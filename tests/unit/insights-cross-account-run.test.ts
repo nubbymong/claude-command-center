@@ -28,7 +28,11 @@ vi.mock('../../src/main/ipc/setup-handlers', () => ({
   getResourcesDirectory: () => h.resourcesDir,
   registerSetupHandlers: () => {}
 }))
-vi.mock('../../src/main/account-profiles', () => ({
+// isValidProfileId comes from the REAL module via importOriginal — the insights
+// runner now guards on it (renderer-supplied ids), so the mock must provide the
+// genuine one (which requires the seeded ids be valid, hence lowercase 'a'/'b').
+vi.mock('../../src/main/account-profiles', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/account-profiles')>()),
   getProfileConfigDir: (id: string) => h.profileDir[id] ?? '',
   getPrimaryProfileId: () => h.profiles.find((p) => p.isPrimary)?.id ?? h.profiles[0]?.id ?? null,
   setupProfileLinks: () => {},
@@ -102,7 +106,7 @@ function seedProfile(id: string, email: string, opts: { withReport?: boolean; is
   const dir = join(tmpRoot, 'profiles', id)
   mkdirSync(dir, { recursive: true })
   h.profileDir[id] = dir
-  h.profiles.push({ id, name: `Acct ${id}`, accountEmail: email, isPrimary: opts.isPrimary })
+  h.profiles.push({ id, name: `Acct ${id.toUpperCase()}`, accountEmail: email, isPrimary: opts.isPrimary })
   if (opts.withReport !== false) {
     const usage = join(dir, '.claude', 'usage-data')
     mkdirSync(usage, { recursive: true })
@@ -137,31 +141,31 @@ describe('runCrossAccountInsights', () => {
   })
 
   it('refuses to run with fewer than two signed-in accounts', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
+    seedProfile('a', 'a@example.com', { isPrimary: true })
     await expect(runCrossAccountInsights(getWin)).rejects.toThrow(/at least 2 signed-in accounts/i)
     expect(aggregate()).toHaveLength(0)
     expect(isCrossAccountRunning()).toBe(false)
   })
 
   it('narrows an explicit id list to real profiles and never widens it', () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
-    expect(resolveCrossAccountTargets().map((p) => p.id)).toEqual(['A', 'B'])
-    expect(resolveCrossAccountTargets(['B']).map((p) => p.id)).toEqual(['B'])
-    expect(resolveCrossAccountTargets(['B', 'does-not-exist', '../escape']).map((p) => p.id)).toEqual(['B'])
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
+    expect(resolveCrossAccountTargets().map((p) => p.id)).toEqual(['a', 'b'])
+    expect(resolveCrossAccountTargets(['b']).map((p) => p.id)).toEqual(['b'])
+    expect(resolveCrossAccountTargets(['b', 'does-not-exist', '../escape']).map((p) => p.id)).toEqual(['b'])
   })
 
   it('refuses when an explicit id list narrows below two accounts', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
-    await expect(runCrossAccountInsights(getWin, { profileIds: ['A', 'ghost'] })).rejects.toThrow(
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
+    await expect(runCrossAccountInsights(getWin, { profileIds: ['a', 'ghost'] })).rejects.toThrow(
       /at least 2 signed-in accounts/i
     )
   })
 
   it('runs every account, then writes one synthesized roll-up', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
 
     const id = await runCrossAccountInsights(getWin)
     const runs = getCatalogue().runs
@@ -177,7 +181,7 @@ describe('runCrossAccountInsights', () => {
 
     // The member runs are ordinary per-account entries alongside the aggregate.
     const memberRuns = runs.filter((r) => r.kind !== 'aggregate')
-    expect(memberRuns.map((r) => r.profileId).sort()).toEqual(['A', 'B'])
+    expect(memberRuns.map((r) => r.profileId).sort()).toEqual(['a', 'b'])
     expect(memberRuns.every((r) => r.status === 'complete')).toBe(true)
 
     // An aggregate has no report.html — only its JSON.
@@ -204,8 +208,8 @@ describe('runCrossAccountInsights', () => {
   })
 
   it('still completes with a numbers-only roll-up when the synthesis pass fails', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
     h.synthesisCode = 1
     h.synthesisStdout = 'the model fell over'
 
@@ -220,8 +224,8 @@ describe('runCrossAccountInsights', () => {
   })
 
   it('degrades to numbers-only when the synthesis reply is unusable JSON', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
     h.synthesisStdout = 'here is your report, in prose, with no JSON'
 
     const id = await runCrossAccountInsights(getWin)
@@ -229,8 +233,8 @@ describe('runCrossAccountInsights', () => {
   })
 
   it('isolates a failed member and fails the roll-up when too few accounts survive', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com', { withReport: false }) // /insights produced nothing to archive
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com', { withReport: false }) // /insights produced nothing to archive
 
     const id = await runCrossAccountInsights(getWin)
     const agg = getCatalogue().runs.find((r) => r.id === id)!
@@ -238,9 +242,9 @@ describe('runCrossAccountInsights', () => {
     expect(agg.status).toBe('failed')
     expect(agg.error).toMatch(/Only 1 of 2 accounts produced KPIs/)
     const byProfile = new Map(agg.members!.map((m) => [m.profileId, m]))
-    expect(byProfile.get('A')!.status).toBe('complete')
-    expect(byProfile.get('B')!.status).toBe('failed')
-    expect(byProfile.get('B')!.error).toMatch(/copy report/i)
+    expect(byProfile.get('a')!.status).toBe('complete')
+    expect(byProfile.get('b')!.status).toBe('failed')
+    expect(byProfile.get('b')!.error).toMatch(/copy report/i)
     // No roll-up artifact for a refused roll-up.
     expect(existsSync(join(h.resourcesDir, 'insights', id, 'kpis.json'))).toBe(false)
     expect(h.synthesisPrompts).toHaveLength(0)
@@ -248,8 +252,8 @@ describe('runCrossAccountInsights', () => {
   })
 
   it('records a member whose report completed without KPIs and leaves it out', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
     // Extraction succeeds but returns unparseable output, which is the real
     // "report is viewable, KPIs unavailable" case — the member run completes.
     h.memberKpiStdout = 'sorry, no JSON for you'
@@ -267,37 +271,37 @@ describe('runCrossAccountInsights', () => {
     // The real failure: the PRIMARY account's OAuth session had expired, so the
     // synthesis pass failed with 0 tokens and the roll-up degraded to numbers-only
     // even though two other accounts had authenticated seconds earlier.
-    seedProfile('A', 'a@example.com', { withReport: false, isPrimary: true }) // primary produces no KPIs
-    seedProfile('B', 'b@example.com')
-    seedProfile('C', 'c@example.com')
+    seedProfile('a', 'a@example.com', { withReport: false, isPrimary: true }) // primary produces no KPIs
+    seedProfile('b', 'b@example.com')
+    seedProfile('c', 'c@example.com')
 
     const id = await runCrossAccountInsights(getWin)
     const agg = getCatalogue().runs.find((r) => r.id === id)!
     expect(agg.status).toBe('complete')
     expect(h.synthesisHomes).toHaveLength(1)
     // Not the primary's home: the primary contributed nothing to this roll-up.
-    expect(h.synthesisHomes[0]).not.toBe(h.profileDir['A'])
-    expect([h.profileDir['B'], h.profileDir['C']]).toContain(h.synthesisHomes[0])
+    expect(h.synthesisHomes[0]).not.toBe(h.profileDir['a'])
+    expect([h.profileDir['b'], h.profileDir['c']]).toContain(h.synthesisHomes[0])
   })
 
   it('prefers the primary when the primary DID produce KPIs', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
 
     await runCrossAccountInsights(getWin)
-    expect(h.synthesisHomes[0]).toBe(h.profileDir['A'])
+    expect(h.synthesisHomes[0]).toBe(h.profileDir['a'])
   })
 
   it('carries a completed-but-no-KPIs member reason so the UI can name it', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
-    seedProfile('C', 'c@example.com')
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
+    seedProfile('c', 'c@example.com')
     // C's extraction hard-fails with an authentication error, like the real run.
-    h.kpiFailFor = { C: '{"is_error":true,"result":"Failed to authenticate: OAuth session expired and could not be refreshed","duration_api_ms":0}' }
+    h.kpiFailFor = { c: '{"is_error":true,"result":"Failed to authenticate: OAuth session expired and could not be refreshed","duration_api_ms":0}' }
 
     const id = await runCrossAccountInsights(getWin)
     const agg = getCatalogue().runs.find((r) => r.id === id)!
-    const c = agg.members!.find((m) => m.profileId === 'C')!
+    const c = agg.members!.find((m) => m.profileId === 'c')!
     expect(c.status).toBe('complete')
     expect(c.kpisUnavailable).toBe(true)
     expect(c.error).toMatch(/OAuth session expired/)
@@ -312,8 +316,8 @@ describe('runCrossAccountInsights', () => {
   })
 
   it('explains a missing written analysis instead of degrading silently', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
     h.synthesisCode = 1
     h.synthesisStdout = JSON.stringify({
       is_error: true,
@@ -334,8 +338,8 @@ describe('runCrossAccountInsights', () => {
   })
 
   it('does not claim an auth problem when the synthesis failed for another reason', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
     h.synthesisStdout = 'prose with no JSON at all'
 
     const id = await runCrossAccountInsights(getWin)
@@ -346,8 +350,8 @@ describe('runCrossAccountInsights', () => {
   })
 
   it('holds an aggregate-level lock so two roll-ups cannot overlap', async () => {
-    seedProfile('A', 'a@example.com', { isPrimary: true })
-    seedProfile('B', 'b@example.com')
+    seedProfile('a', 'a@example.com', { isPrimary: true })
+    seedProfile('b', 'b@example.com')
     h.holdSynthesis = () => {} // replaced with the resolver once the pass is reached
 
     const first = runCrossAccountInsights(getWin)
