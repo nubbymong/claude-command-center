@@ -58,6 +58,19 @@ particle formation (+1.3 s) and the swept C-ring monogram (+2.9 s); main
 closed it at +3.7 s and the fade was caught mid-flight. SwiftShader (no GPU on
 the VM) renders it fine.
 
+## Adversarial review (ADR-009 — new BrowserWindow + file:// + CSP)
+
+Ran on PR #210 (two rounds, independent attackers; author orchestrated only).
+Supply chain verified byte-identical to upstream (three.js r160, Montserrat
+subset); offline claim and sandbox held. Findings fixed then re-attacked to a
+clean PASS: added a strict `<meta>` CSP to the splash page (the app's
+onHeadersReceived CSP does not reach a file:// document), an orphan backstop so
+the splash can never hang unclosable, a `CCC_FORCE_SPLASH='0'` pin across the
+Playwright launchers, a tripwire test, and third-party attribution. The pass
+also surfaced one unrelated, pre-existing finding outside this change's scope;
+it was routed to the maintainer privately and is deliberately recorded nowhere
+public — component, mechanism and repro are embargoed until any fix ships.
+
 ## Follow-ups
 
 - macOS: `hiddenInset` main window unaffected, but the splash is frameless
