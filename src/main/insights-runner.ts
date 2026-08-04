@@ -16,7 +16,7 @@ import { BrowserWindow } from 'electron'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveClaudeForPty, withProfileHome } from './pty-manager'
 import { spawnClaudeHeadless } from './claude-headless'
-import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type { AccountProfile } from '../shared/account-types'
@@ -64,10 +64,13 @@ function getCatalogueFile(): string { return join(getInsightsDir(), 'catalogue.j
  */
 function resolveInsightsAccount(profileId?: string): { home: string | null; profileId?: string; accountEmail?: string } {
   let resolved: string | null = null
-  if (profileId && existsSync(getProfileConfigDir(profileId))) {
+  // The profileId is renderer-supplied and becomes a PATH COMPONENT below (and
+  // the HOME of the spawned run). Validate before the join so a crafted id takes
+  // the fall-back branch rather than resolving outside the profiles root.
+  if (profileId && isValidProfileId(profileId) && existsSync(getProfileConfigDir(profileId))) {
     resolved = profileId
   } else {
-    if (profileId) logWarn(`[insights] profile dir missing for ${profileId}; falling back to primary/default`)
+    if (profileId) logWarn(`[insights] profile dir missing or invalid for ${profileId}; falling back to primary/default`)
     const primary = getPrimaryProfileId()
     if (primary && existsSync(getProfileConfigDir(primary))) resolved = primary
   }
@@ -1208,13 +1211,27 @@ export function getCatalogue(): InsightsCatalogue {
   return loadCatalogue()
 }
 
+// Run ids are renderer-supplied and used as a PATH COMPONENT under the insights
+// dir. Reject anything outside a strict charset so a crafted id can never escape
+// that directory. A charset allowlist is used rather than a shape-specific regex
+// because the id format has already changed once (older archives are
+// `YYYY-MM-DD-HHMMSS`, newer ones carry a `-mmmNNN` suffix) — this cannot break a
+// past or future format, while admitting no `.`, `/` or `\`.
+// Mirrors isValidNoteId in ipc/notes-handlers.ts, which exists for the same reason.
+const RUN_ID_RE = /^[A-Za-z0-9_-]+$/
+export function isValidRunId(id: unknown): id is string {
+  return typeof id === 'string' && id.length > 0 && id.length <= 128 && RUN_ID_RE.test(id)
+}
+
 export function getInsightsReport(runId: string): string | null {
+  if (!isValidRunId(runId)) return null
   const reportPath = join(getInsightsDir(), runId, 'report.html')
   if (!existsSync(reportPath)) return null
   return readFileSync(reportPath, 'utf-8')
 }
 
 export function getInsightsKpis(runId: string): unknown | null {
+  if (!isValidRunId(runId)) return null
   const kpiPath = join(getInsightsDir(), runId, 'kpis.json')
   if (!existsSync(kpiPath)) return null
   try {

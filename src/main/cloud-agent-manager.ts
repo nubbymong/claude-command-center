@@ -11,7 +11,7 @@ import { readConfig, writeConfig } from './config-manager'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveVersionBinary, isVersionInstalled, installVersion } from './legacy-version-manager'
 import { isValidLegacyVersion } from '../shared/legacy-version'
-import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles, isValidProfileId } from './account-profiles'
 import { withProfileHome } from './pty-manager'
 import { randomId } from '../shared/id'
 
@@ -55,10 +55,13 @@ function resolveAgentEnv(profileId: string | undefined): {
   }
 
   let resolvedProfileId: string | null = null
-  if (profileId && fs.existsSync(getProfileConfigDir(profileId))) {
+  // Same guard as the insights/headless resolvers: validate before the join so a
+  // crafted id can't resolve a home outside the profiles root (it becomes the
+  // spawned agent's HOME).
+  if (profileId && isValidProfileId(profileId) && fs.existsSync(getProfileConfigDir(profileId))) {
     resolvedProfileId = profileId
   } else {
-    if (profileId) logWarn(`[cloud-agent] profile dir missing for profileId=${profileId}; falling back to primary/default`)
+    if (profileId) logWarn(`[cloud-agent] profile dir missing or invalid for profileId=${profileId}; falling back to primary/default`)
     const primary = getPrimaryProfileId()
     if (primary && fs.existsSync(getProfileConfigDir(primary))) resolvedProfileId = primary
   }

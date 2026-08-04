@@ -5,7 +5,7 @@
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
 import fs, { promises as fsp } from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
-import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles } from './account-profiles'
+import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles, isValidProfileId } from './account-profiles'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -99,7 +99,10 @@ const POLL_MS = 5000
  *  session this is the account's shared profile home (Bug 2); for the default
  *  account it is ~/.claude.json. */
 function identityFilePath(profileId: string | undefined): string {
-  return profileId
+  // Validate before the join. This runs on a 5s poll timer, so letting
+  // getProfileConfigDir's throw escape here would take down the main process on
+  // a bad id; an invalid one resolves the shared identity file instead.
+  return isValidProfileId(profileId)
     ? path.join(getProfileConfigDir(profileId), '.claude.json')
     : path.join(path.dirname(sharedRoot()), '.claude.json')
 }

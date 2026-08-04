@@ -24,7 +24,13 @@ export const SHARED_DIR_NAMES = ['projects', 'memory', 'agents', 'skills', 'comm
 // (e.g. "..\\..\\.claude") escaping the profiles root in teardown.
 const PROFILE_ID_RE = /^[a-z0-9][a-z0-9-]*$/
 
-export function isValidProfileId(id: string): boolean { return PROFILE_ID_RE.test(id) }
+// `unknown` in, type-guard out: the id can arrive over IPC, where it is not
+// necessarily a string. `RE.test(x)` would stringify a non-string first, so a
+// crafted `{ toString: () => 'ok' }` used to pass. Length-capped like
+// isValidNoteId so a pathological id can't be used to build a huge path.
+export function isValidProfileId(id: unknown): id is string {
+  return typeof id === 'string' && id.length > 0 && id.length <= 128 && PROFILE_ID_RE.test(id)
+}
 
 let rootsOverride: { resourcesDir: string; sharedRoot: string } | null = null
 /** Test seam: inject temp roots so we never touch ~/.claude. */
@@ -35,7 +41,25 @@ function resourcesDir(): string { return rootsOverride?.resourcesDir ?? getResou
 export function sharedRoot(): string { return rootsOverride?.sharedRoot ?? path.join(os.homedir(), '.claude') }
 
 export function getProfilesRoot(): string { return path.join(resourcesDir(), 'account-profiles') }
-export function getProfileConfigDir(id: string): string { return path.join(getProfilesRoot(), id) }
+
+// The single choke point: every profile home in the app is built here, so the
+// guard lives here rather than at each of the ~20 call sites. Three resolvers
+// (insights, headless/sentinel, cloud agents) previously accepted a
+// caller-supplied id and gated only on existsSync, which `path.join` will
+// happily walk out of the profiles root with `..` segments — and the resolved
+// path is then passed to setupProfileLinks (mkdir + junction creation) and used
+// as a spawned process's HOME. Guarding the join itself bans the pattern instead
+// of normalising one instance of it.
+//
+// This throws rather than returning a sentinel because there is no in-band
+// "invalid" value for a path. It is unreachable from the app's own paths: every
+// caller either passes an id from listProfiles()/createProfile() (always
+// `profile-<base36>-<hex>`) or validates first. A future unguarded caller gets a
+// loud failure instead of a silent traversal.
+export function getProfileConfigDir(id: string): string {
+  if (!isValidProfileId(id)) throw new Error('invalid profile id')
+  return path.join(getProfilesRoot(), id)
+}
 
 // ── Credential file permissions (POSIX hardening) ──────────────────────────
 // `.credentials.json` holds live OAuth access/refresh tokens. Claude Code's own
@@ -125,7 +149,10 @@ export function resolveHeadlessProfileHome(preferredProfileId?: string | null): 
   home: string | null
   profileId: string | null
 } {
-  const homeExists = (pid: string): boolean => fs.existsSync(getProfileConfigDir(pid))
+  // Validate before the join: an invalid id reports "no home", so a crafted
+  // preferredProfileId takes the existing fall-back-to-primary branch instead of
+  // reaching getProfileConfigDir's throw.
+  const homeExists = (pid: string): boolean => isValidProfileId(pid) && fs.existsSync(getProfileConfigDir(pid))
   let id: string | null = null
   if (preferredProfileId && homeExists(preferredProfileId)) {
     id = preferredProfileId

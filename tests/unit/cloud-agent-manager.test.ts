@@ -38,7 +38,14 @@ const profMocks = vi.hoisted(() => ({
   setupProfileLinks: vi.fn(),
   listProfiles: vi.fn(() => [] as Array<{ id: string; accountEmail?: string; name?: string; isPrimary?: boolean }>),
 }))
-vi.mock('../../src/main/account-profiles', () => ({
+// isValidProfileId comes from the REAL module via importOriginal. The resolver's
+// path guard is part of what these tests exercise, so stubbing it `true` would let
+// a traversing id through here while the shipped code rejects it — but a
+// hand-copied mirror of the predicate is only correct until PROFILE_ID_RE or the
+// length cap changes, at which point the mock silently diverges and the test keeps
+// passing against a stale rule. Importing the real one cannot drift.
+vi.mock('../../src/main/account-profiles', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/account-profiles')>()),
   getPrimaryProfileId: profMocks.getPrimaryProfileId,
   getProfileConfigDir: profMocks.getProfileConfigDir,
   setupProfileLinks: profMocks.setupProfileLinks,
