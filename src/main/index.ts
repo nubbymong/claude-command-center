@@ -158,13 +158,23 @@ function getHooksSupervisor(): ServiceSupervisor | null { return _hooksSuperviso
 const SPLASH_MIN_MS = 3100
 
 function createSplashWindow(): void {
+  // Playwright-driven runs (e2e + the training-screenshot capture) assume the
+  // first window is the main window; keep the splash out of them. The probe
+  // that visually verifies the splash sets CCC_FORCE_SPLASH=1 to override.
+  if (process.env.CCC_E2E_DATA_DIR && process.env.CCC_FORCE_SPLASH !== '1') {
+    logInfo('[splash] Skipped for e2e run')
+    return
+  }
+
   // The animated splash is self-contained under resources/splash/ (packaged
-  // inside the asar via the `files` glob; app.getAppPath() resolves into the
-  // asar in production and the repo root in dev). All assets are local —
-  // three.js and the Montserrat subset are vendored — so it renders with no
-  // network, and its script is a separate module file because the app CSP
-  // has no 'unsafe-inline' for scripts.
-  const splashHtml = join(app.getAppPath(), 'resources', 'splash', 'index.html')
+  // inside the asar via the `files` glob). Resolve it relative to __dirname
+  // (out/main/ in every launch mode): app.getAppPath() is the js file's
+  // directory when Electron is handed out/main/index.js directly, which made
+  // an appPath-based lookup miss. All assets are local — three.js and the
+  // Montserrat subset are vendored — so it renders with no network, and its
+  // script is a separate module file because the app CSP has no
+  // 'unsafe-inline' for scripts.
+  const splashHtml = join(__dirname, '..', '..', 'resources', 'splash', 'index.html')
   if (!existsSync(splashHtml)) {
     logInfo('[splash] Animated splash page not found, skipping')
     return
