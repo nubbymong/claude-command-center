@@ -37,6 +37,18 @@
   ${endIf}
 !macroend
 
+; Delete a legacy install folder (and the shortcuts that pointed into it), but
+; never the folder this install is going into.
+!macro RemoveLegacyInstall DIR NAME
+  ${If} "${DIR}" != "$INSTDIR"
+  ${AndIf} ${FileExists} "${DIR}\*.*"
+    DetailPrint "Removing legacy install folder: ${DIR}"
+    RMDir /r "${DIR}"
+    Delete "$DESKTOP\${NAME}.lnk"
+    Delete "$SMPROGRAMS\${NAME}.lnk"
+  ${EndIf}
+!macroend
+
 ; Copy one setting forward into the current brand key if it does not have one
 ; yet, looking through the legacy keys newest-first.
 !macro AdoptLegacyValue NAME
@@ -72,16 +84,20 @@
 ; Guarded on the final path component being a known legacy folder name, so a
 ; custom install location is never touched and the parent is never something
 ; broad like C:\Program Files.
+; Deliberately no Var for the old folder: NSIS compiles the uninstaller in a
+; SEPARATE pass with BUILD_UNINSTALLER defined, and installer.nsi only inserts
+; customInit when that is NOT defined — so a Var set solely there is "never set"
+; in the uninstaller pass, which NSIS reports as warning 6001 and electron-builder
+; escalates to a build failure. customInstall recomputes the legacy path from
+; $INSTDIR instead, which is also idempotent: it cleans up a stale legacy folder
+; even if an earlier relocation was interrupted before it could.
 !include "FileFunc.nsh"
-Var LegacyInstallDir
 
 !macro customInit
-  StrCpy $LegacyInstallDir ""
   ${GetFileName} "$INSTDIR" $0
   ${If} $0 == "Claude Command Center"
   ${OrIf} $0 == "Claude Conductor"
     DetailPrint "Relocating install from legacy folder: $INSTDIR"
-    StrCpy $LegacyInstallDir "$INSTDIR"
     ${GetParent} "$INSTDIR" $1
     ; Set the FINAL path here rather than just stepping up to the parent and
     ; letting instFilesPre append. A silent install (/S) skips MUI pages, so the
@@ -108,22 +124,14 @@ Var LegacyInstallDir
   WriteRegStr HKCU "Software\AI Code Conductor" "InstallPath" "$INSTDIR"
   WriteRegStr HKCU "Software\AI Code Conductor" "SourcePath" ""
 
-  ; --- Remove the legacy install folder we relocated away from ---
-  ; Only the application binaries live here; user data lives in the data and
-  ; resources directories, which are untouched. appId is frozen, so this install
-  ; has already overwritten the single uninstall entry to point at $INSTDIR.
-  ${If} $LegacyInstallDir != ""
-  ${AndIf} $LegacyInstallDir != $INSTDIR
-    ${If} ${FileExists} "$LegacyInstallDir\*.*"
-      DetailPrint "Removing legacy install folder: $LegacyInstallDir"
-      RMDir /r "$LegacyInstallDir"
-    ${EndIf}
-    ; Shortcuts created under the old display name now point at a deleted exe.
-    Delete "$DESKTOP\Claude Command Center.lnk"
-    Delete "$SMPROGRAMS\Claude Command Center.lnk"
-    Delete "$DESKTOP\Claude Conductor.lnk"
-    Delete "$SMPROGRAMS\Claude Conductor.lnk"
-  ${EndIf}
+  ; --- Remove a legacy install folder sitting beside this one ---
+  ; Only application binaries live there; user data is in the data and resources
+  ; directories and is untouched. appId is frozen, so this install has already
+  ; overwritten the single uninstall entry to point at $INSTDIR — leaving the old
+  ; folder would just orphan a copy that nothing can uninstall.
+  ${GetParent} "$INSTDIR" $R2
+  !insertmacro RemoveLegacyInstall "$R2\Claude Command Center" "Claude Command Center"
+  !insertmacro RemoveLegacyInstall "$R2\Claude Conductor" "Claude Conductor"
 !macroend
 
 ; ============================================================

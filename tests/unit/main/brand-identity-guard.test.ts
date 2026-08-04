@@ -49,8 +49,11 @@ describe('brand identity guard', () => {
     expect(nsh).toMatch(/!macro customInit/)
     expect(nsh).toMatch(/GetParent/)
     expect(nsh).toContain('"Claude Command Center"')
-    // And the old folder has to be cleaned up, or the machine keeps a dead copy.
-    expect(nsh).toMatch(/RMDir \/r "\$LegacyInstallDir"/)
+    // And the old folder has to be cleaned up, or the machine keeps a dead copy
+    // that nothing can uninstall (the single uninstall entry now points at the
+    // new folder).
+    expect(nsh).toMatch(/!macro RemoveLegacyInstall/)
+    expect(nsh).toMatch(/RMDir \/r "\$\{DIR\}"/)
   })
 
   it('release artifact names keep the frozen ClaudeCommandCenter- prefix', () => {
