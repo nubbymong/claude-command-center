@@ -103,6 +103,15 @@ obvious API call is the wrong one: `POST .../security-advisories` needs admin an
 `POST .../security-advisories/reports` is the open one. Do not conclude from that 403 that
 you have no private channel (ADR-011).
 
+**File it with `node scripts/file-advisory.mjs` (`--dry-run` first). Do not hand-build the
+payload and do not call the endpoint directly.** The report needs `vulnerabilities[]` and
+`cvss_vector_string`, and omitting either returns a **bodyless `500`, not a `422`** naming the
+field — which reads as a GitHub outage and is not one. Read
+`docs/security-embargo-runbook.md` BEFORE the first API call, not after it fails: the
+procedure is already written down, and re-deriving it from the GitHub docs cost five wasted
+attempts and a wrong diagnosis (#207). The script also refuses a description file written
+inside the repo, because `CONTEXT.d/` is tracked.
+
 `CONTEXT.d/` is the trap. The running log *feels* like a scratch notebook and is in fact a
 tracked file; a fragment describing a live bug is a disclosure with a repro attached. A
 fragment written during an embargo may say *that* a finding exists and was routed

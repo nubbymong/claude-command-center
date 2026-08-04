@@ -8,3 +8,10 @@ CHANGELOG.md text eol=lf
 # Husky hooks are POSIX shell run via sh — CRLF would inject stray \r and break
 # execution.
 .husky/commit-msg text eol=lf
+
+# Node ESM scripts. A `.mjs` that a test imports must be LF: Vite strips a leading
+# shebang by rewriting the first line, and under CRLF that leaves a stray \r, so the
+# module fails to parse with "SyntaxError: Invalid or unexpected token". Reproduced
+# on #207 — LF parses, CRLF does not, independent of file content. Pinning the whole
+# directory means the next script to grow a test cannot rediscover this.
+scripts/*.mjs text eol=lf

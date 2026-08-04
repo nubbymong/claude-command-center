@@ -60,39 +60,39 @@ Go to **Security → Advisories → Report a vulnerability**, or straight to
 `/security/advisories/new`. Fill in the summary, description, severity, and affected
 versions. Tick **"Start a temporary private fork"**.
 
-### CLI
-
-Equivalent, and easier to get right for a long description. Write the description to a
-file first so Markdown survives intact:
+### CLI — use the script. Do not hand-build the payload.
 
 ```sh
-# 1. description in its own file (NOT inside the repo -- see Embargo below)
-#    ~/sec/desc.md
+# 1. description in its own file, OUTSIDE the repo (the script REFUSES a path
+#    inside the working tree -- see Embargo below)
+#      ~/sec/desc.md
 
-# 2. build the payload
-node -e "
-const fs=require('fs');
-fs.writeFileSync('payload.json', JSON.stringify({
-  summary: 'One line, <=1024 chars',
-  description: fs.readFileSync('desc.md','utf8'),
-  cvss_vector_string: 'CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N',
-  cwe_ids: ['CWE-22'],
-  vulnerabilities: [{
-    package: { ecosystem: 'other', name: 'claude-command-center' },
-    vulnerable_version_range: '<= 2.1.0-beta.2',
-    vulnerable_functions: ['theFunction']
-  }],
-  start_private_fork: true
-}));
-"
+# 2. review what will be sent, without sending it
+node scripts/file-advisory.mjs \
+  --summary "One line, <=1024 chars" \
+  --desc ~/sec/desc.md \
+  --cwe CWE-22 \
+  --range "<= 2.1.0-beta.5" \
+  --functions theFunction \
+  --dry-run
 
-# 3. file it
-gh api -X POST \
-  repos/nubbymong/claude-command-center/security-advisories/reports \
-  --input payload.json
+# 3. drop --dry-run to file it
 ```
 
-`ecosystem: 'other'` is correct — this app is not published to a package registry.
+**This is the required path, and hand-assembling the payload is the mistake it exists to
+prevent.** The endpoint needs `summary`, `description`, `cvss_vector_string`, `cwe_ids`,
+`vulnerabilities[]` and `start_private_fork`, and it answers a payload missing any of the
+last four with a **bodyless `500`, not a `422` naming the field** — which reads exactly like
+a GitHub outage and is not one. `scripts/file-advisory.mjs` fills in every field, validates
+before a request exists, prints the field name when something is wrong, and defaults
+`start_private_fork` to true. Its required-field list is enforced by
+`tests/unit/file-advisory-payload.test.ts`, so CI notices if it drifts.
+
+`ecosystem: 'other'` is correct — this app is not published to a package registry — and the
+script sets it for you.
+
+The script also enforces the embargo mechanically: a `--desc` path inside the repository is
+rejected outright, because `CONTEXT.d/` reads like a scratch notebook and is a tracked file.
 
 The response carries `ghsa_id`, `state: "triage"`, and `private_fork.full_name`. Keep the
 GHSA id; you need it next. **The report lands in `triage`** — it is a submission awaiting
@@ -185,6 +185,7 @@ Each of these cost real time on the first run of this process.
 
 | Symptom | Cause and fix |
 | --- | --- |
+| **`500 Internal Server Error`, `Content-Length: 0`, filing a report** | **Your payload, NOT an outage.** The endpoint answers a missing `vulnerabilities[]` or `cvss_vector_string` with a bodyless 500 instead of a 422 naming the field. Use `scripts/file-advisory.mjs`, which cannot omit them. Do not go checking whether PVR is enabled — this exact 500 was misread as a GitHub outage and cost five attempts (#207) |
 | `403` creating an advisory | Wrong endpoint. Use `.../security-advisories/reports` |
 | "Ask for the security manager role" | Org-only. Not grantable on a user-owned repo |
 | Fork shows `permissions.push: false` | Not authoritative. `git push` works |
