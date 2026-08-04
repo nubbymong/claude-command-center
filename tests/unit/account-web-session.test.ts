@@ -17,6 +17,18 @@ import {
   toElectronCookie,
   type CdpCookie,
 } from '../../src/main/account-web/cookie-harvest'
+import {
+  authProfileDir,
+  buildAuthBrowserArgs,
+  isHeadless,
+} from '../../src/main/account-web/browser-launch'
+import {
+  AUTH_CDP_PORT_DEV,
+  AUTH_CDP_PORT_PROD,
+  CDP_PORT_DEV,
+  CDP_PORT_PROD,
+  resolveAuthCdpPort,
+} from '../../src/shared/cdp-ports'
 
 const cookie = (over: Partial<CdpCookie> = {}): CdpCookie => ({
   name: CLAUDE_SESSION_COOKIE,
@@ -60,6 +72,72 @@ describe('webPartitionForProfile — the isolation boundary', () => {
 
   it('PROFILE_ID_RE matches the real on-disk profile id shape', () => {
     expect(PROFILE_ID_RE.test('profile-mrdsqlsb-aefe03')).toBe(true)
+  })
+})
+
+describe('the sign-in browser never collides with Vision', () => {
+  it('uses a different CDP port in both build modes', () => {
+    expect(AUTH_CDP_PORT_PROD).not.toBe(CDP_PORT_PROD)
+    expect(AUTH_CDP_PORT_DEV).not.toBe(CDP_PORT_DEV)
+    // Sharing Vision's port would be worse than a collision: the sign-in browser
+    // briefly holds a live claude.ai session, and Vision's port is reachable by
+    // every session's MCP tooling.
+    expect(new Set([AUTH_CDP_PORT_PROD, AUTH_CDP_PORT_DEV, CDP_PORT_PROD, CDP_PORT_DEV]).size).toBe(4)
+  })
+
+  it('resolves per build mode', () => {
+    expect(resolveAuthCdpPort(true)).toBe(AUTH_CDP_PORT_PROD)
+    expect(resolveAuthCdpPort(false)).toBe(AUTH_CDP_PORT_DEV)
+  })
+})
+
+describe('authProfileDir', () => {
+  it('gives each account its own browser profile', () => {
+    const a = authProfileDir('C:/data', 'profile-aaa111')
+    const b = authProfileDir('C:/data', 'profile-bbb222')
+    expect(a).not.toBe(b)
+    expect(a).toContain('account-web')
+  })
+
+  it('refuses an id that would escape the data dir', () => {
+    // It becomes a filesystem path, so it does not get to be arbitrary.
+    for (const bad of ['profile-../..', 'profile-a/b', '../evil', '']) {
+      expect(() => authProfileDir('C:/data', bad)).toThrow(/unexpected profile id/)
+    }
+  })
+})
+
+describe('buildAuthBrowserArgs', () => {
+  const args = () => buildAuthBrowserArgs({ port: 9522, profileDir: 'C:/data/account-web/profile-a' })
+
+  it('binds the debug endpoint to loopback', () => {
+    // Anything that can reach this port reads the claude.ai cookies while the
+    // browser is open. It must never be reachable off-box.
+    expect(args()).toContain('--remote-debugging-address=127.0.0.1')
+    expect(args()).toContain('--remote-debugging-port=9522')
+  })
+
+  it('uses the dedicated profile dir, never the default profile', () => {
+    // Chrome 136+ refuses --remote-debugging-port against the default profile,
+    // and CCC should never attach a debugger to the user's everyday browser.
+    expect(args().some((a) => a.startsWith('--user-data-dir='))).toBe(true)
+  })
+
+  it('is NEVER headless — a human has to complete SSO', () => {
+    expect(isHeadless(args())).toBe(false)
+  })
+
+  it('opens at claude.ai and refuses to be pointed anywhere else', () => {
+    expect(args()[args().length - 1]).toBe('https://claude.ai/')
+    for (const bad of ['https://evil.example/', 'http://claude.ai/', 'https://claude.ai.evil.example/']) {
+      expect(() => buildAuthBrowserArgs({ port: 9522, profileDir: 'd', startUrl: bad })).toThrow(/non-claude\.ai/)
+    }
+  })
+
+  it('refuses an out-of-range port', () => {
+    for (const p of [0, 80, 70000, 1.5]) {
+      expect(() => buildAuthBrowserArgs({ port: p, profileDir: 'd' })).toThrow(/out-of-range port/)
+    }
   })
 })
 
