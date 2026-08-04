@@ -899,7 +899,9 @@ async function main() {
     console.log(`[capture] App data root (CCC_E2E_DATA_DIR): ${dataRoot}`)
     const app = await electron.launch({
       args: [BUILT_APP],
-      env: { ...process.env, NODE_ENV: 'production', CCC_E2E_DATA_DIR: dataRoot },
+      // CCC_FORCE_SPLASH pinned off: the capture assumes the first window is
+      // the main window, so a stray export must not surface the splash.
+      env: { ...process.env, NODE_ENV: 'production', CCC_E2E_DATA_DIR: dataRoot, CCC_FORCE_SPLASH: '0' },
     })
     const window = await app.firstWindow()
     await window.setViewportSize({ width: WIDTH, height: HEIGHT })

@@ -149,6 +149,13 @@ function saveWindowState(win: BrowserWindow): void {
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
+// Unconditional backstop so the splash can never orphan. It is normally
+// closed by the main window's ready-to-show; if that never fires (renderer
+// crash, GPU wedge) or createWindow() throws, this timer force-closes it so
+// the user is never left with a frameless, alwaysOnTop, taskbar-less window
+// that also blocks app quit. Generous — well past the ~3.1s normal close.
+let splashBackstopTimer: ReturnType<typeof setTimeout> | null = null
+const SPLASH_MAX_MS = 15000
 let _hooksSupervisor: ServiceSupervisor | null = null
 function setHooksSupervisor(s: ServiceSupervisor): void { _hooksSupervisor = s }
 function getHooksSupervisor(): ServiceSupervisor | null { return _hooksSupervisor }
@@ -176,9 +183,11 @@ function createSplashWindow(): void {
   // (out/main/ in every launch mode): app.getAppPath() is the js file's
   // directory when Electron is handed out/main/index.js directly, which made
   // an appPath-based lookup miss. All assets are local — three.js and the
-  // Montserrat subset are vendored — so it renders with no network, and its
-  // script is a separate module file because the app CSP has no
-  // 'unsafe-inline' for scripts.
+  // Montserrat subset are vendored — so it renders with no network. The page
+  // carries its own <meta> CSP (script-src 'self', no 'unsafe-inline'): the
+  // app-wide onHeadersReceived CSP does not reach a file:// document, so the
+  // splash must police itself, which is why its script lives in a separate
+  // module file rather than inline.
   const splashHtml = join(__dirname, '..', '..', 'resources', 'splash', 'index.html')
   if (!existsSync(splashHtml)) {
     logInfo('[splash] Animated splash page not found, skipping')
@@ -205,14 +214,22 @@ function createSplashWindow(): void {
     },
   })
 
+  // If the splash page itself fails to load or its renderer dies, close it
+  // rather than show a blank always-on-top window.
+  splashWindow.webContents.on('did-fail-load', () => closeSplashWindow())
+  splashWindow.webContents.on('render-process-gone', () => closeSplashWindow())
+
   splashWindow.loadFile(splashHtml)
   splashWindow.once('ready-to-show', () => {
     splashShownAt = Date.now()
     splashWindow?.show()
   })
+
+  splashBackstopTimer = setTimeout(() => closeSplashWindow(), SPLASH_MAX_MS)
 }
 
 function closeSplashWindow(): void {
+  if (splashBackstopTimer) { clearTimeout(splashBackstopTimer); splashBackstopTimer = null }
   if (!splashWindow || splashWindow.isDestroyed()) return
   // Fade out by sending a message, then destroy after delay
   splashWindow.webContents.executeJavaScript(`
@@ -707,7 +724,16 @@ if (!gotTheLock) {
     })
 
     createSplashWindow()
-    createWindow()
+    try {
+      createWindow()
+    } catch (err) {
+      // A failed main-window creation must not leave the splash pinned
+      // on-screen forever (the backstop would eventually catch it, but
+      // close now so a fatal boot doesn't hang behind an orphan splash).
+      logInfo(`[main] createWindow failed: ${err}`)
+      closeSplashWindow()
+      throw err
+    }
 
     const getWindow = () => mainWindow
     registerPtyHandlers(getWindow)

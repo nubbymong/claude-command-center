@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  The app's runtime CSP is delivered by an onHeadersReceived header, which
+  does not apply to a file:// document — so this page carries its own CSP as
+  a <meta>, which the parser enforces regardless of scheme. Locked down to
+  local assets only: no remote origins, no connect (the offline guarantee is
+  now enforced, not just observed), no inline/eval script.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'">
 <title>AI Code Conductor</title>
 <!--
   Animated boot splash, adapted from the brand asset package (2026-08-04).

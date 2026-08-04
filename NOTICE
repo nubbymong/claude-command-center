@@ -1,3 +1,7 @@
 This product bundles the following fonts under the SIL Open Font License 1.1:
 - JetBrains Mono -- (c) JetBrains. See src/renderer/assets/fonts/JetBrainsMono-OFL.txt
 - Inter -- (c) The Inter Project Authors. See src/renderer/assets/fonts/Inter-OFL.txt
+- Montserrat -- (c) The Montserrat Project Authors. See resources/splash/Montserrat-OFL.txt
+
+This product bundles the following software under the MIT License:
+- three.js (r160) -- (c) 2010-2024 three.js authors. See resources/splash/three.js-LICENSE.txt
