@@ -83,7 +83,12 @@ Var LegacyInstallDir
     DetailPrint "Relocating install from legacy folder: $INSTDIR"
     StrCpy $LegacyInstallDir "$INSTDIR"
     ${GetParent} "$INSTDIR" $1
-    StrCpy $INSTDIR "$1"
+    ; Set the FINAL path here rather than just stepping up to the parent and
+    ; letting instFilesPre append. A silent install (/S) skips MUI pages, so the
+    ; page PRE callbacks never fire — leaving $INSTDIR at the parent would then
+    ; install straight into …\Programs. Writing the full path is correct in both
+    ; modes, and makes instFilesPre's check a no-op because the name is present.
+    StrCpy $INSTDIR "$1\${APP_FILENAME}"
   ${EndIf}
 !macroend
 
