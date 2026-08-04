@@ -9,16 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
-## [2.2.0] - 2026-08-02
+## [2.1.0-beta.6] - 2026-08-04
 
-> Insights can now look at all of your accounts at once: one click generates every account's report and then a combined report that compares them side by side.
+> The app is now AI Code Conductor, with a new icon, start-up animation and a rebuilt session setup dialog. Insights can also look at all of your accounts at once: one click generates every account's report and then a combined report that compares them side by side.
 
 ### Added
+- The app is now called AI Code Conductor. Only the name and the artwork change: your saved configs, settings, history and accounts stay exactly where they are, the app installs and updates over the top of your existing copy, and nothing needs migrating.
+- A new app icon, and a new start-up screen that draws the mark as the app loads.
+- The session setup dialog has been rebuilt around the two questions that actually matter: what you are launching (Claude Code, Codex, or a plain terminal) and where it runs (this PC or over SSH). The rest of the form follows from those answers instead of showing every field at once, so a plain terminal no longer asks you about models and a Codex session no longer shows Claude-only options. Starting model and starting effort are now explicit choices, listed newest first.
 - Insights: a "Run all" button generates a report for every signed-in account and then one combined cross-account report. It lines every metric the accounts have in common up side by side, marks the best and worst account for each, totals the counts, and adds a written comparison — where your work actually lives, which account is costing you the most friction, and what one account should copy from another. It appears once you have two or more accounts signed in; with a single account nothing changes.
 - The combined report is kept alongside your normal reports and appears in the same dropdown as "All accounts", so you can go back to any earlier comparison. Each account's own full report is still generated and still there.
 - The accounts view now tells you when each account will force you to sign in again — "Forced sign-in in 12 days" — and turns amber under a week, red under two days. It also offers "Refresh sign-in" on accounts that are working fine, so you can reset the clock at a convenient moment instead of finding out when something fails. The countdown deliberately tracks only the long-lived credential: the short one behind each session renews itself and is not shown, because showing it would look alarming for no reason.
 
 ### Changed
+- A terminal-only launcher no longer insists on a working directory, and the "run as administrator" wording now matches the platform you are on.
+- Installed builds now enforce the same content restrictions the development build has always run under — an extra layer around anything the app displays, including text that comes from your repositories and sessions.
+- The drawing canvas no longer fetches its fonts from the internet when you open it. They ship with the app, so it draws correctly offline and makes no outside requests.
+- The in-app walkthrough screenshots have been retaken against the current app.
 - A combined report never invents a number, and never claims two accounts measured the same thing unless they agree that they did. Where accounts describe a metric differently the report shows both wordings and stops ranking them, rather than silently treating one account's definition as the shared one. Totals appear only where adding up actually means something, and are dropped entirely when the accounts cover reporting periods of different lengths — each column shows its own period so you can see why.
 - Metrics only one account reported now get their own section instead of being dropped. In practice that is most of them, and it is often the most interesting part: a tool or a kind of error that shows up in one account and nowhere else says more than a metric you already had side by side. Each account's top tools, languages and goals are carried into the comparison too.
 - If the written analysis cannot be produced, you still get the measured comparison and the report says so rather than quietly leaving it out.
@@ -27,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generating Insights is far cheaper. Each analysis was quietly loading everything your account has configured — every connected tool server, every skill, your instruction files — into a job that only needed to read one report. Measured on a real setup that was about 193,000 words of context per account; it is now about 14,000. Nothing about the analysis itself changes.
 
 ### Fixed
+- Fixed: every button in the sidebar could end up announcing itself with the same label. That broke the guided tour and made the app significantly harder to use with a screen reader.
+- Fixed: two of the tips could never appear, because they were waiting on activity the app never actually recorded.
 - The accounts view now warns when two accounts are signed into the SAME Anthropic account, and explains why it matters: each time one refreshes, it invalidates the other, so they take turns mysteriously expiring. This is easy to cause by accident — sign one account in while your browser is still signed in as another and it happens silently.
 - Signing an existing account back in now opens a tab labelled with that account, e.g. "Sign in: you@example.com". Previously the tab had no name at all for any account you had not manually renamed, which made it impossible to tell two of them apart when signing more than one account back in.
 - Insights now tells you when an account needs signing in again, on the Insights page itself, with a button that signs it in. Previously an expired sign-in showed up as an unexplained "KPI extraction failed" and there was no way to tell which account was the problem — the report generated fine, so nothing looked broken, and the metrics simply never appeared. A combined cross-account report also no longer loses its written analysis just because the primary account is the expired one.
@@ -977,7 +986,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
-[2.2.0]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.2.0
+[2.1.0-beta.6]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.6
 [2.1.0-beta.5]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.5
 [2.1.0-beta.4]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.4
 [2.1.0-beta.3]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.3

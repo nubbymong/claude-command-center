@@ -21,10 +21,19 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
-    version: '2.2.0',
-    date: '2026-08-02',
-    highlights: 'Insights can now look at all of your accounts at once: one click generates every account\'s report and then a combined report that compares them side by side.',
+    version: '2.1.0-beta.6',
+    date: '2026-08-04',
+    highlights: 'The app is now AI Code Conductor, with a new icon, start-up animation and a rebuilt session setup dialog. Insights can also look at all of your accounts at once: one click generates every account\'s report and then a combined report that compares them side by side.',
     changes: [
+      { type: 'feature', description: 'The app is now called AI Code Conductor. Only the name and the artwork change: your saved configs, settings, history and accounts stay exactly where they are, the app installs and updates over the top of your existing copy, and nothing needs migrating.' },
+      { type: 'feature', description: 'A new app icon, and a new start-up screen that draws the mark as the app loads.' },
+      { type: 'feature', description: 'The session setup dialog has been rebuilt around the two questions that actually matter: what you are launching (Claude Code, Codex, or a plain terminal) and where it runs (this PC or over SSH). The rest of the form follows from those answers instead of showing every field at once, so a plain terminal no longer asks you about models and a Codex session no longer shows Claude-only options. Starting model and starting effort are now explicit choices, listed newest first.' },
+      { type: 'improvement', description: 'A terminal-only launcher no longer insists on a working directory, and the "run as administrator" wording now matches the platform you are on.' },
+      { type: 'fix', description: 'Fixed: every button in the sidebar could end up announcing itself with the same label. That broke the guided tour and made the app significantly harder to use with a screen reader.' },
+      { type: 'fix', description: 'Fixed: two of the tips could never appear, because they were waiting on activity the app never actually recorded.' },
+      { type: 'improvement', description: 'Installed builds now enforce the same content restrictions the development build has always run under — an extra layer around anything the app displays, including text that comes from your repositories and sessions.' },
+      { type: 'improvement', description: 'The drawing canvas no longer fetches its fonts from the internet when you open it. They ship with the app, so it draws correctly offline and makes no outside requests.' },
+      { type: 'improvement', description: 'The in-app walkthrough screenshots have been retaken against the current app.' },
       { type: 'feature', description: 'Insights: a "Run all" button generates a report for every signed-in account and then one combined cross-account report. It lines every metric the accounts have in common up side by side, marks the best and worst account for each, totals the counts, and adds a written comparison — where your work actually lives, which account is costing you the most friction, and what one account should copy from another. It appears once you have two or more accounts signed in; with a single account nothing changes.' },
       { type: 'feature', description: 'The combined report is kept alongside your normal reports and appears in the same dropdown as "All accounts", so you can go back to any earlier comparison. Each account\'s own full report is still generated and still there.' },
       { type: 'improvement', description: 'A combined report never invents a number, and never claims two accounts measured the same thing unless they agree that they did. Where accounts describe a metric differently the report shows both wordings and stops ranking them, rather than silently treating one account\'s definition as the shared one. Totals appear only where adding up actually means something, and are dropped entirely when the accounts cover reporting periods of different lengths — each column shows its own period so you can see why.' },

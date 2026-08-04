@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/screenshots/splash.png" alt="AI Code Conductor" width="180" />
+<img src="docs/screenshots/brand-icon.png" alt="AI Code Conductor" width="180" />
 
 # AI Code Conductor
 
