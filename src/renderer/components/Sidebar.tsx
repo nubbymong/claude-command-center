@@ -25,6 +25,7 @@ import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
+import { resolveConfigPanelExpanded, toggleConfigPanel, overrideAfterPinChange, type ConfigPanelOverride } from './sidebar/configPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
 import ConfigHydrationNotice from './ConfigHydrationNotice'
@@ -106,8 +107,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const [groupContextMenu, setGroupContextMenu] = useState<{ groupId: string; x: number; y: number } | null>(null)
   const [showNewSectionInput, setShowNewSectionInput] = useState(false)
   const [newSectionName, setNewSectionName] = useState('')
-  const [configPanelOpen, setConfigPanelOpen] = useState(false)
+  // null = the user has not expanded/collapsed by hand this session, so the
+  // persisted pin decides (#217). NOT seeded from configPanelPinned: settings
+  // hydrate after mount, so an initial value would latch `false`.
+  const [configPanelOpen, setConfigPanelOpen] = useState<ConfigPanelOverride>(null)
   const configPanelPinned = useSettingsStore((s) => s.settings.configPanelPinned)
+  const configPanelExpanded = resolveConfigPanelExpanded(configPanelOpen, configPanelPinned)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const setConfigPanelPinned = (val: boolean | ((prev: boolean) => boolean)) => {
     const newVal = typeof val === 'function' ? val(configPanelPinned) : val
@@ -607,15 +612,17 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
         <div className="p-3 flex items-center justify-between hover:bg-surface0/30 transition-colors">
           <button
             type="button"
-            onClick={() => { if (!configPanelPinned) setConfigPanelOpen((o) => !o) }}
-            aria-expanded={configPanelOpen || configPanelPinned}
+            /* Works while pinned too: a pinned panel stays collapsible. This used
+               to be blocked when pinned, so "pinned" also meant "stuck open". */
+            onClick={() => setConfigPanelOpen((o) => toggleConfigPanel(o, configPanelPinned))}
+            aria-expanded={configPanelExpanded}
             className="flex items-center gap-1.5 rounded focus-ring"
-            title="Show all saved configs"
+            title={configPanelExpanded ? 'Collapse saved configs' : 'Show all saved configs'}
           >
             <svg
               width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
               className="text-overlay0 transition-transform"
-              style={{ transform: (configPanelOpen || configPanelPinned) ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+              style={{ transform: configPanelExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}
             >
               <polygon points="2,2 8,5 2,8" />
             </svg>
@@ -626,10 +633,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                setConfigPanelPinned(prev => {
-                  if (!prev) setConfigPanelOpen(true)
-                  return !prev
-                })
+                // Clear the session override so the derived default (the new pin
+                // value) decides. Forcing `true` would be defeated by a stale
+                // `false` from an earlier manual collapse — the original bug.
+                setConfigPanelOpen(overrideAfterPinChange())
+                setConfigPanelPinned(prev => !prev)
               }}
               className={`w-6 h-6 flex items-center justify-center rounded transition-colors focus-ring ${configPanelPinned ? 'bg-blue/20 text-blue' : 'hover:bg-surface0 text-overlay1 hover:text-text'}`}
               title={configPanelPinned ? 'Unpin config panel' : 'Pin config panel open'}
@@ -670,7 +678,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
         style={configPanelPinned
           ? {
               backgroundColor: 'var(--color-surface0)',
-              maxHeight: configPanelOpen ? '60vh' : '0',
+              maxHeight: configPanelExpanded ? '60vh' : '0',
               transition: 'max-height 200ms ease',
             }
           : {
@@ -678,12 +686,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
               marginTop: 2,
               backgroundColor: 'var(--color-surface0)',
               boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)',
-              maxHeight: configPanelOpen ? '60vh' : '0',
-              opacity: configPanelOpen ? 1 : 0,
-              transform: configPanelOpen ? 'translateY(0) scaleY(1)' : 'translateY(-4px) scaleY(0.98)',
+              maxHeight: configPanelExpanded ? '60vh' : '0',
+              opacity: configPanelExpanded ? 1 : 0,
+              transform: configPanelExpanded ? 'translateY(0) scaleY(1)' : 'translateY(-4px) scaleY(0.98)',
               transformOrigin: 'top center',
               transition: 'max-height 200ms ease, opacity 180ms ease, transform 180ms ease',
-              pointerEvents: configPanelOpen ? 'auto' : 'none',
+              pointerEvents: configPanelExpanded ? 'auto' : 'none',
             }
         }
       >
