@@ -259,7 +259,13 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     // cards forbid; the disabled cards don't constrain saved state, so guard it
     // here or the config saves and then hard-throws at spawn.
     if (uiProvider === 'codex' && sessionType === 'ssh') return "Codex can't run over SSH — pick Claude Code or Terminal only"
-    if (sessionType === 'local' && !workingDir.trim()) return 'Add a working directory to save'
+    // Required only where the folder is load-bearing: an agent session reads and
+    // edits files there, and it's the folder transcripts get filed under. A
+    // terminal-only launcher often just runs a command that connects somewhere
+    // else, so an empty value is legitimate — it starts in the home folder.
+    if (sessionType === 'local' && uiProvider !== 'terminal' && !workingDir.trim()) {
+      return 'Add a working directory to save'
+    }
     // Enforce the absolute-path rule only on a CHANGED value: an imported or
     // synced config with a foreign-platform absolute path (e.g. a macOS
     // /Users/... path opened on Windows) can still have its label/colour/model
@@ -521,19 +527,30 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               {/* ── 2 · WORKSPACE ── */}
               {sectionHead('Workspace', 'Any provider', 'ws', 'About the workspace')}
               <Hint k="ws">
-                {sessionType === 'local'
-                  ? 'The folder every session starts in. The agent can read and edit files here, with your approval. Every session also gets a second plain terminal from the command bar — no setup needed.'
-                  : "Where sessions land after connecting. Your PC's folders are not visible to this session."}
+                {sessionType !== 'local'
+                  ? "Where sessions land after connecting. Your PC's folders are not visible to this session."
+                  : uiProvider === 'terminal'
+                    ? 'The folder the terminal starts in. Optional — leave it blank and the session starts in your home folder, which is usually what you want when the command connects somewhere else.'
+                    : 'The folder every session starts in. The agent can read and edit files here, with your approval. Every session also gets a second plain terminal from the command bar — no setup needed.'}
               </Hint>
 
               {sessionType === 'local' ? (
                 <div className="mt-1">
-                  <label className="block text-xs text-subtext0 mb-1">Working directory <span className="text-peach">*</span></label>
+                  <label className="block text-xs text-subtext0 mb-1">
+                    Working directory{' '}
+                    {uiProvider === 'terminal'
+                      ? <span className="text-overlay0">(optional)</span>
+                      : <span className="text-peach">*</span>}
+                  </label>
                   <div className="flex gap-2">
                     <input
                       value={workingDir}
                       onChange={(e) => setWorkingDir(e.target.value)}
-                      placeholder={window.electronPlatform === 'win32' ? 'C:\\path\\to\\project' : '~/path/to/project'}
+                      placeholder={
+                        uiProvider === 'terminal'
+                          ? 'Leave blank to start in your home folder'
+                          : window.electronPlatform === 'win32' ? 'C:\\path\\to\\project' : '~/path/to/project'
+                      }
                       className={inputCls.replace('w-full', 'flex-1')}
                     />
                     <button
@@ -550,7 +567,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       what mis-filed transcripts before. */}
                   {workingDir.trim() && !looksAbsolute(workingDir) && (
                     <p className="text-[11px] text-yellow mt-1.5">
-                      Not a full path — sessions will start in your home folder. Pick a real project folder.
+                      {uiProvider === 'terminal'
+                        ? 'Not a full path — this session will start in your home folder. Clear the field if that’s what you want.'
+                        : 'Not a full path — sessions will start in your home folder. Pick a real project folder.'}
                     </p>
                   )}
                 </div>
@@ -917,7 +936,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         onChange={(e) => setTermElevated(e.target.checked)}
                         className="rounded border-surface1"
                       />
-                      {`Run as Administrator (requires ${window.electronPlatform === 'win32' ? 'gsudo' : 'sudo'})`}
+                      {window.electronPlatform === 'win32'
+                        ? 'Run as Administrator (requires gsudo)'
+                        : 'Run with elevated privileges (requires sudo)'}
                     </label>
                   </div>
                 </>
