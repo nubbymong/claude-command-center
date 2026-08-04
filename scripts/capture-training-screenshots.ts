@@ -9,8 +9,9 @@
  *   - @playwright/test must be installed (already a devDependency)
  *
  * What it does:
- *   1. Seeds sample data (configs, commands, agents, memory) so pages look populated
- *   2. Launches the built Electron app via Playwright
+ *   1. Seeds sample data (configs, commands, agents, memory) into a throwaway
+ *      temp data root so pages look populated without touching real user data
+ *   2. Launches the built Electron app via Playwright, pointed at that root
  *   3. Navigates to each relevant view and captures screenshots
  *   4. Saves JPEGs to src/renderer/assets/training/
  *   5. Cleans up sample data (restores any backed-up originals)
@@ -20,9 +21,14 @@ import { _electron as electron } from '@playwright/test'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
-import { execSync } from 'child_process'
+import { STEPS, ONBOARDING_VERSION } from '../src/renderer/onboarding/steps'
 
 const SCREENSHOT_DIR = path.join(__dirname, '..', 'src', 'renderer', 'assets', 'training')
+// Must match the build's __APP_VERSION__ exactly — the Claude CLI-setup gate
+// compares with !==, so any sentinel value makes the wizard fire.
+const APP_VERSION = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'),
+).version as string
 const BUILT_APP = path.join(__dirname, '..', 'out', 'main', 'index.js')
 // Setting CAPTURE_NO_PLATFORM_SUFFIX=1 forces no -mac suffix even on darwin,
 // useful when you want the Mac run to produce the canonical filenames the
@@ -50,52 +56,23 @@ function redactAccountInStatusline(sl: any) {
 }
 
 // ── Config directory resolution ──
-
-function readRegistryValue(name: 'ResourcesDirectory' | 'DataDirectory'): string | null {
-  if (process.platform !== 'win32') return null
-  for (const key of ['Software\\Claude Command Center', 'Software\\Claude Conductor']) {
-    try {
-      const result = execSync(`reg query "HKCU\\${key}" /v ${name}`, { encoding: 'utf-8', timeout: 5000, windowsHide: true })
-      const match = result.match(new RegExp(`${name}\\s+REG_SZ\\s+(.+)`))
-      if (match) return match[1].trim()
-    } catch { /* try next */ }
-  }
-  return null
-}
+//
+// The capture runs against a THROWAWAY data root under the OS temp dir, never
+// the user's real resources/data directories. Pointing the app at the real
+// folders made the Logs and Tokenomics pages render the user's actual account
+// address and spend figures, and these assets ship in a public repo. The
+// launched app follows this root automatically: main() passes it as
+// CCC_E2E_DATA_DIR, which data-paths.ts maps to data dir = <root> and
+// resources dir = <root>/resources — mirror that shape here so the seed
+// writes exactly where the app reads.
+const CAPTURE_DATA_ROOT = path.join(os.tmpdir(), `ccc-capture-${process.pid}`)
 
 function getResourcesDir(): string {
-  const fromReg = readRegistryValue('ResourcesDirectory')
-  if (fromReg) return fromReg
-  if (process.platform === 'win32') {
-    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor')
-  }
-  const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
-  try {
-    if (fs.existsSync(fallbackFile)) {
-      const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
-      if (config.ResourcesDirectory) return config.ResourcesDirectory
-      if (config.DataDirectory) return config.DataDirectory
-    }
-  } catch {}
-  return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor')
+  return path.join(CAPTURE_DATA_ROOT, 'resources')
 }
 
 function getDataDir(): string {
-  const fromReg = readRegistryValue('DataDirectory')
-  if (fromReg) return fromReg
-  // Defaults match getDefaultDataDir() in src/main/ipc/setup-handlers.ts
-  if (process.platform === 'win32') {
-    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor')
-  }
-  const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
-  try {
-    if (fs.existsSync(fallbackFile)) {
-      const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
-      if (config.DataDirectory) return config.DataDirectory
-      if (config.ResourcesDirectory) return config.ResourcesDirectory
-    }
-  } catch {}
-  return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor')
+  return CAPTURE_DATA_ROOT
 }
 
 function getConfigDir(): string {
@@ -306,7 +283,10 @@ const DEMO_FINGERPRINTS: Record<string, string[]> = {
   'tokenomics.json': ['demo-s1', 'demo-s2'],
   'github-config.json': ['demo-github-profile'],
   'settings.json': ['Dev Workstation', 'Mac Mini'],
-  'app-meta.json': ['"setupVersion": "99.99.99"'],
+  // NOT setupVersion — that now has to equal the real app version (see the
+  // seed below), which would match a genuine user file. lastTrainingVersion
+  // keeps the sentinel and appears only in demo content.
+  'app-meta.json': ['"lastTrainingVersion": "99.99.99"'],
 }
 
 function isDemoContent(filePath: string, content: string): boolean {
@@ -408,8 +388,31 @@ function seedSampleData(): BackupInfo {
     'commands.json': SAMPLE_COMMANDS,
     'command-sections.json': SAMPLE_SECTIONS,
     'settings.json': { localMachineName: 'Demo Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false },
-    'app-meta.json': { setupVersion: '99.99.99', lastTrainingVersion: '99.99.99', lastWhatsNewVersion: '99.99.99', lastSeenVersion: '99.99.99' },
+    // Boot gates. A "very high" sentinel works only for the >= comparisons
+    // (lastSeenVersion / lastTrainingVersion / lastWhatsNewVersion). The Claude
+    // CLI-setup wizard is gated on `setupVersion !== __APP_VERSION__`, so
+    // '99.99.99' GUARANTEED it fired: every run was stuck on "Claude CLI Setup"
+    // with a real claude session inside it, and the whole capture was shots of
+    // that screen. It must equal the app version exactly.
+    // The v2 onboarding harness (bootGates priority 1.5) outranks all of the
+    // above and needs its own three keys — derived from STEPS so a newly added
+    // step can't silently re-break this. Mirrors tests/e2e/helpers/electron-app.ts.
+    'app-meta.json': {
+      setupVersion: APP_VERSION,
+      lastTrainingVersion: '99.99.99',
+      lastWhatsNewVersion: '99.99.99',
+      lastSeenVersion: '99.99.99',
+      hasCreatedFirstConfig: true,
+      accountGateDecided: true,
+      completedSteps: Object.fromEntries(STEPS.map((s) => [s.id, '2026-01-01T00:00:00.000Z'])),
+      onboardingCompletedVersion: ONBOARDING_VERSION,
+      onboardingAppVersion: APP_VERSION,
+    },
     'cloud-agents.json': SAMPLE_CLOUD_AGENTS,
+    // v1-era dashboard store. The v2 dashboard reads tokenomics.db, built by
+    // scanning transcripts (see the demo transcripts seeded below) — this
+    // file is inert on v2 builds but kept so a v1 build never scans real
+    // history into its screenshots.
     'tokenomics.json': sampleTokenomics,
     'github-config.json': SAMPLE_GITHUB_CONFIG,
   }
@@ -517,6 +520,52 @@ function seedSampleData(): BackupInfo {
     for (const file of project.files) fs.writeFileSync(path.join(memoryDir, file.filename), file.content, 'utf-8')
     console.log(`[capture] Seeded memory: ${project.projectDir}`)
   }
+
+  // The v2 tokenomics dashboard does NOT read tokenomics.json — it queries
+  // tokenomics.db, which a worker builds by scanning ~/.claude/projects/**/
+  // *.jsonl (and ~/.codex/sessions). Real projects are hidden above, so
+  // without a seed here the Tokenomics screenshot is an empty $0.00
+  // dashboard. Write small demo transcripts whose cwd matches the demo
+  // configs' workingDirectory — cost cards, daily chart, per-config
+  // breakdown and the sessions table then populate through the app's own
+  // scan + pricing pipeline. Model ids must price offline: both are registry
+  // entries, and anything unknown would still fall back to sonnet rates.
+  const transcriptSessions = [
+    { dir: 'C--Users-developer-Projects-web-app', cwd: path.join(homePath, 'web-app'), model: 'claude-sonnet-4-6', agoMs: 2 * 3600000, turns: 5 },
+    { dir: 'C--Users-developer-Projects-api-server', cwd: path.join(homePath, 'api-server'), model: 'claude-sonnet-4-6', agoMs: 7 * 3600000, turns: 4 },
+    { dir: 'C--Users-developer-Projects-web-app', cwd: path.join(homePath, 'web-app'), model: 'claude-opus-4-8', agoMs: day + 3 * 3600000, turns: 3 },
+    { dir: 'C--Users-developer-Projects-mobile', cwd: path.join(homePath, 'mobile'), model: 'claude-sonnet-4-6', agoMs: 2 * day + 5 * 3600000, turns: 4 },
+    { dir: 'C--Users-developer-Projects-api-server', cwd: path.join(homePath, 'api-server'), model: 'claude-opus-4-8', agoMs: 4 * day + 2 * 3600000, turns: 3 },
+    { dir: 'C--Users-developer-Projects-infra', cwd: path.join(homePath, 'infra'), model: 'claude-sonnet-4-6', agoMs: 5 * day + 6 * 3600000, turns: 5 },
+  ]
+  transcriptSessions.forEach((s, si) => {
+    const sessionId = `00000000-0000-4000-8000-00000000000${si + 1}`
+    const lines: string[] = []
+    for (let t = 0; t < s.turns; t++) {
+      lines.push(JSON.stringify({
+        type: 'assistant',
+        sessionId,
+        requestId: `demo-req-${si}-${t}`,
+        timestamp: new Date(now - s.agoMs + t * 8 * 60000).toISOString(),
+        cwd: s.cwd,
+        message: {
+          id: `demo-msg-${si}-${t}`,
+          model: s.model,
+          usage: {
+            input_tokens: 6000 + ((si * 7 + t * 13) % 9) * 3000,
+            output_tokens: 1500 + ((si * 5 + t * 11) % 7) * 800,
+            cache_read_input_tokens: t === 0 ? 0 : 14000 + ((si + t) % 5) * 5000,
+            cache_creation_input_tokens: t === 0 ? 8000 + si * 1200 : 1200,
+          },
+        },
+      }))
+    }
+    const dir = path.join(projectsDir, s.dir)
+    fs.mkdirSync(dir, { recursive: true })
+    activeBackupInfo.createdMemoryDirs.push(dir)
+    fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), lines.join('\n') + '\n', 'utf-8')
+    console.log(`[capture] Seeded transcript: ${s.dir} (${s.model}, ${s.turns} turns)`)
+  })
 
   return activeBackupInfo
 }
@@ -654,23 +703,53 @@ function cleanupSampleData(info: BackupInfo | null): void {
 
 // ── Helpers ──
 
-/** Click a nav button by its title attribute */
+/** Click a nav button.
+ *
+ * Matches aria-label first, then the native title. The rail dropped its
+ * OS-native `title` when the inline tooltip landed (SidebarNav: "the only
+ * tooltip -- the OS-native `title` was removed so the two no longer
+ * conflict"), so the old title-only lookup silently matched nothing: every
+ * clickNav logged a warning and the capture then shot whichever view was
+ * already on screen, quietly producing a run of near-identical screenshots.
+ * A miss is now fatal rather than cosmetic, because a warning here means the
+ * whole run is worthless.
+ */
 async function clickNav(window: any, label: string): Promise<void> {
-  // Try exact title match first, then startsWith
+  // NOTE: no helper functions inside this callback. tsx/esbuild runs with
+  // keepNames, which rewrites a named inner function as `__name(fn, "...")`;
+  // that helper does not exist in the page context, so the evaluate throws
+  // `ReferenceError: __name is not defined`. Keep the body to inline
+  // expressions only.
   const clicked = await window.evaluate((lbl: string) => {
     const buttons = Array.from(document.querySelectorAll('button'))
-    // Exact match
     for (const btn of buttons) {
-      if (btn.title === lbl) { btn.click(); return true }
+      const al = btn.getAttribute('aria-label') ?? ''
+      if (al === lbl || btn.title === lbl) { btn.click(); return true }
     }
-    // StartsWith match (for "2 agents running" etc)
+    // StartsWith fallback (labels can carry a running-job suffix).
     for (const btn of buttons) {
-      if (btn.title?.startsWith(lbl)) { btn.click(); return true }
+      const al = btn.getAttribute('aria-label') ?? ''
+      if (al.startsWith(lbl) || btn.title?.startsWith(lbl)) { btn.click(); return true }
     }
     return false
   }, label)
-  if (!clicked) console.log(`[capture] WARNING: nav button "${label}" not found`)
-  else console.log(`[capture] Nav -> ${label}`)
+  if (!clicked) {
+    // Dump what IS on the page so a selector regression is diagnosable from
+    // the failure alone instead of needing a second instrumented run.
+    const seen = await window.evaluate(() => {
+      const out: string[] = []
+      for (const btn of Array.from(document.querySelectorAll('button'))) {
+        const al = btn.getAttribute('aria-label') ?? ''
+        const dt = btn.getAttribute('data-tour') ?? ''
+        const t = btn.title ?? ''
+        if (al || dt || t) out.push(`aria="${al}" tour="${dt}" title="${t}"`)
+      }
+      return out.slice(0, 40)
+    })
+    console.log(`[capture] buttons present (${seen.length}):\n  ${seen.join('\n  ')}`)
+    throw new Error(`[capture] nav button "${label}" not found -- aborting rather than capturing the wrong view`)
+  }
+  console.log(`[capture] Nav -> ${label}`)
   await window.waitForTimeout(1200)
 }
 
@@ -802,7 +881,28 @@ async function main() {
 
   try {
     console.log('[capture] Launching Electron app...')
-    const app = await electron.launch({ args: [BUILT_APP], env: { ...process.env, NODE_ENV: 'production' } })
+    // Point the app at the SAME resources dir this script just seeded.
+    // Without this the run captured nothing but the "Claude CLI Setup" wizard:
+    // the launched build is not packaged, so src/main/index.ts sets
+    // CCC_DEV_DATA_DIR itself and the app reads <base>/dev/resources/CONFIG --
+    // an empty dir -- while the seed went to the prod resources dir. No configs
+    // meant the CLI-setup gate fired, and every screenshot was that screen.
+    // CCC_E2E_DATA_DIR is checked ahead of the dev override in data-paths.ts.
+    const resourcesDir = getResourcesDir()
+    if (path.basename(resourcesDir).toLowerCase() !== 'resources') {
+      throw new Error(
+        `[capture] cannot derive a data root from resources dir "${resourcesDir}" ` +
+        `(expected it to end in "resources"); the app would read a different CONFIG than the seed wrote.`,
+      )
+    }
+    const dataRoot = path.dirname(resourcesDir)
+    console.log(`[capture] App data root (CCC_E2E_DATA_DIR): ${dataRoot}`)
+    const app = await electron.launch({
+      args: [BUILT_APP],
+      // CCC_FORCE_SPLASH pinned off: the capture assumes the first window is
+      // the main window, so a stray export must not surface the splash.
+      env: { ...process.env, NODE_ENV: 'production', CCC_E2E_DATA_DIR: dataRoot, CCC_FORCE_SPLASH: '0' },
+    })
     const window = await app.firstWindow()
     await window.setViewportSize({ width: WIDTH, height: HEIGHT })
     console.log('[capture] Waiting for app to load...')
@@ -831,48 +931,42 @@ async function main() {
       for (const el of items) { if (el.textContent?.trim() === 'Edit') { (el as HTMLElement).click(); return } }
     })
     await window.waitForTimeout(800)
-    // v1.5.13: seed the dialog state so the captured screenshot actually
-    // shows the Claude controls (Opus 4.8 model, Ultracode effort). The Edit
-    // dialog opened on a "shellOnly:true" config so the Claude options are
-    // hidden by default - we have to uncheck Shell only FIRST (the Claude
-    // controls are conditionally rendered).
-    // All DOM mutation must live in a single inline anonymous arrow
-    // because esbuild/tsx names const-assigned arrows which triggers
-    // __name in the evaluate context.
+    // v2.1 dialog: the launcher is picked via provider cards (hidden radios,
+    // name="ccc-provider"), not the old "Shell only" checkbox. The demo
+    // config is Terminal-only, so switch it to Claude Code first — the
+    // Session startup section (starting model + effort) the tour text
+    // describes only renders for the Claude provider.
     await window.evaluate(() => {
-      const cbs = Array.from(document.querySelectorAll('input[type=checkbox]'))
-      for (const cb of cbs) {
-        const lbl = cb.closest('label')?.textContent || ''
-        if (lbl.includes('Shell only')) {
-          if ((cb as HTMLInputElement).checked) (cb as HTMLInputElement).click()
-          break
-        }
-      }
+      const radio = document.querySelector('input[name="ccc-provider"][value="claude"]') as HTMLInputElement | null
+      if (radio && !radio.checked) radio.click()
     })
     await window.waitForTimeout(400)
+    // No helper functions inside evaluate bodies (keepNames/__name trap) —
+    // inline anonymous arrows only.
     await window.evaluate(() => {
-      // Native value setter trick - React 18 reads value via the prototype
-      // descriptor, so a plain sel.value = 'opus' will not fire onChange.
+      // Starting model is a native select. Pick the newest Opus entry by
+      // label so the shot tracks whatever the registry currently ships;
+      // React 18 reads value via the prototype descriptor, so set through
+      // it and fire change. Starting effort is a radio-pill group.
       const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set
       const selects = Array.from(document.querySelectorAll('select'))
-      let modelSel: HTMLSelectElement | null = null
-      let effortSel: HTMLSelectElement | null = null
       for (const s of selects) {
-        const labelText = (s.previousElementSibling?.textContent || '') + ' ' + (s.closest('div')?.textContent || '')
-        if (!modelSel && /Model override/i.test(labelText)) modelSel = s as HTMLSelectElement
-        if (!effortSel && /Effort level/i.test(labelText)) effortSel = s as HTMLSelectElement
+        const wrap = s.closest('div')?.textContent || ''
+        if (!/Starting model/i.test(wrap)) continue
+        const opt = Array.from((s as HTMLSelectElement).options).find((o) => /opus/i.test(o.textContent || ''))
+        if (opt && setter) {
+          setter.call(s, opt.value)
+          s.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        break
       }
-      if (modelSel && setter) {
-        setter.call(modelSel, 'opus')
-        modelSel.dispatchEvent(new Event('change', { bubbles: true }))
-      }
-      if (effortSel && setter) {
-        setter.call(effortSel, 'ultracode')
-        effortSel.dispatchEvent(new Event('change', { bubbles: true }))
-      }
+      const effort = document.querySelector('input[name="ccc-effort"][value="ultracode"]') as HTMLInputElement | null
+      if (effort && !effort.checked) effort.click()
+      const lbl = Array.from(document.querySelectorAll('label')).find((l) => /Starting model/i.test(l.textContent || ''))
+      if (lbl) lbl.scrollIntoView({ block: 'center' })
     })
     await window.waitForTimeout(500)
-    await capture(window, 'step-session-options.jpg', 'Session config dialog (Opus 4.8 + Ultracode)')
+    await capture(window, 'step-session-options.jpg', 'Session config dialog (Claude Code, Opus + Ultracode startup)')
     // Close dialog — try multiple methods
     await window.keyboard.press('Escape')
     await window.waitForTimeout(300)
@@ -936,8 +1030,10 @@ async function main() {
     await clickNav(window, 'Conductor MCP')
     await capture(window, 'step-vision.jpg', 'Conductor MCP page')
 
-    // Step 4: Tokenomics
+    // Step 4: Tokenomics (small settle so the transcript scan the seed feeds
+    // has landed in tokenomics.db before the shot)
     await clickNav(window, 'Tokenomics')
+    await window.waitForTimeout(1000)
     await capture(window, 'step-tokenomics.jpg', 'Tokenomics page')
 
     // Step 5: Insights (sidebar nav, distinct from Tokenomics)
@@ -1071,6 +1167,11 @@ async function main() {
   } finally {
     cleanupSampleData(backupInfo)
   }
+
+  // Success path only: drop the throwaway data root (seeded CONFIG plus
+  // whatever the app wrote next to it). On failure it stays behind so the
+  // seeded state can be inspected.
+  try { fs.rmSync(CAPTURE_DATA_ROOT, { recursive: true, force: true }) } catch {}
 
   console.log('\n[capture] All screenshots captured.')
 }

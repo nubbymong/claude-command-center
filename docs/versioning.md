@@ -1,6 +1,6 @@
 # Versioning & release channels
 
-How Claude Command Center versions builds, what the prerelease suffixes and
+How AI Code Conductor versions builds, what the prerelease suffixes and
 channels mean, and — importantly — when a rebuild ships to users versus when you
 must bump the version. This documents the behavior encoded in
 `.github/workflows/release.yml`, `scripts/release.js`, and the in-app updater

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
 import { join } from 'path'
-import { tmpdir, homedir } from 'os'
+import { homedir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
@@ -80,6 +80,7 @@ import { loadCredential, saveCredential, deleteCredential } from './credential-s
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
 import { safeExternalHttpsHref } from '../shared/safe-url'
+import { CSP_POLICY } from '../shared/csp-policy'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
@@ -149,91 +150,64 @@ function saveWindowState(win: BrowserWindow): void {
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
+// Unconditional backstop so the splash can never orphan. It is normally
+// closed by the main window's ready-to-show; if that never fires (renderer
+// crash, GPU wedge) or createWindow() throws, this timer force-closes it so
+// the user is never left with a frameless, alwaysOnTop, taskbar-less window
+// that also blocks app quit. Generous — well past the ~5s normal close.
+let splashBackstopTimer: ReturnType<typeof setTimeout> | null = null
+const SPLASH_MAX_MS = 15000
 let _hooksSupervisor: ServiceSupervisor | null = null
 function setHooksSupervisor(s: ServiceSupervisor): void { _hooksSupervisor = s }
 function getHooksSupervisor(): ServiceSupervisor | null { return _hooksSupervisor }
 
-function getSplashImagePath(): { path: string; mime: string } | null {
-  // In dev: repo root. In production: resources/ directory inside app.
-  // Prefer PNG (new branded asset) then fall back to legacy WebP so
-  // older installs that still ship the .webp keep working.
-  const candidates: { name: string; mime: string }[] = [
-    { name: 'splash.png', mime: 'image/png' },
-    { name: 'splash.webp', mime: 'image/webp' },
-  ]
-  for (const c of candidates) {
-    const dev = join(app.getAppPath(), c.name)
-    if (existsSync(dev)) return { path: dev, mime: c.mime }
-    const prod = join(process.resourcesPath, c.name)
-    if (existsSync(prod)) return { path: prod, mime: c.mime }
-  }
-  return null
-}
+// Minimum on-screen time before the splash may close: enough for the animation
+// (a 7 s authored timeline played at 2.0x in resources/splash/splash.js) to
+// reach the finished brand lockup (~3.3 s) so it is never cut off mid-form.
+const SPLASH_MIN_MS = 3600
+// After the main window is ready AND the lockup has formed, hold the finished
+// lockup this long before fading — so the brand mark is clearly seen on every
+// launch, even when the main window loads instantly.
+const SPLASH_POST_READY_MS = 1000
+// When the splash became visible (its ready-to-show), which is when its
+// animation clock actually starts — page load + module init put that a few
+// hundred ms after window creation. Initialised to "now" so the skip paths
+// (e2e, page missing) behave as if the splash showed instantly.
+let splashShownAt = Date.now()
 
 function createSplashWindow(): void {
-  const splash = getSplashImagePath()
-  if (!splash) {
-    logInfo('[splash] Splash image not found, skipping')
+  // Playwright-driven runs (e2e + the training-screenshot capture) assume the
+  // first window is the main window; keep the splash out of them. The probe
+  // that visually verifies the splash sets CCC_FORCE_SPLASH=1 to override.
+  if (process.env.CCC_E2E_DATA_DIR && process.env.CCC_FORCE_SPLASH !== '1') {
+    logInfo('[splash] Skipped for e2e run')
     return
   }
 
-  // Write the wrapper HTML (with the image inlined as base64) to a temp file
-  // and load it via loadFile. The previous approach passed the entire
-  // base64-encoded HTML as a `data:text/html` URL into loadURL — fine for
-  // the 89 KB legacy splash.webp, but the new 1.5 MB branded splash.png
-  // produces a >2 MB URL that exceeds Electron's practical loadURL size
-  // limit; loadURL silently never reaches ready-to-show and the window is
-  // created but never shown. Writing to disk + loadFile has no size limit,
-  // and keeping the img as `data:` (not `file://`) sidesteps Chromium's
-  // file://-to-file:// cross-origin block without having to disable
-  // webSecurity.
-  const imgData = readFileSync(splash.path).toString('base64')
-  const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><style>
-  * { margin: 0; padding: 0; }
-  body {
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100vh;
-    overflow: hidden;
-    opacity: 0;
-    animation: fadeIn 0.6s ease-out 0.1s forwards;
-  }
-  @keyframes fadeIn { to { opacity: 1; } }
-  img { width: 100%; height: 100%; object-fit: contain; }
-  .disclaimer {
-    position: fixed;
-    bottom: 10px;
-    left: 0;
-    right: 0;
-    text-align: center;
-    font: 500 10px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif;
-    letter-spacing: 0.2px;
-    color: rgba(205, 214, 244, 0.82);
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.7);
-    padding: 0 14px;
-    pointer-events: none;
-  }
-</style></head><body>
-  <img src="data:${splash.mime};base64,${imgData}" />
-  <div class="disclaimer">Independent community project. Not affiliated with or endorsed by Anthropic.</div>
-</body></html>`
-
-  const tmpHtml = join(tmpdir(), 'claude-command-center-splash.html')
-  try {
-    writeFileSync(tmpHtml, html, 'utf-8')
-  } catch (err) {
-    logInfo(`[splash] Failed to write splash HTML to ${tmpHtml}: ${err}`)
+  // The animated splash is self-contained under resources/splash/ (packaged
+  // inside the asar via the `files` glob). Resolve it relative to __dirname
+  // (out/main/ in every launch mode): app.getAppPath() is the js file's
+  // directory when Electron is handed out/main/index.js directly, which made
+  // an appPath-based lookup miss. All assets are local — three.js and the
+  // Montserrat subset are vendored — so it renders with no network. The page
+  // carries its own <meta> CSP (script-src 'self', no 'unsafe-inline'): the
+  // app-wide onHeadersReceived CSP does not reach a file:// document, so the
+  // splash must police itself, which is why its script lives in a separate
+  // module file rather than inline.
+  const splashHtml = join(__dirname, '..', '..', 'resources', 'splash', 'index.html')
+  if (!existsSync(splashHtml)) {
+    logInfo('[splash] Animated splash page not found, skipping')
     return
   }
 
   splashWindow = new BrowserWindow({
-    width: 420,
-    height: 420,
+    width: 720,
+    height: 430,
     frame: false,
-    transparent: true,
+    // Opaque + frameless so Windows 11 gives the window its native rounded
+    // corners (transparent windows lose them). The page paints #0b0e15.
+    transparent: false,
+    backgroundColor: '#0b0e15',
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
@@ -246,25 +220,40 @@ function createSplashWindow(): void {
     },
   })
 
-  splashWindow.loadFile(tmpHtml)
+  // If the splash page itself fails to load or its renderer dies, close it
+  // rather than show a blank always-on-top window.
+  splashWindow.webContents.on('did-fail-load', () => closeSplashWindow())
+  splashWindow.webContents.on('render-process-gone', () => closeSplashWindow())
+
+  splashWindow.loadFile(splashHtml)
   splashWindow.once('ready-to-show', () => {
+    splashShownAt = Date.now()
     splashWindow?.show()
   })
+
+  splashBackstopTimer = setTimeout(() => closeSplashWindow(), SPLASH_MAX_MS)
 }
 
 function closeSplashWindow(): void {
+  if (splashBackstopTimer) { clearTimeout(splashBackstopTimer); splashBackstopTimer = null }
   if (!splashWindow || splashWindow.isDestroyed()) return
-  // Fade out by sending a message, then destroy after delay
-  splashWindow.webContents.executeJavaScript(`
-    document.body.style.transition = 'opacity 0.4s ease-in';
-    document.body.style.opacity = '0';
-  `).catch(() => {})
-  setTimeout(() => {
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.destroy()
+  // Fade the whole window out (revealing the main window behind it), then
+  // destroy. setOpacity on the window itself gives a clean cross-fade: the
+  // splash is opaque (#0b0e15, for Win11 rounded corners), so fading the page
+  // body would only reveal that dark rectangle, not the app.
+  const win = splashWindow
+  splashWindow = null // re-entrancy guard — a second close() is a no-op
+  let op = 1
+  const fade = setInterval(() => {
+    if (win.isDestroyed()) { clearInterval(fade); return }
+    op -= 0.09
+    if (op <= 0) {
+      clearInterval(fade)
+      if (!win.isDestroyed()) win.destroy()
+      return
     }
-    splashWindow = null
-  }, 500)
+    try { win.setOpacity(op) } catch { /* setOpacity unsupported → destroy next tick */ }
+  }, 28)
 }
 
 function clampToVisibleDisplay(state: WindowState): WindowState {
@@ -349,23 +338,23 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  const splashShownAt = Date.now()
-
   mainWindow.on('ready-to-show', () => {
     if (process.env.E2E_HEADLESS === '1') {
       mainWindow!.setPosition(-10000, -10000)
       mainWindow!.showInactive()
       closeSplashWindow()
     } else {
-      // Ensure splash shows for at least 2 seconds
+      // Hold the splash until its lockup has formed AND for a beat after the
+      // window is ready, so the finished brand mark is clearly shown before the
+      // reveal (the main window stays hidden behind the splash during the hold).
       const elapsed = Date.now() - splashShownAt
-      const remaining = Math.max(0, 2000 - elapsed)
+      const wait = Math.max(0, SPLASH_MIN_MS - elapsed) + SPLASH_POST_READY_MS
       setTimeout(() => {
         // Maximize BEFORE show to avoid flash of non-maximized window
         if (state.isMaximized) mainWindow!.maximize()
         mainWindow!.show()
         closeSplashWindow()
-      }, remaining)
+      }, wait)
     }
   })
 
@@ -602,7 +591,7 @@ function createWindow(): void {
   // unmistakable next to a running prod window. Guard page-title-updated so the
   // renderer's <title> can't overwrite it. No-op in prod.
   if (!app.isPackaged) {
-    const devTitle = 'Claude Command Center — DEV'
+    const devTitle = 'AI Code Conductor — DEV'
     mainWindow.on('page-title-updated', (e) => { e.preventDefault(); mainWindow?.setTitle(devTitle) })
     mainWindow.setTitle(devTitle)
   }
@@ -637,7 +626,9 @@ if (!gotTheLock) {
 
     if (process.platform === 'darwin') {
       menuTemplate.push({
-        label: app.name,
+        // app.name is the npm package name ('claude-conductor', frozen for the
+        // userData path) — hardcode the display name instead.
+        label: 'AI Code Conductor',
         submenu: [
           { role: 'about' },
           { type: 'separator' },
@@ -734,20 +725,31 @@ if (!gotTheLock) {
         }, 5000)
       })
 
-    // Content Security Policy
+    // Content Security Policy. This header path only reaches the renderer in
+    // dev (loadURL → http://localhost); the packaged renderer loads via
+    // file://, which a header cannot reach — that build is covered by the
+    // matching <meta> CSP in src/renderer/index.html. Both use CSP_POLICY so
+    // dev and prod enforce the identical policy.
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({
         responseHeaders: {
           ...details.responseHeaders,
-          'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws://localhost:* http://localhost:*"
-          ]
+          'Content-Security-Policy': [CSP_POLICY]
         }
       })
     })
 
     createSplashWindow()
-    createWindow()
+    try {
+      createWindow()
+    } catch (err) {
+      // A failed main-window creation must not leave the splash pinned
+      // on-screen forever (the backstop would eventually catch it, but
+      // close now so a fatal boot doesn't hang behind an orphan splash).
+      logInfo(`[main] createWindow failed: ${err}`)
+      closeSplashWindow()
+      throw err
+    }
 
     const getWindow = () => mainWindow
     registerPtyHandlers(getWindow)
@@ -1024,7 +1026,7 @@ if (!gotTheLock) {
     logError('[boot] startup failed -- the app may be partially initialised:', err)
     try {
       dialog.showErrorBox(
-        'Claude Command Center failed to start cleanly',
+        'AI Code Conductor failed to start cleanly',
         `Startup hit an error and some features may not work. Please restart the app.\n\n${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
       )
     } catch { /* dialog unavailable (very early failure) */ }

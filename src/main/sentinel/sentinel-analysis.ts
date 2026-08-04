@@ -9,10 +9,10 @@ import type { SentinelFinding } from '../../shared/sentinel-types'
 // The only things that, if CC changes them, actually stop CCC working. The AI
 // checks the changelog against ONLY these four surfaces.
 const CCC_BREAKING_SURFACE = [
-  '1. Session launch — how `claude` is spawned (CLI flags, env vars, PATH, install layout). Break = CCC sessions will not start.',
-  '2. Terminal embedding — mouse modes, clickable UI, alternate-screen, OSC/escape sequences; CCC renders claude inside xterm.js. Break = the session renders garbled or unusable.',
-  '3. Statusline hook — the statusLine settings/hook contract CCC installs to read session telemetry. Break = telemetry / rate-limit readouts die.',
-  '4. Config & account files — the shape of ~/.claude/settings.json and ~/.claude.json that CCC multi-account isolation and hook install depend on. Break = multi-account or hooks break.',
+  '1. Session launch — how `claude` is spawned (CLI flags, env vars, PATH, install layout). Break = Conductor sessions will not start.',
+  '2. Terminal embedding — mouse modes, clickable UI, alternate-screen, OSC/escape sequences; the Conductor renders claude inside xterm.js. Break = the session renders garbled or unusable.',
+  '3. Statusline hook — the statusLine settings/hook contract the Conductor installs to read session telemetry. Break = telemetry / rate-limit readouts die.',
+  '4. Config & account files — the shape of ~/.claude/settings.json and ~/.claude.json that the Conductor multi-account isolation and hook install depend on. Break = multi-account or hooks break.',
 ].join('\n')
 
 const BreakingChangeSchema = z.object({
@@ -25,15 +25,15 @@ const OutputSchema = z.object({ breakingChanges: z.array(BreakingChangeSchema).m
 
 export function buildAnalysisPrompt(changelog: string): string {
   return [
-    'You are CCC Sentinel. Claude Command Center (CCC) is a desktop app that runs the Claude Code (CC) CLI inside embedded terminals.',
-    'Read the CC changelog below and report ONLY changes that would SEVERELY BREAK CCC — stop it working — by hitting one of these four surfaces:',
+    'You are Sentinel, the compatibility watcher in AI Code Conductor (the "Conductor"), a desktop app that runs the Claude Code (CC) CLI inside embedded terminals.',
+    'Read the CC changelog below and report ONLY changes that would SEVERELY BREAK the Conductor — stop it working — by hitting one of these four surfaces:',
     CCC_BREAKING_SURFACE,
     '',
     'Ignore everything else: new features, new models, model/pricing housekeeping, performance, cosmetic or informational changes, and anything that only affects enterprise / managed-settings installs. A change is NOT breaking just because it is new.',
     '',
     'Output STRICT JSON only — no markdown, no prose: {"breakingChanges": [ ... ]} where each item is',
-    '{"title": "<short>", "evidence": "<exact changelog line(s), quoted verbatim>", "surface": <1-4>, "whatBreaks": "<one sentence: what stops working in CCC>"}.',
-    'Quote the changelog verbatim in evidence. List at most 5. If nothing severely breaks CCC, return {"breakingChanges": []}.',
+    '{"title": "<short>", "evidence": "<exact changelog line(s), quoted verbatim>", "surface": <1-4>, "whatBreaks": "<one sentence: what stops working in the Conductor>"}.',
+    'Quote the changelog verbatim in evidence. List at most 5. If nothing severely breaks the Conductor, return {"breakingChanges": []}.',
     '',
     '--- CHANGELOG ---',
     changelog,

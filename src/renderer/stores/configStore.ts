@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
-import type { ProviderId, ClaudeOptions, CodexOptions } from '../../shared/types'
+import type { ProviderId, ClaudeOptions, CodexOptions, TerminalOptions } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
 import { generateId } from '../utils/id'
 
 // Re-export provider types so callers can import from a single place
-export type { ProviderId, ClaudeOptions, CodexOptions }
+export type { ProviderId, ClaudeOptions, CodexOptions, TerminalOptions }
 
 export interface TerminalConfig {
   id: string
@@ -18,6 +18,8 @@ export interface TerminalConfig {
   legacyColor?: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean  // Don't run Claude, just open a shell
+  /** Terminal-only launcher options (command / args / secret / elevated). */
+  terminalOptions?: TerminalOptions
   groupId?: string     // Group this config belongs to
   sectionId?: string   // Section this config belongs to (only used when ungrouped)
   partnerTerminalPath?: string  // Optional partner shell terminal path

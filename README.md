@@ -1,8 +1,10 @@
 <div align="center">
 
-<img src="docs/screenshots/splash.png" alt="Claude Command Center" width="180" />
+<img src="docs/screenshots/brand-icon.png" alt="AI Code Conductor" width="180" />
 
-# Claude Command Center
+# AI Code Conductor
+
+<sub>formerly **Claude Command Center**</sub>
 
 ### **v2.0** &middot; Mission control for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
@@ -24,7 +26,7 @@ Run dozens of Claude Code and Codex sessions in parallel, each with its own acco
 
 <br/>
 
-<img src="docs/screenshots/v2-shell-hero.jpg" alt="Claude Command Center v2.0 multi-session shell" width="100%" />
+<img src="docs/screenshots/v2-shell-hero.jpg" alt="AI Code Conductor v2.0 multi-session shell" width="100%" />
 
 </div>
 
@@ -34,7 +36,7 @@ Run dozens of Claude Code and Codex sessions in parallel, each with its own acco
 
 Claude Code is a remarkable CLI. But the moment you have more than one project, more than one account, or more than one machine, the experience fragments. You lose track of which terminal is which, which sessions are paused, what they have spent, and where their attention is going.
 
-Claude Command Center (CCC) wraps Claude Code and Codex in a desktop app that treats the session as the first-class object. Every session has a colour, a name, an account, a working directory, and a saved config. Every spawn surfaces its tokens, its model, its rate-limit window, and its identity. Every cent is captured and pivotable.
+AI Code Conductor wraps Claude Code and Codex in a desktop app that treats the session as the first-class object. Every session has a colour, a name, an account, a working directory, and a saved config. Every spawn surfaces its tokens, its model, its rate-limit window, and its identity. Every cent is captured and pivotable.
 
 It does not replace Claude Code. It conducts it.
 
@@ -56,7 +58,7 @@ Every workspace starts as a **saved config**: a label, a colour, a working direc
 
 <img src="docs/screenshots/settings.jpg" alt="Settings" width="100%" />
 
-Run more than one Claude account side by side. Your existing login is captured into a protected **primary** account on first run, and every session runs under a saved, isolated account, so signing in to one never disturbs another or your default login. You pick the account at **launch time**, the first time a session spawns this run. Add an account by running `/login` in any session: CCC detects the new login and offers to save it as a separate named account. Name and colour each one in **Settings, Accounts**; the colour follows the account onto the session card, the statusline, and the launch picker. Memory, settings, and history stay shared across all accounts.
+Run more than one Claude account side by side. Your existing login is captured into a protected **primary** account on first run, and every session runs under a saved, isolated account, so signing in to one never disturbs another or your default login. You pick the account at **launch time**, the first time a session spawns this run. Add an account by running `/login` in any session: the Conductor detects the new login and offers to save it as a separate named account. Name and colour each one in **Settings, Accounts**; the colour follows the account onto the session card, the statusline, and the launch picker. Memory, settings, and history stay shared across all accounts.
 
 <br/>
 
@@ -64,7 +66,7 @@ Run more than one Claude account side by side. Your existing login is captured i
 
 <img src="docs/screenshots/logs.jpg" alt="Logs chat-transcript viewer with timeline rail" width="100%" />
 
-CCC indexes Claude's own conversation transcripts and renders them back as a readable chat: messages, tool calls, and thinking. A **timeline rail** beside the transcript scrubs the whole conversation; click to jump. **Full-text search** spans every conversation and jumps you straight to the matching turn. A per-session **Conversation** tab live-follows the running session. Deleting the index never touches your conversations, which stay in `~/.claude/projects`.
+The Conductor indexes Claude's own conversation transcripts and renders them back as a readable chat: messages, tool calls, and thinking. A **timeline rail** beside the transcript scrubs the whole conversation; click to jump. **Full-text search** spans every conversation and jumps you straight to the matching turn. A per-session **Conversation** tab live-follows the running session. Deleting the index never touches your conversations, which stay in `~/.claude/projects`.
 
 <br/>
 
@@ -90,11 +92,11 @@ A dashboard over Claude's auto-memory across every project. A **KPI strip** (mem
 <tr>
 <td width="50%" valign="top">
 
-### CCC Sentinel
+### Sentinel
 
-<img src="docs/screenshots/settings.jpg" alt="Settings, CCC Sentinel" width="100%" />
+<img src="docs/screenshots/settings.jpg" alt="Settings, Sentinel" width="100%" />
 
-An opt-in watcher that notices when Claude Code updates and checks whether the new version might affect CCC. Findings surface in a labelled **Sentinel** chip in the title bar and a panel. It proposes **model and effort registry** fixes you apply yourself and never changes anything automatically. A hot-reloadable registry means brand-new models still get a colour, label, and pricing. Fail-open, so it never blocks the app. Toggle it in **Settings, CCC Sentinel**.
+An opt-in watcher that notices when Claude Code updates and checks whether the new version might affect the Conductor. Findings surface in a labelled **Sentinel** chip in the title bar and a panel. It proposes **model and effort registry** fixes you apply yourself and never changes anything automatically. A hot-reloadable registry means brand-new models still get a colour, label, and pricing. Fail-open, so it never blocks the app. Toggle it in **Settings, Sentinel**.
 
 </td>
 <td width="50%" valign="top">
@@ -163,7 +165,7 @@ Region or window capture from any screen, encoded at 1920px / JPEG 85 to stay un
 
 <img src="docs/screenshots/dynamic-workflows.jpg" alt="Dynamic workflows" width="100%" />
 
-Invoke an Opus 4.8 dynamic workflow three ways: include the word `workflow` in a prompt for a one-off, run `/effort ultracode` so every substantive task auto-orchestrates, or run the bundled `/deep-research <question>`. Watch active runs with `/workflows`. CCC rolls workflow spend into your session totals, and a Settings toggle disables dynamic workflows globally if you want them off.
+Invoke an Opus 4.8 dynamic workflow three ways: include the word `workflow` in a prompt for a one-off, run `/effort ultracode` so every substantive task auto-orchestrates, or run the bundled `/deep-research <question>`. Watch active runs with `/workflows`. The Conductor rolls workflow spend into your session totals, and a Settings toggle disables dynamic workflows globally if you want them off.
 
 </td>
 </tr>
@@ -179,6 +181,8 @@ Invoke an Opus 4.8 dynamic workflow three ways: include the word `workflow` in a
    - Windows: `ClaudeCommandCenter-x.y.z.exe`
    - macOS (Apple Silicon): `ClaudeCommandCenter-x.y.z-mac.dmg`
    - Linux (experimental): `ClaudeCommandCenter-x.y.z-linux-x86_64.AppImage`
+
+   > Installer files keep the legacy `ClaudeCommandCenter-` name on purpose: the auto-updater in every installed copy matches release assets by that name, so renaming the files would silently strand existing installs.
 2. Verify the **SHA-256** of the file you downloaded against the checksum printed on the release page.
 3. Run the installer and choose your Data and Resources directories.
 4. The setup wizard hands off to Claude CLI auth.
@@ -241,7 +245,7 @@ The main process owns config persistence, the PTY pool, the hooks HTTP gateway (
 |:------|:-----------|
 | **Credentials** | SSH passwords, sudo passwords, and encrypted notes are stored as encrypted blobs via the OS keystore (DPAPI on Windows, Keychain on macOS, libsecret on Linux). Machine-bound, never plaintext. |
 | **Account isolation** | Each session runs under its own isolated home so signing in to one account never touches another or your default login. The original global login is snapshotted read-only on first run. |
-| **Permissions** | CCC honors Claude Code's own permission prompts and settings. It is not a gate and never auto-approves or intercepts tool calls on your behalf. |
+| **Permissions** | The Conductor honors Claude Code's own permission prompts and settings. It is not a gate and never auto-approves or intercepts tool calls on your behalf. |
 | **Telemetry** | None of our own. The Claude API goes through the Claude CLI directly. Outbound is limited to: GitHub Releases (update check), `status.claude.com` (status pills), the GitHub API (opt-in GitHub sidebar after sign-in), and LiteLLM open-pricing JSON (cached 24 hours). |
 | **Data integrity** | Atomic config writes (`.tmp` + rename). Daily snapshots of `CONFIG/*.json` to `CONFIG/_backups/YYYY-MM-DD/`, 7-day retention. Sandboxed renderer; typed IPC with schema validation on data-bearing channels. |
 | **Releases** | Installers are unsigned (see [Install](#install)). Releases built by the CI pipeline are scanned through VirusTotal across 70+ engines; verify the SHA-256 from the release page before running any installer. |
@@ -270,7 +274,7 @@ All shortcuts are rebindable in **Settings, Shortcuts**.
 
 ## Project history
 
-CCC was developed privately from late 2025 and open-sourced in April 2026. The git history was squashed for the initial public release; everything from v1.0 forward is in the open.
+The app was developed privately from late 2025 and open-sourced in April 2026 (as Claude Command Center). The git history was squashed for the initial public release; everything from v1.0 forward is in the open.
 
 Per-release detail lives in [`src/renderer/changelog.ts`](src/renderer/changelog.ts).
 
@@ -286,7 +290,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, coding 
 
 Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. This project is an independent, community-built tool. It is **not affiliated with, endorsed by, sponsored by, or supported by Anthropic or OpenAI**.
 
-All references to "Claude", "Claude Code", "Codex", "Anthropic", or "OpenAI" are nominative, used solely to identify the third-party software this tool interoperates with. Claude Command Center is a separate work that wraps and orchestrates the official Claude Code and Codex CLIs. It does not include, modify, or redistribute their code, and it requires you to install and authenticate those tools yourself under their own terms.
+All references to "Claude", "Claude Code", "Codex", "Anthropic", or "OpenAI" are nominative, used solely to identify the third-party software this tool interoperates with. AI Code Conductor (formerly Claude Command Center) is a separate work that wraps and orchestrates the official Claude Code and Codex CLIs. It does not include, modify, or redistribute their code, and it requires you to install and authenticate those tools yourself under their own terms.
 
 If you are a rights holder with a concern about this project's use of a name or mark, please open a [GitHub issue](../../issues) or contact the maintainer and it will be addressed promptly.
 

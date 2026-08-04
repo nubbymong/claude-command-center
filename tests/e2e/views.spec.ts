@@ -41,13 +41,16 @@ test.describe('Sessions View', () => {
     expect(body.length).toBeGreaterThan(0)
   })
 
-  test('empty sessions shows command center heading', async () => {
+  test('empty sessions shows the app-brand heading', async () => {
     if (!await clickNavButton(1)) { test.skip(); return }
 
-    const heading = page.locator('text=Claude Command Center')
-    const hasHeading = await heading.isVisible().catch(() => false)
-    // True if no sessions, false if sessions exist — both valid
-    expect(typeof hasHeading).toBe('boolean')
+    // The e2e seed starts with no configs, so the empty state must show the
+    // brand heading (StageEmptyState). A real assertion — the previous
+    // typeof-boolean check passed no matter what rendered. Scoped to the h2 so
+    // the always-visible TitleBar (same brand text, a span) can't satisfy it.
+    const heading = page.locator('h2', { hasText: 'AI Code Conductor' })
+    await heading.first().waitFor({ state: 'visible', timeout: 5000 })
+    expect(await heading.first().isVisible()).toBe(true)
   })
 })
 

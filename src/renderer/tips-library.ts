@@ -98,9 +98,9 @@ export const TIPS_LIBRARY: Tip[] = [
         focusHint: 'Session header -- small lock icon with a + next to it',
       },
       postUse: {
-        shortText: '🔒 Right-click a note to edit or duplicate',
+        shortText: '🔒 Right-click a note to edit or delete',
         title: 'Organize Your Notes',
-        body: 'Nice -- you already use notes. A few things you might not know:\n\n• **Right-click a note** to edit, duplicate, change color, or delete\n• **Drag notes** to reorder them in the bar\n• Notes can be **config-scoped** (only shown for one config) or **global** (shown in every session)\n• Each note shows a **lock icon** indicating encrypted-at-rest status',
+        body: 'Nice -- you already use notes. A few things you might not know:\n\n• **Right-click a note** to edit or delete it (change its colour inside the edit dialog)\n• **Drag notes** to reorder them in the bar\n• Notes can be **config-scoped** (only shown for one config) or **global** (shown in every session)\n• Each note shows a **lock icon** indicating encrypted-at-rest status',
       },
     },
   },
@@ -168,7 +168,7 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'commands',
     complexity: 'intermediate',
     priority: 55,
-    requires: ['commands.create-command', 'sessions.partner-terminal'],
+    requires: ['commands.create-command'],
     variants: {
       primary: {
         shortText: '🎯 Target commands at your partner terminal',
@@ -202,14 +202,12 @@ export const TIPS_LIBRARY: Tip[] = [
     complexity: 'intermediate',
     priority: 65,
     requires: ['sessions.create-config'],
-    excludes: ['sessions.partner-terminal'],
+    
     variants: {
       primary: {
         shortText: '🔀 Add a partner shell next to Claude',
         title: 'Partner Terminal',
-        body: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click toggles between them.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nEdit your config and set a Partner Terminal Path. Path examples below.',
-        bodyMac: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click toggles between them.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nEdit your config and set Partner Terminal Path to `/bin/zsh` or `/bin/bash`.',
-        bodyWin: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click toggles between them.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nEdit your config and set Partner Terminal Path to `powershell.exe` or `cmd.exe`. You can also tick **Elevated** to run it as admin (requires `gsudo`).',
+        body: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click on the Partner button in the command bar toggles between them — every session has one, no setup needed.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nIt opens in the session\'s working directory (home for SSH sessions).',
       },
       postUse: {
         shortText: '🎯 Route command buttons to your partner shell',
@@ -230,7 +228,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '🧠 Dial Claude\'s thinking depth with /effort',
         title: 'Effort Level',
-        body: '**Effort** controls how hard Claude thinks before responding. It is a **live** setting you change inside Claude with **`/effort`**, not a saved-config field.\n\nLevels, lightest to heaviest: **low**, **medium**, **high**, **xhigh**, **max**, **ultracode** (ultracode also turns on dynamic workflows). Higher effort means deeper thinking, slower replies, and more cost.\n\nCCC shows the current level as a colour-coded pill on the session card and in the statusline, tinted green through red as effort rises, so you can read it at a glance without opening the session.',
+        body: '**Effort** controls how hard Claude thinks before responding. Set a **Starting effort** on the saved config, and change it live inside Claude with **`/effort`**.\n\nLevels, lightest to heaviest: **low**, **medium**, **high**, **xhigh**, **max**, **ultracode** (ultracode also turns on dynamic workflows). Higher effort means deeper thinking, slower replies, and more cost.\n\nThe Conductor shows the current level as a colour-coded pill on the session card and in the statusline, tinted green through red as effort rises, so you can read it at a glance without opening the session.',
       },
     },
   },
@@ -283,7 +281,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '👁 Give Claude a browser to drive',
         title: 'Conductor MCP',
-        body: '**Conductor MCP** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that Claude can drive via CDP.\n\nThe MCP server is registered in `~/.claude.json` under `mcpServers.conductor`. CCC-spawned sessions also get a per-session override written to `~/.claude/mcp-<sid>.json` and passed via `--mcp-config`. When you stop the browser, the MCP server stays up so the other sub-tools (codex_review, host transfer) remain available.',
+        body: '**Conductor MCP** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that Claude can drive via CDP.\n\nEach Conductor-spawned session gets its own `~/.claude/mcp-<sid>.json`, passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup). When you stop the browser, the MCP server stays up so the other sub-tools (codex_review, host transfer) remain available.',
         actionLabel: 'Open Conductor MCP',
         actionTarget: 'vision',
         focusHint: 'Sidebar -- Conductor MCP',
@@ -303,7 +301,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '💰 See where your Claude money is going',
         title: 'Tokenomics',
-        body: 'The **Tokenomics** page is a spend dashboard for every Claude and Codex session: today, this week, all time.\n\nA background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the page opens instantly. You get:\n\n• A **KPI row** with total spend, tokens, sessions, and daily burn\n• **Charts** for daily spend and per-model breakdown\n• A **sessions table** with cost, model, and config attribution\n• **Filters** to slice by date, model, account, or project\n\nModel pricing is fetched from BerriAI\'s LiteLLM repo on GitHub (cached for 24h) so costs stay accurate.',
+        body: 'The **Tokenomics** page is a spend dashboard for every Claude and Codex session: today, this week, all time.\n\nA background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the page opens instantly. You get:\n\n• A **KPI row** with total spend, tokens, sessions, and daily burn\n• **Charts** for daily spend and per-model breakdown\n• A **sessions table** with cost, model, and config attribution\n• **Filters** for config, date range (7d / 30d / all) and a free-text search over model and project\n\nModel pricing is fetched from BerriAI\'s LiteLLM repo on GitHub (cached for 24h) so costs stay accurate.',
         actionLabel: 'Open Tokenomics',
         actionTarget: 'tokenomics',
       },
@@ -351,7 +349,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '✏️ Sketch ideas in the Draw scratchpad',
         title: 'Excalidraw Scratchpad',
-        body: 'The **Draw** button next to Snap opens a full Excalidraw canvas. Sketch architecture, annotate flowcharts, draw selectors over a screenshot -- anything you\'d normally reach for a tablet for.\n\n• **Copy to clipboard** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session -- no per-config setup.\n• Closes with **Esc**.',
+        body: 'The **Draw** button next to Snap opens a full Excalidraw canvas. Sketch architecture, annotate flowcharts, draw selectors over a screenshot -- anything you\'d normally reach for a tablet for.\n\n• **Copy to clipboard** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session -- no per-config setup.\n• Close it with the **Close** button, or press **Draw** again.',
       },
     },
   },
@@ -365,7 +363,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '🌐 Open a webview when a command finishes',
         title: 'Webview on Command Completion',
-        body: 'Building a dev server, generating a docs site, or anything that ends with "now look at this URL"? Tick **Launch webview on completion** when editing a command and enter the URL.\n\nWhat happens:\n• Command runs in whichever target you pick -- Claude, Partner, or Any (works with SSH `shellOnly` sessions too).\n• The app polls the URL every second for up to 30s after the command write. The button pulses **blue** while polling, goes **green** the moment the URL responds, **red** on timeout.\n• A **Web** button sits in the toolbar whenever a webview command exists for this session. Greyed when idle.\n• If a server is already running when the app launches, the mount-time auto-probe picks it up.\n• Stop your server later? The next time you press any command button in the session the URL gets re-checked, downgrading to red -- no constant background polling.\n• Click the button to swap the active pane to a real Chrome view of the page.\n\nThe pane has back/forward/hard-refresh/home, plus a **Freeze** button that snapshots the page and opens it in Excalidraw for annotation.',
+        body: 'Building a dev server, generating a docs site, or anything that ends with "now look at this URL"? Tick **Launch webview on completion** when editing a command and enter the URL.\n\nWhat happens:\n• Command runs in whichever target you pick -- Claude, Partner, or Any (works with **Terminal-only** sessions too).\n• The app polls the URL every second for up to 30s after the command write. The button pulses **blue** while polling, goes **green** the moment the URL responds, **red** on timeout.\n• A **Web** button sits in the toolbar whenever a webview command exists for this session. Greyed when idle.\n• If a server is already running when the app launches, the mount-time auto-probe picks it up.\n• Stop your server later? The next time you press any command button in the session the URL gets re-checked, downgrading to red -- no constant background polling.\n• Click the button to swap the active pane to a real Chrome view of the page.\n\nThe pane has back/forward/hard-refresh/home, plus a **Freeze** button that snapshots the page and opens it in Excalidraw for annotation.',
       },
     },
   },
@@ -431,8 +429,8 @@ export const TIPS_LIBRARY: Tip[] = [
     variants: {
       primary: {
         shortText: '🤖 Chain agents into multi-step pipelines',
-        title: 'Agent Teams',
-        body: 'You\'ve used cloud agents -- ready for the next level? **Agent Teams** orchestrate multiple agents in sequence or parallel, like a mini CI/CD pipeline for Claude.\n\nExample team: [analyze codebase] → [write tests] → [run tests] → [fix failures]. Each step uses a different agent template with different tools.\n\nGo to Agent Hub > **Teams** tab to create your first one.',
+        title: 'Agent pipelines',
+        body: 'You\'ve used cloud agents -- ready for the next level? **Pipelines** orchestrate multiple agents in sequence or parallel, like a mini CI/CD pipeline for Claude.\n\nExample team: [analyze codebase] → [write tests] → [run tests] → [fix failures]. Each step uses a different agent template with different tools.\n\nOpen **Agent Hub** and pick **Pipelines** in the left rail to create your first one.',
       },
     },
   },
@@ -466,7 +464,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'ℹ How we power the statusline metrics',
         title: 'Statusline Script Injection',
-        body: 'Heads up, you should know how the rich statusline (tokens, cost, rate limits, context %) actually works:\n\n1. The app keeps a small Node.js statusline script in its own resources folder\n2. Each session Command Center launches gets a `statusLine` entry in its per-session Claude settings pointing at that script. Your global `~/.claude/settings.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code runs the script and displays its output beneath the session\n4. The script reads your Claude OAuth token from `~/.claude/.credentials.json` to fetch rate limits from `api.anthropic.com/api/oauth/usage`\n\n**What the app does NOT do**: store your token, send data anywhere else, or modify anything in the Claude CLI itself. Turn the status line off in Settings → Status Line and new sessions launch without it.',
+        body: 'Heads up, you should know how the rich statusline (tokens, cost, rate limits, context %) actually works:\n\n1. The app keeps a small Node.js statusline script in its own resources folder\n2. Each session the Conductor launches gets a `statusLine` entry in its per-session Claude settings pointing at that script. Your global `~/.claude/settings.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code runs the script and displays its output beneath the session\n4. The script reads your Claude OAuth token from `~/.claude/.credentials.json` to fetch rate limits from `api.anthropic.com/api/oauth/usage`\n\n**What the app does NOT do**: store your token, send data anywhere else, or modify anything in the Claude CLI itself. Turn the status line off in Settings → Status Line and new sessions launch without it.',
       },
     },
   },
@@ -481,7 +479,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'ℹ How the Conductor MCP server injects into Claude settings',
         title: 'Conductor MCP Registration',
-        body: 'The Conductor MCP server hosts three sub-tools (Vision, Codex review, Host transfer) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at CCC boot\n2. Registration is per session only: each CCC-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (17 browser-vision tools plus `codex_review` and `fetch_host_screenshot`)\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
+        body: 'The Conductor MCP server hosts three sub-tools (Vision, Codex review, Host transfer) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review` and `fetch_host_screenshot`)\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
       },
     },
   },
@@ -495,7 +493,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'ℹ Your session output is logged locally',
         title: 'Session Activity Logging',
-        body: 'The Logs, Memory and Tokenomics pages are powered by an index of **Claude\'s own conversation transcripts** (the files Claude Code already writes under `~/.claude/projects`). CCC does not record terminal output itself.\n\n• The index is built locally, in the app\'s resources folder\n• It stays **100% local** -- never uploaded or transmitted\n• Turning off "Index conversation logs" in Settings only stops the index; your conversations stay in Claude\'s own files either way\n\nTo clean up: Settings → General → Clear index (removes CCC\'s index only, never your conversations).',
+        body: 'The Logs, Memory and Tokenomics pages are powered by an index of **Claude\'s own conversation transcripts** (the files Claude Code already writes under `~/.claude/projects`). The Conductor does not record terminal output itself.\n\n• The index is a local SQLite database in the app\'s data folder\n• It stays **100% local** -- never uploaded or transmitted\n• Turning off "Index conversation logs" in Settings only stops the index; your conversations stay in Claude\'s own files either way\n\nTo clean up: Settings → General → Clear index (removes the app\'s index only, never your conversations).',
       },
     },
   },
@@ -511,7 +509,7 @@ export const TIPS_LIBRARY: Tip[] = [
         title: 'Credential Storage',
         body: 'SSH passwords and OAuth account tokens are encrypted using **Electron\'s `safeStorage` API**, which wraps your OS credential store:\n\n• **Windows** -- DPAPI (Data Protection API), tied to your Windows user account\n• **macOS** -- Keychain\n• **Linux** -- libsecret (Secret Service)\n\nEncrypted blobs are stored in `resources/CONFIG/ssh-credentials.json` with an `enc:` prefix. The renderer process **never** sees plaintext -- decryption happens only in the main process, right before the credential is needed.\n\nIf you move the app to a new machine, encrypted credentials won\'t work there -- you\'ll need to re-enter them (they\'re tied to the old OS\'s credential store).',
         bodyMac: 'SSH passwords and OAuth account tokens are encrypted using **Electron\'s `safeStorage` API** which wraps macOS **Keychain**.\n\nEncrypted blobs are stored in `~/Library/Application Support/Claude Conductor/resources/CONFIG/ssh-credentials.json` with an `enc:` prefix. The renderer process **never** sees plaintext -- decryption happens only in the main process.\n\nIf you move the app to a new machine, encrypted credentials won\'t work there -- you\'ll need to re-enter them (they\'re tied to the old Keychain).',
-        bodyWin: 'SSH passwords and OAuth account tokens are encrypted using **Electron\'s `safeStorage` API** which wraps **Windows DPAPI** (Data Protection API), tied to your Windows user account.\n\nEncrypted blobs are stored in `%LOCALAPPDATA%\\Claude Conductor\\resources\\CONFIG\\ssh-credentials.json` with an `enc:` prefix. The renderer process **never** sees plaintext -- decryption happens only in the main process.\n\nIf you move the app to a new Windows machine or reinstall the OS, encrypted credentials won\'t decrypt there -- you\'ll need to re-enter them.',
+        bodyWin: 'SSH passwords and OAuth account tokens are encrypted using **Electron\'s `safeStorage` API** which wraps **Windows DPAPI** (Data Protection API), tied to your Windows user account.\n\nEncrypted blobs are stored under your resources folder (`%LOCALAPPDATA%\\AI Code Conductor\\resources\\CONFIG\\ssh-credentials.json` on a new install, `...\\Claude Command Center\\...` if you upgraded from an older version) with an `enc:` prefix. The renderer process **never** sees plaintext -- decryption happens only in the main process.\n\nIf you move the app to a new Windows machine or reinstall the OS, encrypted credentials won\'t decrypt there -- you\'ll need to re-enter them.',
       },
     },
   },
@@ -527,7 +525,7 @@ export const TIPS_LIBRARY: Tip[] = [
         title: 'Resources Folder',
         body: 'The app uses a **Resources Directory** for all user data. Configurable at first-run setup.\n\nContents:\n• `CONFIG/` -- JSON files for your configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` -- per-session JSONL activity logs\n• `screenshots/` -- any screenshots captured by the Snap features\n• `insights/` -- AI-generated usage reports\n• `status/` -- real-time session metrics (written by the statusline script)\n• `scripts/` -- deployed helper scripts like the statusline\n• `claude-versions/` -- installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (note: encrypted credentials won\'t transfer -- see the credential tip).',
         bodyMac: 'The app stores everything under `~/Library/Application Support/Claude Conductor/resources/`:\n\n• `CONFIG/` -- JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` -- per-session JSONL activity logs\n• `screenshots/` -- captured by Snap features\n• `insights/` -- AI usage reports\n• `status/` -- real-time session metrics (from statusline script)\n• `scripts/` -- deployed helper scripts\n• `claude-versions/` -- installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to Keychain).',
-        bodyWin: 'The app stores everything under `%LOCALAPPDATA%\\Claude Conductor\\resources\\`:\n\n• `CONFIG\\` -- JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs\\` -- per-session JSONL activity logs\n• `screenshots\\` -- captured by Snap features\n• `insights\\` -- AI usage reports\n• `status\\` -- real-time session metrics (from statusline script)\n• `scripts\\` -- deployed helper scripts\n• `claude-versions\\` -- installed legacy Claude CLI versions\n\nBack up the whole `resources\\` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to DPAPI).',
+        bodyWin: 'The app stores everything under your resources folder -- `%LOCALAPPDATA%\\AI Code Conductor\\resources\\` on a new install, `...\\Claude Command Center\\...` if you upgraded:\n\n• `CONFIG\\` -- JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs\\` -- per-session JSONL activity logs\n• `screenshots\\` -- captured by Snap features\n• `insights\\` -- AI usage reports\n• `status\\` -- real-time session metrics (from statusline script)\n• `scripts\\` -- deployed helper scripts\n• `claude-versions\\` -- installed legacy Claude CLI versions\n\nBack up the whole `resources\\` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to DPAPI).',
       },
     },
   },
@@ -545,7 +543,7 @@ export const TIPS_LIBRARY: Tip[] = [
         shortText: '🐙 Sign in with GitHub to light up the sidebar',
         title: 'Sign in with GitHub',
         body: 'The GitHub sidebar shows the PR, CI runs, reviews, linked issues, and local git state for your current session. Sign in to unlock it.\n\nYou can use **OAuth device flow** (recommended), **paste a fine-grained PAT** if your org requires it, or let the app auto-detect a **gh CLI** login.\n\nFind it in **Settings > GitHub**. Nothing runs until you opt in per session.',
-        actionLabel: 'Open GitHub settings',
+        actionLabel: 'Open Status Line settings',
         actionTarget: 'settings',
         focusHint: 'Settings page > GitHub tab',
       },
@@ -612,10 +610,10 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '📊 Track your GitHub Copilot AI-credit spend in the repo strip',
         title: 'AI Usage Meter',
-        body: 'Turn on the **AI usage meter** to watch your GitHub Copilot AI-credit spend without leaving the terminal.\n\nA compact chip sits in the **repo strip** above the session. It shows credits used (and your cap, once you set one). The instant GitHub bills you past your included credits the chip turns **amber** and shows the billed amount, for example +$11.69.\n\nClick the chip for a read-only popover: a **per-model GitHub breakdown** (credits, covered, billed) plus the **Claude and Codex** 5h / 7d rate-limit windows side by side.\n\nEnable it and set your included-credit cap under **Settings, GitHub**. It is best-effort and never changes anything.',
-        actionLabel: 'Open GitHub settings',
+        body: 'Turn on the **AI usage meter** to watch your GitHub Copilot AI-credit spend without leaving the terminal.\n\nA compact chip sits in the **session status strip**. It shows credits used (and your cap, once you set one). The instant GitHub bills you past your included credits the chip turns **amber** and shows the billed amount, for example +$11.69.\n\nClick the chip for a read-only popover: a **per-model GitHub breakdown** (credits, covered, billed) plus the **Claude and Codex** 5h / 7d rate-limit windows side by side.\n\nEnable it under **Settings, GitHub**; set your included-credit cap under **Settings, Status Line**. It is best-effort and never changes anything.',
+        actionLabel: 'Open Status Line settings',
         actionTarget: 'settings',
-        focusHint: 'Repo strip -- the AI chip beside the connection state',
+        focusHint: 'Session status strip -- the AI chip',
       },
     },
   },
@@ -645,7 +643,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Opus 4.8 can orchestrate hundreds of subagents',
         title: 'Dynamic Workflows',
-        body: 'Opus 4.8 ships **dynamic workflows** -- Claude writes a JavaScript orchestration script on the fly and fans out up to 1,000 parallel subagents in the background while your session stays free.\n\n**Three ways to invoke:**\n- Include the word **workflow** in your prompt\n- Set effort to **Ultracode** in Session Config (auto-orchestrates every task)\n- Run **/deep-research <question>** -- the bundled example\n\nWatch with **/workflows**. Save a run with **s** -- it becomes /<name> in future sessions.\n\nCCC: if you want it off globally, toggle **Disable Claude Code dynamic workflows** in Settings > Security.',
+        body: 'Opus 4.8 ships **dynamic workflows** -- Claude writes a JavaScript orchestration script on the fly and fans out up to 1,000 parallel subagents in the background while your session stays free.\n\n**Three ways to invoke:**\n- Include the word **workflow** in your prompt\n- Set effort to **Ultracode** in Session Config (auto-orchestrates every task)\n- Run **/deep-research <question>** -- the bundled example\n\nWatch with **/workflows**. Save a run with **s** -- it becomes /<name> in future sessions.\n\nConductor: if you want it off globally, toggle **Disable Claude Code dynamic workflows** in Settings > General > Security.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
       },

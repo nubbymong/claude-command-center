@@ -1,4 +1,4 @@
-# Claude Command Center — agent & contributor brief
+# AI Code Conductor — agent & contributor brief
 
 Canonical instructions for any AI agent or contributor working in this repo. This
 is the cross-tool standard file (read by Claude Code via `@AGENTS.md` in

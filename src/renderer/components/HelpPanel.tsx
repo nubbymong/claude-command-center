@@ -50,13 +50,19 @@ export default function HelpPanel({ onClose, onStartTour, onShowSessions }: Prop
         setError('Could not prepare the help workspace.')
         return
       }
-      // Reuse (or create once) the Ask Command Center config, keyed by the
+      // Reuse (or create once) the Ask Conductor config, keyed by the
       // workspace directory, then launch through the standard config path.
       let config = useConfigStore.getState().configs.find((c) => c.workingDirectory === dir)
+      if (config && config.label === 'Ask Command Center') {
+        // Opportunistic one-time migration of the pre-rename label; keyed by
+        // directory so a custom label is never overwritten.
+        useConfigStore.getState().updateConfig(config.id, { label: 'Ask Conductor' })
+        config = { ...config, label: 'Ask Conductor' }
+      }
       if (!config) {
         const created: TerminalConfig = {
           id: generateId(),
-          label: 'Ask Command Center',
+          label: 'Ask Conductor',
           workingDirectory: dir,
           color: '#a78bfa',
           identityColorKey: 'mauve',
@@ -145,7 +151,7 @@ export default function HelpPanel({ onClose, onStartTour, onShowSessions }: Prop
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !launching) void ask() }}
-              placeholder="Ask Claude about Command Center…"
+              placeholder="Ask Claude about the Conductor…"
               className="flex-1 bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-blue/50 placeholder:text-overlay0"
             />
             <button

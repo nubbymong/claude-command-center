@@ -58,7 +58,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
         <div className="p2-inner" style={{ width: 'min(760px, 95vw)' }}>
           <h2 className="h2">Want Claude to have a few extra tools?</h2>
           <p className="p2-sub">
-            Command Center can hand every session a set of ready-made tools: no setup, no servers to wire up. Choose
+            AI Code Conductor can hand every session a set of ready-made tools: no setup, no servers to wire up. Choose
             which ones Claude gets.
           </p>
 
@@ -96,9 +96,9 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
               <div className="tc-body">
                 <div className="tc-t">How it works</div>
                 <div className="tc-d">
-                  Command Center runs a small local helper (an MCP server) and registers it with each session it
+                  The Conductor runs a small local helper (an MCP server) and registers it with each session it
                   launches (Claude, Codex, local or SSH), so these tools appear automatically. It runs only while
-                  Command Center is open. Turn this off and new sessions launch without it.
+                  the Conductor is open. Turn this off and new sessions launch without it.
                 </div>
               </div>
             </div>
@@ -108,7 +108,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
                 <b>Nothing touches your global Claude config.</b>
                 <span>
                   The helper is registered per session, only for sessions launched here. Plain Claude and Codex
-                  outside Command Center never see it.
+                  outside the Conductor never see it.
                 </span>
               </div>
             </div>

@@ -178,7 +178,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string) => {
+  const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => {
     const config: TerminalConfig = { ...data, id: generateId() }
     addConfig(config)
     // Same stamps as the guided first-config path (App.tsx): without them the
@@ -193,11 +193,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
     if (sudoPassword) {
       await window.electronAPI.credentials.save(config.id + '_sudo', sudoPassword)
     }
+    if (argSecret) {
+      await window.electronAPI.credentials.save(config.id + '_argsecret', argSecret)
+    }
     setShowNewDialog(false)
     launchFromConfig(config)
   }
 
-  const handleEditConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string) => {
+  const handleEditConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => {
     if (!editingConfig) return
     updateConfig(editingConfig.id, data)
     sessions.forEach((s) => {
@@ -212,12 +215,20 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
     if (sudoPassword) {
       await window.electronAPI.credentials.save(editingConfig.id + '_sudo', sudoPassword)
     }
+    if (argSecret) {
+      await window.electronAPI.credentials.save(editingConfig.id + '_argsecret', argSecret)
+    }
     setEditingConfig(null)
   }
 
   const handleDeleteConfig = async (configId: string) => {
     removeConfig(configId)
     await window.electronAPI.credentials.delete(configId)
+    // The sudo password and the Terminal-only secret argument live under their
+    // own keys; without these they stay orphaned in the OS keychain forever
+    // (pre-2.1.0-beta.5 bug).
+    await window.electronAPI.credentials.delete(configId + '_sudo')
+    await window.electronAPI.credentials.delete(configId + '_argsecret')
   }
 
   const launchFromConfig = async (config: TerminalConfig) => {

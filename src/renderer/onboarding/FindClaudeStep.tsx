@@ -57,7 +57,7 @@ export function FindClaudeStep({
                 {installed === null ? (
                   'Checking…'
                 ) : installed === false ? (
-                  'Install Claude Code, then reopen Command Center.'
+                  'Install Claude Code, then reopen the Conductor.'
                 ) : realPath ? (
                   <>
                     Found at <code>{realPath}</code>.

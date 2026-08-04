@@ -48,10 +48,10 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
     <>
       <div className="hero">
         <BrandMark className="mark" />
-        <h1 className="word">Claude</h1>
-        <div className="sub">Command Center</div>
+        <h1 className="word">AI Code</h1>
+        <div className="sub">Conductor</div>
         <p className="lede">
-          Welcome. I built <b>Command Center to sit on top of the Claude Code you already use</b>. It runs your
+          Welcome. I built <b>AI Code Conductor to sit on top of the Claude Code you already use</b>. It runs your
           sessions and adds accounts, status lines, history and cost tracking on top.
         </p>
         <p className="setup">
@@ -66,7 +66,7 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
         </div>
         <div className="privacy">
           <span className="lock">{LOCK}</span>
-          <span>Everything stays on your machine. Any command Command Center runs is shown to you first.</span>
+          <span>Everything stays on your machine. Any command the Conductor runs is shown to you first.</span>
         </div>
       </div>
       <div className="foot">

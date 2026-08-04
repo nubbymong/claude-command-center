@@ -121,7 +121,7 @@ The following are in scope:
   or secret is written to disk or handed to a child process
 - **IPC message handling** between main, preload, and renderer
 - **PTY input and command injection** — argument construction for spawned shells
-- **Prompt injection leading to command execution** — CCC runs an agent that acts on
+- **Prompt injection leading to command execution** — the app runs an agent that acts on
   untrusted repository content and can spawn shells. Anything that turns content a user
   merely *opened* into a command the machine *ran* is in scope, and is the threat class we
   most want reports about.
@@ -159,7 +159,7 @@ accumulate. Where a property is conditional, it says so.
 - **Renderer sandboxing — enforced.** Application windows run with
   `contextIsolation: true`, `nodeIntegration: false`, and `sandbox: true`. All
   renderer↔main communication crosses a typed preload bridge.
-- **Credential storage — the OS credential store for the credentials CCC owns.** Provider
+- **Credential storage — the OS credential store for the credentials the app owns.** Provider
   OAuth credentials are held by the OS store. This is *not* a claim that no secret is ever
   on disk: the app also mints local secrets (for example the loopback MCP token) that are
   persisted in the resources directory and passed to child processes, because a spawned

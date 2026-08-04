@@ -1,4 +1,4 @@
-# Claude Command Center — User Guide
+# AI Code Conductor — User Guide
 
 A task-oriented manual: *how do I…* for everyday use. For the feature tour and
 install instructions see [`README.md`](../README.md); for running a dev build
@@ -102,6 +102,9 @@ and *The rest of the surface*.
   draw their own.)
 - **Slow first paint in dev:** use a current build — the boot-time backfill and
   dev source-watcher now run deferred/async.
-- **Where's my data?** Prod uses the data dir chosen at setup (default
-  `%LOCALAPPDATA%\Claude Command Center`); a dev build uses `…\Claude Command
-  Center\dev`.
+- **Where's my data?** Prod uses the data dir chosen at setup. A **new** install
+  defaults to `%LOCALAPPDATA%\AI Code Conductor`; an install **upgraded** from a
+  release before the rename keeps whatever it already had (usually
+  `%LOCALAPPDATA%\Claude Command Center`) — the installer reads the existing
+  path from the registry and never moves your data. A dev build uses a `dev`
+  sub-folder under whichever data root applies.

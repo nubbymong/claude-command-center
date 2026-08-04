@@ -346,21 +346,25 @@ jobs:
           CHANNEL="${{ inputs.channel }}"
 
           TITLE="${TAG}"
+          # Display names only. Asset filenames deliberately keep the
+          # ClaudeCommandCenter- prefix (the updater in every installed client
+          # matches release assets by that literal prefix; renaming them
+          # strands existing installs silently).
           case "$CHANNEL" in
             stable)
-              RELEASE_NAME="Claude Command Center"
+              RELEASE_NAME="AI Code Conductor"
               LABEL="**Stable Release**"
               ;;
             beta)
-              RELEASE_NAME="Claude Command Center Beta"
+              RELEASE_NAME="AI Code Conductor Beta"
               LABEL="**Beta Release** (pre-release)"
               ;;
             dev)
-              RELEASE_NAME="Claude Command Center Dev"
+              RELEASE_NAME="AI Code Conductor Dev"
               LABEL="**Dev Release** (experimental)"
               ;;
             *)
-              RELEASE_NAME="Claude Command Center ${CHANNEL}"
+              RELEASE_NAME="AI Code Conductor ${CHANNEL}"
               LABEL="**${CHANNEL} Release**"
               ;;
           esac
@@ -377,6 +381,10 @@ jobs:
               echo ""
             fi
             echo "---"
+            echo "Installer files keep the ClaudeCommandCenter- name so existing installs keep receiving updates."
+            echo ""
+            echo "AI Code Conductor is an independent community project — not affiliated with or endorsed by Anthropic. Claude and Claude Code are Anthropic trademarks."
+            echo ""
             echo "SHA-256 checksums are in CHECKSUMS.txt attached to this release."
           } > RELEASE_BODY.md
 

@@ -40,8 +40,9 @@ export function useLaunchConfig(): (config: TerminalConfig) => string {
       createdAt: Date.now(),
       sessionType: config.sessionType,
       shellOnly: config.shellOnly,
-      partnerTerminalPath: config.partnerTerminalPath,
-      partnerElevated: config.partnerElevated,
+      terminalOptions: config.terminalOptions,
+      // Partner terminal is permanent for every config type (2 Aug decision):
+      // stored partnerTerminalPath/partnerElevated are no longer consumed.
       sshConfig: config.sshConfig ? {
         host: config.sshConfig.host,
         port: config.sshConfig.port,
@@ -58,7 +59,11 @@ export function useLaunchConfig(): (config: TerminalConfig) => string {
       permissionMode: config.claudeOptions?.permissionMode,
       extraArgs: config.claudeOptions?.extraArgs,
       disableAutoMemory: config.claudeOptions?.disableAutoMemory,
-      enableCodexReview: config.claudeOptions?.enableCodexReview,
+      // Launch must carry the indexing opt-out or the spawn never sees it
+      // (pre-2.1.0-beta.5 bug: this path dropped it, so the toggle was inert
+      // for sidebar launches). enableCodexReview is retired — the tool is
+      // authorised globally now, not per config.
+      loggingEnabled: config.claudeOptions?.loggingEnabled,
       provider: config.provider,
       profileId: config.profileId,
       codexOptions: config.codexOptions,

@@ -20,7 +20,8 @@ import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-d
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
-import { resolveCwd } from './path-utils'
+import { resolveCwd, isHomeOrAncestor } from './path-utils'
+import { buildTerminalLaunchLine } from './terminal-launch-line'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
@@ -274,6 +275,10 @@ export function spawnPty(
     rows?: number
     ssh?: SSHOptions
     shellOnly?: boolean
+    /** Terminal-only launcher: command + args run once when the shell opens. */
+    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
+    /** Secret argument resolved from the OS keychain in the IPC handler (main only). */
+    terminalSecret?: string
     elevated?: boolean
     configLabel?: string
     /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
@@ -646,12 +651,22 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
-          includeStatusLine: s?.statusLineEnabled !== false,
-          includeConductorMcp: s?.conductorToolsEnabled !== false,
-        })
-        ptyProcess.write(setupCmd + '\r')
+        // configureRemoteSettings → assertSafeRemotePath throws on a bad path.
+        // Catch it HERE: an uncaught throw in a setTimeout is re-thrown by the
+        // global handler and crashes main (adversarial review, #188). Fail the
+        // flow instead. The IPC schema already rejects bad paths up front; this
+        // is defence-in-depth for any path that reaches here.
+        try {
+          const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+          const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+            includeStatusLine: s?.statusLineEnabled !== false,
+            includeConductorMcp: s?.conductorToolsEnabled !== false,
+          })
+          ptyProcess.write(setupCmd + '\r')
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: host setup failed: ${(err as Error)?.message ?? err}`)
+          setFlowState('failed', 'host setup error')
+        }
       }, 200)
     }
 
@@ -676,12 +691,19 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
-          includeStatusLine: s?.statusLineEnabled !== false,
-          includeConductorMcp: s?.conductorToolsEnabled !== false,
-        })
-        ptyProcess.write(setupCmd + '\r')
+        // See writeHostSetupCmd: a throw here would crash main via the global
+        // handler; fail the flow instead (adversarial review, #188).
+        try {
+          const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+          const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+            includeStatusLine: s?.statusLineEnabled !== false,
+            includeConductorMcp: s?.conductorToolsEnabled !== false,
+          })
+          ptyProcess.write(setupCmd + '\r')
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: container setup failed: ${(err as Error)?.message ?? err}`)
+          setFlowState('failed', 'container setup error')
+        }
       }, 300)
     }
 
@@ -1007,7 +1029,8 @@ export function spawnPty(
       cols,
       rows,
       shellOnly: options?.shellOnly,
-      elevated: options?.elevated,
+      elevated: options?.elevated ?? options?.terminalOptions?.elevated,
+      terminalSecret: options?.terminalSecret,
       legacyVersion: options?.legacyVersion,
       effortLevel: options?.effortLevel,
       disableAutoMemory: options?.disableAutoMemory,
@@ -1082,17 +1105,32 @@ export function spawnPty(
 
       // Explicitly cd to ensure the shell is in the right directory
       // (PowerShell profiles can change cwd before the user sees the prompt)
+      const isWin = os.platform() === 'win32'
       const escapedShellCwd = resolvedCwd.replace(/'/g, "''")
-      const cdCmd = os.platform() === 'win32'
+      const cdCmd = isWin
         ? `Set-Location '${escapedShellCwd}'`
         : `cd '${resolvedCwd.replace(/'/g, "'\\''")}' 2>/dev/null; clear`
+
+      // Terminal-only first-run command. `{secret}` becomes a REFERENCE to the
+      // CCC_ARG_SECRET env var (set from the keychain in buildClaudeLocalSpawn),
+      // never the secret itself — see terminal-launch-line.ts for the contract.
+      const launchLine = buildTerminalLaunchLine(options?.terminalOptions, isWin)
+
       setTimeout(() => {
         // Liveness guard: a kill / Restart / app-quit can land inside this 300ms
         // window — writing to a dead or already-replaced PTY here would throw
         // inside the timer (uncaught in main). Only write when our PTY is still
         // the registered one.
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
-        try { ptyProcess.write(cdCmd + '\r') } catch { /* session died mid-launch */ }
+        try {
+          ptyProcess.write(cdCmd + '\r')
+          // Queued straight after the cd: the shell runs them in order, so the
+          // command always starts in the configured directory.
+          if (launchLine) {
+            logInfo(`[pty-manager] shell-only first-run command for ${sessionId}: ${launchLine}`)
+            ptyProcess.write(launchLine + '\r')
+          }
+        } catch { /* session died mid-launch */ }
       }, 300)
     } else {
       // Launch Claude Code interactive mode.
@@ -1200,11 +1238,26 @@ export function spawnPty(
       // without a respawn), so the strip/card/statusline follow the new account.
       startWatchingAccountIdentity(sessionId, resolvedProfileId)
 
-      // P6: register for codex_review opt-in if the session config requested it.
-      // Only Claude sessions can opt in; Codex sessions never reach this branch
-      // (they go through the codex provider branch above).
-      if (options?.enableCodexReview) {
-        registerCodexReviewSession(sessionId, resolvedCwd)
+      // codex_review is authorised globally (2 Aug decision): every LOCAL Claude
+      // session registers. Availability is still governed at tool-registration
+      // time by the global Codex master + conductor tool toggles
+      // (conductor-mcp-server createServer), and SSH sessions never reach this
+      // branch, so the tool keeps running only against paths that exist on this
+      // machine. The per-config enableCodexReview flag is retired (ignored).
+      //
+      // SECURITY (adversarial review, #188): register the ACTUAL launch cwd
+      // (`claudeCwd`, post-resume-override) — not the pre-override `resolvedCwd`
+      // — and REFUSE to register when that cwd is the bare home directory. A
+      // config whose workingDirectory is '.', empty, or a stale/deleted path
+      // makes resolveCwd() silently fall back to os.homedir(); registering that
+      // would let a prompt-injected session review ~/.ssh, ~/.claude, ~/.aws via
+      // mode:'paths' (containment holds, but the ROOT is wrong). Since universal
+      // opt-in removed the per-config gate that used to bound this, block it at
+      // the source: no legitimate review targets the bare home dir.
+      if (isHomeOrAncestor(claudeCwd)) {
+        logWarn(`[pty] codex_review NOT registered for ${sessionId}: launch cwd resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home). Set a real project directory to enable review.`)
+      } else {
+        registerCodexReviewSession(sessionId, claudeCwd)
       }
 
       // Explicitly cd to the project directory, then launch Claude.
@@ -1668,6 +1721,14 @@ function cleanupSessionResources(sessionId: string): void {
     try { flow.destroy() } catch { /* noop */ }
     sshFlows.delete(sessionId)
   }
+  // SECURITY (adversarial review, #188): deregister codex_review here so
+  // registration is strictly RE-ESTABLISHED per spawn. spawnPty calls killPty
+  // (→ this) before it re-registers, so a session that restarts into a
+  // home-rooted, SSH, shell-only or Codex state cannot INHERIT the stale
+  // registration (and stale cwd) from a prior local-Claude spawn — which would
+  // otherwise defeat the home-dir refusal and the "SSH never registers"
+  // invariant. Idempotent: a no-op when the session was never registered.
+  unregisterCodexReviewSession(sessionId)
 }
 
 // U8: grace before killing an SSH PTY so the in-band remote-cleanup command has

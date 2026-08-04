@@ -2,8 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Content-Security-Policy for the PACKAGED renderer. The app also sets this
+      via an onHeadersReceived header, but a header never reaches a file://
+      document, so the packaged build relies on this <meta> (the parser enforces
+      it regardless of scheme). Keep byte-identical to CSP_POLICY in
+      src/shared/csp-policy.ts — tests/unit/renderer/csp-policy-sync.test.ts
+      fails on drift.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws://localhost:* http://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self'" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Claude Command Center</title>
+    <title>AI Code Conductor</title>
     <style>
       body {
         margin: 0;

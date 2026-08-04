@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "2.1.0-beta.5",
+  "version": "2.1.0-beta.6",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
@@ -100,7 +100,7 @@
   },
   "build": {
     "appId": "com.claudeconductor.app",
-    "productName": "Claude Command Center",
+    "productName": "AI Code Conductor",
     "files": [
       "out/**/*",
       "resources/**/*",
@@ -111,6 +111,7 @@
       "scripts/vision-prompt.txt"
     ],
     "win": {
+      "executableName": "Claude Command Center",
       "target": [
         {
           "target": "nsis",
@@ -121,6 +122,7 @@
       ]
     },
     "mac": {
+      "executableName": "Claude Command Center",
       "target": [
         {
           "target": "dmg",
@@ -150,7 +152,8 @@
       "artifactName": "ClaudeCommandCenter-${version}-linux-${arch}.${ext}"
     },
     "dmg": {
-      "sign": false
+      "sign": false,
+      "title": "AI Code Conductor"
     },
     "nsis": {
       "oneClick": false,
@@ -158,9 +161,9 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Claude Command Center",
+      "shortcutName": "AI Code Conductor",
       "runAfterFinish": true,
-      "uninstallDisplayName": "Claude Command Center",
+      "uninstallDisplayName": "AI Code Conductor",
       "artifactName": "ClaudeCommandCenter-${version}.${ext}"
     },
     "directories": {
@@ -176,10 +179,6 @@
       {
         "from": "build/config-template.json",
         "to": "config-template.json"
-      },
-      {
-        "from": "splash.png",
-        "to": "splash.png"
       }
     ]
   }
