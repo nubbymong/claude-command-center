@@ -16,10 +16,21 @@ const fontsDir = join(repoRoot, 'src/renderer/public/excalidraw-assets/fonts')
 const LATIN = ['Assistant', 'Cascadia', 'ComicShanns', 'Excalifont', 'Liberation', 'Lilita', 'Nunito', 'Virgil']
 
 describe('Excalidraw local font bundle', () => {
-  it('main.tsx sets EXCALIDRAW_ASSET_PATH before rendering', () => {
+  it('the asset-path module sets EXCALIDRAW_ASSET_PATH to the local bundle', () => {
+    const mod = readFileSync(join(repoRoot, 'src/renderer/excalidraw-asset-path.ts'), 'utf-8')
+    expect(mod).toMatch(/EXCALIDRAW_ASSET_PATH\s*=/)
+    expect(mod).toMatch(/excalidraw-assets/)
+  })
+
+  it('main.tsx imports the asset-path module BEFORE App (Excalidraw bakes URLs on eval)', () => {
     const main = readFileSync(join(repoRoot, 'src/renderer/main.tsx'), 'utf-8')
-    expect(main).toMatch(/EXCALIDRAW_ASSET_PATH\s*=/)
-    expect(main).toMatch(/excalidraw-assets/)
+    const iPath = main.indexOf('excalidraw-asset-path')
+    const iApp = main.indexOf("from './App'")
+    expect(iPath, 'excalidraw-asset-path import missing').toBeGreaterThan(-1)
+    expect(iApp, 'App import missing').toBeGreaterThan(-1)
+    // Import order is load-bearing: the side effect must evaluate before App's
+    // static import graph pulls in @excalidraw/excalidraw.
+    expect(iPath).toBeLessThan(iApp)
   })
 
   it('bundles every Latin family, each with at least one woff2', () => {

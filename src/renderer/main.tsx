@@ -1,21 +1,11 @@
+// FIRST: set window.EXCALIDRAW_ASSET_PATH before @excalidraw/excalidraw (pulled
+// in by App's static import graph) evaluates and bakes its font URLs. Must stay
+// above `import App`. See the module for why it can't live in this file's body.
+import './excalidraw-asset-path'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import './styles.css'
-
-// Point Excalidraw at locally-bundled fonts instead of its esm.sh CDN default.
-// Excalidraw's font loader prepends this base to each "fonts/<Family>/…" path
-// and only appends its esm.sh fallback after; a local hit means the browser
-// never reaches that fallback — which the renderer CSP (font-src 'self') blocks
-// anyway, and which would otherwise phone a third-party CDN on every canvas
-// open. Resolved against document.baseURI so it is an absolute file:// (packaged)
-// or http://localhost (dev) URL — not a "/"-rooted path, which Excalidraw would
-// re-resolve against the (opaque on file://) origin. The Latin families live in
-// public/excalidraw-assets/; the ~13MB CJK Xiaolai family is intentionally not
-// bundled, so CJK text falls back to a system font (no crash, no fetch unless
-// CJK glyphs are actually drawn). Must run before any Excalidraw import.
-;(window as unknown as { EXCALIDRAW_ASSET_PATH: string }).EXCALIDRAW_ASSET_PATH =
-  new URL('./excalidraw-assets/', document.baseURI).href
 
 // Renderer-wide backstop for unhandled promise rejections. IPC read surfaces
 // (tokenomics / logs handlers) reject by design on worker crash / restart-backoff
