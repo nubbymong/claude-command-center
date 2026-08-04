@@ -95,8 +95,8 @@ describe('recheckAll — ACCOUNT_NEW_DETECTED', () => {
   })
 
   it('does NOT fire when /login switches to an email that IS already a known profile', () => {
-    const profileA = 'profile-detect-A'
-    const profileB = 'profile-detect-B'
+    const profileA = 'profile-detect-a'
+    const profileB = 'profile-detect-b'
     const sessionId = 's2'
 
     upsertProfile({ id: profileA, name: 'Alice', accountEmail: 'a@x.com', createdAt: Date.now() })

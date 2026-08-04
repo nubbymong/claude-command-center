@@ -36,7 +36,7 @@ import {
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
@@ -1043,10 +1043,18 @@ export function spawnPty(
       hostColorScheme,
     })
     const wantProfileId = options?.profileId
-    if (wantProfileId && fs.existsSync(getProfileConfigDir(wantProfileId))) {
+    // Validate before the join. This is the FOURTH site with the resolver shape,
+    // and the only one that is inline rather than a named function, which is why
+    // it was missed when the other three were guarded. `pty:spawn` types
+    // profileId as `z.string().optional()` — a type check, not a charset one — so
+    // a renderer-supplied `../x` reaches here. Without this, getProfileConfigDir
+    // throws and the spawn hard-fails; with it, a crafted id takes the existing
+    // warn-and-fall-back-to-primary branch below, matching the other three
+    // resolvers and keeping that throw genuinely unreachable.
+    if (wantProfileId && isValidProfileId(wantProfileId) && fs.existsSync(getProfileConfigDir(wantProfileId))) {
       resolvedProfileId = wantProfileId
     } else if (wantProfileId) {
-      logWarn(`[profiles] session ${sessionId}: profile dir missing for profileId=${wantProfileId}; falling back to primary/default`)
+      logWarn(`[profiles] session ${sessionId}: profile dir missing or invalid for profileId=${wantProfileId}; falling back to primary/default`)
     }
     // Clobber-proofing: a non-shell Claude session never runs on the bare global
     // home -- fall back to the captured primary profile.
