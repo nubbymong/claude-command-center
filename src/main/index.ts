@@ -156,6 +156,11 @@ function getHooksSupervisor(): ServiceSupervisor | null { return _hooksSuperviso
 // Keep >= the splash choreography (a 7 s authored timeline played at 2.4x in
 // resources/splash/splash.js ≈ 2.9 s) so the lockup lands before the fade.
 const SPLASH_MIN_MS = 3100
+// When the splash became visible (its ready-to-show), which is when its
+// animation clock actually starts — page load + module init put that a few
+// hundred ms after window creation. Initialised to "now" so the skip paths
+// (e2e, page missing) behave as if the splash showed instantly.
+let splashShownAt = Date.now()
 
 function createSplashWindow(): void {
   // Playwright-driven runs (e2e + the training-screenshot capture) assume the
@@ -202,6 +207,7 @@ function createSplashWindow(): void {
 
   splashWindow.loadFile(splashHtml)
   splashWindow.once('ready-to-show', () => {
+    splashShownAt = Date.now()
     splashWindow?.show()
   })
 }
@@ -302,8 +308,6 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler(() => {
     return { action: 'deny' }
   })
-
-  const splashShownAt = Date.now()
 
   mainWindow.on('ready-to-show', () => {
     if (process.env.E2E_HEADLESS === '1') {
