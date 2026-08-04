@@ -666,15 +666,21 @@ function cleanupSampleData(info: BackupInfo | null): void {
  * whole run is worthless.
  */
 async function clickNav(window: any, label: string): Promise<void> {
+  // NOTE: no helper functions inside this callback. tsx/esbuild runs with
+  // keepNames, which rewrites a named inner function as `__name(fn, "...")`;
+  // that helper does not exist in the page context, so the evaluate throws
+  // `ReferenceError: __name is not defined`. Keep the body to inline
+  // expressions only.
   const clicked = await window.evaluate((lbl: string) => {
     const buttons = Array.from(document.querySelectorAll('button'))
-    const label = (b: HTMLButtonElement) => b.getAttribute('aria-label') ?? ''
     for (const btn of buttons) {
-      if (label(btn) === lbl || btn.title === lbl) { btn.click(); return true }
+      const al = btn.getAttribute('aria-label') ?? ''
+      if (al === lbl || btn.title === lbl) { btn.click(); return true }
     }
     // StartsWith fallback (labels can carry a running-job suffix).
     for (const btn of buttons) {
-      if (label(btn).startsWith(lbl) || btn.title?.startsWith(lbl)) { btn.click(); return true }
+      const al = btn.getAttribute('aria-label') ?? ''
+      if (al.startsWith(lbl) || btn.title?.startsWith(lbl)) { btn.click(); return true }
     }
     return false
   }, label)
