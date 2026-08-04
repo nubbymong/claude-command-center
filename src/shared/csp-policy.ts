@@ -21,6 +21,12 @@
 //   worker-src 'self' blob: data: — pica spins up its resize workers from
 //     blob:/data: URLs; without this they fall back to a slow main-thread path.
 //   style-src 'unsafe-inline' — React style={{…}} and injected <style> tags.
+//   font-src 'self' — app fonts and Excalidraw's fonts are bundled locally
+//     (public/excalidraw-assets, via EXCALIDRAW_ASSET_PATH in main.tsx); no
+//     remote font origin is relied upon. Excalidraw would otherwise fetch ~15
+//     font families from esm.sh on every canvas open — this policy blocks that,
+//     and the local bundle makes it unnecessary. (data:/gstatic are unused
+//     headroom kept only so this string matches the dev header verbatim.)
 //   connect-src is IPC-routed in this app (the renderer makes no direct remote
 //     request), so 'self' + localhost is ample; no remote origin is allowed.
 export const CSP_POLICY =
