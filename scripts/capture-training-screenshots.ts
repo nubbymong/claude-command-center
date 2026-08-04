@@ -409,6 +409,10 @@ function seedSampleData(): BackupInfo {
       onboardingAppVersion: APP_VERSION,
     },
     'cloud-agents.json': SAMPLE_CLOUD_AGENTS,
+    // v1-era dashboard store. The v2 dashboard reads tokenomics.db, built by
+    // scanning transcripts (see the demo transcripts seeded below) — this
+    // file is inert on v2 builds but kept so a v1 build never scans real
+    // history into its screenshots.
     'tokenomics.json': sampleTokenomics,
     'github-config.json': SAMPLE_GITHUB_CONFIG,
   }
@@ -516,6 +520,52 @@ function seedSampleData(): BackupInfo {
     for (const file of project.files) fs.writeFileSync(path.join(memoryDir, file.filename), file.content, 'utf-8')
     console.log(`[capture] Seeded memory: ${project.projectDir}`)
   }
+
+  // The v2 tokenomics dashboard does NOT read tokenomics.json — it queries
+  // tokenomics.db, which a worker builds by scanning ~/.claude/projects/**/
+  // *.jsonl (and ~/.codex/sessions). Real projects are hidden above, so
+  // without a seed here the Tokenomics screenshot is an empty $0.00
+  // dashboard. Write small demo transcripts whose cwd matches the demo
+  // configs' workingDirectory — cost cards, daily chart, per-config
+  // breakdown and the sessions table then populate through the app's own
+  // scan + pricing pipeline. Model ids must price offline: both are registry
+  // entries, and anything unknown would still fall back to sonnet rates.
+  const transcriptSessions = [
+    { dir: 'C--Users-developer-Projects-web-app', cwd: path.join(homePath, 'web-app'), model: 'claude-sonnet-4-6', agoMs: 2 * 3600000, turns: 5 },
+    { dir: 'C--Users-developer-Projects-api-server', cwd: path.join(homePath, 'api-server'), model: 'claude-sonnet-4-6', agoMs: 7 * 3600000, turns: 4 },
+    { dir: 'C--Users-developer-Projects-web-app', cwd: path.join(homePath, 'web-app'), model: 'claude-opus-4-8', agoMs: day + 3 * 3600000, turns: 3 },
+    { dir: 'C--Users-developer-Projects-mobile', cwd: path.join(homePath, 'mobile'), model: 'claude-sonnet-4-6', agoMs: 2 * day + 5 * 3600000, turns: 4 },
+    { dir: 'C--Users-developer-Projects-api-server', cwd: path.join(homePath, 'api-server'), model: 'claude-opus-4-8', agoMs: 4 * day + 2 * 3600000, turns: 3 },
+    { dir: 'C--Users-developer-Projects-infra', cwd: path.join(homePath, 'infra'), model: 'claude-sonnet-4-6', agoMs: 5 * day + 6 * 3600000, turns: 5 },
+  ]
+  transcriptSessions.forEach((s, si) => {
+    const sessionId = `00000000-0000-4000-8000-00000000000${si + 1}`
+    const lines: string[] = []
+    for (let t = 0; t < s.turns; t++) {
+      lines.push(JSON.stringify({
+        type: 'assistant',
+        sessionId,
+        requestId: `demo-req-${si}-${t}`,
+        timestamp: new Date(now - s.agoMs + t * 8 * 60000).toISOString(),
+        cwd: s.cwd,
+        message: {
+          id: `demo-msg-${si}-${t}`,
+          model: s.model,
+          usage: {
+            input_tokens: 6000 + ((si * 7 + t * 13) % 9) * 3000,
+            output_tokens: 1500 + ((si * 5 + t * 11) % 7) * 800,
+            cache_read_input_tokens: t === 0 ? 0 : 14000 + ((si + t) % 5) * 5000,
+            cache_creation_input_tokens: t === 0 ? 8000 + si * 1200 : 1200,
+          },
+        },
+      }))
+    }
+    const dir = path.join(projectsDir, s.dir)
+    fs.mkdirSync(dir, { recursive: true })
+    activeBackupInfo.createdMemoryDirs.push(dir)
+    fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), lines.join('\n') + '\n', 'utf-8')
+    console.log(`[capture] Seeded transcript: ${s.dir} (${s.model}, ${s.turns} turns)`)
+  })
 
   return activeBackupInfo
 }
@@ -879,48 +929,42 @@ async function main() {
       for (const el of items) { if (el.textContent?.trim() === 'Edit') { (el as HTMLElement).click(); return } }
     })
     await window.waitForTimeout(800)
-    // v1.5.13: seed the dialog state so the captured screenshot actually
-    // shows the Claude controls (Opus 4.8 model, Ultracode effort). The Edit
-    // dialog opened on a "shellOnly:true" config so the Claude options are
-    // hidden by default - we have to uncheck Shell only FIRST (the Claude
-    // controls are conditionally rendered).
-    // All DOM mutation must live in a single inline anonymous arrow
-    // because esbuild/tsx names const-assigned arrows which triggers
-    // __name in the evaluate context.
+    // v2.1 dialog: the launcher is picked via provider cards (hidden radios,
+    // name="ccc-provider"), not the old "Shell only" checkbox. The demo
+    // config is Terminal-only, so switch it to Claude Code first — the
+    // Session startup section (starting model + effort) the tour text
+    // describes only renders for the Claude provider.
     await window.evaluate(() => {
-      const cbs = Array.from(document.querySelectorAll('input[type=checkbox]'))
-      for (const cb of cbs) {
-        const lbl = cb.closest('label')?.textContent || ''
-        if (lbl.includes('Shell only')) {
-          if ((cb as HTMLInputElement).checked) (cb as HTMLInputElement).click()
-          break
-        }
-      }
+      const radio = document.querySelector('input[name="ccc-provider"][value="claude"]') as HTMLInputElement | null
+      if (radio && !radio.checked) radio.click()
     })
     await window.waitForTimeout(400)
+    // No helper functions inside evaluate bodies (keepNames/__name trap) —
+    // inline anonymous arrows only.
     await window.evaluate(() => {
-      // Native value setter trick - React 18 reads value via the prototype
-      // descriptor, so a plain sel.value = 'opus' will not fire onChange.
+      // Starting model is a native select. Pick the newest Opus entry by
+      // label so the shot tracks whatever the registry currently ships;
+      // React 18 reads value via the prototype descriptor, so set through
+      // it and fire change. Starting effort is a radio-pill group.
       const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set
       const selects = Array.from(document.querySelectorAll('select'))
-      let modelSel: HTMLSelectElement | null = null
-      let effortSel: HTMLSelectElement | null = null
       for (const s of selects) {
-        const labelText = (s.previousElementSibling?.textContent || '') + ' ' + (s.closest('div')?.textContent || '')
-        if (!modelSel && /Model override/i.test(labelText)) modelSel = s as HTMLSelectElement
-        if (!effortSel && /Effort level/i.test(labelText)) effortSel = s as HTMLSelectElement
+        const wrap = s.closest('div')?.textContent || ''
+        if (!/Starting model/i.test(wrap)) continue
+        const opt = Array.from((s as HTMLSelectElement).options).find((o) => /opus/i.test(o.textContent || ''))
+        if (opt && setter) {
+          setter.call(s, opt.value)
+          s.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        break
       }
-      if (modelSel && setter) {
-        setter.call(modelSel, 'opus')
-        modelSel.dispatchEvent(new Event('change', { bubbles: true }))
-      }
-      if (effortSel && setter) {
-        setter.call(effortSel, 'ultracode')
-        effortSel.dispatchEvent(new Event('change', { bubbles: true }))
-      }
+      const effort = document.querySelector('input[name="ccc-effort"][value="ultracode"]') as HTMLInputElement | null
+      if (effort && !effort.checked) effort.click()
+      const lbl = Array.from(document.querySelectorAll('label')).find((l) => /Starting model/i.test(l.textContent || ''))
+      if (lbl) lbl.scrollIntoView({ block: 'center' })
     })
     await window.waitForTimeout(500)
-    await capture(window, 'step-session-options.jpg', 'Session config dialog (Opus 4.8 + Ultracode)')
+    await capture(window, 'step-session-options.jpg', 'Session config dialog (Claude Code, Opus + Ultracode startup)')
     // Close dialog — try multiple methods
     await window.keyboard.press('Escape')
     await window.waitForTimeout(300)
@@ -984,8 +1028,10 @@ async function main() {
     await clickNav(window, 'Conductor MCP')
     await capture(window, 'step-vision.jpg', 'Conductor MCP page')
 
-    // Step 4: Tokenomics
+    // Step 4: Tokenomics (small settle so the transcript scan the seed feeds
+    // has landed in tokenomics.db before the shot)
     await clickNav(window, 'Tokenomics')
+    await window.waitForTimeout(1000)
     await capture(window, 'step-tokenomics.jpg', 'Tokenomics page')
 
     // Step 5: Insights (sidebar nav, distinct from Tokenomics)
