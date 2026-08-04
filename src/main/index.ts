@@ -154,16 +154,21 @@ let splashWindow: BrowserWindow | null = null
 // closed by the main window's ready-to-show; if that never fires (renderer
 // crash, GPU wedge) or createWindow() throws, this timer force-closes it so
 // the user is never left with a frameless, alwaysOnTop, taskbar-less window
-// that also blocks app quit. Generous — well past the ~3.1s normal close.
+// that also blocks app quit. Generous — well past the ~5s normal close.
 let splashBackstopTimer: ReturnType<typeof setTimeout> | null = null
 const SPLASH_MAX_MS = 15000
 let _hooksSupervisor: ServiceSupervisor | null = null
 function setHooksSupervisor(s: ServiceSupervisor): void { _hooksSupervisor = s }
 function getHooksSupervisor(): ServiceSupervisor | null { return _hooksSupervisor }
 
-// Keep >= the splash choreography (a 7 s authored timeline played at 2.4x in
-// resources/splash/splash.js ≈ 2.9 s) so the lockup lands before the fade.
-const SPLASH_MIN_MS = 3100
+// Minimum on-screen time before the splash may close: enough for the animation
+// (a 7 s authored timeline played at 2.0x in resources/splash/splash.js) to
+// reach the finished brand lockup (~3.3 s) so it is never cut off mid-form.
+const SPLASH_MIN_MS = 3600
+// After the main window is ready AND the lockup has formed, hold the finished
+// lockup this long before fading — so the brand mark is clearly seen on every
+// launch, even when the main window loads instantly.
+const SPLASH_POST_READY_MS = 1000
 // When the splash became visible (its ready-to-show), which is when its
 // animation clock actually starts — page load + module init put that a few
 // hundred ms after window creation. Initialised to "now" so the skip paths
@@ -232,17 +237,23 @@ function createSplashWindow(): void {
 function closeSplashWindow(): void {
   if (splashBackstopTimer) { clearTimeout(splashBackstopTimer); splashBackstopTimer = null }
   if (!splashWindow || splashWindow.isDestroyed()) return
-  // Fade out by sending a message, then destroy after delay
-  splashWindow.webContents.executeJavaScript(`
-    document.body.style.transition = 'opacity 0.4s ease-in';
-    document.body.style.opacity = '0';
-  `).catch(() => {})
-  setTimeout(() => {
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.destroy()
+  // Fade the whole window out (revealing the main window behind it), then
+  // destroy. setOpacity on the window itself gives a clean cross-fade: the
+  // splash is opaque (#0b0e15, for Win11 rounded corners), so fading the page
+  // body would only reveal that dark rectangle, not the app.
+  const win = splashWindow
+  splashWindow = null // re-entrancy guard — a second close() is a no-op
+  let op = 1
+  const fade = setInterval(() => {
+    if (win.isDestroyed()) { clearInterval(fade); return }
+    op -= 0.09
+    if (op <= 0) {
+      clearInterval(fade)
+      if (!win.isDestroyed()) win.destroy()
+      return
     }
-    splashWindow = null
-  }, 500)
+    try { win.setOpacity(op) } catch { /* setOpacity unsupported → destroy next tick */ }
+  }, 28)
 }
 
 function clampToVisibleDisplay(state: WindowState): WindowState {
@@ -333,15 +344,17 @@ function createWindow(): void {
       mainWindow!.showInactive()
       closeSplashWindow()
     } else {
-      // Hold the splash long enough for its choreography to finish
+      // Hold the splash until its lockup has formed AND for a beat after the
+      // window is ready, so the finished brand mark is clearly shown before the
+      // reveal (the main window stays hidden behind the splash during the hold).
       const elapsed = Date.now() - splashShownAt
-      const remaining = Math.max(0, SPLASH_MIN_MS - elapsed)
+      const wait = Math.max(0, SPLASH_MIN_MS - elapsed) + SPLASH_POST_READY_MS
       setTimeout(() => {
         // Maximize BEFORE show to avoid flash of non-maximized window
         if (state.isMaximized) mainWindow!.maximize()
         mainWindow!.show()
         closeSplashWindow()
-      }, remaining)
+      }, wait)
     }
   })
 

@@ -11,7 +11,7 @@
 //    CSS shows the static mark + drives the loading bar instead.
 import * as THREE from './three.module.min.js';
 
-const SPEED = 2.4; // 7 s authored timeline -> ~2.9 s on screen
+const SPEED = 2.0; // 7 s authored timeline -> ~3.5 s on screen (lockup fully formed ~3.3 s)
 
 document.body.classList.remove('nojs');
 
