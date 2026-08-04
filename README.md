@@ -286,6 +286,14 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, coding 
 
 ---
 
+## Privacy
+
+The app collects nothing — no analytics, no telemetry, no crash reporting, no
+account. Everything it creates stays on your machine, and every network request
+it makes is listed in full in [PRIVACY.md](PRIVACY.md).
+
+---
+
 ## Disclaimer and trademarks
 
 Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. This project is an independent, community-built tool. It is **not affiliated with, endorsed by, sponsored by, or supported by Anthropic or OpenAI**.
