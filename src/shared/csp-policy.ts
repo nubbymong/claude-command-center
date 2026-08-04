@@ -29,6 +29,10 @@
 //     headroom kept only so this string matches the dev header verbatim.)
 //   connect-src is IPC-routed in this app (the renderer makes no direct remote
 //     request), so 'self' + localhost is ample; no remote origin is allowed.
+//   object-src 'none' / base-uri 'self' / form-action 'self' — defense-in-depth
+//     backstops (no <object>/<embed>, no <base> hijack, no cross-origin form
+//     post) for if the one DOMPurify-gated HTML sink is ever bypassed; the
+//     renderer uses none of these today, so they cost nothing.
 export const CSP_POLICY =
   "default-src 'self'; " +
   "script-src 'self' 'wasm-unsafe-eval'; " +
@@ -36,4 +40,7 @@ export const CSP_POLICY =
   "style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: file:; " +
   "font-src 'self' data: https://fonts.gstatic.com; " +
-  "connect-src 'self' ws://localhost:* http://localhost:*"
+  "connect-src 'self' ws://localhost:* http://localhost:*; " +
+  "object-src 'none'; " +
+  "base-uri 'self'; " +
+  "form-action 'self'"
