@@ -80,6 +80,7 @@ import { loadCredential, saveCredential, deleteCredential } from './credential-s
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
 import { safeExternalHttpsHref } from '../shared/safe-url'
+import { CSP_POLICY } from '../shared/csp-policy'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
@@ -711,14 +712,16 @@ if (!gotTheLock) {
         }, 5000)
       })
 
-    // Content Security Policy
+    // Content Security Policy. This header path only reaches the renderer in
+    // dev (loadURL → http://localhost); the packaged renderer loads via
+    // file://, which a header cannot reach — that build is covered by the
+    // matching <meta> CSP in src/renderer/index.html. Both use CSP_POLICY so
+    // dev and prod enforce the identical policy.
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback({
         responseHeaders: {
           ...details.responseHeaders,
-          'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws://localhost:* http://localhost:*"
-          ]
+          'Content-Security-Policy': [CSP_POLICY]
         }
       })
     })
