@@ -95,6 +95,12 @@ export async function launchIsolatedApp(): Promise<IsolatedApp> {
       NODE_ENV: 'test',
       E2E_HEADLESS: '1',
       CCC_E2E_DATA_DIR: dataDir,
+      // Pin off: the splash is gated out for e2e (first window must be the
+      // main window). A CCC_FORCE_SPLASH=1 left exported in the dev shell —
+      // e.g. after running the splash probe — would otherwise flow through
+      // the ...process.env spread and make the splash the first window,
+      // timing out every spec with no obvious cause.
+      CCC_FORCE_SPLASH: '0',
     },
   })
   const page = await app.firstWindow()

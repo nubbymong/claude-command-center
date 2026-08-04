@@ -10,33 +10,20 @@ import { _electron as electron } from '@playwright/test'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
-import { execSync } from 'child_process'
 
 const BUILT_APP = path.join(__dirname, '..', 'out', 'main', 'index.js')
 const OUTPUT_DIR = path.join(__dirname, '..', '.tip-screenshots')
 const PLATFORM_SUFFIX = process.platform === 'darwin' ? '-mac' : '-win'
 
+// Seed + launch against a throwaway data root (never the user's real one), the
+// same shape data-paths.ts derives from CCC_E2E_DATA_DIR: data root = <root>,
+// resources = <root>/resources. The launch passes CCC_E2E_DATA_DIR=<root> so
+// the app reads exactly what we seed here — and that also gates the boot splash
+// out (with CCC_FORCE_SPLASH pinned off) so app.firstWindow() is the main window.
+const DATA_ROOT = path.join(os.tmpdir(), `ccc-tips-test-${process.pid}`)
+
 function getConfigDir(): string {
-  if (process.platform === 'win32') {
-    for (const key of ['Software\\Claude Command Center', 'Software\\Claude Conductor']) {
-      try {
-        const result = execSync(`reg query "HKCU\\${key}" /v ResourcesDirectory`, { encoding: 'utf-8', timeout: 5000, windowsHide: true })
-        const match = result.match(/ResourcesDirectory\s+REG_SZ\s+(.+)/)
-        if (match) return path.join(match[1].trim(), 'CONFIG')
-      } catch {}
-    }
-    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor', 'CONFIG')
-  } else {
-    const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
-    try {
-      if (fs.existsSync(fallbackFile)) {
-        const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
-        if (config.ResourcesDirectory) return path.join(config.ResourcesDirectory, 'CONFIG')
-        if (config.DataDirectory) return path.join(config.DataDirectory, 'CONFIG')
-      }
-    } catch {}
-    return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor', 'CONFIG')
-  }
+  return path.join(DATA_ROOT, 'resources', 'CONFIG')
 }
 
 async function main() {
@@ -66,7 +53,9 @@ async function main() {
 
   try {
     console.log('[tips-test] Launching app...')
-    const app = await electron.launch({ args: [BUILT_APP], env: { ...process.env, NODE_ENV: 'production' } })
+    // Point the app at the throwaway root we seeded; CCC_FORCE_SPLASH pinned
+    // off so the splash is gated out and firstWindow is the main window.
+    const app = await electron.launch({ args: [BUILT_APP], env: { ...process.env, NODE_ENV: 'production', CCC_E2E_DATA_DIR: DATA_ROOT, CCC_FORCE_SPLASH: '0' } })
     const window = await app.firstWindow()
     await window.setViewportSize({ width: 1280, height: 800 })
     await window.waitForTimeout(5000)
@@ -177,7 +166,8 @@ async function main() {
 
     await app.close()
   } finally {
-    // Restore backups
+    // Restore backups (vestigial now the seed goes to a throwaway root, but
+    // harmless), then drop the throwaway root entirely.
     for (const [filename] of Object.entries(files)) {
       const fp = path.join(configDir, filename)
       const bp = fp + backupSuffix
@@ -186,6 +176,7 @@ async function main() {
         else if (fs.existsSync(fp)) fs.unlinkSync(fp)
       } catch {}
     }
+    try { fs.rmSync(DATA_ROOT, { recursive: true, force: true }) } catch {}
   }
 
   console.log(`\n[tips-test] Done. Screenshots in ${OUTPUT_DIR}`)
