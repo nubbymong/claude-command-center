@@ -89,6 +89,7 @@ vi.mock('../../../src/main/github-update', () => ({
 
 // ── everything else the module pulls in ────────────────────────────────
 const fsState = vi.hoisted(() => ({ accessThrows: false }))
+const storeState = vi.hoisted(() => ({ isStoreBuild: false }))
 vi.mock('fs', () => ({
   existsSync: () => true,
   readFileSync: () => '{"version":"2.1.1"}',
@@ -111,6 +112,10 @@ vi.mock('../../../src/main/update-watcher', () => ({
   // `gh.verified = null`, which is why nothing covered that path.
   isPackagedApp: () => true,
   hasSourcePath: () => false,
+  // Same reason as the two above: the handlers call this on every update path,
+  // so omitting it fails every test in the file rather than just the Store one.
+  // Defaults to the direct-download build; the Store gate has its own suite.
+  isStoreBuild: () => storeState.isStoreBuild,
 }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 vi.mock('../../../src/main/pty-manager', () => ({ killAllPty: vi.fn() }))
@@ -142,7 +147,31 @@ beforeEach(() => {
   gh.noexec = false
   gh.appImageVerifiers = []
   fsState.accessThrows = false
+  storeState.isStoreBuild = false
   registerUpdateHandlers()
+})
+
+describe('Microsoft Store builds do not self-update', () => {
+  // The Store owns updates for an MSIX install. Offering one would download an
+  // NSIS installer the package container cannot run, and shipping a
+  // self-updater in a Store app fails certification.
+  it('reports no update available, so the UI never offers one', async () => {
+    storeState.isStoreBuild = true
+    const check = handlers.get('update:check')!
+    await expect(Promise.resolve(check())).resolves.toBe(false)
+  })
+
+  it('refuses to install even when invoked directly, bypassing the UI', async () => {
+    storeState.isStoreBuild = true
+    await expect(invoke()).rejects.toThrow(/Microsoft Store/i)
+    // Nothing was launched: the refusal happens before any spawn.
+    expect(spawnState.calls).toHaveLength(0)
+  })
+
+  it('still updates normally in the direct-download build', async () => {
+    storeState.isStoreBuild = false
+    await expect(invoke()).resolves.toBe(true)
+  })
 })
 
 describe('update:installAndRestart — launch handshake', () => {
