@@ -179,10 +179,6 @@
       {
         "from": "build/config-template.json",
         "to": "config-template.json"
-      },
-      {
-        "from": "splash.png",
-        "to": "splash.png"
       }
     ]
   }
