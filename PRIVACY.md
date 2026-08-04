@@ -6,10 +6,33 @@ Last updated: 4 August 2026
 
 ## The short version
 
-The app collects nothing. There is no analytics, no telemetry, no crash
-reporting, and no account with us — there is no "us" to send anything to. Every
-file the app creates stays on your computer. The only network requests it makes
-are listed in full below, and each one goes to a service you are already using.
+The app collects nothing about you and sends nothing to its developer. There is
+no analytics, no telemetry, no crash reporting, and no account with us — there
+is no "us" to send anything to. Every file the app creates stays on your
+computer. The only network requests it makes are listed in full below, and each
+one goes to a service you are already using.
+
+It does handle some personal information locally, because it has to in order to
+show you which account you are signed in as. Exactly what, and where it goes, is
+set out in the next section.
+
+## What personal information the app handles
+
+To show which account a session is running under, the app reads — from files
+that the Claude Code and Codex tools already keep on your computer — **your
+account email address** and **the access token for that account**. The email
+address is displayed in the app so you can tell your accounts apart. The token
+is used only to ask that same provider for your usage allowance.
+
+If you turn on the optional GitHub integration, the app reads your GitHub
+account details for the same purpose.
+
+Your session transcripts may contain personal information, because they contain
+whatever you typed. The app indexes them locally so it can show your history and
+costs, and that indexing can be switched off (see below).
+
+None of this is transmitted anywhere except to the provider it already belongs
+to, and none of it ever reaches the developer of this app.
 
 ## What the app stores, and where
 
