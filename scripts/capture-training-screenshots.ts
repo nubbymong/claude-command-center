@@ -860,7 +860,26 @@ async function main() {
 
   try {
     console.log('[capture] Launching Electron app...')
-    const app = await electron.launch({ args: [BUILT_APP], env: { ...process.env, NODE_ENV: 'production' } })
+    // Point the app at the SAME resources dir this script just seeded.
+    // Without this the run captured nothing but the "Claude CLI Setup" wizard:
+    // the launched build is not packaged, so src/main/index.ts sets
+    // CCC_DEV_DATA_DIR itself and the app reads <base>/dev/resources/CONFIG --
+    // an empty dir -- while the seed went to the prod resources dir. No configs
+    // meant the CLI-setup gate fired, and every screenshot was that screen.
+    // CCC_E2E_DATA_DIR is checked ahead of the dev override in data-paths.ts.
+    const resourcesDir = getResourcesDir()
+    if (path.basename(resourcesDir).toLowerCase() !== 'resources') {
+      throw new Error(
+        `[capture] cannot derive a data root from resources dir "${resourcesDir}" ` +
+        `(expected it to end in "resources"); the app would read a different CONFIG than the seed wrote.`,
+      )
+    }
+    const dataRoot = path.dirname(resourcesDir)
+    console.log(`[capture] App data root (CCC_E2E_DATA_DIR): ${dataRoot}`)
+    const app = await electron.launch({
+      args: [BUILT_APP],
+      env: { ...process.env, NODE_ENV: 'production', CCC_E2E_DATA_DIR: dataRoot },
+    })
     const window = await app.firstWindow()
     await window.setViewportSize({ width: WIDTH, height: HEIGHT })
     console.log('[capture] Waiting for app to load...')
