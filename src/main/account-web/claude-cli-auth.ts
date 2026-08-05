@@ -24,20 +24,53 @@
  * No default export (project convention).
  */
 
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo } from '../debug-logger'
-import { getProfileConfigDir } from '../account-profiles'
+import { getProfileConfigDir, getProfilesRoot } from '../account-profiles'
 
 export interface ClaudeCliAuthStatus {
-  /** True when a credential file exists with a claude.ai OAuth block. */
+  /** True when this account is signed in to the CLI. */
   authenticated: boolean
-  /** Subscription tier the CLI recorded, when present. Display only. */
+  /** Subscription tier, when reported. Display only. */
   subscriptionType?: string
-  /** Epoch ms the OAuth token expires, when recorded. */
+  /** Epoch ms the OAuth token expires, when known (credential-file path only). */
   expiresAt?: number
-  /** Set when the file could not be read or parsed. */
+  /** The account the CLI reports for this profile. Only the status path knows it. */
+  email?: string
+  /** Organisation the CLI reports. Display only. */
+  orgName?: string
+  /** Which source answered: the CLI's own status command, or the credential file. */
+  source?: 'cli-status' | 'credential-file'
+  /** Set when nothing could be determined. */
   error?: string
+}
+
+/**
+ * PURE: interpret `claude auth status` JSON. Exported so it has a test.
+ *
+ * PREFERRED over reading the credential file. It is the CLI's own supported
+ * interface, it survives a change to that file's private layout, and it answers
+ * a question the file cannot: WHICH ACCOUNT this profile is signed in as, plus
+ * the org and plan. Verified per-account by setting USERPROFILE to the profile
+ * home — the same redirection pty-manager already uses to spawn a session under
+ * an account.
+ */
+export function parseAuthStatus(raw: string): ClaudeCliAuthStatus | null {
+  try {
+    const j = JSON.parse(raw)
+    if (typeof j?.loggedIn !== 'boolean') return null
+    return {
+      authenticated: j.loggedIn,
+      email: typeof j.email === 'string' ? j.email : undefined,
+      orgName: typeof j.orgName === 'string' ? j.orgName : undefined,
+      subscriptionType: typeof j.subscriptionType === 'string' ? j.subscriptionType : undefined,
+      source: 'cli-status',
+    }
+  } catch {
+    return null
+  }
 }
 
 /** PURE: interpret a credentials file's contents. Exported so it has a test. */
@@ -67,17 +100,38 @@ export function parseCliAuth(raw: string): ClaudeCliAuthStatus {
  * value is never returned, logged, or copied.
  */
 export function readClaudeCliAuth(profileId: string): ClaudeCliAuthStatus {
+  // 1. Ask the CLI. Setting USERPROFILE to the profile home is how a session is
+  //    already spawned under an account, and `claude auth status` honours it —
+  //    verified against two profiles, which reported two different emails.
   try {
-    // getProfileConfigDir is the per-account CLAUDE_CONFIG_DIR — the same dir
-    // the CLI writes its credentials into when a session runs as this account.
+    const home = join(getProfilesRoot(), profileId)
+    if (existsSync(home)) {
+      const out = execFileSync('claude', ['auth', 'status'], {
+        encoding: 'utf-8',
+        timeout: 10_000,
+        windowsHide: true,
+        shell: true,          // resolves claude.cmd on Windows, as elsewhere in the app
+        env: { ...process.env, USERPROFILE: home, HOME: home },
+      })
+      const parsed = parseAuthStatus(out)
+      if (parsed) return parsed
+    }
+  } catch {
+    // CLI absent, slow, or erroring — fall through to the file.
+  }
+
+  // 2. Fall back to the credential file. Less informative (no email/org) but it
+  //    needs no subprocess, so a missing or broken CLI still yields a usable
+  //    signed-in/out answer rather than an error.
+  try {
     const configDir = getProfileConfigDir(profileId)
     if (!configDir) return { authenticated: false }
     const path = join(configDir, '.credentials.json')
     if (!existsSync(path)) return { authenticated: false }
-    return parseCliAuth(readFileSync(path, 'utf-8'))
+    return { ...parseCliAuth(readFileSync(path, 'utf-8')), source: 'credential-file' }
   } catch (err) {
     logError(`[account-web] could not read CLI auth for ${profileId}: ${(err as Error)?.message}`)
-    return { authenticated: false, error: 'could not read the credential file' }
+    return { authenticated: false, error: 'could not determine CLI auth state' }
   }
 }
 
@@ -90,8 +144,16 @@ export function readClaudeCliAuth(profileId: string): ClaudeCliAuthStatus {
  * its browser hand-off and any prompts are visible — instead of a hidden child
  * process the user cannot answer.
  */
-export function claudeAuthCommand(): string {
-  return 'claude auth'
+export function claudeAuthCommand(email?: string): string {
+  // --sso forces the SSO flow, which is what a managed org needs; --email
+  // pre-populates so the user does not retype it. Both are documented flags of
+  // claude auth login, checked against --help rather than assumed.
+  const base = 'claude auth login --sso'
+  if (!email) return base
+  // Only an address-shaped value is interpolated. This string is shown to a
+  // human and may be written into a terminal, so it does not get to carry
+  // whatever happened to be in the profile record.
+  return /^[^\s"'`;&|<>$()]+@[^\s"'`;&|<>$()]+$/.test(email) ? `${base} --email ${email}` : base
 }
 
 export function logAuthHandoff(profileId: string): void {

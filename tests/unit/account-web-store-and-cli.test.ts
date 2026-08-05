@@ -12,8 +12,10 @@ vi.mock('../../src/main/channel-storage', () => ({
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 vi.mock('../../src/main/account-profiles', () => ({ getProfileConfigDir: () => '' }))
 
+vi.mock('node:child_process', () => ({ execFileSync: () => { throw new Error('no cli') } }))
+
 const { statusOf } = await import('../../src/main/account-web/session-store')
-const { parseCliAuth } = await import('../../src/main/account-web/claude-cli-auth')
+const { parseCliAuth, parseAuthStatus, claudeAuthCommand } = await import('../../src/main/account-web/claude-cli-auth')
 
 const NOW = 1_700_000_000_000
 
@@ -39,7 +41,56 @@ describe('statusOf — when a web session counts as usable', () => {
   })
 })
 
-describe('parseCliAuth — the code-session half', () => {
+describe('parseAuthStatus — the CLI’s own interface, preferred over the file', () => {
+  // Verified against the real CLI: `claude auth status` with USERPROFILE set to a
+  // profile home reports THAT account. Two profiles returned two different
+  // emails, which is the question the credential file cannot answer.
+  it('reads a signed-in account, with the identity the file does not carry', () => {
+    const r = parseAuthStatus(JSON.stringify({
+      loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty',
+      email: 'a@example.com', orgName: 'Broadnet', subscriptionType: 'team',
+    }))!
+    expect(r.authenticated).toBe(true)
+    expect(r.email).toBe('a@example.com')
+    expect(r.orgName).toBe('Broadnet')
+    expect(r.subscriptionType).toBe('team')
+    expect(r.source).toBe('cli-status')
+  })
+
+  it('reads a signed-out profile', () => {
+    const r = parseAuthStatus(JSON.stringify({ loggedIn: false, authMethod: 'none' }))!
+    expect(r.authenticated).toBe(false)
+    expect(r.email).toBeUndefined()
+  })
+
+  it('returns null on anything that is not a status payload, so the caller falls back', () => {
+    // The CLI also prints human prose (e.g. a missing-config warning). Returning
+    // null — rather than a confident "signed out" — is what lets the credential
+    // file answer instead of the UI wrongly prompting for a sign-in.
+    expect(parseAuthStatus('Claude configuration file not found at: ...')).toBeNull()
+    expect(parseAuthStatus('{ not json')).toBeNull()
+    expect(parseAuthStatus(JSON.stringify({ email: 'a@b.c' }))).toBeNull()
+  })
+})
+
+describe('claudeAuthCommand', () => {
+  it('forces the SSO flow, which is what a managed org needs', () => {
+    expect(claudeAuthCommand()).toBe('claude auth login --sso')
+  })
+
+  it('pre-populates a plausible email', () => {
+    expect(claudeAuthCommand('a@example.com')).toBe('claude auth login --sso --email a@example.com')
+  })
+
+  it('drops anything that is not address-shaped rather than interpolating it', () => {
+    // This string is shown to a human and may be typed into a terminal.
+    for (const bad of ['a@b.c; rm -rf /', 'a b@c.d', '$(whoami)@x.y', 'not-an-email', '']) {
+      expect(claudeAuthCommand(bad)).toBe('claude auth login --sso')
+    }
+  })
+})
+
+describe('parseCliAuth — the credential-file fallback', () => {
   it('reads an authenticated credential file without returning the token', () => {
     const r = parseCliAuth(JSON.stringify({
       claudeAiOauth: { accessToken: 'secret-value', subscriptionType: 'max', expiresAt: NOW },
