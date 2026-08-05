@@ -6,6 +6,7 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
+  unlinkSync,
   copyFileSync,
   readdirSync,
   statSync,
@@ -120,15 +121,58 @@ function loadCatalogue(): InsightsCatalogue {
   return { runs: [] }
 }
 
+/**
+ * On Windows a rename over an existing file fails with EPERM/EACCES/EBUSY while
+ * ANY other process holds a handle on either path — and Defender, the Search
+ * indexer and backup agents all open a file briefly right after it is written.
+ * The window is a few milliseconds, so it is invisible on an idle machine and
+ * common under load: on a Defender-managed box, CPU pressure made this throw on
+ * roughly a third of unit-suite runs, aborting whichever run was mid-flight and
+ * reading as an unrelated flaky test (#213).
+ *
+ * Retrying is the whole fix — the handle is transient by definition. A genuine
+ * permission problem still surfaces, just ~155ms later.
+ */
+const RENAME_RETRY_DELAYS_MS = [5, 10, 20, 40, 80]
+
+function sleepSync(ms: number): void {
+  // saveCatalogue is synchronous and called from sync code paths, so the wait
+  // has to block rather than yield.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+function renameWithRetry(from: string, to: string): void {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(from, to)
+      return
+    } catch (err: any) {
+      const transient = err?.code === 'EPERM' || err?.code === 'EACCES' || err?.code === 'EBUSY'
+      if (!transient || attempt >= RENAME_RETRY_DELAYS_MS.length) {
+        // Don't leave the staged copy behind for the next writer to trip over.
+        try { unlinkSync(from) } catch { /* ignore */ }
+        throw err
+      }
+      logWarn(`[insights] rename ${from} -> ${to} failed with ${err.code}, retry ${attempt + 1}`)
+      sleepSync(RENAME_RETRY_DELAYS_MS[attempt])
+    }
+  }
+}
+
+let catalogueWriteSeq = 0
+
 function saveCatalogue(catalogue: InsightsCatalogue): void {
   ensureDir(getInsightsDir())
   // Atomic: write a tmp then rename over the target so a crash mid-write can't
   // truncate catalogue.json (which loadCatalogue would then read as an empty
   // catalogue, hiding every run).
   const file = getCatalogueFile()
-  const tmp = file + '.tmp'
+  // Unique per write. A write that dies between writeFileSync and the rename
+  // leaves its staging file behind, and a fixed `.tmp` name would let the next
+  // write adopt those stale bytes if it then failed before its own write landed.
+  const tmp = `${file}.${process.pid}.${++catalogueWriteSeq}.tmp`
   writeFileSync(tmp, JSON.stringify(catalogue, null, 2))
-  renameSync(tmp, file)
+  renameWithRetry(tmp, file)
 }
 
 /** Read-modify-write a single run into the CURRENT on-disk catalogue (replace by
