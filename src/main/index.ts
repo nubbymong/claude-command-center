@@ -7,6 +7,7 @@ import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
+import { sweepAbandonedProfiles } from './account-web/sign-in'
 import { killAllPty, gracefulExitAllPty, resolveClaudeForPty } from './pty-manager'
 import { spawnClaudeHeadless } from './claude-headless'
 import { parseClaudeVersion } from './sentinel/sentinel-version'
@@ -757,6 +758,9 @@ if (!gotTheLock) {
     registerUsageHandlers()
     registerDiscoveryHandlers()
     registerAccountWebHandlers()
+    // #216: a crash or forced quit can leave a sign-in browser profile behind, and
+    // each one holds a live claude.ai session. Sweep them at boot.
+    try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }
     registerResumeHandlers()
     // Logs v2 — first-run warned wipe of the OLD log artifacts (orphaned ~21 GB
     // logs.db + ~16 GB legacy logs/ tree + migration markers). The renderer drives

@@ -12,11 +12,10 @@
  * No default export (project convention).
  */
 
-import { BrowserWindow, ipcMain, app } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { PROFILE_ID_RE } from '../../shared/account-web-session'
-import { resolveAuthCdpPort } from '../../shared/cdp-ports'
 import { logError } from '../debug-logger'
 import { getDataDirectory } from '../data-paths'
 import { cancelSignIn, clearWebSession, getSignInState, runSignIn } from '../account-web/sign-in'
@@ -51,7 +50,6 @@ export function registerAccountWebHandlers(): void {
       const state = await runSignIn({
         profileId: id,
         dataDir: getDataDirectory(),
-        port: resolveAuthCdpPort(app.isPackaged),
       })
       if (state.phase === 'done' && state.session) saveWebSession(state.session)
       return { ok: true, state }
@@ -81,11 +79,13 @@ export function registerAccountWebHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_WEB_SIGN_OUT, async (_e, profileId: unknown) => {
     try {
       const id = profileIdSchema.parse(profileId)
-      // Order matters: drop the cookies first, then the record. A crash between
-      // them should leave no usable session with a record claiming otherwise.
+      // Close the window FIRST: it is holding the session being revoked, and if
+      // clearWebSession rejects, an open window on that account is the worst
+      // outcome. Then drop the cookies, then the record — a crash between the
+      // last two leaves no usable session with a record claiming otherwise.
+      closeArtifacts(id)
       await clearWebSession(id)
       removeWebSession(id)
-      closeArtifacts(id)
       return { ok: true }
     } catch (err) {
       return fail('signOut', err)

@@ -43,23 +43,36 @@ export function authProfileDir(dataDir: string, profileId: string): string {
 }
 
 export interface AuthBrowserArgs {
-  port: number
   profileDir: string
   /** Where the browser opens. claude.ai only — this is a sign-in, not a browser. */
   startUrl?: string
 }
 
+/** The file Chrome writes the real port into when launched with port 0. */
+export const DEVTOOLS_PORT_FILE = 'DevToolsActivePort'
+
 /**
  * Build the launch argv.
  *
- * Deliberately NOT headless: the whole point is that a human completes SSO,
- * with their compliance plugin and their MFA. A headless flag here would
- * reproduce exactly the failure #209 hit.
+ * THE PORT IS EPHEMERAL (`=0`), and that is a security decision, not a tidiness
+ * one. Chrome's CDP endpoint has NO AUTHENTICATION: any local process that can
+ * reach it can read the claude.ai cookies out of the browser, or answer as the
+ * browser. On a fixed, published port both are trivial — a squatter listening
+ * there before a sign-in starts can hand CCC an attacker's `sessionKey` and have
+ * it written into the user's partition. Loopback binding is not a control
+ * against local code; unpredictability plus verification is.
+ *
+ * Chrome writes the real port to `<profileDir>/DevToolsActivePort`, which only
+ * the process owning that profile dir can produce — so reading the port from
+ * there is also what proves the endpoint is the browser CCC launched.
+ *
+ * It also removes a collision: two sign-ins can no longer contend for one port.
+ *
+ * Deliberately NOT headless: the whole point is that a human completes SSO with
+ * their compliance plugin and their MFA. A headless flag here would reproduce
+ * exactly the failure #209 hit.
  */
 export function buildAuthBrowserArgs(a: AuthBrowserArgs): string[] {
-  if (!Number.isInteger(a.port) || a.port < 1024 || a.port > 65535) {
-    throw new Error(`refusing to launch a debug browser on an out-of-range port: ${a.port}`)
-  }
   const url = a.startUrl ?? 'https://claude.ai/'
   if (!/^https:\/\/(www\.)?claude\.ai\//.test(url)) {
     // The start URL ends up on a command line and in a browser CCC is
@@ -69,10 +82,11 @@ export function buildAuthBrowserArgs(a: AuthBrowserArgs): string[] {
   }
 
   return [
-    `--remote-debugging-port=${a.port}`,
+    // 0 = ephemeral; the real port is read back from DevToolsActivePort.
+    '--remote-debugging-port=0',
     // Bind the debug endpoint to loopback. Anything that can reach this port can
     // read the claude.ai cookies while the browser is open, so it must never be
-    // reachable off-box.
+    // reachable off-box. This is necessary, not sufficient — see the port note.
     '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${a.profileDir}`,
     '--no-first-run',

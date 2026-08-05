@@ -10,6 +10,9 @@ import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProf
 import { fetchAllAccountsUsage, fetchAccountUsage } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
 import { logError } from '../debug-logger'
+import { clearWebSession } from '../account-web/sign-in'
+import { removeWebSession } from '../account-web/session-store'
+import { closeArtifacts } from '../account-web/artifacts'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
@@ -62,6 +65,14 @@ export function registerAccountProfilesHandlers(): void {
       logError(`[account-profiles] delete failed for ${p.id}:`, err)
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+    // #216: the profile dir is gone, but this account's claude.ai WEB session
+    // lives in an Electron partition, not in that dir. Without this, deleting an
+    // account leaves live cookies on disk indefinitely and an artifacts window
+    // still open on it.
+    closeArtifacts(p.id)
+    void clearWebSession(p.id).catch((err) =>
+      logError(`[account-profiles] could not clear the web session for ${p.id}:`, err))
+    removeWebSession(p.id)
     return { ok: true }
   })
 

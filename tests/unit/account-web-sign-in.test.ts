@@ -28,7 +28,11 @@ vi.mock('node:child_process', () => ({
   spawn: (...a: any[]) => { spawned.push(a); return { killed: false, kill: vi.fn(), on: vi.fn() } },
 }))
 vi.mock('node:fs', () => ({
-  existsSync: () => true,          // pretend the browser binary + profile dir exist
+  existsSync: () => true,            // browser binary + profile dir "exist"
+  // Chrome writes the real port here; the code reads it back to prove the CDP
+  // endpoint belongs to the browser it launched.
+  readFileSync: () => '51234\n',
+  readdirSync: () => [],
   rmSync: vi.fn(),
 }))
 
@@ -55,7 +59,7 @@ beforeEach(() => {
 describe('runSignIn', () => {
   it('injects the cookies and reports the account once signed in', async () => {
     _setCdpForTest(fakeCdp('me@example.com', [sessionCookie]))
-    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', port: 9522, timeoutMs: 3000, pollMs: 5 })
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5 })
 
     expect(s.phase).toBe('done')
     expect(s.session?.accountEmail).toBe('me@example.com')
@@ -68,7 +72,7 @@ describe('runSignIn', () => {
     // Authenticated bootstrap, but only an analytics cookie: injecting this
     // yields a partition that looks signed in and 401s on every request.
     _setCdpForTest(fakeCdp('me@example.com', [{ ...sessionCookie, name: 'ajs_anonymous_id' }]))
-    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', port: 9522, timeoutMs: 120, pollMs: 5 })
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5 })
 
     expect(s.phase).toBe('failed')
     expect(s.error).toMatch(/Timed out/)
@@ -77,7 +81,7 @@ describe('runSignIn', () => {
 
   it('times out rather than hanging when the user never signs in', async () => {
     _setCdpForTest(fakeCdp(null, []))
-    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', port: 9522, timeoutMs: 120, pollMs: 5 })
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5 })
 
     expect(s.phase).toBe('failed')
     expect(cookiesSet).not.toHaveBeenCalled()
@@ -89,7 +93,7 @@ describe('runSignIn', () => {
       { ...sessionCookie, name: 'SID', domain: 'mail.google.com' },
       { ...sessionCookie, name: 'user_session', domain: 'github.com' },
     ]))
-    await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', port: 9522, timeoutMs: 3000, pollMs: 5 })
+    await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5 })
 
     expect(cookiesSet).toHaveBeenCalledTimes(1)
     expect(cookiesSet.mock.calls[0][0].name).toBe(CLAUDE_SESSION_COOKIE)
@@ -97,7 +101,7 @@ describe('runSignIn', () => {
 
   it('refuses a profile id that is not the expected shape, before launching anything', async () => {
     _setCdpForTest(fakeCdp('me@example.com', [sessionCookie]))
-    const s = await runSignIn({ profileId: '../evil', dataDir: 'C:/data', port: 9522, timeoutMs: 120, pollMs: 5 })
+    const s = await runSignIn({ profileId: '../evil', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5 })
 
     expect(s.phase).toBe('failed')
     expect(s.error).toMatch(/unexpected profile id/)

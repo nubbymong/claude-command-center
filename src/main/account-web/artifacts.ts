@@ -17,6 +17,27 @@
 import { BrowserWindow, shell } from 'electron'
 import { logError, logInfo } from '../debug-logger'
 import { webPartitionForProfile } from '../../shared/account-web-session'
+import { safeExternalHttpsHref } from '../../shared/safe-url'
+
+/**
+ * Hand a URL to the OS, but only if it survives the repo's existing control.
+ *
+ * The artifacts page renders user-authored HTML, so a link in it is web content,
+ * not something CCC chose. `shell.openExternal` is an OS-handler sink:
+ * `file:`, `ms-msdt:`, `shell:` and friends reach real handlers, and a
+ * `file://attacker-share/...` is an NTLM leak. `safeExternalHttpsHref` already
+ * exists for exactly this and is used elsewhere in the app; an inline copy of
+ * the pattern that omits the check is how a guarded sink becomes an unguarded
+ * one.
+ */
+function openExternalSafely(url: string): void {
+  const href = safeExternalHttpsHref(url)
+  if (!href) {
+    logError('[account-web] refused to hand a non-https URL from the artifacts window to the OS')
+    return
+  }
+  void shell.openExternal(href)
+}
 
 /** Where the account's artifacts live. */
 export const ARTIFACTS_URL = 'https://claude.ai/artifacts'
@@ -70,19 +91,27 @@ export function openArtifacts(profileId: string, parent?: BrowserWindow): { ok: 
     },
   })
 
-  win.webContents.on('will-navigate', (e, url) => {
-    if (!isAllowed(url)) {
-      e.preventDefault()
-      // A link out of claude.ai belongs in the user's real browser, not in a
-      // window holding their claude.ai session.
-      void shell.openExternal(url)
-    }
-  })
+  const leaveForBrowser = (e: { preventDefault: () => void }, url: string): void => {
+    if (isAllowed(url)) return
+    e.preventDefault()
+    // A link out of claude.ai belongs in the user's real browser, not in a
+    // window holding their claude.ai session.
+    openExternalSafely(url)
+  }
+  win.webContents.on('will-navigate', leaveForBrowser)
+  // will-redirect too: a 302 off claude.ai would otherwise carry the
+  // session-bearing window off the allowlist without a will-navigate event.
+  win.webContents.on('will-redirect', leaveForBrowser)
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowed(url)) return { action: 'allow' }
-    void shell.openExternal(url)
+    openExternalSafely(url)
     return { action: 'deny' }
   })
+
+  // Deny every permission request. Electron grants by default, and a window
+  // holding a live claude.ai session has no business reaching a camera, a
+  // microphone, or the clipboard on a page's say-so.
+  win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
   win.on('closed', () => windows.delete(profileId))
 
   windows.set(profileId, win)
