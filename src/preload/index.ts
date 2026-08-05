@@ -183,13 +183,14 @@ export interface ElectronAPI {
   /** Per-account claude.ai web session (#216). */
   accountWeb: {
     status: (profileId: string) => Promise<
-      { ok: true; web: any; cli: any; authCommand: string } | { ok: false; error: string }
+      { ok: true; web: any; cli: any; authCommand: string; authMethod: 'claudeai' | 'sso' | 'console' } | { ok: false; error: string }
     >
     signIn: (profileId: string) => Promise<{ ok: true; state: any } | { ok: false; error: string }>
     signInState: () => Promise<{ ok: true; state: any } | { ok: false; error: string }>
     cancel: () => Promise<{ ok: true } | { ok: false; error: string }>
     signOut: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -684,6 +685,7 @@ const electronAPI: ElectronAPI = {
     cancel: () => ipcRenderer.invoke(IPC.ACCOUNT_WEB_CANCEL),
     signOut: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SIGN_OUT, profileId),
     openArtifacts: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_OPEN_ARTIFACTS, profileId),
+    setAuthMethod: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_METHOD, args),
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),

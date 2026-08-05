@@ -73,19 +73,32 @@ describe('parseAuthStatus — the CLI’s own interface, preferred over the file
   })
 })
 
-describe('claudeAuthCommand', () => {
-  it('forces the SSO flow, which is what a managed org needs', () => {
-    expect(claudeAuthCommand()).toBe('claude auth login --sso')
+describe('claudeAuthCommand — the flow is per account, not assumed', () => {
+  it('emits the flag for each of the CLI’s actual choices', () => {
+    // Hardcoding --sso was wrong: an org account uses SSO, a personal
+    // subscription does not, and a Console account bills API usage. Getting it
+    // wrong fails at the identity provider, not in CCC.
+    expect(claudeAuthCommand('claudeai')).toBe('claude auth login --claudeai')
+    expect(claudeAuthCommand('sso')).toBe('claude auth login --sso')
+    expect(claudeAuthCommand('console')).toBe('claude auth login --console')
+  })
+
+  it('defaults to the subscription flow, which is the CLI’s own default', () => {
+    expect(claudeAuthCommand()).toBe('claude auth login --claudeai')
+  })
+
+  it('falls back to the default rather than emitting an unknown flag', () => {
+    expect(claudeAuthCommand('nonsense' as never)).toBe('claude auth login --claudeai')
   })
 
   it('pre-populates a plausible email', () => {
-    expect(claudeAuthCommand('a@example.com')).toBe('claude auth login --sso --email a@example.com')
+    expect(claudeAuthCommand('sso', 'a@example.com')).toBe('claude auth login --sso --email a@example.com')
   })
 
   it('drops anything that is not address-shaped rather than interpolating it', () => {
     // This string is shown to a human and may be typed into a terminal.
     for (const bad of ['a@b.c; rm -rf /', 'a b@c.d', '$(whoami)@x.y', 'not-an-email', '']) {
-      expect(claudeAuthCommand(bad)).toBe('claude auth login --sso')
+      expect(claudeAuthCommand('sso', bad)).toBe('claude auth login --sso')
     }
   })
 })

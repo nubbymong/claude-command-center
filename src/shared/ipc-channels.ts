@@ -310,6 +310,7 @@ export const IPC = {
   ACCOUNT_WEB_CANCEL: 'accountWeb:cancel',
   ACCOUNT_WEB_SIGN_OUT: 'accountWeb:signOut',
   ACCOUNT_WEB_OPEN_ARTIFACTS: 'accountWeb:openArtifacts',
+  ACCOUNT_WEB_SET_AUTH_METHOD: 'accountWeb:setAuthMethod',
 
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',

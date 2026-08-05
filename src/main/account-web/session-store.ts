@@ -9,26 +9,56 @@
 //
 // Follows the standing-approvals-store convention (schemaVersion + readJsonFile
 // / writeJsonFile).
-import type { AccountWebSession } from '../../shared/account-web-session'
+import {
+  DEFAULT_CLI_AUTH_METHOD,
+  isCliAuthMethod,
+  type AccountWebSession,
+  type CliAuthMethod,
+} from '../../shared/account-web-session'
 import { readJsonFile, writeJsonFile } from '../channel-storage'
 
 const FILE = 'account-web-sessions.json'
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 interface SessionsFile {
   schemaVersion: number
   sessions: AccountWebSession[]
+  /** Per-account CLI sign-in flow. Absent means the default. */
+  authMethods: Record<string, CliAuthMethod>
 }
 
 function seed(): SessionsFile {
-  return { schemaVersion: SCHEMA_VERSION, sessions: [] }
+  return { schemaVersion: SCHEMA_VERSION, sessions: [], authMethods: {} }
 }
 
 function read(): SessionsFile {
   const f = readJsonFile<SessionsFile>(FILE, seed)
-  return f.schemaVersion === SCHEMA_VERSION
-    ? { schemaVersion: SCHEMA_VERSION, sessions: f.sessions ?? [] }
-    : seed()
+  // v1 -> v2 added authMethods. MIGRATE rather than reseed: discarding the file
+  // would silently sign every account out of claude.ai on upgrade, which looks
+  // like a bug in the sign-in rather than in the store.
+  if (f.schemaVersion === 1) {
+    return { schemaVersion: SCHEMA_VERSION, sessions: f.sessions ?? [], authMethods: {} }
+  }
+  if (f.schemaVersion !== SCHEMA_VERSION) return seed()
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    sessions: f.sessions ?? [],
+    authMethods: f.authMethods ?? {},
+  }
+}
+
+/** The account's chosen CLI sign-in flow, or the default. */
+export function getAuthMethod(profileId: string): CliAuthMethod {
+  const v = read().authMethods[profileId]
+  return isCliAuthMethod(v) ? v : DEFAULT_CLI_AUTH_METHOD
+}
+
+/** Record the account's CLI sign-in flow. Refuses anything the CLI does not offer. */
+export function setAuthMethod(profileId: string, method: CliAuthMethod): void {
+  if (!isCliAuthMethod(method)) throw new Error(`unknown auth method: ${method}`)
+  const f = read()
+  f.authMethods = { ...f.authMethods, [profileId]: method }
+  writeJsonFile(FILE, f)
 }
 
 /** How a stored session looks to the UI once expiry is taken into account. */

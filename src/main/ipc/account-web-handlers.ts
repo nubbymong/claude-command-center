@@ -19,7 +19,7 @@ import { PROFILE_ID_RE } from '../../shared/account-web-session'
 import { logError } from '../debug-logger'
 import { getDataDirectory } from '../data-paths'
 import { cancelSignIn, clearWebSession, getSignInState, runSignIn } from '../account-web/sign-in'
-import { removeWebSession, saveWebSession, viewFor } from '../account-web/session-store'
+import { getAuthMethod, removeWebSession, saveWebSession, setAuthMethod, viewFor } from '../account-web/session-store'
 import { readClaudeCliAuth, claudeAuthCommand } from '../account-web/claude-cli-auth'
 import { closeArtifacts, openArtifacts } from '../account-web/artifacts'
 
@@ -38,7 +38,17 @@ export function registerAccountWebHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_WEB_STATUS, async (_e, profileId: unknown) => {
     try {
       const id = profileIdSchema.parse(profileId)
-      return { ok: true, web: viewFor(id), cli: readClaudeCliAuth(id), authCommand: claudeAuthCommand() }
+      const cli = readClaudeCliAuth(id)
+      const authMethod = getAuthMethod(id)
+      return {
+        ok: true,
+        web: viewFor(id),
+        cli,
+        authMethod,
+        // Built from the account's OWN setting and its reported address, so the
+        // command shown is the one that will actually work for this account.
+        authCommand: claudeAuthCommand(authMethod, cli.email),
+      }
     } catch (err) {
       return fail('status', err)
     }
@@ -89,6 +99,20 @@ export function registerAccountWebHandlers(): void {
       return { ok: true }
     } catch (err) {
       return fail('signOut', err)
+    }
+  })
+
+  ipcMain.handle(IPC.ACCOUNT_WEB_SET_AUTH_METHOD, async (_e, args: unknown) => {
+    try {
+      // The method is validated against the CLI's actual choices, not accepted
+      // as a string: it becomes a `--flag` on a command shown to a human.
+      const { profileId, method } = z
+        .object({ profileId: profileIdSchema, method: z.enum(['claudeai', 'sso', 'console']) })
+        .parse(args)
+      setAuthMethod(profileId, method)
+      return { ok: true }
+    } catch (err) {
+      return fail('setAuthMethod', err)
     }
   })
 

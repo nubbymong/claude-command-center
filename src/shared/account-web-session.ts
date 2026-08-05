@@ -24,6 +24,38 @@
 /** Where a web session came from. Recorded so a stale one can be explained. */
 export type WebSessionOrigin = 'system-browser'
 
+/**
+ * How an account signs in to the Claude Code CLI.
+ *
+ * PER ACCOUNT, because it genuinely varies: an org account goes through SSO, a
+ * personal subscription does not, and a Console account bills API usage instead
+ * of using a subscription. These are the flows `claude auth login` actually
+ * offers (`--claudeai` (default) / `--console` / `--sso`), read off its own
+ * `--help` rather than assumed.
+ *
+ * Defaulting every account to `sso` — as the first cut did — is wrong for anyone
+ * whose account is not an SSO one, and it fails in a confusing place: at the
+ * identity provider, not in CCC.
+ */
+export type CliAuthMethod = 'claudeai' | 'console' | 'sso'
+
+export const CLI_AUTH_METHODS: readonly CliAuthMethod[] = ['claudeai', 'sso', 'console']
+
+/** The default when an account has never been told otherwise. */
+export const DEFAULT_CLI_AUTH_METHOD: CliAuthMethod = 'claudeai'
+
+/** Human labels for the picker. */
+export const CLI_AUTH_METHOD_LABELS: Record<CliAuthMethod, string> = {
+  claudeai: 'Claude subscription',
+  sso: 'Single sign-on (SSO)',
+  console: 'Anthropic Console (API billing)',
+}
+
+/** True when the value is one of the CLI's actual choices. */
+export function isCliAuthMethod(v: unknown): v is CliAuthMethod {
+  return typeof v === 'string' && (CLI_AUTH_METHODS as readonly string[]).includes(v)
+}
+
 export interface AccountWebSession {
   /** The account profile this session belongs to. Never shared between accounts. */
   profileId: string

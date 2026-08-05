@@ -29,6 +29,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo } from '../debug-logger'
 import { getProfileConfigDir, getProfilesRoot } from '../account-profiles'
+import { DEFAULT_CLI_AUTH_METHOD, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
 export interface ClaudeCliAuthStatus {
   /** True when this account is signed in to the CLI. */
@@ -144,11 +145,13 @@ export function readClaudeCliAuth(profileId: string): ClaudeCliAuthStatus {
  * its browser hand-off and any prompts are visible — instead of a hidden child
  * process the user cannot answer.
  */
-export function claudeAuthCommand(email?: string): string {
-  // --sso forces the SSO flow, which is what a managed org needs; --email
-  // pre-populates so the user does not retype it. Both are documented flags of
-  // claude auth login, checked against --help rather than assumed.
-  const base = 'claude auth login --sso'
+export function claudeAuthCommand(method: CliAuthMethod = DEFAULT_CLI_AUTH_METHOD, email?: string): string {
+  // The flag comes from the account's own setting, not a guess. `--claudeai` is
+  // the CLI's default and is emitted explicitly so the command is
+  // self-describing when a user copies it. All three are documented flags of
+  // `claude auth login`, read off its --help.
+  const flag = isCliAuthMethod(method) ? method : DEFAULT_CLI_AUTH_METHOD
+  const base = `claude auth login --${flag}`
   if (!email) return base
   // Only an address-shaped value is interpolated. This string is shown to a
   // human and may be written into a terminal, so it does not get to carry

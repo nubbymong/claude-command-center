@@ -15,6 +15,12 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react'
+import {
+  CLI_AUTH_METHODS,
+  CLI_AUTH_METHOD_LABELS,
+  DEFAULT_CLI_AUTH_METHOD,
+  type CliAuthMethod,
+} from '../../../shared/account-web-session'
 
 interface Props {
   profileId: string
@@ -22,7 +28,7 @@ interface Props {
 }
 
 type Web = { status: 'none' | 'active' | 'expired'; accountEmail?: string | null; acquiredAt?: number; expiresAt?: number | null }
-type Cli = { authenticated: boolean; subscriptionType?: string; expiresAt?: number; error?: string }
+type Cli = { authenticated: boolean; subscriptionType?: string; expiresAt?: number; email?: string; orgName?: string; error?: string }
 
 const fmt = (ms?: number | null): string =>
   typeof ms === 'number' && ms > 0 ? new Date(ms).toLocaleString() : 'unknown'
@@ -31,14 +37,15 @@ export function AccountWebSession({ profileId, accountName }: Props) {
   const api = window.electronAPI.accountWeb
   const [web, setWeb] = useState<Web>({ status: 'none' })
   const [cli, setCli] = useState<Cli>({ authenticated: false })
-  const [authCommand, setAuthCommand] = useState('claude auth')
+  const [authCommand, setAuthCommand] = useState('claude auth login')
+  const [authMethod, setAuthMethod] = useState<CliAuthMethod>(DEFAULT_CLI_AUTH_METHOD)
   const [phase, setPhase] = useState<string>('idle')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const refresh = useCallback(async () => {
     const r = await api.status(profileId)
-    if (r.ok) { setWeb(r.web); setCli(r.cli); setAuthCommand(r.authCommand) }
+    if (r.ok) { setWeb(r.web); setCli(r.cli); setAuthCommand(r.authCommand); if (r.authMethod) setAuthMethod(r.authMethod) }
     else setError(r.error)
   }, [profileId])
 
@@ -53,6 +60,13 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     }, 1000)
     return () => clearInterval(t)
   }, [busy])
+
+  const changeAuthMethod = async (m: CliAuthMethod): Promise<void> => {
+    setAuthMethod(m)   // optimistic: the picker should not lag the click
+    const r = await api.setAuthMethod({ profileId, method: m })
+    if (!r.ok) setError(r.error)
+    await refresh()    // re-read so the shown command matches what was stored
+  }
 
   const signIn = async (): Promise<void> => {
     setBusy(true); setError(''); setPhase('launching')
@@ -94,13 +108,34 @@ export function AccountWebSession({ profileId, accountName }: Props) {
           </div>
           <div className="text-[10px] text-overlay0 leading-snug">
             {cli.authenticated
-              ? `Token expires ${fmt(cli.expiresAt)}.`
+              ? <>
+                  {cli.email ? <>Signed in as <span className="text-subtext0">{cli.email}</span>. </> : null}
+                  {cli.orgName ? <>{cli.orgName}. </> : null}
+                  {cli.expiresAt ? `Token expires ${fmt(cli.expiresAt)}.` : null}
+                </>
               : <>
                   Sign in from a running session for this account: <span className="text-subtext0">right-click it
                   → Sign in to Claude Code</span>, which runs <code className="text-subtext0">/login</code> in that
-                  terminal and opens your own browser. Or run <code className="text-subtext0">{authCommand}</code>
-                  {' '}yourself.
+                  terminal and opens your own browser. Or run{' '}
+                  <code className="text-subtext0">{authCommand}</code> yourself.
                 </>}
+          </div>
+
+          {/* Sign-in flow is PER ACCOUNT: an org account goes through SSO, a
+              personal subscription does not, and a Console account bills API
+              usage. Defaulting everyone to one of them fails at the identity
+              provider rather than here, which is a bad place to find out. */}
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className="text-[10px] text-overlay0 shrink-0">Sign-in flow</span>
+            <select
+              value={authMethod}
+              onChange={(e) => { void changeAuthMethod(e.target.value as CliAuthMethod) }}
+              className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue"
+            >
+              {CLI_AUTH_METHODS.map((m) => (
+                <option key={m} value={m}>{CLI_AUTH_METHOD_LABELS[m]}</option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
