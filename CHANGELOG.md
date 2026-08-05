@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-beta.7] - 2026-08-05
+
+### Fixed
+- Windows: an Insights run could report itself as failed for no visible reason. Security software on Windows briefly holds a file open just after it has been written, and that could make saving the list of runs fail — more often when the machine was busy. Saving now waits a moment and tries again.
+- Insights could get stuck insisting a report was already being generated when nothing was running, leaving restarting the app as the only way out. If saving the list of runs failed at the wrong moment, the app never cleared its "in progress" marker. That marker is now always cleared, however the run ends.
+
 ## [2.1.0-beta.6] - 2026-08-04
 
 > The app is now AI Code Conductor, with a new icon, start-up animation and a rebuilt session setup dialog. Insights can also look at all of your accounts at once: one click generates every account's report and then a combined report that compares them side by side.
@@ -992,6 +998,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-beta.7]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.7
 [2.1.0-beta.6]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.6
 [2.1.0-beta.5]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.5
 [2.1.0-beta.4]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.4
