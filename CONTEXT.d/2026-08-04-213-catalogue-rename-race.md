@@ -99,9 +99,21 @@ failure mid-fan-out. Verified to fail 3 of 3 against the old ordering. ENOSPC de
 not EPERM: EPERM is now retried, and a guard that the fix above quietly satisfies would not
 be testing this at all.
 
-Follow-up, not done here: the same fixed-`.tmp`-plus-bare-`renameSync` shape appears in
-roughly a dozen other main-process modules (`config-manager.ts`, `session-state.ts`,
-`account-profiles.ts`, `model-registry-service.ts`, `sentinel/sentinel-state.ts`,
-`hooks/per-session-settings.ts`, `channel-storage.ts`, `codex-review-usage.ts` and others).
-Every one of them can lose the same race; `config-manager.ts` losing it means a dropped
-config save. A shared atomic-write helper is the right fix and is out of scope for #213.
+Follow-up, filed as #233 and out of scope here: `insights-runner.ts` is now the ONLY
+atomic-write site in `src/main` that retries. Roughly a dozen others -- `config-manager.ts`,
+`session-state.ts`, `account-profiles.ts`, `model-registry-service.ts`,
+`sentinel/sentinel-state.ts`, `hooks/per-session-settings.ts`, `channel-storage.ts`,
+`codex-review-usage.ts`, `conductor-mcp-server.ts`, `usage/account-usage.ts` -- can lose the
+same race. `config-manager.ts:165` catches it, logs, and returns `false`, so a scanner
+winning a 3ms race silently DROPS a config save: worse than what #213 fixed, because a
+failed insights run is visible and a lost settings write is not. The fix is one shared
+`atomicWriteFileSync` helper, and it wants an adversarial pass because `account-profiles.ts`
+credential writes and their `0600`/`hardenCredentialFile` handling have to survive it.
+
+A correction worth recording, because the first version of this fragment got it wrong: the
+staging-name half of that claim did NOT generalise. Most of those sites already qualify the
+tmp by pid (`${filePath}.tmp.${process.pid}`), and the two GitHub stores use a per-write
+`randomUUID()`. Only `account-profiles.ts`, `channel-storage.ts`, `model-registry-service.ts`
+and `sentinel/sentinel-state.ts` use a bare fixed `.tmp`. The shared gap is the MISSING
+RETRY, not the staging name -- the name is secondary hygiene. Grepping for `+ '.tmp'` found
+one shape and I generalised from it without reading the other construction sites.
