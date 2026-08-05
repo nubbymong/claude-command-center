@@ -302,6 +302,15 @@ export const IPC = {
   WEBVIEW_CLOSE_ALL: 'webview:closeAll',          // emergency: destroy every view (escape hatch)
   WEBVIEW_ESCAPE_PRESSED: 'webview:escapePressed', // main → renderer: user pressed Esc inside a WebContentsView
 
+  // Per-account claude.ai web session (#216): sign in via the system browser,
+  // hold the cookies in a per-account partition, open artifacts as that account.
+  ACCOUNT_WEB_STATUS: 'accountWeb:status',
+  ACCOUNT_WEB_SIGN_IN: 'accountWeb:signIn',
+  ACCOUNT_WEB_SIGN_IN_STATE: 'accountWeb:signInState',
+  ACCOUNT_WEB_CANCEL: 'accountWeb:cancel',
+  ACCOUNT_WEB_SIGN_OUT: 'accountWeb:signOut',
+  ACCOUNT_WEB_OPEN_ARTIFACTS: 'accountWeb:openArtifacts',
+
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',
   HOOKS_GET_BUFFER: 'hooks:getBuffer',

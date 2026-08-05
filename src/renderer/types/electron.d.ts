@@ -301,6 +301,17 @@ export interface ElectronAPI {
     /** Live push from the worker when a tailed transcript appends messages. */
     onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
+  /** Per-account claude.ai web session (#216). */
+  accountWeb: {
+    status: (profileId: string) => Promise<
+      { ok: true; web: any; cli: any; authCommand: string } | { ok: false; error: string }
+    >
+    signIn: (profileId: string) => Promise<{ ok: true; state: any } | { ok: false; error: string }>
+    signInState: () => Promise<{ ok: true; state: any } | { ok: false; error: string }>
+    cancel: () => Promise<{ ok: true } | { ok: false; error: string }>
+    signOut: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+  }
   discovery: {
     getProjects: () => Promise<any>
     getSessionHistory: (projectPath: string) => Promise<any>

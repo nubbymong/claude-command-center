@@ -6,6 +6,7 @@ import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
+import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { killAllPty, gracefulExitAllPty, resolveClaudeForPty } from './pty-manager'
 import { spawnClaudeHeadless } from './claude-headless'
 import { parseClaudeVersion } from './sentinel/sentinel-version'
@@ -755,6 +756,7 @@ if (!gotTheLock) {
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
     registerDiscoveryHandlers()
+    registerAccountWebHandlers()
     registerResumeHandlers()
     // Logs v2 — first-run warned wipe of the OLD log artifacts (orphaned ~21 GB
     // logs.db + ~16 GB legacy logs/ tree + migration markers). The renderer drives
