@@ -95,7 +95,12 @@ export function AccountWebSession({ profileId, accountName }: Props) {
           <div className="text-[10px] text-overlay0 leading-snug">
             {cli.authenticated
               ? `Token expires ${fmt(cli.expiresAt)}.`
-              : <>Run <code className="text-subtext0">{authCommand}</code> in a session for this account. It opens your own browser, so your sign-in extensions are there.</>}
+              : <>
+                  Sign in from a running session for this account: <span className="text-subtext0">right-click it
+                  → Sign in to Claude Code</span>, which runs <code className="text-subtext0">/login</code> in that
+                  terminal and opens your own browser. Or run <code className="text-subtext0">{authCommand}</code>
+                  {' '}yourself.
+                </>}
           </div>
         </div>
       </div>

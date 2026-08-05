@@ -22,11 +22,21 @@ interface SessionContextMenuProps {
   /** Switch this session to the chosen account (undefined = default account).
    *  No-op upstream when it equals the current account. */
   onSwitchAccount?: (profileId: string | undefined) => void
+  /** #216: open claude.ai artifacts as THIS session's account. Hidden when undefined. */
+  onOpenArtifacts?: () => void
+  /** #216: acquire this account's claude.ai web session (opens the system browser). */
+  onAuthenticateWeb?: () => void
+  /** #216: sign the CODE session in — writes /login into this session's own terminal. */
+  onSignInCode?: () => void
+  /** True when this account already holds a claude.ai web session; drives the
+   *  artifacts item's enabled state and the wording of the authenticate item. */
+  hasWebSession?: boolean
 }
 
 export default function SessionContextMenu({
   x, y, session, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss,
   canSwitchAccount, profiles, accountAliases, onSwitchAccount,
+  onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
@@ -58,6 +68,54 @@ export default function SessionContextMenu({
           </svg>
           Remove from Group
         </button>
+      )}
+
+      {/* #216: account actions, reachable from the session itself. If artifacts
+          will not open, the fix is the next item down rather than a trip to
+          Settings — which is the whole reason these live here. */}
+      {(onOpenArtifacts || onAuthenticateWeb || onSignInCode) && (
+        <>
+          <div className="my-1 border-t border-surface1" />
+          {onOpenArtifacts && (
+            <button
+              onClick={() => { onOpenArtifacts(); onDismiss() }}
+              disabled={!hasWebSession}
+              title={hasWebSession ? 'Open this account’s artifacts on claude.ai' : 'Authenticate claude.ai first'}
+              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+                <rect x="1.5" y="2" width="9" height="8" rx="1.2"/>
+                <path d="M1.5 4.5h9" strokeLinecap="round"/>
+              </svg>
+              Open artifacts
+            </button>
+          )}
+          {onAuthenticateWeb && (
+            <button
+              onClick={() => { onAuthenticateWeb(); onDismiss() }}
+              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+                <circle cx="6" cy="6" r="4.5"/>
+                <path d="M1.5 6h9M6 1.5c1.5 1.6 1.5 7.4 0 9M6 1.5c-1.5 1.6-1.5 7.4 0 9" strokeLinecap="round"/>
+              </svg>
+              {hasWebSession ? 'Re-authenticate claude.ai...' : 'Authenticate claude.ai...'}
+            </button>
+          )}
+          {onSignInCode && (
+            <button
+              onClick={() => { onSignInCode(); onDismiss() }}
+              title="Runs /login in this session’s terminal"
+              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+                <path d="M7 1.5h2.5a1 1 0 011 1v7a1 1 0 01-1 1H7" strokeLinecap="round"/>
+                <path d="M5 8.5L7.5 6 5 3.5M7.5 6H1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Sign in to Claude Code
+            </button>
+          )}
+        </>
       )}
 
       {showSwitch && (
