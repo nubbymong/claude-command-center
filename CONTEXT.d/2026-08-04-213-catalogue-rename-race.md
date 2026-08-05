@@ -17,9 +17,23 @@ running:
 rename fails with EPERM/EACCES/EBUSY while ANY other process holds a handle on either path,
 and Defender, the Search indexer and backup agents all open a file briefly right after it is
 written. The window is a few milliseconds, so it is invisible on an idle machine and common
-under load. When it fired, `publish()` threw, `runCrossAccountInsights` caught it, and the
-roll-up was marked failed -- surfacing as whichever assertion that test happened to make.
-That is why a different test failed each run, and why running the file alone always passed.
+under load. That is why a different test failed each run, and why running the file alone
+always passed.
+
+Where the throw lands was measured rather than assumed, by injecting a single EPERM at the
+Nth catalogue write of a two-account roll-up and sweeping N (a throwaway test, since a real
+scanner will not hold still). Three distinct outcomes, and the first guess was the rarest:
+
+- N = 1, the aggregate's opening `publish()`: rejects outright AND strands the lock (below).
+- N = 2..11, any write inside a member's `runInsights`: that member is caught by its own
+  handler and marked failed, so the roll-up legitimately refuses with "Only 1 of 2 accounts
+  produced KPIs". This is the common case and it matches the observed test failures exactly
+  -- `expected 'failed' to be 'complete'`, with the EPERM nowhere in the assertion.
+- N = 12, a write inside the aggregate's own try: caught at the bottom of
+  `runCrossAccountInsights`, roll-up marked failed with the EPERM text as its error.
+
+Only the last of those is "publish() threw and the roll-up caught it", which is what the
+commit message for the first pass claimed. The member path is what actually bit.
 
 Cross-test leakage was ruled out rather than assumed: every catalogue path is synchronous
 (`readFileSync`/`writeFileSync`/`renameSync`), so two `upsertRun` calls cannot interleave,
@@ -57,6 +71,33 @@ promptly flaked under load itself, because a REAL Defender EPERM added an attemp
 had not injected. It now asserts that the injected failures were consumed and that the set of
 distinct staging paths is right, never the attempt count. Writing a retry-tolerant fix
 deserves a retry-tolerant assertion.
+
+## A second, worse bug the sweep exposed: the stranded lock
+
+The N = 1 case is not a variant of the same failure, it is a separate defect. Both run
+entry points take their lock, then do disk work, and only THEN enter the try whose `finally`
+releases it:
+
+    inFlight.add(key)
+    ensureDir(archiveDir)      // can throw: EACCES, ENOSPC
+    upsertRun(run)             // can throw: the rename race above
+    try { ... } finally { inFlight.delete(key) }
+
+Anything that throws in that gap strands the key in `inFlight` for the life of the process.
+The user then gets "Insights already running for this account" -- or "A cross-account report
+is already being generated" -- forever, with nothing running and no way out but restarting
+the app. The retry above makes the rename race far less likely to trigger it, but `ensureDir`
+on a full or locked disk reaches it just as well, so the retry is not a fix for this.
+
+Fixed by moving `ensureDir` and the opening `upsertRun`/`publish()` inside the existing try
+in both `runInsights` and `runCrossAccountInsights`. The lock is still taken immediately
+before the try, so the guard itself is unchanged; only the unprotected gap closes.
+
+`tests/unit/insights-lock-release.test.ts` injects a non-retryable ENOSPC at a chosen write
+and asserts the lock is clear afterwards, for the per-account lock, the aggregate lock, and a
+failure mid-fan-out. Verified to fail 3 of 3 against the old ordering. ENOSPC deliberately,
+not EPERM: EPERM is now retried, and a guard that the fix above quietly satisfies would not
+be testing this at all.
 
 Follow-up, not done here: the same fixed-`.tmp`-plus-bare-`renameSync` shape appears in
 roughly a dozen other main-process modules (`config-manager.ts`, `session-state.ts`,

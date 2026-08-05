@@ -954,14 +954,19 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
 
   const id = generateRunId()
   const archiveDir = join(getInsightsDir(), id)
-  ensureDir(archiveDir)
-
   const run: InsightsRun = { id, timestamp: Date.now(), status: 'running', accountEmail: account.accountEmail, profileId: account.profileId }
-  upsertRun(run)
-  notifyRenderer(getWindow, run)
-  logInfo(`[insights] Run ${id} account=${account.accountEmail ?? '(default)'} home=${account.home ?? 'global'}`)
 
+  // Everything that can touch the disk lives inside the try, because only its
+  // `finally` releases the lock. ensureDir and the first upsertRun used to run
+  // above it, so a transient failure there (a scanner losing us the catalogue
+  // rename, a full disk) left `key` in `inFlight` forever and every later run
+  // for that account reported "Insights already running" with nothing running.
   try {
+    ensureDir(archiveDir)
+    upsertRun(run)
+    notifyRenderer(getWindow, run)
+    logInfo(`[insights] Run ${id} account=${account.accountEmail ?? '(default)'} home=${account.home ?? 'global'}`)
+
     // Step 1: Run /insights via interactive PTY
     run.statusMessage = 'Step 1/3: Generating report...'
     upsertRun(run)
@@ -1081,7 +1086,6 @@ export async function runCrossAccountInsights(
 
   const id = generateRunId()
   const archiveDir = join(getInsightsDir(), id)
-  ensureDir(archiveDir)
 
   const run: InsightsRun = {
     id,
@@ -1105,10 +1109,14 @@ export async function runCrossAccountInsights(
     const row = run.members?.find(m => m.profileId === profileId)
     if (row) Object.assign(row, patch)
   }
-  publish()
-  logInfo(`[insights] Cross-account run ${id} over ${targets.length} accounts`)
-
+  // Same reason as runInsights: ensureDir and the opening publish() have to be
+  // inside the try, or a transient disk failure there strands CROSS_ACCOUNT_KEY
+  // in `inFlight` and every later roll-up reports "already being generated".
   try {
+    ensureDir(archiveDir)
+    publish()
+    logInfo(`[insights] Cross-account run ${id} over ${targets.length} accounts`)
+
     // Step 1: fan out one normal per-account run each, bounded so a wide
     // multi-account setup doesn't put N interactive Claude PTYs on the machine.
     let done = 0
