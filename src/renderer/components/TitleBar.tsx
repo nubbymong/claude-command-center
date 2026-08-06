@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useIsDev } from '../hooks/useIsDev'
 import ThemeToggle from './ThemeToggle'
+import { BrandMark } from './BrandMark'
 import ConductorHealthPill from './ConductorHealthPill'
 import ConductorServicesPanel from './ConductorServicesPanel'
 import SentinelDot from './sentinel/SentinelDot'
@@ -197,6 +198,11 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         ...(isDev ? { boxShadow: 'inset 0 -2px 0 var(--status-warning)' } : {}),
       }}
     >
+      {/* Brand mark. Deliberately left INSIDE the drag region: it is decorative,
+          so the window stays draggable by it rather than presenting a dead
+          click target. aria-hidden — the window title already names the app. */}
+      <BrandMark className="w-[18px] h-[18px] shrink-0 mr-2.5 opacity-95" />
+
       <div className="titlebar-no-drag flex items-center gap-1 mr-3">
         <button
           onClick={onToggleSidebar}

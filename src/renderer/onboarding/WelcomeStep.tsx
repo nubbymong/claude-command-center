@@ -1,4 +1,4 @@
-import { BrandMark } from './BrandMark'
+import { BrandMark } from '../components/BrandMark'
 import { useSettingsStore, type ThemeMode } from '../stores/settingsStore'
 
 const LOCK = String.fromCodePoint(0x1f512)
