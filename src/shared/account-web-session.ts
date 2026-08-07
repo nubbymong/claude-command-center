@@ -56,6 +56,49 @@ export function isCliAuthMethod(v: unknown): v is CliAuthMethod {
   return typeof v === 'string' && (CLI_AUTH_METHODS as readonly string[]).includes(v)
 }
 
+/**
+ * Which system browser completes an account's claude.ai sign-in.
+ *
+ * PER ACCOUNT AND USER-CHOSEN, because the browsers are not interchangeable for
+ * SSO and the difference is invisible until the login fails. Measured on the
+ * target managed workstation, 2026-08-06:
+ *
+ *   Chrome  ExtensionInstallForcelist (HKCU) forces `Microsoft Single Sign On`.
+ *           A FRESH profile — which this feature creates by design — does not
+ *           have it yet: Chrome fetches force-installed extensions
+ *           asynchronously after launch, so claude.ai loads before the
+ *           extension exists and the SSO step fails.
+ *   Edge    Does Entra SSO natively, with no extension to wait for. A fresh
+ *           profile completed the login. Verified by hand.
+ *
+ * So Edge is the default. It stays a CHOICE rather than a hardcoded switch
+ * because neither the policy nor the identity provider is CCC's to assume: an
+ * account on a personal machine, an org that forces Chrome, or a box with no
+ * Edge at all all want the other answer.
+ */
+export type AuthBrowser = 'chrome' | 'edge'
+
+export const AUTH_BROWSERS: readonly AuthBrowser[] = ['edge', 'chrome']
+
+/**
+ * The default when an account has never been told otherwise.
+ *
+ * Edge, because it is the one verified to complete an SSO login in a fresh
+ * profile. `resolveBrowserBinary` still falls back when it is absent.
+ */
+export const DEFAULT_AUTH_BROWSER: AuthBrowser = 'edge'
+
+/** Human labels for the picker. */
+export const AUTH_BROWSER_LABELS: Record<AuthBrowser, string> = {
+  edge: 'Microsoft Edge',
+  chrome: 'Google Chrome',
+}
+
+/** True when the value names a browser this app can drive. */
+export function isAuthBrowser(v: unknown): v is AuthBrowser {
+  return typeof v === 'string' && (AUTH_BROWSERS as readonly string[]).includes(v)
+}
+
 export interface AccountWebSession {
   /** The account profile this session belongs to. Never shared between accounts. */
   profileId: string

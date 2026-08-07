@@ -5,12 +5,19 @@
  * decisions that matter can be tested without spawning Chrome.
  *
  * WHY THE SYSTEM BROWSER. An embedded Electron window loads no browser
- * extensions. #209 shipped one and it could not complete a login on a managed
- * workstation, because a compliance-mandated SSO plugin simply is not there. The
- * user's real Chrome has it. Verified on the target machine: Chrome's
- * `ExtensionInstallForcelist` is set under HKCU, and force-installed extensions
- * install into ANY profile — including the fresh one this module creates. That
- * single fact is what makes a dedicated profile viable instead of a dead end.
+ * extensions and has no OS identity, so #209's in-app window could not complete a
+ * login on a managed workstation. The user's own browser can.
+ *
+ * WHICH system browser is the ACCOUNT'S CHOICE, and the reason is a correction to
+ * this file's first draft. It argued that because Chrome's
+ * `ExtensionInstallForcelist` is set under HKCU, force-installed extensions
+ * install into ANY profile including the fresh one created here, and that this was
+ * what made a dedicated profile viable. The policy claim is true; the TIMING is
+ * not. Measured 2026-08-06: Chrome fetches force-installed extensions
+ * asynchronously after launch, so claude.ai loads before `Microsoft Single Sign
+ * On` exists and the SSO step fails in a fresh profile. Edge does Entra SSO
+ * natively, with nothing to wait for, and completed the same login. Hence
+ * `AuthBrowser` and an Edge default — see `shared/account-web-session.ts`.
  *
  * WHY A DEDICATED PROFILE DIR. Chrome refuses `--remote-debugging-port` against
  * the DEFAULT profile (136+), so debugging the user's everyday profile is not
@@ -25,8 +32,13 @@
 import { join } from 'node:path'
 import { PROFILE_ID_RE } from '../../shared/account-web-session'
 
-/** Browsers this module can drive. Same engine, same CDP. */
-export type AuthBrowser = 'chrome' | 'edge'
+/**
+ * Browsers this module can drive. Same engine, same CDP, same argv — but NOT
+ * interchangeable for SSO, which is why the account picks one. The type and the
+ * default live in `shared/` because the renderer's picker needs them too;
+ * re-exported here so this module stays the one place launching is described.
+ */
+export type { AuthBrowser } from '../../shared/account-web-session'
 
 /**
  * Per-account profile directory for the sign-in browser.

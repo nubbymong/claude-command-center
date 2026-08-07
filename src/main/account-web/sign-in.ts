@@ -28,6 +28,8 @@ import { session as electronSession } from 'electron'
 import { logError, logInfo } from '../debug-logger'
 import { getBrowserPaths } from '../vision-manager'
 import {
+  AUTH_BROWSER_LABELS,
+  DEFAULT_AUTH_BROWSER,
   webPartitionForProfile,
   type AccountWebSession,
 } from '../../shared/account-web-session'
@@ -53,6 +55,17 @@ export interface SignInState {
   /** Populated on 'failed'. Shown to the user verbatim. */
   error?: string
   session?: AccountWebSession
+  /** The browser actually launched — not necessarily the one asked for. */
+  browser?: AuthBrowser
+  /**
+   * A non-fatal thing the user should know, shown verbatim alongside a result.
+   *
+   * Its one job today is to never let a browser substitution be silent. The
+   * account chose a browser BECAUSE the browsers behave differently at the
+   * identity provider, so falling back without saying so would turn a working
+   * setting into an unexplained SSO failure.
+   */
+  notice?: string
 }
 
 let current: SignInState = { phase: 'idle', profileId: null }
@@ -64,7 +77,7 @@ export function getSignInState(): SignInState {
 }
 
 /** Resolve the first system browser binary that exists. */
-export function resolveBrowserBinary(preferred: AuthBrowser = 'chrome'): { browser: AuthBrowser; path: string } | null {
+export function resolveBrowserBinary(preferred: AuthBrowser = DEFAULT_AUTH_BROWSER): { browser: AuthBrowser; path: string } | null {
   for (const b of [preferred, preferred === 'chrome' ? 'edge' : 'chrome'] as AuthBrowser[]) {
     for (const p of getBrowserPaths(b)) {
       if (existsSync(p)) return { browser: b, path: p }
@@ -173,6 +186,12 @@ export interface RunSignInOpts {
   /** How long to wait for the human, ms. SSO with MFA is not fast. */
   timeoutMs?: number
   pollMs?: number
+  /**
+   * Which system browser to drive. The ACCOUNT'S setting, resolved by the
+   * caller — this module does not read the store, so it stays testable without
+   * one. Omitted falls back to the shared default rather than to Chrome.
+   */
+  browser?: AuthBrowser
 }
 
 /** True while a sign-in is in flight. */
@@ -220,11 +239,31 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
 
   current = { phase: 'launching', profileId }
 
-  const bin = resolveBrowserBinary()
+  const requested = opts.browser ?? DEFAULT_AUTH_BROWSER
+  const bin = resolveBrowserBinary(requested)
   if (!bin) {
-    current = { phase: 'failed', profileId, error: 'No Chrome or Edge found. A system browser is required: the sign-in needs the extensions your policy installs, which an in-app window does not have.' }
+    current = {
+      phase: 'failed',
+      profileId,
+      error: 'No Chrome or Edge found. A system browser is required: the sign-in needs the SSO support your policy installs, which an in-app window does not have.',
+    }
     return current
   }
+
+  const browser = bin.browser
+  // A SUBSTITUTION IS NEVER SILENT. The account picked a browser because the two
+  // do not behave the same at the identity provider — on a managed box Chrome
+  // needs a force-installed SSO extension that a fresh profile has not fetched
+  // yet, and Edge needs none. Quietly launching the other one turns that setting
+  // into an SSO failure with no visible cause. Still a fallback rather than a
+  // refusal: a machine with only one of them should be able to sign in.
+  const notice =
+    browser === requested
+      ? undefined
+      : `${AUTH_BROWSER_LABELS[requested]} is not installed, so ${AUTH_BROWSER_LABELS[browser]} was used instead. If the sign-in fails at your identity provider, install ${AUTH_BROWSER_LABELS[requested]}.`
+
+  /** Stamp the browser that actually launched onto every state the UI sees. */
+  const tag = (s: SignInState): SignInState => ({ ...s, browser, ...(notice ? { notice } : {}) })
 
   try {
     const args = buildAuthBrowserArgs({ profileDir })
@@ -232,7 +271,7 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
     child = spawn(bin.path, args, { detached: false, stdio: 'ignore' })
     child.on('error', (err) => logError(`[account-web] browser spawn error: ${err.message}`))
 
-    current = { phase: 'awaiting-user', profileId }
+    current = tag({ phase: 'awaiting-user', profileId })
     const deadline = Date.now() + timeoutMs
 
     // Read the port from the profile dir rather than assuming one. Only the
@@ -242,11 +281,11 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
     const port = await waitForDebugPort(profileDir, deadline)
     if (port === null) {
       await cleanup(profileDir)
-      current = {
+      current = tag({
         phase: 'failed',
         profileId,
         error: cancelled ? 'Sign-in cancelled.' : 'The browser did not report a debugging port. It may have been blocked from starting.',
-      }
+      })
       return current
     }
 
@@ -261,13 +300,13 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
       if (!email) continue
 
       // Authenticated. Harvest.
-      current = { phase: 'harvesting', profileId }
+      current = tag({ phase: 'harvesting', profileId })
       const all: CdpCookie[] = (await client.Network.getAllCookies())?.cookies ?? []
       const harvest = harvestClaudeCookies(all)
 
       if (!harvest.hasSessionCookie) {
         // Keep waiting rather than declaring success on a cookie-less jar.
-        current = { phase: 'awaiting-user', profileId }
+        current = tag({ phase: 'awaiting-user', profileId })
         continue
       }
 
@@ -289,21 +328,21 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
         origin: 'system-browser',
       }
       logInfo(`[account-web] ${profileId}: signed in as ${email}, ${harvest.cookies.length} cookie(s), ${harvest.dropped} dropped`)
-      current = { phase: 'done', profileId, session: acquired }
+      current = tag({ phase: 'done', profileId, session: acquired })
       return current
     }
 
     try { await client?.close() } catch { /* ignore */ }
     await cleanup(profileDir)
-    current = {
+    current = tag({
       phase: 'failed',
       profileId,
       error: cancelled ? 'Sign-in cancelled.' : 'Timed out waiting for the sign-in to complete.',
-    }
+    })
     return current
   } catch (err) {
     await cleanup(profileDir)
-    current = { phase: 'failed', profileId, error: (err as Error)?.message ?? String(err) }
+    current = tag({ phase: 'failed', profileId, error: (err as Error)?.message ?? String(err) })
     return current
   }
 }

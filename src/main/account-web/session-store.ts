@@ -10,40 +10,53 @@
 // Follows the standing-approvals-store convention (schemaVersion + readJsonFile
 // / writeJsonFile).
 import {
+  DEFAULT_AUTH_BROWSER,
   DEFAULT_CLI_AUTH_METHOD,
+  isAuthBrowser,
   isCliAuthMethod,
   type AccountWebSession,
+  type AuthBrowser,
   type CliAuthMethod,
 } from '../../shared/account-web-session'
 import { readJsonFile, writeJsonFile } from '../channel-storage'
 
 const FILE = 'account-web-sessions.json'
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 interface SessionsFile {
   schemaVersion: number
   sessions: AccountWebSession[]
   /** Per-account CLI sign-in flow. Absent means the default. */
   authMethods: Record<string, CliAuthMethod>
+  /** Per-account system browser for the web sign-in. Absent means the default. */
+  authBrowsers: Record<string, AuthBrowser>
 }
 
 function seed(): SessionsFile {
-  return { schemaVersion: SCHEMA_VERSION, sessions: [], authMethods: {} }
+  return { schemaVersion: SCHEMA_VERSION, sessions: [], authMethods: {}, authBrowsers: {} }
 }
 
 function read(): SessionsFile {
   const f = readJsonFile<SessionsFile>(FILE, seed)
-  // v1 -> v2 added authMethods. MIGRATE rather than reseed: discarding the file
+  // MIGRATE a known older version rather than reseeding: discarding the file
   // would silently sign every account out of claude.ai on upgrade, which looks
   // like a bug in the sign-in rather than in the store.
-  if (f.schemaVersion === 1) {
-    return { schemaVersion: SCHEMA_VERSION, sessions: f.sessions ?? [], authMethods: {} }
+  //   v1 -> v2 added authMethods  (which CLI sign-in flow an account uses)
+  //   v2 -> v3 added authBrowsers (which system browser completes the web sign-in)
+  if (f.schemaVersion === 1 || f.schemaVersion === 2) {
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      sessions: f.sessions ?? [],
+      authMethods: f.authMethods ?? {},
+      authBrowsers: {},
+    }
   }
   if (f.schemaVersion !== SCHEMA_VERSION) return seed()
   return {
     schemaVersion: SCHEMA_VERSION,
     sessions: f.sessions ?? [],
     authMethods: f.authMethods ?? {},
+    authBrowsers: f.authBrowsers ?? {},
   }
 }
 
@@ -58,6 +71,25 @@ export function setAuthMethod(profileId: string, method: CliAuthMethod): void {
   if (!isCliAuthMethod(method)) throw new Error(`unknown auth method: ${method}`)
   const f = read()
   f.authMethods = { ...f.authMethods, [profileId]: method }
+  writeJsonFile(FILE, f)
+}
+
+/** The account's chosen sign-in browser, or the default. */
+export function getAuthBrowser(profileId: string): AuthBrowser {
+  const v = read().authBrowsers[profileId]
+  return isAuthBrowser(v) ? v : DEFAULT_AUTH_BROWSER
+}
+
+/**
+ * Record the account's sign-in browser.
+ *
+ * Refuses anything but the two known values: this string selects an executable
+ * to spawn, so it does not get to be arbitrary even having come from our own UI.
+ */
+export function setAuthBrowser(profileId: string, browser: AuthBrowser): void {
+  if (!isAuthBrowser(browser)) throw new Error(`unknown sign-in browser: ${browser}`)
+  const f = read()
+  f.authBrowsers = { ...f.authBrowsers, [profileId]: browser }
   writeJsonFile(FILE, f)
 }
 
@@ -104,5 +136,10 @@ export function saveWebSession(s: AccountWebSession): void {
 export function removeWebSession(profileId: string): void {
   const f = read()
   const next = f.sessions.filter((s) => s.profileId !== profileId)
-  if (next.length !== f.sessions.length) writeJsonFile(FILE, { schemaVersion: SCHEMA_VERSION, sessions: next })
+  if (next.length === f.sessions.length) return
+  // Write the WHOLE file back. Writing only `sessions` — as this used to — threw
+  // away every per-account setting on sign-out, so an account that signed out of
+  // claude.ai silently lost its CLI sign-in flow (and now its browser choice)
+  // and reverted to the defaults with nothing to explain why.
+  writeJsonFile(FILE, { ...f, sessions: next })
 }

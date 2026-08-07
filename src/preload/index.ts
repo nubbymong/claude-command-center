@@ -183,7 +183,15 @@ export interface ElectronAPI {
   /** Per-account claude.ai web session (#216). */
   accountWeb: {
     status: (profileId: string) => Promise<
-      { ok: true; web: any; cli: any; authCommand: string; authMethod: 'claudeai' | 'sso' | 'console' } | { ok: false; error: string }
+      | {
+          ok: true
+          web: any
+          cli: any
+          authCommand: string
+          authMethod: 'claudeai' | 'sso' | 'console'
+          authBrowser: 'chrome' | 'edge'
+        }
+      | { ok: false; error: string }
     >
     signIn: (profileId: string) => Promise<{ ok: true; state: any } | { ok: false; error: string }>
     signInState: () => Promise<{ ok: true; state: any } | { ok: false; error: string }>
@@ -191,6 +199,7 @@ export interface ElectronAPI {
     signOut: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    setAuthBrowser: (args: { profileId: string; browser: 'chrome' | 'edge' }) => Promise<{ ok: true } | { ok: false; error: string }>
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -686,6 +695,7 @@ const electronAPI: ElectronAPI = {
     signOut: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SIGN_OUT, profileId),
     openArtifacts: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_OPEN_ARTIFACTS, profileId),
     setAuthMethod: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_METHOD, args),
+    setAuthBrowser: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_BROWSER, args),
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),

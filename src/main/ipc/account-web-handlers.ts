@@ -19,7 +19,15 @@ import { PROFILE_ID_RE } from '../../shared/account-web-session'
 import { logError } from '../debug-logger'
 import { getDataDirectory } from '../data-paths'
 import { cancelSignIn, clearWebSession, getSignInState, runSignIn } from '../account-web/sign-in'
-import { getAuthMethod, removeWebSession, saveWebSession, setAuthMethod, viewFor } from '../account-web/session-store'
+import {
+  getAuthBrowser,
+  getAuthMethod,
+  removeWebSession,
+  saveWebSession,
+  setAuthBrowser,
+  setAuthMethod,
+  viewFor,
+} from '../account-web/session-store'
 import { readClaudeCliAuth, claudeAuthCommand } from '../account-web/claude-cli-auth'
 import { closeArtifacts, openArtifacts } from '../account-web/artifacts'
 
@@ -45,6 +53,7 @@ export function registerAccountWebHandlers(): void {
         web: viewFor(id),
         cli,
         authMethod,
+        authBrowser: getAuthBrowser(id),
         // Built from the account's OWN setting and its reported address, so the
         // command shown is the one that will actually work for this account.
         authCommand: claudeAuthCommand(authMethod, cli.email),
@@ -60,6 +69,10 @@ export function registerAccountWebHandlers(): void {
       const state = await runSignIn({
         profileId: id,
         dataDir: getDataDirectory(),
+        // The ACCOUNT's browser, read here rather than inside the sign-in: the
+        // launcher takes what it is given, and the store is the one authority on
+        // what this account chose.
+        browser: getAuthBrowser(id),
       })
       if (state.phase === 'done' && state.session) saveWebSession(state.session)
       return { ok: true, state }
@@ -113,6 +126,21 @@ export function registerAccountWebHandlers(): void {
       return { ok: true }
     } catch (err) {
       return fail('setAuthMethod', err)
+    }
+  })
+
+  ipcMain.handle(IPC.ACCOUNT_WEB_SET_AUTH_BROWSER, async (_e, args: unknown) => {
+    try {
+      // Enumerated, not accepted as a string: this value picks which executable
+      // the sign-in spawns, so the boundary refuses anything else outright rather
+      // than letting it reach the launcher.
+      const { profileId, browser } = z
+        .object({ profileId: profileIdSchema, browser: z.enum(['chrome', 'edge']) })
+        .parse(args)
+      setAuthBrowser(profileId, browser)
+      return { ok: true }
+    } catch (err) {
+      return fail('setAuthBrowser', err)
     }
   })
 

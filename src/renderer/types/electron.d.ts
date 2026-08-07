@@ -304,7 +304,15 @@ export interface ElectronAPI {
   /** Per-account claude.ai web session (#216). */
   accountWeb: {
     status: (profileId: string) => Promise<
-      { ok: true; web: any; cli: any; authCommand: string; authMethod: 'claudeai' | 'sso' | 'console' } | { ok: false; error: string }
+      | {
+          ok: true
+          web: any
+          cli: any
+          authCommand: string
+          authMethod: 'claudeai' | 'sso' | 'console'
+          authBrowser: 'chrome' | 'edge'
+        }
+      | { ok: false; error: string }
     >
     signIn: (profileId: string) => Promise<{ ok: true; state: any } | { ok: false; error: string }>
     signInState: () => Promise<{ ok: true; state: any } | { ok: false; error: string }>
@@ -312,6 +320,7 @@ export interface ElectronAPI {
     signOut: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    setAuthBrowser: (args: { profileId: string; browser: 'chrome' | 'edge' }) => Promise<{ ok: true } | { ok: false; error: string }>
   }
   discovery: {
     getProjects: () => Promise<any>

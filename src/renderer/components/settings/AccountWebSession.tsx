@@ -16,9 +16,13 @@
 
 import React, { useCallback, useEffect, useState } from 'react'
 import {
+  AUTH_BROWSERS,
+  AUTH_BROWSER_LABELS,
   CLI_AUTH_METHODS,
   CLI_AUTH_METHOD_LABELS,
+  DEFAULT_AUTH_BROWSER,
   DEFAULT_CLI_AUTH_METHOD,
+  type AuthBrowser,
   type CliAuthMethod,
 } from '../../../shared/account-web-session'
 
@@ -39,13 +43,20 @@ export function AccountWebSession({ profileId, accountName }: Props) {
   const [cli, setCli] = useState<Cli>({ authenticated: false })
   const [authCommand, setAuthCommand] = useState('claude auth login')
   const [authMethod, setAuthMethod] = useState<CliAuthMethod>(DEFAULT_CLI_AUTH_METHOD)
+  const [authBrowser, setAuthBrowser] = useState<AuthBrowser>(DEFAULT_AUTH_BROWSER)
   const [phase, setPhase] = useState<string>('idle')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  /** Non-fatal, e.g. the chosen browser was missing and the other one was used. */
+  const [notice, setNotice] = useState('')
 
   const refresh = useCallback(async () => {
     const r = await api.status(profileId)
-    if (r.ok) { setWeb(r.web); setCli(r.cli); setAuthCommand(r.authCommand); if (r.authMethod) setAuthMethod(r.authMethod) }
+    if (r.ok) {
+      setWeb(r.web); setCli(r.cli); setAuthCommand(r.authCommand)
+      if (r.authMethod) setAuthMethod(r.authMethod)
+      if (r.authBrowser) setAuthBrowser(r.authBrowser)
+    }
     else setError(r.error)
   }, [profileId])
 
@@ -68,12 +79,22 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     await refresh()    // re-read so the shown command matches what was stored
   }
 
+  const changeAuthBrowser = async (b: AuthBrowser): Promise<void> => {
+    setAuthBrowser(b)   // optimistic: the picker should not lag the click
+    const r = await api.setAuthBrowser({ profileId, browser: b })
+    if (!r.ok) setError(r.error)
+    await refresh()     // re-read so the picker shows what was actually stored
+  }
+
   const signIn = async (): Promise<void> => {
-    setBusy(true); setError(''); setPhase('launching')
+    setBusy(true); setError(''); setNotice(''); setPhase('launching')
     const r = await api.signIn(profileId)
     setBusy(false)
     if (!r.ok) setError(r.error)
     else if (r.state.phase === 'failed') setError(r.state.error ?? 'Sign-in failed.')
+    // Shown whether the sign-in succeeded or not: a browser substitution is the
+    // likeliest explanation for an SSO step that behaved unexpectedly.
+    if (r.ok && r.state?.notice) setNotice(r.state.notice)
     setPhase('idle')
     await refresh()
   }
@@ -153,6 +174,29 @@ export function AccountWebSession({ profileId, accountName }: Props) {
               ? `Acquired ${fmt(web.acquiredAt)}${web.expiresAt ? `, expires ${fmt(web.expiresAt)}` : ''}.`
               : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens your own browser to sign in.'}
           </div>
+
+          {/* Browser is PER ACCOUNT and the user's call, because the two are not
+              interchangeable at the identity provider. The sign-in runs in a
+              fresh profile by design, and on a managed machine Chrome's
+              force-installed SSO extension is not there yet when claude.ai
+              loads — Edge does Entra SSO natively and has nothing to wait for.
+              Which one an account needs depends on its org, so CCC asks. */}
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className="text-[10px] text-overlay0 shrink-0">Sign-in browser</span>
+            <select
+              value={authBrowser}
+              disabled={busy}
+              onChange={(e) => { void changeAuthBrowser(e.target.value as AuthBrowser) }}
+              className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue disabled:opacity-40"
+            >
+              {AUTH_BROWSERS.map((b) => (
+                <option key={b} value={b}>{AUTH_BROWSER_LABELS[b]}</option>
+              ))}
+            </select>
+            <span className="text-[10px] text-overlay0">
+              {authBrowser === 'edge' ? 'Handles SSO without an extension' : 'Needs your policy’s SSO extension'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -167,6 +211,12 @@ export function AccountWebSession({ profileId, accountName }: Props) {
       {error && (
         <div className="rounded border border-red/40 bg-red/10 px-3 py-2 text-[11px] text-red whitespace-pre-wrap">
           {error}
+        </div>
+      )}
+
+      {notice && (
+        <div className="rounded border border-yellow/40 bg-yellow/10 px-3 py-2 text-[11px] text-yellow whitespace-pre-wrap">
+          {notice}
         </div>
       )}
 
