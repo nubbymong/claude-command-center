@@ -232,7 +232,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
         {busy && (
           <button
             type="button"
-            onClick={() => { void api.cancel() }}
+            onClick={() => { void api.cancel(profileId) }}
             className="px-3 py-1.5 rounded text-xs bg-surface1 text-text hover:bg-surface2 transition-colors"
           >
             Cancel

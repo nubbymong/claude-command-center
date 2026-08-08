@@ -90,9 +90,16 @@ export function registerAccountWebHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_WEB_CANCEL, async () => {
+  ipcMain.handle(IPC.ACCOUNT_WEB_CANCEL, async (_e, profileId: unknown) => {
     try {
-      cancelSignIn()
+      // SCOPED, AND THE ID IS REQUIRED HERE. The cancel flag is module-global,
+      // so an unscoped cancel from one account's row aborted whichever sign-in
+      // happened to be running. Leaving `undefined` acceptable at the boundary
+      // would have left that exact cross-account cancel reachable from the
+      // renderer — the only place it was ever reachable from. Main-process
+      // callers that genuinely want "cancel whatever is running" (shutdown) call
+      // cancelSignIn() directly and do not come through here.
+      cancelSignIn(profileIdSchema.parse(profileId))
       return { ok: true }
     } catch (err) {
       return fail('cancel', err)

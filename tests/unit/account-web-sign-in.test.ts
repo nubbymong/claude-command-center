@@ -45,6 +45,10 @@ const { CLAUDE_SESSION_COOKIE } = await import('../../src/shared/account-web-ses
 /** A fake chrome-remote-interface whose page reports `email` and returns `cookies`. */
 function fakeCdp(email: string | null, cookies: any[]) {
   const f: any = () => Promise.resolve({
+    // A real chrome-remote-interface client always carries Target, and the
+    // identity check now REFUSES a client without it — "could not ask which page
+    // this is" must not mean "trust the page".
+    Target: { getTargetInfo: async () => ({ targetInfo: { url: 'https://claude.ai/login' } }) },
     Runtime: { evaluate: async () => ({ result: { value: email } }) },
     Network: { getAllCookies: async () => ({ cookies }) },
     close: async () => {},

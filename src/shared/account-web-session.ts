@@ -128,8 +128,18 @@ export function webPartitionForProfile(profileId: string): string {
   return `persist:claude-web-${profileId}`
 }
 
-/** `profile-<alnum/dash>`, matching the on-disk account-profile directory name. */
-export const PROFILE_ID_RE = /^profile-[A-Za-z0-9-]{1,64}$/
+/**
+ * `profile-<alnum/dash>`, matching the on-disk account-profile directory name.
+ *
+ * LOWERCASE ONLY, deliberately. `createProfile` has only ever emitted lowercase
+ * (`profile-<base36 time>-<hex>`), and allowing uppercase created a genuine
+ * ambiguity: two ids differing only in case name the SAME directory on
+ * Windows — where the filesystem is case-insensitive — while
+ * `webPartitionForProfile` treats them as two different accounts. One account's
+ * sign-in could then take ownership of another's on-disk profile dir. Narrowing
+ * the shape removes the ambiguity instead of teaching every consumer about it.
+ */
+export const PROFILE_ID_RE = /^profile-[a-z0-9-]{1,64}$/
 
 /** Hosts whose cookies are harvested. Nothing else is ever copied out of the browser. */
 export const CLAUDE_COOKIE_HOSTS = ['claude.ai', '.claude.ai'] as const

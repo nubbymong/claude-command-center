@@ -30,6 +30,7 @@ import { getBrowserPaths } from '../vision-manager'
 import {
   AUTH_BROWSER_LABELS,
   DEFAULT_AUTH_BROWSER,
+  PROFILE_ID_RE,
   webPartitionForProfile,
   type AccountWebSession,
 } from '../../shared/account-web-session'
@@ -144,6 +145,40 @@ async function cleanup(profileDir: string | null): Promise<void> {
 export const PROFILE_REMOVAL_RETRIES_MS: readonly number[] = [2_000, 5_000, 15_000, 45_000]
 
 /**
+ * Which run currently owns each profile dir.
+ *
+ * `authProfileDir` is DETERMINISTIC per account, so a second sign-in for the
+ * same account lands on the exact same path a previous run may still be
+ * background-retrying. Without an owner check, a user who signs in again a few
+ * seconds after a "still locked, retrying" failure gets their BRAND NEW browser
+ * profile — cookie DB included — deleted out from under the running browser by
+ * the old run's timer. Demonstrated with a repro; no attacker required.
+ */
+const dirGeneration = new Map<string, number>()
+
+/**
+ * Canonical map key for a profile dir.
+ *
+ * Keyed by raw string, `C:/x` and `C:\x` are two different owners of the same
+ * directory — and an ownership check that silently compares the wrong key is
+ * indistinguishable from no check at all. Today every caller goes through
+ * `authProfileDir`, so the keys happen to agree; this stops that from being the
+ * thing holding it together. Windows paths are case-insensitive too.
+ */
+function dirKey(profileDir: string): string {
+  const k = profileDir.replace(/\\/g, '/')
+  return process.platform === 'win32' ? k.toLowerCase() : k
+}
+
+/** Claim a profile dir for a new run, invalidating any retry still pending on it. */
+function claimProfileDir(profileDir: string): number {
+  const key = dirKey(profileDir)
+  const next = (dirGeneration.get(key) ?? 0) + 1
+  dirGeneration.set(key, next)
+  return next
+}
+
+/**
  * Keep trying to delete a profile dir that was still locked at teardown.
  *
  * Measured on the box 2026-08-08: after `taskkill /T /F` the tree dies in ~850ms
@@ -153,11 +188,19 @@ export const PROFILE_REMOVAL_RETRIES_MS: readonly number[] = [2_000, 5_000, 15_0
  * could be days. So the window gets closed now, on a backoff, rather than being
  * left to a boot that may not come.
  */
-export function retryProfileRemoval(profileDir: string, delays: readonly number[] = PROFILE_REMOVAL_RETRIES_MS): void {
+export function retryProfileRemoval(
+  profileDir: string,
+  delays: readonly number[] = PROFILE_REMOVAL_RETRIES_MS,
+  generation: number = dirGeneration.get(dirKey(profileDir)) ?? 0,
+): void {
   const attempt = (i: number): void => {
     const t = setTimeout(() => {
-      if (!existsSync(profileDir)) return
+      // OWNERSHIP FIRST, before any filesystem call. A newer run has claimed
+      // this path, so whatever is there now belongs to it — deleting it would
+      // destroy a live sign-in rather than clean up a dead one.
+      if ((dirGeneration.get(dirKey(profileDir)) ?? 0) !== generation) return
       try {
+        if (!existsSync(profileDir)) return
         rmSync(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 })
         logInfo(`[account-web] removed the sign-in profile dir on retry ${i + 1}`)
       } catch (err) {
@@ -202,8 +245,27 @@ function killBrowserTree(proc: ChildProcess): void {
       logError(`[account-web] taskkill threw: ${(err as Error)?.message}`)
     }
   }
+  else {
+    // POSIX: Chrome is a process tree here too, and a bare `proc.kill()` reaps
+    // only the parent — exactly the bug the Windows path above was written to
+    // fix. The child is spawned detached, so it leads its own process group and
+    // a negative pid signals the whole group. SIGKILL follows because an
+    // unresponsive browser never acts on SIGTERM, and the profile dir it is
+    // holding contains a live session.
+    try { process.kill(-pid, 'SIGTERM') } catch { /* no group, or already gone */ }
+    // CANCELLED THE MOMENT THE CHILD IS REAPED. A blind SIGKILL fired 2s later
+    // targets a pid the OS has already freed — and Chrome burns pids fast
+    // enough that the number can be back in use by then, at which point this
+    // group-kills an unrelated process tree. The escalation is for a browser
+    // that ignored SIGTERM, not for one that obeyed it.
+    const t = setTimeout(() => {
+      try { process.kill(-pid, 'SIGKILL') } catch { /* already gone */ }
+    }, 2_000)
+    if (typeof (t as any)?.unref === 'function') (t as any).unref()
+    try { proc.once('exit', () => clearTimeout(t)) } catch { /* no emitter */ }
+  }
   // Always signal directly too: on win32 this catches a taskkill that could not
-  // run, and elsewhere it is the whole mechanism.
+  // run, and on POSIX it covers a child that never became a group leader.
   try { proc.kill() } catch { /* already gone */ }
 }
 
@@ -217,6 +279,15 @@ export function sweepAbandonedProfiles(dataDir: string): void {
   const root = join(dataDir, 'account-web')
   if (!existsSync(root)) return
   for (const entry of readdirSync(root)) {
+    // VALIDATE THE NAME BEFORE DELETING BY IT. Every other path-bound id in this
+    // module is re-checked against PROFILE_ID_RE rather than trusted, and this
+    // one is a recursive delete driven by whatever names exist in a directory.
+    // It runs unconditionally at every app start, so it is the last place to
+    // make an exception for.
+    if (!PROFILE_ID_RE.test(entry)) {
+      logError(`[account-web] refusing to sweep an entry that is not a profile dir: ${entry}`)
+      continue
+    }
     try {
       rmSync(join(root, entry), { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
       logInfo(`[account-web] swept an abandoned sign-in profile: ${entry}`)
@@ -232,10 +303,26 @@ export interface CdpTarget {
   webSocketDebuggerUrl?: string
 }
 
-/** True for a URL served by claude.ai itself. Anything unparseable is not. */
-function isClaudeUrl(url: string | undefined): boolean {
+/**
+ * True for a URL served by claude.ai itself, over HTTPS. Anything unparseable
+ * is not.
+ *
+ * THE SCHEME IS PART OF THE CHECK. A hostname match alone accepts
+ * `http://claude.ai/`, and this browser profile is created fresh for every
+ * sign-in — it carries no HSTS state of its own, so a captive portal or a
+ * transparent proxy can answer plaintext on that host. The subsequent
+ * origin-relative `fetch('/api/bootstrap')` would then be asking an attacker who
+ * is signed in, and the answer becomes the account identity CCC stores.
+ *
+ * Exported so both the target filter and the in-connection re-check use exactly
+ * this rule. They were two copy-pasted hostname comparisons, which is how one of
+ * them silently drifts.
+ */
+export function isClaudeUrl(url: string | undefined): boolean {
   try {
-    const host = new URL(url ?? '').hostname.toLowerCase()
+    const u = new URL(url ?? '')
+    if (u.protocol !== 'https:') return false
+    const host = u.hostname.toLowerCase()
     return host === 'claude.ai' || host === 'www.claude.ai'
   } catch {
     return false
@@ -266,6 +353,38 @@ export function pickSignInTargets(targets: readonly CdpTarget[] | null | undefin
   return [...pages.filter((t) => !extensionOwned(t)), ...pages.filter(extensionOwned)]
 }
 
+/**
+ * Bound a CDP round-trip in time.
+ *
+ * NOTHING OVER CDP IS ALLOWED TO HANG. The poll loop only consults its deadline
+ * at the top of each iteration, so a promise that never settles parks the loop
+ * forever: `current.phase` stays in flight, the single-flight latch never
+ * releases, and EVERY account's sign-in is dead until the app restarts —
+ * `cancelSignIn` cannot help, because the loop is not running to observe it.
+ * `Runtime.evaluate` with `awaitPromise` on an origin-relative fetch is exactly
+ * the shape that stalls against a proxy that accepts the connection and then
+ * says nothing.
+ *
+ * Rejects on timeout; every caller already treats a rejection as "no answer".
+ */
+async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`[account-web] ${what} timed out after ${ms}ms`)), ms)
+        if (typeof (timer as any)?.unref === 'function') (timer as any).unref()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** How long any single CDP round-trip may take. */
+const CDP_CALL_TIMEOUT_MS = 10_000
+
 /** Close a CDP client without letting a teardown error mask the real outcome. */
 async function closeQuietly(client: any): Promise<void> {
   try { await client?.close() } catch { /* closing anyway */ }
@@ -279,19 +398,41 @@ async function readAccountEmail(client: any): Promise<string | null> {
     // can be the identity provider, and a page that answers with an
     // account-shaped object would otherwise label the stored session with an
     // unrelated email.
+    //
+    // THIS CHECK FAILS CLOSED. It used to swallow every error and fall through
+    // to the fetch, which made "the page is not claude.ai" and "asking which
+    // page this is failed" the same outcome — trust it. That is not theoretical:
+    // the target list is re-read every poll precisely because pages come and go,
+    // so `getTargetInfo` rejecting with "No target with given id found" mid
+    // navigation is a NORMAL failure, and an attacker-controlled page inherits
+    // the trust. Demonstrated: with `getTargetInfo` throwing, a page on
+    // evil.test was accepted and its email stored as the account identity.
+    //
+    // The one legitimate skip is a client with no Target domain at all, which is
+    // a shape question and not a runtime failure.
+    // No Target domain at all is no longer an escape hatch. It was the one
+    // branch that still accepted an arbitrary page's answer as the account
+    // identity, and nothing legitimate needs it: a real chrome-remote-interface
+    // client always carries Target.
+    if (typeof client?.Target?.getTargetInfo !== 'function') return null
+    let url: unknown
     try {
-      const { url } = (await client.Target?.getTargetInfo?.())?.targetInfo ?? {}
-      if (typeof url === 'string' && url) {
-        const host = new URL(url).hostname.toLowerCase()
-        if (host !== 'claude.ai' && host !== 'www.claude.ai') return null
-      }
-    } catch { /* no Target domain — fall through to the fetch */ }
+      url = (await withTimeout<any>(client.Target.getTargetInfo(), CDP_CALL_TIMEOUT_MS, 'getTargetInfo'))?.targetInfo?.url
+    } catch {
+      return null   // asked, and could not find out. Not the same as "it is fine".
+    }
+    if (typeof url !== 'string' || !isClaudeUrl(url)) return null
 
-    const { result } = await client.Runtime.evaluate({
-      expression: `fetch('/api/bootstrap',{credentials:'include'}).then(r=>r.json()).then(j=>j?.account?.email_address ?? null).catch(()=>null)`,
+    // AND CHECK AGAIN INSIDE THE PAGE. The check above is on target metadata
+    // from a previous round-trip; `Runtime.evaluate` runs in whatever document
+    // the frame holds NOW, and this module re-reads the target list every poll
+    // precisely because pages come and go. `location.origin` is evaluated in the
+    // same breath as the fetch, so the two cannot disagree.
+    const { result } = await withTimeout<any>(client.Runtime.evaluate({
+      expression: `location.origin === 'https://claude.ai' || location.origin === 'https://www.claude.ai' ? fetch('/api/bootstrap',{credentials:'include'}).then(r=>r.json()).then(j=>j?.account?.email_address ?? null).catch(()=>null) : Promise.resolve(null)`,
       awaitPromise: true,
       returnByValue: true,
-    })
+    }), CDP_CALL_TIMEOUT_MS, 'bootstrap evaluate')
     return typeof result?.value === 'string' ? result.value : null
   } catch {
     return null
@@ -390,8 +531,21 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
 
   try {
     const args = buildAuthBrowserArgs({ profileDir })
+
+    // CLAIM THE PATH before anything is created in it. `authProfileDir` is
+    // deterministic per account, so a previous run's background removal may
+    // still be pending on this exact directory; claiming invalidates it.
+    const generation = claimProfileDir(profileDir)
+
+    // Drop any stale DevToolsActivePort a previous run left behind. The port is
+    // read back from that file to PROVE the CDP endpoint is the browser we just
+    // launched, and a leftover file turns that proof into a coincidence.
+    try { rmSync(join(profileDir, DEVTOOLS_PORT_FILE), { force: true }) } catch { /* nothing there */ }
+
     logInfo(`[account-web] launching ${bin.browser} for ${profileId} on an ephemeral loopback port`)
-    child = spawn(bin.path, args, { detached: false, stdio: 'ignore' })
+    // Detached on POSIX so the browser gets its own process GROUP, which is the
+    // only way to reap Chrome's children there — see killBrowserTree.
+    child = spawn(bin.path, args, { detached: process.platform !== 'win32', stdio: 'ignore' })
     child.on('error', (err) => logError(`[account-web] browser spawn error: ${err.message}`))
     child.on('exit', () => { browserExited = true })
 
@@ -424,12 +578,16 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
       // underneath a long-lived connection. Reconnecting each poll costs one
       // loopback websocket every 1.5s and removes the entire class of bug.
       let targets: CdpTarget[] = []
-      try { targets = await getCDP().List({ port }) } catch { continue }
+      try { targets = await withTimeout(getCDP().List({ port }), CDP_CALL_TIMEOUT_MS, 'target list') } catch { continue }
 
       for (const t of pickSignInTargets(targets)) {
         let client: any = null
         try {
-          client = await getCDP()({ port, target: t.webSocketDebuggerUrl ?? t.id })
+          client = await withTimeout(
+            getCDP()({ port, target: t.webSocketDebuggerUrl ?? t.id }),
+            CDP_CALL_TIMEOUT_MS,
+            'CDP connect',
+          )
         } catch { continue }
 
         const email = await readAccountEmail(client)
@@ -437,7 +595,7 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
 
         // Authenticated. Harvest.
         current = tag({ phase: 'harvesting', profileId })
-        const all: CdpCookie[] = (await client.Network.getAllCookies())?.cookies ?? []
+        const all: CdpCookie[] = (await withTimeout<any>(client.Network.getAllCookies(), CDP_CALL_TIMEOUT_MS, 'getAllCookies'))?.cookies ?? []
         const harvest = harvestClaudeCookies(all)
 
         if (!harvest.hasSessionCookie) {
@@ -447,11 +605,39 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
           continue
         }
 
+        // THE WRITE IS CHECKED ON EVERY ITERATION, NOT ONCE BEFORE THE LOOP.
+        // Each `cookies.set` is an await, and every await is a chance for the
+        // sign-out IPC handler to run: checking once let `clearStorageData()`
+        // land mid-loop, so the cookies written after it survived the sign-out.
+        // The user pressed Sign out and stayed signed in.
+        const revoked = (): boolean =>
+          cancelled || (dirGeneration.get(dirKey(profileDir)) ?? 0) !== generation
+
+        if (revoked()) { await closeQuietly(client); break }
+
         const store = electronSession.fromPartition(partition)
+        let aborted = false
         for (const c of harvest.cookies) {
+          if (revoked()) { aborted = true; break }
           try { await store.cookies.set(c) } catch (err) {
             logError(`[account-web] could not set cookie ${c.name}: ${(err as Error)?.message}`)
           }
+        }
+
+        if (aborted) {
+          // Partially written into a partition somebody just revoked. Clear what
+          // landed and FAIL — reporting `done` here would have the IPC layer
+          // save a session record for a session the user just signed out of.
+          try { await store.clearStorageData() } catch { /* best effort */ }
+          await closeQuietly(client)
+          await cleanup(profileDir)
+          logInfo(`[account-web] ${profileId}: sign-in abandoned — the session was revoked while it was being collected`)
+          current = tag({
+            phase: 'failed',
+            profileId,
+            error: 'Signed out while the session was being collected, so it was discarded. Sign in again if that was not what you wanted.',
+          })
+          return current
         }
 
         await closeQuietly(client)
@@ -490,8 +676,16 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
   }
 }
 
-/** Cancel an in-flight sign-in and tear the browser down. */
-export function cancelSignIn(): void {
+/**
+ * Cancel an in-flight sign-in and tear the browser down.
+ *
+ * SCOPED TO AN ACCOUNT when one is given. `cancelled` is module-global, so an
+ * unscoped cancel from one account's row killed whichever sign-in happened to be
+ * running — a cross-account denial with no attacker in it. Omitting the id still
+ * cancels whatever is in flight, which is what app shutdown wants.
+ */
+export function cancelSignIn(profileId?: string): void {
+  if (profileId && current.profileId && current.profileId !== profileId) return
   cancelled = true
 }
 
@@ -503,6 +697,12 @@ export function cancelSignIn(): void {
  * "the cookie is gone but the account's data is still on disk".
  */
 export async function clearWebSession(profileId: string): Promise<void> {
+  // CANCEL FIRST. A sign-in for this account may be mid-poll, and it would
+  // otherwise finish and write a fresh session into the partition we are about
+  // to clear — the user presses Sign out and ends up signed in. There is a
+  // second entry point for sign-in (the session right-click), so the two can
+  // overlap without the settings panel ever disabling its own button.
+  cancelSignIn(profileId)
   const store = electronSession.fromPartition(webPartitionForProfile(profileId))
   await store.clearStorageData()
   logInfo(`[account-web] cleared the web session for ${profileId}`)

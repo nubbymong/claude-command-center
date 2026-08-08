@@ -122,9 +122,17 @@ export function openArtifacts(profileId: string, parent?: BrowserWindow): { ok: 
   return { ok: true }
 }
 
-/** Close any artifacts window for an account — used when its session is cleared. */
+/**
+ * Close any artifacts window for an account — used when its session is cleared.
+ *
+ * DESTROY, NOT CLOSE. This window renders remote claude.ai content, and `close()`
+ * is a request a page can veto (`beforeunload`). The map entry was dropped
+ * regardless, so a vetoing page kept a window alive on a session that had just
+ * been revoked, with nothing left able to reach it — and the next open created a
+ * second window on the same partition. `destroy()` is not refusable.
+ */
 export function closeArtifacts(profileId: string): void {
   const w = windows.get(profileId)
-  if (w && !w.isDestroyed()) w.close()
+  if (w && !w.isDestroyed()) w.destroy()
   windows.delete(profileId)
 }

@@ -51,6 +51,7 @@ const TARGETS = [{ type: 'page', url: 'https://claude.ai/login', id: 't1', webSo
 /** A fake chrome-remote-interface that reports a signed-in account. */
 function fakeCdp() {
   const f: any = () => Promise.resolve({
+    Target: { getTargetInfo: async () => ({ targetInfo: { url: 'https://claude.ai/login' } }) },
     Runtime: { evaluate: async () => ({ result: { value: 'me@example.com' } }) },
     Network: { getAllCookies: async () => ({ cookies: [cookie] }) },
     close: async () => {},

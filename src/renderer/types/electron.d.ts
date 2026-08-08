@@ -316,7 +316,7 @@ export interface ElectronAPI {
     >
     signIn: (profileId: string) => Promise<{ ok: true; state: any } | { ok: false; error: string }>
     signInState: () => Promise<{ ok: true; state: any } | { ok: false; error: string }>
-    cancel: () => Promise<{ ok: true } | { ok: false; error: string }>
+    cancel: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     signOut: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>

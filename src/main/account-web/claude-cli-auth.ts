@@ -29,7 +29,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo } from '../debug-logger'
 import { getProfileConfigDir, getProfilesRoot } from '../account-profiles'
-import { DEFAULT_CLI_AUTH_METHOD, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
+import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
 
 export interface ClaudeCliAuthStatus {
   /** True when this account is signed in to the CLI. */
@@ -101,6 +101,16 @@ export function parseCliAuth(raw: string): ClaudeCliAuthStatus {
  * value is never returned, logged, or copied.
  */
 export function readClaudeCliAuth(profileId: string): ClaudeCliAuthStatus {
+  // VALIDATE HERE, not only at the IPC boundary. `join` does not sandbox: with
+  // `../../..` segments it walks straight out of the profiles root, and the id
+  // below becomes both a filesystem path and the HOME of a spawned process. The
+  // one caller today validates first, which makes this function safe by
+  // coincidence rather than by construction — and that is precisely the pattern
+  // `getProfileConfigDir` exists to stop repeating.
+  if (!PROFILE_ID_RE.test(profileId)) {
+    return { authenticated: false, error: 'could not determine CLI auth state' }
+  }
+
   // 1. Ask the CLI. Setting USERPROFILE to the profile home is how a session is
   //    already spawned under an account, and `claude auth status` honours it —
   //    verified against two profiles, which reported two different emails.
