@@ -209,7 +209,7 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
             label={active ? 'Deactivate this account' : 'Activate this account'}
             title={active
               ? 'Active: selectable when switching a session’s account'
-              : 'Inactive: still listed, but hidden from account switching'}
+              : 'Inactive: still shown in the switcher, but can’t be selected'}
           />
         )}
         {!profile.isPrimary && (

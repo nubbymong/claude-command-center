@@ -16,4 +16,11 @@ describe('isAccountActive', () => {
   it('is inactive only when active is explicitly false', () => {
     expect(isAccountActive({ active: false })).toBe(false)
   })
+
+  it('always reports the primary account as active, even if stored inactive', () => {
+    // The write path refuses to deactivate the primary; a corrupted or hand-edited
+    // profiles.json must not be able to grey it out of the switcher either.
+    expect(isAccountActive({ isPrimary: true, active: false })).toBe(true)
+    expect(isAccountActive({ isPrimary: true })).toBe(true)
+  })
 })

@@ -26,7 +26,13 @@ export interface AccountProfilesConfig {
 
 /** An account is selectable unless it has been explicitly deactivated.
  *  Undefined => active, so pre-existing profiles need no migration and the
- *  first update after this ships leaves every account active. */
-export function isAccountActive(p: Pick<AccountProfile, 'active'>): boolean {
+ *  first update after this ships leaves every account active.
+ *
+ *  The primary account is ALWAYS active. The write path already refuses to
+ *  deactivate it, but this is enforced on read too: a corrupted or hand-edited
+ *  profiles.json marking the primary inactive must never grey it out of the
+ *  switcher and leave no valid account to select. */
+export function isAccountActive(p: Pick<AccountProfile, 'active' | 'isPrimary'>): boolean {
+  if (p.isPrimary) return true
   return p.active !== false
 }
