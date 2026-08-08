@@ -6,7 +6,7 @@
 // are injectable so tests never touch the live ~/.claude. Profile metadata is
 // persisted as an atomic profiles.json under the profiles root (NOT via
 // config-manager) so _setRootsForTest is a total seam.
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -72,8 +72,51 @@ const IS_POSIX = process.platform !== 'win32'
 const CRED_FILE_MODE = 0o600
 const CRED_DIR_MODE = 0o700
 
+/** Longest a staging name should ever have to be re-drawn. A collision is a
+ *  128-bit coincidence, so anything past the first retry means something is
+ *  occupying the path deliberately and we should fail rather than loop. */
+const STAGING_NAME_ATTEMPTS = 3
+
+/**
+ * Stage-and-rename where the staging file is always freshly CREATED, never
+ * opened through whatever happens to sit at that path already.
+ *
+ * Two properties, and both are load-bearing:
+ *
+ * - `flag: 'wx'` is O_CREAT|O_EXCL|O_WRONLY. open(2) with O_CREAT|O_EXCL fails
+ *   with EEXIST on an existing file AND on a symlink (even a dangling one), so
+ *   the write can never be redirected through a link someone else put there.
+ *   The plain writeFileSync this replaces follows a symlink silently.
+ * - Because O_EXCL means the file is always created, the `mode` argument always
+ *   applies. A mode passed to open(2) is honoured ONLY on creation, so writing
+ *   into a pre-existing inode silently inherits that inode's permissions --
+ *   which is how a 0600 request can land on a world-readable file.
+ *
+ * The name is drawn from randomUUID rather than a pid or a counter so it cannot
+ * be predicted and pre-created. `github/cache/cache-store.ts` and
+ * `github/github-config-store.ts` already stage this way.
+ */
+export function atomicWriteSecure(file: string, data: string | Uint8Array, mode?: number): void {
+  for (let attempt = 0; ; attempt++) {
+    const tmp = `${file}.${randomUUID()}.tmp`
+    try {
+      fs.writeFileSync(tmp, data, mode != null ? { flag: 'wx', mode } : { flag: 'wx' })
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'EEXIST' && attempt < STAGING_NAME_ATTEMPTS) continue
+      throw err
+    }
+    try {
+      fs.renameSync(tmp, file)
+    } catch (err) {
+      try { fs.unlinkSync(tmp) } catch { /* best-effort */ }
+      throw err
+    }
+    return
+  }
+}
+
 /** chmod a just-written/copied credential FILE to 0o600 on POSIX (no-op on Win). */
-function hardenCredentialFile(file: string): void {
+export function hardenCredentialFile(file: string): void {
   if (!IS_POSIX) return
   try { fs.chmodSync(file, CRED_FILE_MODE) } catch { /* best-effort */ }
 }
@@ -82,18 +125,85 @@ function hardenCredentialDir(dir: string): void {
   if (!IS_POSIX) return
   try { fs.chmodSync(dir, CRED_DIR_MODE) } catch { /* best-effort */ }
 }
+
+/** The app-managed roots below which every credential/identity/backup directory
+ *  is created. Segments AT or BELOW one of these must be real directories the
+ *  app itself made; the user's chosen path ABOVE them (a resources dir that may
+ *  legitimately sit under a symlink, the home dir) is trusted and not inspected.
+ *  Returns the DEEPEST matching root so the walk in `mkdirSecure` stops as tight
+ *  as possible. */
+function managedTrustRoot(target: string): string {
+  const rp = path.resolve(target)
+  let best: string | null = null
+  // The user's chosen credential roots. The resources dir may legitimately live
+  // on a symlink/junction (docs invite a network drive for portability) and
+  // ~/.claude is commonly a dotfile symlink -- so these anchors are trusted and
+  // NOT inspected; only the app-created tree BELOW them is. realHomeDir()/
+  // sharedRoot() honour the _setRootsForTest seam. Each getter is guarded: at
+  // early boot the resources dir may not be configured yet, and a throw there
+  // must not sink a credential write.
+  for (const get of [resourcesDir, sharedRoot, realHomeDir]) {
+    let root: string
+    try { root = get() } catch { continue }
+    const r = path.resolve(root)
+    if ((rp === r || rp.startsWith(r + path.sep)) && (best === null || r.length > best.length)) best = r
+  }
+  return best ?? path.dirname(rp)
+}
+
+/**
+ * `mkdir -p` for a directory a credential or identity file is about to be
+ * written into, refusing to build it THROUGH a pre-planted reparse point.
+ *
+ * `atomicWriteSecure` stops a link planted at the staging FILE, but it cannot
+ * see a symlink/junction planted on a DIRECTORY above it: the leaf file is still
+ * created fresh with O_EXCL -- just inside the attacker's directory, where on
+ * Windows it inherits the attacker dir's ACL (the 0o600 hardening is a POSIX
+ * no-op). An unprivileged Windows directory *junction* is enough, and it is not
+ * a race: `mkdir -p` silently accepts a pre-existing junction. So after creating
+ * the tree, walk every app-managed segment from `dir` up to its trust root and
+ * reject any that is a reparse point. lstat reports a junction as a symbolic
+ * link on Windows (verified on this platform), so one check covers POSIX
+ * symlinks and Windows junctions alike. Throwing fails closed -- the credential
+ * write never happens rather than happening in attacker space.
+ */
+export function mkdirSecure(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true })
+  const stop = managedTrustRoot(dir)
+  let cur = path.resolve(dir)
+  for (;;) {
+    // Stop AT the trusted anchor without inspecting it: the anchor is the user's
+    // own directory and may legitimately be a symlink; inspecting it would turn a
+    // supported layout (resources on a network junction, symlinked ~/.claude) into
+    // a permanent silent failure. Everything strictly below it is app-created and
+    // must be real.
+    if (cur === stop) break
+    let st
+    try { st = fs.lstatSync(cur) } catch { break }
+    if (st.isSymbolicLink()) {
+      throw new Error(`refusing to write credentials: ${cur} is a reparse point, not a real directory`)
+    }
+    const parent = path.dirname(cur)
+    if (parent === cur) break
+    cur = parent
+  }
+}
 /** Atomic write of a credential file with a restrictive 0o600 mode (POSIX),
  *  creating parent dirs (subsumes the old plain atomicWriteFile). */
 function writeCredentialFile(file: string, data: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = file + '.tmp'
-  fs.writeFileSync(tmp, data, IS_POSIX ? { mode: CRED_FILE_MODE } : undefined)
-  fs.renameSync(tmp, file)
+  mkdirSecure(path.dirname(file))
+  atomicWriteSecure(file, data, IS_POSIX ? CRED_FILE_MODE : undefined)
   hardenCredentialFile(file)   // rename preserves the tmp's mode; re-assert to be safe
 }
-/** copyFileSync + chmod 0o600 (copy clones the source mode only loosely). */
-function copyCredentialFile(src: string, dest: string): void {
-  fs.copyFileSync(src, dest)
+/** Copy a credential file to `dest` SAFELY. Plain copyFileSync opens the
+ *  destination THROUGH a link planted there and writes the token into it
+ *  (COPYFILE_EXCL is not set), and the follow-up chmod then hardens the
+ *  attacker's file -- the exact write-through this module exists to stop, one
+ *  copy away from writeCredentialFile. Route the bytes through the same
+ *  exclusive-create staging instead, then re-assert 0o600. Exported for tests. */
+export function copyCredentialFile(src: string, dest: string): void {
+  mkdirSecure(path.dirname(dest))
+  atomicWriteSecure(dest, fs.readFileSync(src), IS_POSIX ? CRED_FILE_MODE : undefined)
   hardenCredentialFile(dest)
 }
 
@@ -109,9 +219,7 @@ export function listProfiles(): AccountProfile[] {
 function saveProfiles(profiles: AccountProfile[]): void {
   const file = profilesMetaFile()
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = file + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify({ profiles } satisfies AccountProfilesConfig, null, 2))
-  fs.renameSync(tmp, file) // atomic; Node renameSync overwrites existing on win + posix
+  atomicWriteSecure(file, JSON.stringify({ profiles } satisfies AccountProfilesConfig, null, 2))
 }
 export function upsertProfile(p: AccountProfile): void {
   const all = listProfiles().filter((x) => x.id !== p.id)
@@ -551,7 +659,9 @@ export function cleanupSessionHomes(): void {
   // Apply only when a session home was fresher than the profile home.
   for (const [profileId, cand] of best) {
     if (!cand.fromSession) continue
-    writeCanonicalIdentity(profileId, { claudeJson: cand.claudeJson, credentials: cand.credentials })
+    // Per-item: a reparse-point plant (or any fs error) on ONE profile's dir must
+    // not abort salvaging the others, nor the shared-dir repair pass further down.
+    try { writeCanonicalIdentity(profileId, { claudeJson: cand.claudeJson, credentials: cand.credentials }) } catch { /* best-effort */ }
     const home = getProfileConfigDir(profileId)
     try { fs.writeFileSync(path.join(home, '.claude.json'), cand.claudeJson) } catch { /* best-effort */ }
     if (cand.credentials != null) {
@@ -604,11 +714,17 @@ export function writeCanonicalIdentity(
   files: { claudeJson?: string; credentials?: string },
 ): void {
   const dir = getAccountIdentityDir(id)
-  fs.mkdirSync(dir, { recursive: true })
+  // mkdirSecure, not a bare mkdir: this directory holds .credentials.json, and a
+  // symlink/junction pre-planted on it (or an ancestor) would redirect that
+  // write into attacker space before the leaf-file O_EXCL guard ever applied.
+  mkdirSecure(dir)
+  // It was also being created at the umask default (0755 observed), leaving the
+  // credential filenames enumerable by any other local user even though their
+  // contents are 0600.
+  hardenCredentialDir(dir)
   if (files.claudeJson != null) {
     const f = path.join(dir, '.claude.json')
-    fs.writeFileSync(f + '.tmp', files.claudeJson)
-    fs.renameSync(f + '.tmp', f)
+    atomicWriteSecure(f, files.claudeJson)
   }
   if (files.credentials != null) {
     writeCredentialFile(path.join(dir, '.credentials.json'), files.credentials)
@@ -665,7 +781,10 @@ export function migrateProfilesToCanonicalLayout(): void {
     try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { /* none */ }
     let credentials: string | undefined
     try { credentials = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8') } catch { /* none */ }
-    if (claudeJson || credentials) writeCanonicalIdentity(p.id, { claudeJson, credentials })
+    // Per-item: one profile throwing must not halt migration of the rest.
+    if (claudeJson || credentials) {
+      try { writeCanonicalIdentity(p.id, { claudeJson, credentials }) } catch { /* best-effort */ }
+    }
   }
 }
 
@@ -704,14 +823,27 @@ export function readProfileAccountEmail(id: string): string | null {
  *  Returns false if there is no canonical backup to restore from. */
 export function restoreProfileHomeFromCanonical(id: string): boolean {
   const idDir = getAccountIdentityDir(id)
+  // Read side: if the identity dir is a reparse point, readFileSync below would
+  // follow it and restore an ATTACKER-chosen token into the live home (account
+  // fixation). The dir is always app-created (writeCanonicalIdentity), so a link
+  // here is a plant, not a legitimate layout — refuse.
+  try {
+    if (fs.lstatSync(idDir).isSymbolicLink()) throw new Error(`refusing restore: ${idDir} is a reparse point`)
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('reparse point')) throw e
+    return false // idDir absent -> nothing to restore
+  }
   const srcJson = path.join(idDir, '.claude.json')
   if (!fs.existsSync(srcJson)) return false
   const home = getProfileConfigDir(id)
-  fs.copyFileSync(srcJson, path.join(home, '.claude.json'))
+  // .claude.json can carry OAuth tokens, so restore it through the same
+  // link-safe path as the credential file rather than a plain copyFileSync.
+  mkdirSecure(home)
+  atomicWriteSecure(path.join(home, '.claude.json'), fs.readFileSync(srcJson))
   const srcCred = path.join(idDir, '.credentials.json')
   if (fs.existsSync(srcCred)) {
     const claudeDir = path.join(home, '.claude')
-    fs.mkdirSync(claudeDir, { recursive: true })
+    mkdirSecure(claudeDir)
     hardenCredentialDir(claudeDir)
     copyCredentialFile(srcCred, path.join(claudeDir, '.credentials.json'))
   }

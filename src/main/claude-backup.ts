@@ -8,6 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { logInfo, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { mkdirSecure, hardenCredentialFile } from './account-profiles'
 
 /** Where backups live: a CCC-managed dir SEPARATE from account-profiles/account-homes
  *  (the feature never writes here), so a feature bug cannot touch the backup. */
@@ -41,16 +42,28 @@ export function backupRealClaudeOnce(opts?: { homeDir?: string; resourcesDir?: s
 
   const staging = path.join(root, 'initial.tmp')
   try {
+    // The staging path is fixed and predictable, and we copy the real
+    // .credentials.json into it. A crashed prior attempt leaves a REAL dir here;
+    // a reparse point is a plant redirecting the copy into attacker space. Refuse
+    // before rmSync, so we never recurse a `force` delete THROUGH a junction into
+    // someone else's tree, and never copy the token through it.
+    let stagingLink = false
+    try { stagingLink = fs.lstatSync(staging).isSymbolicLink() } catch { /* absent */ }
+    if (stagingLink) throw new Error(`staging path ${staging} is a reparse point, not a real directory`)
     // Clear any stale staging dir from a prior crashed attempt so we start clean.
     fs.rmSync(staging, { recursive: true, force: true })
-    fs.mkdirSync(staging, { recursive: true })
+    mkdirSecure(staging)
 
     const present: string[] = []
 
     // 1) ~/.claude.json (the global identity). If it exists at source it MUST copy.
     const claudeJson = path.join(home, '.claude.json')
     if (fs.existsSync(claudeJson) && fs.statSync(claudeJson).isFile()) {
-      fs.copyFileSync(claudeJson, path.join(staging, '.claude.json'))
+      // COPYFILE_EXCL: fail if the destination already exists, so a link planted
+      // at the staging leaf cannot capture the copy (plain copyFileSync follows
+      // it). The staging dir is freshly mkdirSecure'd, so the dest never legitimately
+      // pre-exists.
+      fs.copyFileSync(claudeJson, path.join(staging, '.claude.json'), fs.constants.COPYFILE_EXCL)
       present.push('.claude.json')
     }
 
@@ -58,12 +71,17 @@ export function backupRealClaudeOnce(opts?: { homeDir?: string; resourcesDir?: s
     const claudeDir = path.join(home, '.claude')
     if (fs.existsSync(claudeDir)) {
       const destClaude = path.join(staging, '.claude')
-      fs.mkdirSync(destClaude, { recursive: true })
+      // mkdirSecure, not a bare mkdir: this dir RECEIVES the real .credentials.json,
+      // so a junction pre-planted at staging/.claude would copy the primary OAuth
+      // token into attacker space just as a junction on `staging` would.
+      mkdirSecure(destClaude)
       for (const ent of fs.readdirSync(claudeDir, { withFileTypes: true })) {
         if (!ent.isFile()) continue // skip projects/memory/etc subdirs (large; never destructively written)
         const isCritical = (CRITICAL_CLAUDE_DIR_FILES as readonly string[]).includes(ent.name)
+        const destFile = path.join(destClaude, ent.name)
         try {
-          fs.copyFileSync(path.join(claudeDir, ent.name), path.join(destClaude, ent.name))
+          fs.copyFileSync(path.join(claudeDir, ent.name), destFile, fs.constants.COPYFILE_EXCL)
+          if (isCritical) hardenCredentialFile(destFile) // the backup copy is a credential too — 0600 on POSIX
           present.push(`.claude/${ent.name}`)
         } catch (e) {
           // A critical file that EXISTS at source but fails to copy fails the

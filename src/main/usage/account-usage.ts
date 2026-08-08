@@ -14,7 +14,7 @@
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { listProfiles, getProfileConfigDir, readProfileAccountEmail } from '../account-profiles'
+import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWriteSecure, hardenCredentialFile } from '../account-profiles'
 import { isProfileInUseByLiveSession } from '../claude-account-identity'
 import { parseUsage } from './usage-buckets'
 import type { AccountUsage, UsageBucket, CreditsInfo } from '../../shared/usage-types'
@@ -244,9 +244,10 @@ async function writeRefreshedCreds(
         return false
       }
       c.claudeAiOauth = { ...(c.claudeAiOauth ?? {}), accessToken: t.accessToken, refreshToken: t.refreshToken, expiresAt: t.expiresAt }
-      const tmp = credsPath + '.ccc-refresh.tmp'
-      fs.writeFileSync(tmp, JSON.stringify(c, null, 2), { mode: 0o600 })
-      fs.renameSync(tmp, credsPath)
+      atomicWriteSecure(credsPath, JSON.stringify(c, null, 2), 0o600)
+      // This path had no re-assert, unlike account-profiles' writeCredentialFile.
+      // Keep the two credential writers symmetric so neither is a lone weak point.
+      hardenCredentialFile(credsPath)
       return true
     } catch (e) {
       if (attempt < 2) { await sleep(100); continue }
