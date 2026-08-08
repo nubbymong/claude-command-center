@@ -36,7 +36,11 @@ export interface ElectronCookie {
   url: string
   name: string
   value: string
-  domain: string
+  /**
+   * Omitted for a `__Host-` cookie, which is host-only BY DEFINITION: Chromium
+   * rejects the prefix outright when a domain attribute is present.
+   */
+  domain?: string
   path: string
   secure: boolean
   httpOnly: boolean
@@ -71,18 +75,29 @@ export function toElectronCookie(c: CdpCookie): ElectronCookie | null {
   if (!c || !c.name || !isClaudeCookie(c)) return null
 
   const host = c.domain.replace(/^\./, '')
-  const secure = c.secure !== false
+
+  // COOKIE PREFIXES ARE RULES, NOT DECORATION. Chromium enforces them on set,
+  // and copying a prefixed cookie across verbatim fails its own rule: observed
+  // 2026-08-08, `__Host-claude-ai-pending-login-email` was refused with
+  // EXCLUDE_INVALID_PREFIX because we passed a domain. `__Host-` means
+  // host-only, path `/`, secure; `__Secure-` means secure. Both are satisfied
+  // here rather than passed through and rejected.
+  const hostPrefixed = c.name.startsWith('__Host-')
+  const securePrefixed = c.name.startsWith('__Secure-')
+  const secure = hostPrefixed || securePrefixed ? true : c.secure !== false
+  const path = hostPrefixed ? '/' : (c.path || '/')
+
   const out: ElectronCookie = {
     // Electron derives the store key from the url; claude.ai is https-only.
-    url: `https://${host}${c.path && c.path !== '/' ? c.path : ''}`,
+    url: `https://${host}${path !== '/' ? path : ''}`,
     name: c.name,
     value: c.value ?? '',
-    domain: c.domain,
-    path: c.path || '/',
+    path,
     secure,
     httpOnly: c.httpOnly === true,
     sameSite: mapSameSite(c.sameSite),
   }
+  if (!hostPrefixed) out.domain = c.domain
   // A session cookie (expires -1 / absent) must NOT get an expirationDate, or
   // Electron turns it into a persistent one that outlives the browser session
   // it came from.
@@ -94,7 +109,17 @@ export interface HarvestResult {
   cookies: ElectronCookie[]
   /** True when the cookie that actually carries the session is present. */
   hasSessionCookie: boolean
-  /** Earliest expiry across persistent cookies, epoch MS; null when all are session cookies. */
+  /**
+   * When the SESSION cookie expires, epoch MS; null when it is a session cookie
+   * (no expiry of its own).
+   *
+   * The session's lifetime is `sessionKey`'s lifetime and nothing else. This
+   * used to be the EARLIEST expiry across every harvested cookie, which sounds
+   * conservative and is simply wrong: the jar contains infrastructure cookies
+   * with short lives — `__cf_bm` is Cloudflare's and lasts 30 minutes — so a
+   * freshly harvested, perfectly good session reported half an hour of life and
+   * `statusOf` would then call it expired. Observed 2026-08-08.
+   */
   expiresAt: number | null
   /** How many input cookies were dropped for not being claude.ai's. */
   dropped: number
@@ -118,15 +143,14 @@ export function harvestClaudeCookies(all: readonly CdpCookie[]): HarvestResult {
     else dropped++
   }
 
-  const expiries = cookies
-    .map((c) => c.expirationDate)
-    .filter((e): e is number => typeof e === 'number' && e > 0)
+  const session = cookies.find((c) => c.name === CLAUDE_SESSION_COOKIE)
+  const sessionExpiry = session?.expirationDate
 
   return {
     cookies,
-    hasSessionCookie: cookies.some((c) => c.name === CLAUDE_SESSION_COOKIE),
+    hasSessionCookie: session !== undefined,
     // CDP seconds -> epoch ms, to match everything else in the app.
-    expiresAt: expiries.length ? Math.min(...expiries) * 1000 : null,
+    expiresAt: typeof sessionExpiry === 'number' && sessionExpiry > 0 ? sessionExpiry * 1000 : null,
     dropped,
   }
 }

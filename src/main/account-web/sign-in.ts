@@ -21,7 +21,7 @@
  * No default export (project convention).
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { session as electronSession } from 'electron'
@@ -120,7 +120,7 @@ async function cleanup(profileDir: string | null): Promise<void> {
   child = null
   if (proc && !proc.killed) {
     try {
-      proc.kill()
+      killBrowserTree(proc)
       await Promise.race([
         new Promise((r) => proc.once('exit', r)),
         new Promise((r) => setTimeout(r, 5000)),
@@ -129,11 +129,39 @@ async function cleanup(profileDir: string | null): Promise<void> {
   }
   if (profileDir && existsSync(profileDir)) {
     try {
-      rmSync(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+      rmSync(profileDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
     } catch (err) {
+      // Worth shouting about: what is left behind is a browser profile holding a
+      // LIVE claude.ai session. `sweepAbandonedProfiles` clears it at next boot.
       logError(`[account-web] could not remove the sign-in profile dir (retried): ${(err as Error)?.message}`)
     }
   }
+}
+
+/**
+ * Kill the browser AND its children.
+ *
+ * `proc.kill()` signals only the process we spawned. Chrome and Edge are process
+ * TREES — renderers, GPU, network, utility — and those children keep open
+ * handles on the profile directory. Observed 2026-08-08: the harvest succeeded,
+ * `proc.kill()` returned, `proc` reported exit, and the very next `rmSync` threw
+ *
+ *   EPERM, Permission denied: ...\account-web\profile-mrbhy8is-b85405
+ *
+ * leaving a directory on disk that still contained `sessionKey`. That is the
+ * exact outcome this module's dedicated-profile design exists to prevent, so the
+ * teardown has to take the whole tree with it.
+ */
+function killBrowserTree(proc: ChildProcess): void {
+  const pid = proc.pid
+  if (!pid) return
+  if (process.platform === 'win32') {
+    // /T = tree, /F = force. Windows has no process-group kill for this.
+    try { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }) } catch { /* fall through */ }
+  }
+  // Always signal directly too: on win32 this catches a taskkill that could not
+  // run, and elsewhere it is the whole mechanism.
+  try { proc.kill() } catch { /* already gone */ }
 }
 
 /**

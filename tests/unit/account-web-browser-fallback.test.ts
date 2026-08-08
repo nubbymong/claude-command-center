@@ -24,8 +24,10 @@ vi.mock('../../src/main/vision-manager', () => ({
 }))
 
 const spawned: any[] = []
+const spawnSyncMock = vi.fn()
 vi.mock('node:child_process', () => ({
-  spawn: (...a: any[]) => { spawned.push(a); return { killed: false, kill: vi.fn(), on: vi.fn() } },
+  spawn: (...a: any[]) => { spawned.push(a); return { killed: false, kill: vi.fn(), on: vi.fn(), pid: 4242, once: vi.fn((_e: string, cb: () => void) => cb()) } },
+  spawnSync: (...a: any[]) => spawnSyncMock(...a),
 }))
 vi.mock('node:fs', () => ({
   // Only the Chrome binary exists. Everything else (the profile dir the code
@@ -88,6 +90,25 @@ describe('runSignIn — a substitution is reported, never silent', () => {
     expect(s.notice).toMatch(/Microsoft Edge is not installed/)
     expect(s.notice).toMatch(/Google Chrome was used instead/)
     expect(spawned[0][0]).toBe('C:/present/chrome.exe')
+  })
+
+  it('kills the browser TREE at teardown, not just the process it spawned', async () => {
+    // REGRESSION, observed 2026-08-08. proc.kill() signals only the spawned
+    // process; Edge's children kept handles on the profile dir, the following
+    // rmSync threw EPERM, and a directory containing a live claude.ai
+    // sessionKey was left on disk -- the exact outcome the dedicated-profile
+    // design exists to prevent.
+    spawnSyncMock.mockClear()
+    await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, browser: 'chrome' })
+
+    if (process.platform === 'win32') {
+      expect(spawnSyncMock).toHaveBeenCalled()
+      const [cmd, args] = spawnSyncMock.mock.calls[0]
+      expect(cmd).toBe('taskkill')
+      expect(args).toContain('/T')   // the tree
+      expect(args).toContain('/F')
+      expect(args).toContain('4242') // the pid we spawned
+    }
   })
 
   it('says nothing when the browser that ran is the one that was asked for', async () => {

@@ -133,6 +133,31 @@ describe('isClaudeCookie — nothing but claude.ai leaves the browser', () => {
   })
 })
 
+describe('toElectronCookie — cookie prefixes', () => {
+  // Chromium enforces `__Host-` and `__Secure-` on set. Copying such a cookie
+  // across verbatim breaks its own rule: observed 2026-08-08,
+  // `__Host-claude-ai-pending-login-email` was refused with
+  // EXCLUDE_INVALID_PREFIX because a domain was passed with it.
+  it('sets a __Host- cookie host-only, at /, secure', () => {
+    const out = toElectronCookie(cookie({ name: '__Host-claude-ai-pending-login-email', path: '/x', secure: false }))!
+    expect(out.domain).toBeUndefined()
+    expect(out.path).toBe('/')
+    expect(out.secure).toBe(true)
+    expect(out.url).toBe('https://claude.ai')
+  })
+
+  it('forces secure on a __Secure- cookie but keeps its domain and path', () => {
+    const out = toElectronCookie(cookie({ name: '__Secure-thing', path: '/api', secure: false }))!
+    expect(out.secure).toBe(true)
+    expect(out.domain).toBe('.claude.ai')
+    expect(out.path).toBe('/api')
+  })
+
+  it('leaves an unprefixed cookie’s domain alone', () => {
+    expect(toElectronCookie(cookie())!.domain).toBe('.claude.ai')
+  })
+})
+
 describe('toElectronCookie', () => {
   it('carries a persistent cookie across with its expiry', () => {
     const out = toElectronCookie(cookie())!
@@ -184,16 +209,38 @@ describe('harvestClaudeCookies', () => {
     expect(harvestClaudeCookies([]).hasSessionCookie).toBe(false)
   })
 
-  it('reports the EARLIEST expiry, in epoch ms', () => {
+  it('reports the SESSION cookie’s expiry, in epoch ms', () => {
+    // Not the earliest across the jar, which is what this used to do. The
+    // session lives as long as `sessionKey` lives, and nothing else in the jar
+    // has any bearing on that.
     const r = harvestClaudeCookies([
-      cookie({ name: 'a', expires: 1_900_000_000 }),
-      cookie({ name: 'b', expires: 1_700_000_000 }),
+      cookie({ name: 'lastActiveOrg', expires: 1_900_000_000 }),
+      cookie({ expires: 1_800_000_000 }),
     ])
-    expect(r.expiresAt).toBe(1_700_000_000 * 1000)
+    expect(r.expiresAt).toBe(1_800_000_000 * 1000)
   })
 
-  it('reports null expiry when everything is a session cookie', () => {
+  it('is NOT dragged down by a short-lived infrastructure cookie', () => {
+    // REGRESSION, observed 2026-08-08: a freshly harvested session reported
+    // "expires in 30 minutes" because Cloudflare's `__cf_bm` was in the jar and
+    // the earliest-expiry rule picked it. statusOf would then have called a
+    // perfectly good session expired half an hour later.
+    const halfAnHour = Math.floor(Date.now() / 1000) + 1800
+    const r = harvestClaudeCookies([
+      cookie({ name: '__cf_bm', expires: halfAnHour }),
+      cookie({ expires: 1_900_000_000 }),
+    ])
+    expect(r.expiresAt).toBe(1_900_000_000 * 1000)
+  })
+
+  it('reports null expiry when the session cookie is a session cookie', () => {
     expect(harvestClaudeCookies([cookie({ expires: -1 })]).expiresAt).toBeNull()
+  })
+
+  it('reports null expiry when there is no session cookie at all', () => {
+    const r = harvestClaudeCookies([cookie({ name: 'lastActiveOrg', expires: 1_900_000_000 })])
+    expect(r.hasSessionCookie).toBe(false)
+    expect(r.expiresAt).toBeNull()
   })
 
   it('survives a malformed jar without throwing', () => {
