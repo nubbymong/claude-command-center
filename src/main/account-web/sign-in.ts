@@ -153,6 +153,53 @@ export function sweepAbandonedProfiles(dataDir: string): void {
   }
 }
 
+/** The bits of a CDP target this module uses. */
+export interface CdpTarget {
+  type?: string
+  url?: string
+  id?: string
+  webSocketDebuggerUrl?: string
+}
+
+/** True for a URL served by claude.ai itself. Anything unparseable is not. */
+function isClaudeUrl(url: string | undefined): boolean {
+  try {
+    const host = new URL(url ?? '').hostname.toLowerCase()
+    return host === 'claude.ai' || host === 'www.claude.ai'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The claude.ai page targets worth asking "who is signed in?", best first.
+ *
+ * PURE, and the reason this exists is a bug that cost a whole test round.
+ * `chrome-remote-interface` connects to the FIRST page target it is offered,
+ * and on a real sign-in that is not the tab the human is using. Captured from an
+ * actual launch on 2026-08-08, the list held, in this order: an extension's own
+ * `claude.ai/oauth/authorize?...redirect_uri=chrome-extension://...` handshake
+ * page, then `claude.ai/login`, then the account-selection tab. The poller bound
+ * to the extension's page — same origin, so every other check passed — and when
+ * that transient page went away the connection was dead for the rest of the
+ * sign-in. The user logged in successfully and nothing was ever harvested, with
+ * no error logged anywhere.
+ *
+ * So: enumerate rather than assume, and deprioritise (never exclude) the pages
+ * that belong to an extension completing its own OAuth. The caller tries each in
+ * turn, which means no single guess has to be right.
+ */
+export function pickSignInTargets(targets: readonly CdpTarget[] | null | undefined): CdpTarget[] {
+  const pages = (targets ?? []).filter((t) => t?.type === 'page' && isClaudeUrl(t?.url))
+  const extensionOwned = (t: CdpTarget): boolean => /redirect_uri=chrome-extension/i.test(t.url ?? '')
+  return [...pages.filter((t) => !extensionOwned(t)), ...pages.filter(extensionOwned)]
+}
+
+/** Close a CDP client without letting a teardown error mask the real outcome. */
+async function closeQuietly(client: any): Promise<void> {
+  try { await client?.close() } catch { /* closing anyway */ }
+}
+
 /** Ask the page for the signed-in account, via claude.ai's own bootstrap. */
 async function readAccountEmail(client: any): Promise<string | null> {
   try {
@@ -265,11 +312,17 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
   /** Stamp the browser that actually launched onto every state the UI sees. */
   const tag = (s: SignInState): SignInState => ({ ...s, browser, ...(notice ? { notice } : {}) })
 
+  // Set when the browser goes away on its own. Without this, closing the window
+  // mid-sign-in left the poll loop talking to nothing for the full five-minute
+  // timeout and then blaming the timeout — which is not what happened.
+  let browserExited = false
+
   try {
     const args = buildAuthBrowserArgs({ profileDir })
     logInfo(`[account-web] launching ${bin.browser} for ${profileId} on an ephemeral loopback port`)
     child = spawn(bin.path, args, { detached: false, stdio: 'ignore' })
     child.on('error', (err) => logError(`[account-web] browser spawn error: ${err.message}`))
+    child.on('exit', () => { browserExited = true })
 
     current = tag({ phase: 'awaiting-user', profileId })
     const deadline = Date.now() + timeoutMs
@@ -289,55 +342,74 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
       return current
     }
 
-    let client: any = null
-
-    while (Date.now() < deadline && !cancelled) {
+    while (Date.now() < deadline && !cancelled && !browserExited) {
       await new Promise((r) => setTimeout(r, pollMs))
-      if (!client) {
-        try { client = await getCDP()({ port }) } catch { continue }
-      }
-      const email = await readAccountEmail(client)
-      if (!email) continue
+      if (cancelled || browserExited) break
 
-      // Authenticated. Harvest.
-      current = tag({ phase: 'harvesting', profileId })
-      const all: CdpCookie[] = (await client.Network.getAllCookies())?.cookies ?? []
-      const harvest = harvestClaudeCookies(all)
+      // RE-ENUMERATE EVERY POLL rather than holding one connection to whichever
+      // target CDP offered first. A sign-in creates and destroys claude.ai pages
+      // as it goes — a login tab, an account-selection hop, an extension doing
+      // its own OAuth — so both "which target" and "is it still alive" change
+      // underneath a long-lived connection. Reconnecting each poll costs one
+      // loopback websocket every 1.5s and removes the entire class of bug.
+      let targets: CdpTarget[] = []
+      try { targets = await getCDP().List({ port }) } catch { continue }
 
-      if (!harvest.hasSessionCookie) {
-        // Keep waiting rather than declaring success on a cookie-less jar.
-        current = tag({ phase: 'awaiting-user', profileId })
-        continue
-      }
+      for (const t of pickSignInTargets(targets)) {
+        let client: any = null
+        try {
+          client = await getCDP()({ port, target: t.webSocketDebuggerUrl ?? t.id })
+        } catch { continue }
 
-      const store = electronSession.fromPartition(partition)
-      for (const c of harvest.cookies) {
-        try { await store.cookies.set(c) } catch (err) {
-          logError(`[account-web] could not set cookie ${c.name}: ${(err as Error)?.message}`)
+        const email = await readAccountEmail(client)
+        if (!email) { await closeQuietly(client); continue }
+
+        // Authenticated. Harvest.
+        current = tag({ phase: 'harvesting', profileId })
+        const all: CdpCookie[] = (await client.Network.getAllCookies())?.cookies ?? []
+        const harvest = harvestClaudeCookies(all)
+
+        if (!harvest.hasSessionCookie) {
+          // Keep waiting rather than declaring success on a cookie-less jar.
+          current = tag({ phase: 'awaiting-user', profileId })
+          await closeQuietly(client)
+          continue
         }
-      }
 
-      try { await client.close() } catch { /* closing anyway */ }
-      await cleanup(profileDir)
+        const store = electronSession.fromPartition(partition)
+        for (const c of harvest.cookies) {
+          try { await store.cookies.set(c) } catch (err) {
+            logError(`[account-web] could not set cookie ${c.name}: ${(err as Error)?.message}`)
+          }
+        }
 
-      const acquired: AccountWebSession = {
-        profileId,
-        accountEmail: email,
-        acquiredAt: Date.now(),
-        expiresAt: harvest.expiresAt,
-        origin: 'system-browser',
+        await closeQuietly(client)
+        await cleanup(profileDir)
+
+        const acquired: AccountWebSession = {
+          profileId,
+          accountEmail: email,
+          acquiredAt: Date.now(),
+          expiresAt: harvest.expiresAt,
+          origin: 'system-browser',
+        }
+        logInfo(`[account-web] ${profileId}: signed in as ${email}, ${harvest.cookies.length} cookie(s), ${harvest.dropped} dropped`)
+        current = tag({ phase: 'done', profileId, session: acquired })
+        return current
       }
-      logInfo(`[account-web] ${profileId}: signed in as ${email}, ${harvest.cookies.length} cookie(s), ${harvest.dropped} dropped`)
-      current = tag({ phase: 'done', profileId, session: acquired })
-      return current
     }
 
-    try { await client?.close() } catch { /* ignore */ }
     await cleanup(profileDir)
     current = tag({
       phase: 'failed',
       profileId,
-      error: cancelled ? 'Sign-in cancelled.' : 'Timed out waiting for the sign-in to complete.',
+      error: cancelled
+        ? 'Sign-in cancelled.'
+        // Distinguishable on purpose: waiting out a five-minute timeout because
+        // the window is already gone tells the user nothing about what to do.
+        : browserExited
+          ? 'The sign-in browser was closed before the session could be collected. Sign in again and leave the window open until this panel says you are signed in.'
+          : 'Timed out waiting for the sign-in to complete.',
     })
     return current
   } catch (err) {

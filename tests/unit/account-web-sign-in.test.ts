@@ -41,11 +41,17 @@ const { CLAUDE_SESSION_COOKIE } = await import('../../src/shared/account-web-ses
 
 /** A fake chrome-remote-interface whose page reports `email` and returns `cookies`. */
 function fakeCdp(email: string | null, cookies: any[]) {
-  return () => Promise.resolve({
+  const f: any = () => Promise.resolve({
     Runtime: { evaluate: async () => ({ result: { value: email } }) },
     Network: { getAllCookies: async () => ({ cookies }) },
     close: async () => {},
   })
+  // The poller enumerates targets each cycle instead of taking whichever one it
+  // is handed first — see pickSignInTargets.
+  f.List = async () => [
+    { type: 'page', url: 'https://claude.ai/login', id: 't1', webSocketDebuggerUrl: 'ws://t1' },
+  ]
+  return f
 }
 
 const sessionCookie = { name: CLAUDE_SESSION_COOKIE, value: 'sk', domain: '.claude.ai', path: '/', expires: 1_800_000_000, secure: true, httpOnly: true }

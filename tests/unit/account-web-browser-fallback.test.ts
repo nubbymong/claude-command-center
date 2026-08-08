@@ -44,13 +44,17 @@ const cookie = {
   expires: 1_800_000_000, secure: true, httpOnly: true,
 }
 
+const TARGETS = [{ type: 'page', url: 'https://claude.ai/login', id: 't1', webSocketDebuggerUrl: 'ws://t1' }]
+
 /** A fake chrome-remote-interface that reports a signed-in account. */
 function fakeCdp() {
-  return () => Promise.resolve({
+  const f: any = () => Promise.resolve({
     Runtime: { evaluate: async () => ({ result: { value: 'me@example.com' } }) },
     Network: { getAllCookies: async () => ({ cookies: [cookie] }) },
     close: async () => {},
   })
+  f.List = async () => TARGETS
+  return f
 }
 
 let setCdp: (f: unknown) => void
@@ -97,11 +101,13 @@ describe('runSignIn — a substitution is reported, never silent', () => {
   it('stamps the browser onto a FAILED state too, so a failure can be attributed', async () => {
     // No account ever reported: the sign-in times out. Which browser was driving
     // is the first thing worth knowing about an SSO step that never completed.
-    setCdp(() => Promise.resolve({
+    const never: any = () => Promise.resolve({
       Runtime: { evaluate: async () => ({ result: { value: null } }) },
       Network: { getAllCookies: async () => ({ cookies: [] }) },
       close: async () => {},
-    }))
+    })
+    never.List = async () => TARGETS
+    setCdp(never)
     const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5, browser: 'edge' })
 
     expect(s.phase).toBe('failed')
