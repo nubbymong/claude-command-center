@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { logError } from './debug-logger'
+import { atomicWriteFileSync } from './atomic-write'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type {
   CodexReviewUsageRecord,
@@ -59,13 +60,13 @@ function saveShard(): void {
     // copyFileSync truncates the destination in-place. Copilot caught this
     // on the P7.7.14 review.
     const filePath = shardPath()
-    const tmpPath = `${filePath}.tmp.${process.pid}`
-    writeFileSync(tmpPath, JSON.stringify(shard, null, 2), 'utf-8')
     try {
-      renameSync(tmpPath, filePath)
-    } catch (renameErr: any) {
-      try { unlinkSync(tmpPath) } catch { /* ignore */ }
-      logError('[codex-review-usage] shard rename failed:', renameErr?.message)
+      atomicWriteFileSync(filePath, JSON.stringify(shard, null, 2))
+    } catch (writeErr: any) {
+      // Distinguish the stages so the log still says which half failed, as it
+      // did before the staging moved into the shared helper (#233).
+      const stage = writeErr?.atomicWriteStage === 'rename' ? 'rename' : 'write'
+      logError(`[codex-review-usage] shard ${stage} failed:`, writeErr?.message)
     }
   } catch (err: any) {
     logError('[codex-review-usage] shard write failed:', err?.message)

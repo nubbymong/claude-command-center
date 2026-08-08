@@ -238,13 +238,17 @@ export function writeConfig(key: ConfigKey, data: unknown): boolean {
     // link planted at the staging path is refused, AND -- the part that matters
     // here -- the mode is honoured, because open(2) applies a mode only on
     // creation. A plain writeFileSync into an existing inode silently keeps that
-    // inode's permissions.
+    // inode's permissions. Post-#233 this is a thin alias over the shared
+    // atomicWriteFileSync, so it carries the wx/random-staging properties too.
     atomicWriteSecure(filePath, JSON.stringify(data, null, 2), modeFor(key))
     // Re-assert for the case the file already existed at 0644 from an older
     // build; the rename above replaces the inode, so this is belt and braces.
     if (SECRET_CONFIG_KEYS.has(key)) hardenCredentialFile(filePath)
     return true
   } catch (err) {
+    // Unchanged contract: log and return false. What changed is that a transient
+    // Windows rename failure is now retried instead of silently dropping the
+    // save (#233), and the staging file can no longer be a planted link.
     logError(`[config-manager] Failed to write ${key}: ${err}`)
     return false
   }

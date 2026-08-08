@@ -2,6 +2,7 @@
 // writes; corrupt file -> empty state (fail-open invariant, spec §7).
 import * as fs from 'fs'
 import * as path from 'path'
+import { atomicWriteFileSync } from '../atomic-write'
 import type { SentinelFinding, SentinelStateSnapshot, FindingStatus } from '../../shared/sentinel-types'
 
 export class SentinelState {
@@ -27,9 +28,7 @@ export class SentinelState {
   private persist(): void {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true })
-      const tmp = this.file + '.tmp'
-      fs.writeFileSync(tmp, JSON.stringify(this.state, null, 2))
-      fs.renameSync(tmp, this.file)
+      atomicWriteFileSync(this.file, JSON.stringify(this.state, null, 2))
     } catch { /* persistence failure must not break the app */ }
     for (const fn of this.subs) { try { fn(this.state) } catch { /* subscriber */ } }
   }
