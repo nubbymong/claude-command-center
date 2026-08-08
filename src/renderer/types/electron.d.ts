@@ -94,6 +94,7 @@ export interface ElectronAPI {
   accountProfiles: {
     list: () => Promise<import('../../shared/account-types').AccountProfile[]>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Per-profile credential state: forced-login countdown + identity cross-check. */

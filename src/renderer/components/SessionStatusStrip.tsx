@@ -10,6 +10,7 @@ import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { isAccountActive } from '../../shared/account-types'
 import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
@@ -142,12 +143,21 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
 
   // Account chooser: every profile (resolved name + truncated email hint).
   // The current account is marked active; selecting it is a no-op in switchAccount.
-  const accountItems = profiles.map((p) => ({
-    label: resolveAccountName(p.accountEmail, p.name, accountAliases),
-    value: p.id,
-    active: p.id === session.profileId,
-    hint: middleTruncateEmail(p.accountEmail),
-  }))
+  // Inactive accounts stay listed but are disabled (greyed, unselectable); the
+  // current account is never disabled, even if it was deactivated while in use.
+  const accountItems = profiles.map((p) => {
+    const isCurrent = p.id === session.profileId
+    const inactive = !isAccountActive(p)
+    return {
+      label: resolveAccountName(p.accountEmail, p.name, accountAliases),
+      value: p.id,
+      active: isCurrent,
+      disabled: inactive && !isCurrent,
+      hint: inactive
+        ? `${middleTruncateEmail(p.accountEmail)} · inactive`
+        : middleTruncateEmail(p.accountEmail),
+    }
+  })
 
   return (
     <div

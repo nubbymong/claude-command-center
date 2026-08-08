@@ -42,6 +42,22 @@ export function registerAccountProfilesHandlers(): void {
     return { ok: true }
   })
 
+  // Mark an account active/inactive. Inactive accounts stay listed but cannot be
+  // chosen when switching a session's account (enforced in the switch surfaces
+  // and, as a backstop, in useSwitchAccount).
+  ipcMain.handle(IPC.ACCOUNT_PROFILES_SET_ACTIVE, (_e, p: { id: string; active: boolean }) => {
+    if (!p || !isValidProfileId(p.id)) return { ok: false }
+    const prof = listProfiles().find((x) => x.id === p.id)
+    if (!prof) return { ok: false }
+    // The primary account is always active -- it can't be deleted either, and
+    // keeping it selectable guarantees the switcher can never be left empty.
+    if (prof.isPrimary && p.active === false) {
+      return { ok: false, error: 'The primary account cannot be deactivated.' }
+    }
+    upsertProfile({ ...prof, active: p.active !== false })
+    return { ok: true }
+  })
+
   ipcMain.handle(IPC.ACCOUNT_PROFILES_DELETE, (_e, p: { id: string }) => {
     // safeTeardownProfile validates the id + asserts path containment + refuses a
     // reparse-point root; it throws on an invalid/escaping id.

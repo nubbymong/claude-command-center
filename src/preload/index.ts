@@ -18,6 +18,7 @@ export interface ElectronAPI {
     list: () => Promise<import('../shared/account-types').AccountProfile[]>
     create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Per-profile credential state: forced-login countdown + identity cross-check. */
@@ -482,6 +483,7 @@ const electronAPI: ElectronAPI = {
     list: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_LIST),
     create: (name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CREATE, { name }),
     rename: (id, name) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_RENAME, { id, name }),
+    setActive: (id, active) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id, active }),
     delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
     refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
     authInfo: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_AUTH_INFO),

@@ -26,6 +26,7 @@ import type { AccountProfile } from '../../../src/shared/account-types'
 const listMock = vi.fn<[], Promise<AccountProfile[]>>()
 const deleteMock = vi.fn<[string], Promise<{ ok: boolean; error?: string }>>()
 const renameMock = vi.fn<[string, string], Promise<{ ok: boolean }>>()
+const setActiveMock = vi.fn<[string, boolean], Promise<{ ok: boolean; error?: string }>>()
 const globalEmailMock = vi.fn<[], Promise<string | null>>()
 const refreshIdentityMock = vi.fn<[string], Promise<{ ok: boolean; email: string; configDir: string } | null>>()
 const updateSettingsMock = vi.fn()
@@ -39,6 +40,7 @@ const configSaveMock = vi.fn<[string, unknown], Promise<unknown>>().mockResolved
     list: listMock,
     delete: deleteMock,
     rename: renameMock,
+    setActive: setActiveMock,
     globalEmail: globalEmailMock,
     create: vi.fn(),
     refreshIdentity: refreshIdentityMock,
@@ -115,6 +117,7 @@ describe('AccountsPanel', () => {
     listMock.mockResolvedValue([])
     deleteMock.mockResolvedValue({ ok: true })
     renameMock.mockResolvedValue({ ok: true })
+    setActiveMock.mockResolvedValue({ ok: true })
     globalEmailMock.mockResolvedValue(null)
     refreshIdentityMock.mockResolvedValue(null)
     configSaveMock.mockResolvedValue(undefined)
@@ -275,6 +278,56 @@ describe('AccountsPanel', () => {
     expect(overrides?.['me@example.com']).toBe('indigo')
     // Pre-existing override for other email is preserved.
     expect(overrides?.['other@example.com']).toBe('rose')
+  })
+
+  it('shows an active/inactive toggle on non-primary profiles but not the primary', () => {
+    useAccountProfilesStore.setState({ profiles: [primaryProfile, profileWithEmail] })
+
+    const { container, unmount: u } = renderComponent(
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
+    )
+    unmount = u
+
+    const primaryRow = container.querySelector(`[data-testid="profile-row-${primaryProfile.id}"]`)!
+    const workRow = container.querySelector(`[data-testid="profile-row-${profileWithEmail.id}"]`)!
+    expect(primaryRow.querySelector('[role="switch"]')).toBeNull()
+    expect(workRow.querySelector('[role="switch"]')).toBeTruthy()
+  })
+
+  it('toggling an active account calls setActive(id, false)', async () => {
+    useAccountProfilesStore.setState({ profiles: [profileWithEmail] })
+
+    const { container, unmount: u } = renderComponent(
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
+    )
+    unmount = u
+
+    const toggle = container.querySelector(
+      `[data-testid="profile-row-${profileWithEmail.id}"] [role="switch"]`
+    ) as HTMLButtonElement
+    expect(toggle).toBeTruthy()
+    await act(async () => { toggle.click() })
+
+    expect(setActiveMock).toHaveBeenCalledWith(profileWithEmail.id, false)
+  })
+
+  it('shows an "inactive" badge and re-activates on toggle for an inactive account', async () => {
+    const inactive: AccountProfile = { ...profileWithEmail, active: false }
+    useAccountProfilesStore.setState({ profiles: [inactive] })
+
+    const { container, unmount: u } = renderComponent(
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
+    )
+    unmount = u
+
+    expect(container.querySelector(`[data-testid="inactive-badge-${inactive.id}"]`)).toBeTruthy()
+
+    const toggle = container.querySelector(
+      `[data-testid="profile-row-${inactive.id}"] [role="switch"]`
+    ) as HTMLButtonElement
+    await act(async () => { toggle.click() })
+
+    expect(setActiveMock).toHaveBeenCalledWith(inactive.id, true)
   })
 
   it('does NOT show a colour picker for a setup-incomplete profile (no email)', async () => {

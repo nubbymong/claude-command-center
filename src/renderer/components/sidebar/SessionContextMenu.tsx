@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react'
 import { Session } from '../../stores/sessionStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
-import type { AccountProfile } from '../../../shared/account-types'
+import { isAccountActive, type AccountProfile } from '../../../shared/account-types'
 import { resolveAccountName, middleTruncateEmail } from '../../../shared/account-chip-color'
 
 interface SessionContextMenuProps {
@@ -78,21 +78,32 @@ export default function SessionContextMenu({
           </button>
           {accountOpen && (
             <div className="pl-2">
-              {profiles!.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => { onSwitchAccount?.(p.id); onDismiss() }}
-                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-surface1 transition-colors flex items-center gap-2"
-                  style={{ color: p.id === session.profileId ? 'var(--color-text)' : 'var(--color-subtext0)' }}
-                  title={p.accountEmail}
-                >
-                  <span className="w-3 shrink-0 text-green">{p.id === session.profileId ? String.fromCodePoint(0x2713) : ''}</span>
-                  <span className="flex flex-col min-w-0">
-                    <span className="truncate">{resolveAccountName(p.accountEmail, p.name, accountAliases)}</span>
-                    <span className="truncate text-overlay0" style={{ fontSize: 10, lineHeight: '13px' }}>{middleTruncateEmail(p.accountEmail)}</span>
-                  </span>
-                </button>
-              ))}
+              {profiles!.map((p) => {
+                const isCurrent = p.id === session.profileId
+                // Inactive accounts stay visible but can't be selected. The current
+                // account is always shown selectable (choosing it is a harmless no-op)
+                // even in the edge case where it was deactivated while in use.
+                const selectable = isAccountActive(p) || isCurrent
+                return (
+                  <button
+                    key={p.id}
+                    disabled={!selectable}
+                    onClick={() => { if (selectable) { onSwitchAccount?.(p.id); onDismiss() } }}
+                    className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${selectable ? 'hover:bg-surface1' : 'cursor-default'}`}
+                    style={{ color: !selectable ? 'var(--color-overlay0)' : (isCurrent ? 'var(--color-text)' : 'var(--color-subtext0)') }}
+                    title={selectable ? p.accountEmail : `${p.accountEmail} (inactive)`}
+                  >
+                    <span className="w-3 shrink-0 text-green">{isCurrent ? String.fromCodePoint(0x2713) : ''}</span>
+                    <span className="flex flex-col min-w-0">
+                      <span className="truncate">
+                        {resolveAccountName(p.accountEmail, p.name, accountAliases)}
+                        {!isAccountActive(p) && <span className="text-overlay0"> · inactive</span>}
+                      </span>
+                      <span className="truncate text-overlay0" style={{ fontSize: 10, lineHeight: '13px' }}>{middleTruncateEmail(p.accountEmail)}</span>
+                    </span>
+                  </button>
+                )
+              })}
             </div>
           )}
         </>

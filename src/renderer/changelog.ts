@@ -21,6 +21,13 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.8',
+    date: '2026-08-10',
+    changes: [
+      { type: 'feature', description: 'Accounts can now be marked inactive. An inactive account still appears in the accounts list but cannot be chosen when you switch a session\'s account — it shows up greyed and labelled "inactive" in the switch menus. Toggle it from Settings › Accounts; every existing account stays active, and the primary account is always active. Handy for parking an account you are not using without removing it.' }
+    ]
+  },
+  {
     version: '2.1.0-beta.7',
     date: '2026-08-10',
     highlights: 'A security release. Two high-severity local-attacker vulnerabilities are fixed — their advisories publish alongside this release — and every open dependency security alert on the project is cleared.',

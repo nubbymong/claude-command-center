@@ -332,6 +332,7 @@ export const IPC = {
   ACCOUNT_PROFILES_LIST: 'accountProfiles:list',
   ACCOUNT_PROFILES_CREATE: 'accountProfiles:create',
   ACCOUNT_PROFILES_RENAME: 'accountProfiles:rename',
+  ACCOUNT_PROFILES_SET_ACTIVE: 'accountProfiles:setActive',
   ACCOUNT_PROFILES_DELETE: 'accountProfiles:delete',
   ACCOUNT_PROFILES_REFRESH_IDENTITY: 'accountProfiles:refreshIdentity',
   ACCOUNT_PROFILES_AUTH_INFO: 'accountProfiles:authInfo',
