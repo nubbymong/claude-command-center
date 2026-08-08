@@ -5,7 +5,7 @@
  */
 
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError, logWarn } from './debug-logger'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir, hardenCredentialFile } from './account-profiles'
@@ -206,12 +206,14 @@ export function readConfig<T = unknown>(key: ConfigKey): T | null {
 }
 
 /**
- * Write a config file atomically (write per-pid .tmp then rename over the
- * destination). renameSync is an atomic replace on POSIX (rename(2)) and on
- * Windows (MoveFileExW + REPLACE_EXISTING) whether or not the destination
- * exists — a crash mid-write leaves the previous file intact, never a torn
- * one. The previous copyFileSync-when-target-exists branch truncated the
- * destination in place (same bug fixed in session-state.ts, P7.7.16).
+ * Write a config file atomically via the shared helper (#233) — staging,
+ * exclusive create, the rename retry and cleanup all live in atomic-write.ts.
+ *
+ * Losing the Windows rename race used to return false here, silently dropping a
+ * config save because a scanner held the file for a few milliseconds.
+ *
+ * The previous copyFileSync-when-target-exists branch truncated the destination
+ * in place (same bug fixed in session-state.ts, P7.7.16).
  */
 export function writeConfig(key: ConfigKey, data: unknown): boolean {
   // Fail closed on an unregistered key. The CONFIG_FILES[key] lookup ran

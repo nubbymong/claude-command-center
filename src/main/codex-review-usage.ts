@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'fs'
+import { mkdirSync, readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { logError } from './debug-logger'
 import { atomicWriteFileSync } from './atomic-write'

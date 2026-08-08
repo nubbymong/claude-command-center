@@ -76,7 +76,12 @@ describe('catalogue persistence survives a transient Windows rename failure', ()
 
   it('retries a rename that loses to a scanner and still lands the write', () => {
     seedStuckCatalogue()
-    h.failCodes = ['EPERM', 'EACCES', 'EBUSY']
+    // EBUSY only: it is the one code retried on EVERY platform, so this asserts
+    // the behaviour on both CI legs. EPERM/EACCES are Windows-only (they are a
+    // permanent permission denial on POSIX) and are covered by the platform-rule
+    // tests in atomic-write-platform.test.ts, which exercise both branches
+    // regardless of the host.
+    h.failCodes = ['EBUSY', 'EBUSY', 'EBUSY']
 
     expect(() => cleanupStuckRuns()).not.toThrow()
 
@@ -92,12 +97,13 @@ describe('catalogue persistence survives a transient Windows rename failure', ()
     expect(stagingFiles()).toEqual([])
   })
 
-  it('gives up on a real permission problem instead of retrying forever', () => {
+  it('gives up on a persistent failure instead of retrying forever', () => {
     seedStuckCatalogue()
-    // Longer than the retry budget, so the last attempt still fails.
-    h.failCodes = ['EPERM', 'EPERM', 'EPERM', 'EPERM', 'EPERM', 'EPERM', 'EPERM']
+    // Longer than the retry budget, so the last attempt still fails. EBUSY for
+    // the same cross-platform reason as above.
+    h.failCodes = ['EBUSY', 'EBUSY', 'EBUSY', 'EBUSY', 'EBUSY', 'EBUSY', 'EBUSY']
 
-    expect(() => cleanupStuckRuns()).toThrow(/EPERM/)
+    expect(() => cleanupStuckRuns()).toThrow(/EBUSY/)
     // Five delays plus the first try = six attempts, then it stops.
     expect(h.renameFrom).toHaveLength(6)
     // A failed write must not leave its staging file for the next writer.

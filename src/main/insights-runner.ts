@@ -868,7 +868,18 @@ function saveExtractionFailure(
 ): void {
   try {
     const target = join(archiveDir, 'kpi-extraction-failure.json')
-    writeFileSync(
+    // 0o600 on POSIX. This file holds the verbatim reply to a prompt that embeds
+    // the previous run's full kpis.json, so it routinely persists a copy of the
+    // user's analysed usage data, and it must not land 0o644 under the default
+    // umask.
+    //
+    // Through the shared atomic write, not a bare writeFileSync + chmod (#233).
+    // The old shape was GHSA-pwfw-2ggq-569x exactly: a mode passed to open(2)
+    // applies only on CREATE, so writing into an existing inode inherited its
+    // permissions, and the compensating chmod followed a link to harden someone
+    // else's file. Exclusive create means the file is always new, so the mode
+    // always applies and the re-assert is no longer needed.
+    atomicWriteFileSync(
       target,
       JSON.stringify(
         {
@@ -883,17 +894,8 @@ function saveExtractionFailure(
         null,
         2
       ),
-      // 0o600 on POSIX. This file holds the verbatim reply to a prompt that embeds
-      // the previous run's full kpis.json, so it routinely persists a copy of the
-      // user's analysed usage data. A plain writeFileSync lands 0o644 under the
-      // default umask — world-readable — which is exactly the failure mode
-      // account-profiles.ts's writeCredentialFile/hardenCredentialFile exist to
-      // prevent. NTFS ACL inheritance masks this on Windows; macOS and Linux ship
-      // too. Mode is ignored on win32, so this is unconditional.
       { mode: 0o600 }
     )
-    // writeFileSync's mode only applies on CREATE, so re-assert for an overwrite.
-    try { chmodSync(target, 0o600) } catch { /* best-effort; win32 ignores modes */ }
     logError(`[insights] Full failed reply saved to ${target}`)
   } catch (err) {
     logError('[insights] Could not save the extraction failure record:', err)

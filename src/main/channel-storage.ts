@@ -1,5 +1,5 @@
 // src/main/channel-storage.ts
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, appendFileSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
