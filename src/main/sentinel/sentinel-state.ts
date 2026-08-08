@@ -28,10 +28,14 @@ export class SentinelState {
   private persist(): void {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true })
-      // retry:false -- persist() runs once per finding in the boot loop, so a
-      // blocking retry per call could freeze the main thread for seconds. This
-      // writer already swallows its failures, so waiting buys it nothing.
-      atomicWriteFileSync(this.file, JSON.stringify(this.state, null, 2), { retry: false })
+      // Retry left ON, deliberately. An earlier revision passed retry:false to
+      // keep the boot loop (one persist per finding) off a blocking wait -- but
+      // persist() is ALSO the user-click path: setStatus(id, 'dismissed') calls
+      // it once per dismissal, and upsertFinding's "never resurrect dismissed"
+      // dedup reads the file. Dropping that write silently resurrects a finding
+      // the user dismissed, at the next boot. The retry only engages when a
+      // rename has already failed, so the normal path costs nothing.
+      atomicWriteFileSync(this.file, JSON.stringify(this.state, null, 2))
     } catch { /* persistence failure must not break the app */ }
     for (const fn of this.subs) { try { fn(this.state) } catch { /* subscriber */ } }
   }

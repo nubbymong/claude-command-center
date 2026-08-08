@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { logError } from './debug-logger'
-import { atomicWriteFileSync } from './atomic-write'
+import { atomicWriteFileSync, isRenameStageFailure } from './atomic-write'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type {
   CodexReviewUsageRecord,
@@ -65,7 +65,7 @@ function saveShard(): void {
     } catch (writeErr: any) {
       // Distinguish the stages so the log still says which half failed, as it
       // did before the staging moved into the shared helper (#233).
-      const stage = writeErr?.atomicWriteStage === 'rename' ? 'rename' : 'write'
+      const stage = isRenameStageFailure(writeErr) ? 'rename' : 'write'
       logError(`[codex-review-usage] shard ${stage} failed:`, writeErr?.message)
     }
   } catch (err: any) {

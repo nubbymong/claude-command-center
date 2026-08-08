@@ -10,7 +10,6 @@ import {
   copyFileSync,
   readdirSync,
   statSync,
-  chmodSync
 } from 'fs'
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'

@@ -64,16 +64,46 @@ describe('sweepStaleStaging, via atomicWriteFileSync', () => {
     try { rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
   })
 
-  it('reclaims orphans belonging to a DIFFERENT file in the same directory', async () => {
+  it('reclaims an orphan for each file it writes, as it writes them', async () => {
     const { atomicWriteFileSync: write } = await import('../../src/main/atomic-write')
     plantOrphan('alpha.json', 2 * 60 * 60 * 1000)
     plantOrphan('beta.json', 2 * 60 * 60 * 1000)
 
-    // One write, to one of them. Both orphans must go: the sweep runs once per
-    // directory, so it cannot be scoped to the name being written.
+    // Writing alpha reclaims alpha's orphan. beta's is NOT ours yet — this
+    // process has never written beta.json, so we have no standing to delete it.
+    write(join(dir, 'alpha.json'), '{}')
+    expect(leftovers()).toHaveLength(1)
+
+    // Writing beta admits it to the known set and reclaims its orphan too. This
+    // is the round-1 bug: with a per-directory memo, this second sweep never ran
+    // and beta's orphan lived forever.
+    write(join(dir, 'beta.json'), '{}')
+    expect(leftovers()).toEqual([])
+  })
+
+  it('never deletes a staging-shaped file this process did not write', async () => {
+    const { atomicWriteFileSync: write } = await import('../../src/main/atomic-write')
+    // $HOME is a real target of this helper (the global .claude.json), so a bare
+    // pattern match reaches into a directory full of other people's files. These
+    // match the shape exactly and must survive.
+    const foreign = ['Quicken Backup', 'vendor-db', 'github-cache.json']
+    for (const f of foreign) plantOrphan(f, 2 * 60 * 60 * 1000)
+
     write(join(dir, 'alpha.json'), '{}')
 
-    expect(leftovers()).toEqual([])
+    expect(leftovers()).toHaveLength(foreign.length)
+  })
+
+  it('ignores an upper-case GUID, which randomUUID never produces', async () => {
+    const { atomicWriteFileSync: write } = await import('../../src/main/atomic-write')
+    const p = join(dir, 'alpha.json.9F2C41AE-77B1-4B2E-9C0D-3F5A6E8D1B44.tmp')
+    writeFileSync(p, 'someone else')
+    const when = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    utimesSync(p, when, when)
+
+    write(join(dir, 'alpha.json'), '{}')
+
+    expect(leftovers()).toHaveLength(1)
   })
 
   it('leaves a FRESH staging file alone, in case another process is mid-write', async () => {

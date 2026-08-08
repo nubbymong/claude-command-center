@@ -1,5 +1,5 @@
 import { writeFileSync, renameSync, unlinkSync, readdirSync, lstatSync } from 'fs'
-import { join, dirname } from 'path'
+import { join, dirname, basename } from 'path'
 import { randomUUID } from 'crypto'
 
 /**
@@ -60,8 +60,10 @@ export function isTransientRenameError(code: string | undefined, platform: strin
  *  something is sitting on the path deliberately, so fail rather than loop. */
 const STAGING_NAME_ATTEMPTS = 3
 
-/** `<name>.<uuid>.tmp` -- what this module leaves behind if it is killed mid-write. */
-const STAGING_RE = /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i
+/** `<name>.<uuid>.tmp` -- what this module leaves behind if it is killed mid-write.
+ *  Lower-case only: `randomUUID()` never emits upper-case, so a mixed-case GUID in
+ *  a filename is somebody else's convention, not ours. */
+const STAGING_RE = /\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/
 const STALE_STAGING_MS = 60 * 60 * 1000
 
 function sleepSync(ms: number): void {
@@ -76,22 +78,37 @@ function sleepSync(ms: number): void {
  * a random name is never reused, so nothing reclaims it -- unlike the fixed
  * `<file>.tmp` this replaced, which the next write simply overwrote. Left alone
  * these accumulate indefinitely, and for the credential writers each one is a
- * complete token blob. Sweep them, but only once per directory per process: a
- * readdir on every write would be a real cost on a busy CONFIG dir.
+ * complete token blob.
+ *
+ * OWNERSHIP is the hard part, and it has been got wrong twice.
+ *
+ * Keying the memo per directory while filtering per filename cleaned almost
+ * nothing: the first write to a directory marked the whole directory done, so
+ * every other name's orphans survived forever. Matching the staging pattern
+ * ALONE fixed that and broke something worse -- `$HOME` is a live target (the
+ * global `.claude.json`), so a bare pattern match reached in and deleted files
+ * this app never wrote, including other subsystems' staging files.
+ *
+ * So: remember which BASE NAMES this process has written to each directory, and
+ * only ever reclaim `<knownBase>.<uuid>.tmp`. A new base name triggers one
+ * readdir; a repeat costs nothing. Anything we did not write is not ours to
+ * delete, however much it looks like ours.
  */
-const sweptDirs = new Set<string>()
-function sweepStaleStaging(dir: string): void {
-  if (sweptDirs.has(dir)) return
-  sweptDirs.add(dir)
+const sweptDirs = new Map<string, Set<string>>()
+function sweepStaleStaging(dir: string, name: string): void {
+  let known = sweptDirs.get(dir)
+  if (known?.has(name)) return // this base name is already accounted for here
+  if (!known) { known = new Set<string>(); sweptDirs.set(dir, known) }
+  known.add(name)
   try {
     const cutoff = Date.now() - STALE_STAGING_MS
     for (const entry of readdirSync(dir)) {
-      // Match on the staging pattern ALONE, not on the file being written now.
-      // The memo is keyed by directory, so filtering by the current name meant
-      // the first file written to a directory marked the whole directory swept
-      // and every OTHER name's orphans survived forever -- which is most of
-      // them in ~/.claude (settings-<sid>.json, mcp-<sid>.json) and CONFIG.
-      if (!STAGING_RE.test(entry)) continue
+      const suffix = STAGING_RE.exec(entry)
+      if (!suffix) continue
+      // Ownership check: strip the `.<uuid>.tmp` and require the remainder to be
+      // a file THIS PROCESS writes. `Quicken Backup.<GUID>.tmp` matches the shape
+      // and is emphatically not ours.
+      if (!known.has(entry.slice(0, entry.length - suffix[0].length))) continue
       const full = join(dir, entry)
       try {
         // lstat, not stat: this must never resolve a link. An entry matching the
@@ -109,14 +126,20 @@ function sweepStaleStaging(dir: string): void {
   } catch { /* the directory may not exist yet; nothing to sweep */ }
 }
 
-/** Rename `from` over `to`, waiting out only the errors worth waiting out. */
-export function renameWithRetry(from: string, to: string, retry = true): void {
+/**
+ * Rename `from` over `to`, waiting out only the errors worth waiting out.
+ *
+ * `retry !== false`, not `!retry`: retrying is the safe default, so a caller that
+ * fumbles the argument (null, 0, '') must keep it rather than silently lose it.
+ * Only a literal `false` opts out. Matches `atomicWriteFileSync`'s own check.
+ */
+export function renameWithRetry(from: string, to: string, retry: boolean = true): void {
   for (let attempt = 0; ; attempt++) {
     try {
       renameSync(from, to)
       return
     } catch (err: any) {
-      if (!retry || !isTransientRenameError(err?.code) || attempt >= RENAME_RETRY_DELAYS_MS.length) throw err
+      if (retry === false || !isTransientRenameError(err?.code) || attempt >= RENAME_RETRY_DELAYS_MS.length) throw err
       sleepSync(RENAME_RETRY_DELAYS_MS[attempt])
     }
   }
@@ -175,7 +198,7 @@ export interface AtomicWriteOptions {
  * staging FILE, and nothing here can see a link planted on a DIRECTORY above it.
  */
 export function atomicWriteFileSync(file: string, data: string | Uint8Array, opts?: AtomicWriteOptions): void {
-  sweepStaleStaging(dirname(file))
+  sweepStaleStaging(dirname(file), basename(file))
 
   for (let attempt = 0; ; attempt++) {
     const tmp = `${file}.${randomUUID()}.tmp`
