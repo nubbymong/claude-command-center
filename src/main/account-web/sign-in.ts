@@ -119,12 +119,20 @@ async function waitForDebugPort(profileDir: string, deadline: number): Promise<n
 async function cleanup(profileDir: string | null): Promise<void> {
   const proc = child
   child = null
-  if (proc && !proc.killed) {
+  // `killed` only reports that a signal was SENT, so it stays false after a
+  // browser the user closed themselves. Asking whether it has actually been
+  // reaped is what keeps teardown from signalling a dead pid and from waiting
+  // out the full five seconds for an 'exit' event that already fired.
+  const alive = !!proc && proc.exitCode === null && proc.signalCode === null
+  if (proc && alive) {
     try {
       killBrowserTree(proc)
       await Promise.race([
         new Promise((r) => proc.once('exit', r)),
-        new Promise((r) => setTimeout(r, 5000)),
+        new Promise((r) => {
+          const t = setTimeout(r, 5000)
+          if (typeof (t as any)?.unref === 'function') (t as any).unref()
+        }),
       ])
     } catch { /* already gone */ }
   }
@@ -231,6 +239,13 @@ export function retryProfileRemoval(
 function killBrowserTree(proc: ChildProcess): void {
   const pid = proc.pid
   if (!pid) return
+  // ALREADY REAPED? Then signal nothing. `proc.killed` does not answer this — it
+  // only says a signal was sent — so a browser the user closed themselves still
+  // looked killable, and the POSIX branch below would schedule a group SIGKILL
+  // against a pid the OS is free to hand to someone else two seconds later.
+  // Registering the cancelling 'exit' listener afterwards cannot help: that
+  // event has already fired and a late listener never runs.
+  if (proc.exitCode !== null || proc.signalCode !== null) return
   if (process.platform === 'win32') {
     // /T = tree, /F = force. Windows has no process-group kill for this.
     // NOT silent on failure: a swallowed error here looks exactly like a kill
@@ -382,12 +397,20 @@ async function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<
   }
 }
 
-/** How long any single CDP round-trip may take. */
-const CDP_CALL_TIMEOUT_MS = 10_000
+/**
+ * How long any single blocking call in the sign-in may take.
+ *
+ * NOT JUST CDP. The first version of this bounded only the DevTools calls, which
+ * left `cookies.set` and `clearStorageData` unbounded — and those cross
+ * Electron's network-service IPC, which is if anything MORE prone to stalling
+ * than a loopback websocket. A hang in either parks the poll loop just as
+ * effectively and wedges every account's sign-in.
+ */
+const IO_CALL_TIMEOUT_MS = 10_000
 
 /** Close a CDP client without letting a teardown error mask the real outcome. */
 async function closeQuietly(client: any): Promise<void> {
-  try { await client?.close() } catch { /* closing anyway */ }
+  try { await withTimeout(Promise.resolve(client?.close?.()), IO_CALL_TIMEOUT_MS, 'CDP close') } catch { /* closing anyway */ }
 }
 
 /** Ask the page for the signed-in account, via claude.ai's own bootstrap. */
@@ -417,7 +440,7 @@ async function readAccountEmail(client: any): Promise<string | null> {
     if (typeof client?.Target?.getTargetInfo !== 'function') return null
     let url: unknown
     try {
-      url = (await withTimeout<any>(client.Target.getTargetInfo(), CDP_CALL_TIMEOUT_MS, 'getTargetInfo'))?.targetInfo?.url
+      url = (await withTimeout<any>(client.Target.getTargetInfo(), IO_CALL_TIMEOUT_MS, 'getTargetInfo'))?.targetInfo?.url
     } catch {
       return null   // asked, and could not find out. Not the same as "it is fine".
     }
@@ -432,7 +455,7 @@ async function readAccountEmail(client: any): Promise<string | null> {
       expression: `location.origin === 'https://claude.ai' || location.origin === 'https://www.claude.ai' ? fetch('/api/bootstrap',{credentials:'include'}).then(r=>r.json()).then(j=>j?.account?.email_address ?? null).catch(()=>null) : Promise.resolve(null)`,
       awaitPromise: true,
       returnByValue: true,
-    }), CDP_CALL_TIMEOUT_MS, 'bootstrap evaluate')
+    }), IO_CALL_TIMEOUT_MS, 'bootstrap evaluate')
     return typeof result?.value === 'string' ? result.value : null
   } catch {
     return null
@@ -578,14 +601,14 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
       // underneath a long-lived connection. Reconnecting each poll costs one
       // loopback websocket every 1.5s and removes the entire class of bug.
       let targets: CdpTarget[] = []
-      try { targets = await withTimeout(getCDP().List({ port }), CDP_CALL_TIMEOUT_MS, 'target list') } catch { continue }
+      try { targets = await withTimeout(getCDP().List({ port }), IO_CALL_TIMEOUT_MS, 'target list') } catch { continue }
 
       for (const t of pickSignInTargets(targets)) {
         let client: any = null
         try {
           client = await withTimeout(
             getCDP()({ port, target: t.webSocketDebuggerUrl ?? t.id }),
-            CDP_CALL_TIMEOUT_MS,
+            IO_CALL_TIMEOUT_MS,
             'CDP connect',
           )
         } catch { continue }
@@ -595,7 +618,7 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
 
         // Authenticated. Harvest.
         current = tag({ phase: 'harvesting', profileId })
-        const all: CdpCookie[] = (await withTimeout<any>(client.Network.getAllCookies(), CDP_CALL_TIMEOUT_MS, 'getAllCookies'))?.cookies ?? []
+        const all: CdpCookie[] = (await withTimeout<any>(client.Network.getAllCookies(), IO_CALL_TIMEOUT_MS, 'getAllCookies'))?.cookies ?? []
         const harvest = harvestClaudeCookies(all)
 
         if (!harvest.hasSessionCookie) {
@@ -619,7 +642,7 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
         let aborted = false
         for (const c of harvest.cookies) {
           if (revoked()) { aborted = true; break }
-          try { await store.cookies.set(c) } catch (err) {
+          try { await withTimeout(Promise.resolve(store.cookies.set(c)), IO_CALL_TIMEOUT_MS, 'cookies.set') } catch (err) {
             logError(`[account-web] could not set cookie ${c.name}: ${(err as Error)?.message}`)
           }
         }
@@ -628,7 +651,12 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
           // Partially written into a partition somebody just revoked. Clear what
           // landed and FAIL — reporting `done` here would have the IPC layer
           // save a session record for a session the user just signed out of.
-          try { await store.clearStorageData() } catch { /* best effort */ }
+          try {
+            await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
+          } catch (err) {
+            // Loudly: what is left is cookies in a partition the user revoked.
+            logError(`[account-web] could not clear a partially written session for ${profileId}: ${(err as Error)?.message}`)
+          }
           await closeQuietly(client)
           await cleanup(profileDir)
           logInfo(`[account-web] ${profileId}: sign-in abandoned — the session was revoked while it was being collected`)
@@ -642,6 +670,27 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
 
         await closeQuietly(client)
         await cleanup(profileDir)
+
+        // ONE MORE CHECK, because `cleanup` is itself a wait. It races the
+        // browser's exit for up to five seconds, and a sign-out landing in THAT
+        // window used to leave the worst of both: the partition cleared, and
+        // then `phase: 'done'` handed to the IPC layer, which saved a session
+        // record for it. The panel said "signed in as ..." over an empty
+        // partition, and every request under it would 401.
+        if (revoked()) {
+          try {
+            await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
+          } catch (err) {
+            logError(`[account-web] could not clear a revoked session for ${profileId}: ${(err as Error)?.message}`)
+          }
+          logInfo(`[account-web] ${profileId}: sign-in discarded — the session was revoked during teardown`)
+          current = tag({
+            phase: 'failed',
+            profileId,
+            error: 'Signed out while the session was being collected, so it was discarded. Sign in again if that was not what you wanted.',
+          })
+          return current
+        }
 
         const acquired: AccountWebSession = {
           profileId,

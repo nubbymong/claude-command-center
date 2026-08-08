@@ -15,10 +15,22 @@ vi.mock('../../src/main/vision-manager', () => ({ getBrowserPaths: () => ['C:/pr
 
 const spawnSyncMock = vi.fn()
 const spawned: any[] = []
+/** Runs when teardown waits on the browser's exit -- i.e. inside cleanup(). */
+const duringTeardown: { fn: (() => void) | null } = { fn: null }
 vi.mock('node:child_process', () => ({
   spawn: (...a: any[]) => {
     spawned.push(a)
-    return { killed: false, kill: vi.fn(), on: vi.fn(), pid: 4242, once: vi.fn((_e: string, cb: () => void) => cb()) }
+    return {
+      // A real ChildProcess reports null for both while it is running; cleanup
+      // now asks these rather than `killed` to decide whether it is still alive.
+      exitCode: null,
+      signalCode: null,
+      killed: false,
+      kill: vi.fn(),
+      on: vi.fn(),
+      pid: 4242,
+      once: vi.fn((_e: string, cb: () => void) => { duringTeardown.fn?.(); cb() }),
+    }
   },
   spawnSync: (...a: any[]) => spawnSyncMock(...a),
 }))
@@ -269,6 +281,49 @@ describe('BLOCKER — a hung CDP call cannot wedge every account', () => {
     const next = await runSignIn({ ...RUN })
     expect(next.phase).toBe('done')
   }, 30_000)
+})
+
+describe('MAJOR — a hung Electron call cannot wedge every account either', () => {
+  it('bounds cookies.set, so the single-flight latch always releases', async () => {
+    // The first timeout fix covered only CDP. `cookies.set` crosses Electron's
+    // network-service IPC, which stalls at least as readily, and a hang there
+    // parked the loop just as hard: phase stuck at 'harvesting' forever and
+    // every other account refused with "already in progress".
+    cookiesSet.mockImplementation(() => new Promise(() => {}))   // never settles
+    _setCdpForTest(cdp('me@example.com', 'ok'))
+
+    const s = await runSignIn({ ...RUN, timeoutMs: 300, pollMs: 5 })
+    expect(['failed', 'done']).toContain(s.phase)   // resolved at all is the point
+
+    cookiesSet.mockReset()
+    _setCdpForTest(cdp('me@example.com', 'ok'))
+    const next = await runSignIn({ ...RUN })
+    expect(next.phase).toBe('done')                 // the latch is free
+  }, 60_000)
+})
+
+describe('MAJOR — a session revoked during teardown is not reported as signed in', () => {
+  it('fails instead of handing back a record over a cleared partition', async () => {
+    // cleanup() waits on the browser's exit, and a sign-out landing in THAT
+    // window used to still return phase 'done' -- so the IPC layer saved a
+    // record while the partition had just been emptied. The panel said "signed
+    // in as ..." and every request under it would 401.
+    const { clearWebSession } = await import('../../src/main/account-web/sign-in')
+    // Land the sign-out AFTER the write loop's last check, while cleanup() is
+    // waiting on the browser to exit. clearWebSession cancels synchronously,
+    // which is exactly what the real IPC handler does.
+    duringTeardown.fn = () => { void clearWebSession('profile-aaa111') }
+    _setCdpForTest(cdp('me@example.com', 'ok'))
+
+    try {
+      const s = await runSignIn({ ...RUN })
+      expect(s.phase).toBe('failed')
+      expect(s.session).toBeUndefined()
+      expect(clearStorageData).toHaveBeenCalled()
+    } finally {
+      duringTeardown.fn = null
+    }
+  })
 })
 
 describe('MINOR — the identity check has no shape-based escape hatch left', () => {

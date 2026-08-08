@@ -78,6 +78,10 @@ export function registerAccountProfilesHandlers(): void {
         error: `The account's claude.ai session could not be cleared, so the account was not removed: ${err instanceof Error ? err.message : String(err)}`,
       }
     }
+    // Drop the record next to the clear that made it meaningless, rather than
+    // after the teardown below: if that throws, the account survives with a
+    // record claiming a web session whose partition has already been wiped.
+    removeWebSession(p.id)
     // safeTeardownProfile can throw on a Windows file lock (e.g. an actively-rewritten
     // .claude.json) mid-recursion -- return a structured failure instead of rejecting
     // the invoke, so the renderer can surface it rather than swallowing the rejection.
@@ -87,7 +91,6 @@ export function registerAccountProfilesHandlers(): void {
       logError(`[account-profiles] delete failed for ${p.id}:`, err)
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-    removeWebSession(p.id)
     return { ok: true }
   })
 

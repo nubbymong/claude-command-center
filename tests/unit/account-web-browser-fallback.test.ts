@@ -26,7 +26,9 @@ vi.mock('../../src/main/vision-manager', () => ({
 const spawned: any[] = []
 const spawnSyncMock = vi.fn()
 vi.mock('node:child_process', () => ({
-  spawn: (...a: any[]) => { spawned.push(a); return { killed: false, kill: vi.fn(), on: vi.fn(), pid: 4242, once: vi.fn((_e: string, cb: () => void) => cb()) } },
+  // exitCode/signalCode null = still running. Teardown asks these rather than
+  // `killed`, which only reports that a signal was sent.
+  spawn: (...a: any[]) => { spawned.push(a); return { exitCode: null, signalCode: null, killed: false, kill: vi.fn(), on: vi.fn(), pid: 4242, once: vi.fn((_e: string, cb: () => void) => cb()) } },
   spawnSync: (...a: any[]) => spawnSyncMock(...a),
 }))
 vi.mock('node:fs', () => ({
