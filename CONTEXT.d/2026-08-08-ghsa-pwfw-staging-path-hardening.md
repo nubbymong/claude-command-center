@@ -79,11 +79,8 @@ merging it as it stands would REVERT this advisory on the public repo, under a
 performance-refactor title. It must be rebased onto `aada4ca` and its helper must carry
 `flag: 'wx'` and an unguessable name before it goes anywhere near `beta`.
 
-The non-credential writers (`config-manager`, `session-state`, `channel-storage`,
-`model-registry-service`, `sentinel-state`, the two hooks writers, `codex-review-usage`,
-`conductor-mcp-server`) still stage predictably. They carry the arbitrary-file-clobber half
-but no secrets, which is why they were left out of the embargoed fix rather than fixed twice
-and guaranteed a conflict. #233 is where they get it.
+The writers outside the credential path were left to #233 rather than fixed twice here,
+which would have guaranteed a conflict between the two branches.
 
 ## Gate
 
