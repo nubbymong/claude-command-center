@@ -131,11 +131,44 @@ async function cleanup(profileDir: string | null): Promise<void> {
     try {
       rmSync(profileDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
     } catch (err) {
-      // Worth shouting about: what is left behind is a browser profile holding a
-      // LIVE claude.ai session. `sweepAbandonedProfiles` clears it at next boot.
-      logError(`[account-web] could not remove the sign-in profile dir (retried): ${(err as Error)?.message}`)
+      // What is left behind is a browser profile holding a LIVE claude.ai
+      // session, so this does not get to be a one-shot attempt that shrugs and
+      // waits for the next boot.
+      logError(`[account-web] sign-in profile dir still locked, retrying in the background: ${(err as Error)?.message}`)
+      retryProfileRemoval(profileDir)
     }
   }
+}
+
+/** Backoff for the background removal, ms. Exported so a test need not wait. */
+export const PROFILE_REMOVAL_RETRIES_MS: readonly number[] = [2_000, 5_000, 15_000, 45_000]
+
+/**
+ * Keep trying to delete a profile dir that was still locked at teardown.
+ *
+ * Measured on the box 2026-08-08: after `taskkill /T /F` the tree dies in ~850ms
+ * and the directory becomes removable ~1.5s later — but that is one machine on
+ * one day, and when the timing does not hold, what stays on disk is a live
+ * `sessionKey`. `sweepAbandonedProfiles` only runs at the NEXT app start, which
+ * could be days. So the window gets closed now, on a backoff, rather than being
+ * left to a boot that may not come.
+ */
+export function retryProfileRemoval(profileDir: string, delays: readonly number[] = PROFILE_REMOVAL_RETRIES_MS): void {
+  const attempt = (i: number): void => {
+    const t = setTimeout(() => {
+      if (!existsSync(profileDir)) return
+      try {
+        rmSync(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 })
+        logInfo(`[account-web] removed the sign-in profile dir on retry ${i + 1}`)
+      } catch (err) {
+        if (i + 1 < delays.length) return attempt(i + 1)
+        logError(`[account-web] sign-in profile dir STILL not removed after ${delays.length} retries; it holds a live session and will be swept at next start: ${(err as Error)?.message}`)
+      }
+    }, delays[i])
+    // Never hold the process open for this.
+    if (typeof (t as any)?.unref === 'function') (t as any).unref()
+  }
+  if (delays.length) attempt(0)
 }
 
 /**
@@ -157,7 +190,17 @@ function killBrowserTree(proc: ChildProcess): void {
   if (!pid) return
   if (process.platform === 'win32') {
     // /T = tree, /F = force. Windows has no process-group kill for this.
-    try { spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }) } catch { /* fall through */ }
+    // NOT silent on failure: a swallowed error here looks exactly like a kill
+    // that worked, and the only visible symptom is an EPERM further down whose
+    // cause is then unknowable. Measured working standalone on this box, so if
+    // it fails from inside Electron the log needs to say so.
+    try {
+      const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+      if (r.error) logError(`[account-web] taskkill could not run (${r.error.message}); falling back to a direct signal`)
+      else if (r.status !== 0) logError(`[account-web] taskkill exited ${r.status} for pid ${pid}`)
+    } catch (err) {
+      logError(`[account-web] taskkill threw: ${(err as Error)?.message}`)
+    }
   }
   // Always signal directly too: on win32 this catches a taskkill that could not
   // run, and elsewhere it is the whole mechanism.
