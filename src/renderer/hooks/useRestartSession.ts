@@ -49,6 +49,12 @@ export function useRestartSession(
         rateLimitWeekly: undefined,
         rateLimitWeeklyResets: undefined,
         rateLimitExtra: undefined,
+        // Per-model usage buckets (statusline limits[], incl. the weekly Fable
+        // bucket) are live indicators too -- omitting them left the previous
+        // account's hit limit painted on the card after a mid-session switch
+        // (which routes through this same remount) until a later tick overwrote
+        // it. Clear them like the rateLimit* siblings.
+        usageBuckets: undefined,
       })
     },
     [session],
