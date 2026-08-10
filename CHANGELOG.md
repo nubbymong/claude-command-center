@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-beta.8] - 2026-08-10
+
+### Added
+- Accounts can now be marked inactive. An inactive account still appears in the accounts list but cannot be chosen when you switch a session's account — it shows up greyed and labelled "inactive" in the switch menus. Toggle it from Settings › Accounts; every existing account stays active, and the primary account is always active. Handy for parking an account you are not using without removing it.
+
 ## [2.1.0-beta.7] - 2026-08-10
 
 > A security release. Two high-severity local-attacker vulnerabilities are fixed — their advisories publish alongside this release — and every open dependency security alert on the project is cleared.
@@ -1007,6 +1012,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-beta.8]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.8
 [2.1.0-beta.7]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.7
 [2.1.0-beta.6]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.6
 [2.1.0-beta.5]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.5
