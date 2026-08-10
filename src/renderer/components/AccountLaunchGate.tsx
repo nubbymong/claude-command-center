@@ -11,6 +11,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { middleTruncateEmail, resolveAccountName, resolveAccountColourKey } from '../../shared/account-chip-color'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor } from '../../shared/identity-colors'
+import { isAccountActive } from '../../shared/account-types'
 
 export default function AccountLaunchGate() {
   const pending = useAccountGateStore((s) => s.queue[0] ?? null)
@@ -20,14 +21,23 @@ export default function AccountLaunchGate() {
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const theme = useResolvedTheme()
-  // Pre-select: use the session's pinned profile, otherwise fall back to primary.
-  const primaryId = profiles.find((p) => p.isPrimary)?.id ?? profiles[0]?.id ?? ''
-  const [selected, setSelected] = useState<string>(pending?.currentProfileId ?? primaryId)
+  // Only active accounts are selectable at launch: an inactive account has been
+  // parked and must not be chosen for a new session. The session's own pinned
+  // account stays selectable so a session already on it can relaunch, and the
+  // primary is always active, so it is always a valid fallback.
+  const isSelectable = (p: (typeof profiles)[number]) =>
+    isAccountActive(p) || p.id === pending?.currentProfileId
+  const selectableProfiles = profiles.filter(isSelectable)
+  // Pre-select: the session's pinned profile, else primary, else the first
+  // selectable (never an inactive account).
+  const defaultSelectedId = () =>
+    pending?.currentProfileId ?? profiles.find((p) => p.isPrimary)?.id ?? selectableProfiles[0]?.id ?? ''
+  const [selected, setSelected] = useState<string>(defaultSelectedId())
 
   // Re-seed the selection each time a new session reaches the head of the queue.
   useEffect(() => {
-    const pid = pending?.currentProfileId ?? profiles.find((p) => p.isPrimary)?.id ?? profiles[0]?.id ?? ''
-    setSelected(pid)
+    setSelected(defaultSelectedId())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pending?.sessionId])
 
   if (!pending) return null
@@ -80,7 +90,7 @@ export default function AccountLaunchGate() {
             data-testid="account-launch-select"
             className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
           >
-            {profiles.map((p) => {
+            {selectableProfiles.map((p) => {
               // Friendly name wins when set; otherwise the email (or a clear
               // "setup incomplete" hint for a profile still mid-login).
               const resolved = resolveAccountName(p.accountEmail, p.name, accountAliases)
