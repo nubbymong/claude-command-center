@@ -15,6 +15,10 @@ on:
         description: 'Skip VirusTotal scan'
         type: boolean
         default: false
+      dry_run:
+        description: 'Dry run: build + sign + verify Windows only — no tag, no release'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -25,6 +29,10 @@ jobs:
     # Pinned off windows-latest: the new vs2026 image breaks @electron/node-gyp
     # (no supported Visual Studio). Same pin as ci.yml — unpin together.
     runs-on: windows-2025
+    env:
+      # Presence-gate for Windows code signing (SSL.com eSigner CKA). One flag
+      # read by the signing, packaging and verification steps below.
+      HAS_SIGNING: ${{ secrets.ES_USERNAME != '' && secrets.ES_PASSWORD != '' && secrets.ES_TOTP_SECRET != '' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -100,8 +108,93 @@ jobs:
       - name: Build
         run: npm run build
 
+      # ── Windows code signing: SSL.com eSigner CKA (cloud HSM) ──
+      # The signing key lives in SSL.com's cloud HSM and never exists as a file
+      # on the runner. CKA registers a Windows KSP so the key appears in the
+      # user certificate store; electron-builder's normal signtool path then
+      # signs DURING packaging. That placement is load-bearing: latest.yml's
+      # sha512, the .blockmap and CHECKSUMS.txt all hash the final signed
+      # binary — signing after packaging would silently break auto-update.
+      - name: Set up code signing (eSigner CKA)
+        id: esigner
+        if: env.HAS_SIGNING == 'true'
+        shell: pwsh
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Pinned release + SHA-256 of the installer, verified before running.
+          $url = 'https://github.com/SSLcom/eSignerCKA/releases/download/v1.1.2/SSL.COM.eSigner.CKA_1.1.2_build_202600624.exe'
+          $sha = '3F088403139505DDFB0ED3B56B72893F92C865F98B382753A1E1C695A5CECE35'
+          $setup = Join-Path $env:RUNNER_TEMP 'eSignerCKA-setup.exe'
+          Invoke-WebRequest -Uri $url -OutFile $setup
+          $actual = (Get-FileHash $setup -Algorithm SHA256).Hash
+          if ($actual -ne $sha) { throw "eSigner CKA download hash mismatch: got $actual" }
+          $dir = Join-Path $env:RUNNER_TEMP 'eSignerCKA'
+          Start-Process $setup -ArgumentList '/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES',"/DIR=$dir" -Wait
+          Get-ChildItem $dir -Filter '*.exe' | ForEach-Object { Write-Host "installed: $($_.Name)" }
+          $tool = @('eSignerCKATool.exe', 'eSignerCKA.exe') |
+            ForEach-Object { Join-Path $dir $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $tool) { throw "eSigner CKA CLI not found in $dir" }
+          & $tool config -mode product -user $env:ES_USERNAME -pass $env:ES_PASSWORD -totp $env:ES_TOTP_SECRET -key (Join-Path $dir 'master.key') -r
+          & $tool unload
+          & $tool load
+          $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
+            Where-Object { $_.Subject -like '*CN=Nicholas Moger*' } | Select-Object -First 1
+          if (-not $cert) { throw 'eSigner CKA loaded no matching code-signing certificate into the store' }
+          Write-Host "Certificate loaded: $($cert.Subject) [$($cert.Thumbprint)]"
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+
       - name: Package Windows installer
-        run: npx electron-builder --win --publish never
+        shell: pwsh
+        env:
+          SIGN_THUMBPRINT: ${{ steps.esigner.outputs.thumbprint }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $extra = @()
+          if ($env:HAS_SIGNING -eq 'true') {
+            if (-not $env:SIGN_THUMBPRINT) { throw 'Signing is enabled but no certificate thumbprint was captured' }
+            # Hash algorithm, timestamp server and publisherName come from
+            # build.win.signtoolOptions in package.json; only the thumbprint is
+            # injected here so unsigned local/dev builds stay possible.
+            $extra += "-c.win.signtoolOptions.certificateSha1=$env:SIGN_THUMBPRINT"
+          }
+          npx electron-builder --win --publish never @extra
+
+      # Fail loudly rather than ever ship unsigned again: a stable/beta release
+      # with signing secrets missing is an error, not a fallback.
+      # Template values (installer name, channel) are passed via env: rather than
+      # interpolated into the pwsh source, so a crafted package.json version can
+      # never break out of the string into runner code (GitHub run-step hardening).
+      - name: Verify Windows signature
+        shell: pwsh
+        env:
+          INSTALLER: ${{ steps.version.outputs.installer }}
+          CHANNEL: ${{ inputs.channel }}
+          SIGN_THUMBPRINT: ${{ steps.esigner.outputs.thumbprint }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = "dist/$env:INSTALLER"
+          $sig = Get-AuthenticodeSignature $exe
+          if ($env:HAS_SIGNING -eq 'true') {
+            if ($sig.Status -ne 'Valid') { throw "Signature on $exe is $($sig.Status): $($sig.StatusMessage)" }
+            # Pin the exact leaf we loaded, not a CN substring — a CN substring
+            # would also accept e.g. 'CN=Nicholas Moger Ltd' or a second SSL.com
+            # customer. The thumbprint was captured from the loaded cert.
+            if (-not $env:SIGN_THUMBPRINT) { throw 'Signing enabled but no certificate thumbprint was captured' }
+            if ($sig.SignerCertificate.Thumbprint -ne $env:SIGN_THUMBPRINT) { throw "Unexpected signer thumbprint $($sig.SignerCertificate.Thumbprint), expected $env:SIGN_THUMBPRINT" }
+            if ($sig.SignerCertificate.Subject -notlike '*CN=Nicholas Moger*') { throw "Unexpected signer: $($sig.SignerCertificate.Subject)" }
+            if (-not $sig.TimeStamperCertificate) { throw 'Signature carries no RFC3161 timestamp' }
+            Write-Host "Signed OK: $exe"
+            Write-Host "  signer:    $($sig.SignerCertificate.Subject)"
+            Write-Host "  timestamp: $($sig.TimeStamperCertificate.Subject)"
+          } elseif ($env:CHANNEL -ne 'dev') {
+            throw "Refusing to build an unsigned '$env:CHANNEL' release: signing secrets are not configured"
+          } else {
+            Write-Host 'dev build left unsigned (signing secrets not configured)'
+          }
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v7
@@ -118,6 +211,7 @@ jobs:
 
   # ── Build macOS app ──
   build-macos:
+    if: ${{ !inputs.dry_run }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -220,6 +314,7 @@ jobs:
   # in the run (visible to the maintainer), and release.js flags the missing
   # AppImage asset — but the release proceeds with the platforms that built.
   build-linux:
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -279,6 +374,8 @@ jobs:
 
   # ── Create GitHub Release ──
   release:
+    # dry_run stops here by construction: no tag, no release, no client impact.
+    if: ${{ !inputs.dry_run }}
     needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     steps:

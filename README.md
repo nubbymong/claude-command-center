@@ -195,7 +195,7 @@ Invoke an Opus 4.8 dynamic workflow three ways: include the word `workflow` in a
 
 > **Linux (experimental)** &middot; Make the AppImage executable before first run (`chmod +x ClaudeCommandCenter-*.AppImage`); it needs FUSE (`sudo apt install libfuse2` on Ubuntu) and the usual GTK 3 desktop libraries. Verified on Ubuntu 24.04 and Rocky Linux 10. Older glibc lines (Ubuntu 22.04, Rocky 8/9) are not covered by this build. The vision browser tool needs a **deb/rpm** Chrome or Chromium — the Ubuntu *snap* build's confinement blocks the debug profile, so vision stays disabled with snap-only Chromium.
 
-> **Windows SmartScreen** &middot; These installers are **not code-signed**. This is an independent, single-maintainer build, and a code-signing certificate is not in place yet, so Windows SmartScreen will warn the first time you run a new release: click **More info**, then **Run anyway**. To convince yourself the download is intact, verify the SHA-256 against the value on the release page before running it. Releases produced by the CI pipeline are additionally scanned through VirusTotal (70+ engines); the scan link is included in those release notes.
+> **Windows SmartScreen** &middot; Windows installers are **code-signed** (SSL.com certificate, publisher "Nicholas Moger"), so you'll see a named publisher rather than "unknown". SmartScreen builds reputation per-certificate over time, so a brand-new release may still show a prompt for a while: click **More info**, then **Run anyway**. To convince yourself the download is intact, verify the SHA-256 against the value on the release page before running it. Releases produced by the CI pipeline are additionally scanned through VirusTotal (70+ engines); the scan link is included in those release notes.
 
 > **macOS** &middot; The DMG is not notarised. Gatekeeper will block it on first open: right-click the app and choose **Open**, or allow it under **System Settings, Privacy & Security**.
 
@@ -248,7 +248,7 @@ The main process owns config persistence, the PTY pool, the hooks HTTP gateway (
 | **Permissions** | The Conductor honors Claude Code's own permission prompts and settings. It is not a gate and never auto-approves or intercepts tool calls on your behalf. |
 | **Telemetry** | None of our own. The Claude API goes through the Claude CLI directly. Outbound is limited to: GitHub Releases (update check), `status.claude.com` (status pills), the GitHub API (opt-in GitHub sidebar after sign-in), and LiteLLM open-pricing JSON (cached 24 hours). |
 | **Data integrity** | Atomic config writes (`.tmp` + rename). Daily snapshots of `CONFIG/*.json` to `CONFIG/_backups/YYYY-MM-DD/`, 7-day retention. Sandboxed renderer; typed IPC with schema validation on data-bearing channels. |
-| **Releases** | Installers are unsigned (see [Install](#install)). Releases built by the CI pipeline are scanned through VirusTotal across 70+ engines; verify the SHA-256 from the release page before running any installer. |
+| **Releases** | Windows installers are code-signed (SSL.com cert) and macOS builds are signed + notarized; the Linux AppImage is unsigned by convention (see [Install](#install)). Every download is verifiable by **SHA-256** against `CHECKSUMS.txt` on the release page — the in-app updater checks this on each update — and CI additionally scans installers through VirusTotal (70+ engines). |
 
 Report vulnerabilities privately via [GitHub Security Advisories](../../security/advisories/new). See [SECURITY.md](SECURITY.md) for scope.
 
