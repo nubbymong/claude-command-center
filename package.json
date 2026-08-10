@@ -124,7 +124,14 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "signtoolOptions": {
+        "signingHashAlgorithms": [
+          "sha256"
+        ],
+        "rfc3161TimeStampServer": "http://ts.ssl.com",
+        "publisherName": "Nicholas Moger"
+      }
     },
     "mac": {
       "executableName": "AI Code Conductor",

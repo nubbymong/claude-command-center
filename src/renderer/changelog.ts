@@ -24,7 +24,8 @@ export const changelog: ChangelogEntry[] = [
     version: '2.1.0-beta.8',
     date: '2026-08-10',
     changes: [
-      { type: 'feature', description: 'Accounts can now be marked inactive. An inactive account still appears in the accounts list but cannot be chosen when you switch a session\'s account — it shows up greyed and labelled "inactive" in the switch menus. Toggle it from Settings › Accounts; every existing account stays active, and the primary account is always active. Handy for parking an account you are not using without removing it.' }
+      { type: 'feature', description: 'Accounts can now be marked inactive. An inactive account still appears in the accounts list but cannot be chosen when you switch a session\'s account — it shows up greyed and labelled "inactive" in the switch menus. Toggle it from Settings › Accounts; every existing account stays active, and the primary account is always active. Handy for parking an account you are not using without removing it.' },
+      { type: 'improvement', description: 'Windows releases are now digitally code-signed. The installer and the app carry the developer\'s signature, and from this version on the built-in updater also verifies the publisher of every Windows update it downloads before installing it. Windows SmartScreen may still show a reputation prompt for a little while — trust accrues to the new certificate with each install — but downloads no longer show an unknown publisher.' }
     ]
   },
   {
