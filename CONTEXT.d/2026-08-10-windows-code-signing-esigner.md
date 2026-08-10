@@ -12,8 +12,17 @@ Decisions that matter later:
 - `build.win.signtoolOptions` pins `signingHashAlgorithms: ["sha256"]`
   (electron-builder's default still attempts SHA-1 dual-signing, which modern
   CAs refuse), timestamps at `http://ts.ssl.com`, and sets
-  `publisherName: "Nicholas Moger"` — from the first signed release onward,
-  electron-updater verifies the publisher of every downloaded Windows update.
+  `publisherName: "Nicholas Moger"` — inert at build time (electron-builder only
+  writes it into `app-update.yml`); keep it equal to the cert CN for a possible
+  future electron-updater. Signer identity is enforced by the workflow verify
+  gate, not by `publisherName`.
+- **Signing does NOT add publisher verification to updates.** The app ships a
+  custom updater (`src/main/github-update.ts`), not electron-updater; it
+  verifies downloads by SHA-256 against `CHECKSUMS.txt` (unchanged). No runtime
+  code reads `publisherName`. Adversarial review (below) caught an earlier draft
+  of the changelog/docs claiming otherwise — corrected before merge. What
+  signing buys the user today: a verified publisher in UAC/SmartScreen instead
+  of "unknown publisher".
 - The workflow gains a hard gate: a stable/beta build that is not validly
   signed by the expected CN fails. Unsigned builds are possible only on
   `channel=dev` with no signing secrets configured.
@@ -27,6 +36,15 @@ Decisions that matter later:
 - SmartScreen reputation keys on the certificate and accrues gradually;
   early signed installs may still see a reputation prompt, now with a named
   publisher.
+- The verify gate pins the exact leaf thumbprint captured at load time (not a
+  CN substring), and template values are passed via `env:` rather than
+  interpolated into PowerShell — both from the adversarial pass.
+- **Open owner-action (not a code defect):** the `ES_*` signing secrets are
+  repo-level, so any Write collaborator can read them via a `workflow_dispatch`
+  on an arbitrary branch — the same exposure the existing `APPLE_*`/`VT_API_KEY`
+  secrets already carry, now holding a code-signing identity. Recommended:
+  move all signing/publish secrets into a protected Environment with a
+  deployment-branch policy (beta + release/*). Deferred to an owner decision.
 
 Details in `docs/code-signing.md` (rewritten: the old text still recommended
 Azure Trusted Signing, which is unavailable to UK individuals and was a dead

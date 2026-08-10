@@ -78,17 +78,35 @@ The pieces:
 - **`package.json` (`build.win.signtoolOptions`):** `signingHashAlgorithms:
   ["sha256"]` (electron-builder's default still tries SHA-1, which modern CAs
   refuse), SSL.com's RFC3161 timestamp server (`http://ts.ssl.com`), and
-  `publisherName: "Nicholas Moger"` — baked into every build so electron-updater
-  verifies the publisher of each downloaded Windows update.
+  `publisherName: "Nicholas Moger"`. `publisherName` does **not** verify
+  anything at build time — electron-builder's only use of it is to write it into
+  the packaged `app-update.yml`. Keep it equal to the certificate CN so it is
+  correct if electron-updater is ever adopted; it is otherwise inert. The real
+  build-time signature check is the verify gate below.
+
+> **What signing does and does not change for updates.** Signing gives the
+> installer a *verified publisher* in Windows' UAC/SmartScreen prompts — no
+> more "unknown publisher". It does **not** add publisher verification to the
+> in-app updater: this app ships a custom updater (`src/main/github-update.ts`),
+> not electron-updater, and it verifies each downloaded update by **SHA-256
+> against `CHECKSUMS.txt`** (unchanged by this work). `publisherName` above only
+> writes `app-update.yml` (metadata a hypothetical future electron-updater would
+> read) — no current runtime code consults it. If we ever want the updater to
+> also check the Authenticode publisher, that is separate runtime work (and its
+> own adversarial pass).
 - **Verification gate:** after packaging, the workflow fails unless the
-  installer has a Valid Authenticode signature from the expected CN with an
-  RFC3161 timestamp. A stable/beta run without signing secrets fails outright —
+  installer has a Valid Authenticode signature whose leaf **thumbprint matches
+  the certificate loaded at signing time** (and whose CN is the expected one),
+  with an RFC3161 timestamp. This gate — not `publisherName` — is what enforces
+  the signer identity. A stable/beta run without signing secrets fails outright;
   we never silently ship unsigned again. Only `channel=dev` may build unsigned,
   and only when the secrets are absent.
 
 **Secrets (Actions):** `ES_USERNAME` (SSL.com account username), `ES_PASSWORD`,
 `ES_TOTP_SECRET` (the eSigner TOTP *secret* from the enrollment QR — not a
-6-digit code), and optionally `ES_CREDENTIAL_ID`. To rotate the TOTP secret,
+6-digit code). `ES_CREDENTIAL_ID` is also set but **not currently consumed** by
+`release.yml` — CKA auto-selects the sole signing credential; it is reserved for
+if the account ever holds more than one. To rotate the TOTP secret,
 use "reset eSigner PIN or get new QR Code" in the SSL.com portal — the old
 secret dies instantly everywhere it was copied.
 

@@ -165,21 +165,33 @@ jobs:
 
       # Fail loudly rather than ever ship unsigned again: a stable/beta release
       # with signing secrets missing is an error, not a fallback.
+      # Template values (installer name, channel) are passed via env: rather than
+      # interpolated into the pwsh source, so a crafted package.json version can
+      # never break out of the string into runner code (GitHub run-step hardening).
       - name: Verify Windows signature
         shell: pwsh
+        env:
+          INSTALLER: ${{ steps.version.outputs.installer }}
+          CHANNEL: ${{ inputs.channel }}
+          SIGN_THUMBPRINT: ${{ steps.esigner.outputs.thumbprint }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = "dist/${{ steps.version.outputs.installer }}"
+          $exe = "dist/$env:INSTALLER"
           $sig = Get-AuthenticodeSignature $exe
           if ($env:HAS_SIGNING -eq 'true') {
             if ($sig.Status -ne 'Valid') { throw "Signature on $exe is $($sig.Status): $($sig.StatusMessage)" }
+            # Pin the exact leaf we loaded, not a CN substring — a CN substring
+            # would also accept e.g. 'CN=Nicholas Moger Ltd' or a second SSL.com
+            # customer. The thumbprint was captured from the loaded cert.
+            if (-not $env:SIGN_THUMBPRINT) { throw 'Signing enabled but no certificate thumbprint was captured' }
+            if ($sig.SignerCertificate.Thumbprint -ne $env:SIGN_THUMBPRINT) { throw "Unexpected signer thumbprint $($sig.SignerCertificate.Thumbprint), expected $env:SIGN_THUMBPRINT" }
             if ($sig.SignerCertificate.Subject -notlike '*CN=Nicholas Moger*') { throw "Unexpected signer: $($sig.SignerCertificate.Subject)" }
             if (-not $sig.TimeStamperCertificate) { throw 'Signature carries no RFC3161 timestamp' }
             Write-Host "Signed OK: $exe"
             Write-Host "  signer:    $($sig.SignerCertificate.Subject)"
             Write-Host "  timestamp: $($sig.TimeStamperCertificate.Subject)"
-          } elseif ('${{ inputs.channel }}' -ne 'dev') {
-            throw "Refusing to build an unsigned '${{ inputs.channel }}' release: signing secrets are not configured"
+          } elseif ($env:CHANNEL -ne 'dev') {
+            throw "Refusing to build an unsigned '$env:CHANNEL' release: signing secrets are not configured"
           } else {
             Write-Host 'dev build left unsigned (signing secrets not configured)'
           }
