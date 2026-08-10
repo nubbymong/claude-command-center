@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
-## [2.1.0-beta.8] - 2026-08-10
+## [2.1.0-beta.8] - 2026-08-11
 
 ### Added
 - Accounts can now be marked inactive. An inactive account still appears in the accounts list but cannot be chosen when you switch a session's account — it shows up greyed and labelled "inactive" in the switch menus. Toggle it from Settings › Accounts; every existing account stays active, and the primary account is always active. Handy for parking an account you are not using without removing it.
