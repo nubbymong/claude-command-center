@@ -97,14 +97,34 @@ export function parseCccSessionIdFromUrl(reqUrl: string): string | null {
 // authenticated" (SSE closed) with no recovery but relaunching the session. It is
 // already effectively on disk (in each session's mcp-config), so central
 // persistence adds no new exposure; loopback remains not an auth boundary.
+/**
+ * Bumped when a stored secret must be considered burned regardless of its value.
+ *
+ * v2: every secret written by an earlier build was persisted through writeConfig
+ * with no file mode, so it landed 0644 -- world-readable -- and on Windows into a
+ * config dir created without a reparse-point check. Re-permissioning it does not
+ * help: anything that could read it already has. So a secret stored without this
+ * marker is DISCARDED and a fresh one minted, once, on first launch of a fixed
+ * build.
+ *
+ * The cost is understood and accepted: a session already running with the old
+ * token baked into its --mcp-config (the reason this is persisted rather than
+ * rotated per launch) will fail MCP auth until it is relaunched. That is a
+ * one-time upgrade cost and the alternative is keeping a compromised token.
+ */
+const CONDUCTOR_SECRET_VERSION = 2
+
 let _conductorMcpSecret: string | null = null
 function loadOrCreateConductorMcpSecret(): string {
   try {
-    const saved = readConfig<{ secret?: string }>('conductorSecret')
-    if (saved?.secret && /^[0-9a-f]{64}$/.test(saved.secret)) return saved.secret
+    const saved = readConfig<{ secret?: string; v?: number }>('conductorSecret')
+    if (saved?.secret && /^[0-9a-f]{64}$/.test(saved.secret)) {
+      if (saved.v === CONDUCTOR_SECRET_VERSION) return saved.secret
+      logWarn('[conductor-mcp] rotating the auth secret: the stored one predates the file-mode fix and must be treated as compromised')
+    }
   } catch { /* fall through and mint a fresh one */ }
   const secret = crypto.randomBytes(32).toString('hex')
-  try { saveConfig('conductorSecret', { secret }) } catch (err) { logWarn(`[conductor-mcp] could not persist auth secret: ${err}`) }
+  try { saveConfig('conductorSecret', { secret, v: CONDUCTOR_SECRET_VERSION }) } catch (err) { logWarn(`[conductor-mcp] could not persist auth secret: ${err}`) }
   return secret
 }
 

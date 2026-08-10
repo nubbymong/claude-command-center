@@ -121,7 +121,7 @@ export function hardenCredentialFile(file: string): void {
   try { fs.chmodSync(file, CRED_FILE_MODE) } catch { /* best-effort */ }
 }
 /** chmod a credential-containing dir (a `.claude/`) to 0o700 on POSIX. */
-function hardenCredentialDir(dir: string): void {
+export function hardenCredentialDir(dir: string): void {
   if (!IS_POSIX) return
   try { fs.chmodSync(dir, CRED_DIR_MODE) } catch { /* best-effort */ }
 }

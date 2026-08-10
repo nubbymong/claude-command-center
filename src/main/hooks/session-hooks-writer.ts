@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import type { HookEventKind } from '../../shared/hook-types'
+import { atomicWriteSecure, mkdirSecure, hardenCredentialDir } from '../account-profiles'
+import { logWarn } from '../debug-logger'
 
 // Injected hook events. SubagentStart/SubagentStop bracket subagent and
 // dynamic-workflow-agent execution so the status strip can pin its model +
@@ -220,17 +222,19 @@ function readJsonSafe(file: string): Record<string, unknown> {
 // (different Electron processes in dev) from colliding on the tmp path.
 function writeJson(file: string, data: unknown): void {
   const dir = path.dirname(file)
-  fs.mkdirSync(dir, { recursive: true })
-  const tmp = `${file}.tmp.${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
   try {
-    fs.renameSync(tmp, file)
+    // settings-<sid>.json carries the per-session X-CCC-Hook-Token in its hooks
+    // block, so write it owner-only through the same hardened path the MCP config
+    // uses: mkdirSecure refuses a planted ~/.claude junction, hardenCredentialDir
+    // makes the dir 0700, and atomicWriteSecure stages exclusively (wx) at 0600.
+    // The old plain writeFileSync (no mode) left it 0644 and its symlink-following
+    // fallback undid the per-session-settings hardening on the same file.
+    mkdirSecure(dir)
+    hardenCredentialDir(dir)
+    atomicWriteSecure(file, JSON.stringify(data, null, 2), 0o600)
   } catch (err) {
-    // Best-effort cleanup; fall back to direct write so caller isn't
-    // blocked by a Windows rename quirk. This matches the prior
-    // behaviour; only the success path gets the atomicity upgrade.
-    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8')
-    void err
+    // Fail closed: leave the existing file (base settings from
+    // writeLocalSessionSettings) rather than fall back to an insecure write.
+    logWarn(`[hooks] secure write of ${path.basename(file)} failed (${String(err)}); left the previous file`)
   }
 }

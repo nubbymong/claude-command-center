@@ -13,9 +13,32 @@ vi.mock('fs', () => ({
   join: vi.fn(),
 }))
 
-vi.mock('path', () => ({
-  join: (...parts: string[]) => parts.join('/'),
-}))
+// Real module + a join override. A join-only stub silently undefines whatever the
+// code under test picks up later (dirname/resolve/sep, once config-manager began
+// using the hardening helpers).
+vi.mock('path', async (importOriginal) => {
+  const real = await importOriginal<typeof import('path')>()
+  const join = (...parts: string[]): string => parts.join('/')
+  return { ...real, default: { ...real, join }, join }
+})
+
+// config-manager now routes writes through account-profiles' hardening helpers.
+// Stub them so this stays a config-manager unit test, but keep the stubs faithful
+// to what the real ones do — stage, then rename — so the assertions below still
+// mean what they say.
+vi.mock('../../src/main/account-profiles', async () => {
+  const fs = await import('fs')
+  return {
+    atomicWriteSecure: (file: string, data: string, mode?: number) => {
+      const tmp = `${file}.stub.tmp`
+      fs.writeFileSync(tmp, data, mode != null ? { flag: 'wx', mode } : { flag: 'wx' })
+      fs.renameSync(tmp, file)
+    },
+    mkdirSecure: (dir: string) => fs.mkdirSync(dir, { recursive: true }),
+    hardenCredentialDir: vi.fn(),
+    hardenCredentialFile: vi.fn(),
+  }
+})
 
 vi.mock('../../src/main/ipc/setup-handlers', () => ({
   getResourcesDirectory: () => '/mock/resources',
@@ -65,10 +88,17 @@ describe('config-manager', () => {
       )
     })
 
-    it('does not create if already exists', () => {
+    it('still ensures and re-hardens when the directory already exists', () => {
+      // Deliberate change: this used to skip entirely when the dir was present.
+      // It must not, because an existing CONFIG created by an older build sits at
+      // the umask default and would stay world-readable forever after an upgrade.
+      // mkdirSecure is idempotent and also re-checks for a planted reparse point.
       mockedFs.existsSync.mockReturnValue(true)
       ensureConfigDir()
-      expect(mockedFs.mkdirSync).not.toHaveBeenCalled()
+      expect(mockedFs.mkdirSync).toHaveBeenCalledWith(
+        expect.stringContaining('CONFIG'),
+        { recursive: true }
+      )
     })
   })
 
@@ -110,10 +140,14 @@ describe('config-manager', () => {
       const data = { items: [1, 2, 3] }
       const result = writeConfig('commands', data)
       expect(result).toBe(true)
+      // The write is staged and renamed, and the staging file is created
+      // EXCLUSIVELY — a link planted at that path is refused rather than
+      // followed, and an explicit mode can actually apply (open(2) honours a mode
+      // only on creation).
       expect(mockedFs.writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('.tmp'),
         expect.stringContaining('"items"'),
-        'utf-8'
+        expect.objectContaining({ flag: 'wx' })
       )
       expect(mockedFs.renameSync).toHaveBeenCalled()
     })
@@ -143,7 +177,7 @@ describe('config-manager', () => {
       expect(mockedFs.writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('excalidraw.json'),
         expect.any(String),
-        'utf-8'
+        expect.objectContaining({ flag: 'wx' })
       )
     })
 
