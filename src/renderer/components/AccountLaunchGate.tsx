@@ -27,7 +27,11 @@ export default function AccountLaunchGate() {
   // primary is always active, so it is always a valid fallback.
   const isSelectable = (p: (typeof profiles)[number]) =>
     isAccountActive(p) || p.id === pending?.currentProfileId
-  const selectableProfiles = profiles.filter(isSelectable)
+  // If nothing is selectable (a no-primary install where every remaining account
+  // was parked, e.g. after deleting the last active one) fall back to all
+  // profiles rather than a dead, empty picker -- a choice beats no choice.
+  const activeSelectable = profiles.filter(isSelectable)
+  const selectableProfiles = activeSelectable.length > 0 ? activeSelectable : profiles
   // Pre-select: the session's pinned profile, else primary, else the first
   // selectable (never an inactive account).
   const defaultSelectedId = () =>
