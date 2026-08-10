@@ -9,11 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
-## [2.1.0-beta.7] - 2026-08-05
+## [2.1.0-beta.7] - 2026-08-10
+
+> A security release. Two high-severity local-attacker vulnerabilities are fixed — their advisories publish alongside this release — and every open dependency security alert on the project is cleared.
+
+### Changed
+- Security: updated bundled third-party components to clear every open dependency vulnerability alert on the project, including the id generator, URI parser, network-address parser, diagram renderer and HTML sanitiser the app ships. All updates are minor or patch releases, and the full test suite passed unchanged.
+- A privacy policy now ships with the project, naming exactly what personal information the app handles and where it goes.
 
 ### Fixed
+- Security: the token that protects the app's local browser-control service was stored in a file other users of the same computer could read. On a shared machine, another local user who read it could connect to that service and run code inside the app's embedded browser. The token file and the folder holding it are now created private to your user account and repaired to private if found otherwise, the token is rotated on upgrade, and the per-session files that carry it are private too. Fixed in this release; 2.1.0-beta.6 and earlier are affected. Advisory GHSA-58r3-f5hg-vxcq, severity high: it requires another user account on the same machine.
+- Security: files the app saves safely (write-then-swap) used a predictable temporary name in a location where another local user could plant a link in advance, redirecting the write — including the sign-in credential file — and defeating its private-file protection. Staging names are now unpredictable, the swap refuses to follow planted links, and credential copies go through a hardened path. Fixed in this release; 2.1.0-beta.6 and earlier are affected. Advisory GHSA-pwfw-2ggq-569x, severity high: it requires another user account on the same machine.
 - Windows: an Insights run could report itself as failed for no visible reason. Security software on Windows briefly holds a file open just after it has been written, and that could make saving the list of runs fail — more often when the machine was busy. Saving now waits a moment and tries again.
 - Insights could get stuck insisting a report was already being generated when nothing was running, leaving restarting the app as the only way out. If saving the list of runs failed at the wrong moment, the app never cleared its "in progress" marker. That marker is now always cleared, however the run ends.
+- The Saved Configs pin fix from the previous beta now also covers app launch: a pinned panel starts open, rather than pinned-but-collapsed, the first time the sidebar renders.
 
 ## [2.1.0-beta.6] - 2026-08-04
 
