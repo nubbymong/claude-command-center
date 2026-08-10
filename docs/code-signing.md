@@ -92,6 +92,12 @@ The pieces:
 use "reset eSigner PIN or get new QR Code" in the SSL.com portal — the old
 secret dies instantly everywhere it was copied.
 
+**eSigner account requirement:** the eSigner **Malware Blocker** must be
+*disabled* (eSigner portal → Settings). When it is on, the cloud refuses any
+hash that was not pre-scanned — CKA cannot pre-scan, so signing fails with
+"hash needs to be scanned first before submitting for signing". This is
+SSL.com's documented configuration for CKA-based CI signing.
+
 **Test without releasing:**
 
 ```bash
