@@ -230,3 +230,32 @@ describe('total output is bounded (the caps multiply)', () => {
     expect(out.text.split('\n')).toHaveLength(402) // header + root + 400 nodes, nothing dropped
   })
 })
+
+// Round 4. `fit()` charges each node its COMPACT cost while this path emitted
+// pretty-printed JSON, so indentation — which scales with DEPTH — went unbudgeted.
+// The shipped ceiling fixture is 4000 FLAT siblings, where indentation is ~2
+// chars a node and the accounting is nearly exact; depth is the whole multiplier,
+// and the fixture had none. Measured overshoot: 2.7x at ordinary nesting, 35x at
+// the depth cap, every one of them reported as `truncated: false`.
+describe('the output ceiling holds when the tree is DEEP, not just wide', () => {
+  function chain(depth: number, breadth: number): SnapshotNode {
+    let level: SnapshotNode[] = Array.from({ length: breadth }, (_, i) =>
+      node({ ref: `leaf${i}`, role: 'button', name: 'A name of ordinary length' }),
+    )
+    for (let d = depth; d > 0; d--) {
+      level = [node({ ref: `d${d}`, role: 'group', name: 'wrapper', children: level })]
+    }
+    return node({ ref: 'e0', role: 'document', children: level })
+  }
+
+  it.each([4, 16, 32, 62])('caps json at depth %i', (depth) => {
+    const out = serializeSnapshot(snap(chain(depth, 400)), { format: 'json' })
+    expect(out.text.length).toBeLessThanOrEqual(512_000)
+    expect(() => JSON.parse(out.text)).not.toThrow()
+  })
+
+  it('caps text at depth too', () => {
+    const out = serializeSnapshot(snap(chain(62, 400)))
+    expect(out.text.length).toBeLessThanOrEqual(512_000)
+  })
+})

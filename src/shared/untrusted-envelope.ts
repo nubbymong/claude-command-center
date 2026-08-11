@@ -35,7 +35,16 @@ const MARKER_ATTEMPT = /<\s*\/*\s*untrusted[\s\S]{0,3}content/i
  * marker, there is exactly one of them, so escape it and stop guessing.
  */
 function defang(text: string): string {
-  return text.replace(/</g, '&lt;')
+  // The escape character FIRST, or the escape has no inverse.
+  //
+  // Escaping only `<` chose an HTML-entity alphabet without owning `&`, so a
+  // page could write the literal text `&lt;/untrusted-content>` and have it pass
+  // through untouched — byte-identical to what this function produces for a real
+  // `<`. Any reader that decodes entities (and it must, or a button labelled
+  // `<Back` is misreported) then sees a second, genuine envelope terminator, plus
+  // `&#10;` for the line breaks needed to forge `note:` and `- issue:` lines.
+  // Same shape as every previous round: the defence built the bypass.
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
 }
 
 /**

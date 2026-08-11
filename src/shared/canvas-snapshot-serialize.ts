@@ -60,10 +60,20 @@ export function serializeSnapshot(snapshot: SemanticSnapshot, opts?: SerializeOp
     // not JSON, and the caller asked for this format precisely to parse it.
     const budget: CharBudget = { left: limit, truncated: false }
     const root = fit(snapshot.root, budget)
-    return {
-      text: JSON.stringify({ ...snapshot, root: root ?? { ...snapshot.root, children: [] } }, null, 2),
-      truncated: budget.truncated,
+    const payload = { ...snapshot, root: root ?? { ...snapshot.root, children: [] } }
+    let text = JSON.stringify(payload, null, 2)
+    if (text.length > limit) {
+      // `fit()` charges each node its COMPACT cost, but this path emits
+      // pretty-printed JSON — and the indentation it never counted scales with
+      // depth (2 chars per level per line, at a depth cap of 64). Measured
+      // overshoot ran from 2.7x on ordinary nesting to 35x, reported with
+      // `truncated: false`, i.e. handed to the model as a complete snapshot.
+      // Compact is what the budget actually costed, so fall back to it rather
+      // than pretend: still valid JSON, still the whole pruned tree.
+      text = JSON.stringify(payload)
+      budget.truncated = true
     }
+    return { text, truncated: budget.truncated }
   }
 
   const { width, height, dpr } = snapshot.viewport
