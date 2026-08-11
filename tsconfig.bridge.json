@@ -1,0 +1,17 @@
+{
+  "//": "The Agent Canvas in-page bridge. It lives under src/main/ but runs in the CONTENT frame, so it needs DOM types and no Node types — the main-process project excludes it and this one owns it. Type-check only; esbuild does the emitting (scripts/vite-plugin-canvas-bridge.mjs).",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/main/canvas/bridge/**/*", "src/shared/canvas.ts"]
+}

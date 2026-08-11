@@ -26,10 +26,17 @@
 import { protocol } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
-import { CANVAS_BRIDGE_PATH, CANVAS_ID_RE, CANVAS_VERSION_ID_RE, CCC_UX_SCHEME } from '../../shared/canvas'
+import {
+  CANVAS_ANALYSIS_PATH,
+  CANVAS_BRIDGE_PATH,
+  CANVAS_ID_RE,
+  CANVAS_VERSION_ID_RE,
+  CCC_UX_SCHEME,
+} from '../../shared/canvas'
 import { validatePath } from '../utils/path-validator'
 import { getServableVersion, ServableVersion } from './canvas-store'
-import bridgeSource from './bridge/canvas-bridge.js?raw'
+import bridgeSource from 'virtual:canvas-bridge'
+import analysisSource from 'virtual:canvas-analysis'
 
 // Spec §3.1 default policy, with an explicit script-src and the same
 // defense-in-depth backstops the app renderer carries (object/base/form).
@@ -181,9 +188,17 @@ export async function handleCccUxRequest(request: Request): Promise<Response> {
     if (!CANVAS_ID_RE.test(canvasId)) return notFound()
 
     // The bridge is version-independent and mounted on an absolute path so an
-    // injected <script src> survives any document location.
+    // injected <script src> survives any document location. The analysis chunk
+    // sits beside it and is fetched by the bridge's own dynamic import() the
+    // first time a snapshot asks for issue analysis.
     if (url.pathname === CANVAS_BRIDGE_PATH) {
       return new Response(method === 'HEAD' ? null : bridgeSource, {
+        status: 200,
+        headers: baseHeaders(MIME_BY_EXT['.js']),
+      })
+    }
+    if (url.pathname === CANVAS_ANALYSIS_PATH) {
+      return new Response(method === 'HEAD' ? null : analysisSource, {
         status: 200,
         headers: baseHeaders(MIME_BY_EXT['.js']),
       })

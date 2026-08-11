@@ -71,6 +71,11 @@ export const CCC_UX_SCHEME = 'ccc-ux'
  *  Version-independent on purpose: an absolute src survives any document path. */
 export const CANVAS_BRIDGE_PATH = '/__ccc__/canvas-bridge.js'
 
+/** Path the analysis chunk (axe-core) is mounted at. It is an order of magnitude
+ *  larger than the bridge, so it is NOT part of the always-injected script: the
+ *  bridge pulls it in on the first snapshot that asks for issue analysis. */
+export const CANVAS_ANALYSIS_PATH = '/__ccc__/canvas-analysis.js'
+
 /** Ids that may appear in ccc-ux:// URLs. canvasId comes from randomId() (24
  *  lowercase hex); versionIds are 'v<n>'. The pattern is deliberately tighter
  *  than "path-safe" — these are the ONLY shapes the store ever mints. */
@@ -111,8 +116,19 @@ export interface CanvasViewportInfo {
   scale: number
 }
 
+/** What a snapshot request may narrow. Both levers exist for token economy: an
+ *  unscoped snapshot of a dense page is the expensive case the agent is told to
+ *  avoid (spec §4.1, §5). */
+export interface CanvasSnapshotOptions {
+  /** `data-ux-id` values to scope to. Absent/empty = the whole document. Only
+   *  scoped nodes carry `styles` — that is the bulk of the token cost. */
+  scope?: string[]
+  /** Run the axe pass, loading the analysis chunk on first use. Default true. */
+  analysis?: boolean
+}
+
 export type CanvasBridgeRequest =
-  | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'snapshot' }
+  | ({ ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'snapshot' } & CanvasSnapshotOptions)
   | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'boxMap' }
   | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'elementAtPoint'; x: number; y: number }
 
@@ -163,14 +179,35 @@ export interface SnapshotNode {
     type?: string
     checked?: boolean
     disabled?: boolean
+    /** Redacted to '<redacted>' for password/hidden inputs and secret-looking
+     *  fields — the snapshot is sent verbatim to the agent. */
     value?: string
     ariaInvalid?: boolean
     /** Effective (accumulated) opacity, 0..1 — catches "visible in the DOM but
      *  faded to nothing" that a bare tree misses. */
     opacity?: number
+    /** Deliberately screen-reader-only (clip/1px/inset(50%)). The other HARD
+     *  P0 run-2b requirement: without it the agent reports every visually-hidden
+     *  label as an invisible-text defect. Suppresses size/clipping rules. */
+    srOnly?: boolean
   }
   issues?: AxeIssue[]
   children: SnapshotNode[]
+}
+
+/** What the in-page bridge returns for a snapshot request. The main process
+ *  stamps `versionId` / `capturedAt` onto this to make a `SemanticSnapshot` —
+ *  neither is taken from the content frame. */
+export interface CanvasSnapshotResult {
+  viewport: { width: number; height: number; dpr: number }
+  root: SnapshotNode
+  /** Scope ids that matched nothing on the page. */
+  unmatchedScope?: string[]
+  /** The node cap was hit — the tree is partial. */
+  truncated?: boolean
+  /** Analysis was asked for but could not run (chunk blocked, axe threw). The
+   *  snapshot is still returned; measurement issues are unaffected. */
+  analysisError?: string
 }
 
 export interface SemanticSnapshot {

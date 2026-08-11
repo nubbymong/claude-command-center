@@ -27,7 +27,7 @@
     "postinstall": "electron-rebuild --only=node-pty,better-sqlite3",
     "rebuild": "electron-rebuild",
     "capture-training": "npx tsx scripts/capture-training-screenshots.ts",
-    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.bridge.json --noEmit",
     "test:minimal": "electron test/minimal/main.js"
   },
   "dependencies": {
@@ -59,6 +59,8 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@types/ws": "^8.18.1",
+    "axe-core": "^4.13.0",
+    "dom-accessibility-api": "^0.7.1",
     "electron": "43.2.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",

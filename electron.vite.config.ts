@@ -2,12 +2,15 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 import { readFileSync } from 'fs'
+import { canvasBridgePlugin } from './scripts/vite-plugin-canvas-bridge.mjs'
 
 const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'))
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // canvasBridgePlugin resolves virtual:canvas-bridge / virtual:canvas-analysis
+    // to the esbuild-bundled in-page scripts ccc-ux:// serves.
+    plugins: [externalizeDepsPlugin(), canvasBridgePlugin()],
     // Bake the full package version (incl. any -beta.N suffix) into the main
     // process so the updater knows its exact prerelease build (numbered-beta
     // detection). Mirrors the renderer define below.

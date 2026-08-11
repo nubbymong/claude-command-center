@@ -68,6 +68,9 @@ function stateTokens(state: SnapshotNode['state']): string[] {
   if (state.ariaInvalid) out.push('[aria-invalid]')
   // Opacity is only interesting when it's actually reducing visibility.
   if (state.opacity != null && state.opacity < 1) out.push(`[opacity=${round2(state.opacity)}]`)
+  // Deliberately invisible: without this the agent reads every visually-hidden
+  // label as broken text (the P0 run-2 false positives).
+  if (state.srOnly) out.push('[sr-only]')
   return out
 }
 

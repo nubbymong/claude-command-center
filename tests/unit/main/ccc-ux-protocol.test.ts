@@ -141,6 +141,27 @@ describe('design serving', () => {
     expect(await res.text()).toContain('__cccCanvasBridge')
   })
 
+  it('serves the analysis chunk the bridge imports on demand, and keeps it OUT of the bridge', async () => {
+    const { canvasId } = store.renderVersion(SID, { mode: 'design', html: DESIGN_HTML })
+    const res = await get(`ccc-ux://${canvasId}/__ccc__/canvas-analysis.js`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('javascript')
+    const analysis = await res.text()
+    expect(analysis).toContain('axe')
+
+    // The whole point of the split: the always-injected script must not carry
+    // the rule engine. axe-core is ~10x the bridge.
+    const bridge = await (await get(`ccc-ux://${canvasId}/__ccc__/canvas-bridge.js`)).text()
+    expect(bridge.length * 4).toBeLessThan(analysis.length)
+  })
+
+  it('injects only the bridge tag — the analysis chunk is never planted in the document', async () => {
+    const { canvasId } = store.renderVersion(SID, { mode: 'design', html: DESIGN_HTML })
+    const body = await (await get(`ccc-ux://${canvasId}/v1/index.html`)).text()
+    expect(body).toContain('/__ccc__/canvas-bridge.js')
+    expect(body).not.toContain('/__ccc__/canvas-analysis.js')
+  })
+
   it('design mode has no SPA fallback — extensionless miss is 404', async () => {
     const { canvasId } = store.renderVersion(SID, { mode: 'design', html: DESIGN_HTML })
     expect((await get(`ccc-ux://${canvasId}/v1/some/route`)).status).toBe(404)

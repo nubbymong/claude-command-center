@@ -98,6 +98,18 @@ describe('form-state semantics (HARD P2 requirement)', () => {
     const line = serializeSnapshot(s).split('\n')[1]
     expect(line).toBe('- textbox [ref=e6] [box=0,0,200,32] [type=text] [value="hello"]')
   })
+
+  it('marks screen-reader-only nodes so a hidden label never reads as broken text', () => {
+    const s = snap(
+      node({
+        ref: 'e7',
+        name: 'Skip to content',
+        box: { x: 0, y: 0, width: 1, height: 1 },
+        state: { srOnly: true },
+      }),
+    )
+    expect(serializeSnapshot(s).split('\n')[1]).toBe('- "Skip to content" [ref=e7] [box=0,0,1,1] [sr-only]')
+  })
 })
 
 describe('styles (scoped-only, token economy)', () => {
