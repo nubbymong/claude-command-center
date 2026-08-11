@@ -164,12 +164,21 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           column 1. */}
       <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '1 / 3' }} data-testid="card-line2">
         <span className="meta truncate">{metaLine}</span>
-        <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
-          <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
-        </div>
-        <span className="meta w-9 text-right tabular-nums shrink-0">
-          {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
-        </span>
+        {/* Context meter is Claude-session telemetry. Terminal-only (shell)
+            sessions don't have a reliable context signal — the statusline bridge
+            can leak a stale/foreign percentage onto them — so hide the meter and
+            the % for shell sessions until there's proper integration. The model ·
+            mode meta stays. */}
+        {!session.shellOnly && (
+          <>
+            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
+              <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
+            </div>
+            <span className="meta w-9 text-right tabular-nums shrink-0">
+              {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
+            </span>
+          </>
+        )}
       </div>
 
       {/* Line 3: account on its own row, under the model (spans 1 / 3 so it aligns
