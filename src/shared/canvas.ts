@@ -128,3 +128,55 @@ export type CanvasBridgeEvent =
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'ready' }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'viewport'; viewport: CanvasViewportInfo }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'pointer'; pageX: number; pageY: number; hit: CanvasHitInfo | null }
+
+// ── Semantic snapshot (P2, spec §4) ─────────────────────────────────────────
+// The richer tree the P2 bridge produces (dom-accessibility-api + aria-query +
+// axe-core + a measurement pass) and the `canvas_snapshot` MCP tool returns.
+// The P1 CanvasSnapshotNode above is the basic role/name/box report; SnapshotNode
+// supersedes it once the bundled bridge lands.
+
+/** One axe (or measurement) finding joined onto the node it fired on. */
+export interface AxeIssue {
+  rule: string
+  severity: string
+  /** What was measured on the page, e.g. '28px' or '2.47:1'. */
+  measured: string
+  /** What the rule needs, e.g. '44px' or '4.5:1'. */
+  needed: string
+}
+
+export interface SnapshotNode {
+  /** Stable within a single snapshot ('e12'). */
+  ref: string
+  uxId?: string
+  role: string
+  name: string
+  /** Content-page coordinates at capture. */
+  box: Rect
+  /** Curated computed styles (font-*, color, background, padding, margin,
+   *  overflow, …). Present only for nodes IN SCOPE — the dominant token cost,
+   *  so unscoped snapshots omit them (spec §4.1). */
+  styles?: Record<string, string>
+  /** Form-state semantics — a HARD P2 requirement (P0 run-2b): a lossy tree on a
+   *  form page produced false positives. Present on form controls. */
+  state?: {
+    type?: string
+    checked?: boolean
+    disabled?: boolean
+    value?: string
+    ariaInvalid?: boolean
+    /** Effective (accumulated) opacity, 0..1 — catches "visible in the DOM but
+     *  faded to nothing" that a bare tree misses. */
+    opacity?: number
+  }
+  issues?: AxeIssue[]
+  children: SnapshotNode[]
+}
+
+export interface SemanticSnapshot {
+  versionId: string
+  /** ISO capture time. */
+  capturedAt: string
+  viewport: { width: number; height: number; dpr: number }
+  root: SnapshotNode
+}
