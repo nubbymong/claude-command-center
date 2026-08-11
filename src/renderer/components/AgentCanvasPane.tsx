@@ -14,6 +14,7 @@ import {
   canvasContentUrl,
 } from '../../shared/canvas'
 import { contentPageRectToStage, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
+import { safeHit, safeViewport } from '../utils/canvas-geometry-guard'
 
 interface Props {
   sessionId: string
@@ -117,18 +118,20 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
     const onMessage = (event: MessageEvent) => {
       const frameWindow = iframeRef.current?.contentWindow
       if (!frameWindow || event.source !== frameWindow) return
-      if (typeof event.origin === 'string' && !event.origin.startsWith('ccc-ux://')) return
+      // Fail closed: a non-string origin (shouldn't happen) is rejected too.
+      if (typeof event.origin !== 'string' || !event.origin.startsWith('ccc-ux://')) return
       const msg = event.data as CanvasBridgeEvent | null
       if (!msg || msg.ns !== CANVAS_BRIDGE_NS || !('type' in msg)) return
       if (msg.type === 'ready') {
         setBridgeReady(true)
       } else if (msg.type === 'viewport') {
-        setViewport(msg.viewport)
+        const vp = safeViewport(msg.viewport)
+        setViewport(vp)
         setHover(null)
-        viewportRef.current = msg.viewport
+        viewportRef.current = vp
         repinGlass()
       } else if (msg.type === 'pointer') {
-        setHover(msg.hit ? { hit: msg.hit } : null)
+        setHover(msg.hit ? { hit: safeHit(msg.hit) } : null)
       }
     }
     window.addEventListener('message', onMessage)

@@ -92,6 +92,14 @@ test.describe('Agent Canvas content frame', () => {
   test('connect-src confines fetch to the canvas origin', async () => {
     const frame = page.frame({ url: frameUrl })!
     const results = await frame.evaluate(async () => {
+      // Distinguish a CSP block from a mere network failure: a network-isolated
+      // CI would see any foreign fetch "fail" even if connect-src allowed it, so
+      // that assertion would pass while the CSP claim is false. Capture the
+      // actual securitypolicyviolation to prove the block is the CSP.
+      const violations: string[] = []
+      document.addEventListener('securitypolicyviolation', (e) => {
+        if (e.violatedDirective.startsWith('connect-src')) violations.push(e.blockedURI)
+      })
       const attempt = async (input: string) => {
         try {
           const res = await fetch(input)
@@ -100,15 +108,19 @@ test.describe('Agent Canvas content frame', () => {
           return 'blocked'
         }
       }
-      return {
-        foreignHttps: await attempt('https://example.com/'),
-        localhost: await attempt('http://localhost:19333/health'),
-        self: await attempt('/__ccc__/canvas-bridge.js'),
-      }
+      const foreignHttps = await attempt('https://example.com/')
+      const localhost = await attempt('http://localhost:19333/health')
+      const self = await attempt('/__ccc__/canvas-bridge.js')
+      // Let the async violation events flush.
+      await new Promise((r) => setTimeout(r, 50))
+      return { foreignHttps, localhost, self, violations }
     })
     expect(results.foreignHttps).toBe('blocked')
     expect(results.localhost).toBe('blocked')
     expect(results.self).toMatch(/^ok:200$/)
+    // The block MUST be attributable to connect-src, not just a dead network.
+    expect(results.violations.some((uri) => uri.includes('example.com'))).toBe(true)
+    expect(results.violations.some((uri) => uri.includes('localhost'))).toBe(true)
   })
 
   test('frame cannot reach the parent document (cross-origin isolation)', async () => {

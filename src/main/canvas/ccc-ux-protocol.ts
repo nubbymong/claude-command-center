@@ -108,8 +108,14 @@ function baseHeaders(contentType: string, csp?: string): Record<string, string> 
   return headers
 }
 
+/** Windows reserved device basenames (CON/NUL/COM1/…) — kept in sync with the
+ *  store's normalizeEntry so both ingress paths reject a device read. */
+const WIN_RESERVED_BASENAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9]|conin\$|conout\$)$/i
+
 /** Decode and vet the path segments after the version id. Returns null on
- *  anything that is not a list of plain file/dir names. */
+ *  anything that is not a plain file/dir name. Self-sufficient against the
+ *  Win32 forms libuv would otherwise normalize (trailing dot/space, all-dot
+ *  segments, device names), so confinement never leans on the fs layer. */
 export function sanitizeContentPath(rawSegments: string[]): string[] | null {
   const segments: string[] = []
   for (const raw of rawSegments) {
@@ -119,10 +125,12 @@ export function sanitizeContentPath(rawSegments: string[]): string[] | null {
     } catch {
       return null
     }
-    if (decoded === '' || decoded === '.' || decoded === '..') return null
+    if (decoded === '' || /^\.+$/.test(decoded)) return null // '', '.', '..', '...'
     // A decoded slash would smuggle a separator into the join ('..%2f..'),
     // backslash and colon cover Windows separators / drives / ADS, NUL is NUL.
     if (/[/\\:\0]/.test(decoded)) return null
+    if (/[. ]$/.test(decoded)) return null // Win32 strips a trailing '.'/' '
+    if (WIN_RESERVED_BASENAME.test(decoded.split('.')[0])) return null
     segments.push(decoded)
   }
   return segments
@@ -233,7 +241,10 @@ export async function handleCccUxRequest(request: Request): Promise<Response> {
       const realEntry = fs.realpathSync.native(filePath)
       if (realEntry !== realRoot && !realEntry.startsWith(realRoot + path.sep)) return notFound()
       if (stat.size > MAX_SERVED_FILE_BYTES) return notFound()
-      return serveFile(filePath, servable, true, method)
+      // Serve the canonical (link-resolved) path, matching the main branch — no
+      // window between the containment check and the read where the lexical
+      // path could resolve elsewhere.
+      return serveFile(realEntry, servable, true, method)
     }
 
     let realTarget: string

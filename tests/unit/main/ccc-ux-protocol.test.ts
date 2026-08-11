@@ -21,6 +21,7 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => {
 
 const { getResourcesDirectory } = await import('../../../src/main/ipc/setup-handlers')
 const store = await import('../../../src/main/canvas/canvas-store')
+const { registerCanvasUatRoot } = store
 const { handleCccUxRequest, injectBridgeTag, sanitizeContentPath } = await import(
   '../../../src/main/canvas/ccc-ux-protocol'
 )
@@ -156,6 +157,9 @@ function makeDist(): string {
   fs.mkdirSync(path.join(dist, 'assets'))
   fs.writeFileSync(path.join(dist, 'assets', 'app.js'), 'console.log(1)')
   fs.writeFileSync(path.join(dist, 'secret-sibling.txt'), 'inside-ok')
+  // UAT roots are default-deny: the base the dist sits under must be registered
+  // before renderVersion will accept it (serving still stays inside `dist`).
+  registerCanvasUatRoot(path.dirname(dist))
   return dist
 }
 
@@ -230,8 +234,9 @@ describe('confinement', () => {
     }
   })
 
-  it('does not follow a directory link inside the tree to outside it', async () => {
+  it('does not follow a directory link inside the tree to outside it', async (ctx) => {
     const dist = makeDist()
+    registerCanvasUatRoot(path.dirname(dist))
     outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-outside-'))
     fs.writeFileSync(path.join(outsideDir, 'leak.txt'), 'LEAKED')
     let linked = false
@@ -240,9 +245,11 @@ describe('confinement', () => {
       fs.symlinkSync(outsideDir, path.join(dist, 'link'), 'junction')
       linked = true
     } catch {
-      /* environment forbids link creation — nothing to assert */
+      /* environment forbids link creation */
     }
-    if (!linked) return
+    // NEVER silently pass: a green here would falsely certify layer-3. If this
+    // runner can't create links, mark the test SKIPPED (visible), not passed.
+    if (!linked) return ctx.skip()
     const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
     const res = await get(`ccc-ux://${canvasId}/v1/link/leak.txt`)
     expect(res.status).toBe(404)
