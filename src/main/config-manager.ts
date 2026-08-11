@@ -5,7 +5,7 @@
  */
 
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError, logWarn } from './debug-logger'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir, hardenCredentialFile } from './account-profiles'
@@ -206,12 +206,14 @@ export function readConfig<T = unknown>(key: ConfigKey): T | null {
 }
 
 /**
- * Write a config file atomically (write per-pid .tmp then rename over the
- * destination). renameSync is an atomic replace on POSIX (rename(2)) and on
- * Windows (MoveFileExW + REPLACE_EXISTING) whether or not the destination
- * exists — a crash mid-write leaves the previous file intact, never a torn
- * one. The previous copyFileSync-when-target-exists branch truncated the
- * destination in place (same bug fixed in session-state.ts, P7.7.16).
+ * Write a config file atomically via the shared helper (#233) — staging,
+ * exclusive create, the rename retry and cleanup all live in atomic-write.ts.
+ *
+ * Losing the Windows rename race used to return false here, silently dropping a
+ * config save because a scanner held the file for a few milliseconds.
+ *
+ * The previous copyFileSync-when-target-exists branch truncated the destination
+ * in place (same bug fixed in session-state.ts, P7.7.16).
  */
 export function writeConfig(key: ConfigKey, data: unknown): boolean {
   // Fail closed on an unregistered key. The CONFIG_FILES[key] lookup ran
@@ -238,13 +240,17 @@ export function writeConfig(key: ConfigKey, data: unknown): boolean {
     // link planted at the staging path is refused, AND -- the part that matters
     // here -- the mode is honoured, because open(2) applies a mode only on
     // creation. A plain writeFileSync into an existing inode silently keeps that
-    // inode's permissions.
+    // inode's permissions. Post-#233 this is a thin alias over the shared
+    // atomicWriteFileSync, so it carries the wx/random-staging properties too.
     atomicWriteSecure(filePath, JSON.stringify(data, null, 2), modeFor(key))
     // Re-assert for the case the file already existed at 0644 from an older
     // build; the rename above replaces the inode, so this is belt and braces.
     if (SECRET_CONFIG_KEYS.has(key)) hardenCredentialFile(filePath)
     return true
   } catch (err) {
+    // Unchanged contract: log and return false. What changed is that a transient
+    // Windows rename failure is now retried instead of silently dropping the
+    // save (#233), and the staging file can no longer be a planted link.
     logError(`[config-manager] Failed to write ${key}: ${err}`)
     return false
   }

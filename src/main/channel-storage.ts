@@ -1,9 +1,10 @@
 // src/main/channel-storage.ts
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, appendFileSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
 import { randomId } from '../shared/id'
+import { atomicWriteFileSync } from './atomic-write'
 
 const SUBDIR = 'conductor-channels'
 
@@ -22,11 +23,8 @@ function filePath(name: string): string {
 export function writeJsonFile(name: string, data: unknown): boolean {
   ensureDir()
   const fp = filePath(name)
-  const tmp = fp + '.tmp'
   try {
-    writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
-    // rename atomically replaces on the same volume (Windows + POSIX)
-    renameSync(tmp, fp)
+    atomicWriteFileSync(fp, JSON.stringify(data, null, 2))
     return true
   } catch (err) {
     logError(`[channels] write ${name} failed: ${String(err)}`)

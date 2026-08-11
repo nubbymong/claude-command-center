@@ -5,9 +5,10 @@
  */
 
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync } from 'fs'
+import { readFileSync, existsSync, unlinkSync } from 'fs'
 import { getConfigDir, ensureConfigDir, migrateConfigToProviderShape } from './config-manager'
 import { logInfo, logError } from './debug-logger'
+import { atomicWriteFileSync } from './atomic-write'
 import type { SavedSession, SessionState } from '../shared/types'
 
 export type { SavedSession, SessionState }
@@ -22,12 +23,8 @@ function getSessionStateFile(): string {
 }
 
 /**
- * Atomic write helper for session-state.json. Writes a per-pid tmp file
- * then renames it over the final path. fs.renameSync is atomic on POSIX
- * (rename(2) on same-filesystem) and on Windows via MoveFileExW with
- * REPLACE_EXISTING; this is a true atomic-replace regardless of whether
- * the destination exists. A crash mid-write leaves the previous file
- * intact, never a partially-written one.
+ * Atomic write for session-state.json, via the shared helper (#233). A crash
+ * mid-write leaves the previous file intact, never a partially-written one.
  *
  * P7.7.16: the earlier copyFileSync-when-target-exists branch was NOT
  * atomic -- copyFileSync truncates the destination in-place and then
@@ -35,14 +32,9 @@ function getSessionStateFile(): string {
  * The Copilot review on 6384814 (P7.7.14) caught this.
  */
 function atomicWriteSessionState(filePath: string, state: SessionState): void {
-  const tmpPath = `${filePath}.tmp.${process.pid}`
-  writeFileSync(tmpPath, JSON.stringify(state, null, 2))
-  try {
-    renameSync(tmpPath, filePath)
-  } catch (renameErr) {
-    try { unlinkSync(tmpPath) } catch { /* ignore */ }
-    throw renameErr
-  }
+  // Staging, exclusive create, retry and cleanup all live in atomic-write.ts
+  // (#233). Still rethrows, so the caller's contract is unchanged.
+  atomicWriteFileSync(filePath, JSON.stringify(state, null, 2))
 }
 
 /**

@@ -13,7 +13,14 @@ vi.mock('fs', () => ({
   unlinkSync: (p: string) => { files.delete(p) },
   readdirSync: () => [] as string[],
 }))
-vi.mock('path', () => ({ join: (...p: string[]) => p.join('/') }))
+// Real module + a join override. A partial 'path' silently undefines whatever the
+// code under test picks up later — dirname/basename, once staging moved into the
+// shared atomic write.
+vi.mock('path', async (importOriginal) => {
+  const real = await importOriginal<typeof import('path')>()
+  const join = (...p: string[]): string => p.join('/')
+  return { ...real, default: { ...real, join }, join }
+})
 vi.mock('../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '/res' }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 

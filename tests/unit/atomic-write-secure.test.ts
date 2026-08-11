@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-// Setup/inspection deliberately import 'fs' while the module under test imports
-// 'node:fs' — only the latter is mocked, so fixture writes never pollute the
-// recorded calls.
+// NOTE: 'fs' and 'node:fs' resolve to the SAME module under vitest, so the
+// fixture writes below DO go through the mock. An earlier version of this comment
+// claimed otherwise and the retry assertion silently counted a fixture write —
+// it passed with zero retries. The recorded calls are filtered to staging paths
+// instead, which is the thing actually under test.
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -107,9 +109,12 @@ describe('atomicWriteSecure', () => {
 
     expect(() => atomicWriteSecure(target, 'attacker-redirected')).toThrow(/EEXIST/)
 
-    // Retried with FRESH names rather than reusing one, then gave up.
-    expect(h.writeCalls.length).toBeGreaterThan(1)
-    expect(new Set(h.writeCalls.map((c) => c.path)).size).toBe(h.writeCalls.length)
+    // Retried with FRESH names rather than reusing one, then gave up. Count only
+    // STAGING writes: the fixture write above goes through the same mock, and
+    // counting it made this pass with zero retries.
+    const staged = h.writeCalls.filter((c) => c.path.endsWith('.tmp'))
+    expect(staged.length).toBeGreaterThan(1)
+    expect(new Set(staged.map((c) => c.path)).size).toBe(staged.length)
     expect(h.renameFrom).toEqual([]) // never reached the rename
     expect(readFileSync(target, 'utf-8')).toBe('untouched')
   })

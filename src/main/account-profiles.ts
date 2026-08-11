@@ -6,11 +6,12 @@
 // are injectable so tests never touch the live ~/.claude. Profile metadata is
 // persisted as an atomic profiles.json under the profiles root (NOT via
 // config-manager) so _setRootsForTest is a total seam.
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { atomicWriteFileSync } from './atomic-write'
 import { canonicaliseEmail } from '../shared/account-chip-color'
 import type { AccountProfile, AccountProfilesConfig } from '../shared/account-types'
 
@@ -72,47 +73,19 @@ const IS_POSIX = process.platform !== 'win32'
 const CRED_FILE_MODE = 0o600
 const CRED_DIR_MODE = 0o700
 
-/** Longest a staging name should ever have to be re-drawn. A collision is a
- *  128-bit coincidence, so anything past the first retry means something is
- *  occupying the path deliberately and we should fail rather than loop. */
-const STAGING_NAME_ATTEMPTS = 3
-
 /**
- * Stage-and-rename where the staging file is always freshly CREATED, never
- * opened through whatever happens to sit at that path already.
+ * Credential-writer alias for the shared atomic write (#233). The exclusive
+ * create and the unguessable staging name that GHSA-pwfw-2ggq-569x turned on now
+ * live in `atomic-write.ts`, so every writer in the app gets them rather than
+ * only the four credential paths -- and there is one implementation to keep
+ * correct instead of two that can drift apart.
  *
- * Two properties, and both are load-bearing:
- *
- * - `flag: 'wx'` is O_CREAT|O_EXCL|O_WRONLY. open(2) with O_CREAT|O_EXCL fails
- *   with EEXIST on an existing file AND on a symlink (even a dangling one), so
- *   the write can never be redirected through a link someone else put there.
- *   The plain writeFileSync this replaces follows a symlink silently.
- * - Because O_EXCL means the file is always created, the `mode` argument always
- *   applies. A mode passed to open(2) is honoured ONLY on creation, so writing
- *   into a pre-existing inode silently inherits that inode's permissions --
- *   which is how a 0600 request can land on a world-readable file.
- *
- * The name is drawn from randomUUID rather than a pid or a counter so it cannot
- * be predicted and pre-created. `github/cache/cache-store.ts` and
- * `github/github-config-store.ts` already stage this way.
+ * Kept as a named export because the config/hooks credential writers and
+ * `usage/account-usage.ts` import it, and because the name states the intent at
+ * a credential call site.
  */
 export function atomicWriteSecure(file: string, data: string | Uint8Array, mode?: number): void {
-  for (let attempt = 0; ; attempt++) {
-    const tmp = `${file}.${randomUUID()}.tmp`
-    try {
-      fs.writeFileSync(tmp, data, mode != null ? { flag: 'wx', mode } : { flag: 'wx' })
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code === 'EEXIST' && attempt < STAGING_NAME_ATTEMPTS) continue
-      throw err
-    }
-    try {
-      fs.renameSync(tmp, file)
-    } catch (err) {
-      try { fs.unlinkSync(tmp) } catch { /* best-effort */ }
-      throw err
-    }
-    return
-  }
+  atomicWriteFileSync(file, data, mode != null ? { mode } : undefined)
 }
 
 /** chmod a just-written/copied credential FILE to 0o600 on POSIX (no-op on Win). */

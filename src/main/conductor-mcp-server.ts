@@ -30,6 +30,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { logInfo, logError, logDebug, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { atomicWriteFileSync, isRenameStageFailure } from './atomic-write'
 import { mimeForImage } from './clipboard-file'
 import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
@@ -928,14 +929,19 @@ export function getMcpPort(): number {
  * full of unrelated state (projects map, OAuth tokens, growthbook cache).
  */
 function strictAtomicWriteJson(filePath: string, data: unknown): boolean {
-  const tmp = `${filePath}.tmp.${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
   try {
-    fs.renameSync(tmp, filePath)
+    atomicWriteFileSync(filePath, JSON.stringify(data, null, 2))
     return true
   } catch (err: any) {
-    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-    logError(`[vision] Atomic rename failed for ${filePath} (${err?.code ?? err?.message}); leaving the existing file untouched.`)
+    // Deliberate: a staging-write failure used to throw past this and now
+    // returns false, which is what the boolean contract implies. The one caller
+    // (removeMcpSettings) discards the value and reached the same end state
+    // either way, so nothing downstream changes.
+    // Own-property read via isRenameStageFailure, not `err.atomicWriteStage`
+    // through the prototype chain -- a polluted Object.prototype must not steer
+    // this log word, and this stays consistent with codex-review-usage.
+    const stage = isRenameStageFailure(err) ? 'rename' : 'staging write'
+    logError(`[vision] Atomic ${stage} failed for ${filePath} (${err?.code ?? err?.message}); leaving the existing file untouched.`)
     return false
   }
 }
