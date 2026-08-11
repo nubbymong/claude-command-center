@@ -160,12 +160,47 @@ function elementOf(node: AxeNodeResult): Element | null {
   }
 }
 
+/**
+ * The nearest ancestor that is actually IN the tree, including the element
+ * itself.
+ *
+ * axe fires on whichever element owns the text, but the snapshot only emits
+ * nodes it considers meaningful — so a finding on a plain wrapper was dropped
+ * on the floor. `<div>Price <span>10</span></div>` is the commonest text
+ * container there is, and a contrast violation on that div reached the agent as
+ * nothing at all. Attributing it to the enclosing node is imprecise; losing it
+ * is worse. Bounded so a deeply-buried finding cannot climb to the document.
+ */
+function nearestNode(el: Element, byElement: Map<Element, SnapshotNode>): SnapshotNode | null {
+  let cur: Element | null = el
+  for (let hops = 0; cur && hops < 6; hops++) {
+    const node = byElement.get(cur)
+    if (node) return node
+    cur = cur.parentElement
+  }
+  return null
+}
+
+/** The elements axe evaluated for contrast and handed back undecided. Those —
+ *  and only those — are the ones the measurement pass must still cover. */
+function declinedContrast(incomplete: AxeViolation[] | undefined): Set<Element> {
+  const out = new Set<Element>()
+  for (const result of incomplete ?? []) {
+    if (result.id !== 'color-contrast') continue
+    for (const axeNode of result.nodes ?? []) {
+      const el = elementOf(axeNode)
+      if (el) out.add(el)
+    }
+  }
+  return out
+}
+
 function joinAxe(violations: AxeViolation[], byElement: Map<Element, SnapshotNode>): void {
   for (const violation of violations ?? []) {
     for (const axeNode of violation.nodes ?? []) {
       const el = elementOf(axeNode)
       if (!el) continue
-      const node = byElement.get(el)
+      const node = nearestNode(el, byElement)
       if (!node) continue
       const issue = toIssue(violation, axeNode)
       const issues = node.issues ?? []
@@ -226,21 +261,32 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   // coverage. (Two concurrent captures hit this readily: axe is a singleton and
   // rejects with "Axe is already running".)
   let violations: AxeViolation[] | null = null
+  let contrastDeclined = new Set<Element>()
   if (analysis) {
     try {
       const context = scope.length > 0 && roots.length > 0 ? roots : document
       const result = await withRunTimeout(analysis.run(context, AXE_RULES))
       violations = result.violations
+      contrastDeclined = declinedContrast(result.incomplete)
     } catch {
       analysisError = 'run-failed' satisfies AnalysisFailure
     }
   }
 
-  // axe owns flat-background contrast when it ran; the measurement pass then
-  // claims only the gradient case, which axe reports as `incomplete` and
-  // therefore never fails. When axe did not run, measurement covers both.
-  const flatContrast = violations === null
+  // Contrast coverage is decided PER NODE, not once for the whole capture.
+  //
+  // The old rule was `flatContrast = violations === null` — the moment axe ran
+  // at all, the measurement pass stood down everywhere. But axe declines to
+  // decide contrast on any node whose foreground has alpha, whose text overlaps
+  // something, whose content is generated, or whose font is an icon font: it
+  // returns those as `incomplete`, which is neither a pass nor a failure. So on
+  // the only path production uses (`analysis: true`) those nodes were checked by
+  // nobody — and the measurement pass is strictly BETTER there, because it
+  // composites alpha itself. Now axe owns the nodes it actually decided, and
+  // measurement covers the ones it handed back.
+  const axeRan = violations !== null
   for (const candidate of ctx.candidates) {
+    const flatContrast = !axeRan || contrastDeclined.has(candidate.el)
     const issues = measurementIssues(candidate, { flatContrast })
     if (issues.length > 0) candidate.node.issues = (candidate.node.issues ?? []).concat(issues)
   }

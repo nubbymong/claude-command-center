@@ -35,6 +35,9 @@ type Sender = (event: CanvasSnapshotRequestEvent) => boolean
 
 interface Pending {
   sessionId: string
+  /** What WE asked for, not what came back: styles are only legitimate on a
+   *  scoped capture, and the reply is written by the page. */
+  scoped: boolean
   resolve: (result: CanvasSnapshotResult) => void
   reject: (err: Error) => void
   timer: ReturnType<typeof setTimeout>
@@ -74,7 +77,13 @@ export function requestCanvasSnapshot(request: SnapshotRequest): Promise<CanvasS
       pending.delete(requestId)
       reject(new Error('The canvas frame did not answer in time. Is the Agent Canvas open on this session?'))
     }, SNAPSHOT_TIMEOUT_MS)
-    pending.set(requestId, { sessionId: request.sessionId, resolve, reject, timer })
+    pending.set(requestId, {
+      sessionId: request.sessionId,
+      scoped: (request.options?.scope?.length ?? 0) > 0,
+      resolve,
+      reject,
+      timer,
+    })
   })
 }
 
@@ -90,7 +99,7 @@ export function resolveCanvasSnapshot(raw: unknown): void {
   clearTimeout(waiting.timer)
 
   if (reply.ok === true) {
-    waiting.resolve(sanitizeSnapshotResult((reply as { result?: unknown }).result))
+    waiting.resolve(sanitizeSnapshotResult((reply as { result?: unknown }).result, undefined, { scoped: waiting.scoped }))
     return
   }
   const error = (reply as { error?: unknown }).error

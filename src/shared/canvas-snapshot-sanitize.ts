@@ -21,11 +21,21 @@ export interface SanitizeLimits {
   maxText: number
 }
 
-/** Matched to the bridge's own caps, so a well-behaved page never trips them. */
+/**
+ * Matched to the bridge's own caps, so a well-behaved page never trips them.
+ *
+ * `maxChildren` used to be 500 while the bridge had no per-node children cap at
+ * all — the comment above was simply false. An honest 600-row list lost 100 rows,
+ * and the capture note blamed "the snapshot node limit", which was not the limit
+ * that fired. It is now aligned with `maxNodes`, which is the real bound: the
+ * node budget is checked before every node, so total output is capped whatever a
+ * single parent's fan-out is, and a separate smaller breadth cap bought nothing
+ * except silent data loss on ordinary pages.
+ */
 export const DEFAULT_SNAPSHOT_LIMITS: SanitizeLimits = {
   maxNodes: 4000,
   maxDepth: 64,
-  maxChildren: 500,
+  maxChildren: 4000,
   maxIssuesPerNode: 20,
   maxStyleEntries: 24,
   maxText: 200,
@@ -35,14 +45,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+/** Cut to `max` without splitting a surrogate pair. A lone surrogate is not
+ *  text; it survives JSON and structured clone as a replacement character and
+ *  makes the wire output lie about what the page contained. */
+function clip(value: string, max: number): string {
+  let end = max - 1
+  const lastKept = value.charCodeAt(end - 1)
+  if (lastKept >= 0xd800 && lastKept <= 0xdbff) end -= 1
+  return value.slice(0, end) + '…'
+}
+
 function str(value: unknown, max: number): string {
   if (typeof value !== 'string') return ''
-  // Anything a reader — or a model — could take for a line break or for
-  // invisible structure. \x00-\x1F is NOT enough: U+2028/U+2029/U+0085 are line
-  // terminators too, and format characters (bidi overrides, zero-width joiners)
-  // let text claim to be something it is not. Cc, Cf, Zl and Zp cover all of it.
-  const clean = value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
-  return clean.length > max ? clean.slice(0, max - 1) + '…' : clean
+  // Bound the WORK before doing any of it. A page can put a megabyte in every
+  // field, and scanning all of it to keep 200 characters cost ~0.67 ms per KB
+  // of wire — on the renderer's UI thread. NFKC can expand one codepoint into
+  // 18, so a prefix that survives the worst expansion is still a constant.
+  const head = value.length > max * 24 ? value.slice(0, max * 24) : value
+  // Normalise BEFORE capping, and this order is the whole point. The serializer
+  // normalises too, and it used to be the FIRST to do so — so a string that was
+  // cap-legal at 200 characters here expanded to ~3,600 on the wire, and 4,000
+  // nodes of that threw RangeError out of the main process after ~9 s of
+  // synchronous work and a 3 GB heap spike. Normalising first makes the
+  // serializer's pass idempotent and makes this cap mean what it says.
+  const clean = head
+    .normalize('NFKC')
+    // Anything a reader — or a model — could take for a line break or for
+    // invisible structure. \x00-\x1F is NOT enough: U+2028/U+2029/U+0085 are line
+    // terminators too, and format characters (bidi overrides, zero-width joiners)
+    // let text claim to be something it is not. Cc, Cf, Zl and Zp cover all of it.
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
+  return clean.length > max ? clip(clean, max) : clean
 }
 
 function num(value: unknown): number {
@@ -71,11 +104,26 @@ function issues(value: unknown, limits: SanitizeLimits): AxeIssue[] | undefined 
   return out.length > 0 ? out : undefined
 }
 
-function styles(value: unknown, limits: SanitizeLimits): Record<string, string> | undefined {
+function styles(value: unknown, budget: Budget, limits: SanitizeLimits): Record<string, string> | undefined {
+  if (!budget.allowStyles) return undefined
   if (!isRecord(value)) return undefined
+  // Structured clone preserves object IDENTITY, so one huge styles object
+  // referenced from every node costs the page almost nothing on the wire while
+  // costing us the full scan per node. Memoise per snapshot and that asymmetry
+  // — the thing that made the attack cheap — disappears.
+  const cached = budget.styleMemo.get(value)
+  if (cached !== undefined) return cached.value
+
   const out: Record<string, string> = {}
   let count = 0
-  for (const key of Object.keys(value)) {
+  // Bound the keys EXAMINED, not the keys accepted. Rejected keys used to be
+  // free — they never advanced `count`, so a map of junk names was walked in
+  // full for every node, and 0.3 MB of payload froze the renderer's UI thread
+  // for 30 s: longer than either capture timeout, on the thread that runs
+  // React, every terminal, and all IPC.
+  const keys = Object.keys(value)
+  const examine = keys.length > limits.maxStyleEntries * 8 ? keys.slice(0, limits.maxStyleEntries * 8) : keys
+  for (const key of examine) {
     if (count >= limits.maxStyleEntries) break
     const name = str(key, 48)
     // A style name is a CSS property, never arbitrary page text. The shape
@@ -88,7 +136,9 @@ function styles(value: unknown, limits: SanitizeLimits): Record<string, string> 
     out[name] = styleValue
     count++
   }
-  return count > 0 ? out : undefined
+  const result = count > 0 ? out : undefined
+  budget.styleMemo.set(value, { value: result })
+  return result
 }
 
 function state(value: unknown, limits: SanitizeLimits): SnapshotNode['state'] {
@@ -111,6 +161,12 @@ function state(value: unknown, limits: SanitizeLimits): SnapshotNode['state'] {
 interface Budget {
   nodes: number
   truncated: boolean
+  /** Per-snapshot, so this stays a pure function across calls. Wrapped because
+   *  `undefined` is a real result ("no usable styles") and WeakMap cannot tell
+   *  that from a miss. */
+  styleMemo: WeakMap<object, { value: Record<string, string> | undefined }>
+  /** False for an unscoped capture — see SanitizeContext.scoped. */
+  allowStyles: boolean
 }
 
 function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLimits): SnapshotNode | null {
@@ -133,7 +189,7 @@ function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLim
   }
   const uxId = str(value.uxId, 128)
   if (uxId) out.uxId = uxId
-  const nodeStyles = styles(value.styles, limits)
+  const nodeStyles = styles(value.styles, budget, limits)
   if (nodeStyles) out.styles = nodeStyles
   const nodeState = state(value.state, limits)
   if (nodeState) out.state = nodeState
@@ -166,10 +222,31 @@ const EMPTY_ROOT: SnapshotNode = { ref: 'e0', role: 'document', name: '', box: {
  * Never throws: a malformed payload degrades to an empty tree rather than
  * failing the tool call, and `truncated` records that something was dropped.
  */
-export function sanitizeSnapshotResult(raw: unknown, limits: SanitizeLimits = DEFAULT_SNAPSHOT_LIMITS): CanvasSnapshotResult {
+export interface SanitizeContext {
+  /**
+   * Whether the capture that produced this actually ASKED for a scope.
+   *
+   * Styles are the dominant token cost, and the contract the tool advertises to
+   * the model is that only scoped nodes carry them. That was enforced solely by
+   * the bridge — i.e. by code inside the page, which a hostile document simply
+   * replaces. A forged reply put 24 styles on all 4,000 nodes of an UNSCOPED
+   * capture, which was ~84% of the payload that serialized to 43.8 MB.
+   *
+   * Defaults to false: this is the one place that knows the honest answer, so it
+   * fails closed and a caller that forgets to say gets the cheap tree, not the
+   * expensive one.
+   */
+  scoped?: boolean
+}
+
+export function sanitizeSnapshotResult(
+  raw: unknown,
+  limits: SanitizeLimits = DEFAULT_SNAPSHOT_LIMITS,
+  context: SanitizeContext = {},
+): CanvasSnapshotResult {
   const source = isRecord(raw) ? raw : {}
   const viewportRaw = isRecord(source.viewport) ? source.viewport : {}
-  const budget: Budget = { nodes: 0, truncated: false }
+  const budget: Budget = { nodes: 0, truncated: false, styleMemo: new WeakMap(), allowStyles: context.scoped === true }
   const root = node(source.root, 0, budget, limits) ?? { ...EMPTY_ROOT }
 
   const out: CanvasSnapshotResult = {

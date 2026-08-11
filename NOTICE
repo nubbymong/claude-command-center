@@ -11,7 +11,9 @@ This product bundles the following software under the MIT License:
 This product bundles the following software under the Mozilla Public License 2.0:
 - axe-core -- (c) Deque Systems, Inc. Bundled UNMODIFIED into the Agent Canvas
   analysis chunk (src/main/canvas/bridge/analysis.ts), which the app serves to
-  its own content frame. The full licence text ships inside that bundle.
+  its own content frame. That bundle carries axe-core's own MPL-2.0 Exhibit A
+  header, which names the licence and where to obtain it; the full licence text
+  is at https://mozilla.org/MPL/2.0/ and in this file's source repository.
   Source, including the exact version bundled (see package.json), is available
   at https://github.com/dequelabs/axe-core. Per MPL-2.0 s.3.3 this bundling does
   not place any other part of this product under the MPL.

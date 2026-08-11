@@ -9,6 +9,8 @@ import {
   SNAPSHOT_TIMEOUT_MS,
   _resetSnapshotBrokerForTest,
 } from '../../../src/main/canvas/canvas-snapshot-broker'
+import { FRAME_TIMEOUT_MS } from '../../../src/renderer/canvas/canvas-snapshot-host'
+import { ANALYSIS_RUN_TIMEOUT_MS } from '../../../src/main/canvas/bridge/analysis-loader'
 import type { CanvasSnapshotRequestEvent } from '../../../src/shared/canvas'
 
 const REQUEST = { sessionId: 'sess-1', canvasId: 'c1', versionId: 'v1', options: {} }
@@ -141,5 +143,25 @@ describe('bounds', () => {
 
     armSender(false) // window present but the send failed
     await expect(requestCanvasSnapshot(REQUEST)).rejects.toThrow(/window is not available/)
+  })
+})
+
+// The timeout tests above advance the clock by `SNAPSHOT_TIMEOUT_MS + 10` — they
+// read the constant they exist to pin, so setting it to ~24 days left them green
+// and the bound was never actually guarded. What matters is not that a timer
+// exists but that it fires SOON, and that the renderer's own timeout sits inside
+// main's so a slow frame surfaces the specific message, not the generic one.
+describe('the bounds themselves', () => {
+  it('keeps the capture timeouts short and correctly nested', () => {
+    expect(SNAPSHOT_TIMEOUT_MS).toBe(30_000)
+    expect(FRAME_TIMEOUT_MS).toBe(25_000)
+    expect(FRAME_TIMEOUT_MS).toBeLessThan(SNAPSHOT_TIMEOUT_MS)
+    // An MCP call must never outlive a reasonable human wait.
+    expect(SNAPSHOT_TIMEOUT_MS).toBeLessThanOrEqual(60_000)
+  })
+
+  it('bounds the analysis run so a wedged rule pass cannot hold the reply', () => {
+    expect(ANALYSIS_RUN_TIMEOUT_MS).toBe(12_000)
+    expect(ANALYSIS_RUN_TIMEOUT_MS).toBeLessThan(FRAME_TIMEOUT_MS)
   })
 })

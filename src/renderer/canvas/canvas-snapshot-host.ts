@@ -117,8 +117,16 @@ export async function handleSnapshotRequest(
   if (!frame.isReady()) return fail('The canvas page is still loading. Try again in a moment.')
 
   try {
-    const raw = await askFrame(target, event.canvasId, event.options ?? {}, timeoutMs)
-    return { requestId: event.requestId, ok: true, result: sanitizeSnapshotResult(raw) }
+    const options = event.options ?? {}
+    const raw = await askFrame(target, event.canvasId, options, timeoutMs)
+    // Sanitised HERE as well as in main, and the scope is known here, so an
+    // unscoped capture sheds its styles before it ever crosses IPC rather than
+    // after.
+    return {
+      requestId: event.requestId,
+      ok: true,
+      result: sanitizeSnapshotResult(raw, undefined, { scoped: (options.scope?.length ?? 0) > 0 }),
+    }
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err))
   }

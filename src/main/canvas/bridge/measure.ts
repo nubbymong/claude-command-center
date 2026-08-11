@@ -13,7 +13,30 @@ const VALUE_MAX = 60
 
 /** Field names that must never round-trip their value to the agent. The input
  *  type covers the honest cases; this covers the ones typed into a text box. */
-const SECRET_HINT = /pass|secret|token|otp|cvv|ccnum|card|ssn|auth|key/i
+const SECRET_HINT =
+  /pass|secret|token|otp|cvv|cvc|\bpin\b|ccnum|card|ssn|auth|key|iban|routing|sort.?code|seed|mnemonic|phrase|private/i
+
+/**
+ * `autocomplete` values that ARE secrets, by definition.
+ *
+ * These are the standard tokens whose entire purpose is to say "this field holds
+ * payment or credential data" — and they were the ones being missed, because the
+ * name-based heuristic above never matched them: a hand-rolled `name="cardNumber"`
+ * was redacted while the spec-compliant `autocomplete="cc-number"` handed the
+ * model a live card number. Every `cc-*` token is payment data.
+ */
+const SECRET_AUTOCOMPLETE = /^(?:cc-|one-time-code$|current-password$|new-password$)/i
+
+/**
+ * Content that is a credential whatever the field around it is called.
+ *
+ * The backstop for the case no naming heuristic can reach: a key pasted into a
+ * bare `<textarea>`. A snapshot goes verbatim into the model's context and from
+ * there into transcripts, so the cost of missing one is permanent and the cost
+ * of a false positive is a redacted field in a design review.
+ */
+const SECRET_VALUE =
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk|rk)-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[baprs]-[A-Za-z0-9-]{10,}/
 
 /** Curated computed styles (spec §4: font-*, colour, background, padding,
  *  margin, overflow). They are the dominant token cost, so they ride only on
@@ -41,7 +64,18 @@ export function boxOf(el: Element): Rect {
 export function isVisible(el: Element): boolean {
   if (!el.getClientRects || el.getClientRects().length === 0) return false
   const rect = el.getBoundingClientRect()
-  return rect.width > 0 && rect.height > 0
+  if (rect.width <= 0 || rect.height <= 0) return false
+  // `visibility: hidden` keeps its box and its client rects — it reserves space
+  // — so geometry alone says "visible" for content that is never painted. Every
+  // measurement finding on such a node (contrast, target size, clipping,
+  // overlap) is then a false positive, which is the exact class the sr-only work
+  // exists to prevent. `display: none` needs no check: it has no rects at all.
+  //
+  // Deliberately NOT extended to `aria-hidden`: that content IS painted, so its
+  // findings are real. Hiding it from the tree would lose them.
+  const cs = styleOf(el)
+  if (cs && (cs.visibility === 'hidden' || cs.visibility === 'collapse')) return false
+  return true
 }
 
 /**
@@ -109,10 +143,18 @@ export function isSrOnly(el: Element): boolean {
     if (cs) {
       const clip = (cs.clip || '').replace(/\s+/g, '')
       const clipPath = (cs.clipPath || '').replace(/\s+/g, '')
-      if (clip === 'rect(0px,0px,0px,0px)' || clip === 'rect(1px,1px,1px,1px)') return true
+      const positioned = cs.position === 'absolute' || cs.position === 'fixed'
+      // `clip` REQUIRES positioning to do anything. On a static box it is a
+      // visual no-op that getComputedStyle still reports — so this branch, when
+      // it did not check position, was a pure-CSS way for a page to mark any
+      // subtree sr-only and suppress every measurement rule on it while the
+      // content stayed plainly visible. No script needed, and the resulting
+      // `[sr-only]` is legitimately emitted, so no downstream defence sees it.
+      if (positioned && (clip === 'rect(0px,0px,0px,0px)' || clip === 'rect(1px,1px,1px,1px)')) return true
+      // `clip-path` does apply to static elements — and genuinely hides them, so
+      // suppressing findings there is correct rather than exploitable.
       if (clipPath === 'inset(50%)' || clipPath === 'inset(100%)') return true
       const rect = node.getBoundingClientRect()
-      const positioned = cs.position === 'absolute' || cs.position === 'fixed'
       const hidden = cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden'
       if (positioned && hidden && rect.width <= 1 && rect.height <= 1) return true
     }
@@ -186,9 +228,28 @@ export function stateOf(el: Element, opts?: { srOnly?: boolean; opacity?: number
   if ((isControl && control.disabled === true) || ariaFlag(el, 'aria-disabled')) state.disabled = true
 
   if (isControl && type !== 'checkbox' && type !== 'radio' && type !== 'file' && type !== 'submit' && type !== 'button') {
-    const name = `${el.getAttribute('name') || ''} ${el.id || ''} ${el.getAttribute('autocomplete') || ''}`
-    const secret = type === 'password' || type === 'hidden' || SECRET_HINT.test(name)
+    const autocomplete = (el.getAttribute('autocomplete') || '').trim()
     const value = typeof control.value === 'string' ? control.value : ''
+    // Everything a page uses to say what a field is FOR. `name` and `id` alone
+    // missed the three most common ways to label a secret without naming it one:
+    // the standard autocomplete token, the accessible label, and the placeholder.
+    // A card number under `autocomplete="cc-number"`, an `aria-label="API secret"`
+    // and a `placeholder="Recovery phrase"` all reached the model in full.
+    const surface = [
+      el.getAttribute('name') || '',
+      el.id || '',
+      autocomplete,
+      el.getAttribute('aria-label') || '',
+      el.getAttribute('placeholder') || '',
+      // The visible label is often the ONLY thing identifying the field.
+      el.closest?.('label')?.textContent || '',
+    ].join(' ')
+    const secret =
+      type === 'password' ||
+      type === 'hidden' ||
+      SECRET_AUTOCOMPLETE.test(autocomplete) ||
+      SECRET_HINT.test(surface) ||
+      SECRET_VALUE.test(value)
     if (secret) {
       if (value.length > 0) state.value = '(redacted)'
     } else if (value.length > 0) {

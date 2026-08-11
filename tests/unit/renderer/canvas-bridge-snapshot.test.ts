@@ -246,8 +246,8 @@ describe('scoping and token economy (spec §4.1)', () => {
       viewport: result.viewport,
       root: result.root,
     })
-    const unscoped = serializeSnapshot(stamp(await snapshot()))
-    const scoped = serializeSnapshot(stamp(await snapshot({ scope: ['card-3'] })))
+    const unscoped = serializeSnapshot(stamp(await snapshot())).text
+    const scoped = serializeSnapshot(stamp(await snapshot({ scope: ['card-3'] }))).text
     // Spec §10 P2 acceptance: under 15% — and that is WITH the scoped nodes
     // carrying their styles.
     expect(scoped.length / unscoped.length).toBeLessThan(0.15)

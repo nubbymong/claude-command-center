@@ -198,13 +198,21 @@ export async function handleCccUxRequest(request: Request): Promise<Response> {
       })
     }
     if (url.pathname === CANVAS_ANALYSIS_PATH) {
-      // ~600 KB, immutable per build, and reachable by any page script under
-      // `connect-src 'self'` — so it is cacheable rather than a per-request
-      // main-process work amplifier. (The bridge above is small enough that
-      // no-store costs nothing.)
-      const headers = baseHeaders(MIME_BY_EXT['.js'])
-      headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-      return new Response(method === 'HEAD' ? null : analysisSource, { status: 200, headers })
+      // ~600 KB, served `no-store` like the bridge.
+      //
+      // It previously carried `public, max-age=31536000, immutable` on a path
+      // with no build identifier — but a canvasId is PERSISTED, so that URL is
+      // stable across app upgrades while its body changes with every build. A
+      // year-long immutable entry could keep serving the PREVIOUS axe-core into
+      // the frame after an update (silently declining a security bump), and a new
+      // bridge paired with an old chunk trips "exposed no run()" — i.e. the rule
+      // pass stops running, which is exactly the invisible failure this feature
+      // has already had twice. Re-serving an in-process string measures ~1 ms,
+      // and a page can defeat any cache with `fetch(…, {cache:'reload'})` anyway.
+      return new Response(method === 'HEAD' ? null : analysisSource, {
+        status: 200,
+        headers: baseHeaders(MIME_BY_EXT['.js']),
+      })
     }
 
     const rawSegments = url.pathname.split('/').filter((s) => s.length > 0)

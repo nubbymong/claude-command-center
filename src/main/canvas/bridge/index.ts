@@ -19,6 +19,24 @@
 // 'null' — so replies target '*'; everything sent is the page's own visible
 // semantics, nothing secret.
 //
+// WHAT THIS BRIDGE IS NOT: an independent observer. It cannot be made into one.
+// It is a classic script sharing a realm with the page it reports on, and the
+// page runs first. A document that executes script can monkey-patch
+// `getBoundingClientRect`, `getComputedStyle` or `querySelectorAll` — or skip
+// this script entirely by setting the already-loaded flag and answering the host
+// protocol itself — and thereby dictate what the agent is told. A forged
+// snapshot showing a healthy page over an empty <body> was demonstrated in
+// review. Design mode grants `script-src 'self' 'unsafe-inline'` and writes
+// author HTML verbatim, so this is the expected shape, not an edge case.
+//
+// Capturing primordials at load time does not fix it — the page's inline script
+// still runs first, and a capture happens much later — so nothing here pretends
+// to. What follows is a DOCUMENTATION duty rather than a code one: downstream
+// describes a snapshot as the page's own report of itself, and keeps treating it
+// as untrusted input, which is what the sanitiser and the untrusted-content
+// envelope already do. The cheap one-line bypasses are closed where closing them
+// is free (see analysis.ts); the general case is a stated non-goal.
+//
 // Bundled by scripts/vite-plugin-canvas-bridge.mjs into a single IIFE.
 
 import { CANVAS_BRIDGE_NS, type CanvasHitInfo, type CanvasViewportInfo } from '../../../shared/canvas'

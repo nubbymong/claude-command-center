@@ -16,7 +16,6 @@ import { wrapUntrustedContent } from '../shared/untrusted-envelope'
 
 /** More than this and the agent should be scoping, not reading everything. */
 const MAX_SCOPE_IDS = 50
-const MAX_SCOPE_ID_LENGTH = 128
 
 export interface CanvasToolDeps {
   getCanvasState: (sessionId: string) => CanvasState | null
@@ -51,7 +50,9 @@ function cleanScope(raw: unknown): string[] | undefined {
   const out = raw
     .filter((id): id is string => typeof id === 'string')
     .map((id) => id.trim())
-    .filter((id) => id.length <= MAX_SCOPE_ID_LENGTH && UX_ID_SHAPE.test(id))
+    // The shape already bounds the length to 128 — a separate length check was
+    // unreachable, and two bounds that can disagree are worse than one.
+    .filter((id) => UX_ID_SHAPE.test(id))
     .slice(0, MAX_SCOPE_IDS)
   return out.length > 0 ? out : undefined
 }
@@ -66,7 +67,7 @@ function cleanScope(raw: unknown): string[] | undefined {
  * sent (intersected with what the page said it missed), the analysis code is a
  * closed vocabulary the sanitiser enforces, and counts stand in for text.
  */
-function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined): string[] {
+function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined, outputCapped: boolean): string[] {
   const notes: string[] = []
   // COUNTS outside the envelope, never the ids themselves. The agent supplied
   // them and knows what it asked for; joined into a line out here they were a
@@ -82,6 +83,11 @@ function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined)
   }
 
   if (result.truncated) notes.push('the page exceeded the snapshot node limit; this tree is partial')
+  // A DIFFERENT limit from the one above, and worth saying so: the node cap
+  // drops nodes at capture, this one stops the write-out. Reporting both as
+  // "the node limit" is how a 600-row list quietly became 500 rows under a note
+  // that blamed the wrong thing.
+  if (outputCapped) notes.push('this snapshot hit the output size limit and was cut short; scope the call to see the rest')
 
   if (result.analysisError) {
     // Accurate for both failure modes: the bridge recomputes contrast coverage
@@ -112,7 +118,17 @@ export async function runCanvasSnapshot(
   sessionId: string,
   deps: CanvasToolDeps,
 ): Promise<{ text: string; isError: boolean }> {
-  const state = deps.getCanvasState(sessionId)
+  // Inside the guard, not outside it. Reading the store touches the filesystem,
+  // and a throw here escaped this function entirely into the MCP SDK, which
+  // relays the raw message — including a path — to the model, unwrapped and
+  // outside the untrusted envelope. Everything else was already guarded; this
+  // one call sat above the net.
+  let state: CanvasState | null
+  try {
+    state = deps.getCanvasState(sessionId)
+  } catch {
+    return { text: 'Could not capture the canvas: this session’s canvas could not be read.', isError: true }
+  }
   if (!state || !state.activeVersionId) {
     return {
       text: 'This session has no rendered canvas yet. Render one first, then ask the user to open the Canvas pane.',
@@ -128,6 +144,12 @@ export async function runCanvasSnapshot(
     return { text: 'That canvasId does not belong to this session.', isError: true }
   }
 
+  // Fail closed on shape, the same way canvasId does. A non-string versionId
+  // (array, object, number, boxed String) used to fall through to "use the
+  // active version", silently answering a question the model did not ask.
+  if (rawArgs.versionId != null && typeof rawArgs.versionId !== 'string') {
+    return { text: 'That versionId is not a version id.', isError: true }
+  }
   const requestedVersion = typeof rawArgs.versionId === 'string' && rawArgs.versionId.length > 0 ? rawArgs.versionId : null
   const versionId = requestedVersion ?? state.activeVersionId
   if (!state.versions.some((v) => v.id === versionId)) {
@@ -167,12 +189,12 @@ export async function runCanvasSnapshot(
     root: result.root,
   }
   const format = rawArgs.format === 'json' ? 'json' : 'text'
-  const body = serializeSnapshot(snapshot, { format })
+  const serialized = serializeSnapshot(snapshot, { format })
 
   return {
-    text: wrapUntrustedContent(body, {
+    text: wrapUntrustedContent(serialized.text, {
       source: 'agent-canvas/snapshot',
-      notes: captureNotes(result, scope),
+      notes: captureNotes(result, scope, serialized.truncated),
     }),
     isError: false,
   }
@@ -188,7 +210,7 @@ export function registerCanvasTools(
 ): void {
   server.tool(
     'canvas_snapshot',
-    'Read the CURRENTLY RENDERED Agent Canvas page as a compact semantic tree: role, accessible name, box, form state, and measured findings (clipped text, targets below the WCAG minimum, overlapping content, contrast). This is what the page actually looks like once laid out, which its source cannot tell you. Prefer a scoped call: pass the data-ux-id values you care about, and only those nodes carry styles. Requires the Canvas pane to be open on this session.',
+    'Read the CURRENTLY RENDERED Agent Canvas page as a compact semantic tree: role, accessible name, box, form state, and measured findings (clipped text, targets below the WCAG minimum, overlapping content, contrast). These are layout-time facts the page source cannot tell you. It is gathered by instrumentation running INSIDE the page, so it is the page\'s own report of itself rather than independent ground truth — a page that runs scripts can misreport, and a clean result means "nothing was reported", not "nothing is wrong". Prefer a scoped call: pass the data-ux-id values you care about, and only those nodes carry styles. Requires the Canvas pane to be open on this session.',
     {
       canvasId: zMod
         .string()

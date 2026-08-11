@@ -32,7 +32,10 @@ export interface AxeViolation {
 
 export interface AnalysisApi {
   version: string
-  run(context: unknown, rules: string[]): Promise<{ violations: AxeViolation[] }>
+  /** `incomplete` is as load-bearing as `violations`: it is where axe puts every
+   *  contrast check it declined to decide, and the measurement pass keys its own
+   *  coverage off it (see captureSnapshot). */
+  run(context: unknown, rules: string[]): Promise<{ violations: AxeViolation[]; incomplete: AxeViolation[] }>
 }
 
 const LOAD_TIMEOUT_MS = 5_000

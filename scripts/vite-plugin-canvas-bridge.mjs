@@ -55,7 +55,8 @@ async function bundleEntry({ entry, format, minify }) {
     target: ['chrome124'],
     minify,
     // MPL-2.0 (axe-core) and MIT (dom-accessibility-api) attribution rides in
-    // the served artifact, not just in THIRD-PARTY-NOTICES.
+    // the served artifact, not just in NOTICE. (dom-accessibility-api ships no
+    // legal comment of its own, so its MIT notice lives in NOTICE only.)
     legalComments: 'eof',
     define: { 'process.env.NODE_ENV': '"production"' },
     logLevel: 'silent',
@@ -75,8 +76,11 @@ export function canvasBridgePlugin() {
     async load(id) {
       if (!id.startsWith('\0')) return null
       const key = id.slice(1)
+      // Same own-property check as resolveId: a bare lookup let a `\0`-prefixed
+      // id naming an Object.prototype member resolve to a truthy non-spec and
+      // throw out of the plugin instead of returning null.
+      if (!Object.prototype.hasOwnProperty.call(ENTRIES, key)) return null
       const spec = ENTRIES[key]
-      if (!spec) return null
       const { code, inputs } = await bundleEntry(spec)
       // esbuild owns this dependency graph, so Vite has to be told what to
       // watch or editing a bridge module would not reload the app in dev.
