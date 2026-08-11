@@ -73,7 +73,7 @@ vi.mock('../../../src/renderer/utils/id', () => ({
 vi.mock('../../../src/renderer/components/ScreenshotButton', () => ({
   default: () => null,
 }))
-vi.mock('../../../src/renderer/components/ExcalidrawButton', () => ({
+vi.mock('../../../src/renderer/components/AgentCanvasButton', () => ({
   default: () => null,
 }))
 vi.mock('../../../src/renderer/components/WebviewButton', () => ({

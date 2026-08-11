@@ -6,12 +6,12 @@ interface Props {
 }
 
 /**
- * Tool button next to Snap/Web. Toggles the per-session Excalidraw
- * pane in place of the active terminal pane (instead of overlaying a
- * fixed modal across the entire app — that prior modal blew past the
- * Claude/Partner content area and trapped the user).
+ * Tool button next to Snap/Web — the Agent Canvas entry (spec D2: the old
+ * per-session Draw button became the canvas; the classic Excalidraw
+ * scratchpad lives on as the canvas's empty state, so pane visibility still
+ * lives in excalidrawStore and nothing the Draw button did is lost).
  */
-export default function ExcalidrawButton({ sessionId }: Props) {
+export default function AgentCanvasButton({ sessionId }: Props) {
   const isOpen = useExcalidrawStore((s) => !!s.bySessionId[sessionId]?.isOpen)
   const togglePane = useExcalidrawStore((s) => s.togglePane)
 
@@ -23,14 +23,15 @@ export default function ExcalidrawButton({ sessionId }: Props) {
           ? 'bg-surface1 border-surface1 text-text'
           : 'bg-surface0/60 border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text'
       }`}
-      title={isOpen ? 'Hide Excalidraw scratchpad' : 'Open Excalidraw scratchpad'}
+      title={isOpen ? 'Hide Agent Canvas' : 'Open Agent Canvas'}
     >
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-        {/* Pencil / sketch glyph */}
-        <path d="M11.5 2.5l2 2-7 7H4.5v-2z" />
-        <path d="M2 14h12" />
+        {/* Framed-canvas + pen glyph */}
+        <rect x="1.5" y="2.5" width="13" height="9" rx="1" />
+        <path d="M10.8 5.2l1.6 1.6-3.4 3.4H7.4V8.6z" />
+        <path d="M5 14h6" />
       </svg>
-      Draw
+      Canvas
     </button>
   )
 }

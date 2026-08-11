@@ -4,6 +4,7 @@ import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData } from '../shared/types'
 import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
+import type { CanvasChangedEvent, CanvasRenderSource, CanvasState } from '../shared/canvas'
 
 export interface ElectronAPI {
   /** True when this is a dev build (npm run dev / ccc), false for a packaged
@@ -180,6 +181,12 @@ export interface ElectronAPI {
     } | null>
     sessionConfig: (args: { sessionId: string }) => Promise<{ configId: string | null } | null>
     onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
+  }
+  canvas: {
+    getState: (args: { sessionId: string }) => Promise<CanvasState | null>
+    render: (args: { sessionId: string; source: CanvasRenderSource }) => Promise<{ canvasId: string; versionId: string }>
+    setActiveVersion: (args: { sessionId: string; versionId: string }) => Promise<CanvasState>
+    onChanged: (cb: (e: CanvasChangedEvent) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -666,6 +673,19 @@ const electronAPI: ElectronAPI = {
       const handler = (_e: unknown, e: { sessionId: string; configId: string | null; count: number }) => cb(e)
       ipcRenderer.on(IPC.LOGS2_NEW_MESSAGES, handler)
       return () => ipcRenderer.removeListener(IPC.LOGS2_NEW_MESSAGES, handler)
+    },
+  },
+  // Agent Canvas — per-session review surface state + change push. Content
+  // itself loads straight into the canvas iframe over ccc-ux://, not IPC.
+  canvas: {
+    getState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_GET_STATE, args),
+    render: (args: { sessionId: string; source: CanvasRenderSource }) => ipcRenderer.invoke(IPC.CANVAS_RENDER, args),
+    setActiveVersion: (args: { sessionId: string; versionId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_SET_ACTIVE_VERSION, args),
+    onChanged: (cb: (e: CanvasChangedEvent) => void) => {
+      const handler = (_e: unknown, e: CanvasChangedEvent) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_CHANGED, handler)
     },
   },
   discovery: {

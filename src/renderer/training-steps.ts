@@ -234,8 +234,8 @@ export const trainingSteps: TrainingStep[] = [
       'Replaces the terminal in place -- no fullscreen modal eating the toolbar',
     ],
     howToTrigger: [
-      { label: 'Open', value: 'Session toolbar → Draw' },
-      { label: 'Switch back', value: 'Click Draw again, or pick a different session' },
+      { label: 'Open', value: 'Session toolbar → Canvas' },
+      { label: 'Switch back', value: 'Click Canvas again, or pick a different session' },
       { label: 'New drawing', value: 'Left rail → + (rename with ✎, delete with ×)' },
     ],
     proTip:

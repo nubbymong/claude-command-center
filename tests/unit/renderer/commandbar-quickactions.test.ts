@@ -97,7 +97,7 @@ vi.mock('../../../src/renderer/utils/id', () => ({
 
 // Stub child components that would need full Electron context
 vi.mock('../../../src/renderer/components/ScreenshotButton', () => ({ default: () => null }))
-vi.mock('../../../src/renderer/components/ExcalidrawButton', () => ({ default: () => null }))
+vi.mock('../../../src/renderer/components/AgentCanvasButton', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/components/WebviewButton', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/components/CommandDialog', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/components/ToolbarPopup', () => ({ default: () => null }))
