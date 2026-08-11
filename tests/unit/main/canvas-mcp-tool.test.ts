@@ -171,14 +171,17 @@ describe('output', () => {
   it('reports capture caveats as operator notes, outside the envelope', async () => {
     const out = await runCanvasSnapshot({ scope: ['missing-card'] }, 'sess-mine', deps({
       requestSnapshot: async () =>
-        result({ unmatchedScope: ['missing-card'], truncated: true, analysisError: 'analysis chunk load timed out' }),
+        result({ unmatchedScope: ['missing-card'], truncated: true, analysisError: 'load-failed' }),
     }))
     const envelopeStart = out.text.indexOf('<untrusted-content')
     const notes = out.text.slice(0, envelopeStart)
     expect(notes).toContain('scoped to missing-card')
-    expect(notes).toContain('matched nothing')
+    expect(notes).toContain('matched no element')
     expect(notes).toContain('partial')
-    expect(notes).toContain('axe analysis did not run')
+    expect(notes).toContain('axe rule pass did not run (load-failed)')
+    // The measurement pass DOES cover contrast when axe is absent, so the note
+    // must not claim otherwise (it used to say the opposite).
+    expect(notes).toContain('contrast still apply')
   })
 
   it('json format is available but costs more than the text form', async () => {

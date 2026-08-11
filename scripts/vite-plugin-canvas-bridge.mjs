@@ -22,24 +22,33 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ENTRIES = {
   'virtual:canvas-bridge': {
     entry: 'src/main/canvas/bridge/index.ts',
+    // A classic script: it is injected with a plain <script src> tag and must
+    // run on load, not be imported.
+    format: 'iife',
     // Left readable: it is ~50 KB, and a legible bundle is worth more in
     // devtools (and in review) than the bytes.
     minify: false,
   },
   'virtual:canvas-analysis': {
     entry: 'src/main/canvas/bridge/analysis.ts',
+    // MUST be esm: the bridge consumes this with a dynamic import() and reads
+    // run/getRole off the module namespace. Built as an IIFE it exports nothing,
+    // the loader throws, and axe silently never runs — which is exactly what
+    // shipped until the adversarial pass caught it. canvas-analysis-format.test.ts
+    // is the guard.
+    format: 'esm',
     // axe-core is ~500 KB unminified and is parsed inside the content frame.
     minify: true,
   },
 }
 
-async function bundleEntry({ entry, minify }) {
+async function bundleEntry({ entry, format, minify }) {
   const result = await build({
     entryPoints: [path.resolve(ROOT, entry)],
     bundle: true,
     write: false,
     metafile: true,
-    format: 'iife',
+    format,
     platform: 'browser',
     // The content frame is Electron's Chromium — no downlevelling needed, and
     // a modern target keeps both bundles small.

@@ -34,8 +34,8 @@ function makeFrame(): void {
   }) as typeof window.postMessage
 }
 
-function replyFromFrame(body: Record<string, unknown>): void {
-  window.dispatchEvent(new MessageEvent('message', { data: { ns: CANVAS_BRIDGE_NS, ...body }, source: frameWindow }))
+function replyFromFrame(body: Record<string, unknown>, origin = 'ccc-ux://canvas-1'): void {
+  window.dispatchEvent(new MessageEvent('message', { data: { ns: CANVAS_BRIDGE_NS, ...body }, source: frameWindow, origin }))
 }
 
 beforeEach(() => {
@@ -122,6 +122,34 @@ describe('capture', () => {
     const reply = await pending
     expect(reply.ok).toBe(false)
     expect(reply.ok === false && reply.error).toContain('did not answer')
+  })
+
+  it('ignores a reply whose origin is not this canvas — a frame window survives navigation', async () => {
+    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow })
+    const pending = handleSnapshotRequest(EVENT, 300)
+    const id = posted[0].msg.id as number
+
+    // Same frame, same id, wrong document: another canvas, and the null origin
+    // an opaque document serialises to.
+    replyFromFrame({ id, ok: true, result: { root: { ref: 'e0', role: 'x', name: 'foreign', box: {}, children: [] } } }, 'ccc-ux://canvas-someone-else')
+    replyFromFrame({ id, ok: true, result: { root: { ref: 'e0', role: 'x', name: 'opaque', box: {}, children: [] } } }, 'null')
+
+    const reply = await pending
+    expect(reply.ok).toBe(false)
+    expect(reply.ok === false && reply.error).toContain('did not answer')
+  })
+
+  it('uses unpredictable correlation ids, so a page cannot pre-answer by guessing', async () => {
+    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow })
+    void handleSnapshotRequest(EVENT, 50)
+    void handleSnapshotRequest(EVENT, 50)
+    void handleSnapshotRequest(EVENT, 50)
+    const ids = posted.map((p) => p.msg.id as number)
+    expect(new Set(ids).size).toBe(3)
+    // A counter would make these consecutive; these must not be.
+    expect(ids[1] - ids[0]).not.toBe(1)
+    expect(ids.every((id) => Number.isInteger(id) && id > 0)).toBe(true)
+    await new Promise((r) => setTimeout(r, 80))
   })
 
   it('turns a frame-side error into a failed reply', async () => {

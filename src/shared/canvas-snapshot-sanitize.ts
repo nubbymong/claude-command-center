@@ -37,9 +37,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function str(value: unknown, max: number): string {
   if (typeof value !== 'string') return ''
-  // Control characters (newlines included) would break the one-line-per-node
-  // wire format, and are how injected text forges structure.
-  const clean = value.replace(/[\x00-\x1F\x7F]/g, ' ')
+  // Anything a reader — or a model — could take for a line break or for
+  // invisible structure. \x00-\x1F is NOT enough: U+2028/U+2029/U+0085 are line
+  // terminators too, and format characters (bidi overrides, zero-width joiners)
+  // let text claim to be something it is not. Cc, Cf, Zl and Zp cover all of it.
+  const clean = value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
   return clean.length > max ? clean.slice(0, max - 1) + '…' : clean
 }
 
@@ -119,8 +121,11 @@ function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLim
   }
   budget.nodes++
 
+  // A ref is OUR handle for a node and is echoed back inside [ref=…]. Shape,
+  // not length, is the check: a page-supplied ref of any other form is replaced.
+  const rawRef = str(value.ref, 32)
   const out: SnapshotNode = {
-    ref: str(value.ref, 32) || `e${budget.nodes}`,
+    ref: /^e[0-9]{1,8}$/.test(rawRef) ? rawRef : `e${budget.nodes}`,
     role: str(value.role, 64),
     name: str(value.name, limits.maxText),
     box: rect(value.box),
@@ -150,6 +155,9 @@ function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLim
   }
   return out
 }
+
+/** The only analysis-failure codes that may leave this function. */
+const ANALYSIS_CODES = new Set(['load-failed', 'run-failed', 'unavailable'])
 
 const EMPTY_ROOT: SnapshotNode = { ref: 'e0', role: 'document', name: '', box: { x: 0, y: 0, width: 0, height: 0 }, children: [] }
 
@@ -181,7 +189,10 @@ export function sanitizeSnapshotResult(raw: unknown, limits: SanitizeLimits = DE
     if (unmatched.length > 0) out.unmatchedScope = unmatched
   }
   if (source.truncated === true || budget.truncated) out.truncated = true
-  const analysisError = str(source.analysisError, 300)
-  if (analysisError) out.analysisError = analysisError
+  // Closed set, not free text: this string is the one field that reaches the
+  // agent OUTSIDE the untrusted envelope (as a capture note), so the page must
+  // not be able to author it. Anything unrecognised becomes the generic code.
+  const analysisError = str(source.analysisError, 32)
+  if (analysisError) out.analysisError = ANALYSIS_CODES.has(analysisError) ? analysisError : 'unavailable'
   return out
 }

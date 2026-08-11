@@ -40,27 +40,53 @@ interface RawArgs {
   cccSessionId?: unknown
 }
 
+/** A real `data-ux-id`. Shape-checked, not merely length-capped: these ids are
+ *  echoed back in operator-voice note lines, and tool arguments are always
+ *  model-generated — a newline in one forged a `note:` line during the
+ *  adversarial pass. */
+const UX_ID_SHAPE = /^[A-Za-z0-9_.:-]{1,128}$/
+
 function cleanScope(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined
   const out = raw
     .filter((id): id is string => typeof id === 'string')
     .map((id) => id.trim())
-    .filter((id) => id.length > 0 && id.length <= MAX_SCOPE_ID_LENGTH)
+    .filter((id) => id.length <= MAX_SCOPE_ID_LENGTH && UX_ID_SHAPE.test(id))
     .slice(0, MAX_SCOPE_IDS)
   return out.length > 0 ? out : undefined
 }
 
-/** Operator-authored lines that ride OUTSIDE the envelope: they describe the
- *  capture, so they must not be mistakable for page content. */
+/**
+ * Operator-authored lines that ride OUTSIDE the envelope.
+ *
+ * Outside the envelope means "carries authority", so NOTHING here may come from
+ * the page. It previously echoed `unmatchedScope` and `analysisError` straight
+ * from the frame, which handed a page thousands of characters of operator voice
+ * — two independent attackers found it. Now: the ids come from the scope WE
+ * sent (intersected with what the page said it missed), the analysis code is a
+ * closed vocabulary the sanitiser enforces, and counts stand in for text.
+ */
 function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined): string[] {
   const notes: string[] = []
   if (scope) notes.push(`scoped to ${scope.join(', ')}`)
-  if (result.unmatchedScope?.length) {
-    notes.push(`no element carries data-ux-id ${result.unmatchedScope.join(', ')} — those parts of the scope matched nothing`)
+
+  if (result.unmatchedScope?.length && scope) {
+    // Intersection, not the page's list: a page can claim anything, but it
+    // cannot add an id the agent never asked for.
+    const requested = new Set(scope)
+    const missed = result.unmatchedScope.filter((id) => requested.has(id))
+    if (missed.length > 0) notes.push(`${missed.length} of the requested ids matched no element: ${missed.join(', ')}`)
   }
+
   if (result.truncated) notes.push('the page exceeded the snapshot node limit; this tree is partial')
+
   if (result.analysisError) {
-    notes.push(`axe analysis did not run (${result.analysisError}); measurement findings are unaffected, contrast on flat backgrounds is not covered`)
+    // The measurement pass covers flat contrast precisely WHEN axe is absent
+    // (snapshot.ts: flatContrast = analysis === null), so the note must not
+    // claim the opposite.
+    notes.push(
+      `the axe rule pass did not run (${result.analysisError}); measurements and contrast still apply, but missing-name and ARIA rules were not checked`,
+    )
   }
   return notes
 }
@@ -79,8 +105,10 @@ export async function runCanvasSnapshot(
   }
 
   // Advertised, checked, never trusted: a mismatch means the model is aiming at
-  // a canvas that is not this session's.
-  if (typeof rawArgs.canvasId === 'string' && rawArgs.canvasId.length > 0 && rawArgs.canvasId !== state.canvasId) {
+  // a canvas that is not this session's. Written to fail CLOSED — anything
+  // present that is not exactly this canvas's id is refused, including an array
+  // or an object that would slip past a `typeof === 'string'` test.
+  if (rawArgs.canvasId != null && rawArgs.canvasId !== state.canvasId) {
     return { text: 'That canvasId does not belong to this session.', isError: true }
   }
 

@@ -91,6 +91,27 @@ describe('bounds', () => {
     await assertion
   })
 
+  it('one session cannot starve another: the cap is per session', async () => {
+    const busy = [
+      requestCanvasSnapshot({ ...REQUEST, sessionId: 'sess-loop' }),
+      requestCanvasSnapshot({ ...REQUEST, sessionId: 'sess-loop' }),
+      requestCanvasSnapshot({ ...REQUEST, sessionId: 'sess-loop' }),
+      requestCanvasSnapshot({ ...REQUEST, sessionId: 'sess-loop' }),
+    ]
+    await expect(requestCanvasSnapshot({ ...REQUEST, sessionId: 'sess-loop' })).rejects.toThrow(/already in flight/)
+
+    // A different session is unaffected.
+    const victim = requestCanvasSnapshot({ ...REQUEST, sessionId: 'sess-victim' })
+    const victimEvent = sent[sent.length - 1]
+    resolveCanvasSnapshot(okReply(victimEvent.requestId, { viewport: {}, root: { ref: 'e0', role: 'document', name: 'served', box: {}, children: [] } }))
+    await expect(victim).resolves.toMatchObject({ root: { name: 'served' } })
+
+    for (const event of sent.slice(0, 4)) {
+      resolveCanvasSnapshot(okReply(event.requestId, { viewport: {}, root: { ref: 'e0', role: 'document', name: '', box: {}, children: [] } }))
+    }
+    await Promise.all(busy)
+  })
+
   it('refuses more than a handful of concurrent captures', async () => {
     const inFlight = [
       requestCanvasSnapshot(REQUEST),

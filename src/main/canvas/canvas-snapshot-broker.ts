@@ -25,12 +25,16 @@ export const SNAPSHOT_TIMEOUT_MS = 30_000
 
 /** A capture is user-visible work in the renderer; there is no reason for an
  *  agent to have more than a couple in flight, and a cap keeps a loop from
- *  pinning the frame. */
-const MAX_IN_FLIGHT = 4
+ *  pinning the frame.
+ *
+ *  PER SESSION, not global: a global cap let one looping session starve every
+ *  other session's captures for the full timeout window. */
+const MAX_IN_FLIGHT_PER_SESSION = 4
 
 type Sender = (event: CanvasSnapshotRequestEvent) => boolean
 
 interface Pending {
+  sessionId: string
   resolve: (result: CanvasSnapshotResult) => void
   reject: (err: Error) => void
   timer: ReturnType<typeof setTimeout>
@@ -53,8 +57,10 @@ export interface SnapshotRequest {
 
 export function requestCanvasSnapshot(request: SnapshotRequest): Promise<CanvasSnapshotResult> {
   if (!sender) return Promise.reject(new Error('The app window is not available to capture a snapshot.'))
-  if (pending.size >= MAX_IN_FLIGHT) {
-    return Promise.reject(new Error('Too many snapshot captures are already in flight; try again in a moment.'))
+  let mine = 0
+  for (const waiting of pending.values()) if (waiting.sessionId === request.sessionId) mine++
+  if (mine >= MAX_IN_FLIGHT_PER_SESSION) {
+    return Promise.reject(new Error('Too many snapshot captures are already in flight for this session; try again in a moment.'))
   }
 
   const requestId = randomId()
@@ -68,7 +74,7 @@ export function requestCanvasSnapshot(request: SnapshotRequest): Promise<CanvasS
       pending.delete(requestId)
       reject(new Error('The canvas frame did not answer in time. Is the Agent Canvas open on this session?'))
     }, SNAPSHOT_TIMEOUT_MS)
-    pending.set(requestId, { resolve, reject, timer })
+    pending.set(requestId, { sessionId: request.sessionId, resolve, reject, timer })
   })
 }
 

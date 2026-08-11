@@ -37,10 +37,10 @@ function walk(node: SnapshotNode, depth: number, lines: string[]): void {
 
 function nodeLine(node: SnapshotNode): string {
   const parts = ['-']
-  if (node.role) parts.push(node.role)
+  if (node.role) parts.push(token(node.role))
   if (node.name) parts.push(`"${escape(node.name)}"`)
-  parts.push(`[ref=${node.ref}]`)
-  if (node.uxId) parts.push(`[ux=${node.uxId}]`)
+  parts.push(`[ref=${token(node.ref)}]`)
+  if (node.uxId) parts.push(`[ux=${token(node.uxId)}]`)
   parts.push(`[box=${boxTokens(node.box)}]`)
   parts.push(...stateTokens(node.state))
   parts.push(...styleTokens(node.styles))
@@ -49,9 +49,9 @@ function nodeLine(node: SnapshotNode): string {
 
 function issueLine(issue: AxeIssue): string {
   // "issue: target-size 28px, needs 44px"
-  const measured = issue.measured ? ` ${issue.measured}` : ''
-  const needed = issue.needed ? `, needs ${issue.needed}` : ''
-  return `- issue: ${issue.rule}${measured}${needed}`
+  const measured = issue.measured ? ` ${token(issue.measured)}` : ''
+  const needed = issue.needed ? `, needs ${token(issue.needed)}` : ''
+  return `- issue: ${token(issue.rule)}${measured}${needed}`
 }
 
 function boxTokens(box: Rect): string {
@@ -61,7 +61,7 @@ function boxTokens(box: Rect): string {
 function stateTokens(state: SnapshotNode['state']): string[] {
   if (!state) return []
   const out: string[] = []
-  if (state.type) out.push(`[type=${state.type}]`)
+  if (state.type) out.push(`[type=${token(state.type)}]`)
   if (state.checked) out.push('[checked]')
   if (state.disabled) out.push('[disabled]')
   if (state.value != null && state.value !== '') out.push(`[value="${escape(state.value)}"]`)
@@ -79,13 +79,33 @@ function styleTokens(styles: SnapshotNode['styles']): string[] {
   // Stable order so the wire output is deterministic (snapshot diffs, tests).
   return Object.keys(styles)
     .sort()
-    .map((k) => `[${k}=${styles[k]}]`)
+    .map((k) => `[${token(k)}=${token(styles[k])}]`)
 }
 
-/** A style/name value can contain `]` or a newline; keep each token on one line
- *  and never let a value close the bracket early. */
+/**
+ * Everything that lands INSIDE a `[key=value]` token.
+ *
+ * These values are page-authored (a `data-ux-id`, a computed style, an axe rule
+ * id) and the brackets are the only structure this format has. Strip them and
+ * the line breaks and no value can close its token and open another — which is
+ * how a plain static page forged `[sr-only]` on itself during the adversarial
+ * pass, suppressing its own review findings.
+ */
+function token(value: string): string {
+  return String(value)
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
+    .replace(/[[\]]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** A quoted value (name, field value) may contain anything; it must not be able
+ *  to close its own quote — so the escape character is escaped FIRST. */
 function escape(value: string): string {
-  return value.replace(/[\r\n]+/g, ' ').replace(/"/g, '\\"')
+  return value
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
 }
 
 function r(n: number): number {

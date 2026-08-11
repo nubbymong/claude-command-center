@@ -198,10 +198,13 @@ export async function handleCccUxRequest(request: Request): Promise<Response> {
       })
     }
     if (url.pathname === CANVAS_ANALYSIS_PATH) {
-      return new Response(method === 'HEAD' ? null : analysisSource, {
-        status: 200,
-        headers: baseHeaders(MIME_BY_EXT['.js']),
-      })
+      // ~600 KB, immutable per build, and reachable by any page script under
+      // `connect-src 'self'` — so it is cacheable rather than a per-request
+      // main-process work amplifier. (The bridge above is small enough that
+      // no-store costs nothing.)
+      const headers = baseHeaders(MIME_BY_EXT['.js'])
+      headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+      return new Response(method === 'HEAD' ? null : analysisSource, { status: 200, headers })
     }
 
     const rawSegments = url.pathname.split('/').filter((s) => s.length > 0)

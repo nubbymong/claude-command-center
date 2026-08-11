@@ -44,9 +44,32 @@ export function isVisible(el: Element): boolean {
   return rect.width > 0 && rect.height > 0
 }
 
+/**
+ * Per-capture memo for computed styles.
+ *
+ * Every node walks its ancestors up to three times (effective opacity, sr-only,
+ * backdrop) and the overlap pass reads styles again — measured at ~137
+ * getComputedStyle calls per emitted node, half a million for one capture of a
+ * deep page. getComputedStyle returns a LIVE object, so caching it within a
+ * single synchronous capture is safe; `resetStyleCache()` runs at the start of
+ * each one so a later capture never reads stale layout.
+ */
+let styleCache: WeakMap<Element, CSSStyleDeclaration> | null = null
+
+export function resetStyleCache(): void {
+  styleCache = new WeakMap()
+}
+
 export function styleOf(el: Element): CSSStyleDeclaration | null {
+  const cache = styleCache
+  if (cache) {
+    const hit = cache.get(el)
+    if (hit) return hit
+  }
   try {
-    return window.getComputedStyle(el)
+    const cs = window.getComputedStyle(el)
+    if (cache && cs) cache.set(el, cs)
+    return cs
   } catch {
     return null
   }

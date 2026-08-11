@@ -719,8 +719,9 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
     // Agent Canvas: the snapshot is a read of the session's own rendered page,
     // so like codex_review it binds to the transport's session id and refuses a
-    // model-supplied one (#188).
-    if (toolOn('canvas')) {
+    // model-supplied one (#188). Not advertised to Codex, which connects without
+    // a bound session id — every call would refuse, so offering it is a lie.
+    if (source !== 'codex' && toolOn('canvas')) {
       registerCanvasTools(server, z, () => boundSessionId, {
         getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
         requestSnapshot: (args) => requestCanvasSnapshot(args),

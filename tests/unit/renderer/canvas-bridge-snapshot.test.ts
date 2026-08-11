@@ -261,7 +261,9 @@ describe('analysis degradation', () => {
     const reply = await bridgeRequest('snapshot', {}, 15_000)
     expect(reply.ok, reply.error).toBe(true)
     const result = reply.result as CanvasSnapshotResult
-    expect(typeof result.analysisError).toBe('string')
+    // A CODE, not a message: this string reaches the agent outside the
+    // untrusted envelope, so its vocabulary is closed.
+    expect(result.analysisError).toBe('load-failed')
     expect(flatten(result.root).length).toBeGreaterThan(10)
     expect(issueRules(byUxId(result, 'submit'))).toContain('target-size')
   })

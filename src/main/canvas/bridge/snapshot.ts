@@ -8,7 +8,7 @@
 import type { AxeIssue, CanvasSnapshotOptions, CanvasSnapshotResult, SnapshotNode } from '../../../shared/canvas'
 import { ensureAnalysis, withRunTimeout, type AnalysisApi, type AxeNodeResult, type AxeViolation } from './analysis-loader'
 import { addOverlapIssues, measurementIssues, type Candidate } from './issues'
-import { boxOf, curatedStyles, directText, effectiveOpacity, isSrOnly, isVisible, stateOf } from './measure'
+import { boxOf, curatedStyles, directText, effectiveOpacity, isSrOnly, isVisible, resetStyleCache, stateOf } from './measure'
 import { isInteractive, isMeaningful, isSkipped, nameOf, roleOf, squash } from './semantics'
 
 const MAX_NODES = 4000
@@ -42,9 +42,10 @@ interface WalkContext {
   truncated: boolean
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
-}
+/** Failure CODES, never messages: analysisError is surfaced to the agent as a
+ *  capture note outside the untrusted envelope, so its vocabulary is closed
+ *  (canvas-snapshot-sanitize.ts enforces the same set on arrival). */
+type AnalysisFailure = 'load-failed' | 'run-failed'
 
 function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | SnapshotNode[] | null {
   if (depth > MAX_DEPTH) return null
@@ -178,15 +179,20 @@ function joinAxe(violations: AxeViolation[], byElement: Map<Element, SnapshotNod
 export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Promise<CanvasSnapshotResult> {
   const scope = (options.scope ?? []).filter((id) => typeof id === 'string' && id.length > 0)
   let analysis: AnalysisApi | null = null
-  let analysisError: string | undefined
+  let analysisError: AnalysisFailure | undefined
 
   if (options.analysis !== false) {
     try {
       analysis = await ensureAnalysis()
-    } catch (err) {
-      analysisError = errorMessage(err)
+    } catch {
+      analysisError = 'load-failed' satisfies AnalysisFailure
     }
   }
+
+  // One memo per capture: the walk reads each element's computed style several
+  // times over, and re-resolving it every time is the difference between a
+  // snapshot and a stalled frame on a deep page.
+  resetStyleCache()
 
   const { roots, unmatched } = resolveScope(scope)
   const ctx: WalkContext = {
@@ -228,8 +234,8 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
       const context = scope.length > 0 && roots.length > 0 ? roots : document
       const result = await withRunTimeout(analysis.run(context, AXE_RULES))
       joinAxe(result.violations, ctx.byElement)
-    } catch (err) {
-      analysisError = errorMessage(err)
+    } catch {
+      analysisError = 'run-failed' satisfies AnalysisFailure
     }
   }
 

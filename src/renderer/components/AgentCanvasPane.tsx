@@ -253,6 +253,12 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
       {/* Stage: content iframe below, glass above, transient overlay on top. */}
       <div className="flex-1 min-h-0 relative">
         <iframe
+          // Keyed on the URL so a version switch mounts a NEW element. Reusing
+          // one iframe leaves the OLD document in contentWindow until the new
+          // src commits, and versions share a canvas origin — so a snapshot
+          // taken in that window would be answered by the previous version and
+          // then stamped with the new version's id.
+          key={contentUrl}
           ref={iframeRef}
           src={contentUrl}
           title="Agent Canvas content"

@@ -169,6 +169,13 @@ const OVERLAP_FRACTION = 0.25
 
 const MAX_OVERLAP_COMPARISONS = 200_000
 
+/** Per-node, not just per-pass. Bounding comparisons alone still let one node
+ *  accumulate ~4,000 issue objects on a degenerate page — all of which get
+ *  structured-cloned across postMessage before any sanitiser sees them. Matches
+ *  the sanitiser's own maxIssuesPerNode, and the pass is worthless past a
+ *  handful anyway. */
+const MAX_OVERLAPS_PER_NODE = 20
+
 /**
  * Content boxes sitting on top of each other. Restricted to IN-FLOW content
  * (static/relative position) because absolutely positioned and fixed elements
@@ -194,7 +201,9 @@ export function addOverlapIssues(candidates: Candidate[]): void {
   for (let i = 0; i < sorted.length; i++) {
     const a = sorted[i]
     const aBottom = a.node.box.y + a.node.box.height
+    let reported = 0
     for (let j = i + 1; j < sorted.length; j++) {
+      if (reported >= MAX_OVERLAPS_PER_NODE) break
       const b = sorted[j]
       if (b.node.box.y >= aBottom) break
       if (++comparisons > MAX_OVERLAP_COMPARISONS) return
@@ -211,6 +220,7 @@ export function addOverlapIssues(candidates: Candidate[]): void {
       }
       a.node.issues = a.node.issues ?? []
       a.node.issues.push(issue)
+      reported++
     }
   }
 }

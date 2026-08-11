@@ -6,9 +6,12 @@
 //
 // READ-ONLY from the content side: this script reports what the page contains
 // (snapshot / boxMap / elementAtPoint replies, ready / viewport / pointer
-// events); it never mutates the page and is never commanded to draw. The one
-// thing it pulls in — the axe-core analysis chunk — arrives by dynamic import(),
-// not by planting a <script> in the document.
+// events); it never modifies the rendered document and is never commanded to
+// draw. The analysis chunk arrives by dynamic import() rather than by planting a
+// <script> tag — but be precise about what "read-only" means once it loads:
+// axe-core assigns `window.axe` and installs an `elementsFromPoint` polyfill,
+// and its contrast rule may briefly toggle inline styles while probing a hit
+// stack. Nothing the page RENDERS is changed; page globals are.
 //
 // Trust model: requests are accepted ONLY from the direct parent window
 // (event.source === window.parent). The parent's origin cannot be pinned —

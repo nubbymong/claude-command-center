@@ -32,7 +32,15 @@ export interface LiveCanvasFrame {
 export const FRAME_TIMEOUT_MS = 25_000
 
 const frames = new Map<string, LiveCanvasFrame>()
-let nextBridgeId = 1
+
+/** Correlation ids are random, not a counter. A counter starting at 1 let a
+ *  hostile page spray guessed ids at its parent and answer a request before the
+ *  real bridge did — the reply channel has no other proof of who is speaking. */
+function bridgeRequestId(): number {
+  const bytes = new Uint32Array(1)
+  globalThis.crypto.getRandomValues(bytes)
+  return bytes[0]
+}
 
 /** Called by the canvas pane while it is mounted. Returns the unregister. */
 export function registerCanvasFrame(frame: LiveCanvasFrame): () => void {
@@ -47,31 +55,43 @@ export function _framesForTest(): Map<string, LiveCanvasFrame> {
 }
 
 function askFrame(target: Window, canvasId: string, options: CanvasSnapshotOptions, timeoutMs: number): Promise<unknown> {
-  const id = nextBridgeId++
+  const id = bridgeRequestId()
+  const origin = canvasOrigin(canvasId)
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    const settle = (fn: () => void) => {
+      clearTimeout(timer)
       window.removeEventListener('message', onMessage)
-      reject(new Error('The canvas frame did not answer the snapshot request in time.'))
+      fn()
+    }
+
+    const timer = setTimeout(() => {
+      settle(() => reject(new Error('The canvas frame did not answer the snapshot request in time.')))
     }, timeoutMs)
 
     const onMessage = (event: MessageEvent) => {
-      // Only our own frame, only this request.
-      if (event.source !== target) return
+      // Both halves matter. `source` proves it came from the frame we asked;
+      // `origin` proves the document ANSWERING is still this canvas's — a frame's
+      // window identity survives navigation, so without the origin check a
+      // document that replaced the one we asked could answer for it. (The P1
+      // hover listener checks origin; this path had dropped it.)
+      if (event.source !== target || event.origin !== origin) return
       const msg = event.data as { ns?: string; id?: number; ok?: boolean; result?: unknown; error?: unknown } | null
       if (!msg || msg.ns !== CANVAS_BRIDGE_NS || msg.id !== id) return
-      clearTimeout(timer)
-      window.removeEventListener('message', onMessage)
-      if (msg.ok === true) resolve(msg.result)
-      else reject(new Error(typeof msg.error === 'string' ? msg.error.slice(0, 300) : 'The canvas frame reported an error.'))
+      if (msg.ok === true) settle(() => resolve(msg.result))
+      else settle(() => reject(new Error(typeof msg.error === 'string' ? msg.error.slice(0, 300) : 'The canvas frame reported an error.')))
     }
 
     window.addEventListener('message', onMessage)
-    // Targeted at the canvas's own origin: a request can never be delivered to
-    // a document that is not this canvas's.
-    target.postMessage(
-      { ns: CANVAS_BRIDGE_NS, id, type: 'snapshot', scope: options.scope, analysis: options.analysis },
-      canvasOrigin(canvasId),
-    )
+    try {
+      // Targeted at the canvas's own origin: a request can never be delivered to
+      // a document that is not this canvas's.
+      target.postMessage({ ns: CANVAS_BRIDGE_NS, id, type: 'snapshot', scope: options.scope, analysis: options.analysis }, origin)
+    } catch (err) {
+      // Without this the listener and timer outlive the rejected promise, and
+      // main frees its in-flight slot immediately — so the leak would accumulate
+      // at IPC round-trip rate rather than being throttled by the cap.
+      settle(() => reject(err instanceof Error ? err : new Error(String(err))))
+    }
   })
 }
 
