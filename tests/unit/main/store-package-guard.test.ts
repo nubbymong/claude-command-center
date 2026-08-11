@@ -35,11 +35,16 @@ describe('Store package guard', () => {
     expect(pkg.build.appx.publisherDisplayName).toBe('nicholas-moger')
   })
 
-  it('the Store artifact cannot be confused with the direct-download installer', () => {
-    // The updater matches release assets by prefix and extension. A Store package
-    // must never be mistaken for something it could hand to a self-updating
-    // client, so it carries its own suffix and a different extension (.appx).
-    expect(pkg.build.appx.artifactName).toMatch(/-store\./)
-    expect(pkg.build.appx.artifactName).not.toMatch(/ClaudeCommandCenter-/)
+  it('the Store artifact carries the non-installer extension the updater filters on', () => {
+    // The updater matches release assets by prefix AND extension
+    // (github-update.ts: INSTALLER_PREFIXES + endsWith(INSTALLER_EXT)). The Store
+    // artifact name starts with the accepted `AI-Code-Conductor-` prefix, so the
+    // ONLY thing stopping the updater from serving it is the `.appx` extension —
+    // pin that, not the prefix (a prefix assertion passes even for a dangerous
+    // `-store.exe`). The behavioural proof that the matcher rejects `.appx` lives
+    // in tests/unit/github-update.test.ts ('never confuses the Store package…').
+    expect(pkg.build.appx.artifactName).toMatch(/-store\.\$\{ext\}$/)
+    // The appx target resolves ${ext} to `appx`, never an installer extension.
+    expect(pkg.build.win.target.map((t: { target: string }) => t.target)).not.toContain('appx')
   })
 })
