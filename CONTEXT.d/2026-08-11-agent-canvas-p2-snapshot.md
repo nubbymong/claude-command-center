@@ -107,6 +107,40 @@ The tool ships behind a `canvas` toggle in the same four renderer places as the
 other built-in tools. The onboarding recap's tool count is now derived from the
 gate list instead of a hard-coded "of 3".
 
+### The adversarial pass, and what it says about the tests
+
+Five independent attackers over two rounds (ADR-009). Two findings are worth
+recording beyond their fixes, because both were invisible to a green suite.
+
+**axe never ran.** The analysis chunk was bundled as an IIFE and consumed with a
+dynamic import(), so the loader threw on every snapshot: eleven advertised rules
+silently never evaluated. Nothing failed, because the degradation path was the
+ONLY path and the "graceful degradation" test asserted it happily. A test that
+cannot fail is worse than no test; the guard now evaluates the served string as a
+module and was verified fail-first against the old format.
+
+**Fixing that lit up code that had never executed.** With axe genuinely loading,
+`axe.commons.aria.getRole` — which only works between axe.setup() and teardown —
+threw on every call, was swallowed to null, and emptied the role on every node.
+The semantic tree degraded to a box list. Invisible again, because every snapshot
+test passed `analysis: false`. The resolver is gone: an undocumented internal
+that works only inside a run is not worth the fragility when the table always
+works.
+
+The rest clustered on one root cause: **treating a marker as a literal instead of
+banning a pattern.** The envelope defang matched exact lowercase text, so case
+and whitespace variants passed — and the sanitiser's own newline-to-space rewrite
+MANUFACTURED the whitespace variant. Round two beat the pattern version too, with
+`<//untrusted-content>` and homoglyphs that are pixel-identical and match no
+ASCII pattern. The answer was to stop guessing spellings and escape every `<`.
+The same shape appeared in the wire format, where a plain CSS `font-family` with
+fullwidth brackets forged `[sr-only]` — the token that tells the agent to stop
+reporting a node.
+
+Verdict recorded on #256 as **FINDINGS**, not PASS: everything found is fixed
+with a guard, but the round-2 fixes have not themselves been independently
+attacked, and round 2 is the reason that distinction matters.
+
 ### Standing limitations
 
 - The 10-seeded-defect acceptance run needs real layout and real paint, so it
@@ -116,3 +150,8 @@ gate list instead of a hard-coded "of 3".
   the PR gate. That measurement is tracked with the fixture page work.
 - The analysis chunk lives as a ~600 KB string in the main-process bundle. It is
   only parsed in the content frame, and only when analysis is requested.
+- Transport session-binding is a URL parameter, inherited from the codex_review
+  precedent. An attacker argued the original justification transfers less well to
+  a snapshot, which is runtime state existing in no file. Capture still requires
+  the victim's Canvas pane to be open on that canvas and version. The binding
+  mechanism is a repo-wide follow-up, not a P2 change.
