@@ -915,9 +915,10 @@ export default function App() {
             terminal/GitHub-panel row so they span the full content-column
             width and the GitHub panel ends above them. Rendered once for the
             ACTIVE session only -- switching tabs re-resolves these against
-            `activeSession`. The telemetry strip is hidden for shell-only
-            sessions (matches the old per-TerminalView gate). */}
-        {activeSession && !activeSession.shellOnly && (
+            `activeSession`. Shell-only sessions render a minimal variant of the
+            strip — just a Restart control, no telemetry (the strip handles that
+            internally). */}
+        {activeSession && (
           <SessionStatusStrip sessionId={activeSession.id} />
         )}
         {activeSession && (

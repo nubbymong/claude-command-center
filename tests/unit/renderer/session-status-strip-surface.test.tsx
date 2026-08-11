@@ -10,6 +10,7 @@ import { act } from 'react'
 const sessionState: any = { sessions: [{ id: 's1', provider: 'claude', contextPercent: 10 }] }
 const settingsState: any = { settings: { statusLine: { font: 'sans', fontSize: 11 }, theme: 'dark', accountAliases: {}, accountColourOverrides: {} } }
 const profilesState: any = { profiles: [] }
+const restartState = vi.hoisted(() => ({ restart: vi.fn() }))
 
 vi.mock('../../../src/renderer/stores/sessionStore', () => ({
   useSessionStore: (sel: any) => sel(sessionState),
@@ -23,7 +24,7 @@ vi.mock('../../../src/renderer/stores/accountProfilesStore', () => ({
   useAccountProfilesStore: (sel: any) => sel(profilesState),
 }))
 vi.mock('../../../src/renderer/hooks/useCodexReviewUsage', () => ({ useCodexReviewUsage: () => null }))
-vi.mock('../../../src/renderer/hooks/useRestartSession', () => ({ useRestartSession: () => ({ restart: () => {} }) }))
+vi.mock('../../../src/renderer/hooks/useRestartSession', () => ({ useRestartSession: () => ({ restart: restartState.restart }) }))
 vi.mock('../../../src/renderer/hooks/useSwitchAccount', () => ({ useSwitchAccount: () => () => {} }))
 vi.mock('../../../src/renderer/hooks/useThemeController', () => ({ useResolvedTheme: () => 'dark' }))
 
@@ -41,6 +42,7 @@ beforeEach(() => {
   sessionState.sessions = [{ id: 's1', provider: 'claude', contextPercent: 10 }]
   settingsState.settings = { statusLine: { font: 'sans', fontSize: 11 }, theme: 'dark', accountAliases: {}, accountColourOverrides: {} }
   profilesState.profiles = []
+  restartState.restart.mockClear()
 })
 
 afterEach(() => {
@@ -119,5 +121,46 @@ describe('SessionStatusStrip master switch (onboarding p4)', () => {
     act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
 
     expect(container.firstChild).toBeNull()
+  })
+})
+
+describe('SessionStatusStrip terminal-only (shell) sessions', () => {
+  it('shows a Restart control, but none of the Claude telemetry or Model/account controls', () => {
+    sessionState.sessions = [{ id: 's1', shellOnly: true, contextPercent: 10, accountEmail: 'a@x.com', profileId: 'p1' }]
+    settingsState.settings.statusLine = { font: 'sans', fontSize: 11, showContextBar: true, showAccount: true, showModel: true }
+    profilesState.profiles = [
+      { id: 'p1', name: '', accountEmail: 'a@x.com', createdAt: 1 },
+      { id: 'p2', name: '', accountEmail: 'b@x.com', createdAt: 2 },
+    ]
+
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+
+    // The Restart pill is present (same title/affordance as a Claude session).
+    expect(container.querySelector('[title="Restart session"]')).not.toBeNull()
+    // No telemetry (context %) and no Claude-only controls leak onto a raw shell.
+    expect(container.textContent).not.toContain('10%')
+    expect(container.querySelector('[title^="Switch account"]')).toBeNull()
+    expect(container.textContent).not.toContain('a@x.com')
+  })
+
+  it('clicking Restart calls restart()', () => {
+    sessionState.sessions = [{ id: 's1', shellOnly: true }]
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+
+    const btn = container.querySelector('[title="Restart session"]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    act(() => { btn.click() })
+    expect(restartState.restart).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows Restart even when the status line is turned off', () => {
+    // The shell Restart is gated before the status-line collapse, unlike the
+    // telemetry band — turning the status line off must not remove it.
+    sessionState.sessions = [{ id: 's1', shellOnly: true }]
+    settingsState.settings.statusLineEnabled = false
+
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+
+    expect(container.querySelector('[title="Restart session"]')).not.toBeNull()
   })
 })

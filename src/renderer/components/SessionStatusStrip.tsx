@@ -114,6 +114,34 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   }
 
   if (!session) return null
+
+  // Terminal-only (shell) sessions get just a Restart control, in the same
+  // bottom-right position and styling as a Claude session — no telemetry and no
+  // Claude-only Model/Compact/account controls (those write slash-commands a raw
+  // shell would not understand). restart() already handles a shell session (kill
+  // PTY + remount → generic respawn, skipping the resume picker). Placed before
+  // the status-line guard so Restart shows regardless of the status-line toggle.
+  if (session.shellOnly) {
+    return (
+      <div
+        className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t border-b"
+        style={{ background: 'var(--surface-raised)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
+      >
+        <div className="flex-1" aria-hidden />
+        <button
+          onClick={() => restart()}
+          className={CONTROL_PILL}
+          style={{ background: 'transparent', border: '1px solid transparent', color: 'var(--text-muted)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--status-danger) 14%, transparent)'; e.currentTarget.style.color = 'var(--status-danger)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
+          title="Restart session"
+        >
+          Restart
+        </button>
+      </div>
+    )
+  }
+
   // A Codex strip is telemetry-only (no controls cluster), so with the master
   // off there is nothing left to show — collapse the band entirely.
   if (!statusLineEnabled && !isClaude) return null
