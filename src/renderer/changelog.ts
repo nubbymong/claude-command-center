@@ -22,13 +22,15 @@ export interface ChangelogEntry {
 export const changelog: ChangelogEntry[] = [
   {
     version: '2.1.0-beta.8',
-    date: '2026-08-10',
+    date: '2026-08-11',
     changes: [
       { type: 'feature', description: 'Accounts can now be marked inactive. An inactive account still appears in the accounts list but cannot be chosen when you switch a session\'s account — it shows up greyed and labelled "inactive" in the switch menus. Toggle it from Settings › Accounts; every existing account stays active, and the primary account is always active. Handy for parking an account you are not using without removing it.' },
       { type: 'improvement', description: 'Windows releases are now digitally code-signed. The installer and the app carry a verified publisher, so Windows no longer shows an "unknown publisher" warning when you download or install them. SmartScreen may still show a reputation prompt for a little while — trust accrues to the new certificate with each install. Update downloads continue to be verified by SHA-256 checksum, as before.' },
       { type: 'improvement', description: 'The product mark now appears in the title bar, and in the empty window before you start a session in place of the old terminal-prompt placeholder — so the app carries the same mark as its icon and start-up screen throughout.' },
       { type: 'improvement', description: 'Terminal-only ("no AI") sessions now have a Restart control in the bottom-right, the same as Claude sessions — restart re-runs the shell without disturbing your other tabs.' },
-      { type: 'fix', description: 'Terminal-only sessions no longer show a context-usage percentage on their sidebar card. A shell session has no reliable context signal, so the number could be stale or borrowed from another session; it is hidden until terminal integration improves. The model and mode still show.' }
+      { type: 'improvement', description: 'The per-session Draw button is now labelled Canvas and opens the same freehand sketchpad as before. This is the groundwork for an upcoming agent-assisted review surface; there is no change to how you sketch today.' },
+      { type: 'fix', description: 'Terminal-only sessions no longer show a context-usage percentage on their sidebar card. A shell session has no reliable context signal, so the number could be stale or borrowed from another session; it is hidden until terminal integration improves. The model and mode still show.' },
+      { type: 'fix', description: 'Switching a session\'s account no longer leaves a usage limit from the previous account showing. Changing accounts mid-session could keep the old account\'s exhausted-usage state painted on the meter until you restarted; the session now clears it on switch.' }
     ]
   },
   {
