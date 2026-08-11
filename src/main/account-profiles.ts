@@ -448,6 +448,9 @@ function buildHomeLinks(home: string): void {
   // Private Claude config dir: shared junctions + a one-way settings copy.
   const claudeDir = path.join(home, '.claude')
   fs.mkdirSync(claudeDir, { recursive: true })
+  // 0700 (POSIX): it holds .credentials.json + the settings copy; the umask
+  // default (0755) left the credential filenames enumerable by other local users.
+  hardenCredentialDir(claudeDir)
   const shared = sharedRoot()
   for (const name of SHARED_DIR_NAMES) {
     const target = path.join(shared, name)
@@ -474,6 +477,9 @@ function buildHomeLinks(home: string): void {
 export function setupProfileLinks(id: string): void {
   const home = getProfileConfigDir(id)
   fs.mkdirSync(home, { recursive: true })
+  // The per-account fake HOME holds the token-bearing .claude.json; keep it
+  // owner-only (POSIX) rather than the 0755 umask default.
+  hardenCredentialDir(home)
   buildHomeLinks(home)
 }
 
@@ -636,7 +642,8 @@ export function cleanupSessionHomes(): void {
     // not abort salvaging the others, nor the shared-dir repair pass further down.
     try { writeCanonicalIdentity(profileId, { claudeJson: cand.claudeJson, credentials: cand.credentials }) } catch { /* best-effort */ }
     const home = getProfileConfigDir(profileId)
-    try { fs.writeFileSync(path.join(home, '.claude.json'), cand.claudeJson) } catch { /* best-effort */ }
+    // Token-bearing .claude.json — owner-only atomic write, not a bare 0644 one.
+    try { atomicWriteSecure(path.join(home, '.claude.json'), cand.claudeJson, IS_POSIX ? CRED_FILE_MODE : undefined) } catch { /* best-effort */ }
     if (cand.credentials != null) {
       try { const cd = path.join(home, '.claude'); fs.mkdirSync(cd, { recursive: true }); hardenCredentialDir(cd); writeCredentialFile(path.join(cd, '.credentials.json'), cand.credentials) } catch { /* best-effort */ }
     }
@@ -697,7 +704,10 @@ export function writeCanonicalIdentity(
   hardenCredentialDir(dir)
   if (files.claudeJson != null) {
     const f = path.join(dir, '.claude.json')
-    atomicWriteSecure(f, files.claudeJson)
+    // .claude.json carries the account's OAuth token; write it owner-only, not at
+    // the umask default (0644 observed) which left the token world-readable even
+    // though the containing dir is 0700.
+    atomicWriteSecure(f, files.claudeJson, IS_POSIX ? CRED_FILE_MODE : undefined)
   }
   if (files.credentials != null) {
     writeCredentialFile(path.join(dir, '.credentials.json'), files.credentials)

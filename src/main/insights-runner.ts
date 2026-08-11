@@ -824,7 +824,9 @@ async function extractKpis(
   }
 
   try {
-    writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(kpiData, null, 2))
+    // kpis.json holds the account's analysed usage data; write it owner-only
+    // through the shared atomic helper (0600), not a bare 0644 writeFileSync.
+    atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(kpiData, null, 2), { mode: 0o600 })
     logInfo('[insights] KPIs extracted and saved')
     return { ok: true }
   } catch (err) {
@@ -1193,7 +1195,8 @@ export async function runCrossAccountInsights(
     }
 
     const data = withNarrative(baseline, narrative)
-    writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(data, null, 2))
+    // Owner-only atomic write (0600): this kpis.json carries cross-account usage.
+    atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(data, null, 2), { mode: 0o600 })
 
     run.status = 'complete'
     run.statusMessage = undefined

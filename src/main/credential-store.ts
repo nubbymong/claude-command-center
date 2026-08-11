@@ -31,8 +31,9 @@
 
 import { safeStorage } from 'electron'
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { readFileSync, existsSync } from 'fs'
 import { getConfigDir, ensureConfigDir } from './config-manager'
+import { atomicWriteSecure } from './account-profiles'
 
 function getCredentialsFile(): string {
   return join(getConfigDir(), 'ssh-credentials.json')
@@ -51,7 +52,12 @@ export function loadAllCredentials(): Record<string, string> {
 export function saveAllCredentials(creds: Record<string, string>): void {
   try {
     ensureConfigDir()
-    writeFileSync(getCredentialsFile(), JSON.stringify(creds))
+    // ssh-credentials.json holds the per-config safeStorage ciphertext. Write it
+    // owner-only through the shared atomic helper (exclusive create + rename), not
+    // a bare writeFileSync: the old shape landed 0644 and followed a link planted
+    // at the path — the world-readable / link-redirect class the pwfw/58r3
+    // hardening closed for the other credential writers.
+    atomicWriteSecure(getCredentialsFile(), JSON.stringify(creds), 0o600)
   } catch { /* ignore */ }
 }
 
