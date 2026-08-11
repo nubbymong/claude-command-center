@@ -1,4 +1,4 @@
-import { BrandMark } from './BrandMark'
+import { BrandMark } from '../components/BrandMark'
 
 const CHECK = String.fromCodePoint(0x2713)
 

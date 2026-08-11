@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { BrandMark } from './BrandMark'
+import { BrandMark } from '../components/BrandMark'
 
 /** Phase-based breadcrumb (matches the mockup's crumbsHtml / PHASE map). */
 const PHASES = ['Set up', 'Account', 'Features', 'Review']

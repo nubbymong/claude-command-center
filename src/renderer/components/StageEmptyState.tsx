@@ -1,4 +1,5 @@
 import React from 'react'
+import { BrandMark } from './BrandMark'
 import { TerminalConfig } from '../stores/configStore'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
@@ -29,7 +30,10 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
   return (
     <div className="flex-1 flex items-center justify-center">
       <div className="text-center max-w-md px-6">
-        <div className="text-5xl mb-4 font-mono text-overlay1">&gt;_</div>
+        {/* The brand mark rather than the old `>_` placeholder: this is the
+            first thing shown in an empty window, so it should be the product's
+            own mark, matching the title bar, app icon and boot splash. */}
+        <BrandMark className="w-14 h-14 mx-auto mb-4" />
         <h2 className="text-xl font-semibold mb-1 text-text">
           {hasConfigs ? 'Start a saved config' : 'AI Code Conductor'}
         </h2>
