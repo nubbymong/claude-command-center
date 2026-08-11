@@ -32,9 +32,9 @@ not a `<script>` planted in the page, because the bridge does not mutate the pag
 it reports on (D8). A blocked or slow chunk degrades to measurement-only with
 `analysisError` set, and both the load and the run are bounded by timeouts.
 
-axe also supplies the role resolver (`axe.commons.aria.getRole`, feature-detected,
-falling back to the bridge's own table). aria-query was dropped: it is a data
-table, not a resolver, and axe already carries a real HTML-AAM implementation.
+Roles come from the bridge's own implicit-role table, not from axe -- see the
+adversarial section below for why that is deliberate. aria-query was dropped from
+the plan: it is a data table, not a resolver.
 
 ### What the measurement pass claims, and what it does not
 
