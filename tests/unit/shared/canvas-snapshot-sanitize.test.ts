@@ -2,9 +2,11 @@
 // travels frame → renderer → main → the agent's context, so these tests are
 // about what a hostile document can force through, not about happy paths.
 
+import v8 from 'node:v8'
+import vm from 'node:vm'
 import { describe, it, expect } from 'vitest'
 import { sanitizeSnapshotResult, DEFAULT_SNAPSHOT_LIMITS } from '../../../src/shared/canvas-snapshot-sanitize'
-import { serializeSnapshot } from '../../../src/shared/canvas-snapshot-serialize'
+import { serializeSnapshot, MAX_SNAPSHOT_CHARS } from '../../../src/shared/canvas-snapshot-serialize'
 import type { SnapshotNode } from '../../../src/shared/canvas'
 
 function countNodes(node: SnapshotNode): number {
@@ -13,6 +15,19 @@ function countNodes(node: SnapshotNode): number {
 
 function depthOf(node: SnapshotNode): number {
   return node.children.length === 0 ? 1 : 1 + Math.max(...node.children.map(depthOf))
+}
+
+/** A real collection, without needing the suite to be launched with
+ *  `--expose-gc`. Without it a retention measurement reads uncollected garbage
+ *  and cannot tell "still referenced" from "not swept yet". */
+function forceGc(): () => void {
+  if (typeof globalThis.gc === 'function') return globalThis.gc as () => void
+  v8.setFlagsFromString('--expose-gc')
+  try {
+    return vm.runInNewContext('gc') as () => void
+  } finally {
+    v8.setFlagsFromString('--no-expose-gc')
+  }
 }
 
 describe('shape coercion', () => {
@@ -86,7 +101,17 @@ describe('the caps themselves', () => {
       maxIssuesPerNode: 20,
       maxStyleEntries: 24,
       maxText: 200,
+      maxChars: 1_024_000,
     })
+  })
+
+  it('keeps the total ceiling above what the serializer will ever emit', () => {
+    // The two constants live in different files and mean different things, but
+    // the total-character budget is only sound while it sits ABOVE the amount
+    // the serializer is willing to emit — below it, the sanitiser would start
+    // discarding nodes the wire format still had room for, and the agent would
+    // be told the page was truncated when it was not.
+    expect(DEFAULT_SNAPSHOT_LIMITS.maxChars).toBeGreaterThanOrEqual(2 * MAX_SNAPSHOT_CHARS)
   })
 
   it('keeps an ordinary long list whole instead of silently halving it', () => {
@@ -247,5 +272,256 @@ describe('hostile input', () => {
       unmatchedScope: Array.from({ length: 500 }, (_, i) => `id-${i}`),
     })
     expect(out.unmatchedScope!.length).toBeLessThanOrEqual(50)
+  })
+})
+
+// Every cap in here is enforced on the RENDERER'S UI THREAD — the thread that
+// runs React, every terminal and all IPC — before the payload is sent. So a cap
+// that bounds the OUTPUT but not the WORK is not a cap; it is a stall, and a
+// long enough stall is a dead window. A previous fix put `.normalize('NFKC')`
+// (up to 18x expansion) in front of a `max * 24` prefix and 36 KB of page was
+// enough to run the heap out. These pin the cost, not just the result.
+describe('the cost of enforcing the caps', () => {
+  /** Count what actually gets handed to NFKC. The expansion happens inside
+   *  `normalize`, so the length of its receiver IS the work being bounded. */
+  function countNormalized<T>(run: () => T): { result: T; chars: number; calls: number } {
+    const real = String.prototype.normalize
+    let chars = 0
+    let calls = 0
+    // eslint-disable-next-line no-extend-native
+    String.prototype.normalize = function (this: string, form?: string) {
+      chars += this.length
+      calls += 1
+      return real.call(this, form as never)
+    }
+    try {
+      return { result: run(), chars, calls }
+    } finally {
+      // eslint-disable-next-line no-extend-native
+      String.prototype.normalize = real
+    }
+  }
+
+  // NFKC turns this single codepoint into 18 characters.
+  const EXPANDER = 'ﷺ'
+
+  it('normalises a bounded prefix, not a page-sized string', () => {
+    const { result, chars } = countNormalized(() =>
+      sanitizeSnapshotResult({
+        root: {
+          role: 'document',
+          name: '',
+          box: {},
+          children: [{ role: 'x', name: EXPANDER.repeat(50_000), box: {}, children: [] }],
+        },
+      }),
+    )
+    // A 200-character cap must not license normalising thousands of characters
+    // to produce it. The bound is a small multiple of the cap, and the multiple
+    // is a constant — it does not grow with what the page supplied.
+    expect(chars).toBeLessThanOrEqual(1000)
+    expect(result.root.children[0].name.length).toBeLessThanOrEqual(200)
+  })
+
+  it('pays once for a node object the page referenced many times', () => {
+    // Structured clone preserves identity, so this costs the page ONE node and
+    // used to cost the sanitiser 4,000 normalisations of every field on it.
+    const shared = { role: 'button', name: 'Save', uxId: 'u1', state: { type: 'text', value: 'v' }, box: {}, children: [] }
+    // 3,999 references, because the root itself takes the first node slot.
+    const { result, calls } = countNormalized(() =>
+      sanitizeSnapshotResult(
+        { root: { role: 'document', name: '', box: {}, children: Array.from({ length: 3999 }, () => shared) } },
+        undefined,
+        { scoped: true },
+      ),
+    )
+    expect(calls).toBeLessThanOrEqual(50)
+    // The memo must not collapse the NODES — only the string work behind them.
+    expect(result.root.children).toHaveLength(3999)
+    expect(result.root.children[0].ref).not.toBe(result.root.children[1].ref)
+  })
+
+  it('keeps only the characters it emits, not a view onto what it normalised', () => {
+    // V8 answers `slice()` with a view that keeps the whole parent alive. 2,000
+    // fields each holding a view onto their own normalised 36,000-character
+    // parent retained 145 MB to emit 400,000 characters.
+    const gc = forceGc()
+    const children = Array.from({ length: 2000 }, (_, i) => ({
+      role: 'x',
+      name: EXPANDER.repeat(2000) + i,
+      box: {},
+      children: [],
+    }))
+    gc()
+    const before = process.memoryUsage().heapUsed
+    const kept = sanitizeSnapshotResult({ root: { role: 'document', name: '', box: {}, children } })
+    gc()
+    const retained = (process.memoryUsage().heapUsed - before) / 1048576
+    expect(kept.root.children[0].name.length).toBe(200)
+    // Emitting 400,000 characters. Measured 145 MB before the fix, 8 MB after.
+    expect(retained).toBeLessThan(40)
+  })
+
+  it('bounds the WHOLE result, not just each node of it', () => {
+    // Per-node caps multiply. A page that spends 20 KB on one maximal node and
+    // then points at it 4,000 times gets a structured-clone message three
+    // orders of magnitude larger than what it paid — carried across two process
+    // hops and held per session. Nothing but a total counted the result.
+    const maximal = {
+      role: 'r'.repeat(64),
+      name: 'n'.repeat(200),
+      uxId: 'u'.repeat(128),
+      state: { type: 't'.repeat(32), value: 'v'.repeat(200) },
+      styles: Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`aaaaaaa${String.fromCharCode(97 + i)}`, 's'.repeat(200)])),
+      issues: Array.from({ length: 20 }, () => ({
+        rule: 'q'.repeat(64),
+        severity: 'critical',
+        measured: 'm'.repeat(96),
+        needed: 'd'.repeat(96),
+      })),
+      box: { x: 1, y: 2, width: 3, height: 4 },
+      children: [],
+    }
+    const page = JSON.stringify(maximal).length
+    const out = sanitizeSnapshotResult(
+      { root: { role: 'document', name: '', box: {}, children: Array.from({ length: 4000 }, () => maximal) } },
+      undefined,
+      { scoped: true },
+    )
+    const wire = JSON.stringify(out).length
+    expect(out.truncated).toBe(true)
+    // The page spent ~20 KB of distinct string. Before the total budget this
+    // came back at 49.5 M characters; the ceiling is 1,024,000 plus at most the
+    // one node that crossed it.
+    expect(wire).toBeLessThan(1_100_000)
+    // One node's worth of page bought 4,003 nodes' worth of wire. It now buys
+    // 83, and that is the node budget doing its job, not the page's arithmetic.
+    expect(wire / page).toBeLessThan(100)
+  })
+
+  it('charges a node for the structure around its values, not only the values', () => {
+    // The gap between "characters the page supplied" and "characters the wire
+    // carries" is attacker-controlled. Twenty issues with empty values are
+    // ~1,150 characters of JSON key names and punctuation and twenty
+    // characters of content, so a budget that counts only content sells five
+    // times what it charges for. This shape is the one that finds that.
+    const hollow = {
+      role: '',
+      name: '',
+      issues: Array.from({ length: 20 }, () => ({ rule: 'q', severity: '', measured: '', needed: '' })),
+      box: { x: 0.1234567890123456, y: 0.1234567890123456, width: 0.1234567890123456, height: 0.1234567890123456 },
+      children: [],
+    }
+    const out = sanitizeSnapshotResult({
+      root: { role: 'document', name: '', box: {}, children: Array.from({ length: 4000 }, () => hollow) },
+    })
+    expect(out.truncated).toBe(true)
+    expect(JSON.stringify(out).length).toBeLessThan(1_100_000)
+  })
+
+  it('never emits more than it charged, whatever shape the node is', () => {
+    // The total budget is only as good as its accounting, and its accounting is
+    // a hand-written sum over the fields a node can carry. Add a field to
+    // SnapshotNode and forget to charge for it and the ceiling quietly stops
+    // being one. This walks 3,000 randomly shaped snapshots against a small
+    // ceiling; the seed is fixed so a failure is reproducible.
+    // mulberry32, not a textbook LCG. A linear congruential generator's LOW
+    // bits have a period of two, so `rnd(2)` alternated 0,1,0,1 and every
+    // "is this field present?" decision was locked to its neighbours: the
+    // first draft of this test never once produced an issue-heavy node, and
+    // deleting the issue accounting outright left it green.
+    let seed = 1234567
+    const rnd = (n: number) => {
+      seed = (seed + 0x6d2b79f5) | 0
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return ((t ^ (t >>> 14)) >>> 0) % n
+    }
+    const text = (n: number) => 'abcdefghij'.repeat(Math.ceil(n / 10)).slice(0, n)
+    // The lengths a number can serialize to are page-chosen, not 1.
+    const fatNumbers = [0, 1, -1, 0.1234567890123456, 1e21, 5e-324, -1.7976931348623157e308, 99999.99999]
+    const oneNumber = () => fatNumbers[rnd(fatNumbers.length)]
+
+    // `scale` sets how big a node may get. SMALL nodes are what makes this
+    // test sharp: the budget is charged after a node is built, so the honest
+    // overshoot is one node — but an undercharged FIELD is paid on every node,
+    // so the more nodes fit under the ceiling, the further the total runs past
+    // it. With maximal nodes only eight fit and a missing charge hides inside
+    // the one-node slack; with small nodes, hundreds fit and it cannot.
+    const randomNode = (scale: number) => {
+      const n: Record<string, unknown> = {
+        role: text(rnd(scale / 3)),
+        name: text(rnd(scale)),
+        // A number's serialized length is page-chosen, not 1.
+        box: { x: oneNumber(), y: oneNumber(), width: oneNumber(), height: oneNumber() },
+        children: [],
+      }
+      if (rnd(2)) n.uxId = text(rnd(scale))
+      if (rnd(2)) {
+        const s: Record<string, unknown> = {}
+        if (rnd(2)) s.type = text(rnd(Math.min(32, scale)))
+        if (rnd(2)) s.value = text(rnd(scale))
+        if (rnd(2)) s.checked = true
+        if (rnd(2)) s.disabled = true
+        if (rnd(2)) s.ariaInvalid = true
+        if (rnd(2)) s.srOnly = true
+        if (rnd(2)) s.opacity = [0, 1, 0.1234567890123456, 0.5][rnd(4)]
+        n.state = s
+      }
+      if (rnd(2)) {
+        const st: Record<string, string> = {}
+        for (let i = 0; i < rnd(Math.min(24, scale)); i++) {
+          st['a'.repeat(1 + rnd(8)) + String.fromCharCode(97 + i)] = text(1 + rnd(scale))
+        }
+        n.styles = st
+      }
+      if (rnd(2)) {
+        n.issues = Array.from({ length: rnd(Math.min(20, scale)) }, () => ({
+          rule: text(1 + rnd(Math.min(64, scale))),
+          severity: text(rnd(Math.min(24, scale))),
+          measured: text(rnd(scale)),
+          needed: text(rnd(scale)),
+        }))
+      }
+      return n
+    }
+
+    /** A node's own contribution to the wire, without its subtree. */
+    const ownSize = (n: SnapshotNode): number => JSON.stringify({ ...n, children: [] }).length
+    const biggestOwn = (n: SnapshotNode): number =>
+      n.children.reduce((most, c) => Math.max(most, biggestOwn(c)), ownSize(n))
+
+    for (const [scale, maxChars, rounds] of [
+      [12, 100_000, 60],
+      [64, 100_000, 60],
+      [200, 20_000, 60],
+    ] as const) {
+      const limits = { ...DEFAULT_SNAPSHOT_LIMITS, maxChars }
+      for (let round = 0; round < rounds; round++) {
+        const children = Array.from({ length: 4000 }, () => randomNode(scale))
+        const out = sanitizeSnapshotResult({ root: { role: 'document', name: '', box: {}, children } }, limits, {
+          scoped: true,
+        })
+        // The slack is MEASURED, not assumed: one node's own JSON, plus a
+        // little for the viewport wrapper and the flags around the tree.
+        const slack = biggestOwn(out.root) + 200
+        expect(JSON.stringify(out).length - maxChars).toBeLessThanOrEqual(slack)
+      }
+    }
+  })
+
+  it('still fills the cap when NFKC makes the text SHORTER', () => {
+    // The bounded prefix is grown, not fixed, because composition contracts:
+    // Hangul L+V+T collapses three code units into one syllable, and NFKC folds
+    // astral codepoints down to BMP ones. A flat `max * 2` prefix would clip
+    // both of these a third short of the cap they are entitled to.
+    const jamo = sanitizeSnapshotResult({
+      root: { role: 'document', name: '각'.repeat(400), box: {}, children: [] },
+    })
+    expect(jamo.root.name.length).toBe(200)
+    const astral = sanitizeSnapshotResult({
+      root: { role: 'document', name: '\u{1d400}'.repeat(600), box: {}, children: [] },
+    })
+    expect(astral.root.name.length).toBe(200)
   })
 })

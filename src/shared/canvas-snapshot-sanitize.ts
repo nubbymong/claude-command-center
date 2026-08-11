@@ -19,6 +19,8 @@ export interface SanitizeLimits {
   maxIssuesPerNode: number
   maxStyleEntries: number
   maxText: number
+  /** Ceiling on the WHOLE result, not on any one part of it. See below. */
+  maxChars: number
 }
 
 /**
@@ -39,10 +41,36 @@ export const DEFAULT_SNAPSHOT_LIMITS: SanitizeLimits = {
   maxIssuesPerNode: 20,
   maxStyleEntries: 24,
   maxText: 200,
+  // Every other limit here is per-node, and per-node limits MULTIPLY: 4,000
+  // nodes each legally carrying a name, a uxId, 20 issues and 24 styles is
+  // ~48 M characters, all of it structured-cloned across two process hops and
+  // held four times over per session. 19.9 KB of page produced a 28 MB IPC
+  // message that way — a 1,439x amplification of what the page actually spent.
+  //
+  // The serializer will emit at most MAX_SNAPSHOT_CHARS (512,000) of it, so
+  // everything above that is carried at full cost and then discarded. Two times
+  // that leaves room for the sanitised object to hold fields the text form
+  // omits, and still cuts the amplification by a factor of ~28. A snapshot that
+  // hits this is marked `truncated`, exactly like one that hits `maxNodes`.
+  maxChars: 1_024_000,
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+/**
+ * Return a string that owns its own characters.
+ *
+ * V8 answers `slice()` with a SlicedString — a *view* that keeps the entire
+ * parent alive — and wrapping that view in a concatenation does not release it
+ * either (both measured: 200,000 kept results of 201 characters each ran a
+ * 1.4 GB heap out of memory). A snapshot retains up to 4,000 nodes × ~85 of
+ * these, so a view onto a normalised megabyte is the whole difference between
+ * a snapshot and a dead window. Copying ≤ 200 characters is free.
+ */
+function detach(value: string): string {
+  return value.split('').join('')
 }
 
 /** Cut to `max` without splitting a surrogate pair. A lone surrogate is not
@@ -52,30 +80,76 @@ function clip(value: string, max: number): string {
   let end = max - 1
   const lastKept = value.charCodeAt(end - 1)
   if (lastKept >= 0xd800 && lastKept <= 0xdbff) end -= 1
-  return value.slice(0, end) + '…'
+  return detach(value.slice(0, end) + '…')
+}
+
+/** Anything a reader — or a model — could take for a line break or for
+ *  invisible structure. \x00-\x1F is NOT enough: U+2028/U+2029/U+0085 are line
+ *  terminators too, and format characters (bidi overrides, zero-width joiners)
+ *  let text claim to be something it is not. Cc, Cf, Zl and Zp cover all of it. */
+function scrub(value: string): string {
+  return value.normalize('NFKC').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
 }
 
 function str(value: unknown, max: number): string {
-  if (typeof value !== 'string') return ''
-  // Bound the WORK before doing any of it. A page can put a megabyte in every
-  // field, and scanning all of it to keep 200 characters cost ~0.67 ms per KB
-  // of wire — on the renderer's UI thread. NFKC can expand one codepoint into
-  // 18, so a prefix that survives the worst expansion is still a constant.
-  const head = value.length > max * 24 ? value.slice(0, max * 24) : value
-  // Normalise BEFORE capping, and this order is the whole point. The serializer
-  // normalises too, and it used to be the FIRST to do so — so a string that was
-  // cap-legal at 200 characters here expanded to ~3,600 on the wire, and 4,000
-  // nodes of that threw RangeError out of the main process after ~9 s of
-  // synchronous work and a 3 GB heap spike. Normalising first makes the
-  // serializer's pass idempotent and makes this cap mean what it says.
-  const clean = head
-    .normalize('NFKC')
-    // Anything a reader — or a model — could take for a line break or for
-    // invisible structure. \x00-\x1F is NOT enough: U+2028/U+2029/U+0085 are line
-    // terminators too, and format characters (bidi overrides, zero-width joiners)
-    // let text claim to be something it is not. Cc, Cf, Zl and Zp cover all of it.
-    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
-  return clean.length > max ? clip(clean, max) : clean
+  if (typeof value !== 'string' || value.length === 0) return ''
+  // Normalise BEFORE capping, and that order is deliberate: the serializer
+  // normalises too, and it used to be the FIRST to do so, so a string that was
+  // cap-legal at 200 characters here reached the wire at ~3,600.
+  //
+  // But normalising the whole value is how the fix for that became the worse
+  // bug. NFKC expands one codepoint into up to 18, this runs ~85 times per node
+  // on the renderer's UI THREAD, and a prefix bound of `max * 24` in front of
+  // that expansion is an effective bound of `max * 432` — 36 KB of page was
+  // enough to kill the window outright. So normalise a PREFIX and cap after the
+  // expansion, not before.
+  //
+  // The prefix has to be grown rather than fixed because composition SHRINKS:
+  // Hangul L+V+T collapses 3 units to 1, and NFKC folds astral codepoints down
+  // to BMP ones. A fixed `max * 2` would silently clip such a string short of
+  // its cap. Growing while the result is too short is exact for every real
+  // string; the iteration bound is what stops a page engineered to sit just
+  // under the cap from walking a megabyte, at the cost of clipping it early.
+  let end = Math.min(value.length, max * 2)
+  let clean = scrub(value.slice(0, end))
+  for (let grow = 0; grow < 4 && clean.length < max && end < value.length; grow++) {
+    end = Math.min(value.length, end * 2)
+    clean = scrub(value.slice(0, end))
+  }
+  if (clean.length > max) return clip(clean, max)
+  // `scrub` hands back its input unchanged when the value is already normalised
+  // and control-free, so on this path `clean` can still BE the page's string —
+  // or a view onto it. Detach only when a cut actually happened; otherwise the
+  // string is its own bounded self and copying it buys nothing.
+  return value.length > end ? detach(clean) : clean
+}
+
+/**
+ * `str` for a field of a page-supplied record, memoised on that record.
+ *
+ * Same asymmetry `styleMemo` closes, one level down. Structured clone preserves
+ * object IDENTITY, so ONE node object referenced 4,000 times costs the page a
+ * single string and costs us 4,000 normalisations of it — the shape that made
+ * the OOM cheap to trigger. Keyed by the owning record rather than by the
+ * string, because the string is unbounded and page-controlled and has no
+ * business being a map key.
+ */
+function field(record: Record<string, unknown>, key: string, max: number, budget: Budget): string {
+  // `max` is part of the key so a caller that reads one field at two different
+  // caps can never be served the longer answer — a memo is not allowed to hand
+  // back a string that outruns the bound its caller asked for.
+  const memoKey = `${max}:${key}`
+  let byKey = budget.strMemo.get(record)
+  if (byKey === undefined) {
+    byKey = new Map()
+    budget.strMemo.set(record, byKey)
+  } else {
+    const hit = byKey.get(memoKey)
+    if (hit !== undefined) return hit
+  }
+  const out = str(record[key], max)
+  byKey.set(memoKey, out)
+  return out
 }
 
 function num(value: unknown): number {
@@ -87,18 +161,18 @@ function rect(value: unknown): Rect {
   return { x: num(value.x), y: num(value.y), width: num(value.width), height: num(value.height) }
 }
 
-function issues(value: unknown, limits: SanitizeLimits): AxeIssue[] | undefined {
+function issues(value: unknown, budget: Budget, limits: SanitizeLimits): AxeIssue[] | undefined {
   if (!Array.isArray(value)) return undefined
   const out: AxeIssue[] = []
   for (const raw of value.slice(0, limits.maxIssuesPerNode)) {
     if (!isRecord(raw)) continue
-    const rule = str(raw.rule, 64)
+    const rule = field(raw, 'rule', 64, budget)
     if (!rule) continue
     out.push({
       rule,
-      severity: str(raw.severity, 24),
-      measured: str(raw.measured, 96),
-      needed: str(raw.needed, 96),
+      severity: field(raw, 'severity', 24, budget),
+      measured: field(raw, 'measured', 96, budget),
+      needed: field(raw, 'needed', 96, budget),
     })
   }
   return out.length > 0 ? out : undefined
@@ -141,14 +215,14 @@ function styles(value: unknown, budget: Budget, limits: SanitizeLimits): Record<
   return result
 }
 
-function state(value: unknown, limits: SanitizeLimits): SnapshotNode['state'] {
+function state(value: unknown, budget: Budget, limits: SanitizeLimits): SnapshotNode['state'] {
   if (!isRecord(value)) return undefined
   const out: NonNullable<SnapshotNode['state']> = {}
-  const type = str(value.type, 32)
+  const type = field(value, 'type', 32, budget)
   if (type) out.type = type
   if (value.checked === true) out.checked = true
   if (value.disabled === true) out.disabled = true
-  const fieldValue = str(value.value, limits.maxText)
+  const fieldValue = field(value, 'value', limits.maxText, budget)
   if (fieldValue) out.value = fieldValue
   if (value.ariaInvalid === true) out.ariaInvalid = true
   if (value.srOnly === true) out.srOnly = true
@@ -160,18 +234,77 @@ function state(value: unknown, limits: SanitizeLimits): SnapshotNode['state'] {
 
 interface Budget {
   nodes: number
+  /** Characters emitted so far, across the whole result. */
+  chars: number
   truncated: boolean
   /** Per-snapshot, so this stays a pure function across calls. Wrapped because
    *  `undefined` is a real result ("no usable styles") and WeakMap cannot tell
    *  that from a miss. */
   styleMemo: WeakMap<object, { value: Record<string, string> | undefined }>
+  /** Per-snapshot memo for `field`. See its comment for why it exists. */
+  strMemo: WeakMap<object, Map<string, string>>
   /** False for an unscoped capture — see SanitizeContext.scoped. */
   allowStyles: boolean
 }
 
+/**
+ * What a node costs on the wire, as an UPPER bound.
+ *
+ * It has to be an upper bound rather than an estimate, because the gap is
+ * attacker-controlled: the JSON key names around a field are fixed, so a node
+ * carrying twenty issues with empty values costs ~1,150 characters of pure
+ * structure while its *values* cost twenty. Charging only the values would let
+ * a page buy roughly five times the budget it was sold. So every constant here
+ * covers the punctuation and key names the serializer will emit around the
+ * value, and the node base covers the ref, the four box numbers at their
+ * longest, and `"children":[]`.
+ */
+/** Each constant is the fixed JSON around one field — its quotes, its key name
+ *  and its separator — measured, not guessed. Being tight matters as much as
+ *  being an upper bound: a padded constant spends an honest page's budget on
+ *  punctuation it never sends and truncates a snapshot that fitted. */
+function weigh(value: SnapshotNode): number {
+  // `{"ref":"…","role":"…","name":"…","box":{"x":…,"y":…,"width":…,"height":…},"children":[]},`
+  let total = 82 + value.ref.length + value.role.length + value.name.length
+  total += num2str(value.box.x) + num2str(value.box.y) + num2str(value.box.width) + num2str(value.box.height)
+  if (value.uxId !== undefined) total += 10 + value.uxId.length
+  const nodeState = value.state
+  if (nodeState) {
+    total += 11
+    if (nodeState.type !== undefined) total += 10 + nodeState.type.length
+    if (nodeState.value !== undefined) total += 11 + nodeState.value.length
+    if (nodeState.checked !== undefined) total += 15
+    if (nodeState.disabled !== undefined) total += 16
+    if (nodeState.ariaInvalid !== undefined) total += 19
+    if (nodeState.srOnly !== undefined) total += 14
+    if (nodeState.opacity !== undefined) total += 11 + num2str(nodeState.opacity)
+  }
+  if (value.styles) {
+    total += 12
+    for (const key of Object.keys(value.styles)) total += 6 + key.length + value.styles[key].length
+  }
+  if (value.issues) {
+    total += 12
+    for (const issue of value.issues) {
+      total += 52 + issue.rule.length + issue.severity.length + issue.measured.length + issue.needed.length
+    }
+  }
+  return total
+}
+
+/** How many characters this number occupies once serialized. `1e21` is four,
+ *  `0.1234567890123456` is eighteen, and a page picks which. */
+function num2str(value: number): number {
+  return String(value).length
+}
+
 function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLimits): SnapshotNode | null {
   if (!isRecord(value)) return null
-  if (budget.nodes >= limits.maxNodes) {
+  // Two ceilings, and the character one is the load-bearing half: `maxNodes`
+  // alone bounds the COUNT while leaving each node free to be enormous.
+  // Charged after the node is built, so the result can overshoot by at most one
+  // node — bounded by the per-node limits, which is what they are good for.
+  if (budget.nodes >= limits.maxNodes || budget.chars >= limits.maxChars) {
     budget.truncated = true
     return null
   }
@@ -182,19 +315,20 @@ function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLim
   // honest bridge numbers its own nodes anyway — so accepting one buys nothing.
   const out: SnapshotNode = {
     ref: `e${budget.nodes}`,
-    role: str(value.role, 64),
-    name: str(value.name, limits.maxText),
+    role: field(value, 'role', 64, budget),
+    name: field(value, 'name', limits.maxText, budget),
     box: rect(value.box),
     children: [],
   }
-  const uxId = str(value.uxId, 128)
+  const uxId = field(value, 'uxId', 128, budget)
   if (uxId) out.uxId = uxId
   const nodeStyles = styles(value.styles, budget, limits)
   if (nodeStyles) out.styles = nodeStyles
-  const nodeState = state(value.state, limits)
+  const nodeState = state(value.state, budget, limits)
   if (nodeState) out.state = nodeState
-  const nodeIssues = issues(value.issues, limits)
+  const nodeIssues = issues(value.issues, budget, limits)
   if (nodeIssues) out.issues = nodeIssues
+  budget.chars += weigh(out)
 
   // Depth is the cycle guard: a self-referencing tree cannot outrun it, and the
   // node budget bounds the fan-out case.
@@ -246,7 +380,14 @@ export function sanitizeSnapshotResult(
 ): CanvasSnapshotResult {
   const source = isRecord(raw) ? raw : {}
   const viewportRaw = isRecord(source.viewport) ? source.viewport : {}
-  const budget: Budget = { nodes: 0, truncated: false, styleMemo: new WeakMap(), allowStyles: context.scoped === true }
+  const budget: Budget = {
+    nodes: 0,
+    chars: 0,
+    truncated: false,
+    styleMemo: new WeakMap(),
+    strMemo: new WeakMap(),
+    allowStyles: context.scoped === true,
+  }
   const root = node(source.root, 0, budget, limits) ?? { ...EMPTY_ROOT }
 
   const out: CanvasSnapshotResult = {
