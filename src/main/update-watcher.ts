@@ -71,6 +71,23 @@ export function isPackagedApp(): boolean {
   return IS_PACKAGED
 }
 
+/**
+ * True when this copy is running from a Microsoft Store (MSIX) package.
+ *
+ * Electron sets `process.windowsStore` for Store builds. The Store owns updates
+ * for those installs: downloading and running our own NSIS installer would fail
+ * inside the package container anyway, and shipping a self-updater in a Store
+ * app is grounds for certification rejection. Every self-update path checks this
+ * and declines.
+ *
+ * Deliberately a runtime check rather than a build-time flag — the Store package
+ * and the direct-download build come from the same compiled output, and one
+ * binary that behaves correctly in both places is easier to trust than two.
+ */
+export function isStoreBuild(): boolean {
+  return (process as NodeJS.Process & { windowsStore?: boolean }).windowsStore === true
+}
+
 export function hasSourcePath(): boolean {
   const projectRoot = getProjectRootPath()
   if (!projectRoot) return false

@@ -10,6 +10,7 @@
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder --win --dir",
     "package:win": "electron-vite build && electron-builder --win",
+    "package:store": "electron-vite build && electron-builder --win appx",
     "package:mac": "electron-vite build && electron-builder --mac",
     "package:linux": "electron-vite build && electron-builder --linux",
     "verify:package": "node scripts/verify-native-unpack.mjs",
@@ -166,6 +167,16 @@
     "dmg": {
       "sign": false,
       "title": "AI Code Conductor"
+    },
+    "appx": {
+      "identityName": "nicholas-moger.AICodeConductor",
+      "publisher": "CN=219653A3-6C91-474A-9D0D-CC64FC96BD70",
+      "publisherDisplayName": "nicholas-moger",
+      "applicationId": "AICodeConductor",
+      "displayName": "AI Code Conductor",
+      "backgroundColor": "#0b0e15",
+      "showNameOnTiles": true,
+      "artifactName": "AI-Code-Conductor-${version}-store.${ext}"
     },
     "nsis": {
       "oneClick": false,
