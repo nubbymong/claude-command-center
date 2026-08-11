@@ -5,7 +5,7 @@
  */
 
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError, logWarn } from './debug-logger'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir, hardenCredentialFile } from './account-profiles'

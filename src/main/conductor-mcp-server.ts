@@ -30,7 +30,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { logInfo, logError, logDebug, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { atomicWriteFileSync } from './atomic-write'
+import { atomicWriteFileSync, isRenameStageFailure } from './atomic-write'
 import { mimeForImage } from './clipboard-file'
 import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
@@ -937,7 +937,10 @@ function strictAtomicWriteJson(filePath: string, data: unknown): boolean {
     // returns false, which is what the boolean contract implies. The one caller
     // (removeMcpSettings) discards the value and reached the same end state
     // either way, so nothing downstream changes.
-    const stage = err?.atomicWriteStage === 'write' ? 'staging write' : 'rename'
+    // Own-property read via isRenameStageFailure, not `err.atomicWriteStage`
+    // through the prototype chain -- a polluted Object.prototype must not steer
+    // this log word, and this stays consistent with codex-review-usage.
+    const stage = isRenameStageFailure(err) ? 'rename' : 'staging write'
     logError(`[vision] Atomic ${stage} failed for ${filePath} (${err?.code ?? err?.message}); leaving the existing file untouched.`)
     return false
   }

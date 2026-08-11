@@ -80,8 +80,9 @@ const CRED_DIR_MODE = 0o700
  * only the four credential paths -- and there is one implementation to keep
  * correct instead of two that can drift apart.
  *
- * Kept as a named export because `usage/account-usage.ts` and `claude-backup.ts`
- * import it, and because the name states the intent at a credential call site.
+ * Kept as a named export because the config/hooks credential writers and
+ * `usage/account-usage.ts` import it, and because the name states the intent at
+ * a credential call site.
  */
 export function atomicWriteSecure(file: string, data: string | Uint8Array, mode?: number): void {
   atomicWriteFileSync(file, data, mode != null ? { mode } : undefined)

@@ -67,10 +67,16 @@ describe('the sweep never resolves a link', () => {
     h.statted = []
   })
 
+  // Each test uses a DISTINCT fixture dir (both still match the readdir mock's
+  // `includes('sweep-fixture')`). The sweep memoises per (dir, basename) at module
+  // scope, and vi.resetModules() does not reliably hand back a fresh module here
+  // under parallel/cold runs -- a shared instance whose memo already held the dir
+  // would skip the sweep and leave h.lstatted empty. A unique dir per test makes
+  // the memo key fresh regardless, so the sweep always runs.
   it('skips a staging-shaped symlink and still reclaims the real orphan', async () => {
     const { atomicWriteFileSync } = await import('../../src/main/atomic-write')
 
-    atomicWriteFileSync(join('sweep-fixture', 'victim.json'), '{}')
+    atomicWriteFileSync(join('sweep-fixture-1', 'victim.json'), '{}')
 
     expect(h.unlinked).toContain(REAL)
     expect(h.unlinked).not.toContain(LINK)
@@ -79,7 +85,7 @@ describe('the sweep never resolves a link', () => {
   it('inspects entries with lstat, never stat', async () => {
     const { atomicWriteFileSync } = await import('../../src/main/atomic-write')
 
-    atomicWriteFileSync(join('sweep-fixture', 'victim.json'), '{}')
+    atomicWriteFileSync(join('sweep-fixture-2', 'victim.json'), '{}')
 
     // stat() follows a link, so reaching for it at all reopens the hole even if
     // an isSymbolicLink() check happens to sit next to it.
