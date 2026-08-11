@@ -29,6 +29,11 @@
 //     headroom kept only so this string matches the dev header verbatim.)
 //   connect-src is IPC-routed in this app (the renderer makes no direct remote
 //     request), so 'self' + localhost is ample; no remote origin is allowed.
+//   frame-src ccc-ux: — the Agent Canvas content iframe. ccc-ux:// is the
+//     app's own privileged scheme, served by the main process from the canvas
+//     store (no localhost server, no open port); nothing else may be framed
+//     (there is deliberately no 'self' / http entry here, so the renderer can
+//     never frame itself or a remote page).
 //   object-src 'none' / base-uri 'self' / form-action 'self' — defense-in-depth
 //     backstops (no <object>/<embed>, no <base> hijack, no cross-origin form
 //     post) for if the one DOMPurify-gated HTML sink is ever bypassed; the
@@ -41,6 +46,7 @@ export const CSP_POLICY =
   "img-src 'self' data: file:; " +
   "font-src 'self' data: https://fonts.gstatic.com; " +
   "connect-src 'self' ws://localhost:* http://localhost:*; " +
+  "frame-src ccc-ux:; " +
   "object-src 'none'; " +
   "base-uri 'self'; " +
   "form-action 'self'"

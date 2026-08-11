@@ -51,6 +51,11 @@ import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
 import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
 export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
+import type { CanvasChangedEvent, CanvasRenderSource, CanvasState } from '../../shared/canvas'
+export type {
+  CanvasChangedEvent, CanvasHandle, CanvasHitInfo, CanvasMode, CanvasRenderSource,
+  CanvasState, CanvasVersion, CanvasVersionSource, CanvasViewportInfo,
+} from '../../shared/canvas'
 import type {
   ChannelPayload,
   ChannelEnvelopeMeta,
@@ -301,6 +306,13 @@ export interface ElectronAPI {
     sessionConfig: (args: { sessionId: string }) => Promise<{ configId: string | null } | null>
     /** Live push from the worker when a tailed transcript appends messages. */
     onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
+  }
+  /** Agent Canvas — session review-surface state; content loads over ccc-ux://. */
+  canvas: {
+    getState: (args: { sessionId: string }) => Promise<CanvasState | null>
+    render: (args: { sessionId: string; source: CanvasRenderSource }) => Promise<{ canvasId: string; versionId: string }>
+    setActiveVersion: (args: { sessionId: string; versionId: string }) => Promise<CanvasState>
+    onChanged: (cb: (e: CanvasChangedEvent) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<any>

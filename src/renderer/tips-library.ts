@@ -347,9 +347,9 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 50,
     variants: {
       primary: {
-        shortText: '✏️ Sketch ideas in the Draw scratchpad',
+        shortText: '✏️ Sketch ideas in the Canvas scratchpad',
         title: 'Excalidraw Scratchpad',
-        body: 'The **Draw** button next to Snap opens a full Excalidraw canvas. Sketch architecture, annotate flowcharts, draw selectors over a screenshot -- anything you\'d normally reach for a tablet for.\n\n• **Copy to clipboard** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session -- no per-config setup.\n• Close it with the **Close** button, or press **Draw** again.',
+        body: 'The **Canvas** button next to Snap opens the Agent Canvas — an empty one is a full Excalidraw scratchpad. Sketch architecture, annotate flowcharts, draw selectors over a screenshot -- anything you\'d normally reach for a tablet for.\n\n• **Copy to clipboard** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session -- no per-config setup.\n• Close it with the **Close** button, or press **Canvas** again.',
       },
     },
   },

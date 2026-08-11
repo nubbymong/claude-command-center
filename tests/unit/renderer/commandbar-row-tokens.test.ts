@@ -52,7 +52,7 @@ vi.mock('../../../src/renderer/stores/webviewStore', () => ({
 vi.mock('../../../src/renderer/stores/tipsStore', () => ({ trackUsage: vi.fn() }))
 vi.mock('../../../src/renderer/utils/id', () => ({ generateId: () => 'test-id' }))
 vi.mock('../../../src/renderer/components/ScreenshotButton', () => ({ default: () => null }))
-vi.mock('../../../src/renderer/components/ExcalidrawButton', () => ({ default: () => null }))
+vi.mock('../../../src/renderer/components/AgentCanvasButton', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/components/WebviewButton', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/components/CommandDialog', () => ({ default: () => null }))
 vi.mock('../../../src/renderer/components/ToolbarPopup', () => ({ default: () => null }))

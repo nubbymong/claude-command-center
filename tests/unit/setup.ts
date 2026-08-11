@@ -31,6 +31,7 @@ vi.mock('electron', () => ({
   clipboard: { readImage: vi.fn(), readText: vi.fn() },
   safeStorage: { isEncryptionAvailable: vi.fn(() => false) },
   Menu: { buildFromTemplate: vi.fn(), setApplicationMenu: vi.fn() },
+  protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
 }))
 
 // Mock the debug-logger to prevent file I/O
@@ -166,6 +167,12 @@ const mockElectronAPI = {
     ingestStatus: vi.fn(() => Promise.resolve(null)),
     sessionConfig: vi.fn(() => Promise.resolve(null)),
     onNewMessages: vi.fn(() => () => {}),
+  },
+  canvas: {
+    getState: vi.fn(() => Promise.resolve(null)),
+    render: vi.fn(() => Promise.resolve({ canvasId: 'c0ffee', versionId: 'v1' })),
+    setActiveVersion: vi.fn(() => Promise.resolve(null)),
+    onChanged: vi.fn(() => () => {}),
   },
   webview: {
     check: vi.fn(() => Promise.resolve({ reachable: false })),

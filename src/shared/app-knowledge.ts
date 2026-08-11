@@ -60,7 +60,7 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
   },
   {
     id: 'draw',
-    title: 'Draw, Snap, and the webview',
+    title: 'Canvas, Snap, and the webview',
     body: `Inside a session you can swap the terminal for a webview pane (Web), freeze that page into the Excalidraw scratchpad to sketch over it (Freeze), or take a Snap screenshot that lands in the conversation. The alternative pane replaces the terminal while it is open, and closing it brings the terminal straight back.`,
   },
   {

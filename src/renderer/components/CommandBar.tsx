@@ -4,7 +4,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useCommandBarStore } from '../stores/commandBarStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
-import ExcalidrawButton from './ExcalidrawButton'
+import AgentCanvasButton from './AgentCanvasButton'
 import LogsButton from './LogsButton'
 import WebviewButton from './WebviewButton'
 import PasteHint from './PasteHint'
@@ -548,7 +548,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         </button>
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
-        <ExcalidrawButton sessionId={sessionId} />
+        <AgentCanvasButton sessionId={sessionId} />
         <LogsButton sessionId={sessionId} />
         <WebviewButton sessionId={webviewKey} hasWebviewCommand={hasWebviewCommand} />
         {/* Back to Claude / Partner toggle - same monochrome tool-button shape as Snap */}
