@@ -15,6 +15,7 @@ import {
 } from '../../shared/canvas'
 import { contentPageRectToStage, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
 import { safeHit, safeViewport } from '../utils/canvas-geometry-guard'
+import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
 
 interface Props {
   sessionId: string
@@ -144,6 +145,18 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
     setViewport(null)
     setHover(null)
   }, [contentUrl])
+
+  // Publish this frame so `canvas_snapshot` (main) has something to capture.
+  // Only while mounted: with no live frame there is no rendered page, and the
+  // tool says so rather than inventing one.
+  useEffect(() => {
+    return registerCanvasFrame({
+      sessionId,
+      canvasId,
+      versionId: version.id,
+      getWindow: () => iframeRef.current?.contentWindow ?? null,
+    })
+  }, [sessionId, canvasId, version.id])
 
   // Leaving browse mode drops the transient hover immediately (the overlay is
   // for pointing at content, not for decorating the glass).

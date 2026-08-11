@@ -5,6 +5,7 @@ const CHECK = String.fromCodePoint(0x2713)
 const GLOBE = String.fromCodePoint(0x1f310)
 const MAG = String.fromCodePoint(0x1f50d)
 const CAMERA = String.fromCodePoint(0x1f4f7)
+const FRAME = String.fromCodePoint(0x1f5bc)
 
 type ToolKey = keyof ConductorToolsSettings
 
@@ -33,6 +34,12 @@ const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: stri
     icon: CAMERA,
     title: 'Bring in screenshots, even over SSH',
     desc: 'Pull screenshots and images from your machine straight into the conversation, even on a remote box over SSH.',
+  },
+  {
+    k: 'canvas',
+    icon: FRAME,
+    title: 'Agent Canvas: read the rendered page',
+    desc: 'When a page is open in the Canvas pane, Claude can read what it actually looks like once laid out: element names, sizes, form state, and measured problems such as clipped text, targets too small to hit, and unreadable contrast. Nothing is read unless the canvas is open.',
   },
 ]
 

@@ -40,6 +40,9 @@ import { isPackagedApp } from './update-watcher'
 import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
+import { registerCanvasTools } from './canvas-mcp-tool'
+import { getCanvasStateForSession } from './canvas/canvas-store'
+import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
  *  The Codex TOML writer appends `?source=codex` so the server can skip
@@ -504,11 +507,11 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // off; this filter is belt-and-braces for stale session configs.
     const toolCfg = readConfig<{
       conductorToolsEnabled?: boolean
-      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean }
+      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean; canvas?: boolean }
       codexEnabled?: boolean
     }>('settings')
     const toolsMaster = toolCfg?.conductorToolsEnabled !== false
-    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer') =>
+    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer' | 'canvas') =>
       toolsMaster && toolCfg?.conductorTools?.[k] !== false
 
     // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
@@ -712,6 +715,16 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         (sessionId: string) => sessionCwds.get(sessionId) ?? null,
         () => boundSessionId,
       )
+    }
+
+    // Agent Canvas: the snapshot is a read of the session's own rendered page,
+    // so like codex_review it binds to the transport's session id and refuses a
+    // model-supplied one (#188).
+    if (toolOn('canvas')) {
+      registerCanvasTools(server, z, () => boundSessionId, {
+        getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
+        requestSnapshot: (args) => requestCanvasSnapshot(args),
+      })
     }
 
     return server

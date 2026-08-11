@@ -68,6 +68,45 @@ Measured on a 20-card jsdom fixture (121 nodes):
 
 That clears the section 10 P2 bar (scoped under 15% of unscoped).
 
+### `canvas_snapshot`, and the hop that did not exist
+
+The snapshot is produced where the page is: inside the canvas iframe, in the
+renderer. The MCP tool runs in main. Nothing in the app had a main -> renderer
+REQUEST before this -- every one of the ~40 main -> renderer paths is a one-way
+push -- so this establishes one, narrowly: `CANVAS_SNAPSHOT_REQUEST` out,
+`CANVAS_SNAPSHOT_RESULT` back, correlated by request id, with a hard timeout, a
+concurrency cap, and no ability to ask for anything except a snapshot.
+
+The renderer half is armed once at boot rather than by the canvas pane, so a
+request that arrives with nothing mounted answers "open the Canvas pane" instead
+of going quiet -- the same lesson the cloud-agent listeners taught. The pane
+publishes its live frame while mounted; a request for a different canvas or a
+version that is not the one on screen is refused rather than silently answered
+with the wrong page.
+
+Session binding follows the #188 precedent exactly (codex_review): the session
+comes from the TRANSPORT and the model-supplied id is advertised, ignored, and
+overruled. A canvas is per-session and a snapshot is page content, so honouring
+a model-supplied session id would hand a prompt-injected session a read of
+another session's canvas. A `canvasId` that does not belong to the bound session
+is refused, not followed.
+
+Two things treat the payload as hostile, because it is assembled by the page:
+
+- `canvas-snapshot-sanitize.ts` bounds every string, coerces every number, caps
+  nodes/depth/children/issues/styles, and strips control characters so page text
+  cannot forge a line in the wire format. It runs in the renderer (bounding what
+  crosses IPC) and again in main. A cyclic tree -- structured clone carries
+  cycles happily, and the serializer would recurse forever on one -- terminates
+  at the depth cap and is reported as truncated.
+- `untrusted-envelope.ts` wraps the body per section 5.4 and DEFANGS the markers
+  inside it. Without that, a page containing the closing tag would end the
+  envelope early and everything after it would read as operator instruction.
+
+The tool ships behind a `canvas` toggle in the same four renderer places as the
+other built-in tools. The onboarding recap's tool count is now derived from the
+gate list instead of a hard-coded "of 3".
+
 ### Standing limitations
 
 - The 10-seeded-defect acceptance run needs real layout and real paint, so it

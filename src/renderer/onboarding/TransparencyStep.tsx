@@ -34,11 +34,13 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
   }
 
   const email = profiles.find((p) => p.isPrimary)?.accountEmail || profiles[0]?.accountEmail || globalEmail
-  const toolCount = [
+  const toolGates = [
     settings.conductorTools?.vision !== false,
     settings.conductorTools?.codexReview !== false && settings.codexEnabled !== false,
     settings.conductorTools?.hostTransfer !== false,
-  ].filter(Boolean).length
+    settings.conductorTools?.canvas !== false,
+  ]
+  const toolCount = toolGates.filter(Boolean).length
   const themeLabel = settings.theme === 'system' ? 'System' : settings.theme === 'light' ? 'Light' : 'Dark'
 
   const recap: { icon: string; label: string; value: string }[] = [
@@ -72,7 +74,12 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     {
       icon: GEAR,
       label: 'Built-in tools',
-      value: settings.conductorToolsEnabled !== false ? `On: ${toolCount} of 3 tools` : 'Off (Settings → General)',
+      // Counted from the gate list above so adding a tool can never leave this
+      // reading "3 of 3" while four are advertised.
+      value:
+        settings.conductorToolsEnabled !== false
+          ? `On: ${toolCount} of ${toolGates.length} tools`
+          : 'Off (Settings → General)',
     },
   ]
 

@@ -87,6 +87,13 @@ export function canvasContentUrl(canvasId: string, versionId: string, entry: str
   return `${CCC_UX_SCHEME}://${canvasId}/${versionId}/${cleanEntry}`
 }
 
+/** The origin a canvas's documents serialize to — the exact target the host uses
+ *  when posting INTO the frame, so a request can never be delivered to a
+ *  document other than that canvas's own. */
+export function canvasOrigin(canvasId: string): string {
+  return `${CCC_UX_SCHEME}://${canvasId}`
+}
+
 // ── Bridge protocol (host ↔ content frame, postMessage) ─────────────────────
 // The bridge is READ-ONLY from the content side: content reports; content is
 // never commanded to draw or navigate (D8). Requests originate host-side with
@@ -194,6 +201,25 @@ export interface SnapshotNode {
   issues?: AxeIssue[]
   children: SnapshotNode[]
 }
+
+// ── Snapshot capture over IPC (main ↔ renderer ↔ content frame) ─────────────
+// The snapshot is produced INSIDE the content frame, so the MCP tool (main) has
+// to ask the renderer, which asks the frame. Both hops are id-correlated; main
+// never trusts what comes back (see canvas-snapshot-sanitize.ts).
+
+/** main → renderer: take a snapshot of the live frame for this canvas. */
+export interface CanvasSnapshotRequestEvent {
+  requestId: string
+  sessionId: string
+  canvasId: string
+  versionId: string
+  options: CanvasSnapshotOptions
+}
+
+/** renderer → main: the answer, or why there isn't one. */
+export type CanvasSnapshotReply =
+  | { requestId: string; ok: true; result: CanvasSnapshotResult }
+  | { requestId: string; ok: false; error: string }
 
 /** What the in-page bridge returns for a snapshot request. The main process
  *  stamps `versionId` / `capturedAt` onto this to make a `SemanticSnapshot` —

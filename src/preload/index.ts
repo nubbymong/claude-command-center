@@ -4,7 +4,13 @@ import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData } from '../shared/types'
 import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
-import type { CanvasChangedEvent, CanvasRenderSource, CanvasState } from '../shared/canvas'
+import type {
+  CanvasChangedEvent,
+  CanvasRenderSource,
+  CanvasSnapshotReply,
+  CanvasSnapshotRequestEvent,
+  CanvasState,
+} from '../shared/canvas'
 
 export interface ElectronAPI {
   /** True when this is a dev build (npm run dev / ccc), false for a packaged
@@ -187,6 +193,10 @@ export interface ElectronAPI {
     render: (args: { sessionId: string; source: CanvasRenderSource }) => Promise<{ canvasId: string; versionId: string }>
     setActiveVersion: (args: { sessionId: string; versionId: string }) => Promise<CanvasState>
     onChanged: (cb: (e: CanvasChangedEvent) => void) => () => void
+    /** main asks the renderer to capture the live content frame; the renderer
+     *  answers exactly once per requestId via sendSnapshotResult. */
+    onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
+    sendSnapshotResult: (reply: CanvasSnapshotReply) => void
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -687,6 +697,12 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.CANVAS_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC.CANVAS_CHANGED, handler)
     },
+    onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => {
+      const handler = (_e: unknown, e: CanvasSnapshotRequestEvent) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_SNAPSHOT_REQUEST, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_SNAPSHOT_REQUEST, handler)
+    },
+    sendSnapshotResult: (reply: CanvasSnapshotReply) => ipcRenderer.send(IPC.CANVAS_SNAPSHOT_RESULT, reply),
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),

@@ -268,6 +268,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     ['vision', 'Vision: see & drive a browser'],
                     ['codexReview', 'Code review'],
                     ['hostTransfer', 'Host screenshots (incl. over SSH)'],
+                    ['canvas', 'Agent Canvas: read the rendered page'],
                   ] as const).map(([key, label]) => {
                     // Code review runs the codex CLI: with the Codex master off
                     // the MCP server never registers the tool, so a live

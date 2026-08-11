@@ -51,9 +51,12 @@ import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
 import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
 export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
-import type { CanvasChangedEvent, CanvasRenderSource, CanvasState } from '../../shared/canvas'
+import type {
+  CanvasChangedEvent, CanvasRenderSource, CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasState,
+} from '../../shared/canvas'
 export type {
   CanvasChangedEvent, CanvasHandle, CanvasHitInfo, CanvasMode, CanvasRenderSource,
+  CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasSnapshotResult,
   CanvasState, CanvasVersion, CanvasVersionSource, CanvasViewportInfo,
 } from '../../shared/canvas'
 import type {
@@ -313,6 +316,10 @@ export interface ElectronAPI {
     render: (args: { sessionId: string; source: CanvasRenderSource }) => Promise<{ canvasId: string; versionId: string }>
     setActiveVersion: (args: { sessionId: string; versionId: string }) => Promise<CanvasState>
     onChanged: (cb: (e: CanvasChangedEvent) => void) => () => void
+    /** main asks the renderer to capture the live content frame; the renderer
+     *  answers exactly once per requestId via sendSnapshotResult. */
+    onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
+    sendSnapshotResult: (reply: CanvasSnapshotReply) => void
   }
   discovery: {
     getProjects: () => Promise<any>

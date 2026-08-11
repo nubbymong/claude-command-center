@@ -17,6 +17,7 @@ import {
   renderVersion,
   setActiveVersion,
 } from '../canvas/canvas-store'
+import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -91,5 +92,23 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
         /* window gone */
       }
     }
+  })
+
+  // Snapshot capture is the one main → renderer REQUEST in the app: the page
+  // only exists in the renderer's frame, so the MCP tool has to ask for it. The
+  // broker owns correlation and the timeout; this just moves bytes.
+  setSnapshotSender((event) => {
+    const win = getWindow()
+    if (!win || win.isDestroyed()) return false
+    try {
+      win.webContents.send(IPC.CANVAS_SNAPSHOT_REQUEST, event)
+      return true
+    } catch {
+      return false
+    }
+  })
+
+  ipcMain.on(IPC.CANVAS_SNAPSHOT_RESULT, (_e, reply: unknown) => {
+    resolveCanvasSnapshot(reply)
   })
 }

@@ -353,6 +353,8 @@ export const IPC = {
   CANVAS_RENDER: 'canvas:render',                      // renderer -> main: register a new content version
   CANVAS_SET_ACTIVE_VERSION: 'canvas:setActiveVersion',// renderer -> main: switch the surfaced version
   CANVAS_CHANGED: 'canvas:changed',                    // push: main -> renderer (a render/switch happened)
+  CANVAS_SNAPSHOT_REQUEST: 'canvas:snapshotRequest',   // push: main -> renderer: capture the live frame (id-correlated)
+  CANVAS_SNAPSHOT_RESULT: 'canvas:snapshotResult',     // renderer -> main: the reply to one snapshotRequest
 } as const
 
 /** Helper to build per-session PTY data channels */
