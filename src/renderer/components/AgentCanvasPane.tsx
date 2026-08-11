@@ -12,6 +12,7 @@ import {
   CanvasViewportInfo,
   CanvasVersion,
   canvasContentUrl,
+  canvasOrigin,
 } from '../../shared/canvas'
 import { contentPageRectToStage, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
 import { safeHit, safeViewport } from '../utils/canvas-geometry-guard'
@@ -84,6 +85,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
 
   const [bridgeReady, setBridgeReady] = useState(false)
+  const bridgeReadyRef = useRef(false)
   const [viewport, setViewport] = useState<CanvasViewportInfo | null>(null)
   const [hover, setHover] = useState<HoverState | null>(null)
 
@@ -120,10 +122,13 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
       const frameWindow = iframeRef.current?.contentWindow
       if (!frameWindow || event.source !== frameWindow) return
       // Fail closed: a non-string origin (shouldn't happen) is rejected too.
-      if (typeof event.origin !== 'string' || !event.origin.startsWith('ccc-ux://')) return
+      // Exact, not a prefix: another canvas's document would satisfy a prefix
+      // test. Matches the snapshot path's check.
+      if (event.origin !== canvasOrigin(canvasId)) return
       const msg = event.data as CanvasBridgeEvent | null
       if (!msg || msg.ns !== CANVAS_BRIDGE_NS || !('type' in msg)) return
       if (msg.type === 'ready') {
+        bridgeReadyRef.current = true
         setBridgeReady(true)
       } else if (msg.type === 'viewport') {
         const vp = safeViewport(msg.viewport)
@@ -141,6 +146,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
 
   // New version → the frame reloads; bridge state starts over.
   useEffect(() => {
+    bridgeReadyRef.current = false
     setBridgeReady(false)
     setViewport(null)
     setHover(null)
@@ -155,6 +161,9 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
       canvasId,
       versionId: version.id,
       getWindow: () => iframeRef.current?.contentWindow ?? null,
+      // Read through the ref: this registration outlives a re-render, and a
+      // captured boolean would freeze at its mount-time value.
+      isReady: () => bridgeReadyRef.current,
     })
   }, [sessionId, canvasId, version.id])
 

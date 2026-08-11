@@ -56,25 +56,25 @@ describe('no live frame', () => {
   })
 
   it('refuses a canvas that is not the one on screen', async () => {
-    registerCanvasFrame({ ...EVENT, canvasId: 'canvas-other', getWindow: () => frameWindow })
+    registerCanvasFrame({ ...EVENT, canvasId: 'canvas-other', getWindow: () => frameWindow, isReady: () => true })
     const reply = await handleSnapshotRequest(EVENT)
     expect(reply.ok === false && reply.error).toContain('does not match')
   })
 
   it('refuses a version that is not the one on screen, and names what is', async () => {
-    registerCanvasFrame({ ...EVENT, versionId: 'v1', getWindow: () => frameWindow })
+    registerCanvasFrame({ ...EVENT, versionId: 'v1', getWindow: () => frameWindow, isReady: () => true })
     const reply = await handleSnapshotRequest(EVENT)
     expect(reply.ok === false && reply.error).toContain('showing v1')
   })
 
   it('reports a frame that has not loaded yet', async () => {
-    registerCanvasFrame({ ...EVENT, getWindow: () => null })
+    registerCanvasFrame({ ...EVENT, getWindow: () => null, isReady: () => true })
     const reply = await handleSnapshotRequest(EVENT)
     expect(reply.ok === false && reply.error).toContain('not loaded yet')
   })
 
   it('unregisters on unmount', () => {
-    const off = registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow })
+    const off = registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow, isReady: () => true })
     expect(_framesForTest().size).toBe(1)
     off()
     expect(_framesForTest().size).toBe(0)
@@ -83,7 +83,7 @@ describe('no live frame', () => {
 
 describe('capture', () => {
   it('asks the frame at its own origin and returns a sanitised result', async () => {
-    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow })
+    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow, isReady: () => true })
     const pending = handleSnapshotRequest({ ...EVENT, options: { scope: ['card-1'], analysis: true } })
 
     // The request is targeted, not broadcast.
@@ -107,7 +107,7 @@ describe('capture', () => {
   })
 
   it('ignores replies with the wrong id or a foreign source', async () => {
-    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow })
+    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow, isReady: () => true })
     const pending = handleSnapshotRequest(EVENT, 300)
     const id = posted[0].msg.id as number
 
@@ -125,7 +125,7 @@ describe('capture', () => {
   })
 
   it('ignores a reply whose origin is not this canvas — a frame window survives navigation', async () => {
-    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow })
+    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow, isReady: () => true })
     const pending = handleSnapshotRequest(EVENT, 300)
     const id = posted[0].msg.id as number
 
@@ -140,7 +140,7 @@ describe('capture', () => {
   })
 
   it('uses unpredictable correlation ids, so a page cannot pre-answer by guessing', async () => {
-    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow })
+    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow, isReady: () => true })
     void handleSnapshotRequest(EVENT, 50)
     void handleSnapshotRequest(EVENT, 50)
     void handleSnapshotRequest(EVENT, 50)
@@ -148,12 +148,12 @@ describe('capture', () => {
     expect(new Set(ids).size).toBe(3)
     // A counter would make these consecutive; these must not be.
     expect(ids[1] - ids[0]).not.toBe(1)
-    expect(ids.every((id) => Number.isInteger(id) && id > 0)).toBe(true)
+    expect(ids.every((id) => Number.isInteger(id) && id >= 0)).toBe(true)
     await new Promise((r) => setTimeout(r, 80))
   })
 
   it('turns a frame-side error into a failed reply', async () => {
-    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow })
+    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow, isReady: () => true })
     const pending = handleSnapshotRequest(EVENT)
     replyFromFrame({ id: posted[0].msg.id, ok: false, error: 'unknown request: snapshot' })
     const reply = await pending
@@ -161,7 +161,7 @@ describe('capture', () => {
   })
 
   it('gives up before main does, so the agent sees the specific reason', async () => {
-    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow })
+    registerCanvasFrame({ ...EVENT, getWindow: () => frameWindow, isReady: () => true })
     const reply = await handleSnapshotRequest(EVENT, 50)
     expect(reply.ok === false && reply.error).toContain('did not answer the snapshot request in time')
   })

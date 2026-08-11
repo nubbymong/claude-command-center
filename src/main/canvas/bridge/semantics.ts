@@ -1,13 +1,14 @@
 // Role and accessible name.
 //
-// P1 shipped hand-rolled heuristics for both. P2 keeps a (widened) implicit-role
-// table as the always-available fallback, but prefers real implementations:
-//   • name — dom-accessibility-api, the accname algorithm, always bundled (~30 KB)
-//   • role — axe-core's HTML-AAM resolver, injected by the analysis chunk when it
-//     loads, via setRoleResolver()
+// P1 shipped hand-rolled heuristics for both. P2 keeps the (widened) implicit-role
+// table and takes the accessible NAME from dom-accessibility-api — the accname
+// algorithm, always bundled (~30 KB).
 //
-// The table stays because the bridge must answer hover queries instantly without
-// pulling 500 KB of rules into the frame.
+// Roles deliberately do NOT come from axe. `axe.commons.aria.getRole` is an
+// undocumented internal that only works between axe.setup() and axe.teardown():
+// called outside a run it throws, and the adversarial pass proved that swallowing
+// that throw emptied the role on every node of every production snapshot. A table
+// that always works beats a better resolver that works only sometimes.
 
 import { computeAccessibleName } from 'dom-accessibility-api'
 import { directText } from './measure'
@@ -44,27 +45,13 @@ const INTERACTIVE_TAGS = new Set(['button', 'input', 'select', 'textarea', 'a', 
 
 const SKIP_TAGS = new Set(['script', 'style', 'template', 'meta', 'link', 'head', 'noscript', 'title', 'base'])
 
-let roleResolver: ((el: Element) => string | null) | null = null
-
-/** Installed by the analysis chunk once axe-core is in the frame. Authoritative
- *  when present: it implements HTML-AAM, including the cases the table cannot
- *  express (a `<section>` only being a region when named, `<td>` depending on its
- *  table's role, presentation inheritance). */
-export function setRoleResolver(fn: ((el: Element) => string | null) | null): void {
-  roleResolver = fn
-}
-
-export function hasRoleResolver(): boolean {
-  return roleResolver !== null
-}
-
 export function squash(text: string | null | undefined): string {
   if (!text) return ''
   const out = String(text).replace(/\s+/g, ' ').trim()
   return out.length > NAME_MAX ? out.slice(0, NAME_MAX - 1) + '…' : out
 }
 
-function tableRole(el: Element): string {
+export function roleOf(el: Element): string {
   const explicit = el.getAttribute('role')
   if (explicit) return explicit.trim().split(/\s+/)[0].toLowerCase()
   const tag = el.tagName.toLowerCase()
@@ -77,17 +64,6 @@ function tableRole(el: Element): string {
     return el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') ? 'region' : ''
   }
   return Object.prototype.hasOwnProperty.call(IMPLICIT_ROLES, tag) ? IMPLICIT_ROLES[tag] : ''
-}
-
-export function roleOf(el: Element): string {
-  if (roleResolver) {
-    try {
-      return roleResolver(el) || ''
-    } catch {
-      /* a resolver failure must never sink the snapshot */
-    }
-  }
-  return tableRole(el)
 }
 
 export function nameOf(el: Element): string {

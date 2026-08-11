@@ -68,27 +68,43 @@ function cleanScope(raw: unknown): string[] | undefined {
  */
 function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined): string[] {
   const notes: string[] = []
-  if (scope) notes.push(`scoped to ${scope.join(', ')}`)
+  // COUNTS outside the envelope, never the ids themselves. The agent supplied
+  // them and knows what it asked for; joined into a line out here they were a
+  // 6 KB operator-voice channel for anything shape-legal.
+  if (scope) notes.push(`scoped to ${scope.length} id(s)`)
 
   if (result.unmatchedScope?.length && scope) {
-    // Intersection, not the page's list: a page can claim anything, but it
-    // cannot add an id the agent never asked for.
-    const requested = new Set(scope)
-    const missed = result.unmatchedScope.filter((id) => requested.has(id))
-    if (missed.length > 0) notes.push(`${missed.length} of the requested ids matched no element: ${missed.join(', ')}`)
+    // Iterate OUR scope, not the page's list: the page can neither add an id the
+    // agent never asked for nor inflate the count by repeating one.
+    const claimed = new Set(result.unmatchedScope)
+    const missed = scope.filter((id) => claimed.has(id))
+    if (missed.length > 0) notes.push(`${missed.length} of the requested ids matched no element`)
   }
 
   if (result.truncated) notes.push('the page exceeded the snapshot node limit; this tree is partial')
 
   if (result.analysisError) {
-    // The measurement pass covers flat contrast precisely WHEN axe is absent
-    // (snapshot.ts: flatContrast = analysis === null), so the note must not
-    // claim the opposite.
+    // Accurate for both failure modes: the bridge recomputes contrast coverage
+    // after a failed run, so the measurement pass claims flat contrast whenever
+    // axe did not.
     notes.push(
       `the axe rule pass did not run (${result.analysisError}); measurements and contrast still apply, but missing-name and ARIA rules were not checked`,
     )
   }
   return notes
+}
+
+/** Operator-authored causes for a failed capture. The frame's own error text is
+ *  never relayed — it is page-controlled and lands outside the envelope. */
+function captureFailureReason(err: unknown): string {
+  const message = err instanceof Error ? err.message : ''
+  if (/no Agent Canvas is open|does not match|showing/i.test(message)) {
+    return 'the Agent Canvas is not open on the requested canvas and version. Ask the user to open it.'
+  }
+  if (/not loaded yet|in time/i.test(message)) return 'the canvas page did not finish loading in time. Try again in a moment.'
+  if (/in flight/i.test(message)) return 'another capture is already running for this session. Try again in a moment.'
+  if (/window is not available/i.test(message)) return 'the app window is not available.'
+  return 'the canvas frame could not produce a snapshot.'
 }
 
 export async function runCanvasSnapshot(
@@ -115,7 +131,13 @@ export async function runCanvasSnapshot(
   const requestedVersion = typeof rawArgs.versionId === 'string' && rawArgs.versionId.length > 0 ? rawArgs.versionId : null
   const versionId = requestedVersion ?? state.activeVersionId
   if (!state.versions.some((v) => v.id === versionId)) {
-    return { text: `This canvas has no version ${versionId}.`, isError: true }
+    // The id is NOT echoed. Tool arguments are model-generated, this string is
+    // unwrapped operator voice, and `scope` had to be hardened for exactly this
+    // reason — an unbounded echo here would have been the same hole.
+    return {
+      text: `This canvas has no such version. It has: ${state.versions.map((v) => v.id).join(', ')}.`,
+      isError: true,
+    }
   }
 
   const scope = cleanScope(rawArgs.scope)
@@ -128,7 +150,12 @@ export async function runCanvasSnapshot(
       options: { scope, analysis: true },
     })
   } catch (err) {
-    return { text: `Could not capture the canvas: ${err instanceof Error ? err.message : String(err)}`, isError: true }
+    // NEVER relay the frame's own words. The failure text travels page → bridge
+    // → renderer → broker → here, so a hostile document authors it end to end —
+    // and this path is not inside the untrusted envelope. An attacker used it to
+    // emit a working envelope terminator plus forged operator notes. Only
+    // operator-authored causes reach the agent.
+    return { text: `Could not capture the canvas: ${captureFailureReason(err)}`, isError: true }
   }
 
   const snapshot: SemanticSnapshot = {

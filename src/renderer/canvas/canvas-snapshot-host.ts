@@ -25,6 +25,11 @@ export interface LiveCanvasFrame {
   versionId: string
   /** The iframe's contentWindow, read at call time — it changes on reload. */
   getWindow: () => Window | null
+  /** Whether the bridge in THIS document has announced itself. A freshly mounted
+   *  iframe has a non-null contentWindow holding about:blank, and a targeted
+   *  postMessage to it is silently dropped on the origin mismatch — so without
+   *  this the natural render-then-snapshot flow stalls for the full timeout. */
+  isReady: () => boolean
 }
 
 /** Inside main's own timeout, so a slow frame surfaces THIS message rather than
@@ -109,6 +114,7 @@ export async function handleSnapshotRequest(
   }
   const target = frame.getWindow()
   if (!target) return fail('The canvas frame is not loaded yet.')
+  if (!frame.isReady()) return fail('The canvas page is still loading. Try again in a moment.')
 
   try {
     const raw = await askFrame(target, event.canvasId, event.options ?? {}, timeoutMs)

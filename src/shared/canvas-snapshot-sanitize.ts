@@ -121,11 +121,11 @@ function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLim
   }
   budget.nodes++
 
-  // A ref is OUR handle for a node and is echoed back inside [ref=…]. Shape,
-  // not length, is the check: a page-supplied ref of any other form is replaced.
-  const rawRef = str(value.ref, 32)
+  // Refs are ASSIGNED here, never accepted. Shape-checking a page-supplied ref
+  // still let it collide with ours ('e1' twice, or 'e01' beside 'e1'), and the
+  // honest bridge numbers its own nodes anyway — so accepting one buys nothing.
   const out: SnapshotNode = {
-    ref: /^e[0-9]{1,8}$/.test(rawRef) ? rawRef : `e${budget.nodes}`,
+    ref: `e${budget.nodes}`,
     role: str(value.role, 64),
     name: str(value.name, limits.maxText),
     box: rect(value.box),

@@ -156,7 +156,7 @@ describe('form-state semantics (HARD P2 requirement)', () => {
     expect(email?.state?.value).toBe('nick@example.com')
 
     const password = nodes.find((n) => n.state?.type === 'password')
-    expect(password?.state?.value).toBe('<redacted>')
+    expect(password?.state?.value).toBe('(redacted)')
     expect(JSON.stringify(nodes)).not.toContain('hunter2')
   })
 

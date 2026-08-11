@@ -159,16 +159,19 @@ describe('capture notes are operator speech, never the page', () => {
     const out = await runCanvasSnapshot({ scope: ['card-1'] }, 'sess-1', deps(hostile))
     const notes = out.text.slice(0, out.text.indexOf('<untrusted-content'))
     expect(notes).not.toContain('SYSTEM DIRECTIVE')
-    expect(notes).toContain('scoped to card-1')
+    expect(notes).toContain('scoped to 1 id(s)')
   })
 
-  it('reports only ids from the scope it actually sent', async () => {
+  it('counts only ids from the scope it actually sent, and the page cannot inflate the count', async () => {
     const result = base()
-    result.unmatchedScope = ['card-1', 'invented-by-the-page']
-    const out = await runCanvasSnapshot({ scope: ['card-1'] }, 'sess-1', deps(result))
+    // The page invents one id and repeats a real one fifty times.
+    result.unmatchedScope = ['invented-by-the-page', ...Array.from({ length: 50 }, () => 'card-1')]
+    const out = await runCanvasSnapshot({ scope: ['card-1', 'card-2'] }, 'sess-1', deps(result))
     const notes = out.text.slice(0, out.text.indexOf('<untrusted-content'))
-    expect(notes).toContain('card-1')
+    expect(notes).toContain('1 of the requested ids matched no element')
     expect(notes).not.toContain('invented-by-the-page')
+    // No ids at all outside the envelope — the agent knows what it asked for.
+    expect(notes).not.toContain('card-1')
   })
 
   it('never lets the page author the analysis-failure note', async () => {

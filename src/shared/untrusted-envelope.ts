@@ -21,22 +21,30 @@
 const OPEN = '<untrusted-content'
 const CLOSE = '</untrusted-content>'
 
-/** Any spelling of either marker — closing or opening, any case, whitespace
- *  anywhere a tag would tolerate it. Escaping the angle bracket leaves the text
- *  readable but unable to terminate (or forge) an envelope. */
-const MARKER = /<\s*\/?\s*untrusted-content/gi
+/** A loose detector for an ATTEMPT at either marker — used to reject notes, not
+ *  to sanitise the body. Deliberately over-broad. */
+const MARKER_ATTEMPT = /<\s*\/*\s*untrusted[\s\S]{0,3}content/i
 
+/**
+ * Escape EVERY '<' in the body.
+ *
+ * Two rounds of attackers beat marker-matching: first case and whitespace
+ * variants, then `<//untrusted-content>` and homoglyphs (U+2011 hyphen, Cyrillic
+ * о) that are pixel-identical and match no ASCII pattern. Chasing spellings is a
+ * denylist wearing a disguise. The angle bracket is what makes a marker a
+ * marker, there is exactly one of them, so escape it and stop guessing.
+ */
 function defang(text: string): string {
-  return text.replace(MARKER, (match) => '&lt;' + match.slice(1))
+  return text.replace(/</g, '&lt;')
 }
 
-/** A note that carries a line break or an envelope marker is not operator
- *  speech, whatever produced it. */
+/** A note that carries a line break or reaches for an envelope marker is not
+ *  operator speech, whatever produced it. */
 function safeNote(note: string): string | null {
   if (!note) return null
   if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(note)) return null
-  MARKER.lastIndex = 0
-  if (MARKER.test(note)) return null
+  if (note.includes('<')) return null
+  if (MARKER_ATTEMPT.test(note)) return null
   return note
 }
 

@@ -22,8 +22,11 @@ describe('the served analysis chunk', () => {
   it('is an ES module exposing exactly the API analysis-loader reads', async () => {
     const mod = await importSource(analysisSource)
     expect(typeof mod.run).toBe('function')
-    expect(typeof mod.getRole).toBe('function')
     expect(typeof mod.version).toBe('string')
+    // Roles deliberately do NOT come from here: axe.commons.aria.getRole only
+    // works inside an axe run and throws outside one, which silently emptied the
+    // role on every node the moment this chunk started loading for real.
+    expect(mod.getRole).toBeUndefined()
   })
 
   it('carries a real axe-core, not a stub', async () => {

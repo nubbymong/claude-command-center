@@ -10,7 +10,6 @@
 // pull axe-core into the lean bundle.
 
 import { CANVAS_ANALYSIS_PATH } from '../../../shared/canvas'
-import { setRoleResolver } from './semantics'
 
 export interface AxeCheckData {
   contrastRatio?: number
@@ -33,12 +32,11 @@ export interface AxeViolation {
 
 export interface AnalysisApi {
   version: string
-  getRole(el: Element): string | null
   run(context: unknown, rules: string[]): Promise<{ violations: AxeViolation[] }>
 }
 
-const LOAD_TIMEOUT_MS = 10_000
-export const ANALYSIS_RUN_TIMEOUT_MS = 15_000
+const LOAD_TIMEOUT_MS = 5_000
+export const ANALYSIS_RUN_TIMEOUT_MS = 12_000
 
 let pending: Promise<AnalysisApi> | null = null
 
@@ -69,7 +67,6 @@ export function ensureAnalysis(): Promise<AnalysisApi> {
     import(/* @vite-ignore */ specifier).then((mod: unknown) => {
       const api = mod as AnalysisApi
       if (!api || typeof api.run !== 'function') throw new Error('analysis chunk exposed no run()')
-      if (typeof api.getRole === 'function') setRoleResolver((el) => api.getRole(el))
       return api
     }),
     LOAD_TIMEOUT_MS,
@@ -82,10 +79,9 @@ export function ensureAnalysis(): Promise<AnalysisApi> {
   return pending
 }
 
-/** Test seam: drop the memoised chunk (and its role resolver). */
+/** Test seam: drop the memoised chunk. */
 export function resetAnalysis(): void {
   pending = null
-  setRoleResolver(null)
 }
 
 export function withRunTimeout<T>(promise: Promise<T>): Promise<T> {

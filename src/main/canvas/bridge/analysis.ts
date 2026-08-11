@@ -10,28 +10,7 @@
 
 import axe from 'axe-core'
 
-interface AxeInternals {
-  commons?: { aria?: { getRole?: (el: Element, opts?: unknown) => string | null } }
-}
-
 export const version: string = axe.version
-
-/**
- * Element → ARIA role via axe's HTML-AAM implementation.
- *
- * `axe.commons` is not part of axe's documented API surface, so every call is
- * feature-detected and failure falls back to the bridge's own table rather than
- * breaking the snapshot.
- */
-export function getRole(el: Element): string | null {
-  const fn = (axe as unknown as AxeInternals).commons?.aria?.getRole
-  if (typeof fn !== 'function') return null
-  try {
-    return fn(el)
-  } catch {
-    return null
-  }
-}
 
 export interface AxeCheckData {
   contrastRatio?: number
@@ -65,11 +44,15 @@ export interface AxeRunResult {
  * are the page's own business and injecting into them is a mutation.
  */
 export async function run(context: unknown, rules: string[]): Promise<AxeRunResult> {
+  // A renamed or dropped rule id rejects the WHOLE run ("unknown rule ..."),
+  // which would turn every snapshot into run-failed on a dependency bump.
+  const available = new Set((axe.getRules() as Array<{ ruleId: string }>).map((r) => r.ruleId))
+  const values = rules.filter((rule) => available.has(rule))
   const options = {
     elementRef: true,
     iframes: false,
     resultTypes: ['violations'],
-    runOnly: { type: 'rule', values: rules },
+    runOnly: { type: 'rule', values },
   }
   const result = await axe.run(context as never, options as never)
   return result as unknown as AxeRunResult

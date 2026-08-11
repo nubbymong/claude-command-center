@@ -37,7 +37,7 @@ function walk(node: SnapshotNode, depth: number, lines: string[]): void {
 
 function nodeLine(node: SnapshotNode): string {
   const parts = ['-']
-  if (node.role) parts.push(token(node.role))
+  if (node.role) parts.push(roleToken(node.role))
   if (node.name) parts.push(`"${escape(node.name)}"`)
   parts.push(`[ref=${token(node.ref)}]`)
   if (node.uxId) parts.push(`[ux=${token(node.uxId)}]`)
@@ -93,10 +93,22 @@ function styleTokens(styles: SnapshotNode['styles']): string[] {
  */
 function token(value: string): string {
   return String(value)
+    // Normalise FIRST. Fullwidth and small-form brackets read as structure to
+    // any reader but survive an ASCII strip — a page set `font-family: "1］ ［sr-only"`
+    // and forged the token that tells the agent to stop reporting a node. NFKC
+    // folds most of them; the rest are listed because NFKC does not map them.
+    .normalize('NFKC')
     .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
-    .replace(/[[\]]/g, '_')
+    .replace(/[[\]⁅⁆⟦⟧⦃⦄【】〚〛［］﹇﹈]/g, '_')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/** A role is a closed vocabulary, and it is the one value emitted BARE — no
+ *  brackets, no quotes to contain it. So it is validated, not merely escaped. */
+function roleToken(role: string): string {
+  const clean = token(role).toLowerCase()
+  return /^[a-z-]{1,64}$/.test(clean) ? clean : 'unknown-role'
 }
 
 /** A quoted value (name, field value) may contain anything; it must not be able

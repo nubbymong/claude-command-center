@@ -186,7 +186,7 @@ export interface SnapshotNode {
     type?: string
     checked?: boolean
     disabled?: boolean
-    /** Redacted to '<redacted>' for password/hidden inputs and secret-looking
+    /** Redacted to '(redacted)' for password/hidden inputs and secret-looking
      *  fields — the snapshot is sent verbatim to the agent. */
     value?: string
     ariaInvalid?: boolean

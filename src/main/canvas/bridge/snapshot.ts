@@ -219,25 +219,36 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
     children,
   }
 
-  // axe owns flat-background contrast when it is present; the measurement pass
-  // then only claims the gradient case, which axe reports as `incomplete` and
-  // therefore never fails. Without axe, the measurement pass covers both.
-  const flatContrast = analysis === null
+  // Run axe FIRST, so contrast coverage is decided by what actually happened.
+  // Computing it up front left a hole: a chunk that loaded but whose run then
+  // threw meant the measurement pass had already declined flat contrast and axe
+  // produced nothing, so nobody checked it — while the capture note claimed
+  // coverage. (Two concurrent captures hit this readily: axe is a singleton and
+  // rejects with "Axe is already running".)
+  let violations: AxeViolation[] | null = null
+  if (analysis) {
+    try {
+      const context = scope.length > 0 && roots.length > 0 ? roots : document
+      const result = await withRunTimeout(analysis.run(context, AXE_RULES))
+      violations = result.violations
+    } catch {
+      analysisError = 'run-failed' satisfies AnalysisFailure
+    }
+  }
+
+  // axe owns flat-background contrast when it ran; the measurement pass then
+  // claims only the gradient case, which axe reports as `incomplete` and
+  // therefore never fails. When axe did not run, measurement covers both.
+  const flatContrast = violations === null
   for (const candidate of ctx.candidates) {
     const issues = measurementIssues(candidate, { flatContrast })
     if (issues.length > 0) candidate.node.issues = (candidate.node.issues ?? []).concat(issues)
   }
   addOverlapIssues(ctx.candidates)
 
-  if (analysis) {
-    try {
-      const context = scope.length > 0 && roots.length > 0 ? roots : document
-      const result = await withRunTimeout(analysis.run(context, AXE_RULES))
-      joinAxe(result.violations, ctx.byElement)
-    } catch {
-      analysisError = 'run-failed' satisfies AnalysisFailure
-    }
-  }
+  // Joined after the measurement pass so the dedupe keeps the measured finding
+  // when both fire on one node.
+  if (violations) joinAxe(violations, ctx.byElement)
 
   const out: CanvasSnapshotResult = {
     viewport: {

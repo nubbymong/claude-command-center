@@ -190,7 +190,7 @@ export function stateOf(el: Element, opts?: { srOnly?: boolean; opacity?: number
     const secret = type === 'password' || type === 'hidden' || SECRET_HINT.test(name)
     const value = typeof control.value === 'string' ? control.value : ''
     if (secret) {
-      if (value.length > 0) state.value = '<redacted>'
+      if (value.length > 0) state.value = '(redacted)'
     } else if (value.length > 0) {
       state.value = value.length > VALUE_MAX ? value.slice(0, VALUE_MAX - 1) + '…' : value
     }
