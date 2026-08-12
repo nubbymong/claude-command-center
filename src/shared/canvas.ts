@@ -1,8 +1,9 @@
 // Agent Canvas — shared contracts (spec: docs/agent-canvas-spec.md §4).
 //
-// P1 carries the version/serving subset only. Annotations, reviews, and the
-// semantic-snapshot node types land with their phases (P2/P3) so this file
-// never holds dead contracts.
+// P1 carried the version/serving subset; P2 added the semantic snapshot; P3
+// adds anchoring, annotations, and reviews. Plan-mode pieces ('plan-step'
+// anchors, verdicts) are typed here because the CONTRACT is one union — but
+// nothing renders them until P5.
 
 /** Content types the canvas can host. P1 serves 'design' and 'uat'; 'plan' is P5. */
 export type CanvasMode = 'uat' | 'design' | 'plan'
@@ -56,10 +57,146 @@ export interface CanvasChangedEvent {
   activeVersionId: string | null
 }
 
-/** Renderer → main render request (dev/test ingress; MCP `canvas_render` lands in P3). */
+/** Renderer → main render request (dev/test ingress; the `canvas_render` MCP
+ *  tool is the agent-facing ingress — both land in the store's renderVersion). */
 export type CanvasRenderSource =
   | { mode: 'design'; html: string }
   | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string }
+
+// ── Anchoring (P3, spec §4) ─────────────────────────────────────────────────
+
+/**
+ * How an annotation points at content across re-renders.
+ *
+ * 'ux-id' is primary for uat/design (the authoring contract's `data-ux-id`);
+ * 'plan-step' is primary for plan mode (P5); 'fingerprint' is a FALLBACK only —
+ * the name in it is a weak signal. One element commonly carries two refs: its
+ * ux-id and, captured at the same moment, its fingerprint. Resolution walks the
+ * list in order and stops at the first hit, which is what makes "ux-id lookup →
+ * fingerprint fallback" one loop rather than two code paths.
+ */
+export type AnchorRef =
+  | { kind: 'ux-id'; id: string }
+  | { kind: 'plan-step'; id: string }
+  | { kind: 'fingerprint'; role: string; name: string; ancestorPath: string; ordinal: number }
+
+/**
+ * What a locked selection or a marquee IS, once the user has one.
+ *
+ * `bboxPage` is content-page coords AT CAPTURE — on a later version it is the
+ * ghost box the resolution checklist shows when nothing re-anchors, so it must
+ * survive the element it described. `targets` is empty for a pure region.
+ */
+export interface FocusObject {
+  targets: AnchorRef[]
+  bboxPage: Rect
+  /** Human-readable ('button "Save"' / 'region 420×180'). Page-derived text —
+   *  render it as data, never as markup or operator voice. */
+  label: string
+  versionId: string
+}
+
+// ── Annotations & reviews (P3, spec §4) ─────────────────────────────────────
+
+export type AnnotationScope = 'element' | 'region' | 'general'
+export type AnnotationState = 'open' | 'approved' | 'reannotated' | 'dismissed'
+export type PlanVerdict = 'accept' | 'reject' | 'question'
+
+/** A sketch attached to a note (D6). The glass is never the data model: this
+ *  RECORD references glass elements; the PNG is exported once, at submit. */
+export interface AnnotationSketch {
+  excalidrawElementIds: string[]
+  /** Relative to the canvas's own directory ('reviews/R3/a7.png'), so a moved
+   *  resources dir does not orphan every attachment. Empty until submit. */
+  pngPath: string
+  bboxPage: Rect
+}
+
+export interface Annotation {
+  /** 'a1', 'a2', … — minted by the store, never accepted from a caller. */
+  id: string
+  reviewId: string
+  /** 'general' has no focus and can never orphan. */
+  scope: AnnotationScope
+  note: string
+  /** Plan mode only (P5). */
+  verdict?: PlanVerdict
+  /** Element/region only. */
+  focus?: FocusObject
+  sketch?: AnnotationSketch
+  /** The version the note was made against (a draft review can span versions;
+   *  each note remembers its own). */
+  versionId: string
+  state: AnnotationState
+  /** Id of the re-annotation that replaced this note (state 'reannotated'). */
+  supersededBy?: string
+}
+
+export interface Review {
+  /** 'R7' — rendered as 'Review #7'. Minted by the store. */
+  id: string
+  canvas: CanvasHandle
+  /** The active version at submit time (D12: resolution runs against the
+   *  agent's FINAL render of its turn, one pass per turn). */
+  versionId: string
+  annotationIds: string[]
+  status: 'draft' | 'submitted' | 'resolved'
+  createdAt: string
+  submittedAt?: string
+}
+
+/** What `canvas_review` returns to the agent (the pull side of D10). */
+export interface ReviewPayload {
+  review: Review
+  /** Element/region notes; `snapshotContext` is a scoped subtree when one was
+   *  captured with the note (optional — absent in v1). */
+  annotations: Array<Annotation & { snapshotContext?: SnapshotNode }>
+  generalNotes: Annotation[]
+  /** Sketch PNGs, served to the agent as images alongside the text. */
+  attachments: Array<{ annotationId: string; pngPath: string }>
+  envelope: 'untrusted-content'
+}
+
+/** Ids the review store mints. Tighter than path-safe on purpose (these appear
+ *  in file names under the canvas dir): the store never mints anything else. */
+export const CANVAS_REVIEW_ID_RE = /^R[0-9]{1,9}$/
+export const CANVAS_ANNOTATION_ID_RE = /^a[0-9]{1,9}$/
+
+/** What the renderer holds per session for reviews (IPC `canvas:reviewGetState`). */
+export interface CanvasReviewState {
+  canvasId: string
+  sessionId: string
+  reviews: Review[]
+  annotations: Annotation[]
+}
+
+/** Payload of the `canvas:reviewChanged` main → renderer push. */
+export interface CanvasReviewChangedEvent {
+  sessionId: string
+  canvasId: string
+}
+
+/**
+ * Renderer → main: create or update a note in the session's draft review.
+ * Ids are minted in main; a draft carries `annotationId` only to UPDATE the
+ * note it names, and only while that note's review is still a draft.
+ */
+export interface CanvasAnnotationDraft {
+  annotationId?: string
+  scope: AnnotationScope
+  note: string
+  focus?: FocusObject
+  /** Sketch metadata only (ids + bbox). The PNG is exported at submit (D6). */
+  sketch?: { excalidrawElementIds: string[]; bboxPage: Rect }
+  versionId: string
+}
+
+/** Renderer → main at submit: one exported PNG per sketch-carrying note. */
+export interface CanvasSketchExport {
+  annotationId: string
+  /** Base64 PNG (no data: prefix). Capped by schema and re-checked in main. */
+  pngBase64: string
+}
 
 // ── ccc-ux:// URL shape ─────────────────────────────────────────────────────
 // ccc-ux://<canvasId>/<versionId>/<path>  — the canvas id is the URL HOST so
@@ -138,19 +275,78 @@ export type CanvasBridgeRequest =
   | ({ ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'snapshot' } & CanvasSnapshotOptions)
   | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'boxMap' }
   | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'elementAtPoint'; x: number; y: number }
+  | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'inspect'; x: number; y: number }
+  | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'resolveAnchors'; anchors: AnchorRef[] }
 
 export interface CanvasSnapshotNode extends CanvasHitInfo {
   children: CanvasSnapshotNode[]
 }
 
+/**
+ * The identity an element can be re-found by once its box is stale (spec §4
+ * fingerprint anchor). Computed content-side, where the whole document is in
+ * reach; the host only stores and replays it.
+ */
+export interface CanvasFingerprint {
+  role: string
+  name: string
+  /** role-or-tag of each meaningful ancestor, outermost first ('main>list>listitem'). */
+  ancestorPath: string
+  /** Position among the document's elements sharing role+name+ancestorPath, in
+   *  document order — the tie-breaker when a page repeats a component. */
+  ordinal: number
+}
+
+export interface CanvasInspectEntry extends CanvasHitInfo {
+  fingerprint: CanvasFingerprint
+}
+
+/** Reply to 'inspect': the meaningful chain at a point, deepest-first, so
+ *  "expand to parent" is a walk up this array with no further round-trips. */
+export interface CanvasInspectResult {
+  chain: CanvasInspectEntry[]
+}
+
+/** How far up an inspect chain goes. Enough for any real selection ladder;
+ *  bounds what a hostile page can make the host hold per click. */
+export const MAX_INSPECT_CHAIN = 12
+
+/** Reply entries for 'resolveAnchors', 1:1 with the request's anchors. */
+export type CanvasAnchorResolution =
+  | { found: true; via: 'ux-id' | 'fingerprint'; box: Rect; role: string; name: string; uxId?: string }
+  | { found: false }
+
+export interface CanvasResolveAnchorsResult {
+  results: CanvasAnchorResolution[]
+}
+
+/** Cap on anchors per resolveAnchors request (open notes × ~2 refs each; far
+ *  beyond any real checklist, small enough to bound the content-side scan). */
+export const MAX_RESOLVE_ANCHORS = 120
+
 export type CanvasBridgeResponse =
   | { ns: typeof CANVAS_BRIDGE_NS; id: number; ok: true; result: unknown }
   | { ns: typeof CANVAS_BRIDGE_NS; id: number; ok: false; error: string }
+
+/**
+ * Keys the bridge REPORTS from inside the content frame ('contentKey').
+ *
+ * A closed allowlist, and only ever reported from a non-editable target: in
+ * browse mode the iframe owns keyboard focus, so the host would never hear the
+ * spec's "one key expands to parent" without the content relaying it — but a
+ * page is full of real inputs, and relaying keystrokes from THOSE would be a
+ * keylogger wearing a feature's name. Two navigation keys, nothing else, and
+ * the host treats them as requests it may ignore (a report, per D8 — the
+ * content is never commanded).
+ */
+export const CANVAS_REPORTED_KEYS = ['Escape', 'ArrowUp'] as const
 
 export type CanvasBridgeEvent =
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'ready' }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'viewport'; viewport: CanvasViewportInfo }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'pointer'; pageX: number; pageY: number; hit: CanvasHitInfo | null }
+  | { ns: typeof CANVAS_BRIDGE_NS; type: 'contentClick'; pageX: number; pageY: number; hit: CanvasHitInfo | null }
+  | { ns: typeof CANVAS_BRIDGE_NS; type: 'contentKey'; key: string }
 
 // ── Semantic snapshot (P2, spec §4) ─────────────────────────────────────────
 // The richer tree the P2 bridge produces (dom-accessibility-api + aria-query +

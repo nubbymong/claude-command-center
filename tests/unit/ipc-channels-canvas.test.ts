@@ -11,6 +11,12 @@ describe('canvas IPC channels', () => {
     expect(IPC.CANVAS_RENDER).toBe('canvas:render')
     expect(IPC.CANVAS_SET_ACTIVE_VERSION).toBe('canvas:setActiveVersion')
     expect(IPC.CANVAS_CHANGED).toBe('canvas:changed')
+    expect(IPC.CANVAS_REVIEW_GET_STATE).toBe('canvas:reviewGetState')
+    expect(IPC.CANVAS_ANNOTATION_UPSERT).toBe('canvas:annotationUpsert')
+    expect(IPC.CANVAS_ANNOTATION_DELETE).toBe('canvas:annotationDelete')
+    expect(IPC.CANVAS_REVIEW_SUBMIT).toBe('canvas:reviewSubmit')
+    expect(IPC.CANVAS_ANNOTATION_RESOLVE).toBe('canvas:annotationResolve')
+    expect(IPC.CANVAS_REVIEW_CHANGED).toBe('canvas:reviewChanged')
   })
 
   it('keeps every channel value unique', () => {

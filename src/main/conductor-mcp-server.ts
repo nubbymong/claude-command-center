@@ -42,6 +42,7 @@ import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
 import { getCanvasStateForSession, renderVersion } from './canvas/canvas-store'
+import { getReviewPayload } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
@@ -727,6 +728,8 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
         requestSnapshot: (args) => requestCanvasSnapshot(args),
         renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
+        getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
+        readAttachment: (absPath) => fs.readFileSync(absPath),
       })
     }
 

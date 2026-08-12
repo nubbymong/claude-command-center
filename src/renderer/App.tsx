@@ -12,6 +12,7 @@ import LogsPane from './components/LogsPane'
 import { useWebviewStore } from './stores/webviewStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
 import { setupCanvasListener } from './stores/canvasStore'
+import { setupCanvasReviewListener } from './stores/canvasReviewStore'
 import { setupCanvasSnapshotHost } from './canvas/canvas-snapshot-host'
 import { useLogsStore } from './stores/useLogsStore'
 import BottomBar from './components/BottomBar'
@@ -416,6 +417,7 @@ export default function App() {
       setupGitHubListener()
       setupChannelListeners()
       setupCanvasListener()
+      setupCanvasReviewListener()
       setupCanvasSnapshotHost()
       useGitHubStore.getState().loadConfig()
       useConductorMcpStore.getState().loadConfig()

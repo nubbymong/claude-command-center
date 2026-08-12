@@ -38,6 +38,12 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
     getCanvasState: () => STATE,
     requestSnapshot: async () => result(),
     renderVersion: () => ({ canvasId: 'canvas-abc', versionId: 'v3' }),
+    getReviewPayload: () => {
+      throw new Error('unknown review')
+    },
+    readAttachment: () => {
+      throw new Error('no attachments in this fixture')
+    },
     ...overrides,
   }
 }
@@ -300,7 +306,7 @@ describe('registration', () => {
   it('advertises canvas_snapshot with a schema the SDK can accept', () => {
     const registered = vi.fn()
     registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
-    expect(registered).toHaveBeenCalledTimes(2)
+    expect(registered).toHaveBeenCalledTimes(3)
     const [name, description, shape, handler] = registered.mock.calls[0]
     expect(name).toBe('canvas_snapshot')
     expect(String(description)).toMatch(/scoped/i)
@@ -319,6 +325,18 @@ describe('registration', () => {
     // seeing it, or the agent renders and then reports a screen nobody opened.
     expect(String(description)).toMatch(/hand back/i)
     expect(Object.keys(shape as object).sort()).toEqual(['buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'mode'])
+    expect(typeof handler).toBe('function')
+  })
+
+  it('advertises canvas_review with a schema the SDK can accept', () => {
+    const registered = vi.fn()
+    registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
+    const [name, description, shape, handler] = registered.mock.calls[2]
+    expect(name).toBe('canvas_review')
+    // The description has to carry the untrusted-data framing: the notes are
+    // what the user wrote ABOUT the page, never instructions to follow blindly.
+    expect(String(description)).toMatch(/untrusted|DATA/i)
+    expect(Object.keys(shape as object).sort()).toEqual(['canvasId', 'cccSessionId', 'format', 'reviewId'])
     expect(typeof handler).toBe('function')
   })
 })
@@ -614,7 +632,7 @@ describe('canvas_render', () => {
       },
     }
     registerCanvasTools(server, z, () => null, deps())
-    expect(Object.keys(tools).sort()).toEqual(['canvas_render', 'canvas_snapshot'])
+    expect(Object.keys(tools).sort()).toEqual(['canvas_render', 'canvas_review', 'canvas_snapshot'])
 
     const reply = await tools.canvas_render({ mode: 'design', html: '<p>hi</p>' })
     expect(reply.isError).toBe(true)

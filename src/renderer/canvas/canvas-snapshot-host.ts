@@ -10,14 +10,9 @@
 // crosses IPC — a forged reply must not be able to push an unbounded structure
 // into the main process — and bounded again on arrival there.
 
-import {
-  CANVAS_BRIDGE_NS,
-  canvasOrigin,
-  type CanvasSnapshotOptions,
-  type CanvasSnapshotReply,
-  type CanvasSnapshotRequestEvent,
-} from '../../shared/canvas'
+import type { CanvasSnapshotReply, CanvasSnapshotRequestEvent } from '../../shared/canvas'
 import { sanitizeSnapshotResult } from '../../shared/canvas-snapshot-sanitize'
+import { askCanvasFrame } from './canvas-frame-rpc'
 
 export interface LiveCanvasFrame {
   sessionId: string
@@ -38,15 +33,6 @@ export const FRAME_TIMEOUT_MS = 25_000
 
 const frames = new Map<string, LiveCanvasFrame>()
 
-/** Correlation ids are random, not a counter. A counter starting at 1 let a
- *  hostile page spray guessed ids at its parent and answer a request before the
- *  real bridge did — the reply channel has no other proof of who is speaking. */
-function bridgeRequestId(): number {
-  const bytes = new Uint32Array(1)
-  globalThis.crypto.getRandomValues(bytes)
-  return bytes[0]
-}
-
 /** Called by the canvas pane while it is mounted. Returns the unregister. */
 export function registerCanvasFrame(frame: LiveCanvasFrame): () => void {
   frames.set(frame.sessionId, frame)
@@ -57,47 +43,6 @@ export function registerCanvasFrame(frame: LiveCanvasFrame): () => void {
 
 export function _framesForTest(): Map<string, LiveCanvasFrame> {
   return frames
-}
-
-function askFrame(target: Window, canvasId: string, options: CanvasSnapshotOptions, timeoutMs: number): Promise<unknown> {
-  const id = bridgeRequestId()
-  const origin = canvasOrigin(canvasId)
-  return new Promise((resolve, reject) => {
-    const settle = (fn: () => void) => {
-      clearTimeout(timer)
-      window.removeEventListener('message', onMessage)
-      fn()
-    }
-
-    const timer = setTimeout(() => {
-      settle(() => reject(new Error('The canvas frame did not answer the snapshot request in time.')))
-    }, timeoutMs)
-
-    const onMessage = (event: MessageEvent) => {
-      // Both halves matter. `source` proves it came from the frame we asked;
-      // `origin` proves the document ANSWERING is still this canvas's — a frame's
-      // window identity survives navigation, so without the origin check a
-      // document that replaced the one we asked could answer for it. (The P1
-      // hover listener checks origin; this path had dropped it.)
-      if (event.source !== target || event.origin !== origin) return
-      const msg = event.data as { ns?: string; id?: number; ok?: boolean; result?: unknown; error?: unknown } | null
-      if (!msg || msg.ns !== CANVAS_BRIDGE_NS || msg.id !== id) return
-      if (msg.ok === true) settle(() => resolve(msg.result))
-      else settle(() => reject(new Error(typeof msg.error === 'string' ? msg.error.slice(0, 300) : 'The canvas frame reported an error.')))
-    }
-
-    window.addEventListener('message', onMessage)
-    try {
-      // Targeted at the canvas's own origin: a request can never be delivered to
-      // a document that is not this canvas's.
-      target.postMessage({ ns: CANVAS_BRIDGE_NS, id, type: 'snapshot', scope: options.scope, analysis: options.analysis }, origin)
-    } catch (err) {
-      // Without this the listener and timer outlive the rejected promise, and
-      // main frees its in-flight slot immediately — so the leak would accumulate
-      // at IPC round-trip rate rather than being throttled by the cap.
-      settle(() => reject(err instanceof Error ? err : new Error(String(err))))
-    }
-  })
 }
 
 export async function handleSnapshotRequest(
@@ -118,7 +63,12 @@ export async function handleSnapshotRequest(
 
   try {
     const options = event.options ?? {}
-    const raw = await askFrame(target, event.canvasId, options, timeoutMs)
+    const raw = await askCanvasFrame(
+      target,
+      event.canvasId,
+      { type: 'snapshot', scope: options.scope, analysis: options.analysis },
+      timeoutMs,
+    )
     // Sanitised HERE as well as in main, and the scope is known here, so an
     // unscoped capture sheds its styles before it ever crosses IPC rather than
     // after.

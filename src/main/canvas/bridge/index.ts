@@ -39,7 +39,17 @@
 //
 // Bundled by scripts/vite-plugin-canvas-bridge.mjs into a single IIFE.
 
-import { CANVAS_BRIDGE_NS, type CanvasHitInfo, type CanvasViewportInfo } from '../../../shared/canvas'
+import {
+  CANVAS_BRIDGE_NS,
+  CANVAS_REPORTED_KEYS,
+  MAX_INSPECT_CHAIN,
+  MAX_RESOLVE_ANCHORS,
+  type AnchorRef,
+  type CanvasHitInfo,
+  type CanvasInspectEntry,
+  type CanvasViewportInfo,
+} from '../../../shared/canvas'
+import { createAnchorContext, fingerprintOf, resolveAnchors } from './anchors'
 import { boxOf, isVisible } from './measure'
 import { isMeaningful, nameOf, parentOf, roleOf } from './semantics'
 import { captureSnapshot } from './snapshot'
@@ -76,7 +86,8 @@ function describe(el: Element): CanvasHitInfo {
  *  each level is another engine call and components nest. */
 const MAX_HIT_RETARGET = 8
 
-function hitAt(pageX: number, pageY: number): CanvasHitInfo | null {
+/** The raw deepest element under a page point, descending into shadow roots. */
+function elementAt(pageX: number, pageY: number): Element | null {
   const x = pageX - window.scrollX
   const y = pageY - window.scrollY
   let el: Element | null = null
@@ -99,10 +110,46 @@ function hitAt(pageX: number, pageY: number): CanvasHitInfo | null {
     el = inner
   }
   if (!el || el === document.documentElement || el === document.body) return null
+  return el
+}
+
+/** The meaningful element the hover chip names for a raw hit — the same walk
+ *  hitAt and inspectAt must agree on, or a click would lock something other
+ *  than what the hover showed. */
+function meaningfulTargetOf(el: Element): Element {
   let cur: Element | null = el
   while (cur && cur !== document.body && !isMeaningful(cur)) cur = parentOf(cur)
-  const target = cur && cur !== document.body ? cur : el
-  return describe(target)
+  return cur && cur !== document.body ? cur : el
+}
+
+function hitAt(pageX: number, pageY: number): CanvasHitInfo | null {
+  const el = elementAt(pageX, pageY)
+  if (!el) return null
+  return describe(meaningfulTargetOf(el))
+}
+
+/**
+ * The selection ladder at a point (P3 focus): the meaningful element the hover
+ * would have named, then each meaningful ancestor, deepest first, each with the
+ * fingerprint it could later be re-found by. One reply carries everything
+ * "expand to parent" will ever need for this click.
+ */
+function inspectAt(pageX: number, pageY: number): { chain: CanvasInspectEntry[] } {
+  const el = elementAt(pageX, pageY)
+  if (!el) return { chain: [] }
+  const start = meaningfulTargetOf(el)
+  const ctx = createAnchorContext()
+  const chain: CanvasInspectEntry[] = []
+  let cur: Element | null = start
+  while (cur && cur !== document.body && cur !== document.documentElement && chain.length < MAX_INSPECT_CHAIN) {
+    // `start` is included even when nothing meaningful was found (the raw hit
+    // is then the only honest answer); above it only meaningful rungs count.
+    if (cur === start || isMeaningful(cur)) {
+      chain.push({ ...describe(cur), fingerprint: fingerprintOf(cur, ctx) })
+    }
+    cur = parentOf(cur)
+  }
+  return { chain }
 }
 
 /** Every element under `root`, descending into open shadow roots — which
@@ -122,6 +169,13 @@ function boxMap(): CanvasHitInfo[] {
   const out: CanvasHitInfo[] = []
   if (document.documentElement) collectBoxes(document.documentElement, out)
   return out
+}
+
+/** Where a keystroke is the USER'S text entry rather than navigation. */
+function isEditableTarget(el: Element): boolean {
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+  return (el as HTMLElement).isContentEditable === true
 }
 
 function viewportInfo(): CanvasViewportInfo {
@@ -152,6 +206,7 @@ interface IncomingRequest {
   y?: unknown
   scope?: unknown
   analysis?: unknown
+  anchors?: unknown
 }
 
 function handle(msg: IncomingRequest): Promise<unknown> {
@@ -161,6 +216,11 @@ function handle(msg: IncomingRequest): Promise<unknown> {
   }
   if (msg.type === 'boxMap') return Promise.resolve(boxMap())
   if (msg.type === 'elementAtPoint') return Promise.resolve(hitAt(Number(msg.x) || 0, Number(msg.y) || 0))
+  if (msg.type === 'inspect') return Promise.resolve(inspectAt(Number(msg.x) || 0, Number(msg.y) || 0))
+  if (msg.type === 'resolveAnchors') {
+    const anchors = Array.isArray(msg.anchors) ? (msg.anchors.slice(0, MAX_RESOLVE_ANCHORS) as AnchorRef[]) : []
+    return Promise.resolve({ results: resolveAnchors(anchors) })
+  }
   return Promise.reject(new Error('unknown request: ' + String(msg.type)))
 }
 
@@ -233,6 +293,33 @@ function install(): void {
       lastPointer = null
     },
     { passive: true },
+  )
+
+  // Click-to-lock (P3 focus): the host cannot see clicks inside this frame, so
+  // the bridge REPORTS them. Capture phase, so a page handler that stops
+  // propagation cannot make a click invisible to review; nothing is prevented
+  // or retargeted — the page's own behaviour is untouched (D8).
+  document.addEventListener(
+    'click',
+    (event: MouseEvent) => {
+      send({ ns: NS, type: 'contentClick', pageX: event.pageX, pageY: event.pageY, hit: hitAt(event.pageX, event.pageY) })
+    },
+    { capture: true, passive: true },
+  )
+
+  // "One key expands to parent" (spec §6) has to work while the frame owns
+  // keyboard focus. Only the closed CANVAS_REPORTED_KEYS list is ever relayed,
+  // and never from an editable target — a page is full of real inputs, and
+  // relaying those keystrokes would be a keylogger wearing a feature's name.
+  document.addEventListener(
+    'keydown',
+    (event: KeyboardEvent) => {
+      if (!(CANVAS_REPORTED_KEYS as readonly string[]).includes(event.key)) return
+      const target = event.target
+      if (target instanceof Element && isEditableTarget(target)) return
+      send({ ns: NS, type: 'contentKey', key: event.key })
+    },
+    { capture: true, passive: true },
   )
 
   function announceReady(): void {

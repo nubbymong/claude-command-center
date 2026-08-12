@@ -52,12 +52,16 @@ export type { ModelRegistry } from '../../shared/model-registry'
 import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
 export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
 import type {
-  CanvasChangedEvent, CanvasRenderSource, CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasState,
+  CanvasAnnotationDraft, CanvasChangedEvent, CanvasRenderSource, CanvasReviewChangedEvent,
+  CanvasReviewState, CanvasSketchExport, CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasState,
 } from '../../shared/canvas'
 export type {
-  CanvasChangedEvent, CanvasHandle, CanvasHitInfo, CanvasMode, CanvasRenderSource,
+  AnchorRef, Annotation, AnnotationScope, AnnotationState,
+  CanvasAnnotationDraft, CanvasChangedEvent, CanvasHandle, CanvasHitInfo, CanvasMode, CanvasRenderSource,
+  CanvasReviewChangedEvent, CanvasReviewState, CanvasSketchExport,
   CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasSnapshotResult,
   CanvasState, CanvasVersion, CanvasVersionSource, CanvasViewportInfo,
+  FocusObject, Review,
 } from '../../shared/canvas'
 import type {
   ChannelPayload,
@@ -320,6 +324,17 @@ export interface ElectronAPI {
      *  answers exactly once per requestId via sendSnapshotResult. */
     onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
     sendSnapshotResult: (reply: CanvasSnapshotReply) => void
+    // P3 — the review loop (drafts, submit, resolution)
+    reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
+    annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
+    annotationDelete: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) => Promise<CanvasReviewState>
+    annotationResolve: (args: {
+      sessionId: string
+      annotationId: string
+      action: 'approve' | 'dismiss' | 'reannotate'
+    }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
+    onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<any>

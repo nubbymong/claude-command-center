@@ -5,8 +5,12 @@ import type { StatuslineData } from '../shared/types'
 import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
 import type {
+  CanvasAnnotationDraft,
   CanvasChangedEvent,
   CanvasRenderSource,
+  CanvasReviewChangedEvent,
+  CanvasReviewState,
+  CanvasSketchExport,
   CanvasSnapshotReply,
   CanvasSnapshotRequestEvent,
   CanvasState,
@@ -197,6 +201,17 @@ export interface ElectronAPI {
      *  answers exactly once per requestId via sendSnapshotResult. */
     onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
     sendSnapshotResult: (reply: CanvasSnapshotReply) => void
+    // P3 — the review loop (drafts, submit, resolution)
+    reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
+    annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
+    annotationDelete: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) => Promise<CanvasReviewState>
+    annotationResolve: (args: {
+      sessionId: string
+      annotationId: string
+      action: 'approve' | 'dismiss' | 'reannotate'
+    }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
+    onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -703,6 +718,20 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.CANVAS_SNAPSHOT_REQUEST, handler)
     },
     sendSnapshotResult: (reply: CanvasSnapshotReply) => ipcRenderer.send(IPC.CANVAS_SNAPSHOT_RESULT, reply),
+    reviewGetState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_GET_STATE, args),
+    annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_UPSERT, args),
+    annotationDelete: (args: { sessionId: string; annotationId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_DELETE, args),
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
+    annotationResolve: (args: { sessionId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_RESOLVE, args),
+    onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
+      const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_REVIEW_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_REVIEW_CHANGED, handler)
+    },
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),

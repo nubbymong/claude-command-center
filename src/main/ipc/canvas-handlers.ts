@@ -17,6 +17,15 @@ import {
   renderVersion,
   setActiveVersion,
 } from '../canvas/canvas-store'
+import {
+  MAX_SKETCH_PNG_BYTES,
+  deleteAnnotation,
+  getReviewStateForSession,
+  onReviewChanged,
+  resolveAnnotation,
+  submitReview,
+  upsertAnnotation,
+} from '../canvas/canvas-review-store'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 
 // ---------------------------------------------------------------------------
@@ -63,6 +72,94 @@ const setActiveVersionSchema = z
   })
   .strict()
 
+// ── P3: reviews & annotations ───────────────────────────────────────────────
+// The store re-validates everything (it is the single mutation point and the
+// MCP tool reads through it); these schemas are the transport's own bound so a
+// malformed renderer payload dies at the boundary with a parse error, not a
+// store throw.
+
+const versionIdSchema = z.string().regex(/^v[0-9]{1,9}$/)
+const annotationIdSchema = z.string().regex(/^a[0-9]{1,9}$/)
+const reviewIdSchema = z.string().regex(/^R[0-9]{1,9}$/)
+
+const rectSchema = z
+  .object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().finite().min(0),
+    height: z.number().finite().min(0),
+  })
+  .strict()
+
+const anchorRefSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('ux-id'), id: z.string().min(1).max(512) }).strict(),
+  z.object({ kind: z.literal('plan-step'), id: z.string().min(1).max(512) }).strict(),
+  z
+    .object({
+      kind: z.literal('fingerprint'),
+      role: z.string().max(512),
+      name: z.string().max(512),
+      ancestorPath: z.string().max(512),
+      ordinal: z.number().int().min(0).max(1_000_000),
+    })
+    .strict(),
+])
+
+const focusSchema = z
+  .object({
+    targets: z.array(anchorRefSchema).max(8),
+    bboxPage: rectSchema,
+    label: z.string().max(120),
+    versionId: versionIdSchema,
+  })
+  .strict()
+
+const sketchMetaSchema = z
+  .object({
+    excalidrawElementIds: z.array(z.string().min(1).max(128)).min(1).max(100),
+    bboxPage: rectSchema,
+  })
+  .strict()
+
+const annotationDraftSchema = z
+  .object({
+    annotationId: annotationIdSchema.optional(),
+    scope: z.enum(['element', 'region', 'general']),
+    note: z.string().min(1).max(4000),
+    focus: focusSchema.optional(),
+    sketch: sketchMetaSchema.optional(),
+    versionId: versionIdSchema,
+  })
+  .strict()
+
+const reviewGetStateSchema = z.object({ sessionId: sessionIdSchema }).strict()
+
+const annotationUpsertSchema = z.object({ sessionId: sessionIdSchema, draft: annotationDraftSchema }).strict()
+
+const annotationDeleteSchema = z.object({ sessionId: sessionIdSchema, annotationId: annotationIdSchema }).strict()
+
+/** Base64 of a PNG capped at MAX_SKETCH_PNG_BYTES: 4 chars per 3 bytes, plus
+ *  padding slack. The store re-measures in BYTES after decoding. */
+const sketchPngBase64Schema = z.string().min(8).max(Math.ceil(MAX_SKETCH_PNG_BYTES / 3) * 4 + 8)
+
+const reviewSubmitSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    reviewId: reviewIdSchema,
+    sketches: z
+      .array(z.object({ annotationId: annotationIdSchema, pngBase64: sketchPngBase64Schema }).strict())
+      .max(100),
+  })
+  .strict()
+
+const annotationResolveSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    annotationId: annotationIdSchema,
+    action: z.enum(['approve', 'dismiss', 'reannotate']),
+  })
+  .strict()
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -81,6 +178,42 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   ipcMain.handle(IPC.CANVAS_SET_ACTIVE_VERSION, async (_e, args: unknown) => {
     const { sessionId, versionId } = setActiveVersionSchema.parse(args)
     return setActiveVersion(sessionId, versionId)
+  })
+
+  ipcMain.handle(IPC.CANVAS_REVIEW_GET_STATE, async (_e, args: unknown) => {
+    const { sessionId } = reviewGetStateSchema.parse(args)
+    return getReviewStateForSession(sessionId)
+  })
+
+  ipcMain.handle(IPC.CANVAS_ANNOTATION_UPSERT, async (_e, args: unknown) => {
+    const { sessionId, draft } = annotationUpsertSchema.parse(args)
+    return upsertAnnotation(sessionId, draft)
+  })
+
+  ipcMain.handle(IPC.CANVAS_ANNOTATION_DELETE, async (_e, args: unknown) => {
+    const { sessionId, annotationId } = annotationDeleteSchema.parse(args)
+    return deleteAnnotation(sessionId, annotationId)
+  })
+
+  ipcMain.handle(IPC.CANVAS_REVIEW_SUBMIT, async (_e, args: unknown) => {
+    const { sessionId, reviewId, sketches } = reviewSubmitSchema.parse(args)
+    return submitReview(sessionId, reviewId, sketches)
+  })
+
+  ipcMain.handle(IPC.CANVAS_ANNOTATION_RESOLVE, async (_e, args: unknown) => {
+    const { sessionId, annotationId, action } = annotationResolveSchema.parse(args)
+    return resolveAnnotation(sessionId, annotationId, action)
+  })
+
+  onReviewChanged((event) => {
+    const win = getWindow()
+    if (win && !win.isDestroyed()) {
+      try {
+        win.webContents.send(IPC.CANVAS_REVIEW_CHANGED, event)
+      } catch {
+        /* window gone */
+      }
+    }
   })
 
   onCanvasChanged((event) => {
