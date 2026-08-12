@@ -7,7 +7,7 @@
 
 import type { AxeIssue, SnapshotNode } from '../../../shared/canvas'
 import { composite, contrastRatio, formatRatio, parseColor, requiredContrast, type Rgba } from './color'
-import { backdropOf, styleOf } from './measure'
+import { backdropOf, boxOf, styleOf } from './measure'
 
 export interface Candidate {
   el: Element
@@ -196,7 +196,37 @@ function isInactive(el: Element): boolean {
   return false
 }
 
-function contrastIssue(c: Candidate, flatContrast: boolean): AxeIssue | null {
+/**
+ * The one honest output when the backdrop is not knowable: name the gap. It
+ * cannot be a false positive, because it does not claim a defect.
+ *
+ * Reported once per DECLARING element, not once per text node. `reported` is the
+ * capture's memo of which declarations have already been named: one
+ * `background-image` on a hero put this on all 300 paragraphs beneath it, and on
+ * a dense page that pushed a genuine `critical button-name` off the wire — a
+ * coverage note that costs real findings is a worse trade than the silence it
+ * replaced.
+ */
+function notAssessed(c: Candidate, why: string, source: Element | null, reported: Set<Element> | undefined): AxeIssue | null {
+  const declaring = source ?? c.el
+  if (reported) {
+    if (reported.has(declaring)) return null
+    reported.add(declaring)
+  }
+  const issue: AxeIssue = {
+    rule: 'contrast-not-assessed',
+    severity: 'minor',
+    measured: why,
+    needed: 'check this by eye',
+  }
+  // Where the cause is, when that is not this node — the same convention the
+  // axe join uses. Without it the agent is told a paragraph cannot be assessed
+  // and has no way to find the ancestor that made it so.
+  if (declaring !== c.el) issue.at = boxOf(declaring)
+  return issue
+}
+
+function contrastIssue(c: Candidate, flatContrast: boolean, reported?: Set<Element>): AxeIssue | null {
   if (c.srOnly || c.text.length === 0) return null
   if (c.opacity < 0.05) return null
   if (isInactive(c.el)) return null
@@ -204,7 +234,11 @@ function contrastIssue(c: Candidate, flatContrast: boolean): AxeIssue | null {
   if (!cs) return null
 
   const fg = parseColor(cs.color)
-  if (!fg) return null
+  // A foreground that does not parse used to `return null` — silently, and into
+  // the same hole every other silent decline here fell into: axe routes nothing
+  // to `violations` for it either, so the text was checked by nobody while the
+  // capture note claimed contrast coverage.
+  if (!fg) return notAssessed(c, 'text colour could not be read', c.el, reported)
   const backdrop = backdropOf(c.el)
   // A photographic/asset background is unknowable without sampling the render,
   // and guessing produces exactly the false positives P0 charged us with
@@ -216,15 +250,19 @@ function contrastIssue(c: Candidate, flatContrast: boolean): AxeIssue | null {
   // is checked by NOBODY. One `background-image: url(…)` on a wrapper, even one
   // that 404s, silenced every text node beneath it, with no marker anywhere and
   // a capture note actively telling the agent "measurements and contrast still
-  // apply". A finding that names the gap is the only honest output here: it
-  // cannot be a false positive, because it does not claim a defect.
+  // apply".
   if (backdrop.hasImage && backdrop.gradientStops.length === 0) {
-    return {
-      rule: 'contrast-not-assessed',
-      severity: 'minor',
-      measured: 'text sits on an image',
-      needed: 'check this by eye',
-    }
+    return notAssessed(c, 'text sits on an image', backdrop.source, reported)
+  }
+  // A backdrop layer that did not PARSE is the same gap wearing a disguise, and
+  // the more dangerous one: an unreadable layer is skipped, a skipped layer is
+  // indistinguishable from an absent one, and the composite then falls all the
+  // way through to page white. Tailwind v4 writes its whole palette in
+  // `oklch()`, so before the parser understood CSS Color 4 this was not an edge
+  // case — it was every Tailwind page: near-black text on a near-black hero,
+  // measured against imaginary white, reported as 21:1 and passing.
+  if (backdrop.unreadable) {
+    return notAssessed(c, 'backdrop colour could not be read', backdrop.source, reported)
   }
   const text: Rgba = fg.a < 1 ? composite(fg, backdrop.color) : fg
   const required = requiredContrast(parseFloat(cs.fontSize) || 16, fontWeightOf(cs))
@@ -257,6 +295,11 @@ export interface MeasurementOptions {
   /** Claim plain (non-gradient) contrast. False when axe-core is running, since
    *  axe is authoritative there and double-reporting helps nobody. */
   flatContrast: boolean
+  /** The capture's memo of which declarations have already produced a
+   *  `contrast-not-assessed`. Shared across every candidate in one capture; a
+   *  caller that omits it gets one finding per node, which is what the round-6
+   *  noise regression was. */
+  notAssessedReported?: Set<Element>
 }
 
 export function measurementIssues(c: Candidate, options: MeasurementOptions = { flatContrast: true }): AxeIssue[] {
@@ -265,7 +308,7 @@ export function measurementIssues(c: Candidate, options: MeasurementOptions = { 
   if (clipped) out.push(clipped)
   const target = targetSizeIssue(c)
   if (target) out.push(target)
-  const contrast = contrastIssue(c, options.flatContrast)
+  const contrast = contrastIssue(c, options.flatContrast, options.notAssessedReported)
   if (contrast) out.push(contrast)
   return out
 }

@@ -20,6 +20,9 @@ function flatten(node: SnapshotNode, out: SnapshotNode[] = []): SnapshotNode[] {
 
 const GREY = 'color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px'
 
+/** A 1x1 transparent GIF — a real, resolvable `url()` layer. */
+let IMAGE = ''
+
 async function rulesFor(markup: string, uxId = 'grey'): Promise<string[]> {
   document.body.innerHTML = markup
   const result = await captureSnapshot({ analysis: false })
@@ -85,7 +88,7 @@ describe('text on an image is reported as unassessed, not as nothing', () => {
   // cover it, and measurement declines because a photographic backdrop is
   // unknowable without sampling the render. Contrast was then checked by
   // NOBODY, silently, while the capture note said "contrast still applies".
-  const IMAGE =
+  IMAGE =
     "background-image: url('data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')"
 
   it('reports the finding when the backdrop is a flat colour (the control)', async () => {
@@ -116,6 +119,107 @@ describe('text on an image is reported as unassessed, not as nothing', () => {
        </div>`,
     )
     expect(rules).toContain('color-contrast-gradient')
+    expect(rules).not.toContain('contrast-not-assessed')
+  })
+
+  it('names the declaring ancestor ONCE, not every paragraph under it', async () => {
+    // A coverage note is worth having; 300 copies of it is not. One
+    // `background-image` on a hero put this on every paragraph beneath it, and
+    // on a dense page that pushed a genuine `critical` off the per-node wire
+    // budget — so the note cost real findings.
+    document.body.innerHTML = `<div data-ux-id="hero" data-test-box="0,0,900,600" style="background-color: rgb(255,255,255); ${IMAGE}">
+        ${Array.from({ length: 40 }, (_, i) => `<p data-ux-id="p${i}" data-test-box="0,${i * 15},300,14" style="color: rgb(170,170,170); font-size: 14px">Body ${i}</p>`).join('')}
+      </div>`
+    const result = await captureSnapshot({ analysis: false })
+    const all = flatten(result.root).flatMap((n) => n.issues ?? [])
+    expect(all.filter((i) => i.rule === 'contrast-not-assessed')).toHaveLength(1)
+    // And it points at the ancestor that caused it, so the agent has somewhere
+    // to go — the same `at` convention the axe join uses.
+    const note = all.find((i) => i.rule === 'contrast-not-assessed')
+    expect(note?.at).toEqual({ x: 0, y: 0, width: 900, height: 600 })
+  })
+})
+
+describe('a backdrop that cannot be READ is never reported as passing', () => {
+  // The blocker this closes. `parseColor` understood only #hex and rgb(), so
+  // Tailwind v4's `oklch()` palette produced nothing — and nothing is what the
+  // backdrop climb also produces for "no background here", so the composite fell
+  // through to PAGE WHITE. Near-black text on a near-black hero measured 14.62:1
+  // and was reported as fine. axe never covers it either: a gradient surface is
+  // always `incomplete`, which is why this path exists at all.
+
+  it('measures Tailwind-spelled gradient stops instead of imaginary white', async () => {
+    const rules = await rulesFor(
+      `<div data-test-box="0,0,900,400" style="background-image: linear-gradient(oklch(0.208 0.042 265.755), oklch(0.129 0.042 264.695))">
+         <p data-ux-id="grey" data-test-box="0,0,300,20" style="color: oklch(0.279 0.041 260.031); font-size: 14px">Hero copy</p>
+       </div>`,
+    )
+    expect(rules).toContain('color-contrast-gradient')
+  })
+
+  it('pins WHICH backdrop it measured against', async () => {
+    // The ratio is the evidence: against the real stops this text is ~1.22:1,
+    // against the page white the old code fell back to it is ~14.6:1. Asserting
+    // the number is what makes this test unable to pass on the broken code.
+    document.body.innerHTML = `<div data-test-box="0,0,900,400" style="background-image: linear-gradient(oklch(0.208 0.042 265.755), oklch(0.129 0.042 264.695))">
+        <p data-ux-id="grey" data-test-box="0,0,300,20" style="color: oklch(0.279 0.041 260.031); font-size: 14px">Hero copy</p>
+      </div>`
+    const result = await captureSnapshot({ analysis: false })
+    const node = flatten(result.root).find((n) => n.uxId === 'grey')
+    const finding = (node?.issues ?? []).find((i) => i.rule === 'color-contrast-gradient')
+    expect(finding).toBeDefined()
+    expect(parseFloat(finding?.measured ?? '')).toBeLessThan(2)
+  })
+
+  it('declines loudly when a gradient stop does not resolve', async () => {
+    // `color-mix()` resolves to a colour this parser cannot compute. Declining
+    // is safe — the note claims no defect — and a silent skip is not, because
+    // the flat branch would then composite against white.
+    const rules = await rulesFor(
+      `<div data-test-box="0,0,900,200" style="background-image: linear-gradient(rgb(from red r g b), rgb(17,17,17))">
+         <p data-ux-id="grey" data-test-box="0,0,300,20" style="color: rgb(20,20,20); font-size: 14px">Hero copy</p>
+       </div>`,
+    )
+    expect(rules).toContain('contrast-not-assessed')
+    expect(rules).not.toContain('color-contrast')
+  })
+
+  it('declines when an ancestor BACKGROUND COLOUR does not resolve', async () => {
+    // The quietest version of the bug. An unparseable `background-color` was
+    // skipped, and a skipped layer is indistinguishable from an absent one — so
+    // the climb kept going and composited against page white. No gradient, no
+    // image, nothing to hint that a layer had been dropped.
+    //
+    // `color(prophoto-rgb …)` is a colour space this parser deliberately does
+    // not model, and every engine keeps it verbatim in the computed value — so
+    // this is the shape a real page delivers, not a fixture contrivance.
+    const rules = await rulesFor(
+      `<div data-test-box="0,0,900,200" style="background-color: color(prophoto-rgb 0.05 0.05 0.06)">
+         <p data-ux-id="grey" data-test-box="0,0,300,20" style="color: rgb(20,20,20); font-size: 14px">Hero copy</p>
+       </div>`,
+    )
+    expect(rules).toContain('contrast-not-assessed')
+    expect(rules).not.toContain('color-contrast')
+  })
+
+  it('declines when the TEXT colour does not resolve', async () => {
+    const rules = await rulesFor(
+      `<div data-test-box="0,0,900,200" style="background-color: rgb(255,255,255)">
+         <p data-ux-id="grey" data-test-box="0,0,300,20" style="color: rgb(from red r g b); font-size: 14px">Hero copy</p>
+       </div>`,
+    )
+    expect(rules).toContain('contrast-not-assessed')
+  })
+
+  it('still reports a real defect when everything DID resolve (the control)', async () => {
+    // Without this the suite would pass just as well if the code declined on
+    // everything, which is the cheap way to make a false-positive test go green.
+    const rules = await rulesFor(
+      `<div data-test-box="0,0,900,200" style="background-color: oklch(0.984 0.003 247.858)">
+         <p data-ux-id="grey" data-test-box="0,0,300,20" style="color: oklch(0.869 0.022 252.894); font-size: 14px">Faint</p>
+       </div>`,
+    )
+    expect(rules).toContain('color-contrast')
     expect(rules).not.toContain('contrast-not-assessed')
   })
 })

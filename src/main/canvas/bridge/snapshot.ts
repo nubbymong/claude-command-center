@@ -436,9 +436,14 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   // measurement owns everything else. Declined and never-looked-at are both on
   // the measurement side, which is where the last two bugs said they belonged.
   const axeRan = violations !== null
+  // One memo for the whole capture: `contrast-not-assessed` names a DECLARATION
+  // (an ancestor's image, a colour that would not parse), and a declaration
+  // covers every text node under it. Per-node it put the same note on 300
+  // paragraphs and pushed genuine findings off the wire.
+  const notAssessedReported = new Set<Element>()
   for (const candidate of ctx.candidates) {
     const flatContrast = !axeRan || !contrastFailed.has(candidate.el)
-    const issues = measurementIssues(candidate, { flatContrast })
+    const issues = measurementIssues(candidate, { flatContrast, notAssessedReported })
     if (issues.length > 0) candidate.node.issues = (candidate.node.issues ?? []).concat(issues)
   }
   addOverlapIssues(ctx.candidates)

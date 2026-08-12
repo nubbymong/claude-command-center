@@ -5,7 +5,7 @@
 // the bridge is read-only from the content side (D8).
 
 import type { Rect, SnapshotNode } from '../../../shared/canvas'
-import { composite, extractGradientStops, parseColor, type Rgba } from './color'
+import { composite, parseColor, readBackgroundImage, type Rgba } from './color'
 import { holdsTypedText } from './semantics'
 
 export type NodeState = NonNullable<SnapshotNode['state']>
@@ -312,51 +312,94 @@ export interface Backdrop {
   /** A non-gradient background-image (a photo, an SVG asset) is somewhere in the
    *  stack, so the composited colour is NOT what the text actually sits on. */
   hasImage: boolean
+  /**
+   * The element whose declaration made the backdrop unassessable — the one
+   * carrying the image, or the layer that would not parse.
+   *
+   * Carried so the finding can be reported ONCE per declaring element instead of
+   * once per text node. One `background-image` on a hero produced
+   * `contrast-not-assessed` on all 300 paragraphs beneath it, and on a dense
+   * page that pushed a genuine `critical button-name` off the wire: a coverage
+   * note that costs real findings is a worse trade than the silence it replaced.
+   */
+  source: Element | null
+  /**
+   * A layer of this backdrop could not be READ.
+   *
+   * Distinct from `hasImage`, and the distinction is the finding: an image is a
+   * backdrop we know we cannot judge; this is a backdrop we may have judged
+   * WRONG. A `background-color` that does not parse used to be skipped, and a
+   * skipped layer is indistinguishable from an absent one — so the composite
+   * fell through to page white, and near-black text on a near-black surface
+   * measured 21:1 and was reported as PASSING. The caller declines instead.
+   */
+  unreadable: boolean
 }
 
 const PAGE_WHITE: Rgba = { r: 255, g: 255, b: 255, a: 1 }
 
-function paintedImage(cs: CSSStyleDeclaration): boolean {
-  const image = cs.backgroundImage
-  return !!image && image !== 'none' && !/gradient\(/i.test(image)
+/** `background-color` as a layer: a colour, `undefined` for "nothing painted
+ *  here", or `null` for "there is a value and it did not parse" — which is not
+ *  the same thing and must not be treated as it. */
+function backgroundLayer(cs: CSSStyleDeclaration, currentColor: Rgba | null): Rgba | null | undefined {
+  const raw = cs.backgroundColor
+  // The initial value, in the two spellings engines use. Recognised by name so
+  // the parser stays off the hot path for the overwhelmingly common case.
+  if (!raw || raw === 'transparent' || raw === 'rgba(0, 0, 0, 0)') return undefined
+  const bg = parseColor(raw, currentColor)
+  if (!bg) return null
+  return bg.a > 0 ? bg : undefined
 }
 
 export function backdropOf(el: Element): Backdrop {
   const layers: Rgba[] = [] // nearest first
   let gradientStops: Rgba[] = []
   let hasImage = false
-  let node: Element | null = el.parentElement
-  let depth = 0
+  let unreadable = false
+  let source: Element | null = null
+  let node: Element | null = el
 
-  const own = styleOf(el)
-  if (own) {
-    gradientStops = extractGradientStops(own.backgroundImage)
-    hasImage = paintedImage(own)
-    const bg = parseColor(own.backgroundColor)
-    if (bg && bg.a > 0) {
-      layers.push(bg)
-      if (bg.a >= 1) return { color: bg, gradientStops, hasImage }
-    }
-  }
-
-  while (node && depth < 64) {
+  for (let depth = 0; node && depth <= 64; depth++) {
     const cs = styleOf(node)
     if (cs) {
-      if (gradientStops.length === 0) gradientStops = extractGradientStops(cs.backgroundImage)
-      if (!hasImage) hasImage = paintedImage(cs)
-      const bg = parseColor(cs.backgroundColor)
-      if (bg && bg.a > 0) {
+      // `currentcolor` in a background resolves to the colour of the element
+      // that declares it, so it is re-resolved at each step of the climb.
+      const nodeColor = parseColor(cs.color)
+      const image = readBackgroundImage(cs.backgroundImage, nodeColor)
+      if (gradientStops.length === 0) gradientStops = image.stops
+      if (image.hasImage && !hasImage) {
+        hasImage = true
+        source = source ?? node
+      }
+      if (!image.parsed) {
+        unreadable = true
+        source = source ?? node
+      }
+      const bg = backgroundLayer(cs, nodeColor)
+      if (bg === null) {
+        unreadable = true
+        source = source ?? node
+      } else if (bg) {
         layers.push(bg)
-        if (bg.a >= 1) break
+        // Opaque: nothing behind it can show through, so the climb is done.
+        if (bg.a >= 1) {
+          if (depth === 0) return { color: bg, gradientStops, hasImage, unreadable, source }
+          break
+        }
       }
     }
     node = node.parentElement
-    depth++
   }
 
+  // Nothing opaque was reached, so what is under the last translucent layer is
+  // the canvas. White is assumed rather than declined: html/body's background
+  // propagates to the canvas and both are IN the climb, so arriving here means
+  // the stack really is translucent to the bottom — and declining on that would
+  // decline on every ordinary page, almost none of which paint an opaque
+  // background at all.
   let base = PAGE_WHITE
   for (let i = layers.length - 1; i >= 0; i--) base = composite(layers[i], base)
-  return { color: base, gradientStops, hasImage }
+  return { color: base, gradientStops, hasImage, unreadable, source }
 }
 
 /** Text owned by this element rather than by a descendant. */
