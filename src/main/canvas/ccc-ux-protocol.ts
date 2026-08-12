@@ -263,6 +263,10 @@ export async function handleCccUxRequest(request: Request): Promise<Response> {
       } catch {
         return notFound()
       }
+      // Equivalent under test and labelled rather than tested around: reading a
+      // directory throws in `serveFile` and the catch at the bottom turns that
+      // into the same 404. It stays because "fails closed twice" is the design —
+      // this branch refuses on purpose, the other refuses by accident.
       if (stat.isDirectory()) return notFound()
       const realEntry = fs.realpathSync.native(filePath)
       if (realEntry !== realRoot && !realEntry.startsWith(realRoot + path.sep)) return notFound()

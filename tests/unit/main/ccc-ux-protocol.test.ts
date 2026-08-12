@@ -277,6 +277,67 @@ describe('confinement', () => {
     expect(await res.text()).not.toContain('LEAKED')
   })
 
+  it('does not follow a linked ENTRY out of the tree on the SPA-fallback path', async (ctx) => {
+    // The symlink test above covers the direct path. The fallback resolves a
+    // SECOND file — the entry — and re-checks containment on it separately;
+    // that check was the one no test reached, so a mutation deleting it went
+    // unnoticed while its twin one branch over was pinned.
+    //
+    // The shape is a swap after registration: the entry passes validation as an
+    // ordinary file and becomes a link afterwards, which is what a containment
+    // check re-run at serve time exists to catch.
+    // The entry is a plain relative path and may name a subdirectory, so the
+    // link goes on the DIRECTORY — a junction, which needs no privilege on
+    // Windows, where a file symlink does.
+    const dist = makeDist()
+    registerCanvasUatRoot(path.dirname(dist))
+    outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-outside-entry-'))
+    fs.writeFileSync(path.join(outsideDir, 'index.html'), 'LEAKED')
+
+    let linked = false
+    try {
+      fs.symlinkSync(outsideDir, path.join(dist, 'link'), 'junction')
+      linked = true
+    } catch {
+      /* environment forbids link creation */
+    }
+    // Never silently pass: a green here without a link certifies nothing.
+    if (!linked) return ctx.skip()
+
+    const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist, entry: 'link/index.html' })
+    // Extensionless, so the fallback runs rather than the direct path.
+    const res = await get(`ccc-ux://${canvasId}/v1/settings/profile`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).not.toContain('LEAKED')
+  })
+
+  it('refuses a file past the served-size ceiling, and only past it', async () => {
+    const dist = makeDist()
+    // Sparse: the size is what the ceiling reads, and writing 64 MB of real
+    // bytes to assert a refusal would cost more than the rest of the suite.
+    const big = path.join(dist, 'big.bin')
+    const fd = fs.openSync(big, 'w')
+    fs.ftruncateSync(fd, 65 * 1024 * 1024)
+    fs.closeSync(fd)
+    const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
+
+    expect((await get(`ccc-ux://${canvasId}/v1/big.bin`)).status).toBe(404)
+    // A cap and not a blanket refusal: the ordinary file next to it still serves.
+    expect((await get(`ccc-ux://${canvasId}/v1/assets/app.js`)).status).toBe(200)
+  })
+
+  it('applies the size ceiling to the ENTRY the SPA fallback reaches for', async () => {
+    // Its own check on its own branch, and the one the direct-path test cannot
+    // reach: the fallback resolves a second file and re-measures it there.
+    const dist = makeDist()
+    const fd = fs.openSync(path.join(dist, 'index.html'), 'w')
+    fs.ftruncateSync(fd, 65 * 1024 * 1024)
+    fs.closeSync(fd)
+    const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
+
+    expect((await get(`ccc-ux://${canvasId}/v1/settings/profile`)).status).toBe(404)
+  })
+
   it('unknown canvas / version / malformed ids are uniform 404s', async () => {
     const { canvasId } = store.renderVersion(SID, { mode: 'design', html: DESIGN_HTML })
     expect((await get('ccc-ux://ffffffffffffffffffffffff/v1/index.html')).status).toBe(404)

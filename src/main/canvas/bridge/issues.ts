@@ -39,6 +39,12 @@ function round(n: number): number {
 function fontWeightOf(cs: CSSStyleDeclaration): number {
   const raw = (cs.fontWeight || '').trim()
   if (raw === 'bold' || raw === 'bolder') return 700
+  // Equivalent, and labelled rather than tested around: `parseInt('normal')` is
+  // NaN and the fallback below is 400 already. It stays because it is the line
+  // that says WHY 400 — the CSS initial value — where the fallback says only
+  // "unreadable". The `bold` line above is not equivalent and is pinned: without
+  // it a bold keyword falls to 400, which moves the threshold from 3:1 to 4.5:1
+  // and reports passing text as a failure.
   if (raw === 'normal' || raw === '') return 400
   const n = parseInt(raw, 10)
   return Number.isFinite(n) ? n : 400
@@ -527,6 +533,10 @@ export function addOverlapIssues(candidates: Candidate[]): boolean {
         break
       }
       const area = intersectionArea(a.node.box, b.node.box)
+      // Equivalent, and labelled rather than tested around: an area of zero is
+      // a fraction of zero, which the threshold below rejects on its own. It
+      // stays as the cheap exit — the line below it multiplies two areas and
+      // divides, for boxes that do not touch at all.
       if (area <= 0) continue
       const smaller = Math.min(a.node.box.width * a.node.box.height, b.node.box.width * b.node.box.height)
       if (smaller <= 0 || area / smaller < OVERLAP_FRACTION) continue
