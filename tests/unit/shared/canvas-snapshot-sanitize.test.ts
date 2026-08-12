@@ -5,7 +5,12 @@
 import v8 from 'node:v8'
 import vm from 'node:vm'
 import { describe, it, expect } from 'vitest'
-import { sanitizeSnapshotResult, DEFAULT_SNAPSHOT_LIMITS } from '../../../src/shared/canvas-snapshot-sanitize'
+import {
+  sanitizeSnapshotResult,
+  DEFAULT_SNAPSHOT_LIMITS,
+  SCRUB_PREFIX_MAX,
+  detach,
+} from '../../../src/shared/canvas-snapshot-sanitize'
 import { CURATED_STYLE_PROPERTIES, ISSUES_TRUNCATED_RULE } from '../../../src/shared/canvas'
 import { serializeSnapshot, MAX_SNAPSHOT_CHARS } from '../../../src/shared/canvas-snapshot-serialize'
 import type { SnapshotNode } from '../../../src/shared/canvas'
@@ -379,7 +384,7 @@ describe('hostile input', () => {
       const out = sanitizeSnapshotResult({
         root: node([
           { rule: ISSUES_TRUNCATED_RULE, severity: 'critical', measured: 'at least 900 more', needed: '' },
-          { rule: `${ISSUES_TRUNCATED_RULE} `, severity: 'critical', measured: 'forged', needed: '' },
+          { rule: `${ISSUES_TRUNCATED_RULE}\u0000`, severity: 'critical', measured: 'forged', needed: '' },
           { rule: 'real', severity: 'serious', measured: '', needed: '' },
         ]),
       })
@@ -500,6 +505,79 @@ describe('the cost of enforcing the caps', () => {
     expect(result.root.children[0].name.length).toBeLessThanOrEqual(200)
   })
 
+  it('rests on a shrink bound that is actually true of NFKC', () => {
+    // `str()` normalises at most `max * SCRUB_PREFIX_MAX` code units, and that
+    // is only enough while NFKC cannot COMPOSE a string down by more than that
+    // ratio. The bound is measured rather than reasoned about, and it is
+    // measured here so that an ICU update which changes it fails the build
+    // instead of silently clipping every composed name a few characters short.
+    //
+    // The input that shrinks most is the canonical decomposition of a character
+    // that recomposes, so run every code point's own NFD back through the
+    // scrubber. (Compatibility decompositions only ever expand under NFKC.)
+    let worst = 1
+    for (let cp = 0; cp <= 0x2ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue
+      const decomposed = String.fromCodePoint(cp).normalize('NFD')
+      if (decomposed.length <= 1) continue
+      const scrubbed = decomposed.normalize('NFKC').replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu, ' ')
+      if (scrubbed.length === 0) continue
+      worst = Math.max(worst, decomposed.length / scrubbed.length)
+    }
+    // Four: U+1F82, a Greek vowel carrying three combining marks.
+    expect(worst).toBe(4)
+    expect(SCRUB_PREFIX_MAX).toBe(5)
+    expect(SCRUB_PREFIX_MAX).toBeGreaterThan(worst)
+  })
+
+  it('still fills the cap for text that composes down to a quarter of its length', () => {
+    // The string that makes the growth step necessary: a prefix of `max * 2`
+    // yields half a cap, so a FIXED prefix would clip it short and report a
+    // 100-character name for a 200-character one.
+    const shrinks = String.fromCodePoint(0x1f82).normalize('NFD')
+    expect(shrinks).toHaveLength(4)
+    expect(shrinks.normalize('NFKC')).toHaveLength(1)
+
+    const { result, chars } = countNormalized(() =>
+      sanitizeSnapshotResult({
+        root: {
+          role: 'document',
+          name: '',
+          box: {},
+          children: [{ role: 'x', name: shrinks.repeat(2000), box: {}, children: [] }],
+        },
+      }),
+    )
+    expect(result.root.children[0].name.length).toBe(200)
+    // And it costs two passes, not five: 200*2 then 200*4, where four doublings
+    // would have been 200*62.
+    expect(chars).toBeLessThanOrEqual(200 * 7)
+  })
+
+  it('charges for the style keys it REJECTS, so junk cannot be bought for free', () => {
+    // Examining a key is a `str()` call whether or not the key survives, and a
+    // rejected one moved no counter at all — so the total-character budget, the
+    // only global brake there is, never engaged on 192,000 normalisations.
+    const nodes = Array.from({ length: 1000 }, (_, n) => ({
+      role: 'x',
+      name: '',
+      box: {},
+      // Distinct per node, so the styles memo cannot answer for them.
+      styles: Object.fromEntries(Array.from({ length: 192 }, (_, i) => [`not-a-property-${n}-${i}`, 'v'])),
+      children: [],
+    }))
+    const { result, calls } = countNormalized(() =>
+      sanitizeSnapshotResult({ root: { role: 'document', name: '', box: {}, children: nodes } }, undefined, {
+        scoped: true,
+      }),
+    )
+    expect(result.truncated).toBe(true)
+    // The brake engages in the low hundreds of nodes, well short of the 1,000
+    // the page supplied and the 4,000 the node cap would have allowed.
+    expect(countNodes(result.root)).toBeLessThan(500)
+    expect(calls).toBeLessThan(120_000)
+  })
+
   it('pays once for a node object the page referenced many times', () => {
     // Structured clone preserves identity, so this costs the page ONE node and
     // used to cost the sanitiser 4,000 normalisations of every field on it.
@@ -561,12 +639,43 @@ describe('the cost of enforcing the caps', () => {
     expect(result.root.styles).toBeUndefined()
   })
 
-  it('keeps only the characters it emits, not a view onto what it normalised', () => {
-    // V8 answers `slice()` with a view that keeps the whole parent alive. 2,000
-    // fields each holding a view onto their own normalised 36,000-character
-    // parent retained 145 MB to emit 400,000 characters.
+  it('detaches a clipped string from the parent it was cut out of', () => {
+    // V8 answers `slice()` with a VIEW that keeps the whole parent alive, and a
+    // concatenation wrapping that view keeps it too, so a 200-character field
+    // can hold a megabyte. `detach` is the only thing that makes the copy.
+    //
+    // Tested here, on the function itself, rather than through a snapshot —
+    // because through a snapshot it cannot fail. `weigh` walks every emitted
+    // string with `charCodeAt`, which flattens the string as a side effect and
+    // releases the parent whether `detach` ran or not: deleting `detach`
+    // outright moved a whole-snapshot measurement from 14.3 MB to 14.2 MB. A
+    // guarantee that only holds by accident somewhere else needs its own test,
+    // or the next person deletes it and every suite stays green.
     const gc = forceGc()
-    const children = Array.from({ length: 2000 }, (_, i) => ({
+    gc()
+    const before = process.memoryUsage().heapUsed
+    const kept: string[] = []
+    for (let i = 0; i < 2000; i++) {
+      // A fresh parent each time, dropped the moment the cut is taken.
+      const parent = String.fromCharCode(0x0635 + (i % 20)).repeat(50_000)
+      kept.push(detach(parent.slice(0, 200)))
+    }
+    gc()
+    const retained = (process.memoryUsage().heapUsed - before) / 1048576
+    expect(kept).toHaveLength(2000)
+    expect(kept[0]).toHaveLength(200)
+    // 2,000 x 200 two-byte characters is under 1 MB. 2,000 views onto their own
+    // 50,000-character parent is ~190 MB.
+    expect(retained).toBeLessThan(20)
+  })
+
+  it('holds a maximal snapshot in tens of megabytes, not hundreds', () => {
+    // The other half of the same property, at the scale it actually matters:
+    // 4,000 fields each cut out of their own normalised parent. This one cannot
+    // attribute the result to `detach` (see above) — what it pins is that SOME
+    // defence is still in place, so losing both at once is caught.
+    const gc = forceGc()
+    const children = Array.from({ length: 4000 }, (_, i) => ({
       role: 'x',
       name: EXPANDER.repeat(2000) + i,
       box: {},
@@ -580,8 +689,9 @@ describe('the cost of enforcing the caps', () => {
     // 197 characters plus '…', which becomes exactly the 200-character cap once
     // the serializer normalises the ellipsis into three dots.
     expect(kept.root.children[0].name.length).toBe(198)
-    // Emitting 400,000 characters. Measured 145 MB before the fix, 8 MB after.
-    expect(retained).toBeLessThan(40)
+    expect(countNodes(kept.root)).toBeGreaterThan(3000)
+    // Measured 14.3 MB shipped; ~50 MB with every string still a view.
+    expect(retained).toBeLessThan(25)
   })
 
   it('bounds the WHOLE result, not just each node of it', () => {

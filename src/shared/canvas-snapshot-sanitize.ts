@@ -76,8 +76,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * these, so a view onto a normalised megabyte is the whole difference between
  * a snapshot and a dead window. Copying ≤ 200 characters is free.
  */
-function detach(value: string): string {
-  return value.split('').join('')
+export function detach(value: string): string {
+  // Concatenate, then cut the addition off. The concatenation forces V8 to
+  // FLATTEN — the result is a view onto a fresh (n+1)-character string rather
+  // than onto the page's megabyte — and it costs a tenth of `split('').join('')`
+  // (72 ms vs 776 ms per 500,000 calls, both measured, ~1.1 s of a hostile
+  // capture).
+  //
+  // The obvious shorthands do not work and fail SILENTLY, which is why this is
+  // spelled out: `value.repeat(1)`, `slice()`, `substring(0)` and `toString()`
+  // all hand back the receiver, so the view — and its parent — survive intact.
+  // Measured the same way: 190.9 MB retained where this retains 0.5 MB.
+  //
+  // Exported ONLY so that contract can be pinned directly. It has to be,
+  // because end to end this function currently looks like it does nothing:
+  // `weigh` walks every emitted string with `charCodeAt`, which flattens a
+  // ConsString as a side effect and releases the parent anyway. Deleting
+  // `detach` therefore leaves a whole-snapshot retention test green — measured,
+  // 14.2 MB either way — while leaving the guarantee resting on an
+  // implementation detail of an accounting function that has no idea it is
+  // load-bearing. Two things that must agree with only one of them maintained
+  // is the shape of every expensive bug in this file.
+  return (value + ' ').slice(0, -1)
 }
 
 /**
@@ -112,6 +132,22 @@ function scrub(value: string): string {
   return value.normalize('NFKC').replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu, ' ')
 }
 
+/**
+ * The most input `str` will ever normalise to fill a cap of `max`, as a
+ * multiple of that cap.
+ *
+ * NFKC's worst SHRINK is 4:1 in UTF-16 code units — the longest canonical
+ * decomposition that recomposes is four units to one (U+1F82, a Greek vowel
+ * carrying three combining marks), found by decomposing every code point and
+ * measuring, not by reasoning about it. `scrub` also replaces Cc/Cf/Cs/Zl/Zp
+ * one-for-one with a space, which cannot shrink anything, so composition is the
+ * whole of it. Five leaves a unit of margin.
+ *
+ * Past this there is nothing to find: a prefix of `max * 5` that still came up
+ * short did not come up short because it was too small.
+ */
+export const SCRUB_PREFIX_MAX = 5
+
 function str(value: unknown, max: number): string {
   if (typeof value !== 'string' || value.length === 0) return ''
   // Normalise BEFORE capping, and that order is deliberate: the serializer
@@ -125,16 +161,26 @@ function str(value: unknown, max: number): string {
   // enough to kill the window outright. So normalise a PREFIX and cap after the
   // expansion, not before.
   //
-  // The prefix has to be grown rather than fixed because composition SHRINKS:
-  // Hangul L+V+T collapses 3 units to 1, and NFKC folds astral codepoints down
-  // to BMP ones. A fixed `max * 2` would silently clip such a string short of
-  // its cap. Growing while the result is too short is exact for every real
-  // string; the iteration bound is what stops a page engineered to sit just
-  // under the cap from walking a megabyte, at the cost of clipping it early.
+  // The prefix cannot be a flat `max` because composition SHRINKS: Hangul
+  // L+V+T collapses 3 units to 1, and a base with three combining marks
+  // collapses 4. A fixed `max * 2` would silently clip such a string short of
+  // its cap.
+  //
+  // But the growth was UNBOUNDED relative to the cap: four doublings, each one
+  // re-scrubbing from scratch, is `max * 62` characters of normalisation — on
+  // the renderer's UI thread, ~85 times per node. What makes that safe today is
+  // a fact the code never stated: NFKC cannot shrink by more than 4:1, so the
+  // loop runs out of reasons to grow long before it runs out of doublings.
+  // State the fact and the bound follows from it (SCRUB_PREFIX_MAX), instead of
+  // resting on an accident that an ICU update is free to change.
+  //
+  // The doubling itself stays: the first prefix answers every string that does
+  // not shrink at all, which is nearly all of them, and paying `max * 5` up
+  // front to spare the rare one is the wrong trade.
   let end = Math.min(value.length, max * 2)
   let clean = scrub(value.slice(0, end))
-  for (let grow = 0; grow < 4 && clean.length < max && end < value.length; grow++) {
-    end = Math.min(value.length, end * 2)
+  while (clean.length < max && end < value.length && end < max * SCRUB_PREFIX_MAX) {
+    end = Math.min(value.length, end * 2, max * SCRUB_PREFIX_MAX)
     clean = scrub(value.slice(0, end))
   }
   if (clean.length > max) return clip(clean, max)
@@ -264,6 +310,11 @@ function issues(
   return out.length > 0 ? out : undefined
 }
 
+/** What a rejected style key costs the budget: the same `6 + key` an accepted
+ *  one costs in `weigh`, so the two halves of the bill are the same size and an
+ *  honest page — which sends nothing but allowlisted keys — pays neither. */
+const REJECTED_KEY_COST = 6
+
 function styles(value: unknown, budget: Budget, limits: SanitizeLimits): Record<string, string> | undefined {
   if (!budget.allowStyles) return undefined
   if (!isRecord(value)) return undefined
@@ -296,7 +347,20 @@ function styles(value: unknown, budget: Budget, limits: SanitizeLimits): Record<
     //
     // A closed set also removes the prototype-name question rather than
     // answering it: `constructor` and `prototype` are simply not in it.
-    if (!ALLOWED_STYLE_PROPERTIES.has(name)) continue
+    if (!ALLOWED_STYLE_PROPERTIES.has(name)) {
+      // Examining a key is WORK — a `str()` call, so up to `maxText * 7`
+      // characters of normalisation — and until now a rejected key was free.
+      // `budget.chars` is the only global brake there is, and 192 junk keys per
+      // node never touched it, so the one counter that could have stopped a
+      // page from buying 768,000 unbilled normalisations never moved. Accepted
+      // keys are charged by `weigh`; this is the other half of the same bill.
+      budget.chars += REJECTED_KEY_COST + name.length
+      continue
+    }
+    // Deliberately NOT charged when the value scrubs away to nothing: `str`
+    // returns '' only for a non-string or an empty one, both O(1), and the
+    // allowlist bounds this branch at eleven keys a node. A guard no input can
+    // trip is worse than no guard — it reads as coverage and is not.
     const styleValue = str(value[key], limits.maxText)
     if (!styleValue) continue
     out[name] = styleValue
