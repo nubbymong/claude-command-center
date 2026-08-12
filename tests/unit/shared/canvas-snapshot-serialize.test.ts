@@ -173,6 +173,29 @@ describe('robustness', () => {
     expect(serializeSnapshot(s).text).toContain('[box=0,0,0,5]')
   })
 
+  it('keeps a coordinate short enough to read, whatever number the page picked', () => {
+    // `Math.round` is the identity on these, and `String(Number.MAX_VALUE)` is
+    // 23 characters — four of them made a 92-character `[box=…]` token in a
+    // format whose whole value is that a line can be scanned. Finite, so the
+    // non-finite guard never saw them.
+    const s = snap(
+      node({
+        ref: 'e0',
+        role: 'x',
+        box: { x: Number.MAX_VALUE, y: 1e21, width: -Number.MAX_VALUE, height: 0.5 },
+        issues: [{ rule: 'overlap', severity: 'moderate', measured: '', needed: '', at: { x: 1e300, y: -1e300, width: 1e21, height: 1 } }],
+      }),
+    )
+    const lines = serializeSnapshot(s).text.split('\n')
+    const box = lines[1].match(/\[box=([^\]]*)\]/)![1]
+    const at = lines[2].match(/\[at=([^\]]*)\]/)![1]
+    for (const token of [box, at]) {
+      expect(token).not.toMatch(/e[+-]/)
+      for (const part of token.split(',')) expect(part.length).toBeLessThanOrEqual(9)
+    }
+    expect(box).toBe('16777216,16777216,-16777216,1')
+  })
+
   // `role` is the ONE value emitted bare — no brackets, no quotes to contain it —
   // and it had no injection test at all: replacing roleToken() with `return role`
   // left the whole suite green.
@@ -337,6 +360,56 @@ describe('the ceiling survives the envelope that wraps it', () => {
         expect(wrappedBodyLength(out.text), `${format} at maxChars=${limit}`).toBeLessThanOrEqual(limit)
       }
     }
+  })
+
+  it('does not call a complete snapshot truncated just because it lost its indentation', () => {
+    // The json path costs each node COMPACT and emits pretty-printed, so it
+    // falls back to compact when the indentation overshoots. That is a change of
+    // FORMAT, not of content — nothing is dropped — and stamping `truncated`
+    // sent the agent the note "cut short; scope the call" against a snapshot
+    // that was whole. It narrowed and paid for the whole page a second time.
+    //
+    // The fixture is deep, because depth is where indentation costs the most:
+    // two characters per level per line, and the compact form has none of it.
+    let level: SnapshotNode[] = Array.from({ length: 30 }, (_, i) => node({ ref: `leaf${i}`, role: 'button', name: `Item ${i}` }))
+    for (let d = 40; d > 0; d--) level = [node({ ref: `d${d}`, role: 'group', name: 'wrapper', children: level })]
+    const s = snap(node({ ref: 'e0', role: 'document', children: level }))
+
+    const pretty = JSON.stringify({ ...s, root: s.root }, null, 2).length
+    const compact = JSON.stringify({ ...s, root: s.root }).length
+    // A limit the compact form clears and the pretty-printed one does not: the
+    // fallback fires, and nothing is dropped.
+    const limit = Math.round((pretty + compact) / 2)
+    expect(compact).toBeLessThan(limit)
+    expect(pretty).toBeGreaterThan(limit)
+
+    const out = serializeSnapshot(s, { format: 'json', maxChars: limit })
+    expect(out.truncated).toBe(false)
+    // …and the proof that nothing was dropped: every leaf is still there.
+    expect(JSON.stringify(JSON.parse(out.text))).toContain('Item 29')
+    expect(out.text).toBe(JSON.stringify(JSON.parse(out.text)))
+  })
+
+  it('keeps the json ceiling even when the root alone will not fit', () => {
+    // `fit()` refusing the root used to put it back UNCHARGED — every issue,
+    // every style, every string on it — so the ceiling lost the one argument it
+    // had just won. Only reachable through a caller-set limit, which is exactly
+    // what this is.
+    const fat = node({
+      ref: 'e0',
+      role: 'document',
+      name: 'n'.repeat(200),
+      uxId: 'u'.repeat(128),
+      styles: Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`p${i}`, 'v'.repeat(200)])),
+      issues: Array.from({ length: 20 }, () => ({ rule: 'r'.repeat(64), severity: 'serious', measured: 'm'.repeat(96), needed: 'x'.repeat(96) })),
+    })
+    const out = serializeSnapshot(snap(fat), { format: 'json', maxChars: 2000 })
+    expect(out.truncated).toBe(true)
+    expect(wrappedBodyLength(out.text)).toBeLessThanOrEqual(2000)
+    const parsed = JSON.parse(out.text)
+    expect(parsed.root.children).toEqual([])
+    expect(parsed.root.issues).toBeUndefined()
+    expect(parsed.root.name).toBe('')
   })
 
   it('does not charge ordinary text for an expansion it never causes', () => {

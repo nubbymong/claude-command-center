@@ -39,6 +39,29 @@ function fontWeightOf(cs: CSSStyleDeclaration): number {
   return Number.isFinite(n) ? n : 400
 }
 
+/**
+ * KNOWN LIMIT, recorded so the next round does not re-fix it the way the last
+ * one did.
+ *
+ * Content pushed out of view by an `overflow: hidden` ANCESTOR — a carousel
+ * slide at x=900 inside a 300px track, an inactive tab panel — still has a real
+ * box, so every rule below measures it as painted.
+ *
+ * The fix looks obvious and is a weapon. An earlier round added exactly that
+ * check and it had to be reverted: keyed on an ancestor's box it silenced
+ * findings on plainly visible content (`overflow: visible` is the default and
+ * says nothing about what is painted), and a negative `window.scrollX` — which
+ * is ordinary in RTL — applied it to the entire page. Any rule of the form
+ * "this element is not really visible" is a suppression primitive, and a page
+ * that can reach it can hide its own defects from review.
+ *
+ * It is also not clearly a false positive: a slide and a tab panel both BECOME
+ * visible, so a contrast defect on one is a defect. What would settle it is a
+ * real layout engine in the acceptance run — which is the same gate the
+ * ten-seeded-defect run is waiting on, and CI has no browser. Until then this
+ * stays as written and stays written down.
+ */
+
 /** Text clipped by its own box: real on the page, invisible in the source. */
 function clippedIssue(c: Candidate): AxeIssue | null {
   if (c.srOnly) return null

@@ -52,6 +52,16 @@ interface CharBudget {
   truncated: boolean
 }
 
+/** Stands in for a root that would not fit inside the ceiling. Fixed size, no
+ *  page-authored characters, so it cannot itself overshoot. */
+const EMPTY_JSON_ROOT: SnapshotNode = {
+  ref: 'e0',
+  role: 'document',
+  name: '',
+  box: { x: 0, y: 0, width: 0, height: 0 },
+  children: [],
+}
+
 /**
  * How many characters this text becomes once the untrusted-content envelope
  * defangs it: `&` → `&amp;`, `<` → `&lt;`.
@@ -88,7 +98,11 @@ export function serializeSnapshot(snapshot: SemanticSnapshot, opts?: SerializeOp
       truncated: false,
     }
     const root = fit(snapshot.root, budget)
-    const payload = { ...snapshot, root: root ?? { ...snapshot.root, children: [] } }
+    // `fit` refusing the ROOT means not even one node fitted. Putting the root
+    // back UNCHARGED — every issue, every style, every string on it — was the
+    // ceiling losing an argument it had just won. An empty document node is the
+    // only answer that keeps the promise, and `fit` has already set `truncated`.
+    const payload = { ...snapshot, root: root ?? EMPTY_JSON_ROOT }
     let text = JSON.stringify(payload, null, 2)
     if (emittedWidth(text) > limit) {
       // `fit()` charges each node its COMPACT cost, but this path emits
@@ -98,8 +112,16 @@ export function serializeSnapshot(snapshot: SemanticSnapshot, opts?: SerializeOp
       // `truncated: false`, i.e. handed to the model as a complete snapshot.
       // Compact is what the budget actually costed, so fall back to it rather
       // than pretend: still valid JSON, still the whole pruned tree.
+      //
+      // NOT `truncated`, though — nothing was dropped. Saying so cost the agent
+      // a second full capture: it read "cut short; scope the call" against a
+      // snapshot that was complete, narrowed, and paid for the whole thing
+      // again. Losing the indentation is a change of FORMAT, not of content.
       text = JSON.stringify(payload)
-      budget.truncated = true
+      // Unless compact does not fit either, which `fit`'s accounting says
+      // cannot happen — and if the accounting is ever wrong, the ceiling is the
+      // promise that matters.
+      if (emittedWidth(text) > limit) budget.truncated = true
     }
     return { text, truncated: budget.truncated }
   }
@@ -287,8 +309,27 @@ function escape(value: string): string {
     .replace(/"/g, '\\"')
 }
 
+/**
+ * Past this a CSS pixel coordinate is not a coordinate.
+ *
+ * 2^24 is where a double stops being able to name consecutive integers, and no
+ * viewport, document or box is that big — so anything beyond it is a number the
+ * page made up rather than a place on the page.
+ */
+const COORD_MAX = 16_777_216
+
+/**
+ * A coordinate, as a short integer token.
+ *
+ * `Math.round` alone is the IDENTITY on the numbers that matter here: it leaves
+ * `1e21` and `Number.MAX_VALUE` exactly as they are, and `String()` then spells
+ * the latter `1.7976931348623157e+308`. Four of those in one `[box=…]` is a
+ * 92-character token in a format whose whole value is that a reader can scan a
+ * line. Clamping keeps every coordinate at eight characters or fewer.
+ */
 function r(n: number): number {
-  return Math.round(Number.isFinite(n) ? n : 0)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(-COORD_MAX, Math.min(COORD_MAX, Math.round(n)))
 }
 
 function round2(n: number): number {

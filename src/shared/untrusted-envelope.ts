@@ -21,10 +21,6 @@
 const OPEN = '<untrusted-content'
 const CLOSE = '</untrusted-content>'
 
-/** A loose detector for an ATTEMPT at either marker — used to reject notes, not
- *  to sanitise the body. Deliberately over-broad. */
-const MARKER_ATTEMPT = /<\s*\/*\s*untrusted[\s\S]{0,3}content/i
-
 /**
  * Escape EVERY '<' in the body.
  *
@@ -61,6 +57,13 @@ function defang(text: string): string {
  *
  * Every note this module actually emits is an operator-authored constant or a
  * count, so an allowlist costs nothing and cannot be walked around.
+ *
+ * `<` IS NOT IN IT, and that is load-bearing rather than incidental: it is the
+ * one character a marker needs, so excluding it is what makes a separate
+ * marker check unnecessary. There used to be one here — a `/<\s*\/*\s*untrusted
+ * …/i` backstop — and it could not fire, because this shape had already
+ * rejected everything it looked for. Dead code in a defence reads as depth and
+ * is not. Widening this character class means re-deciding that question.
  */
 const NOTE_SHAPE = /^[A-Za-z0-9 ,.;:()'’/-]{1,200}$/
 
@@ -68,7 +71,6 @@ function safeNote(note: string): string | null {
   if (!note) return null
   const normalised = note.normalize('NFKC')
   if (!NOTE_SHAPE.test(normalised)) return null
-  if (MARKER_ATTEMPT.test(normalised)) return null
   return normalised
 }
 
