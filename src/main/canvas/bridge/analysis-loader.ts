@@ -32,15 +32,10 @@ export interface AxeViolation {
 
 export interface AnalysisApi {
   version: string
-  /** All three arrays are load-bearing. `incomplete` is where axe puts every
-   *  contrast check it declined to decide, and `passes` is the only way to tell
-   *  a decision from a rule that never matched — the measurement pass keys its
-   *  own coverage off both (see captureSnapshot). `passes` is optional so an
-   *  analysis module that omits it degrades toward MORE coverage, not less. */
-  run(
-    context: unknown,
-    rules: string[],
-  ): Promise<{ violations: AxeViolation[]; incomplete: AxeViolation[]; passes?: AxeViolation[] }>
+  /** `incomplete` is as load-bearing as `violations`: it is where axe puts every
+   *  contrast check it declined to decide, and the measurement pass covers
+   *  everything axe did not FAIL — which includes those (see captureSnapshot). */
+  run(context: unknown, rules: string[]): Promise<{ violations: AxeViolation[]; incomplete: AxeViolation[] }>
 }
 
 const LOAD_TIMEOUT_MS = 5_000

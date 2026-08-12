@@ -189,29 +189,31 @@ function nearestNode(el: Element, byElement: Map<Element, SnapshotNode>): Snapsh
 }
 
 /**
- * The elements axe reached a CONTRAST VERDICT on — passed or failed.
+ * The elements axe FAILED for contrast — and only those.
  *
- * Deliberately not "the ones it declined". Those are two different questions
- * and only one of them is answerable from `incomplete` alone: an element axe
- * never evaluated appears in no array at all, and "not in `incomplete`" reads
- * it as decided. axe's contrast rule does not match an element it considers
- * invisible on screen — the `left: -9999px` family, a closed `<details>` — so
- * those were covered by nobody with `analysis: true`, while `analysis: false`
- * reported them. Turning analysis on removed a finding, which is the shape of
- * the bug the previous round fixed, one step over.
+ * The question here went through three versions and the third is the one that
+ * is answerable. "Did axe run at all?" stood the measurement pass down
+ * globally, so every check axe declined was covered by nobody. "Did axe return
+ * this as `incomplete`?" assumed every element gets an answer, and one axe
+ * never EVALUATED gets none — its contrast rule does not match an element it
+ * considers invisible on screen, so those were covered by nobody either.
+ * "Which elements did axe reach a verdict on?" was exact, but answering it
+ * required axe's `passes` array and that cost far more than the answer was
+ * worth (see analysis.ts).
  *
- * Asking who axe DECIDED about answers it, and fails in the safe direction: an
- * element missing from this set is measured, not skipped.
+ * So: axe owns what it FAILED, measurement owns everything else. That needs no
+ * `passes`, covers declined and never-evaluated alike, and its failure
+ * direction is more coverage rather than less. What it gives up is that a node
+ * axe explicitly passed gets measured again — which costs a little work and is
+ * only visible at all if the two disagree.
  */
-function decidedContrast(...results: Array<AxeViolation[] | undefined>): Set<Element> {
+function failedContrast(violations: AxeViolation[] | undefined): Set<Element> {
   const out = new Set<Element>()
-  for (const group of results) {
-    for (const result of group ?? []) {
-      if (result.id !== 'color-contrast') continue
-      for (const axeNode of result.nodes ?? []) {
-        const el = elementOf(axeNode)
-        if (el) out.add(el)
-      }
+  for (const result of violations ?? []) {
+    if (result.id !== 'color-contrast') continue
+    for (const axeNode of result.nodes ?? []) {
+      const el = elementOf(axeNode)
+      if (el) out.add(el)
     }
   }
   return out
@@ -307,15 +309,17 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   // coverage. (Two concurrent captures hit this readily: axe is a singleton and
   // rejects with "Axe is already running".)
   let violations: AxeViolation[] | null = null
-  let contrastDecided = new Set<Element>()
+  let contrastFailed = new Set<Element>()
   if (analysis) {
     try {
       const context = scope.length > 0 && roots.length > 0 ? roots : document
       const result = await withRunTimeout(analysis.run(context, AXE_RULES))
+      const failed = failedContrast(result.violations)
+      // Assigned only once the set is built, so a throw in between cannot leave
+      // "axe ran" true beside an empty set — which would double-cover instead
+      // of standing measurement down.
       violations = result.violations
-      // `incomplete` is NOT a verdict, so it is not in here — those elements
-      // are exactly the ones measurement has to cover.
-      contrastDecided = decidedContrast(result.violations, result.passes)
+      contrastFailed = failed
     } catch {
       analysisError = 'run-failed' satisfies AnalysisFailure
     }
@@ -334,12 +338,15 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   //
   // The second rule — "measurement covers what axe returned as incomplete" —
   // had the same shape one layer in. It still assumed every element got an
-  // answer, and an element axe never EVALUATED gets no answer at all. So the
-  // rule is now stated the only way that is exhaustive: axe owns what it
-  // reached a verdict on, measurement owns everything else.
+  // answer, and an element axe never EVALUATED gets no answer at all.
+  //
+  // The rule now names the only set that can be read off axe's output without
+  // asking it for more than it is cheap to give: axe owns what it FAILED,
+  // measurement owns everything else. Declined and never-looked-at are both on
+  // the measurement side, which is where the last two bugs said they belonged.
   const axeRan = violations !== null
   for (const candidate of ctx.candidates) {
-    const flatContrast = !axeRan || !contrastDecided.has(candidate.el)
+    const flatContrast = !axeRan || !contrastFailed.has(candidate.el)
     const issues = measurementIssues(candidate, { flatContrast })
     if (issues.length > 0) candidate.node.issues = (candidate.node.issues ?? []).concat(issues)
   }

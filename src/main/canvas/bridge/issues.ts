@@ -100,9 +100,46 @@ function targetSizeIssue(c: Candidate): AxeIssue | null {
  * worst stop decides, which is the honest reading of "can this text be read
  * anywhere along it".
  */
+/**
+ * Components WCAG 1.4.3 exempts from contrast: the inactive ones. Greyed out
+ * IS the design, and reporting it tells a reviewer to fix the thing that works.
+ *
+ * This has to live here rather than be left to axe. axe drops disabled
+ * controls, `<option>`s and the label of a disabled control from its contrast
+ * rule BEFORE it consults layout, so they appear in none of its result arrays
+ * — and a measurement pass that covers everything axe did not FAIL covers
+ * exactly them. Without this, every disabled control on every page.
+ */
+function isInactive(el: Element): boolean {
+  let node: Element | null = el
+  let depth = 0
+  while (node && depth < 8) {
+    const tag = node.tagName.toLowerCase()
+    if (tag === 'option' || tag === 'optgroup') return true
+    if ((node as Partial<HTMLInputElement>).disabled === true) return true
+    if (node.getAttribute('aria-disabled') === 'true') return true
+    if (node.hasAttribute('inert')) return true
+    // A <label> is exempt when the control it labels is — the greying is the
+    // control's, and the label is painted to match it.
+    if (tag === 'label') {
+      const target = node.getAttribute('for')
+      const control = target
+        ? node.ownerDocument?.getElementById(target)
+        : node.querySelector('input, select, textarea, button')
+      if (control && ((control as Partial<HTMLInputElement>).disabled === true || control.getAttribute('aria-disabled') === 'true')) {
+        return true
+      }
+    }
+    node = node.parentElement
+    depth++
+  }
+  return false
+}
+
 function contrastIssue(c: Candidate, flatContrast: boolean): AxeIssue | null {
   if (c.srOnly || c.text.length === 0) return null
   if (c.opacity < 0.05) return null
+  if (isInactive(c.el)) return null
   const cs = styleOf(c.el)
   if (!cs) return null
 

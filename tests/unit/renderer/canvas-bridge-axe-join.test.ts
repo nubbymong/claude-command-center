@@ -16,7 +16,6 @@ import type { AxeViolation } from '../../../src/main/canvas/bridge/analysis-load
 
 let violations: AxeViolation[] = []
 let incomplete: AxeViolation[] = []
-let passes: AxeViolation[] = []
 
 vi.mock('../../../src/main/canvas/bridge/analysis-loader', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/main/canvas/bridge/analysis-loader')>()
@@ -24,7 +23,7 @@ vi.mock('../../../src/main/canvas/bridge/analysis-loader', async (importOriginal
     ...actual,
     ensureAnalysis: async () => ({
       version: 'fake',
-      run: async () => ({ violations, incomplete, passes }),
+      run: async () => ({ violations, incomplete }),
     }),
   }
 })
@@ -65,7 +64,6 @@ beforeEach(() => {
   document.body.innerHTML = ''
   violations = []
   incomplete = []
-  passes = []
 })
 
 /**
@@ -192,16 +190,46 @@ describe('findings attributed to a shared ancestor', () => {
     expect(contrasts[0].measured).toBe('1.11:1')
   })
 
-  it('stands measurement down on a node axe DID reach a verdict on', async () => {
-    // The other half: a verdict, even a passing one, is axe's to own. Covering
-    // it again would report a finding axe explicitly cleared.
+  it('measures a node axe passed, because it never asks axe what it passed', async () => {
+    // The trade, stated where it can be seen. Knowing which elements axe
+    // PASSED would be exact, but it requires axe's `passes` array, and asking
+    // for that made the run super-linear — 4,902 elements went from 5.0 s to
+    // 28.4 s, past the frame timeout, so the whole axe pass vanished from
+    // pages above about four thousand elements.
+    //
+    // "axe owns what it FAILED" needs no `passes` and errs toward covering
+    // more. The cost is here: a node axe silently passed is measured again,
+    // and if the two ever disagree the measurement is what the agent sees.
     document.body.innerHTML = `<p data-ux-id="grey" data-test-box="0,0,300,20"
         style="color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">Low contrast</p>`
-    const el = document.querySelector('[data-ux-id="grey"]') as Element
-    passes = [{ id: 'color-contrast', nodes: [{ element: el }] }]
 
     const result = await captureSnapshot({ analysis: true })
-    expect((nodeFor(result, 'grey')?.issues ?? []).map((i) => i.rule)).not.toContain('color-contrast')
+    const contrasts = (nodeFor(result, 'grey')?.issues ?? []).filter((i) => i.rule === 'color-contrast')
+    expect(contrasts).toHaveLength(1)
+    expect(contrasts[0].measured).toBe('2.32:1')
+  })
+
+  it('exempts an inactive control, which axe drops before it reaches layout', async () => {
+    // Covering everything axe did not FAIL means covering everything axe never
+    // matched — and axe drops disabled controls, `<option>`s and the label of a
+    // disabled control from its contrast rule before consulting layout. WCAG
+    // 1.4.3 exempts inactive components: greyed out is the design.
+    document.body.innerHTML = `
+      <button data-ux-id="off" disabled data-test-box="0,0,120,32"
+              style="color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">Save</button>
+      <button data-ux-id="on" data-test-box="0,40,120,32"
+              style="color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">Save</button>
+      <label data-ux-id="lbl" for="d" data-test-box="0,80,120,20"
+             style="color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">Name</label>
+      <input id="d" disabled data-test-box="0,100,120,32" />`
+
+    const result = await captureSnapshot({ analysis: true })
+    const rules = (uxId: string) => (nodeFor(result, uxId)?.issues ?? []).map((i) => i.rule)
+    expect(rules('off')).not.toContain('color-contrast')
+    expect(rules('lbl')).not.toContain('color-contrast')
+    // The identical ENABLED control is still reported — the exemption is about
+    // being inactive, not about being grey.
+    expect(rules('on')).toContain('color-contrast')
   })
 
   it('bounds how many findings one node can absorb', async () => {
