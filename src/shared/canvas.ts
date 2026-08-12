@@ -196,9 +196,23 @@ export interface SnapshotNode {
     type?: string
     checked?: boolean
     disabled?: boolean
-    /** Redacted to '(redacted)' for password/hidden inputs and secret-looking
-     *  fields — the snapshot is sent verbatim to the agent. */
-    value?: string
+    /**
+     * How many characters the field holds. NOT what it holds.
+     *
+     * A snapshot goes verbatim into the model's context and from there into
+     * transcripts, so a field's contents are the highest-consequence thing in
+     * it. Deciding WHICH fields are secret means recognising every way a human
+     * might name one, across languages, spellings and separators — two rounds
+     * of adversarial review found that heuristic first too broad and then too
+     * narrow, and both were right. So the contents are simply never carried.
+     *
+     * A review still gets what it needs from the structure: the label, the
+     * placeholder and the accessible name are all page-authored TEXT and are
+     * emitted in full as the node's `name`. What is withheld is only what the
+     * USER typed — and the length of it, which is what overflow and truncation
+     * review actually needs. Omitted when the field is empty.
+     */
+    valueLength?: number
     ariaInvalid?: boolean
     /** Effective (accumulated) opacity, 0..1 — catches "visible in the DOM but
      *  faded to nothing" that a bare tree misses. */

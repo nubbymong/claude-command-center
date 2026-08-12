@@ -198,7 +198,9 @@ function stateTokens(state: SnapshotNode['state']): string[] {
   if (state.type) out.push(`[type=${token(state.type)}]`)
   if (state.checked) out.push('[checked]')
   if (state.disabled) out.push('[disabled]')
-  if (state.value != null && state.value !== '') out.push(`[value="${escape(state.value)}"]`)
+  // How much the field holds, not what. There is deliberately no token here
+  // that carries a field's contents — see SnapshotNode['state'].valueLength.
+  if (state.valueLength) out.push(`[chars=${r(state.valueLength)}]`)
   if (state.ariaInvalid) out.push('[aria-invalid]')
   // Opacity is only interesting when it's actually reducing visibility.
   if (state.opacity != null && state.opacity < 1) out.push(`[opacity=${round2(state.opacity)}]`)

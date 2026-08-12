@@ -6,142 +6,19 @@
 
 import type { Rect, SnapshotNode } from '../../../shared/canvas'
 import { composite, extractGradientStops, parseColor, type Rgba } from './color'
+import { holdsTypedText } from './semantics'
 
 export type NodeState = NonNullable<SnapshotNode['state']>
 
-const VALUE_MAX = 60
-
 /**
- * Split a field identifier into words, so a word boundary means the same thing
- * whatever naming convention the page uses.
+ * Ceiling on the reported length of a field's contents.
  *
- * `cardNumber`, `card_number`, `CARD-NUMBER` and `APIKey` all become the same
- * lowercase token stream. Without this, matching has to fall back to unbounded
- * substrings, and unbounded substrings are what made `key` match `keywords`.
+ * The length is a NUMBER, so it cannot carry page text — but it is still
+ * page-chosen, and an unbounded one is an unbounded token on the wire. A
+ * million characters in one field is already far past anything a review acts
+ * on; the cap says "at least this much" and costs seven characters.
  */
-function words(value: string): string {
-  return value
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-    .replace(/[^A-Za-z0-9]+/g, ' ')
-    .toLowerCase()
-    .trim()
-}
-
-/**
- * Names that mean "credential" wherever they appear — including in prose a
- * human wrote for other humans. Every entry here has no innocent reading, so
- * it is safe to match against a label or a placeholder.
- *
- * Written against the output of `words()`, so a single space matches every
- * separator the page might have used and no `i` flag is needed.
- */
-const SECRET_STRONG = new RegExp(
-  [
-    'secret',
-    'passw', // password, passwd, passwords
-    'passphrase',
-    'passcode',
-    'credential',
-    'mnemonic',
-    'social security',
-    'private key',
-    'security code',
-    'sort code',
-    'authorization',
-    '\\bcvv\\b',
-    '\\bcvc\\b',
-    '\\bccnum\\b',
-    '\\bssn\\b',
-    '\\biban\\b',
-    '\\botp\\b',
-    '\\btotp\\b',
-    'one time (?:code|password|passcode)',
-    '(?:seed|recovery|backup|secret|mnemonic) (?:phrase|words?)',
-    '(?:card|cc) (?:numbers?|num|no|code|pin|expiry|exp)',
-    '(?:credit|debit|payment|bank) cards?',
-    'routing (?:number|no)',
-    'account number',
-    'api (?:keys?|tokens?|secrets?)',
-  ].join('|'),
-)
-
-/**
- * Names that mean "credential" only as WHOLE WORDS, and only on a surface the
- * PAGE chose as a machine identifier.
- *
- * These are the words with a common innocent reading. Matched as unbounded
- * substrings against human prose they redacted 20 of 23 ordinary fields —
- * `key` inside `keywords`, `card` inside "Card title", `pin` inside "Pin to
- * top", `auth` inside `authorName` — and field values are primary evidence in
- * a design review, so a card-authoring form became unreviewable. Bare `card`
- * and bare `auth` are gone entirely: the cases that matter reach this through
- * `autocomplete="cc-*"`, "card number", `authToken` and `authKey`.
- */
-const SECRET_FIELD_NAME = /\b(?:keys?|tokens?|pins?|pass|creds?|pwd)\b/
-
-/**
- * The same risky words, allowed back into prose when the prose is NOTHING BUT
- * one of them.
- *
- * `<label>PIN</label>` names a PIN field; `aria-label="Pin to top"` names a
- * button, and the difference is that the second one is a sentence. Tested
- * against each surface separately rather than against all of them joined, so a
- * long placeholder cannot dilute a one-word label out of matching.
- */
-const SECRET_PROSE_EXACT = /^(?:pins?|keys?|tokens?|pass|creds?|pwd|passcode)$/
-
-/**
- * A page controls every surface below and none of them has a length limit, so
- * the cost of deciding "is this a secret?" is bounded here rather than by the
- * page. This is the bound that matters: `words()` rewrites its input three
- * times over and then several patterns are matched against the result, PER
- * CONTROL. 400 controls under one 540 KB label cost 2,417 ms of synchronous
- * work on the page's thread unclamped, and 240 ms clamped.
- *
- * Set high on purpose. It is a ceiling on the absurd, not a budget: anything
- * tighter would start missing a hint that sits after a paragraph of help text
- * inside a wrapping `<label>`, and a missed secret is permanent.
- */
-const SURFACE_MAX = 4096
-
-function clampSurface(value: string | null | undefined): string {
-  return value ? value.slice(0, SURFACE_MAX) : ''
-}
-
-/** The wrapping label's text, read at most once per label per capture. */
-function labelTextFor(el: Element): string {
-  const label = el.closest?.('label')
-  if (!label) return ''
-  const cache = labelTextCache
-  const hit = cache?.get(label)
-  if (hit !== undefined) return hit
-  const text = clampSurface(label.textContent)
-  cache?.set(label, text)
-  return text
-}
-
-/**
- * `autocomplete` values that ARE secrets, by definition.
- *
- * These are the standard tokens whose entire purpose is to say "this field holds
- * payment or credential data" — and they were the ones being missed, because the
- * name-based heuristic above never matched them: a hand-rolled `name="cardNumber"`
- * was redacted while the spec-compliant `autocomplete="cc-number"` handed the
- * model a live card number. Every `cc-*` token is payment data.
- */
-const SECRET_AUTOCOMPLETE = /^(?:cc-|one-time-code$|current-password$|new-password$)/i
-
-/**
- * Content that is a credential whatever the field around it is called.
- *
- * The backstop for the case no naming heuristic can reach: a key pasted into a
- * bare `<textarea>`. A snapshot goes verbatim into the model's context and from
- * there into transcripts, so the cost of missing one is permanent and the cost
- * of a false positive is a redacted field in a design review.
- */
-const SECRET_VALUE =
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk|rk)-[A-Za-z0-9_-]{16,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[baprs]-[A-Za-z0-9-]{10,}/
+const VALUE_LENGTH_MAX = 1_000_000
 
 /** Curated computed styles (spec §4: font-*, colour, background, padding,
  *  margin, overflow). They are the dominant token cost, so they ride only on
@@ -197,29 +74,13 @@ export function isVisible(el: Element): boolean {
  * backdrop) and the overlap pass reads styles again — measured at ~137
  * getComputedStyle calls per emitted node, half a million for one capture of a
  * deep page. getComputedStyle returns a LIVE object, so caching it within a
- * single synchronous capture is safe; `resetCaptureCaches()` runs at the start of
+ * single synchronous capture is safe; `resetStyleCache()` runs at the start of
  * each one so a later capture never reads stale layout.
  */
 let styleCache: WeakMap<Element, CSSStyleDeclaration> | null = null
 
-/**
- * Per-capture memo for a wrapping label's text, on the same lifecycle.
- *
- * `textContent` rebuilds the whole subtree's string on EVERY read, and one
- * `<label>` may wrap many controls: the page writes that content once and the
- * bridge would otherwise read it once per control.
- *
- * Honestly: this is not the fix for the stall — `SURFACE_MAX` is, and removing
- * this memo changes nothing measurable under jsdom (240 ms either way), whose
- * `textContent` is evidently far cheaper than a real engine's. It is kept
- * because the asymmetry it closes is a property of the DOM rather than of the
- * harness, and it costs one WeakMap. The claim stops there.
- */
-let labelTextCache: WeakMap<Element, string> | null = null
-
-export function resetCaptureCaches(): void {
+export function resetStyleCache(): void {
   styleCache = new WeakMap()
-  labelTextCache = new WeakMap()
 }
 
 export function styleOf(el: Element): CSSStyleDeclaration | null {
@@ -285,16 +146,20 @@ export function isSrOnly(el: Element): boolean {
       const rect = node.getBoundingClientRect()
       const hidden = cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden'
       if (positioned && hidden && rect.width <= 1 && rect.height <= 1) return true
-      // The `left: -9999px` family. Keyed on where the box ACTUALLY ENDS UP in
-      // page coordinates, not on the declaration: a page cannot claim this
-      // without genuinely being off the canvas, which is what separates it from
-      // the `clip` trap above. Page coordinates, so scroll position is not part
-      // of the answer, and no ordinary content sits at a negative page x.
-      // A real box is required before "off the canvas" means anything: an
-      // element with no size is at 0,0 with width 0, which satisfies the
-      // inequality while being nowhere in particular.
-      const box = boxOf(node)
-      if (box.width > 0 && box.height > 0 && (box.x + box.width <= 0 || box.y + box.height <= 0)) return true
+      // NOT here: the `left: -9999px` family. It was added and then removed,
+      // and the reason is worth keeping. Everything this function returns true
+      // for suppresses every measurement rule on the subtree, and the `[sr-only]`
+      // that results is LEGITIMATELY emitted, so no defence downstream objects to
+      // it. That makes each branch a suppression primitive, and a branch keyed on
+      // an ancestor's box is one a page can reach without hiding anything:
+      // `overflow: visible` is the default, so a descendant paints wherever it
+      // likes while its parent's box sits off the canvas. Measured: an off-canvas
+      // wrapper silenced contrast and target-size findings on plainly visible
+      // children three levels down, from plain CSS. A negative `window.scrollX`
+      // — ordinary in an RTL document — did it to the whole page.
+      //
+      // What it bought was the absence of contrast findings on off-screen text.
+      // Noise is a smaller harm than a suppression primitive, so the noise stays.
     }
     node = node.parentElement
     depth++
@@ -366,35 +231,18 @@ export function stateOf(el: Element, opts?: { srOnly?: boolean; opacity?: number
   if ((isControl && control.disabled === true) || ariaFlag(el, 'aria-disabled')) state.disabled = true
 
   if (isControl && type !== 'checkbox' && type !== 'radio' && type !== 'file' && type !== 'submit' && type !== 'button') {
-    const autocomplete = (el.getAttribute('autocomplete') || '').trim()
+    // The LENGTH of what the user typed, never the text of it. See
+    // SnapshotNode['state'].valueLength for why this is not a heuristic.
     const value = typeof control.value === 'string' ? control.value : ''
-    // Two surfaces, because they carry different amounts of evidence.
-    //
-    // An IDENTIFIER is a name the page chose for a machine to read; nobody
-    // writes `name="pin"` for a field that pins a post. PROSE is written for a
-    // human — "Pin to top", "Card title", "Search by keyword" — and reading it
-    // as a field name is how the redaction started eating ordinary content.
-    // Only the unambiguous stems are matched against prose.
-    const identifiers = words([el.getAttribute('name'), el.id, autocomplete].map(clampSurface).join(' '))
-    const prose = [
-      clampSurface(el.getAttribute('aria-label')),
-      clampSurface(el.getAttribute('placeholder')),
-      // The visible label is often the ONLY thing identifying the field.
-      labelTextFor(el),
-    ].map(words)
-    const secret =
-      type === 'password' ||
-      type === 'hidden' ||
-      SECRET_AUTOCOMPLETE.test(autocomplete) ||
-      SECRET_STRONG.test(identifiers) ||
-      SECRET_FIELD_NAME.test(identifiers) ||
-      prose.some((surface) => SECRET_STRONG.test(surface) || SECRET_PROSE_EXACT.test(surface)) ||
-      SECRET_VALUE.test(value)
-    if (secret) {
-      if (value.length > 0) state.value = '(redacted)'
-    } else if (value.length > 0) {
-      state.value = value.length > VALUE_MAX ? value.slice(0, VALUE_MAX - 1) + '…' : value
-    }
+    if (value.length > 0) state.valueLength = Math.min(value.length, VALUE_LENGTH_MAX)
+  } else if (!isControl && holdsTypedText(el)) {
+    // A `contenteditable` is a control that does not look like one. Its text is
+    // withheld by `nameOf` for the same reason a textarea's is, so without this
+    // it would report as an empty element and a review would see nothing there
+    // at all — the length is what makes it legible again.
+    state.type = 'contenteditable'
+    const typed = el.textContent ?? ''
+    if (typed.length > 0) state.valueLength = Math.min(typed.length, VALUE_LENGTH_MAX)
   }
 
   if (ariaFlag(el, 'aria-invalid')) state.ariaInvalid = true

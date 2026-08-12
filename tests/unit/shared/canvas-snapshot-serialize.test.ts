@@ -87,17 +87,31 @@ describe('form-state semantics (HARD P2 requirement)', () => {
     expect(line).toBe('- checkbox "Enable" [ref=e5] [box=0,0,16,16] [type=checkbox] [checked] [disabled] [aria-invalid] [opacity=0.3]')
   })
 
-  it('shows a text input value but omits checked/disabled/aria-invalid when false, and opacity when 1', () => {
+  it('shows how much a field holds — never what — and omits false flags and opacity 1', () => {
     const s = snap(
       node({
         ref: 'e6',
         role: 'textbox',
         box: { x: 0, y: 0, width: 200, height: 32 },
-        state: { type: 'text', value: 'hello', checked: false, disabled: false, ariaInvalid: false, opacity: 1 },
+        state: { type: 'text', valueLength: 5, checked: false, disabled: false, ariaInvalid: false, opacity: 1 },
       }),
     )
     const line = serializeSnapshot(s).text.split('\n')[1]
-    expect(line).toBe('- textbox [ref=e6] [box=0,0,200,32] [type=text] [value="hello"]')
+    expect(line).toBe('- textbox [ref=e6] [box=0,0,200,32] [type=text] [chars=5]')
+  })
+
+  it('has no token that can carry a field’s contents at all', () => {
+    // The property, stated where the wire format is defined: whatever a page
+    // puts in a control, the line for it is the same shape. This is what
+    // replaced a heuristic that tried to decide which values were secret.
+    const line = (valueLength: number) =>
+      serializeSnapshot(
+        snap(node({ ref: 'e1', role: 'textbox', box: { x: 0, y: 0, width: 1, height: 1 }, state: { type: 'text', valueLength } })),
+      ).text.split('\n')[1]
+    expect(line(28)).toBe('- textbox [ref=e1] [box=0,0,1,1] [type=text] [chars=28]')
+    expect(line(1)).toBe('- textbox [ref=e1] [box=0,0,1,1] [type=text] [chars=1]')
+    // Absent for an empty field rather than reported as zero.
+    expect(line(0)).toBe('- textbox [ref=e1] [box=0,0,1,1] [type=text]')
   })
 
   it('marks screen-reader-only nodes so a hidden label never reads as broken text', () => {

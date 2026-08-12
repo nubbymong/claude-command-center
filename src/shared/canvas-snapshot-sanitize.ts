@@ -55,6 +55,10 @@ export const DEFAULT_SNAPSHOT_LIMITS: SanitizeLimits = {
   maxChars: 1_024_000,
 }
 
+/** Mirrors the bridge's own cap on a reported field length. Applied again here
+ *  because the bridge's copy runs inside the page and is not a defence. */
+const VALUE_LENGTH_CEILING = 1_000_000
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -240,8 +244,12 @@ function state(value: unknown, budget: Budget, limits: SanitizeLimits): Snapshot
   if (type) out.type = type
   if (value.checked === true) out.checked = true
   if (value.disabled === true) out.disabled = true
-  const fieldValue = field(value, 'value', limits.maxText, budget)
-  if (fieldValue) out.value = fieldValue
+  // A COUNT, never the contents. The bridge sends a number; anything else the
+  // page substitutes is not one and is dropped rather than coerced, so no
+  // page-authored characters can reach this field by any route.
+  if (typeof value.valueLength === 'number' && Number.isFinite(value.valueLength) && value.valueLength > 0) {
+    out.valueLength = Math.min(Math.floor(value.valueLength), VALUE_LENGTH_CEILING)
+  }
   if (value.ariaInvalid === true) out.ariaInvalid = true
   if (value.srOnly === true) out.srOnly = true
   if (typeof value.opacity === 'number' && Number.isFinite(value.opacity)) {
@@ -290,7 +298,7 @@ function weigh(value: SnapshotNode): number {
   if (nodeState) {
     total += 11
     if (nodeState.type !== undefined) total += 10 + nodeState.type.length
-    if (nodeState.value !== undefined) total += 11 + nodeState.value.length
+    if (nodeState.valueLength !== undefined) total += 17 + num2str(nodeState.valueLength)
     if (nodeState.checked !== undefined) total += 15
     if (nodeState.disabled !== undefined) total += 16
     if (nodeState.ariaInvalid !== undefined) total += 19

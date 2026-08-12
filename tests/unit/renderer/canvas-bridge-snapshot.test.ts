@@ -144,20 +144,26 @@ describe('form-state semantics (HARD P2 requirement)', () => {
     expect(checkbox?.state).toMatchObject({ type: 'checkbox', checked: true })
 
     const disabled = nodes.find((n) => n.state?.disabled)
-    expect(disabled?.state?.value).toBe('locked')
+    expect(disabled?.state?.valueLength).toBe('locked'.length)
 
     const invalid = nodes.find((n) => n.state?.ariaInvalid)
-    expect(invalid?.state).toMatchObject({ ariaInvalid: true, value: 'abc' })
+    expect(invalid?.state).toMatchObject({ ariaInvalid: true, valueLength: 3 })
   })
 
-  it('reports a plain field value but never a secret one', async () => {
+  it('reports how much every field holds and the contents of none of them', async () => {
+    // There is no longer a secret field and an ordinary one — the fixture's
+    // email and its password are treated identically, which is the property.
+    // See canvas-bridge-field-values.test.ts for why the distinction went away.
     const nodes = flatten((await snapshot()).root)
     const email = nodes.find((n) => n.state?.type === 'email')
-    expect(email?.state?.value).toBe('nick@example.com')
+    expect(email?.state?.valueLength).toBe('nick@example.com'.length)
 
     const password = nodes.find((n) => n.state?.type === 'password')
-    expect(password?.state?.value).toBe('(redacted)')
-    expect(JSON.stringify(nodes)).not.toContain('hunter2')
+    expect(password?.state?.valueLength).toBe('hunter2'.length)
+
+    const serialized = JSON.stringify(nodes)
+    expect(serialized).not.toContain('hunter2')
+    expect(serialized).not.toContain('nick@example.com')
   })
 
   it('reports effective opacity so faded-to-nothing content is visible in text', async () => {

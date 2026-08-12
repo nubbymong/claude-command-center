@@ -8,7 +8,7 @@
 import type { AxeIssue, CanvasSnapshotOptions, CanvasSnapshotResult, Rect, SnapshotNode } from '../../../shared/canvas'
 import { ensureAnalysis, withRunTimeout, type AnalysisApi, type AxeNodeResult, type AxeViolation } from './analysis-loader'
 import { addOverlapIssues, measurementIssues, type Candidate } from './issues'
-import { boxOf, curatedStyles, directText, effectiveOpacity, isSrOnly, isVisible, resetCaptureCaches, stateOf } from './measure'
+import { boxOf, curatedStyles, directText, effectiveOpacity, isSrOnly, isVisible, resetStyleCache, stateOf } from './measure'
 import { isInteractive, isMeaningful, isSkipped, nameOf, roleOf, squash } from './semantics'
 
 const MAX_NODES = 4000
@@ -273,7 +273,7 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   // One memo per capture: the walk reads each element's computed style several
   // times over, and re-resolving it every time is the difference between a
   // snapshot and a stalled frame on a deep page.
-  resetCaptureCaches()
+  resetStyleCache()
 
   const { roots, unmatched } = resolveScope(scope)
   const ctx: WalkContext = {

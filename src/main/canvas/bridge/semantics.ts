@@ -76,8 +76,24 @@ export function nameOf(el: Element): string {
   if (name) return squash(name)
   // accname gives nothing for generic containers; their own text is what the
   // reviewer is actually looking at, so text leaves read by their content.
-  if (el.children.length === 0) return squash(directText(el))
+  //
+  // Except where that text is not the page's — it is the USER'S. A `<textarea>`
+  // holds its value as a child text node and a `contenteditable` holds whatever
+  // was typed into it, so this fallback handed both to the agent under the name
+  // of an accessible name. After the value itself stopped being carried this
+  // was the one path a field's contents still had to the wire, and a pasted
+  // private key went down it.
+  if (el.children.length === 0 && !holdsTypedText(el)) return squash(directText(el))
   return ''
+}
+
+/** Elements whose own text is what a USER typed rather than what the page
+ *  wrote. Their length is reported as `state.valueLength`; their contents are
+ *  reported nowhere. */
+export function holdsTypedText(el: Element): boolean {
+  if (el.tagName.toLowerCase() === 'textarea') return true
+  const editable = el.getAttribute?.('contenteditable')
+  return typeof editable === 'string' && editable.toLowerCase() !== 'false'
 }
 
 export function isInteractive(el: Element, role: string): boolean {
