@@ -44,6 +44,19 @@ export interface AxeRunResult {
    * production takes — and the capture note still claimed contrast applied.
    */
   incomplete: AxeViolation[]
+  /**
+   * Rules axe evaluated and PASSED.
+   *
+   * Needed to tell "axe decided this is fine" from "axe never looked at it".
+   * Those are not the same thing and treating them alike is how a finding
+   * disappears: axe's contrast rule does not match an element it considers
+   * invisible on screen, so such an element lands in none of the three arrays
+   * — and a rule of "measurement stands down unless axe said `incomplete`"
+   * covers it with nobody. Knowing what axe passed makes the arbitration
+   * exact, and makes its failure direction safe: an absent `passes` means
+   * measurement covers MORE, never less.
+   */
+  passes: AxeViolation[]
 }
 
 // axe publishes itself onto `window` when it loads, and that global IS the object
@@ -77,9 +90,17 @@ export async function run(context: unknown, rules: string[]): Promise<AxeRunResu
   const options = {
     elementRef: true,
     iframes: false,
-    resultTypes: ['violations', 'incomplete'],
+    // `passes` is in here for the arbitration, not for reporting: nothing
+    // downstream shows a passing result to anyone. Without it axe returns at
+    // most one node per passing rule and the set of elements it decided about
+    // cannot be reconstructed.
+    resultTypes: ['violations', 'incomplete', 'passes'],
     runOnly: { type: 'rule', values },
   }
   const result = (await axeRun(context as never, options as never)) as unknown as Partial<AxeRunResult>
-  return { violations: result.violations ?? [], incomplete: result.incomplete ?? [] }
+  return {
+    violations: result.violations ?? [],
+    incomplete: result.incomplete ?? [],
+    passes: result.passes ?? [],
+  }
 }

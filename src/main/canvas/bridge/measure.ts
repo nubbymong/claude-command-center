@@ -176,6 +176,13 @@ export function isVisible(el: Element): boolean {
   // overlap) is then a false positive, which is the exact class the sr-only work
   // exists to prevent. `display: none` needs no check: it has no rects at all.
   //
+  // This DROPS the node, where sr-only and `opacity` merely mark it, and the
+  // asymmetry is deliberate rather than an oversight: `visibility: hidden` also
+  // removes the subtree from the ACCESSIBILITY tree, so no reader of any kind
+  // perceives it. Screen-reader-only text and `opacity: 0` content stay in that
+  // tree and are announced, which is exactly why they have to be reported and
+  // marked instead of hidden.
+  //
   // Deliberately NOT extended to `aria-hidden`: that content IS painted, so its
   // findings are real. Hiding it from the tree would lose them.
   const cs = styleOf(el)
@@ -278,6 +285,16 @@ export function isSrOnly(el: Element): boolean {
       const rect = node.getBoundingClientRect()
       const hidden = cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden'
       if (positioned && hidden && rect.width <= 1 && rect.height <= 1) return true
+      // The `left: -9999px` family. Keyed on where the box ACTUALLY ENDS UP in
+      // page coordinates, not on the declaration: a page cannot claim this
+      // without genuinely being off the canvas, which is what separates it from
+      // the `clip` trap above. Page coordinates, so scroll position is not part
+      // of the answer, and no ordinary content sits at a negative page x.
+      // A real box is required before "off the canvas" means anything: an
+      // element with no size is at 0,0 with width 0, which satisfies the
+      // inequality while being nowhere in particular.
+      const box = boxOf(node)
+      if (box.width > 0 && box.height > 0 && (box.x + box.width <= 0 || box.y + box.height <= 0)) return true
     }
     node = node.parentElement
     depth++

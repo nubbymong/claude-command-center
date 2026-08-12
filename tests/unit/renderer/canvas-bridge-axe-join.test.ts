@@ -16,6 +16,7 @@ import type { AxeViolation } from '../../../src/main/canvas/bridge/analysis-load
 
 let violations: AxeViolation[] = []
 let incomplete: AxeViolation[] = []
+let passes: AxeViolation[] = []
 
 vi.mock('../../../src/main/canvas/bridge/analysis-loader', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/main/canvas/bridge/analysis-loader')>()
@@ -23,7 +24,7 @@ vi.mock('../../../src/main/canvas/bridge/analysis-loader', async (importOriginal
     ...actual,
     ensureAnalysis: async () => ({
       version: 'fake',
-      run: async () => ({ violations, incomplete }),
+      run: async () => ({ violations, incomplete, passes }),
     }),
   }
 })
@@ -64,6 +65,7 @@ beforeEach(() => {
   document.body.innerHTML = ''
   violations = []
   incomplete = []
+  passes = []
 })
 
 /**
@@ -144,6 +146,62 @@ describe('findings attributed to a shared ancestor', () => {
 
     const result = await captureSnapshot({ analysis: true })
     expect(nodeFor(result, 'region')?.issues ?? []).toHaveLength(1)
+  })
+
+  it('does not read "axe never looked" as "axe passed it"', async () => {
+    // axe's contrast rule does not MATCH an element it considers invisible on
+    // screen — the `left: -9999px` family, a closed `<details>` — so such an
+    // element appears in violations, incomplete and passes alike: nowhere. The
+    // rule "measurement covers what axe returned as incomplete" then reads that
+    // silence as a verdict and covers it with nobody, so turning analysis ON
+    // removed a finding that turning it off produced.
+    const markup = `<p data-ux-id="grey" data-test-box="0,0,300,20"
+        style="color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">Low contrast</p>`
+
+    document.body.innerHTML = markup
+    const degraded = await captureSnapshot({ analysis: false })
+
+    document.body.innerHTML = markup
+    // axe ran, found other things, and said nothing whatsoever about this node.
+    violations = [
+      { id: 'button-name', impact: 'critical', nodes: [{ element: document.body, impact: 'critical' }] },
+    ]
+    const analysed = await captureSnapshot({ analysis: true })
+
+    const rulesOf = (r: CanvasSnapshotResult) => (nodeFor(r, 'grey')?.issues ?? []).map((i) => i.rule)
+    expect(rulesOf(degraded)).toContain('color-contrast')
+    expect(rulesOf(analysed)).toContain('color-contrast')
+  })
+
+  it('reports a node axe FAILED once, not twice', async () => {
+    // A failing verdict is still a verdict. The measurement pass would find the
+    // same defect and phrase it differently, so the agent would be told about
+    // one problem twice with no way to know it was one.
+    //
+    // The ratio axe reports here is deliberately NOT the one the measurement
+    // pass computes for these colours (2.32:1). Matching them would let the
+    // join's dedupe collapse the pair and hide the double coverage — which is
+    // what the first draft of this test did, and it passed against the bug.
+    document.body.innerHTML = `<p data-ux-id="grey" data-test-box="0,0,300,20"
+        style="color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">Low contrast</p>`
+    violations = [contrast('[data-ux-id="grey"]', 1.11)]
+
+    const result = await captureSnapshot({ analysis: true })
+    const contrasts = (nodeFor(result, 'grey')?.issues ?? []).filter((i) => i.rule === 'color-contrast')
+    expect(contrasts).toHaveLength(1)
+    expect(contrasts[0].measured).toBe('1.11:1')
+  })
+
+  it('stands measurement down on a node axe DID reach a verdict on', async () => {
+    // The other half: a verdict, even a passing one, is axe's to own. Covering
+    // it again would report a finding axe explicitly cleared.
+    document.body.innerHTML = `<p data-ux-id="grey" data-test-box="0,0,300,20"
+        style="color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">Low contrast</p>`
+    const el = document.querySelector('[data-ux-id="grey"]') as Element
+    passes = [{ id: 'color-contrast', nodes: [{ element: el }] }]
+
+    const result = await captureSnapshot({ analysis: true })
+    expect((nodeFor(result, 'grey')?.issues ?? []).map((i) => i.rule)).not.toContain('color-contrast')
   })
 
   it('bounds how many findings one node can absorb', async () => {

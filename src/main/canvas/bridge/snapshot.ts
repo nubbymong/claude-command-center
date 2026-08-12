@@ -188,15 +188,30 @@ function nearestNode(el: Element, byElement: Map<Element, SnapshotNode>): Snapsh
   return null
 }
 
-/** The elements axe evaluated for contrast and handed back undecided. Those —
- *  and only those — are the ones the measurement pass must still cover. */
-function declinedContrast(incomplete: AxeViolation[] | undefined): Set<Element> {
+/**
+ * The elements axe reached a CONTRAST VERDICT on — passed or failed.
+ *
+ * Deliberately not "the ones it declined". Those are two different questions
+ * and only one of them is answerable from `incomplete` alone: an element axe
+ * never evaluated appears in no array at all, and "not in `incomplete`" reads
+ * it as decided. axe's contrast rule does not match an element it considers
+ * invisible on screen — the `left: -9999px` family, a closed `<details>` — so
+ * those were covered by nobody with `analysis: true`, while `analysis: false`
+ * reported them. Turning analysis on removed a finding, which is the shape of
+ * the bug the previous round fixed, one step over.
+ *
+ * Asking who axe DECIDED about answers it, and fails in the safe direction: an
+ * element missing from this set is measured, not skipped.
+ */
+function decidedContrast(...results: Array<AxeViolation[] | undefined>): Set<Element> {
   const out = new Set<Element>()
-  for (const result of incomplete ?? []) {
-    if (result.id !== 'color-contrast') continue
-    for (const axeNode of result.nodes ?? []) {
-      const el = elementOf(axeNode)
-      if (el) out.add(el)
+  for (const group of results) {
+    for (const result of group ?? []) {
+      if (result.id !== 'color-contrast') continue
+      for (const axeNode of result.nodes ?? []) {
+        const el = elementOf(axeNode)
+        if (el) out.add(el)
+      }
     }
   }
   return out
@@ -292,13 +307,15 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   // coverage. (Two concurrent captures hit this readily: axe is a singleton and
   // rejects with "Axe is already running".)
   let violations: AxeViolation[] | null = null
-  let contrastDeclined = new Set<Element>()
+  let contrastDecided = new Set<Element>()
   if (analysis) {
     try {
       const context = scope.length > 0 && roots.length > 0 ? roots : document
       const result = await withRunTimeout(analysis.run(context, AXE_RULES))
       violations = result.violations
-      contrastDeclined = declinedContrast(result.incomplete)
+      // `incomplete` is NOT a verdict, so it is not in here — those elements
+      // are exactly the ones measurement has to cover.
+      contrastDecided = decidedContrast(result.violations, result.passes)
     } catch {
       analysisError = 'run-failed' satisfies AnalysisFailure
     }
@@ -306,18 +323,23 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
 
   // Contrast coverage is decided PER NODE, not once for the whole capture.
   //
-  // The old rule was `flatContrast = violations === null` — the moment axe ran
+  // The first rule was `flatContrast = violations === null` — the moment axe ran
   // at all, the measurement pass stood down everywhere. But axe declines to
   // decide contrast on any node whose foreground has alpha, whose text overlaps
   // something, whose content is generated, or whose font is an icon font: it
   // returns those as `incomplete`, which is neither a pass nor a failure. So on
   // the only path production uses (`analysis: true`) those nodes were checked by
   // nobody — and the measurement pass is strictly BETTER there, because it
-  // composites alpha itself. Now axe owns the nodes it actually decided, and
-  // measurement covers the ones it handed back.
+  // composites alpha itself.
+  //
+  // The second rule — "measurement covers what axe returned as incomplete" —
+  // had the same shape one layer in. It still assumed every element got an
+  // answer, and an element axe never EVALUATED gets no answer at all. So the
+  // rule is now stated the only way that is exhaustive: axe owns what it
+  // reached a verdict on, measurement owns everything else.
   const axeRan = violations !== null
   for (const candidate of ctx.candidates) {
-    const flatContrast = !axeRan || contrastDeclined.has(candidate.el)
+    const flatContrast = !axeRan || !contrastDecided.has(candidate.el)
     const issues = measurementIssues(candidate, { flatContrast })
     if (issues.length > 0) candidate.node.issues = (candidate.node.issues ?? []).concat(issues)
   }
