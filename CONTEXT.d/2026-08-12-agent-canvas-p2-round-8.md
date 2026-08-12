@@ -113,3 +113,53 @@ directory read on the fallback path (it throws, and the catch returns the same
   ten-seeded-defect run is waiting on.
 - The overlap scan cap is still starvable at 512. No number removes that
   residual; what changed is that it is no longer silent.
+
+## `canvas_render` — what actually made the feature testable
+
+The store has been able to render versions since P1 and **nothing called it**.
+The only registered tool was `canvas_snapshot`, which reads a canvas no agent had
+any way to create — so the loop could never be closed by an agent, which is what
+"the canvas is not locally testable" has meant all along. It was never the
+snapshot work.
+
+`canvas_render(mode, …)` is the argument boundary in front of the store's
+existing (adversarially reviewed) validation, not a re-implementation of it:
+
+- **`design`** takes a complete HTML document, served from the canvas's own
+  origin under the design CSP. **`uat`** takes a directory the user has already
+  allowed and serves the built app in it. Every call makes a new version.
+- **The session comes from the transport and nowhere else** (#188). It matters
+  more here than on the read side because this is a WRITE: a model-supplied
+  session id would let a prompt-injected session push a document onto another
+  session's canvas, where the user reads it as their own agent's work.
+- **The store's messages are never relayed.** They are built from model-supplied
+  arguments and from paths on this machine, and the reply lands OUTSIDE the
+  untrusted envelope where it carries operator authority. Mapped to a closed
+  vocabulary that keeps only the refusals a user can act on.
+- **`buildLabel` is shape-checked, not length-capped** — the same reason `scope`
+  had to be: a newline in a model-supplied argument forged a note line during
+  the adversarial pass on the read side.
+- The success line says the render is **not** the user seeing it. The hand-back
+  is the protocol (§6.1); an agent told the page is on screen reports on a screen
+  nobody opened and then snapshots the version before it.
+
+16 mutations, 16 killed. Four survived the first pass and **all four were real
+gaps in the tests rather than equivalents**: an unknown mode falls into the UAT
+branch when its gate goes (so `plan` — a mode the spec has and the store does
+not — would quietly serve a directory), and a refusal alone does not prove the
+store was never reached; a truthy non-string `distRoot` slips past a falsiness
+check and lands in `path.resolve`; and the success text was pinned only through
+the tool DESCRIPTION, never the reply.
+
+### The loop, end to end
+
+`canvas_render` → store writes the version and emits a change → the IPC handler
+pushes it to the renderer → the user opens the Canvas pane → `canvas_snapshot`
+reads what a real engine laid out. `toolOn('canvas')` defaults on, so both tools
+are advertised without configuration.
+
+### Before merge
+
+`canvas_render` is a content-ingress point on the Conductor MCP server and
+**needs its own adversarial pass** (ADR-009) — the author does not attack their
+own change, so that is not this session's to sign off.
