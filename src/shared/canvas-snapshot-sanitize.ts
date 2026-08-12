@@ -238,11 +238,13 @@ function viewportSize(value: unknown): number {
 }
 
 /** Device pixel ratio. Real values are 1 to 4; 16 covers anything a display
- *  could plausibly report and keeps the token short. */
+ *  could plausibly report and keeps the token short. Bounded at BOTH ends:
+ *  `1e-7` is positive, so it passed the low guard and then rounded to `dpr=0`,
+ *  which is not a ratio. */
 function viewportDpr(value: unknown): number {
   const n = num(value)
   if (!(n > 0)) return 1
-  return Math.round(Math.min(n, 16) * 100) / 100
+  return Math.round(Math.max(0.01, Math.min(n, 16)) * 100) / 100
 }
 
 function rect(value: unknown): Rect {
@@ -429,6 +431,9 @@ interface Budget {
   /** Characters emitted so far, across the whole result. */
   chars: number
   truncated: boolean
+  /** The DEPTH cap refused a subtree — a different claim from `truncated`, and
+   *  it drives a different note. See the bridge's `depthLimited`. */
+  depthLimited: boolean
   /** Per-snapshot, so this stays a pure function across calls. Wrapped because
    *  `undefined` is a real result ("no usable styles") and WeakMap cannot tell
    *  that from a miss. */
@@ -550,7 +555,11 @@ function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLim
   // Depth is the cycle guard: a self-referencing tree cannot outrun it, and the
   // node budget bounds the fan-out case.
   if (depth >= limits.maxDepth) {
-    if (Array.isArray(value.children) && value.children.length > 0) budget.truncated = true
+    // `depthLimited`, not `truncated` — the same distinction the bridge's own
+    // depth cap makes one process away. `truncated` drives a note blaming the
+    // node limit, and a page 65 levels deep can reach this without exceeding
+    // any node budget. Two halves of one rule, and only one of them was fixed.
+    if (Array.isArray(value.children) && value.children.length > 0) budget.depthLimited = true
     return out
   }
   if (Array.isArray(value.children)) {
@@ -607,6 +616,7 @@ export function sanitizeSnapshotResult(
     nodes: 0,
     chars: 0,
     truncated: false,
+    depthLimited: false,
     styleMemo: new WeakMap(),
     strMemo: new WeakMap(),
     allowStyles: context.scoped === true,
@@ -637,7 +647,7 @@ export function sanitizeSnapshotResult(
   if (source.truncated === true || budget.truncated) out.truncated = true
   // A boolean and nothing else. The frame may say the depth cap bit; that is
   // the whole of what it may say, and it says it in one bit.
-  if (source.depthLimited === true) out.depthLimited = true
+  if (source.depthLimited === true || budget.depthLimited) out.depthLimited = true
   // Closed set, not free text: this string is the one field that reaches the
   // agent OUTSIDE the untrusted envelope (as a capture note), so the page must
   // not be able to author it. Anything unrecognised becomes the generic code.

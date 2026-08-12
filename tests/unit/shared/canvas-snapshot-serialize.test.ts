@@ -163,9 +163,9 @@ describe('styles (scoped-only, token economy)', () => {
 })
 
 describe('robustness', () => {
-  it('escapes quotes and flattens newlines in names', () => {
-    const s = snap(node({ ref: 'e0', role: 'button', name: 'Say "hi"\nnow', box: { x: 0, y: 0, width: 1, height: 1 } }))
-    expect(serializeSnapshot(s).text.split('\n')[1]).toBe('- button "Say \\"hi\\" now" [ref=e0] [box=0,0,1,1]')
+  it('replaces the delimiters and flattens newlines in names', () => {
+    const s = snap(node({ ref: 'e0', role: 'button', name: 'Say "hi"\\ok\nnow', box: { x: 0, y: 0, width: 1, height: 1 } }))
+    expect(serializeSnapshot(s).text.split('\n')[1]).toBe('- button "Say _hi__ok now" [ref=e0] [box=0,0,1,1]')
   })
 
   it('coerces non-finite box values to 0', () => {
@@ -273,11 +273,31 @@ describe('robustness', () => {
     expect((text.match(/(?<!\\)"/g) ?? []).length % 2).toBe(0)
   })
 
-  it('still escapes, rather than replaces, inside a quoted name', () => {
-    // The two paths differ on purpose: a name is contained by quotes and can
-    // afford to escape them, so the reviewer still sees what the page wrote.
-    const s = snap(node({ ref: 'e1', role: 'button', name: 'Say "hi" \\ now' }))
-    expect(serializeSnapshot(s).text.split('\n')[1]).toContain('"Say \\"hi\\" \\\\ now"')
+  it('leaves the WHOLE wire with an even number of quotes, names included', () => {
+    // The first version of this fix hardened `token()` and left `escape()`
+    // escaping — and `"Buy \"now"` has an odd number of RAW quotes, so a reader
+    // that does not honour the backslash (which is this file's whole premise
+    // about model readers) opens a string at the third one and runs to the next
+    // node's opening quote, swallowing its ref, box and findings. Exactly the
+    // harm `token()` was hardened against, one field over: the same two-cleaners
+    // shape that has now broken this format three times.
+    const s = snap(
+      node({
+        ref: 'e0',
+        role: 'document',
+        children: [
+          node({ ref: 'e1', role: 'button', name: 'Buy "now' }),
+          node({ ref: 'e2', role: 'button', name: 'Pay \\', uxId: 'pay"', issues: [{ rule: 'target-size', severity: 'serious', measured: '18px', needed: '24px' }] }),
+        ],
+      }),
+    )
+    const text = serializeSnapshot(s).text
+    expect((text.match(/"/g) ?? []).length % 2).toBe(0)
+    expect(text).not.toContain('\\')
+    // The evidence is still legible, and the following node is still intact.
+    expect(text).toContain('"Buy _now"')
+    expect(text).toContain('[ref=e2]')
+    expect(text).toContain('- issue: target-size 18px, needs 24px')
   })
 
   it('json format returns the raw snapshot', () => {

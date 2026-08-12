@@ -318,14 +318,26 @@ function roleToken(role: string): string {
   return /^[a-z-]{1,64}$/.test(clean) ? clean : 'unknown-role'
 }
 
-/** A quoted value (name, field value). It gets the SAME structural cleaning as
- *  a bare token — quotes are not containment when the reader is a model, which
- *  is what round 3 proved — and on top of that it must not be able to close its
- *  own quote, so the escape character is escaped FIRST. */
+/**
+ * A quoted value — the accessible name.
+ *
+ * It REPLACES the delimiters rather than escaping them, exactly as `token()`
+ * does, so there is finally one decision here instead of two. Escaping was the
+ * obvious answer and it is the wrong one for this reader: `"Buy \"now"` leaves
+ * the wire with an odd number of raw quotes, and a reader that does not honour
+ * the backslash — which is the whole premise of this file, "quotes are not
+ * containment when the reader is a model, which is what round 3 proved" —
+ * opens a string at the third one and runs to the next node's opening quote,
+ * swallowing its ref, its box and its findings. That is the same harm `token()`
+ * was hardened against; keeping a different answer here is how this format has
+ * now been broken three times.
+ *
+ * The cost is that a name containing a quote reads `Buy _now_`. That is a
+ * legible loss in a field the reviewer can still act on, against a delimiter
+ * break that costs the next node entirely.
+ */
 function escape(value: string): string {
-  return neutralise(value)
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
+  return neutralise(value).replace(TOKEN_DELIMITERS, '_')
 }
 
 /**

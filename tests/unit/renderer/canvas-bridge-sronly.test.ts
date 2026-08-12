@@ -101,38 +101,55 @@ describe('sr-only suppression (HARD P2 requirement)', () => {
     expect(rules(nested)).not.toContain('target-size')
   })
 
+  // The canonical wrapper: 1x1, positioned, `overflow: hidden`, with the label
+  // inside it. THE CHILD'S BOX IS ITS FULL NATURAL SIZE — `overflow: hidden`
+  // clips paint, not the border box, so a real browser reports 133x17 for the
+  // link inside a 1px wrapper. A fixture that gives the child the wrapper's own
+  // 1x1 box encodes a layout no engine produces, and an earlier version of the
+  // test below did exactly that, which is why it passed over a fix that broke
+  // this case outright.
+  const wrapper = (wrapperStyle: string, childStyle: string) => `
+    <div data-test-box="0,0,1,1" style="${wrapperStyle}">
+      <a href="#main" data-ux-id="skip" data-test-box="0,0,133,17"
+         style="display: block; color: rgb(200,200,200); background-color: rgb(255,255,255); font-size: 12px; ${childStyle}">Skip to main content</a>
+    </div>`
+
   it.each([
     ['overflow: hidden', 'position: absolute; overflow: hidden'],
     ['clip: rect()', 'position: absolute; clip: rect(1px, 1px, 1px, 1px)'],
     ['clip-path: inset(50%)', 'clip-path: inset(50%)'],
-  ])('does NOT accept a 1x1 wrapper around a FIXED child it cannot clip (%s)', async (_label, wrapperStyle) => {
-    // `overflow: hidden` and the legacy `clip` do not clip a `position: fixed`
-    // descendant — its containing block is the viewport — so the child paints
-    // at full size while the wrapper above it says "screen-reader only". Two
-    // CSS properties, no JavaScript, and every measurement rule on the subtree
-    // is deleted. That is the THIRD ancestor-box suppression primitive found in
-    // `isSrOnly`; the other two were removed in earlier rounds.
-    document.body.innerHTML = `
-      <div data-test-box="0,0,1,1" style="${wrapperStyle}">
-        <div data-ux-id="banner" data-test-box="100,100,400,20"
-             style="position: fixed; color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">
-          Plainly visible low-contrast banner</div>
-      </div>`
-    const escaped = flatten((await captureSnapshot({ analysis: false })).root).find((n) => n.uxId === 'banner')
+  ])('still suppresses the standard sr-only wrapper (%s)', async (_label, wrapperStyle) => {
+    document.body.innerHTML = wrapper(wrapperStyle, '')
+    const hidden = flatten((await captureSnapshot({ analysis: false })).root).find((n) => n.uxId === 'skip')
+    expect(hidden?.state?.srOnly).toBe(true)
+    expect(rules(hidden)).not.toContain('target-size')
+    expect(rules(hidden)).not.toContain('color-contrast')
+  })
+
+  it('does NOT accept a 1x1 overflow wrapper around a FIXED child it cannot clip', async () => {
+    // `overflow: hidden` clips a descendant only when it CONTAINS it, and a
+    // `position: fixed` element is contained by the viewport. So the child
+    // paints at full size while the wrapper says "screen-reader only" — two CSS
+    // properties, no JavaScript, and every measurement rule on the subtree is
+    // deleted. The third ancestor-keyed suppression primitive found here.
+    document.body.innerHTML = wrapper('position: absolute; overflow: hidden', 'position: fixed')
+    const escaped = flatten((await captureSnapshot({ analysis: false })).root).find((n) => n.uxId === 'skip')
     expect(escaped?.state?.srOnly).toBeUndefined()
     expect(rules(escaped)).toContain('color-contrast')
+  })
 
-    // The control: the SAME wrapper style over a child it really does contain
-    // still suppresses, so the fix narrowed the branch rather than deleting it.
-    document.body.innerHTML = `
-      <div data-test-box="0,0,1,1" style="${wrapperStyle}">
-        <div data-ux-id="banner" data-test-box="0,0,1,1"
-             style="color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">
-          Genuinely hidden</div>
-      </div>`
-    const contained = flatten((await captureSnapshot({ analysis: false })).root).find((n) => n.uxId === 'banner')
-    expect(contained?.state?.srOnly).toBe(true)
-    expect(rules(contained)).not.toContain('color-contrast')
+  it.each([
+    ['clip: rect()', 'position: absolute; clip: rect(1px, 1px, 1px, 1px)'],
+    ['clip-path: inset(50%)', 'clip-path: inset(50%)'],
+  ])('still suppresses a fixed child under %s, which really does clip it', async (_label, wrapperStyle) => {
+    // The narrowing is specific to `overflow`. Legacy `clip` clips a fixed
+    // descendant, and `clip-path` establishes a containing block so nothing
+    // under it can be fixed relative to anything else — both checked in a real
+    // browser rather than reasoned from the spec. Treating all three alike is
+    // what produced the false positives above.
+    document.body.innerHTML = wrapper(wrapperStyle, 'position: fixed')
+    const still = flatten((await captureSnapshot({ analysis: false })).root).find((n) => n.uxId === 'skip')
+    expect(still?.state?.srOnly).toBe(true)
   })
 
   it('does NOT accept `clip` without positioning — that hides nothing', async () => {

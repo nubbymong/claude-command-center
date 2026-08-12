@@ -50,8 +50,14 @@ interface WalkContext {
 type AnalysisFailure = 'load-failed' | 'run-failed'
 
 function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | SnapshotNode[] | null {
-  // BEFORE the depth test: a <script> or <style> contributes nothing at any
-  // depth, so refusing one is not a truncation and must not be reported as one.
+  // Before the depth test, so a <script> or <style> at the boundary is refused
+  // for what it is rather than for where it is. The guard below reaches the
+  // same answer on its own — no skipped tag can have element children in a
+  // parsed document (`<template>` keeps its content in a DocumentFragment,
+  // `<noscript>` keeps its as text), so this ordering is belt and braces, not
+  // load-bearing. Recorded because a mutation that swaps it survives, and a
+  // surviving mutant that is genuinely equivalent should be labelled rather
+  // than have a test contorted around it.
   if (isSkipped(el)) return null
   if (depth > MAX_DEPTH) {
     // Reported, unlike the node cap beside it, which always was — the depth cap
@@ -66,8 +72,13 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
     // did not fire costs the agent a whole second capture — which is the exact
     // cost this series cites for NOT stamping `truncated` on the JSON
     // pretty-to-compact fallback. `depthLimited` claims only what is certainly
-    // true: there is DOM below here that was not walked.
-    ctx.depthLimited = true
+    // true: there is CONTENT below here that was not walked.
+    //
+    // "Certainly" is why an empty, non-meaningful leaf does not set it. A chain
+    // of bare wrappers bottoming out in nothing lost nothing, and a note that
+    // fires on a page which lost nothing costs the agent a second capture — the
+    // very cost this flag was split out to avoid.
+    if (el.children.length > 0 || isMeaningful(el)) ctx.depthLimited = true
     return null
   }
 

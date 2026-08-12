@@ -138,7 +138,9 @@ describe('hostile input', () => {
 
     const out = sanitizeSnapshotResult({ root })
     expect(depthOf(out.root)).toBeLessThanOrEqual(65)
-    expect(out.truncated).toBe(true)
+    // Depth is what stopped it, so that is what it says. `truncated` reads as
+    // "the page exceeded the node limit" and drives a note saying so.
+    expect(out.depthLimited).toBe(true)
     // The real proof: the thing downstream actually does with it terminates.
     const text = serializeSnapshot(
       { versionId: 'v1', capturedAt: 'now', viewport: out.viewport, root: out.root },
@@ -537,6 +539,15 @@ describe('hostile input', () => {
     })
     expect(out.viewport).toEqual({ width: 16_777_216, height: 0, dpr: 16 })
     for (const n of Object.values(out.viewport)) expect(String(n)).not.toMatch(/e[+-]/)
+    // Bounded at BOTH ends. `1e-7` is positive, so it cleared the low guard and
+    // then rounded to `dpr=0`, which is not a ratio.
+    for (const tiny of [1e-300, 1e-7, 0.004]) {
+      const out2 = sanitizeSnapshotResult({
+        viewport: { width: 1, height: 1, dpr: tiny },
+        root: { ref: 'e0', role: 'x', name: '', box: {}, children: [] },
+      })
+      expect(out2.viewport.dpr, String(tiny)).toBe(0.01)
+    }
     // Ordinary values are untouched, so the clamp is a clamp and not a constant.
     const honest = sanitizeSnapshotResult({
       viewport: { width: 1440, height: 900, dpr: 2 },

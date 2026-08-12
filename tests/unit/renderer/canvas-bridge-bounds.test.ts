@@ -80,16 +80,33 @@ describe('the walk is bounded where it is BUILT, not only where it is received',
     expect(result.truncated).toBeUndefined()
   })
 
-  it('does not call a deeply-nested page truncated when it lost nothing', async () => {
-    // 70 levels of empty wrappers past the cap: nothing below them, nothing
-    // lost. Flagging `truncated` here told the agent every capture of any app
-    // with deep providers or portals was partial, forever, and cost it a second
-    // full capture each time.
+  it('never calls a deeply-nested page node-TRUNCATED, whatever it lost', async () => {
+    // 70 levels of wrappers past the cap. `truncated` reads to the agent as
+    // "the page exceeded the snapshot node limit" and that limit did not fire —
+    // it told every capture of any app with deep providers or portals that the
+    // tree was partial, forever, and cost a second full capture each time.
     let html = ''
     for (let i = 0; i < 70; i++) html = `<div>${html}</div>`
     document.body.innerHTML = `<p data-test-box="0,0,80,16">visible</p>${html}`
 
     const result = await captureSnapshot({ analysis: false })
+    expect(result.truncated).toBeUndefined()
+    // The depth flag DOES fire, and correctly: there is DOM below the cap that
+    // was not walked. Whether it held anything is unknowable without walking
+    // it, which is the thing the cap exists to refuse — so the claim is scoped
+    // to what is certain. The one case it can rule out is the next test.
+    expect(result.depthLimited).toBe(true)
+  })
+
+  it('says nothing when the element it refused was an empty leaf', async () => {
+    // The only over-claim it can cheaply avoid: the refused element itself has
+    // no children and is not meaningful, so nothing was behind it.
+    let html = '<div></div>'
+    for (let i = 0; i < 64; i++) html = `<div>${html}</div>`
+    document.body.innerHTML = `<p data-test-box="0,0,80,16">visible</p>${html}`
+
+    const result = await captureSnapshot({ analysis: false })
+    expect(result.depthLimited).toBeUndefined()
     expect(result.truncated).toBeUndefined()
   })
 
@@ -104,6 +121,13 @@ describe('the walk is bounded where it is BUILT, not only where it is received',
       return html
     }
     document.body.innerHTML = nest('<script>void 0</script>')
+    expect((await captureSnapshot({ analysis: false })).depthLimited).toBeUndefined()
+
+    // A skipped tag with markup inside it reaches the same answer — and it does
+    // so through the empty-leaf guard rather than through the ordering, because
+    // a parser keeps `<noscript>`'s content as TEXT and `<template>`'s in a
+    // DocumentFragment, so neither has element children to count.
+    document.body.innerHTML = nest('<noscript><div><p>text</p></div></noscript>')
     expect((await captureSnapshot({ analysis: false })).depthLimited).toBeUndefined()
 
     // The control: an element that WOULD have been walked, at the same depth,

@@ -117,31 +117,41 @@ export function effectiveOpacity(el: Element): number {
 }
 
 /**
- * Whether a hiding style on `clipper` can actually reach `el`.
+ * Content an ancestor's `overflow: hidden` cannot reach.
  *
- * Every branch of `isSrOnly` may fire on an ANCESTOR, and an ancestor only
- * hides what it contains. A `position: fixed` descendant is contained by the
- * viewport, not by its parent, so it escapes an ancestor's `overflow: hidden`
- * and its legacy `clip` entirely — it paints at full size wherever it likes
- * while the 1x1 wrapper above it says "screen-reader only".
+ * An ancestor only hides what it CONTAINS. A `position: fixed` element is
+ * contained by the viewport, not by its parent, so it paints at full size
+ * wherever it likes while a 1x1 wrapper above it says "screen-reader only" —
+ * two CSS properties, no JavaScript, and every measurement rule on the subtree
+ * is deleted. Top-layer content (an open popover, a modal `<dialog>`) is
+ * painted outside the box tree entirely and escapes for the same reason.
  *
- * Comparing the painted boxes answers this directly and needs no reasoning
- * about which ancestor happens to establish a containing block — the rule that
- * decides it (`transform`, `filter`, `contain`, `will-change`, `clip-path`, …)
- * is long, engine-dependent and exactly the kind of thing the last two
- * suppression primitives in this function were built out of. The element's own
- * box is unchanged by any of these properties, so a genuinely hidden
- * descendant still measures inside its wrapper and still returns true.
+ * NOT a box comparison. Comparing the painted boxes was the first attempt at
+ * this and it broke the canonical pattern outright: `overflow: hidden` clips
+ * PAINT, not the border box, so the screen-reader-only link inside the standard
+ * 1x1 wrapper still measures its full natural 133x17 and failed any containment
+ * test. Checked in a real browser — the link is not painted, and its box was
+ * never the question. Reporting it as a 1px target with unreadable contrast is
+ * exactly the P0 run-2 false positive this whole function exists to prevent.
+ *
+ * Only `overflow` has this hole. Legacy `clip` does clip a fixed descendant,
+ * and `clip-path` establishes a containing block so its descendants cannot be
+ * fixed relative to anything else — both verified in a browser rather than
+ * reasoned from the spec.
  */
-function clips(clipper: Element, el: Element, inner: DOMRect): boolean {
-  if (clipper === el) return true
-  const outer = clipper.getBoundingClientRect()
-  return (
-    inner.left >= outer.left - 1 &&
-    inner.top >= outer.top - 1 &&
-    inner.right <= outer.right + 1 &&
-    inner.bottom <= outer.bottom + 1
-  )
+function escapesOverflowClip(el: Element): boolean {
+  if (styleOf(el)?.position === 'fixed') return true
+  // Top layer, if this engine knows the selectors. `:modal` is not universal
+  // and jsdom throws on it, so an unknown selector means "not in the top layer"
+  // rather than an exception out of a measurement pass.
+  for (const selector of [':popover-open', ':modal']) {
+    try {
+      if (el.matches(selector)) return true
+    } catch {
+      /* selector unsupported here */
+    }
+  }
+  return false
 }
 
 /**
@@ -162,7 +172,9 @@ function clips(clipper: Element, el: Element, inner: DOMRect): boolean {
 export function isSrOnly(el: Element): boolean {
   let node: Element | null = el
   let depth = 0
-  const own = el.getBoundingClientRect()
+  // Computed once: it is a property of the element being judged, not of the
+  // ancestor doing the hiding.
+  const escapes = escapesOverflowClip(el)
   while (node && depth < 4) {
     const cs = styleOf(node)
     if (cs) {
@@ -174,19 +186,17 @@ export function isSrOnly(el: Element): boolean {
       // it did not check position, was a pure-CSS way for a page to mark any
       // subtree sr-only and suppress every measurement rule on it while the
       // content stayed plainly visible. No script needed.
-      if (positioned && (clip === 'rect(0px,0px,0px,0px)' || clip === 'rect(1px,1px,1px,1px)') && clips(node, el, own)) {
-        return true
-      }
+      if (positioned && (clip === 'rect(0px,0px,0px,0px)' || clip === 'rect(1px,1px,1px,1px)')) return true
       // `clip-path` does apply to static elements — and genuinely hides them, so
       // suppressing findings there is correct rather than exploitable.
-      if ((clipPath === 'inset(50%)' || clipPath === 'inset(100%)') && clips(node, el, own)) return true
+      if (clipPath === 'inset(50%)' || clipPath === 'inset(100%)') return true
       const rect = node.getBoundingClientRect()
       const hidden = cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden'
-      // The 1x1 clipping box every sr-only recipe uses. `overflow: hidden` does
-      // NOT clip a fixed descendant, so a 1x1 positioned wrapper around one
-      // marked a full-size, plainly painted banner screen-reader-only and
-      // deleted every finding under it — two CSS properties, no JavaScript.
-      if (positioned && hidden && rect.width <= 1 && rect.height <= 1 && clips(node, el, own)) return true
+      // The 1x1 clipping box every sr-only recipe uses — unless the element has
+      // escaped the clip, which only `overflow` lets it do. `node !== el`
+      // because an element that is ITSELF 1x1 and hidden is hidden whatever its
+      // position is.
+      if (positioned && hidden && rect.width <= 1 && rect.height <= 1 && !(node !== el && escapes)) return true
       // NOT here: the `left: -9999px` family. It was added and then removed,
       // and the reason is worth keeping. Everything this function returns true
       // for suppresses every measurement rule on the subtree, and the `[sr-only]`
