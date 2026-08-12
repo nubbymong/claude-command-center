@@ -10,7 +10,13 @@
 // arguments are advertised, validated, and then overruled by the bound id — a
 // mismatch is refused rather than silently redirected.
 
-import type { CanvasSnapshotOptions, CanvasSnapshotResult, CanvasState, SemanticSnapshot } from '../shared/canvas'
+import type {
+  CanvasRenderSource,
+  CanvasSnapshotOptions,
+  CanvasSnapshotResult,
+  CanvasState,
+  SemanticSnapshot,
+} from '../shared/canvas'
 import { serializeSnapshot } from '../shared/canvas-snapshot-serialize'
 import { wrapUntrustedContent } from '../shared/untrusted-envelope'
 
@@ -25,6 +31,7 @@ export interface CanvasToolDeps {
     versionId: string
     options: CanvasSnapshotOptions
   }) => Promise<CanvasSnapshotResult>
+  renderVersion: (sessionId: string, source: CanvasRenderSource) => { canvasId: string; versionId: string }
 }
 
 function textResult(text: string, isError = false) {
@@ -133,6 +140,110 @@ function captureFailureReason(err: unknown): string {
   if (/in flight/i.test(message)) return 'another capture is already running for this session. Try again in a moment.'
   if (/window is not available/i.test(message)) return 'the app window is not available.'
   return 'the canvas frame could not produce a snapshot.'
+}
+
+/**
+ * Operator-authored causes for a refused render.
+ *
+ * The store's own messages are NOT relayed, for the same reason the frame's are
+ * not: they are built from arguments the model supplied and from paths on this
+ * machine ("distRoot does not exist" is harmless, `path.resolve` of a hostile
+ * string is not), and this line lands outside the untrusted envelope where it
+ * carries operator authority. Closed vocabulary, matched on shape.
+ */
+function renderFailureReason(err: unknown): string {
+  const message = err instanceof Error ? err.message : ''
+  if (/version cap/i.test(message)) {
+    return 'this canvas has reached its version limit. Start a new session to render again.'
+  }
+  if (/registered canvas UAT root/i.test(message)) {
+    return 'that directory is not under a folder the user has allowed the canvas to serve. Ask the user to add it in the Canvas pane.'
+  }
+  if (/distRoot does not exist|not a directory/i.test(message)) return 'that build directory does not exist.'
+  if (/document too large/i.test(message)) return 'that document is too large to render.'
+  if (/requires html/i.test(message)) return 'a design render needs an html document.'
+  if (/invalid entry/i.test(message)) return 'that entry file name is not a plain relative path.'
+  return 'the canvas could not be rendered.'
+}
+
+interface RawRenderArgs {
+  mode?: unknown
+  html?: unknown
+  distRoot?: unknown
+  entry?: unknown
+  buildLabel?: unknown
+  cccSessionId?: unknown
+}
+
+/**
+ * A build label is the ONE free-text field on this path, and it is echoed back
+ * in an operator-voice confirmation line outside the envelope. Shape-checked
+ * rather than length-capped for the reason `scope` was: a newline in a
+ * model-supplied argument forged a note line during the adversarial pass.
+ */
+const BUILD_LABEL_SHAPE = /^[A-Za-z0-9 _.:@/+-]{1,64}$/
+
+export async function runCanvasRender(
+  rawArgs: RawRenderArgs,
+  sessionId: string,
+  deps: CanvasToolDeps,
+): Promise<{ text: string; isError: boolean }> {
+  const mode = rawArgs.mode
+  if (mode !== 'design' && mode !== 'uat') {
+    return { text: "Render needs a mode of 'design' (an html document) or 'uat' (a built directory).", isError: true }
+  }
+
+  let source: CanvasRenderSource
+  if (mode === 'design') {
+    // Shape first, and fail closed on it: the store's own check is `typeof
+    // !== 'string'`, and an array of strings reaching a byte-length measure
+    // ahead of a write is the kind of thing this layer exists to stop early.
+    if (typeof rawArgs.html !== 'string' || rawArgs.html.length === 0) {
+      return { text: 'A design render needs an html document in `html`.', isError: true }
+    }
+    source = { mode: 'design', html: rawArgs.html }
+  } else {
+    if (typeof rawArgs.distRoot !== 'string' || rawArgs.distRoot.length === 0) {
+      return { text: 'A uat render needs the built directory in `distRoot`.', isError: true }
+    }
+    if (rawArgs.entry != null && typeof rawArgs.entry !== 'string') {
+      return { text: 'That entry is not a file name.', isError: true }
+    }
+    // Refused here rather than trimmed: a label that does not fit the shape is
+    // a label the model got wrong, and silently rewriting it would put words
+    // the agent did not choose into an operator-voice line.
+    if (rawArgs.buildLabel != null && (typeof rawArgs.buildLabel !== 'string' || !BUILD_LABEL_SHAPE.test(rawArgs.buildLabel))) {
+      return { text: 'That build label is not a short plain label.', isError: true }
+    }
+    source = {
+      mode: 'uat',
+      distRoot: rawArgs.distRoot,
+      ...(typeof rawArgs.entry === 'string' && rawArgs.entry.length > 0 ? { entry: rawArgs.entry } : {}),
+      ...(typeof rawArgs.buildLabel === 'string' ? { buildLabel: rawArgs.buildLabel } : {}),
+    }
+  }
+
+  let rendered: { canvasId: string; versionId: string }
+  try {
+    // The session comes from the TRANSPORT and nowhere else — the #188
+    // precedent. A canvas is per-session, and a render is a WRITE: honouring a
+    // model-supplied session id would let a prompt-injected session push a
+    // document onto another session's canvas, where the user would read it as
+    // their own agent's work.
+    rendered = deps.renderVersion(sessionId, source)
+  } catch (err) {
+    return { text: `Could not render the canvas: ${renderFailureReason(err)}`, isError: true }
+  }
+
+  // Both ids are ours: one minted by the store, one a `v<n>` counter. Nothing
+  // the model supplied is echoed back except a build label that passed the
+  // shape above.
+  return {
+    text:
+      `Rendered ${rendered.versionId} on canvas ${rendered.canvasId}. ` +
+      'It is not on screen until the user opens the Canvas pane — hand back to them, then call canvas_snapshot to read what was actually laid out.',
+    isError: false,
+  }
 }
 
 export async function runCanvasSnapshot(
@@ -263,6 +374,39 @@ export function registerCanvasTools(
         )
       }
       const result = await runCanvasSnapshot(rawArgs, sessionId, deps)
+      return textResult(result.text, result.isError)
+    },
+  )
+
+  server.tool(
+    'canvas_render',
+    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': you supply a complete HTML document and it is served from the canvas\'s own origin — use this to show a proposed screen. \'uat\': you supply the path of a directory the user has already allowed, and the built app in it is served — use this to review the real product. Every call creates a new version; nothing is overwritten. The canvas is per-session and this tool always renders to THIS session\'s canvas. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
+    {
+      mode: zMod.enum(['design', 'uat']).describe("'design' renders the html you supply; 'uat' serves a directory the user has allowed."),
+      html: zMod
+        .string()
+        .optional()
+        .describe('design mode only. A complete HTML document. Put a data-ux-id on anything you will want to ask about later.'),
+      distRoot: zMod
+        .string()
+        .optional()
+        .describe('uat mode only. Absolute path of the built directory. It must sit under a folder the user has allowed for this; anything else is refused.'),
+      entry: zMod.string().optional().describe("uat mode only. Entry file relative to distRoot. Defaults to 'index.html'."),
+      buildLabel: zMod.string().optional().describe('uat mode only. Optional short label for this build, shown to the user.'),
+      cccSessionId: zMod
+        .string()
+        .optional()
+        .describe('Ignored — the session is resolved from the MCP connection and cannot be set here. Leave unset.'),
+    },
+    async (rawArgs: RawRenderArgs) => {
+      const sessionId = getBoundSessionId()
+      if (!sessionId) {
+        return textResult(
+          'Canvas unavailable: this MCP connection has no bound Conductor session. Restart the session from inside AI Code Conductor.',
+          true,
+        )
+      }
+      const result = await runCanvasRender(rawArgs, sessionId, deps)
       return textResult(result.text, result.isError)
     },
   )

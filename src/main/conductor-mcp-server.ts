@@ -41,7 +41,7 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
-import { getCanvasStateForSession } from './canvas/canvas-store'
+import { getCanvasStateForSession, renderVersion } from './canvas/canvas-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
@@ -717,14 +717,16 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       )
     }
 
-    // Agent Canvas: the snapshot is a read of the session's own rendered page,
-    // so like codex_review it binds to the transport's session id and refuses a
+    // Agent Canvas: both tools are about the session's OWN canvas — the
+    // snapshot reads its rendered page and the render writes to it — so like
+    // codex_review they bind to the transport's session id and refuse a
     // model-supplied one (#188). Not advertised to Codex, which connects without
     // a bound session id — every call would refuse, so offering it is a lie.
     if (source !== 'codex' && toolOn('canvas')) {
       registerCanvasTools(server, z, () => boundSessionId, {
         getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
         requestSnapshot: (args) => requestCanvasSnapshot(args),
+        renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
       })
     }
 
