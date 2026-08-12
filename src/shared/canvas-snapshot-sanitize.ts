@@ -10,7 +10,7 @@
 // matches CanvasSnapshotResult by construction, with every string bounded and
 // every number finite. Nothing is trusted enough to pass through unexamined.
 
-import { CURATED_STYLE_PROPERTIES } from './canvas'
+import { CURATED_STYLE_PROPERTIES, ISSUES_TRUNCATED_RULE, keepMostSevere, severityRank } from './canvas'
 import type { AxeIssue, CanvasSnapshotResult, Rect, SnapshotNode } from './canvas'
 
 const ALLOWED_STYLE_PROPERTIES: ReadonlySet<string> = new Set(CURATED_STYLE_PROPERTIES)
@@ -182,24 +182,85 @@ function rect(value: unknown): Rect {
   return { x: num(value.x), y: num(value.y), width: num(value.width), height: num(value.height) }
 }
 
-function issues(value: unknown, budget: Budget, limits: SanitizeLimits): AxeIssue[] | undefined {
-  if (!Array.isArray(value)) return undefined
+/** Cheap enough to run over the whole examine window: no normalisation and no
+ *  allocation. An entry that cannot become an issue must not consume a slot. */
+function usableIssue(raw: unknown): raw is Record<string, unknown> {
+  return isRecord(raw) && typeof raw.rule === 'string' && raw.rule.length > 0
+}
+
+/** Ceiling on the frame's own claim of what it dropped. It is only ever printed
+ *  as a decimal, so the bound is on the digits as much as the meaning. */
+const DROPPED_CEILING = 1_000_000
+
+function droppedCount(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0
+  return Math.min(Math.floor(value), DROPPED_CEILING)
+}
+
+/**
+ * The one line that says findings are missing — MINTED here, never relayed.
+ *
+ * The frame reports a number; the words are ours. That is the same
+ * assigned-not-accepted rule `ref` follows, and it is what keeps a page from
+ * authoring a finding-shaped sentence: the only thing it can influence is a
+ * bounded integer.
+ */
+function truncationMarker(dropped: number): AxeIssue {
+  return { rule: ISSUES_TRUNCATED_RULE, severity: 'moderate', measured: `at least ${dropped} more`, needed: '' }
+}
+
+function issues(
+  value: unknown,
+  declaredDropped: number,
+  budget: Budget,
+  limits: SanitizeLimits,
+): AxeIssue[] | undefined {
+  const max = limits.maxIssuesPerNode
+  if (max <= 0) return undefined
+  const raw = Array.isArray(value) ? value : []
+  // Bound the entries EXAMINED, not the entries accepted — `styles` needs the
+  // same rule for the same reason. Structured clone preserves object identity,
+  // so one array of a million issues referenced from every node costs the page
+  // a single array and costs us a full scan per node.
+  const window = raw.length > max * 8 ? raw.slice(0, max * 8) : raw
+  const usable = window.filter(usableIssue)
+  let dropped = declaredDropped + (raw.length - window.length)
+
+  // Ranked on the RAW records, before anything is built. Building 160 issues to
+  // keep 20 would be ~85 normalisations apiece on the renderer's UI thread —
+  // the per-node cost that already froze this window once, one field over.
+  // `severity` is read unnormalised on purpose: it is compared against a closed
+  // four-word ASCII vocabulary, so a spelling that is not one of them ranks zero
+  // and is what the cap eats first, which is the right answer for it.
+  //
+  // One slot pays for the marker, so `issues.length <= maxIssuesPerNode` stays a
+  // flat invariant rather than a "plus one" the next reader has to discover.
+  const room = usable.length > max || dropped > 0 ? max - 1 : max
+  const keep = keepMostSevere(usable.length, (i) => severityRank(usable[i].severity), room)
+  if (keep) dropped += usable.length - keep.size
+
   const out: AxeIssue[] = []
-  for (const raw of value.slice(0, limits.maxIssuesPerNode)) {
-    if (!isRecord(raw)) continue
-    const rule = field(raw, 'rule', 64, budget)
-    if (!rule) continue
+  for (let i = 0; i < usable.length; i++) {
+    if (keep && !keep.has(i)) continue
+    const record = usable[i]
+    const rule = field(record, 'rule', 64, budget)
+    // A page that spells the reserved rule is not believed. `.trim()` because
+    // the serializer trims tokens, so 'issues-truncated ' — which `scrub`
+    // turns into a trailing space — would otherwise reach the wire as the
+    // reserved id itself.
+    if (!rule || rule.trim() === ISSUES_TRUNCATED_RULE) continue
     const issue: AxeIssue = {
       rule,
-      severity: field(raw, 'severity', 24, budget),
-      measured: field(raw, 'measured', 96, budget),
-      needed: field(raw, 'needed', 96, budget),
+      severity: field(record, 'severity', 24, budget),
+      measured: field(record, 'measured', 96, budget),
+      needed: field(record, 'needed', 96, budget),
     }
     // Optional, and only meaningful when the finding is on a descendant — so
     // its absence is information too and must not be coerced into a zero box.
-    if (isRecord(raw.at)) issue.at = rect(raw.at)
+    if (isRecord(record.at)) issue.at = rect(record.at)
     out.push(issue)
   }
+  if (dropped > 0) out.push(truncationMarker(dropped))
   return out.length > 0 ? out : undefined
 }
 
@@ -386,7 +447,7 @@ function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLim
   if (nodeStyles) out.styles = nodeStyles
   const nodeState = state(value.state, budget, limits)
   if (nodeState) out.state = nodeState
-  const nodeIssues = issues(value.issues, budget, limits)
+  const nodeIssues = issues(value.issues, droppedCount(value.issuesDropped), budget, limits)
   if (nodeIssues) out.issues = nodeIssues
   budget.chars += weigh(out)
 

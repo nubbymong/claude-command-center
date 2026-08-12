@@ -6,6 +6,7 @@
 // a snapshot affordable: styles ride only on scoped nodes (§4.1).
 
 import type { AxeIssue, CanvasSnapshotOptions, CanvasSnapshotResult, Rect, SnapshotNode } from '../../../shared/canvas'
+import { MAX_ISSUES_PER_NODE, keepMostSevere, severityRank } from '../../../shared/canvas'
 import { ensureAnalysis, withRunTimeout, type AnalysisApi, type AxeNodeResult, type AxeViolation } from './analysis-loader'
 import { addOverlapIssues, measurementIssues, type Candidate } from './issues'
 import { boxOf, curatedStyles, directText, effectiveOpacity, isSrOnly, isVisible, resetStyleCache, stateOf } from './measure'
@@ -149,11 +150,22 @@ function toIssue(violation: AxeViolation, node: AxeNodeResult): AxeIssue {
   }
 }
 
-/** Matches the sanitiser's `maxIssuesPerNode` and `MAX_OVERLAPS_PER_NODE`.
- *  Attributing findings to an ancestor concentrates them, so without a bound a
- *  page of 4,000 low-contrast wrappers builds 4,000 issue objects on one node
- *  and structured-clones every one of them across postMessage before any
- *  sanitiser sees them. */
+/**
+ * How many AXE findings one node may absorb — counted separately from the
+ * measurement and overlap passes, which is the whole point of it.
+ *
+ * It used to test `node.issues.length`, and `measurementIssues` and
+ * `addOverlapIssues` both run first: twenty-one overlapping elements therefore
+ * spent the entire per-node budget before the join was reached, and a
+ * `critical` missing button name was dropped on the floor to make room for
+ * twenty `moderate` overlaps. A shared budget that the cheapest finding is
+ * allowed to exhaust is not a budget, it is a race.
+ *
+ * The cap itself still has to exist: attributing findings to an ancestor
+ * CONCENTRATES them, so a page of 4,000 low-contrast wrappers would otherwise
+ * build 4,000 issue objects on one node and structured-clone every one of them
+ * across postMessage before any sanitiser sees them.
+ */
 const MAX_AXE_ISSUES_PER_NODE = 20
 
 function elementOf(node: AxeNodeResult): Element | null {
@@ -219,7 +231,26 @@ function failedContrast(violations: AxeViolation[] | undefined): Set<Element> {
   return out
 }
 
+/** Three sibling price wrappers with three different contrast ratios all walk up
+ *  to the same `<main>`, so deduping on the RULE kept one and silently dropped
+ *  two real defects. What makes two findings the same finding is the rule, what
+ *  it measured, WHAT IT COST, and where it is — omitting the severity collapsed
+ *  a `critical` into an identical `moderate` and told the agent the lesser. */
+function sameIssue(a: AxeIssue, b: AxeIssue): boolean {
+  return (
+    a.rule === b.rule &&
+    a.severity === b.severity &&
+    a.measured === b.measured &&
+    a.needed === b.needed &&
+    sameBox(a.at, b.at)
+  )
+}
+
 function joinAxe(violations: AxeViolation[], byElement: Map<Element, SnapshotNode>): void {
+  // What THIS pass has put on each node, and only this pass. Sharing a counter
+  // with the measurement and overlap passes let the cheapest finding starve the
+  // most severe one; see MAX_AXE_ISSUES_PER_NODE.
+  const axeHeld = new Map<SnapshotNode, AxeIssue[]>()
   for (const violation of violations ?? []) {
     for (const axeNode of violation.nodes ?? []) {
       const el = elementOf(axeNode)
@@ -227,30 +258,59 @@ function joinAxe(violations: AxeViolation[], byElement: Map<Element, SnapshotNod
       const node = nearestNode(el, byElement)
       if (!node) continue
       const issue = toIssue(violation, axeNode)
-      // Three sibling price wrappers with three different contrast ratios all
-      // walk up to the same `<main>`, so deduping on the RULE kept one and
-      // silently dropped two real defects. What makes two findings the same
-      // finding is the rule AND what it measured — not the rule alone.
-      const issues = node.issues ?? []
-      if (issues.length >= MAX_AXE_ISSUES_PER_NODE) continue
       // Only when the finding is NOT on this node: an honest same-element
       // finding already has the node's own box and paying for a duplicate of it
       // on every issue is the kind of per-node cost that multiplies.
       if (!byElement.has(el)) issue.at = boxOf(el)
-      if (
-        issues.some(
-          (existing) =>
-            existing.rule === issue.rule &&
-            existing.measured === issue.measured &&
-            existing.needed === issue.needed &&
-            sameBox(existing.at, issue.at),
-        )
-      ) {
-        continue
+      const issues = node.issues ?? []
+      // A duplicate is not a loss, so it is not counted as one.
+      if (issues.some((existing) => sameIssue(existing, issue))) continue
+
+      const held = axeHeld.get(node) ?? []
+      if (held.length >= MAX_AXE_ISSUES_PER_NODE) {
+        node.issuesDropped = (node.issuesDropped ?? 0) + 1
+        // The cap is a memory bound, not a claim that the first twenty findings
+        // matter most. axe emits in rule order, so a `critical` missing button
+        // name routinely arrives behind twenty `moderate`s — and dropping it
+        // for arriving late is the same defect as dropping it for arriving
+        // after the overlap pass. Trading the weakest one out keeps the bound
+        // exact and the choice honest.
+        let weakest = 0
+        for (let k = 1; k < held.length; k++) {
+          if (severityRank(held[k].severity) < severityRank(held[weakest].severity)) weakest = k
+        }
+        if (severityRank(issue.severity) <= severityRank(held[weakest].severity)) continue
+        const victim = held[weakest]
+        held.splice(weakest, 1)
+        const at = issues.indexOf(victim)
+        if (at >= 0) issues.splice(at, 1)
       }
       issues.push(issue)
+      held.push(issue)
       node.issues = issues
+      axeHeld.set(node, held)
     }
+  }
+}
+
+/**
+ * Cut each node down to what the wire allows, keeping the findings that matter.
+ *
+ * Three passes contribute to one node and none of them knows what the others
+ * found, so the total is only bounded here. Taking the first `MAX_ISSUES_PER_NODE`
+ * in the order the passes happened to run is what a slice does, and the order
+ * has nothing to do with importance: a realistic 24-card grid reported twenty
+ * genuine contrast defects and dropped four with nothing said.
+ */
+function trimIssues(candidates: Candidate[]): void {
+  for (const candidate of candidates) {
+    const node = candidate.node
+    const issues = node.issues
+    if (!issues) continue
+    const keep = keepMostSevere(issues.length, (i) => severityRank(issues[i].severity), MAX_ISSUES_PER_NODE)
+    if (!keep) continue
+    node.issues = issues.filter((_, i) => keep.has(i))
+    node.issuesDropped = (node.issuesDropped ?? 0) + (issues.length - node.issues.length)
   }
 }
 
@@ -355,6 +415,11 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   // Joined after the measurement pass so the dedupe keeps the measured finding
   // when both fire on one node.
   if (violations) joinAxe(violations, ctx.byElement)
+
+  // Last, once every pass has had its say: only here is the per-node total
+  // known, and only here can "which twenty" be answered by severity rather than
+  // by which pass happened to run first.
+  trimIssues(ctx.candidates)
 
   const out: CanvasSnapshotResult = {
     viewport: {

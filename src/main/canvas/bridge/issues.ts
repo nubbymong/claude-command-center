@@ -206,12 +206,18 @@ const OVERLAP_FRACTION = 0.25
 
 const MAX_OVERLAP_COMPARISONS = 200_000
 
-/** Per-node, not just per-pass. Bounding comparisons alone still let one node
- *  accumulate ~4,000 issue objects on a degenerate page — all of which get
- *  structured-cloned across postMessage before any sanitiser sees them. Matches
- *  the sanitiser's own maxIssuesPerNode, and the pass is worthless past a
- *  handful anyway. */
-const MAX_OVERLAPS_PER_NODE = 20
+/**
+ * Per-node, not just per-pass. Bounding comparisons alone still let one node
+ * accumulate ~4,000 issue objects on a degenerate page — all of which get
+ * structured-cloned across postMessage before any sanitiser sees them.
+ *
+ * Eight rather than twenty: overlap is the LEAST severe thing this file
+ * reports, the pass is worthless past a handful, and every slot it takes is one
+ * the per-node wire cap has to take back from something that matters more. The
+ * severity trim would rescue the important finding anyway; not manufacturing
+ * twelve `moderate` findings to be trimmed is cheaper and says the same thing.
+ */
+const MAX_OVERLAPS_PER_NODE = 8
 
 /**
  * Content boxes sitting on top of each other. Restricted to IN-FLOW content
@@ -240,7 +246,15 @@ export function addOverlapIssues(candidates: Candidate[]): void {
     const aBottom = a.node.box.y + a.node.box.height
     let reported = 0
     for (let j = i + 1; j < sorted.length; j++) {
-      if (reported >= MAX_OVERLAPS_PER_NODE) break
+      if (reported >= MAX_OVERLAPS_PER_NODE) {
+        // Stop SCANNING, not just stop reporting: the alternative is to keep
+        // counting what we would have found, and the comparison budget is
+        // global — one degenerate node would spend all of it and leave every
+        // later node uncovered. So this node's drop count is a lower bound of
+        // one, which is what SnapshotNode.issuesDropped documents itself as.
+        a.node.issuesDropped = (a.node.issuesDropped ?? 0) + 1
+        break
+      }
       const b = sorted[j]
       if (b.node.box.y >= aBottom) break
       if (++comparisons > MAX_OVERLAP_COMPARISONS) return

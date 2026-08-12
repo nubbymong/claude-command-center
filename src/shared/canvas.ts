@@ -188,6 +188,62 @@ export const CURATED_STYLE_PROPERTIES = [
   'overflow',
 ] as const
 
+/**
+ * How many findings one node may carry on the wire.
+ *
+ * Shared for the same reason CURATED_STYLE_PROPERTIES is: the producer (the
+ * in-page bridge) trims to it and the boundary that accepts the reply enforces
+ * it again, and this codebase's most expensive bug was two halves of one rule
+ * that had to agree while only one was maintained.
+ */
+export const MAX_ISSUES_PER_NODE = 20
+
+/**
+ * The rule id that says findings were dropped from this node.
+ *
+ * MINTED at the trust boundary, never accepted from the frame — the same
+ * assigned-not-accepted rule `ref` follows. The bridge reports a COUNT
+ * (`SnapshotNode.issuesDropped`, a number the sanitiser re-validates); the words
+ * are ours.
+ */
+export const ISSUES_TRUNCATED_RULE = 'issues-truncated'
+
+/** axe's `impact` vocabulary, ranked. Anything outside it is unranked and is
+ *  what a cap eats first. */
+const SEVERITY_RANK: Readonly<Record<string, number>> = {
+  critical: 4,
+  serious: 3,
+  moderate: 2,
+  minor: 1,
+}
+
+export function severityRank(severity: unknown): number {
+  return typeof severity === 'string' ? (SEVERITY_RANK[severity] ?? 0) : 0
+}
+
+/**
+ * Which entries survive a cap: the `max` highest-ranked, ties broken by
+ * position.
+ *
+ * Returns `null` when nothing has to go, so the common path allocates nothing.
+ * Takes a rank FUNCTION rather than the values themselves because the two
+ * callers hold different things — the bridge has built `AxeIssue`s, the
+ * sanitiser has raw page records it has not paid to build yet and must not
+ * (building 160 issues per node to keep 20 is the per-node cost that froze the
+ * UI thread one field over).
+ *
+ * Selection is by severity; ORDER is not touched. The wire format is read top
+ * to bottom by a model and a stable order is what makes two snapshots
+ * comparable — so what changes is which findings survive, never where they sit.
+ */
+export function keepMostSevere(count: number, rankAt: (index: number) => number, max: number): Set<number> | null {
+  if (max <= 0) return new Set()
+  if (count <= max) return null
+  const order = Array.from({ length: count }, (_, i) => i)
+  order.sort((a, b) => rankAt(b) - rankAt(a) || a - b)
+  return new Set(order.slice(0, max))
+}
+
 /** One axe (or measurement) finding joined onto the node it fired on. */
 export interface AxeIssue {
   rule: string
@@ -253,6 +309,18 @@ export interface SnapshotNode {
     srOnly?: boolean
   }
   issues?: AxeIssue[]
+  /**
+   * How many findings this node had that did not fit — a LOWER bound.
+   *
+   * A number rather than a sentence, because it crosses the trust boundary: the
+   * sanitiser validates it as a non-negative integer and mints the wire text
+   * itself (ISSUES_TRUNCATED_RULE), so nothing page-authored rides in on it.
+   *
+   * A lower bound because the overlap pass stops scanning once it has filled its
+   * share, and stopping is what keeps a degenerate page from spending the whole
+   * comparison budget on its first node. Every other producer counts exactly.
+   */
+  issuesDropped?: number
   children: SnapshotNode[]
 }
 

@@ -6,7 +6,7 @@ import v8 from 'node:v8'
 import vm from 'node:vm'
 import { describe, it, expect } from 'vitest'
 import { sanitizeSnapshotResult, DEFAULT_SNAPSHOT_LIMITS } from '../../../src/shared/canvas-snapshot-sanitize'
-import { CURATED_STYLE_PROPERTIES } from '../../../src/shared/canvas'
+import { CURATED_STYLE_PROPERTIES, ISSUES_TRUNCATED_RULE } from '../../../src/shared/canvas'
 import { serializeSnapshot, MAX_SNAPSHOT_CHARS } from '../../../src/shared/canvas-snapshot-serialize'
 import type { SnapshotNode } from '../../../src/shared/canvas'
 
@@ -314,6 +314,116 @@ describe('hostile input', () => {
     })
     expect(out.root.issues?.length).toBeLessThanOrEqual(20)
     expect(out.root.issues?.every((i) => i.rule.length > 0)).toBe(true)
+  })
+
+  describe('findings that did not fit', () => {
+    const node = (issues: unknown, extra: Record<string, unknown> = {}) => ({
+      ref: 'e0',
+      role: 'document',
+      name: '',
+      box: {},
+      issues,
+      children: [],
+      ...extra,
+    })
+    const rulesOf = (out: { root: SnapshotNode }) => (out.root.issues ?? []).map((i) => i.rule)
+    const marker = (out: { root: SnapshotNode }) => (out.root.issues ?? []).find((i) => i.rule === ISSUES_TRUNCATED_RULE)
+
+    it('says so, rather than handing over a short list as if it were the whole one', () => {
+      const issues = Array.from({ length: 25 }, (_, i) => ({ rule: `r${i}`, severity: 'serious', measured: '', needed: '' }))
+      const out = sanitizeSnapshotResult({ root: node(issues) })
+      // The cap still holds exactly: the marker is inside it, not on top of it.
+      expect(out.root.issues).toHaveLength(20)
+      // 25 supplied, 19 emitted — the marker took the twentieth slot.
+      expect(marker(out)?.measured).toBe('at least 6 more')
+    })
+
+    it('keeps the severe findings when it has to choose', () => {
+      const issues = [
+        ...Array.from({ length: 30 }, (_, i) => ({ rule: `minor-${i}`, severity: 'minor', measured: '', needed: '' })),
+        { rule: 'the-one-that-matters', severity: 'critical', measured: '', needed: '' },
+      ]
+      const out = sanitizeSnapshotResult({ root: node(issues) })
+      expect(rulesOf(out)).toContain('the-one-that-matters')
+    })
+
+    it('leaves the order alone — it changes WHICH survive, not where they sit', () => {
+      // Document order and severity order deliberately disagree: the `serious`
+      // one comes FIRST and the `critical` one LAST, so a selection that also
+      // sorts is visible in the result.
+      const issues = [
+        { rule: 'a', severity: 'minor', measured: '', needed: '' },
+        { rule: 'd', severity: 'serious', measured: '', needed: '' },
+        { rule: 'c', severity: 'moderate', measured: '', needed: '' },
+        { rule: 'b', severity: 'critical', measured: '', needed: '' },
+      ]
+      const out = sanitizeSnapshotResult({ root: node(issues) }, { ...DEFAULT_SNAPSHOT_LIMITS, maxIssuesPerNode: 3 })
+      // Four supplied, two slots for findings once the marker is reserved. The
+      // two that stay are the critical and the serious — and they stay WHERE
+      // THEY WERE, `d` before `b`, not re-sorted into severity order.
+      expect(rulesOf(out)).toEqual(['d', 'b', ISSUES_TRUNCATED_RULE])
+    })
+
+    it('turns the frame’s dropped-count into words of ours, and only a number of theirs', () => {
+      const out = sanitizeSnapshotResult({
+        root: node([{ rule: 'target-size', severity: 'moderate', measured: '', needed: '' }], { issuesDropped: 7 }),
+      })
+      expect(rulesOf(out)).toEqual(['target-size', ISSUES_TRUNCATED_RULE])
+      expect(marker(out)?.measured).toBe('at least 7 more')
+    })
+
+    it('does not believe a page that writes the marker itself', () => {
+      // The reserved rule is minted here and accepted from nowhere — the same
+      // rule `ref` follows. Trailing whitespace included, because the serializer
+      // trims tokens and `scrub` turns a control character into a space.
+      const out = sanitizeSnapshotResult({
+        root: node([
+          { rule: ISSUES_TRUNCATED_RULE, severity: 'critical', measured: 'at least 900 more', needed: '' },
+          { rule: `${ISSUES_TRUNCATED_RULE} `, severity: 'critical', measured: 'forged', needed: '' },
+          { rule: 'real', severity: 'serious', measured: '', needed: '' },
+        ]),
+      })
+      expect(rulesOf(out)).toEqual(['real'])
+    })
+
+    it('ignores a dropped-count that is not a count', () => {
+      for (const issuesDropped of ['9', -1, 0, Number.NaN, Number.POSITIVE_INFINITY, { valueOf: () => 9 }, [9]]) {
+        const out = sanitizeSnapshotResult({
+          root: node([{ rule: 'target-size', severity: 'moderate', measured: '', needed: '' }], { issuesDropped }),
+        })
+        expect(rulesOf(out)).toEqual(['target-size'])
+      }
+    })
+
+    it('bounds a dropped-count a page inflates, so the marker cannot become a paragraph', () => {
+      const out = sanitizeSnapshotResult({
+        root: node([], { issuesDropped: Number.MAX_SAFE_INTEGER }),
+      })
+      expect(marker(out)?.measured).toBe('at least 1000000 more')
+    })
+
+    it('bounds the entries it EXAMINES, not just the ones it keeps', () => {
+      // The `styles` lesson one field over: structured clone preserves identity,
+      // so one array of a million issues referenced from every node costs the
+      // page a single array and would cost us a full scan per node.
+      const issues = Array.from({ length: 400_000 }, () => ({ rule: 'r', severity: 'minor', measured: '', needed: '' }))
+      const shared = { ref: 'e0', role: 'x', name: '', box: {}, issues, children: [] }
+      const root = { ref: 'e0', role: 'document', name: '', box: {}, children: Array.from({ length: 400 }, () => shared) }
+      const started = Date.now()
+      const out = sanitizeSnapshotResult({ root })
+      expect(Date.now() - started).toBeLessThan(4000)
+      expect(out.root.children[0].issues).toHaveLength(20)
+      // Everything past the window counts as dropped, because it might have
+      // been real: 400,000 supplied, 19 emitted.
+      expect(marker({ root: out.root.children[0] })?.measured).toBe('at least 399981 more')
+    })
+
+    it('says nothing at all when nothing was dropped', () => {
+      const issues = Array.from({ length: 20 }, (_, i) => ({ rule: `r${i}`, severity: 'serious', measured: '', needed: '' }))
+      const out = sanitizeSnapshotResult({ root: node(issues) })
+      expect(out.root.issues).toHaveLength(20)
+      expect(marker(out)).toBeUndefined()
+    })
   })
 
   it('clamps opacity and ignores non-boolean state flags', () => {
