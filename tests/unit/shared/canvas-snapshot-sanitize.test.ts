@@ -6,6 +6,7 @@ import v8 from 'node:v8'
 import vm from 'node:vm'
 import { describe, it, expect } from 'vitest'
 import { sanitizeSnapshotResult, DEFAULT_SNAPSHOT_LIMITS } from '../../../src/shared/canvas-snapshot-sanitize'
+import { CURATED_STYLE_PROPERTIES } from '../../../src/shared/canvas'
 import { serializeSnapshot, MAX_SNAPSHOT_CHARS } from '../../../src/shared/canvas-snapshot-serialize'
 import type { SnapshotNode } from '../../../src/shared/canvas'
 
@@ -233,6 +234,72 @@ describe('hostile input', () => {
     expect(scoped.root.children.every((c) => c.styles !== undefined)).toBe(true)
   })
 
+  it('does not let a style KEY open a structural token', () => {
+    // The wire format spells a style as `[name=value]`, which is the same shape
+    // and the same alphabet as every structural token it has. A shape check
+    // therefore handed the page a token opener, and a scoped capture emitted
+    // `[ref=e1]` on a node that was not e1 — the exact collision the
+    // assigned-not-accepted rule for `ref` exists to prevent, reached through
+    // the one field that was allowed to name itself.
+    const forged = {
+      ref: 'e1',
+      value: '"anything at all"',
+      'sr-only': 'true',
+      disabled: 'true',
+      checked: 'true',
+      box: '0,0,0,0',
+      at: '0,0,0,0',
+      'aria-invalid': 'true',
+      type: 'text',
+      opacity: '1',
+      // A real one, so the test cannot pass by dropping styles altogether.
+      color: 'rgb(1, 2, 3)',
+    }
+    const out = sanitizeSnapshotResult(
+      { root: { role: 'document', name: '', box: {}, styles: forged, children: [] } },
+      undefined,
+      { scoped: true },
+    )
+    expect(out.root.styles).toEqual({ color: 'rgb(1, 2, 3)' })
+
+    // And the property that actually matters: the emitted LINE carries exactly
+    // one of each structural token, whatever the page called its styles.
+    const line = serializeSnapshot({
+      versionId: 'v1',
+      capturedAt: 'now',
+      viewport: out.viewport,
+      root: out.root,
+    }).text.split('\n')[1]
+    for (const token of ['[ref=', '[box=']) {
+      expect(line.split(token).length - 1, `${token} appears more than once in: ${line}`).toBe(1)
+    }
+    for (const token of ['[sr-only', '[disabled', '[checked', '[value=', '[at=', '[chars=']) {
+      expect(line, `${token} was forged into: ${line}`).not.toContain(token)
+    }
+  })
+
+  it('keeps the allowlist and the bridge that fills it in step', () => {
+    // The producer and this boundary are different files. Every style the
+    // bridge can emit must be one this accepts, or an honest page silently
+    // loses a property; anything this accepts that the bridge cannot emit is a
+    // key only a hostile page would send.
+    expect([...CURATED_STYLE_PROPERTIES].sort()).toEqual(
+      [
+        'background-color',
+        'background-image',
+        'color',
+        'display',
+        'font-family',
+        'font-size',
+        'font-weight',
+        'line-height',
+        'margin',
+        'overflow',
+        'padding',
+      ].sort(),
+    )
+  })
+
   it('drops issue entries with no rule and caps how many one node can carry', () => {
     const issues = Array.from({ length: 100 }, (_, i) => ({ rule: `rule-${i}`, severity: 'x', measured: '', needed: '' }))
     const out = sanitizeSnapshotResult({
@@ -345,7 +412,10 @@ describe('the cost of enforcing the caps', () => {
     // The same identity asymmetry as the node memo, one field over: one styles
     // object attached to every node costs the page nothing on the wire and used
     // to cost a full 24-entry scan per node.
-    const styles = Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`margin-${'a'.repeat(i + 1)}`, `${i}px`]))
+    // Real property names: the allowlist means an invented key is dropped
+    // before it costs anything, so a memo test built on invented keys would
+    // measure the allowlist rather than the memo.
+    const styles = Object.fromEntries(CURATED_STYLE_PROPERTIES.map((p, i) => [p, `value-${i}`]))
     const shared = { role: 'button', name: 'Save', styles, box: {}, children: [] }
     const { result, calls } = countNormalized(() =>
       sanitizeSnapshotResult(
@@ -356,8 +426,8 @@ describe('the cost of enforcing the caps', () => {
     )
     expect(calls).toBeLessThanOrEqual(100)
     // The memo must not stop the styles being EMITTED on every node.
-    expect(Object.keys(result.root.children[0].styles ?? {})).toHaveLength(24)
-    expect(Object.keys(result.root.children[999].styles ?? {})).toHaveLength(24)
+    expect(Object.keys(result.root.children[0].styles ?? {})).toHaveLength(CURATED_STYLE_PROPERTIES.length)
+    expect(Object.keys(result.root.children[999].styles ?? {})).toHaveLength(CURATED_STYLE_PROPERTIES.length)
   })
 
   it('bounds the style keys it EXAMINES, not just the ones it keeps', () => {
@@ -441,6 +511,34 @@ describe('the cost of enforcing the caps', () => {
     expect(wire / page).toBeLessThan(100)
   })
 
+  it('charges what JSON will spend on a value, not what the value measures', () => {
+    // `"` and `\` each serialize to two characters and both survive scrubbing,
+    // so the page chooses the multiplier. Charging `.length` put 4,000 maximal
+    // nodes of quotes at 1,859,222 characters against a 1,024,000 ceiling.
+    const quoted = {
+      role: '"'.repeat(64),
+      name: '"'.repeat(200),
+      uxId: '\\'.repeat(128),
+      state: { type: '"'.repeat(32) },
+      styles: Object.fromEntries(CURATED_STYLE_PROPERTIES.map((p) => [p, '"'.repeat(200)])),
+      issues: Array.from({ length: 20 }, () => ({
+        rule: '"'.repeat(64),
+        severity: '\\'.repeat(24),
+        measured: '"'.repeat(96),
+        needed: '\\'.repeat(96),
+      })),
+      box: { x: 1, y: 2, width: 3, height: 4 },
+      children: [],
+    }
+    const out = sanitizeSnapshotResult(
+      { root: { role: 'document', name: '', box: {}, children: Array.from({ length: 4000 }, () => quoted) } },
+      undefined,
+      { scoped: true },
+    )
+    expect(out.truncated).toBe(true)
+    expect(JSON.stringify(out).length).toBeLessThan(1_100_000)
+  })
+
   it('charges a node for the structure around its values, not only the values', () => {
     // The gap between "characters the page supplied" and "characters the wire
     // carries" is attacker-controlled. Twenty issues with empty values are
@@ -479,7 +577,15 @@ describe('the cost of enforcing the caps', () => {
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
       return ((t ^ (t >>> 14)) >>> 0) % n
     }
-    const text = (n: number) => 'abcdefghij'.repeat(Math.ceil(n / 10)).slice(0, n)
+    // The alphabet matters as much as the lengths. `"` and `\` each serialize
+    // to TWO characters and both survive scrubbing, so a page picks the
+    // multiplier — a fuzz over plain letters cannot see an accounting that
+    // charges `.length`, and did not.
+    const alphabets = ['abcdefghij', '""""""""""', '\\\\\\\\\\\\\\\\\\\\', 'a"b\\c"d\\e"']
+    const text = (n: number) => {
+      const a = alphabets[rnd(alphabets.length)]
+      return a.repeat(Math.ceil(n / a.length) + 1).slice(0, n)
+    }
     // The lengths a number can serialize to are page-chosen, not 1.
     const fatNumbers = [0, 1, -1, 0.1234567890123456, 1e21, 5e-324, -1.7976931348623157e308, 99999.99999]
     const oneNumber = () => fatNumbers[rnd(fatNumbers.length)]
@@ -512,8 +618,12 @@ describe('the cost of enforcing the caps', () => {
       }
       if (rnd(2)) {
         const st: Record<string, string> = {}
-        for (let i = 0; i < rnd(Math.min(24, scale)); i++) {
-          st['a'.repeat(1 + rnd(8)) + String.fromCharCode(97 + i)] = text(1 + rnd(scale))
+        // Real property names. An invented key is now dropped by the allowlist
+        // before it is ever charged, so a fuzz built on invented keys would
+        // generate no styles at all and silently stop covering their
+        // accounting — which is exactly what it did until this was noticed.
+        for (let i = 0; i < rnd(CURATED_STYLE_PROPERTIES.length); i++) {
+          st[CURATED_STYLE_PROPERTIES[i]] = text(1 + rnd(scale))
         }
         n.styles = st
       }

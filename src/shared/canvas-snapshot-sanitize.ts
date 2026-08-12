@@ -10,7 +10,10 @@
 // matches CanvasSnapshotResult by construction, with every string bounded and
 // every number finite. Nothing is trusted enough to pass through unexamined.
 
+import { CURATED_STYLE_PROPERTIES } from './canvas'
 import type { AxeIssue, CanvasSnapshotResult, Rect, SnapshotNode } from './canvas'
+
+const ALLOWED_STYLE_PROPERTIES: ReadonlySet<string> = new Set(CURATED_STYLE_PROPERTIES)
 
 export interface SanitizeLimits {
   maxNodes: number
@@ -222,11 +225,17 @@ function styles(value: unknown, budget: Budget, limits: SanitizeLimits): Record<
   for (const key of examine) {
     if (count >= limits.maxStyleEntries) break
     const name = str(key, 48)
-    // A style name is a CSS property, never arbitrary page text. The shape
-    // already excludes `__proto__` (no underscores); the two remaining
-    // prototype-shaped names are rejected by hand so the map can never carry one.
-    if (!/^[a-z-]{1,48}$/.test(name)) continue
-    if (name === 'constructor' || name === 'prototype') continue
+    // An ALLOWLIST, not a shape. A style is spelled `[name=value]` on the wire,
+    // which is the same shape and the same alphabet as `[ref=…]`, `[sr-only]`,
+    // `[disabled]` and `[value="…"]` — so "looks like a CSS property" is also
+    // "looks like a structural token", and a page that could pick the key could
+    // open one. It emitted `[ref=e1]` on a node that was not e1, which is the
+    // exact collision the assigned-not-accepted rule for `ref` exists to stop,
+    // reached one field over. See CURATED_STYLE_PROPERTIES.
+    //
+    // A closed set also removes the prototype-name question rather than
+    // answering it: `constructor` and `prototype` are simply not in it.
+    if (!ALLOWED_STYLE_PROPERTIES.has(name)) continue
     const styleValue = str(value[key], limits.maxText)
     if (!styleValue) continue
     out[name] = styleValue
@@ -291,13 +300,13 @@ interface Budget {
  *  punctuation it never sends and truncates a snapshot that fitted. */
 function weigh(value: SnapshotNode): number {
   // `{"ref":"…","role":"…","name":"…","box":{"x":…,"y":…,"width":…,"height":…},"children":[]},`
-  let total = 82 + value.ref.length + value.role.length + value.name.length
+  let total = 82 + value.ref.length + strLen(value.role) + strLen(value.name)
   total += num2str(value.box.x) + num2str(value.box.y) + num2str(value.box.width) + num2str(value.box.height)
-  if (value.uxId !== undefined) total += 10 + value.uxId.length
+  if (value.uxId !== undefined) total += 10 + strLen(value.uxId)
   const nodeState = value.state
   if (nodeState) {
     total += 11
-    if (nodeState.type !== undefined) total += 10 + nodeState.type.length
+    if (nodeState.type !== undefined) total += 10 + strLen(nodeState.type)
     if (nodeState.valueLength !== undefined) total += 17 + num2str(nodeState.valueLength)
     if (nodeState.checked !== undefined) total += 15
     if (nodeState.disabled !== undefined) total += 16
@@ -307,12 +316,12 @@ function weigh(value: SnapshotNode): number {
   }
   if (value.styles) {
     total += 12
-    for (const key of Object.keys(value.styles)) total += 6 + key.length + value.styles[key].length
+    for (const key of Object.keys(value.styles)) total += 6 + key.length + strLen(value.styles[key])
   }
   if (value.issues) {
     total += 12
     for (const issue of value.issues) {
-      total += 52 + issue.rule.length + issue.severity.length + issue.measured.length + issue.needed.length
+      total += 52 + strLen(issue.rule) + strLen(issue.severity) + strLen(issue.measured) + strLen(issue.needed)
       // `,"at":{"x":…,"y":…,"width":…,"height":…}`
       if (issue.at) {
         total += 36 + num2str(issue.at.x) + num2str(issue.at.y) + num2str(issue.at.width) + num2str(issue.at.height)
@@ -326,6 +335,27 @@ function weigh(value: SnapshotNode): number {
  *  `0.1234567890123456` is eighteen, and a page picks which. */
 function num2str(value: number): number {
   return String(value).length
+}
+
+/**
+ * How many characters this string occupies once serialized INTO JSON.
+ *
+ * `JSON.stringify` writes two characters for every `"` and every `\`, and both
+ * survive `scrub` — they are ordinary content, correctly — so the multiplier is
+ * the page's to choose. Charging `.length` let a page fill every field with
+ * quotes and land 1.9x over the ceiling: the same defect the serializer's
+ * `emittedWidth` exists to fix, in the sibling budget that did not get it.
+ *
+ * Every other character JSON escapes is a control character, and `scrub` has
+ * already removed all of those, so these two are the whole of it.
+ */
+function strLen(value: string): number {
+  let extra = 0
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code === 34 || code === 92) extra += 1 // " and \
+  }
+  return value.length + extra
 }
 
 function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLimits): SnapshotNode | null {

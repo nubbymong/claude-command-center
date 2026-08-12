@@ -158,6 +158,36 @@ export type CanvasBridgeEvent =
 // The P1 CanvasSnapshotNode above is the basic role/name/box report; SnapshotNode
 // supersedes it once the bundled bridge lands.
 
+/**
+ * The only style properties a snapshot may carry.
+ *
+ * An ALLOWLIST, and it has to be one. The wire format spells a style as
+ * `[name=value]` — the same shape, and the same `[a-z-]` alphabet, as every
+ * structural token the format has. Accepting any key that merely LOOKED like a
+ * CSS property therefore handed a page a token opener: on a scoped capture it
+ * could emit `[ref=e1]` on a node that is not e1, plus `[sr-only=true]`,
+ * `[disabled=true]` and a second `[value="…"]` — defeating by name the
+ * guarantee that refs are assigned here and never accepted.
+ *
+ * Shared rather than duplicated because the producer (the in-page bridge) and
+ * the boundary that accepts its reply are different files, and this codebase's
+ * most expensive bug was two cleaners that had to agree while only one was
+ * hardened.
+ */
+export const CURATED_STYLE_PROPERTIES = [
+  'display',
+  'font-family',
+  'font-size',
+  'font-weight',
+  'line-height',
+  'color',
+  'background-color',
+  'background-image',
+  'padding',
+  'margin',
+  'overflow',
+] as const
+
 /** One axe (or measurement) finding joined onto the node it fired on. */
 export interface AxeIssue {
   rule: string
