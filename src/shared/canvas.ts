@@ -208,17 +208,41 @@ export const MAX_ISSUES_PER_NODE = 20
  */
 export const ISSUES_TRUNCATED_RULE = 'issues-truncated'
 
-/** axe's `impact` vocabulary, ranked. Anything outside it is unranked and is
- *  what a cap eats first. */
-const SEVERITY_RANK: Readonly<Record<string, number>> = {
-  critical: 4,
-  serious: 3,
-  moderate: 2,
-  minor: 1,
-}
+/**
+ * axe's `impact` vocabulary, ranked. Anything outside it is unranked and is
+ * what a cap eats first.
+ *
+ * A Map, not an object literal — and the two other lookup tables in this
+ * pipeline (`ALLOWED_STYLE_PROPERTIES`, `ANALYSIS_CODES`) are Sets for the same
+ * reason. `severity` is page-authored, so an object literal answers
+ * `rank('toString')` with a FUNCTION: `Record<string, number>` makes TypeScript
+ * believe the result is a number, the comparator's subtraction becomes NaN,
+ * `NaN || a - b` falls through to positional order, and a genuine `critical`
+ * finding is evicted from the wire by nineteen `minor` ones. Measured on the
+ * shipped code with `severity: 'toString'`.
+ */
+const SEVERITY_RANK: ReadonlyMap<string, number> = new Map([
+  ['critical', 4],
+  ['serious', 3],
+  ['moderate', 2],
+  ['minor', 1],
+])
 
+/**
+ * Where a finding sits in the queue when something has to go.
+ *
+ * Total by construction: every path returns one of the five numbers, so no
+ * caller can be handed something that is not comparable.
+ *
+ * Normalises first, because the value is ranked HERE on a raw page record and
+ * emitted LATER through `str`/`token`, both of which NFKC-fold — so a fullwidth
+ * `ｃｒｉｔｉｃａｌ` ranked zero and printed `critical`. Two things that must
+ * agree with only one of them maintained is the recurring bug in this pipeline;
+ * bounded to 32 units first so normalising cannot itself become the cost.
+ */
 export function severityRank(severity: unknown): number {
-  return typeof severity === 'string' ? (SEVERITY_RANK[severity] ?? 0) : 0
+  if (typeof severity !== 'string' || severity.length === 0 || severity.length > 32) return 0
+  return SEVERITY_RANK.get(severity.normalize('NFKC')) ?? 0
 }
 
 /**
@@ -353,6 +377,19 @@ export interface CanvasSnapshotResult {
   unmatchedScope?: string[]
   /** The node cap was hit — the tree is partial. */
   truncated?: boolean
+  /**
+   * The walk refused an element deeper than its depth cap, so there is DOM
+   * below it that was not looked at.
+   *
+   * SEPARATE from `truncated`, deliberately. `truncated` means nodes were
+   * dropped and reads to the agent as "the page exceeded the node limit"; a
+   * page can nest past 64 levels — routine once providers, portals and layout
+   * wrappers stack up — without losing a single node. Reporting the wrong limit
+   * costs a whole second capture, and unlike the node cap this one has an
+   * answer: scope to a `data-ux-id` inside the deep region and the walk
+   * restarts from there.
+   */
+  depthLimited?: boolean
   /** Analysis was asked for but could not run (chunk blocked, axe threw). The
    *  snapshot is still returned; measurement issues are unaffected. */
   analysisError?: string

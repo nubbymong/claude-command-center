@@ -241,6 +241,45 @@ describe('robustness', () => {
     expect(text).not.toContain('〕')
   })
 
+  // The format has TWO delimiters — brackets open tokens, quotes contain names
+  // — and `escape()` guarded both while `token()` guarded only the brackets. So
+  // round 3's bug ("two cleaners that had to agree, only one hardened") was
+  // alive one delimiter over, reachable from a static page with no JavaScript:
+  // `data-ux-id='card"'` is read verbatim by the honest bridge.
+  it.each([
+    ['a quote', 'card"'],
+    ['a backslash', 'card\\'],
+    ['both', 'a"b\\c'],
+    ['a run of them', '"""\\\\\\'],
+  ])('a bracket token cannot emit the format’s own delimiters (%s)', (_label, hostile) => {
+    const s = snap(
+      node({
+        ref: 'e1',
+        role: 'textbox',
+        name: 'Card number',
+        uxId: hostile,
+        state: { type: hostile, valueLength: 16 },
+        styles: { color: hostile },
+        issues: [{ rule: hostile, severity: 'serious', measured: hostile, needed: hostile }],
+      }),
+    )
+    const text = serializeSnapshot(s).text
+    for (const token of text.match(/\[[^\]]*\]/g) ?? []) {
+      expect(token, token).not.toContain('"')
+      expect(token, token).not.toContain('\\')
+    }
+    // The whole wire keeps an EVEN number of quotes, so no reader can open a
+    // string that runs across lines and swallows the next node's findings.
+    expect((text.match(/(?<!\\)"/g) ?? []).length % 2).toBe(0)
+  })
+
+  it('still escapes, rather than replaces, inside a quoted name', () => {
+    // The two paths differ on purpose: a name is contained by quotes and can
+    // afford to escape them, so the reviewer still sees what the page wrote.
+    const s = snap(node({ ref: 'e1', role: 'button', name: 'Say "hi" \\ now' }))
+    expect(serializeSnapshot(s).text.split('\n')[1]).toContain('"Say \\"hi\\" \\\\ now"')
+  })
+
   it('json format returns the raw snapshot', () => {
     const s = snap(node({ ref: 'e0', role: 'button', name: 'Save', box: { x: 1, y: 2, width: 3, height: 4 } }))
     expect(JSON.parse(serializeSnapshot(s, { format: 'json' }).text)).toEqual(s)

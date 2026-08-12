@@ -285,9 +285,28 @@ function neutralise(value: string): string {
  * the line breaks and no value can close its token and open another — which is
  * how a plain static page forged `[sr-only]` on itself during the adversarial
  * pass, suppressing its own review findings.
+ *
+ * `"` and `\` go too, and this is where round 3's lesson had NOT been applied.
+ * The format has two delimiters, not one: brackets open tokens and quotes
+ * contain names. `escape()` guards both — it escapes the backslash first and
+ * then the quote, precisely because they are the format's own characters —
+ * while this function guarded only the brackets. So `data-ux-id='card"'`
+ * emitted `[ux=card"]`, leaving the wire with an ODD number of quotes: a reader
+ * honouring the convention opens a string there and runs to the next quote,
+ * swallowing the following node's `[ref=]`, its box, and its findings. Measured
+ * from a static page with no JavaScript at all. `data-ux-id='card\'` does the
+ * same with an unterminated escape.
+ *
+ * Inside a bracket neither character means anything, so they are REPLACED
+ * rather than escaped — one decision, no inverse to get wrong.
  */
+const TOKEN_DELIMITERS = /["\\]/g
+
 function token(value: string): string {
-  return neutralise(value).replace(/\s+/g, ' ').trim()
+  return neutralise(value)
+    .replace(TOKEN_DELIMITERS, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 /** Emitted BARE — no brackets, no quotes to contain it — so a role is validated

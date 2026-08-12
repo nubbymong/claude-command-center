@@ -61,7 +61,7 @@ describe('the walk is bounded where it is BUILT, not only where it is received',
     expect(result.truncated).toBe(true)
   })
 
-  it('stops at the depth cap and says the tree is partial', async () => {
+  it('stops at the depth cap and says so in its own words', async () => {
     // A single chain far past the cap. Non-semantic wrappers splice their
     // children up a level, so each level carries a box AND a role to earn a
     // line of its own — otherwise the whole chain collapses and measures 1 deep.
@@ -71,16 +71,52 @@ describe('the walk is bounded where it is BUILT, not only where it is received',
 
     const result = await captureSnapshot({ analysis: false })
     expect(depthOf(result.root)).toBeLessThanOrEqual(66)
-    expect(result.truncated).toBe(true)
     // …and the report is the point: a tree that just stops, with nothing said,
     // reads to the agent as a page that ends there.
+    expect(result.depthLimited).toBe(true)
     expect(flatten(result.root).some((n) => n.uxId === 'deepest')).toBe(false)
+    // NOT `truncated`. That flag means nodes were dropped and drives a note
+    // blaming the node limit — a limit that did not fire here.
+    expect(result.truncated).toBeUndefined()
+  })
+
+  it('does not call a deeply-nested page truncated when it lost nothing', async () => {
+    // 70 levels of empty wrappers past the cap: nothing below them, nothing
+    // lost. Flagging `truncated` here told the agent every capture of any app
+    // with deep providers or portals was partial, forever, and cost it a second
+    // full capture each time.
+    let html = ''
+    for (let i = 0; i < 70; i++) html = `<div>${html}</div>`
+    document.body.innerHTML = `<p data-test-box="0,0,80,16">visible</p>${html}`
+
+    const result = await captureSnapshot({ analysis: false })
+    expect(result.truncated).toBeUndefined()
+  })
+
+  it('does not report a depth limit for a tag that never contributes', async () => {
+    // Exactly at the boundary: 64 wrappers, so the innermost sits at the last
+    // depth the walk accepts and its child is the first thing refused. A
+    // <script> there is refused for being a <script>, and refusing one loses
+    // nothing at any depth.
+    const nest = (leaf: string) => {
+      let html = leaf
+      for (let i = 0; i < 64; i++) html = `<div>${html}</div>`
+      return html
+    }
+    document.body.innerHTML = nest('<script>void 0</script>')
+    expect((await captureSnapshot({ analysis: false })).depthLimited).toBeUndefined()
+
+    // The control: an element that WOULD have been walked, at the same depth,
+    // does report it. Without this the assertion above passes for any reason.
+    document.body.innerHTML = nest('<p data-test-box="0,0,80,16">too deep</p>')
+    expect((await captureSnapshot({ analysis: false })).depthLimited).toBe(true)
   })
 
   it('says nothing about truncation for a page that fits', async () => {
     document.body.innerHTML = Array.from({ length: 20 }, (_, i) => `<p data-test-box="0,${i},80,16">r${i}</p>`).join('')
     const result = await captureSnapshot({ analysis: false })
     expect(result.truncated).toBeUndefined()
+    expect(result.depthLimited).toBeUndefined()
   })
 })
 

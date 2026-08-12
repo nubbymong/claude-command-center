@@ -156,16 +156,75 @@ describe('a node with more findings than it can carry', () => {
     expect(hot?.issuesDropped).toBe(8)
   })
 
-  it('records the overlap cap as a drop instead of stopping silently', async () => {
+  it('counts the overlaps it could not carry EXACTLY, and only ones that exist', async () => {
+    // 26 boxes genuinely overlap `first`, which carries 20. The count is not a
+    // guess: it used to be taken at the top of the loop the moment the cap was
+    // reached — before the y-band break and before the containment and area
+    // tests — so it fired on candidates that were never going to qualify.
     const pileup = Array.from(
-      { length: 12 },
+      { length: 26 },
       (_, i) => `<div data-test-box="0,${i + 1},300,300">row ${i}</div>`,
     ).join('')
     document.body.innerHTML = `<div data-ux-id="first" data-test-box="0,0,300,300">first</div>${pileup}`
 
     const first = nodeFor(await captureSnapshot({ analysis: false }), 'first')
-    expect(rulesOf(first).filter((r) => r === 'overlap').length).toBeLessThan(12)
-    expect(first?.issuesDropped).toBeGreaterThan(0)
+    expect(rulesOf(first).filter((r) => r === 'overlap')).toHaveLength(20)
+    expect(first?.issuesDropped).toBe(6)
+  })
+
+  it('does not invent a drop when the cap is reached and nothing else qualifies', async () => {
+    // Exactly 20 partners, plus one box far below that the sweep breaks on.
+    // A phantom drop here is worse than a wrong number: the trust boundary
+    // reserves a wire slot the instant a drop is declared, so it DESTROYS a
+    // genuine finding to make room for a line saying a finding was lost.
+    const partners = Array.from(
+      { length: 20 },
+      (_, i) => `<div data-test-box="0,${i + 1},300,300">row ${i}</div>`,
+    ).join('')
+    document.body.innerHTML =
+      `<div data-ux-id="exact" data-test-box="0,0,300,300">first</div>${partners}` +
+      `<div data-test-box="0,5000,300,300">far below</div>`
+
+    const exact = nodeFor(await captureSnapshot({ analysis: false }), 'exact')
+    expect(rulesOf(exact).filter((r) => r === 'overlap')).toHaveLength(20)
+    expect(exact?.issuesDropped).toBeUndefined()
+  })
+
+  it('does not let one crowded node starve the rest of the page', async () => {
+    // The comparison budget used to be one counter for the whole pass, so the
+    // first node in the sweep could spend all of it: measured, 634 benign boxes
+    // sharing a y-band exhausted it and a genuine overlap further down the page
+    // was never looked for, with nothing said anywhere in the output.
+    const benign = Array.from(
+      { length: 800 },
+      (_, i) => `<div data-test-box="${i * 10},0,9,1000">c${i}</div>`,
+    ).join('')
+    document.body.innerHTML =
+      benign +
+      `<div data-ux-id="late-a" data-test-box="0,2000,300,300">late a</div>` +
+      `<div data-ux-id="late-b" data-test-box="10,2010,300,300">late b</div>`
+
+    const lateA = nodeFor(await captureSnapshot({ analysis: false }), 'late-a')
+    expect(rulesOf(lateA)).toContain('overlap')
+  })
+
+  it('bounds how far ONE node looks, so the work stays bounded without a shared counter', async () => {
+    // The other half of replacing the global budget: a per-node bound has to
+    // actually bound, or the total is whatever the page's densest y-band is.
+    // 200 boxes all overlapping one node — it examines 64 of them, reports the
+    // first 20 and counts the other 44. Not 180, which is what it would count
+    // if it looked at every one; not a timing assertion, because on this
+    // fixture the two run 276 ms and 313 ms and a bar between them would be a
+    // coin toss dressed as a guard.
+    const pileup = Array.from(
+      { length: 200 },
+      (_, i) => `<div data-test-box="0,${i + 1},300,300">row ${i}</div>`,
+    ).join('')
+    document.body.innerHTML = `<div data-ux-id="dense" data-test-box="0,0,300,300">first</div>${pileup}`
+
+    const dense = nodeFor(await captureSnapshot({ analysis: false }), 'dense')
+    expect(rulesOf(dense).filter((r) => r === 'overlap')).toHaveLength(20)
+    expect(dense?.issuesDropped).toBe(44)
   })
 
   it('leaves an ordinary node with no drop count at all', async () => {

@@ -223,6 +223,24 @@ describe('output', () => {
     expect(notes).toContain('contrast still apply')
   })
 
+  it('names the DEPTH limit as itself, not as the node limit', async () => {
+    // A third limit, and naming it correctly is the point. The node cap drops
+    // nodes; this one refuses to descend past 64 levels of DOM, which a page
+    // reaches routinely once providers, portals and layout wrappers stack up —
+    // without necessarily losing a node. Reported as the node limit it told the
+    // agent a whole tree was partial when it was not, on every capture, and
+    // cost it a second full capture each time. It is also the only one of the
+    // three with a real answer, so the note gives it.
+    const out = await runCanvasSnapshot({}, 'sess-mine', deps({
+      requestSnapshot: async () => result({ depthLimited: true }),
+    }))
+    const notes = out.text.slice(0, out.text.indexOf('<untrusted-content'))
+    expect(notes).toContain('nests deeper than this walk goes')
+    expect(notes).toContain('Scope to a data-ux-id')
+    expect(notes).not.toContain('node limit')
+    expect(notes).not.toContain('this tree is partial')
+  })
+
   it('json format is available but costs more than the text form', async () => {
     const text = await runCanvasSnapshot({}, 'sess-mine', deps())
     const json = await runCanvasSnapshot({ format: 'json' }, 'sess-mine', deps())

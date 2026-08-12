@@ -117,16 +117,52 @@ export function effectiveOpacity(el: Element): number {
 }
 
 /**
+ * Whether a hiding style on `clipper` can actually reach `el`.
+ *
+ * Every branch of `isSrOnly` may fire on an ANCESTOR, and an ancestor only
+ * hides what it contains. A `position: fixed` descendant is contained by the
+ * viewport, not by its parent, so it escapes an ancestor's `overflow: hidden`
+ * and its legacy `clip` entirely — it paints at full size wherever it likes
+ * while the 1x1 wrapper above it says "screen-reader only".
+ *
+ * Comparing the painted boxes answers this directly and needs no reasoning
+ * about which ancestor happens to establish a containing block — the rule that
+ * decides it (`transform`, `filter`, `contain`, `will-change`, `clip-path`, …)
+ * is long, engine-dependent and exactly the kind of thing the last two
+ * suppression primitives in this function were built out of. The element's own
+ * box is unchanged by any of these properties, so a genuinely hidden
+ * descendant still measures inside its wrapper and still returns true.
+ */
+function clips(clipper: Element, el: Element, inner: DOMRect): boolean {
+  if (clipper === el) return true
+  const outer = clipper.getBoundingClientRect()
+  return (
+    inner.left >= outer.left - 1 &&
+    inner.top >= outer.top - 1 &&
+    inner.right <= outer.right + 1 &&
+    inner.bottom <= outer.bottom + 1
+  )
+}
+
+/**
  * The visually-hidden / sr-only pattern, in any of its common spellings.
  *
  * HARD requirement from the P0 run-2 post-mortem: without it the agent reports
  * every screen-reader-only label as invisible text or a 1px target, which is
  * where its false positives came from. Checked on the element and a few
  * ancestors, because the pattern normally sits on a wrapper.
+ *
+ * EVERY branch here is a suppression primitive — what it returns true for gets
+ * every measurement rule on the subtree deleted, and the `[sr-only]` that
+ * results is legitimately emitted, so nothing downstream objects. Three of
+ * these have now been found and closed. Any new branch has to answer the same
+ * question before it is added: can a page reach this while its content stays
+ * plainly painted?
  */
 export function isSrOnly(el: Element): boolean {
   let node: Element | null = el
   let depth = 0
+  const own = el.getBoundingClientRect()
   while (node && depth < 4) {
     const cs = styleOf(node)
     if (cs) {
@@ -137,15 +173,20 @@ export function isSrOnly(el: Element): boolean {
       // visual no-op that getComputedStyle still reports — so this branch, when
       // it did not check position, was a pure-CSS way for a page to mark any
       // subtree sr-only and suppress every measurement rule on it while the
-      // content stayed plainly visible. No script needed, and the resulting
-      // `[sr-only]` is legitimately emitted, so no downstream defence sees it.
-      if (positioned && (clip === 'rect(0px,0px,0px,0px)' || clip === 'rect(1px,1px,1px,1px)')) return true
+      // content stayed plainly visible. No script needed.
+      if (positioned && (clip === 'rect(0px,0px,0px,0px)' || clip === 'rect(1px,1px,1px,1px)') && clips(node, el, own)) {
+        return true
+      }
       // `clip-path` does apply to static elements — and genuinely hides them, so
       // suppressing findings there is correct rather than exploitable.
-      if (clipPath === 'inset(50%)' || clipPath === 'inset(100%)') return true
+      if ((clipPath === 'inset(50%)' || clipPath === 'inset(100%)') && clips(node, el, own)) return true
       const rect = node.getBoundingClientRect()
       const hidden = cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.overflowY === 'hidden'
-      if (positioned && hidden && rect.width <= 1 && rect.height <= 1) return true
+      // The 1x1 clipping box every sr-only recipe uses. `overflow: hidden` does
+      // NOT clip a fixed descendant, so a 1x1 positioned wrapper around one
+      // marked a full-size, plainly painted banner screen-reader-only and
+      // deleted every finding under it — two CSS properties, no JavaScript.
+      if (positioned && hidden && rect.width <= 1 && rect.height <= 1 && clips(node, el, own)) return true
       // NOT here: the `left: -9999px` family. It was added and then removed,
       // and the reason is worth keeping. Everything this function returns true
       // for suppresses every measurement rule on the subtree, and the `[sr-only]`

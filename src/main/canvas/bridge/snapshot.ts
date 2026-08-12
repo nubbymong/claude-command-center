@@ -41,6 +41,7 @@ interface WalkContext {
   byElement: Map<Element, SnapshotNode>
   nextRef: number
   truncated: boolean
+  depthLimited: boolean
 }
 
 /** Failure CODES, never messages: analysisError is surfaced to the agent as a
@@ -49,15 +50,26 @@ interface WalkContext {
 type AnalysisFailure = 'load-failed' | 'run-failed'
 
 function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | SnapshotNode[] | null {
+  // BEFORE the depth test: a <script> or <style> contributes nothing at any
+  // depth, so refusing one is not a truncation and must not be reported as one.
+  if (isSkipped(el)) return null
   if (depth > MAX_DEPTH) {
-    // Reported, unlike the node cap beside it, which always was. The depth cap
-    // drops a whole SUBTREE and it drops it here, inside the page — so the
-    // sanitiser downstream cannot know it happened and the agent read a tree
-    // that simply stopped as a page that ends there.
-    ctx.truncated = true
+    // Reported, unlike the node cap beside it, which always was — the depth cap
+    // drops a whole SUBTREE, and it drops it here inside the page, so nothing
+    // downstream can know it happened and the agent read a tree that simply
+    // stops as a page that ends there.
+    //
+    // Its own flag, NOT `truncated`. `truncated` means "nodes were dropped" and
+    // drives a note blaming the node limit; a deeply-nested page trips this one
+    // without necessarily losing a single node, and 66 levels is routine once
+    // providers, portals and layout wrappers stack up. Claiming a limit that
+    // did not fire costs the agent a whole second capture — which is the exact
+    // cost this series cites for NOT stamping `truncated` on the JSON
+    // pretty-to-compact fallback. `depthLimited` claims only what is certainly
+    // true: there is DOM below here that was not walked.
+    ctx.depthLimited = true
     return null
   }
-  if (isSkipped(el)) return null
 
   // Refs are allocated on the way DOWN so they run in document order: the agent
   // reads the serialized tree top to bottom, and refs that count downward with it
@@ -351,6 +363,7 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
     byElement: new Map(),
     nextRef: 1,
     truncated: false,
+    depthLimited: false,
   }
 
   let children: SnapshotNode[] = []
@@ -438,6 +451,7 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   }
   if (unmatched.length > 0) out.unmatchedScope = unmatched
   if (ctx.truncated) out.truncated = true
+  if (ctx.depthLimited) out.depthLimited = true
   if (analysisError) out.analysisError = analysisError
   return out
 }

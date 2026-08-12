@@ -101,6 +101,40 @@ describe('sr-only suppression (HARD P2 requirement)', () => {
     expect(rules(nested)).not.toContain('target-size')
   })
 
+  it.each([
+    ['overflow: hidden', 'position: absolute; overflow: hidden'],
+    ['clip: rect()', 'position: absolute; clip: rect(1px, 1px, 1px, 1px)'],
+    ['clip-path: inset(50%)', 'clip-path: inset(50%)'],
+  ])('does NOT accept a 1x1 wrapper around a FIXED child it cannot clip (%s)', async (_label, wrapperStyle) => {
+    // `overflow: hidden` and the legacy `clip` do not clip a `position: fixed`
+    // descendant — its containing block is the viewport — so the child paints
+    // at full size while the wrapper above it says "screen-reader only". Two
+    // CSS properties, no JavaScript, and every measurement rule on the subtree
+    // is deleted. That is the THIRD ancestor-box suppression primitive found in
+    // `isSrOnly`; the other two were removed in earlier rounds.
+    document.body.innerHTML = `
+      <div data-test-box="0,0,1,1" style="${wrapperStyle}">
+        <div data-ux-id="banner" data-test-box="100,100,400,20"
+             style="position: fixed; color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">
+          Plainly visible low-contrast banner</div>
+      </div>`
+    const escaped = flatten((await captureSnapshot({ analysis: false })).root).find((n) => n.uxId === 'banner')
+    expect(escaped?.state?.srOnly).toBeUndefined()
+    expect(rules(escaped)).toContain('color-contrast')
+
+    // The control: the SAME wrapper style over a child it really does contain
+    // still suppresses, so the fix narrowed the branch rather than deleting it.
+    document.body.innerHTML = `
+      <div data-test-box="0,0,1,1" style="${wrapperStyle}">
+        <div data-ux-id="banner" data-test-box="0,0,1,1"
+             style="color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px">
+          Genuinely hidden</div>
+      </div>`
+    const contained = flatten((await captureSnapshot({ analysis: false })).root).find((n) => n.uxId === 'banner')
+    expect(contained?.state?.srOnly).toBe(true)
+    expect(rules(contained)).not.toContain('color-contrast')
+  })
+
   it('does NOT accept `clip` without positioning — that hides nothing', async () => {
     // CSS `clip` only applies to absolutely positioned elements, so on a static
     // box it is a visual no-op that getComputedStyle still reports. Accepting it

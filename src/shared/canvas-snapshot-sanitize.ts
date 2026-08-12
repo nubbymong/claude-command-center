@@ -13,18 +13,26 @@
 import { CURATED_STYLE_PROPERTIES, ISSUES_TRUNCATED_RULE, keepMostSevere, severityRank } from './canvas'
 import type { AxeIssue, CanvasSnapshotResult, Rect, SnapshotNode } from './canvas'
 
-const ALLOWED_STYLE_PROPERTIES: ReadonlySet<string> = new Set(CURATED_STYLE_PROPERTIES)
-
 export interface SanitizeLimits {
   maxNodes: number
   maxDepth: number
   maxChildren: number
   maxIssuesPerNode: number
-  maxStyleEntries: number
   maxText: number
   /** Ceiling on the WHOLE result, not on any one part of it. See below. */
   maxChars: number
 }
+
+/**
+ * There is no `maxStyleEntries`, and its absence is the point.
+ *
+ * It was 24 while `CURATED_STYLE_PROPERTIES` had eleven members, and `styles()`
+ * only ever counted allowlisted keys — so the cap could not bind, on any input,
+ * ever. Removing it entirely (rather than tuning it down) is deliberate: the
+ * allowlist IS the bound, it is shared with the producer so the two cannot
+ * drift, and this file's own rule is that a guard no input can trip reads as
+ * coverage and is not.
+ */
 
 /**
  * Matched to the bridge's own caps, so a well-behaved page never trips them.
@@ -42,7 +50,6 @@ export const DEFAULT_SNAPSHOT_LIMITS: SanitizeLimits = {
   maxDepth: 64,
   maxChildren: 4000,
   maxIssuesPerNode: 20,
-  maxStyleEntries: 24,
   maxText: 200,
   // Every other limit here is per-node, and per-node limits MULTIPLY: 4,000
   // nodes each legally carrying a name, a uxId, 20 issues and 24 styles is
@@ -223,19 +230,47 @@ function num(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
+/** A viewport edge, in CSS pixels. 2^24 is where doubles stop naming
+ *  consecutive integers; no window is that wide, and negative is not a size. */
+function viewportSize(value: unknown): number {
+  const n = num(value)
+  return Math.max(0, Math.min(16_777_216, n))
+}
+
+/** Device pixel ratio. Real values are 1 to 4; 16 covers anything a display
+ *  could plausibly report and keeps the token short. */
+function viewportDpr(value: unknown): number {
+  const n = num(value)
+  if (!(n > 0)) return 1
+  return Math.round(Math.min(n, 16) * 100) / 100
+}
+
 function rect(value: unknown): Rect {
   if (!isRecord(value)) return { x: 0, y: 0, width: 0, height: 0 }
   return { x: num(value.x), y: num(value.y), width: num(value.width), height: num(value.height) }
 }
 
-/** Cheap enough to run over the whole examine window: no normalisation and no
- *  allocation. An entry that cannot become an issue must not consume a slot. */
+/**
+ * Cheap enough to run over the whole examine window: no normalisation and no
+ * allocation. An entry that cannot become an issue must not consume a slot —
+ * and that includes an entry spelling the RESERVED rule, which is rejected at
+ * build time and so used to reserve a slot, waste it, and be counted as a
+ * dropped finding on the way out.
+ *
+ * The `trim()` matches the build-time check: the serializer trims tokens, and
+ * `scrub` turns a trailing control character into a trailing space.
+ */
 function usableIssue(raw: unknown): raw is Record<string, unknown> {
-  return isRecord(raw) && typeof raw.rule === 'string' && raw.rule.length > 0
+  return (
+    isRecord(raw) &&
+    typeof raw.rule === 'string' &&
+    raw.rule.length > 0 &&
+    raw.rule.trim() !== ISSUES_TRUNCATED_RULE
+  )
 }
 
-/** Ceiling on the frame's own claim of what it dropped. It is only ever printed
- *  as a decimal, so the bound is on the digits as much as the meaning. */
+/** Ceiling on the dropped-finding count. It is only ever printed as a decimal,
+ *  so the bound is on the digits as much as on the meaning. */
 const DROPPED_CEILING = 1_000_000
 
 function droppedCount(value: unknown): number {
@@ -252,7 +287,17 @@ function droppedCount(value: unknown): number {
  * bounded integer.
  */
 function truncationMarker(dropped: number): AxeIssue {
-  return { rule: ISSUES_TRUNCATED_RULE, severity: 'moderate', measured: `at least ${dropped} more`, needed: '' }
+  // Clamped HERE, where the digits are actually spelled. `droppedCount` bounds
+  // only the frame's declared number, and `dropped` also carries the entries
+  // past the examine window — and a SPARSE array survives structured clone with
+  // its length intact, so `new Array(4_294_967_295)` costs the page nothing and
+  // printed a ten-digit count.
+  return {
+    rule: ISSUES_TRUNCATED_RULE,
+    severity: 'moderate',
+    measured: `at least ${Math.min(dropped, DROPPED_CEILING)} more`,
+    needed: '',
+  }
 }
 
 function issues(
@@ -291,7 +336,7 @@ function issues(
     const record = usable[i]
     const rule = field(record, 'rule', 64, budget)
     // A page that spells the reserved rule is not believed. `.trim()` because
-    // the serializer trims tokens, so 'issues-truncated ' — which `scrub`
+    // the serializer trims tokens, so 'issues-truncated' followed by a control character — which `scrub`
     // turns into a trailing space — would otherwise reach the wire as the
     // reserved id itself.
     if (!rule || rule.trim() === ISSUES_TRUNCATED_RULE) continue
@@ -310,58 +355,45 @@ function issues(
   return out.length > 0 ? out : undefined
 }
 
-/** What a rejected style key costs the budget: the same `6 + key` an accepted
- *  one costs in `weigh`, so the two halves of the bill are the same size and an
- *  honest page — which sends nothing but allowlisted keys — pays neither. */
-const REJECTED_KEY_COST = 6
-
+/**
+ * The curated styles, PULLED by name rather than filtered out of what the page
+ * offered.
+ *
+ * This used to enumerate the page's object and reject what was not on the
+ * allowlist, and the enumeration was the whole vulnerability: `Object.keys()`
+ * runs before any cap can apply, and on a `Uint8Array` it MINTS a fresh index
+ * string per element. 15 MB of forged reply blocked the renderer's UI thread —
+ * the thread that runs React, every terminal and all IPC — for 1.2 seconds;
+ * 122 MB took 34 seconds and then killed the window with a 4 GB heap. Nothing
+ * in the output recorded that anything had happened, and the guard test written
+ * for the previous version of this bug scored the attack as CHEAPER than its
+ * own honest fixture, because it counted `normalize` calls and the attack makes
+ * none.
+ *
+ * Bounding the enumeration cannot fix that: the enumeration is what costs. So
+ * do not enumerate. The allowlist has eleven entries and the honest producer
+ * (`curatedStyles`) emits exactly those literals, so eleven direct lookups
+ * answer the question completely, in constant time, whatever the page sent —
+ * an array, a typed array, a million-key object, a Proxy.
+ *
+ * Own properties only, so nothing arrives from a prototype the page installed.
+ * `str()` still bounds every value; only the KEYS stopped being the page's to
+ * choose, which they never should have been.
+ */
 function styles(value: unknown, budget: Budget, limits: SanitizeLimits): Record<string, string> | undefined {
   if (!budget.allowStyles) return undefined
   if (!isRecord(value)) return undefined
-  // Structured clone preserves object IDENTITY, so one huge styles object
-  // referenced from every node costs the page almost nothing on the wire while
-  // costing us the full scan per node. Memoise per snapshot and that asymmetry
-  // — the thing that made the attack cheap — disappears.
+  // Structured clone preserves object IDENTITY, so one styles object referenced
+  // from every node costs the page almost nothing on the wire while costing us
+  // a full pass per node. Memoise per snapshot and that asymmetry disappears.
   const cached = budget.styleMemo.get(value)
   if (cached !== undefined) return cached.value
 
   const out: Record<string, string> = {}
   let count = 0
-  // Bound the keys EXAMINED, not the keys accepted. Rejected keys used to be
-  // free — they never advanced `count`, so a map of junk names was walked in
-  // full for every node, and 0.3 MB of payload froze the renderer's UI thread
-  // for 30 s: longer than either capture timeout, on the thread that runs
-  // React, every terminal, and all IPC.
-  const keys = Object.keys(value)
-  const examine = keys.length > limits.maxStyleEntries * 8 ? keys.slice(0, limits.maxStyleEntries * 8) : keys
-  for (const key of examine) {
-    if (count >= limits.maxStyleEntries) break
-    const name = str(key, 48)
-    // An ALLOWLIST, not a shape. A style is spelled `[name=value]` on the wire,
-    // which is the same shape and the same alphabet as `[ref=…]`, `[sr-only]`,
-    // `[disabled]` and `[value="…"]` — so "looks like a CSS property" is also
-    // "looks like a structural token", and a page that could pick the key could
-    // open one. It emitted `[ref=e1]` on a node that was not e1, which is the
-    // exact collision the assigned-not-accepted rule for `ref` exists to stop,
-    // reached one field over. See CURATED_STYLE_PROPERTIES.
-    //
-    // A closed set also removes the prototype-name question rather than
-    // answering it: `constructor` and `prototype` are simply not in it.
-    if (!ALLOWED_STYLE_PROPERTIES.has(name)) {
-      // Examining a key is WORK — a `str()` call, so up to `maxText * 7`
-      // characters of normalisation — and until now a rejected key was free.
-      // `budget.chars` is the only global brake there is, and 192 junk keys per
-      // node never touched it, so the one counter that could have stopped a
-      // page from buying 768,000 unbilled normalisations never moved. Accepted
-      // keys are charged by `weigh`; this is the other half of the same bill.
-      budget.chars += REJECTED_KEY_COST + name.length
-      continue
-    }
-    // Deliberately NOT charged when the value scrubs away to nothing: `str`
-    // returns '' only for a non-string or an empty one, both O(1), and the
-    // allowlist bounds this branch at eleven keys a node. A guard no input can
-    // trip is worse than no guard — it reads as coverage and is not.
-    const styleValue = str(value[key], limits.maxText)
+  for (const name of CURATED_STYLE_PROPERTIES) {
+    if (!Object.prototype.hasOwnProperty.call(value, name)) continue
+    const styleValue = str(value[name], limits.maxText)
     if (!styleValue) continue
     out[name] = styleValue
     count++
@@ -534,7 +566,13 @@ function node(value: unknown, depth: number, budget: Budget, limits: SanitizeLim
 /** The only analysis-failure codes that may leave this function. */
 const ANALYSIS_CODES = new Set(['load-failed', 'run-failed', 'unavailable'])
 
-const EMPTY_ROOT: SnapshotNode = { ref: 'e0', role: 'document', name: '', box: { x: 0, y: 0, width: 0, height: 0 }, children: [] }
+/** BUILT per call, not spread from a constant. `{ ...EMPTY_ROOT }` copies the
+ *  `children` REFERENCE, so every degraded snapshot in the process shared one
+ *  array — a cross-call mutable in the file whose entire job is that nothing
+ *  crosses. Nothing mutates a sanitised root today; that is not a reason. */
+function emptyRoot(): SnapshotNode {
+  return { ref: 'e0', role: 'document', name: '', box: { x: 0, y: 0, width: 0, height: 0 }, children: [] }
+}
 
 /**
  * Coerce whatever came back from the content frame into a CanvasSnapshotResult.
@@ -573,13 +611,18 @@ export function sanitizeSnapshotResult(
     strMemo: new WeakMap(),
     allowStyles: context.scoped === true,
   }
-  const root = node(source.root, 0, budget, limits) ?? { ...EMPTY_ROOT }
+  const root = node(source.root, 0, budget, limits) ?? emptyRoot()
 
   const out: CanvasSnapshotResult = {
+    // Bounded HERE, where the honesty machinery lives, rather than left to the
+    // serializer's coordinate clamp. `dpr` was the one page-chosen number on the
+    // wire that reached no clamp at all and printed
+    // `dpr=1.7976931348623157e+308` in the header — 24 characters of the page's
+    // choosing in the one line the agent reads for the page's own dimensions.
     viewport: {
-      width: num(viewportRaw.width),
-      height: num(viewportRaw.height),
-      dpr: num(viewportRaw.dpr) || 1,
+      width: viewportSize(viewportRaw.width),
+      height: viewportSize(viewportRaw.height),
+      dpr: viewportDpr(viewportRaw.dpr),
     },
     root,
   }
@@ -592,6 +635,9 @@ export function sanitizeSnapshotResult(
     if (unmatched.length > 0) out.unmatchedScope = unmatched
   }
   if (source.truncated === true || budget.truncated) out.truncated = true
+  // A boolean and nothing else. The frame may say the depth cap bit; that is
+  // the whole of what it may say, and it says it in one bit.
+  if (source.depthLimited === true) out.depthLimited = true
   // Closed set, not free text: this string is the one field that reaches the
   // agent OUTSIDE the untrusted envelope (as a capture note), so the page must
   // not be able to author it. Anything unrecognised becomes the generic code.

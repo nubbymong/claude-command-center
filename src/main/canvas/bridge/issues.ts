@@ -133,15 +133,52 @@ function targetSizeIssue(c: Candidate): AxeIssue | null {
  * — and a measurement pass that covers everything axe did not FAIL covers
  * exactly them. Without this, every disabled control on every page.
  */
+/**
+ * Elements on which `aria-disabled` and `disabled` MEAN something.
+ *
+ * `aria-disabled` on a plain `<div>` is not a disabled control — ARIA only
+ * defines the state for widgets — but this function honoured it on any ancestor
+ * for eight levels, so one attribute on one generic wrapper deleted contrast
+ * review for everything inside it, and the wrapper was not even emitted so
+ * nothing in the snapshot hinted at why. Two keystrokes, no JavaScript,
+ * subtree-wide, with no `issuesDropped` and no note: the cheapest suppression
+ * primitive found in this pass.
+ *
+ * It is also a large accidental false-negative source. Component libraries
+ * routinely put `aria-disabled` on a wrapper — a disabled tab strip, a menu, a
+ * card — and every one of those silently removed contrast review from all of
+ * its contents.
+ */
+const DISABLEABLE = new Set([
+  'button', 'input', 'select', 'textarea', 'option', 'optgroup', 'fieldset', 'a', 'summary', 'label',
+])
+
+const DISABLEABLE_ROLES = new Set([
+  'button', 'link', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio',
+  'option', 'slider', 'spinbutton', 'textbox', 'searchbox', 'combobox', 'listbox', 'treeitem', 'gridcell',
+])
+
+function canBeDisabled(el: Element, tag: string): boolean {
+  if (DISABLEABLE.has(tag)) return true
+  const role = el.getAttribute('role')
+  return role != null && DISABLEABLE_ROLES.has(role.trim().split(/\s+/)[0].toLowerCase())
+}
+
 function isInactive(el: Element): boolean {
   let node: Element | null = el
   let depth = 0
   while (node && depth < 8) {
     const tag = node.tagName.toLowerCase()
     if (tag === 'option' || tag === 'optgroup') return true
-    if ((node as Partial<HTMLInputElement>).disabled === true) return true
-    if (node.getAttribute('aria-disabled') === 'true') return true
+    // `inert` is a real HTML attribute with subtree semantics — the browser
+    // removes the subtree from interaction and from the a11y tree — so it is
+    // honoured on any ancestor. `disabled`/`aria-disabled` are widget state and
+    // are honoured only where a widget could carry them.
     if (node.hasAttribute('inert')) return true
+    if (canBeDisabled(node, tag)) {
+      if ((node as Partial<HTMLInputElement>).disabled === true) return true
+      if (node.getAttribute('aria-disabled') === 'true') return true
+    }
     // A <label> is exempt when the control it labels is — the greying is the
     // control's, and the label is painted to match it.
     if (tag === 'label') {
@@ -172,7 +209,23 @@ function contrastIssue(c: Candidate, flatContrast: boolean): AxeIssue | null {
   // A photographic/asset background is unknowable without sampling the render,
   // and guessing produces exactly the false positives P0 charged us with
   // avoiding. Gradients are different: their stops ARE the backdrop.
-  if (backdrop.hasImage && backdrop.gradientStops.length === 0) return null
+  //
+  // But SAY SO, rather than returning nothing. axe routes the same element to
+  // `incomplete` — never to `violations` — so it is not in `contrastFailed`,
+  // measurement is asked to cover it, and measurement then declines: contrast
+  // is checked by NOBODY. One `background-image: url(…)` on a wrapper, even one
+  // that 404s, silenced every text node beneath it, with no marker anywhere and
+  // a capture note actively telling the agent "measurements and contrast still
+  // apply". A finding that names the gap is the only honest output here: it
+  // cannot be a false positive, because it does not claim a defect.
+  if (backdrop.hasImage && backdrop.gradientStops.length === 0) {
+    return {
+      rule: 'contrast-not-assessed',
+      severity: 'minor',
+      measured: 'text sits on an image',
+      needed: 'check this by eye',
+    }
+  }
   const text: Rgba = fg.a < 1 ? composite(fg, backdrop.color) : fg
   const required = requiredContrast(parseFloat(cs.fontSize) || 16, fontWeightOf(cs))
 
@@ -227,20 +280,32 @@ function intersectionArea(a: SnapshotNode['box'], b: SnapshotNode['box']): numbe
  *  kerning bleed is not a finding. */
 const OVERLAP_FRACTION = 0.25
 
-const MAX_OVERLAP_COMPARISONS = 200_000
+/**
+ * How many candidates ONE node compares itself against.
+ *
+ * Per node, replacing a single budget for the whole pass — and that is a fix,
+ * not a tuning. One counter meant the first node in the sweep could spend all
+ * of it: measured, 634 benign boxes sharing a y-band exhausted the budget and a
+ * genuine overlap further down the page was never looked for, with nothing said
+ * anywhere in the output. A per-node bound cannot starve a later node, it needs
+ * no whole-pass abort, and it bounds the total just as well — 4,000 nodes x 64
+ * is the same order as the 200,000 it replaces.
+ */
+const MAX_OVERLAP_COMPARISONS_PER_NODE = 64
 
 /**
- * Per-node, not just per-pass. Bounding comparisons alone still let one node
- * accumulate ~4,000 issue objects on a degenerate page — all of which get
- * structured-cloned across postMessage before any sanitiser sees them.
+ * How many overlaps one node REPORTS. Bounding comparisons alone still let one
+ * node accumulate thousands of issue objects on a degenerate page, all of which
+ * get structured-cloned across postMessage before any sanitiser sees them.
  *
- * Eight rather than twenty: overlap is the LEAST severe thing this file
- * reports, the pass is worthless past a handful, and every slot it takes is one
- * the per-node wire cap has to take back from something that matters more. The
- * severity trim would rescue the important finding anyway; not manufacturing
- * twelve `moderate` findings to be trimmed is cheaper and says the same thing.
+ * Twenty, not eight. Eight was a false economy: the argument for it was that
+ * overlap is the least severe rule here and its slots are better spent on
+ * something that matters more — but the severity trim already does exactly
+ * that, and it does it with the whole node in view. All eight bought was up to
+ * twelve real findings discarded on a node whose findings are ALL overlaps,
+ * where there is nothing more severe to rescue.
  */
-const MAX_OVERLAPS_PER_NODE = 8
+const MAX_OVERLAPS_PER_NODE = 20
 
 /**
  * Content boxes sitting on top of each other. Restricted to IN-FLOW content
@@ -262,30 +327,38 @@ export function addOverlapIssues(candidates: Candidate[]): void {
 
   // Sweep by vertical position: only boxes whose y-ranges meet can intersect.
   const sorted = eligible.slice().sort((a, b) => a.node.box.y - b.node.box.y)
-  let comparisons = 0
 
   for (let i = 0; i < sorted.length; i++) {
     const a = sorted[i]
     const aBottom = a.node.box.y + a.node.box.height
     let reported = 0
+    let dropped = 0
+    let comparisons = 0
     for (let j = i + 1; j < sorted.length; j++) {
-      if (reported >= MAX_OVERLAPS_PER_NODE) {
-        // Stop SCANNING, not just stop reporting: the alternative is to keep
-        // counting what we would have found, and the comparison budget is
-        // global — one degenerate node would spend all of it and leave every
-        // later node uncovered. So this node's drop count is a lower bound of
-        // one, which is what SnapshotNode.issuesDropped documents itself as.
-        a.node.issuesDropped = (a.node.issuesDropped ?? 0) + 1
-        break
-      }
       const b = sorted[j]
+      // The sweep's own bound: nothing below this node's bottom edge can meet it.
       if (b.node.box.y >= aBottom) break
-      if (++comparisons > MAX_OVERLAP_COMPARISONS) return
+      // The work bound. Past here we stop LOOKING, so what lies beyond is
+      // unknown — and unknown is never claimed. See the drop count below.
+      if (++comparisons > MAX_OVERLAP_COMPARISONS_PER_NODE) break
       if (a.el.contains(b.el) || b.el.contains(a.el)) continue
       const area = intersectionArea(a.node.box, b.node.box)
       if (area <= 0) continue
       const smaller = Math.min(a.node.box.width * a.node.box.height, b.node.box.width * b.node.box.height)
       if (smaller <= 0 || area / smaller < OVERLAP_FRACTION) continue
+      // A real overlap. Carry the first few and COUNT the rest exactly.
+      //
+      // The count used to be taken at the top of the loop the moment the report
+      // cap was reached — before the y-band break, before the containment and
+      // area tests — so a node with exactly twenty partners and one unrelated
+      // box below it was charged a drop that never happened. That is worse than
+      // a wrong number: the trust boundary reserves a wire slot the instant a
+      // drop is declared, so a phantom drop DESTROYS a genuine finding to make
+      // room for a line saying a finding was lost.
+      if (reported >= MAX_OVERLAPS_PER_NODE) {
+        dropped++
+        continue
+      }
       const issue: AxeIssue = {
         rule: 'overlap',
         severity: 'moderate',
@@ -296,5 +369,6 @@ export function addOverlapIssues(candidates: Candidate[]): void {
       a.node.issues.push(issue)
       reported++
     }
+    if (dropped > 0) a.node.issuesDropped = (a.node.issuesDropped ?? 0) + dropped
   }
 }

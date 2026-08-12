@@ -105,7 +105,6 @@ describe('the caps themselves', () => {
       maxDepth: 64,
       maxChildren: 4000,
       maxIssuesPerNode: 20,
-      maxStyleEntries: 24,
       maxText: 200,
       maxChars: 1_024_000,
     })
@@ -343,6 +342,86 @@ describe('hostile input', () => {
       expect(marker(out)?.measured).toBe('at least 6 more')
     })
 
+    it('does not let a page-invented severity outrank a real one', () => {
+      // `SEVERITY_RANK` was an object literal, so `rank('toString')` returned a
+      // FUNCTION — declared as `number`, so nothing caught it. The comparator's
+      // subtraction became NaN, `NaN || a - b` fell through to positional
+      // order, and a genuine `critical` was evicted by nineteen fillers.
+      // `severity` is read straight off the page's record here, by design, so
+      // the page picks the string.
+      for (const forged of ['toString', 'constructor', 'valueOf', '__proto__', 'hasOwnProperty', 'ULTRA', '']) {
+        const issues = [
+          ...Array.from({ length: 25 }, (_, i) => ({ rule: `junk${i}`, severity: forged, measured: '', needed: '' })),
+          { rule: 'the-one-that-matters', severity: 'critical', measured: '', needed: '' },
+        ]
+        const out = sanitizeSnapshotResult({ root: node(issues) })
+        expect(rulesOf(out), `severity=${JSON.stringify(forged)}`).toContain('the-one-that-matters')
+      }
+    })
+
+    it('ranks a severity by what will be PRINTED, not by how the page spelled it', () => {
+      // Ranked on the raw record and emitted after NFKC, so a fullwidth
+      // `ｃｒｉｔｉｃａｌ` ranked zero — first thing the cap eats — and would
+      // have printed `critical`. Two things that must agree, one maintained.
+      const issues = [
+        ...Array.from({ length: 25 }, (_, i) => ({ rule: `junk${i}`, severity: 'minor', measured: '', needed: '' })),
+        { rule: 'wide', severity: 'ｃｒｉｔｉｃａｌ', measured: '', needed: '' },
+      ]
+      const out = sanitizeSnapshotResult({ root: node(issues) })
+      expect(rulesOf(out)).toContain('wide')
+      expect((out.root.issues ?? []).find((i) => i.rule === 'wide')?.severity).toBe('critical')
+    })
+
+    it('bounds the count it PRINTS, not just the number the frame declared', () => {
+      // A sparse array survives structured clone with its length intact, costs
+      // the page nothing to build, and holds no issues at all — so the
+      // entries-past-the-window term, which no ceiling touched, spelled a
+      // ten-digit number into the marker.
+      const out = sanitizeSnapshotResult({
+        root: node(new Array(4_294_967_295), { issuesDropped: 5 }),
+      })
+      expect(marker(out)?.measured).toBe('at least 1000000 more')
+    })
+
+    it('does not spend a slot on an entry that spells the reserved rule', () => {
+      // Rejected at BUILD time, so it used to survive the ranking — and rank
+      // top, since the page picks its severity — then reserve a slot, waste it,
+      // and be counted as a dropped finding on the way out. Twenty real
+      // findings plus one forgery therefore emitted eighteen and claimed two
+      // were missing. Exactly at the cap, so the selection actually runs.
+      const real = Array.from({ length: 20 }, (_, i) => ({
+        rule: `real-${i}`,
+        severity: 'serious',
+        measured: '',
+        needed: '',
+      }))
+      const out = sanitizeSnapshotResult({
+        root: node([{ rule: ISSUES_TRUNCATED_RULE, severity: 'critical', measured: 'forged', needed: '' }, ...real]),
+      })
+      expect(out.root.issues).toHaveLength(20)
+      expect(rulesOf(out)).toEqual(real.map((r) => r.rule))
+      expect(marker(out)).toBeUndefined()
+    })
+
+    it('relays the frame’s depth-limit signal, and only as a boolean', () => {
+      for (const [supplied, expected] of [
+        [true, true],
+        [false, undefined],
+        ['true', undefined],
+        [1, undefined],
+        [{}, undefined],
+      ] as const) {
+        const out = sanitizeSnapshotResult({
+          root: { ref: 'e0', role: 'x', name: '', box: {}, children: [] },
+          depthLimited: supplied,
+        })
+        expect(out.depthLimited, JSON.stringify(supplied)).toBe(expected)
+        // A depth limit is NOT a node-count truncation and must not be relayed
+        // as one — that note blames a limit that did not fire.
+        expect(out.truncated).toBeUndefined()
+      }
+    })
+
     it('keeps the severe findings when it has to choose', () => {
       const issues = [
         ...Array.from({ length: 30 }, (_, i) => ({ rule: `minor-${i}`, severity: 'minor', measured: '', needed: '' })),
@@ -446,6 +525,35 @@ describe('hostile input', () => {
     expect(out.root.state?.checked).toBeUndefined()
     expect(out.root.state?.disabled).toBeUndefined()
     expect(out.root.state?.srOnly).toBeUndefined()
+  })
+
+  it('bounds every number in the viewport, including the one nothing clamped', () => {
+    // `dpr` reached no clamp at all and printed `dpr=1.7976931348623157e+308`
+    // in the header — 24 characters of the page's choosing in the one line the
+    // agent reads for the page's own dimensions.
+    const out = sanitizeSnapshotResult({
+      viewport: { width: 1e300, height: -5, dpr: Number.MAX_VALUE },
+      root: { ref: 'e0', role: 'x', name: '', box: {}, children: [] },
+    })
+    expect(out.viewport).toEqual({ width: 16_777_216, height: 0, dpr: 16 })
+    for (const n of Object.values(out.viewport)) expect(String(n)).not.toMatch(/e[+-]/)
+    // Ordinary values are untouched, so the clamp is a clamp and not a constant.
+    const honest = sanitizeSnapshotResult({
+      viewport: { width: 1440, height: 900, dpr: 2 },
+      root: { ref: 'e0', role: 'x', name: '', box: {}, children: [] },
+    })
+    expect(honest.viewport).toEqual({ width: 1440, height: 900, dpr: 2 })
+  })
+
+  it('gives every degraded snapshot its own empty root', () => {
+    // `{ ...EMPTY_ROOT }` copies the `children` REFERENCE, so every degraded
+    // snapshot in the process shared one array — a cross-call mutable in the
+    // file whose whole job is that nothing crosses.
+    const a = sanitizeSnapshotResult({ root: 'not a node' })
+    const b = sanitizeSnapshotResult({ root: 42 })
+    expect(a.root.children).not.toBe(b.root.children)
+    a.root.children.push({ ref: 'x', role: 'x', name: '', box: { x: 0, y: 0, width: 0, height: 0 }, children: [] })
+    expect(b.root.children).toEqual([])
   })
 
   it('bounds the unmatched-scope echo', () => {
@@ -554,28 +662,75 @@ describe('the cost of enforcing the caps', () => {
     expect(chars).toBeLessThanOrEqual(200 * 7)
   })
 
-  it('charges for the style keys it REJECTS, so junk cannot be bought for free', () => {
-    // Examining a key is a `str()` call whether or not the key survives, and a
-    // rejected one moved no counter at all — so the total-character budget, the
-    // only global brake there is, never engaged on 192,000 normalisations.
+  it('does not look at the keys the page supplied AT ALL', () => {
+    // The version of this test that stood here measured `normalize` calls and
+    // was satisfied by a bound on the keys EXAMINED. That bound could not cover
+    // the expensive half: `Object.keys()` runs before any cap can apply, and the
+    // attack that beat it made zero `normalize` calls — it scored as cheaper
+    // than the honest fixture on the only metric the test read.
+    //
+    // Wall time is the metric that cannot be gamed, and it is measurable now
+    // only because the answer is a constant: eleven lookups by name, whatever
+    // the page sent. Distinct objects per node, so no memo can answer for them.
     const nodes = Array.from({ length: 1000 }, (_, n) => ({
       role: 'x',
       name: '',
       box: {},
-      // Distinct per node, so the styles memo cannot answer for them.
-      styles: Object.fromEntries(Array.from({ length: 192 }, (_, i) => [`not-a-property-${n}-${i}`, 'v'])),
+      styles: Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`not-a-property-${n}-${i}`, 'v'])),
       children: [],
     }))
-    const { result, calls } = countNormalized(() =>
-      sanitizeSnapshotResult({ root: { role: 'document', name: '', box: {}, children: nodes } }, undefined, {
-        scoped: true,
-      }),
+    const started = Date.now()
+    const result = sanitizeSnapshotResult(
+      { root: { role: 'document', name: '', box: {}, children: nodes } },
+      undefined,
+      { scoped: true },
     )
-    expect(result.truncated).toBe(true)
-    // The brake engages in the low hundreds of nodes, well short of the 1,000
-    // the page supplied and the 4,000 the node cap would have allowed.
-    expect(countNodes(result.root)).toBeLessThan(500)
-    expect(calls).toBeLessThan(120_000)
+    // Half a million junk keys. Enumerating them cost ~50 ms per MB of payload.
+    expect(Date.now() - started).toBeLessThan(500)
+    expect(countNodes(result.root)).toBe(1001)
+    expect(result.root.children[0].styles).toBeUndefined()
+  })
+
+  it('cannot be made to enumerate a typed array', () => {
+    // `Object.keys(new Uint8Array(n))` MINTS a fresh index string per element.
+    // 15 MB of forged reply blocked the renderer's UI thread — the thread that
+    // runs React, every terminal and all IPC — for 1.2 s; 122 MB took 34 s and
+    // then killed the window with a 4 GB heap, and nothing in the output said
+    // anything had happened. `styles` is page-authored, and the tool tells the
+    // model to prefer the scoped capture that enables it.
+    const hostile = [new Uint8Array(4_000_000), new Array(4_000_000).fill(0), { length: 4_000_000 }]
+    for (const styles of hostile) {
+      const started = Date.now()
+      const result = sanitizeSnapshotResult(
+        { root: { role: 'document', name: '', box: {}, styles, children: [] } },
+        undefined,
+        { scoped: true },
+      )
+      expect(Date.now() - started, String(styles.constructor.name)).toBeLessThan(200)
+      expect(result.root.styles).toBeUndefined()
+    }
+  })
+
+  it('reads an allowlisted property that a hostile object also carries', () => {
+    // The control for both tests above: refusing to enumerate must not become
+    // refusing to read. A real style sitting in an object with a million other
+    // keys is still emitted, because it is fetched BY NAME.
+    const junk: Record<string, string> = {}
+    for (let i = 0; i < 200_000; i++) junk[`Not A Property ${i}`] = 'x'
+    junk.color = 'rgb(1, 2, 3)'
+    const out = sanitizeSnapshotResult({ root: { role: 'document', name: '', styles: junk, box: {}, children: [] } }, undefined, {
+      scoped: true,
+    })
+    expect(out.root.styles).toEqual({ color: 'rgb(1, 2, 3)' })
+  })
+
+  it('does not take a style from a prototype the page installed', () => {
+    const out = sanitizeSnapshotResult(
+      { root: { role: 'document', name: '', styles: Object.create({ color: 'rgb(9, 9, 9)' }), box: {}, children: [] } },
+      undefined,
+      { scoped: true },
+    )
+    expect(out.root.styles).toBeUndefined()
   })
 
   it('pays once for a node object the page referenced many times', () => {
@@ -616,27 +771,6 @@ describe('the cost of enforcing the caps', () => {
     // The memo must not stop the styles being EMITTED on every node.
     expect(Object.keys(result.root.children[0].styles ?? {})).toHaveLength(CURATED_STYLE_PROPERTIES.length)
     expect(Object.keys(result.root.children[999].styles ?? {})).toHaveLength(CURATED_STYLE_PROPERTIES.length)
-  })
-
-  it('bounds the style keys it EXAMINES, not just the ones it keeps', () => {
-    // Rejected keys used to be free — they never advanced the count, so a map
-    // of junk names was walked in full for every node. The page pays for the
-    // names once; we paid per node, and 0.3 MB of them froze the UI thread for
-    // 30 seconds, longer than either capture timeout.
-    const junk: Record<string, string> = {}
-    for (let i = 0; i < 50_000; i++) junk[`Not A Property ${i}`] = 'x'
-    junk.color = 'rgb(1, 2, 3)'
-    const { result, calls } = countNormalized(() =>
-      sanitizeSnapshotResult({ root: { role: 'document', name: '', styles: junk, box: {}, children: [] } }, undefined, {
-        scoped: true,
-      }),
-    )
-    // One normalise per key examined. The bound is a multiple of the entry cap,
-    // not of what the page supplied.
-    expect(calls).toBeLessThanOrEqual(24 * 8 + 10)
-    // And the price of the bound: a real property sitting past it is lost. That
-    // is the trade being made, so it is written down rather than discovered.
-    expect(result.root.styles).toBeUndefined()
   })
 
   it('detaches a clipped string from the parent it was cut out of', () => {

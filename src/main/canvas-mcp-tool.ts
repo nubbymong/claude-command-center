@@ -83,6 +83,15 @@ function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined,
   }
 
   if (result.truncated) notes.push('the page exceeded the snapshot node limit; this tree is partial')
+  // A THIRD limit, and naming it correctly is the point. The node cap drops
+  // nodes; this one refuses to descend past 64 levels of DOM, which a page can
+  // reach without losing anything. Reporting it as the node limit told the
+  // agent a tree was partial when it was whole, on every capture of any app
+  // with deep wrappers. It is also the only one of the three with a real
+  // answer: each scope root restarts the walk at depth zero.
+  if (result.depthLimited) {
+    notes.push('the page nests deeper than this walk goes; anything below that depth is absent. Scope to a data-ux-id inside the deep region to reach it')
+  }
   // A DIFFERENT limit from the one above, and worth saying so: the node cap
   // drops nodes at capture, this one stops the write-out. Reporting both as
   // "the node limit" is how a 600-row list quietly became 500 rows under a note
