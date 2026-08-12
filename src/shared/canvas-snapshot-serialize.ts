@@ -52,17 +52,45 @@ interface CharBudget {
   truncated: boolean
 }
 
+/**
+ * How many characters this text becomes once the untrusted-content envelope
+ * defangs it: `&` → `&amp;`, `<` → `&lt;`.
+ *
+ * Everything serialized here is wrapped by that envelope before it reaches the
+ * agent, and page text is free to be nothing but those two characters — `<` is
+ * Unicode `Sm`, so the structural cleaner passes it through as ordinary
+ * content, which is correct (a button really can be labelled "<Back"). Charging
+ * one character for something that reaches the wire as five put the default
+ * text path 3.9x over its ceiling. The budget is only a ceiling if it counts
+ * the units that are actually emitted.
+ */
+function emittedWidth(text: string): number {
+  let extra = 0
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    if (code === 38) extra += 4 // & -> &amp;
+    else if (code === 60) extra += 3 // < -> &lt;
+  }
+  return text.length + extra
+}
+
 export function serializeSnapshot(snapshot: SemanticSnapshot, opts?: SerializeOptions): SerializeResult {
   const limit = Math.max(1024, opts?.maxChars ?? MAX_SNAPSHOT_CHARS)
 
   if (opts?.format === 'json') {
     // Prune to fit rather than slicing the string: a truncated JSON document is
     // not JSON, and the caller asked for this format precisely to parse it.
-    const budget: CharBudget = { left: limit, truncated: false }
+    // Charge the document AROUND the tree before walking it: versionId,
+    // capturedAt and viewport are emitted whatever happens, and a budget that
+    // starts at the full limit hands them out for free.
+    const budget: CharBudget = {
+      left: limit - emittedWidth(JSON.stringify({ ...snapshot, root: null })),
+      truncated: false,
+    }
     const root = fit(snapshot.root, budget)
     const payload = { ...snapshot, root: root ?? { ...snapshot.root, children: [] } }
     let text = JSON.stringify(payload, null, 2)
-    if (text.length > limit) {
+    if (emittedWidth(text) > limit) {
       // `fit()` charges each node its COMPACT cost, but this path emits
       // pretty-printed JSON — and the indentation it never counted scales with
       // depth (2 chars per level per line, at a depth cap of 64). Measured
@@ -79,7 +107,12 @@ export function serializeSnapshot(snapshot: SemanticSnapshot, opts?: SerializeOp
   const { width, height, dpr } = snapshot.viewport
   const header = `snapshot ${snapshot.versionId}  viewport=${r(width)}x${r(height)} dpr=${dpr}`
   const lines: string[] = [header]
-  const budget: CharBudget = { left: limit - header.length, truncated: false }
+  // The truncation line is reserved up front rather than pushed for free, so
+  // the ceiling holds on the path that actually hits it.
+  const budget: CharBudget = {
+    left: limit - emittedWidth(header) - (TRUNCATED_LINE.length + 1),
+    truncated: false,
+  }
   walk(snapshot.root, 0, lines, budget)
   if (budget.truncated) lines.push(TRUNCATED_LINE)
   return { text: lines.join('\n'), truncated: budget.truncated }
@@ -89,11 +122,12 @@ export function serializeSnapshot(snapshot: SemanticSnapshot, opts?: SerializeOp
  *  walk unwinds instead of building megabytes it will never emit. */
 function push(lines: string[], line: string, budget: CharBudget): boolean {
   if (budget.truncated) return false
-  if (line.length + 1 > budget.left) {
+  const cost = emittedWidth(line) + 1
+  if (cost > budget.left) {
     budget.truncated = true
     return false
   }
-  budget.left -= line.length + 1
+  budget.left -= cost
   lines.push(line)
   return true
 }
@@ -115,7 +149,10 @@ function walk(node: SnapshotNode, depth: number, lines: string[], budget: CharBu
 function fit(node: SnapshotNode, budget: CharBudget): SnapshotNode | null {
   if (budget.truncated) return null
   const bare: SnapshotNode = { ...node, children: [] }
-  const cost = JSON.stringify(bare).length
+  // +1 for the comma that separates this node from its sibling. Charged for
+  // every node including the first, which over-charges by one character per
+  // parent — the direction a ceiling is allowed to be wrong in.
+  const cost = emittedWidth(JSON.stringify(bare)) + 1
   if (cost > budget.left) {
     budget.truncated = true
     return null

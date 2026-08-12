@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { serializeSnapshot } from '../../../src/shared/canvas-snapshot-serialize'
+import { wrapUntrustedContent } from '../../../src/shared/untrusted-envelope'
 import type { SemanticSnapshot, SnapshotNode } from '../../../src/shared/canvas'
 
 function node(partial: Partial<SnapshotNode> & Pick<SnapshotNode, 'ref'>): SnapshotNode {
@@ -257,5 +258,84 @@ describe('the output ceiling holds when the tree is DEEP, not just wide', () => 
   it('caps text at depth too', () => {
     const out = serializeSnapshot(snap(chain(62, 400)))
     expect(out.text.length).toBeLessThanOrEqual(512_000)
+  })
+})
+
+// The ceiling above is not the last word on what reaches the agent: everything
+// serialized here is wrapped by the untrusted-content envelope first, and that
+// envelope escapes `&` and `<`. So the budget is checked THROUGH the real
+// envelope rather than against a local copy of its escaping — two cleaners that
+// have to agree is exactly how this format has been broken twice already.
+describe('the ceiling survives the envelope that wraps it', () => {
+  /** What `wrapUntrustedContent` adds regardless of the body. */
+  const preamble = wrapUntrustedContent('', { source: 'test' }).length
+
+  function wrappedBodyLength(text: string): number {
+    return wrapUntrustedContent(text, { source: 'test' }).length - preamble
+  }
+
+  // `<` is Unicode Sm, so the structural cleaner passes it through as ordinary
+  // content — correctly, since a button really can be labelled "<Back". It
+  // reaches the wire as `&lt;`, and `&` as `&amp;`.
+  const ANGLES = '<'.repeat(180)
+
+  it.each([
+    ['angle brackets', ANGLES],
+    ['ampersands', '&'.repeat(180)],
+    ['both', '<&'.repeat(90)],
+  ])('holds when page text is nothing but %s', (_label, filler) => {
+    const root = node({
+      ref: 'e0',
+      role: 'document',
+      children: Array.from({ length: 4000 }, (_, i) => node({ ref: `e${i + 1}`, role: 'button', name: filler })),
+    })
+    const out = serializeSnapshot(snap(root), { maxChars: 40_000 })
+    expect(wrappedBodyLength(out.text)).toBeLessThanOrEqual(40_000)
+    expect(out.truncated).toBe(true)
+  })
+
+  it('holds on the json path as well', () => {
+    const root = node({
+      ref: 'e0',
+      role: 'document',
+      children: Array.from({ length: 4000 }, (_, i) => node({ ref: `e${i + 1}`, role: 'button', name: ANGLES })),
+    })
+    const out = serializeSnapshot(snap(root), { format: 'json', maxChars: 40_000 })
+    expect(wrappedBodyLength(out.text)).toBeLessThanOrEqual(40_000)
+    expect(() => JSON.parse(out.text)).not.toThrow()
+  })
+
+  it('holds at every ceiling, not just a convenient one', () => {
+    // One payload at one limit leaves slack, and slack hides an accounting
+    // error: the walk simply stops before the missing characters matter. This
+    // sweeps the limit so truncation lands in a different place each time, and
+    // uses a wide, deep tree so the per-parent and per-node costs both bite.
+    const leaves = Array.from({ length: 600 }, (_, i) =>
+      node({ ref: `leaf${i}`, role: 'button', name: `<Back & forth ${i}` }),
+    )
+    let level: SnapshotNode[] = leaves
+    for (let d = 20; d > 0; d--) level = [node({ ref: `d${d}`, role: 'group', name: '&<', children: level })]
+    const root = node({ ref: 'e0', role: 'document', name: '<&', children: level })
+
+    for (let limit = 1100; limit <= 60_000; limit = Math.round(limit * 1.35)) {
+      for (const format of ['text', 'json'] as const) {
+        const out = serializeSnapshot(snap(root), { format, maxChars: limit })
+        expect(wrappedBodyLength(out.text), `${format} at maxChars=${limit}`).toBeLessThanOrEqual(limit)
+      }
+    }
+  })
+
+  it('does not charge ordinary text for an expansion it never causes', () => {
+    // The cost model must not tax a page for characters it did not use, or the
+    // ceiling quietly becomes a much lower one for everybody.
+    const plain = node({
+      ref: 'e0',
+      role: 'document',
+      children: Array.from({ length: 500 }, (_, i) => node({ ref: `e${i + 1}`, role: 'button', name: 'Save changes' })),
+    })
+    const out = serializeSnapshot(snap(plain), { maxChars: 40_000 })
+    expect(out.truncated).toBe(false)
+    // header + the document node + 500 buttons
+    expect(out.text.split('\n')).toHaveLength(502)
   })
 })
