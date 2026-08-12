@@ -73,11 +73,20 @@ function detach(value: string): string {
   return value.split('').join('')
 }
 
-/** Cut to `max` without splitting a surrogate pair. A lone surrogate is not
- *  text; it survives JSON and structured clone as a replacement character and
- *  makes the wire output lie about what the page contained. */
+/**
+ * Cut to `max` without splitting a surrogate pair. A lone surrogate is not
+ * text; it survives JSON and structured clone as a replacement character and
+ * makes the wire output lie about what the page contained.
+ *
+ * Three characters are reserved for the ellipsis rather than one, because '…'
+ * is not NFKC-stable: it decomposes to three dots. The serializer normalises
+ * again on its way to the agent, so a field clipped to exactly `max` arrived
+ * there at `max + 2` — a cap that was not one, in the one place this file
+ * exists to be exact about.
+ */
 function clip(value: string, max: number): string {
-  let end = max - 1
+  if (max < 4) return detach(value.slice(0, max))
+  let end = max - 3
   const lastKept = value.charCodeAt(end - 1)
   if (lastKept >= 0xd800 && lastKept <= 0xdbff) end -= 1
   return detach(value.slice(0, end) + '…')
@@ -86,9 +95,14 @@ function clip(value: string, max: number): string {
 /** Anything a reader — or a model — could take for a line break or for
  *  invisible structure. \x00-\x1F is NOT enough: U+2028/U+2029/U+0085 are line
  *  terminators too, and format characters (bidi overrides, zero-width joiners)
- *  let text claim to be something it is not. Cc, Cf, Zl and Zp cover all of it. */
+ *  let text claim to be something it is not. Cc, Cf, Zl and Zp cover all of it.
+ *
+ *  Cs covers the rest: an unpaired surrogate is not a character at all. It
+ *  survives JSON and structured clone, renders as U+FFFD, and is a byte the
+ *  page put in the output that no reader can account for. A well-formed pair is
+ *  a single code point under `u` and is not touched. */
 function scrub(value: string): string {
-  return value.normalize('NFKC').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ')
+  return value.normalize('NFKC').replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu, ' ')
 }
 
 function str(value: unknown, max: number): string {

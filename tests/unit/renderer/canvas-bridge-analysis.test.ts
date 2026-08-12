@@ -83,7 +83,21 @@ describe('contrast is covered by SOMEBODY on the analysis path', () => {
   // is generated, or the font is an icon font. The old code discarded
   // `incomplete` AND stood the measurement pass down globally the moment axe
   // ran, so these nodes were checked by nobody, on the only path production uses.
-  it('reports low contrast even when the foreground has alpha (axe declines it)', async () => {
+  //
+  // WHAT THESE ACTUALLY PIN, AND WHAT THEY DO NOT. jsdom has no layout, so axe
+  // declines EVERY contrast check here — 100% `incomplete`, against 14–50% in a
+  // real browser. So every case below exercises the "axe declined, does anyone
+  // else cover it?" branch, which is precisely the branch that regressed. None
+  // of them exercises the mix, and none of them demonstrates that a particular
+  // CSS construct is the reason axe declined: under jsdom the reason is always
+  // the missing layout. A real browser is the only place that distinction can
+  // be tested, and CI does not run one.
+  it('covers a node axe returned no verdict for', async () => {
+    // Alpha on the foreground is the classic real-browser reason for a declined
+    // check — though NOT for this specific value: measured in headless Chromium,
+    // rgba(0,0,0,0.28) on white comes back as a violation, not `incomplete`. It
+    // is here as an ordinary node that axe did not judge, which under jsdom is
+    // all of them.
     document.body.innerHTML = `
       <p data-ux-id="faded" data-test-box="0,0,300,20"
          style="color: rgba(0,0,0,0.28); background-color: rgb(255,255,255); font-size: 14px">Terms apply</p>

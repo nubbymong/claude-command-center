@@ -357,7 +357,9 @@ describe('the cost of enforcing the caps', () => {
     const kept = sanitizeSnapshotResult({ root: { role: 'document', name: '', box: {}, children } })
     gc()
     const retained = (process.memoryUsage().heapUsed - before) / 1048576
-    expect(kept.root.children[0].name.length).toBe(200)
+    // 197 characters plus '…', which becomes exactly the 200-character cap once
+    // the serializer normalises the ellipsis into three dots.
+    expect(kept.root.children[0].name.length).toBe(198)
     // Emitting 400,000 characters. Measured 145 MB before the fix, 8 MB after.
     expect(retained).toBeLessThan(40)
   })
@@ -516,18 +518,54 @@ describe('the cost of enforcing the caps', () => {
     }
   })
 
+  it('is bounded by its cap AFTER the serializer normalises it too', () => {
+    // The cap only means something if it survives the next hop. `…` is not
+    // NFKC-stable — it decomposes to three dots — and the serializer normalises
+    // on its way to the agent, so a field clipped to exactly 200 arrived at 202.
+    const out = sanitizeSnapshotResult({
+      root: { role: 'document', name: 'n'.repeat(10_000), box: {}, children: [] },
+    })
+    expect(out.root.name.length).toBeLessThanOrEqual(200)
+    expect(out.root.name.normalize('NFKC').length).toBeLessThanOrEqual(200)
+    expect(out.root.name.endsWith('…')).toBe(true)
+  })
+
+  it('does not pass a lone surrogate through', () => {
+    // Not a character: it survives JSON and structured clone, renders as U+FFFD,
+    // and is output the page authored that no reader can account for.
+    const out = sanitizeSnapshotResult({
+      root: { role: 'document', name: 'a\ud800b\udfffc', box: {}, children: [] },
+    })
+    expect(out.root.name).toBe('a b c')
+    // A well-formed pair is one code point and must survive untouched.
+    const emoji = sanitizeSnapshotResult({
+      root: { role: 'document', name: 'ok \u{1f600}', box: {}, children: [] },
+    })
+    expect(emoji.root.name).toBe('ok \u{1f600}')
+  })
+
   it('still fills the cap when NFKC makes the text SHORTER', () => {
     // The bounded prefix is grown, not fixed, because composition contracts:
     // Hangul L+V+T collapses three code units into one syllable, and NFKC folds
-    // astral codepoints down to BMP ones. A flat `max * 2` prefix would clip
-    // both of these a third short of the cap they are entitled to.
+    // astral codepoints down to BMP ones.
+    //
+    // The jamo are spelled as escapes on purpose. Decomposed L + V + T renders
+    // as one syllable, indistinguishable in a diff or an editor from the
+    // PRECOMPOSED U+AC01 — which is a single code unit that NFKC leaves alone,
+    // and would make this test vacuous without changing how it looks.
     const jamo = sanitizeSnapshotResult({
-      root: { role: 'document', name: '각'.repeat(400), box: {}, children: [] },
+      root: { role: 'document', name: '\u1100\u1161\u11a8'.repeat(400), box: {}, children: [] },
     })
-    expect(jamo.root.name.length).toBe(200)
+    // 198 is a FILLED cap: 197 characters plus the ellipsis, which normalises
+    // to exactly 200 on the next hop. A flat `max * 2` prefix yields 133.
+    expect(jamo.root.name.length).toBe(198)
+
+    // Astral contracts 2:1, which lands exactly on the prefix width: 400 code
+    // units in, 200 characters out. Nothing is dropped and nothing needs
+    // clipping, so there is no ellipsis — a full cap, exactly reached.
     const astral = sanitizeSnapshotResult({
       root: { role: 'document', name: '\u{1d400}'.repeat(600), box: {}, children: [] },
     })
-    expect(astral.root.name.length).toBe(200)
+    expect(astral.root.name).toBe('A'.repeat(200))
   })
 })
