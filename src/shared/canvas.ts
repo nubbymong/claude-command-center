@@ -166,6 +166,16 @@ export interface AxeIssue {
   measured: string
   /** What the rule needs, e.g. '44px' or '4.5:1'. */
   needed: string
+  /**
+   * Where the problem actually is, when that is not the node carrying it.
+   *
+   * A finding fires on whichever element owns the text, and the snapshot emits
+   * only the nodes it considers meaningful — so a finding on a plain wrapper is
+   * attributed to the nearest emitted ancestor, up to six hops up. Without this
+   * the agent is told "`main` has a contrast problem" and has nowhere to go.
+   * Absent when the finding is on the node itself.
+   */
+  at?: Rect
 }
 
 export interface SnapshotNode {

@@ -5,7 +5,7 @@
 // `data-ux-id` — the anchor the authoring contract asks for — and is what keeps
 // a snapshot affordable: styles ride only on scoped nodes (§4.1).
 
-import type { AxeIssue, CanvasSnapshotOptions, CanvasSnapshotResult, SnapshotNode } from '../../../shared/canvas'
+import type { AxeIssue, CanvasSnapshotOptions, CanvasSnapshotResult, Rect, SnapshotNode } from '../../../shared/canvas'
 import { ensureAnalysis, withRunTimeout, type AnalysisApi, type AxeNodeResult, type AxeViolation } from './analysis-loader'
 import { addOverlapIssues, measurementIssues, type Candidate } from './issues'
 import { boxOf, curatedStyles, directText, effectiveOpacity, isSrOnly, isVisible, resetCaptureCaches, stateOf } from './measure'
@@ -149,6 +149,13 @@ function toIssue(violation: AxeViolation, node: AxeNodeResult): AxeIssue {
   }
 }
 
+/** Matches the sanitiser's `maxIssuesPerNode` and `MAX_OVERLAPS_PER_NODE`.
+ *  Attributing findings to an ancestor concentrates them, so without a bound a
+ *  page of 4,000 low-contrast wrappers builds 4,000 issue objects on one node
+ *  and structured-clones every one of them across postMessage before any
+ *  sanitiser sees them. */
+const MAX_AXE_ISSUES_PER_NODE = 20
+
 function elementOf(node: AxeNodeResult): Element | null {
   if (node.element) return node.element
   const selector = node.target?.[0]
@@ -203,12 +210,36 @@ function joinAxe(violations: AxeViolation[], byElement: Map<Element, SnapshotNod
       const node = nearestNode(el, byElement)
       if (!node) continue
       const issue = toIssue(violation, axeNode)
+      // Three sibling price wrappers with three different contrast ratios all
+      // walk up to the same `<main>`, so deduping on the RULE kept one and
+      // silently dropped two real defects. What makes two findings the same
+      // finding is the rule AND what it measured — not the rule alone.
       const issues = node.issues ?? []
-      if (issues.some((existing) => existing.rule === issue.rule)) continue
+      if (issues.length >= MAX_AXE_ISSUES_PER_NODE) continue
+      // Only when the finding is NOT on this node: an honest same-element
+      // finding already has the node's own box and paying for a duplicate of it
+      // on every issue is the kind of per-node cost that multiplies.
+      if (!byElement.has(el)) issue.at = boxOf(el)
+      if (
+        issues.some(
+          (existing) =>
+            existing.rule === issue.rule &&
+            existing.measured === issue.measured &&
+            existing.needed === issue.needed &&
+            sameBox(existing.at, issue.at),
+        )
+      ) {
+        continue
+      }
       issues.push(issue)
       node.issues = issues
     }
   }
+}
+
+function sameBox(a: Rect | undefined, b: Rect | undefined): boolean {
+  if (!a || !b) return a === b
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
 export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Promise<CanvasSnapshotResult> {

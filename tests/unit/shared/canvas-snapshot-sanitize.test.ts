@@ -476,12 +476,18 @@ describe('the cost of enforcing the caps', () => {
         n.styles = st
       }
       if (rnd(2)) {
-        n.issues = Array.from({ length: rnd(Math.min(20, scale)) }, () => ({
-          rule: text(1 + rnd(Math.min(64, scale))),
-          severity: text(rnd(Math.min(24, scale))),
-          measured: text(rnd(scale)),
-          needed: text(rnd(scale)),
-        }))
+        n.issues = Array.from({ length: rnd(Math.min(20, scale)) }, () => {
+          const issue: Record<string, unknown> = {
+            rule: text(1 + rnd(Math.min(64, scale))),
+            severity: text(rnd(Math.min(24, scale))),
+            measured: text(rnd(scale)),
+            needed: text(rnd(scale)),
+          }
+          // Optional, so half the time it is absent — a field that is only
+          // sometimes present is exactly the one an accounting sum forgets.
+          if (rnd(2)) issue.at = { x: oneNumber(), y: oneNumber(), width: oneNumber(), height: oneNumber() }
+          return issue
+        })
       }
       return n
     }

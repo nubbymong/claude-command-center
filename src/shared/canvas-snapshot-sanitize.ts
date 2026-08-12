@@ -168,12 +168,16 @@ function issues(value: unknown, budget: Budget, limits: SanitizeLimits): AxeIssu
     if (!isRecord(raw)) continue
     const rule = field(raw, 'rule', 64, budget)
     if (!rule) continue
-    out.push({
+    const issue: AxeIssue = {
       rule,
       severity: field(raw, 'severity', 24, budget),
       measured: field(raw, 'measured', 96, budget),
       needed: field(raw, 'needed', 96, budget),
-    })
+    }
+    // Optional, and only meaningful when the finding is on a descendant — so
+    // its absence is information too and must not be coerced into a zero box.
+    if (isRecord(raw.at)) issue.at = rect(raw.at)
+    out.push(issue)
   }
   return out.length > 0 ? out : undefined
 }
@@ -287,6 +291,10 @@ function weigh(value: SnapshotNode): number {
     total += 12
     for (const issue of value.issues) {
       total += 52 + issue.rule.length + issue.severity.length + issue.measured.length + issue.needed.length
+      // `,"at":{"x":…,"y":…,"width":…,"height":…}`
+      if (issue.at) {
+        total += 36 + num2str(issue.at.x) + num2str(issue.at.y) + num2str(issue.at.width) + num2str(issue.at.height)
+      }
     }
   }
   return total

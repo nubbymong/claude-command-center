@@ -179,10 +179,13 @@ function nodeLine(node: SnapshotNode): string {
 }
 
 function issueLine(issue: AxeIssue): string {
-  // "issue: target-size 28px, needs 44px"
+  // "issue: target-size 28px, needs 44px [at=840,512,64,28]"
   const measured = issue.measured ? ` ${token(issue.measured)}` : ''
   const needed = issue.needed ? `, needs ${token(issue.needed)}` : ''
-  return `- issue: ${token(issue.rule)}${measured}${needed}`
+  // Present only when the finding is on a descendant of the node carrying it.
+  // Without it the agent is told which ancestor has a problem and not where.
+  const at = issue.at ? ` [at=${boxTokens(issue.at)}]` : ''
+  return `- issue: ${token(issue.rule)}${measured}${needed}${at}`
 }
 
 function boxTokens(box: Rect): string {
