@@ -285,14 +285,30 @@ export function renderVersion(
     throw new Error('unknown render mode')
   }
 
-  // Commit only now that the version is fully materialized.
-  const record: CanvasRecord = existing ?? { canvasId, sessionId, createdAt, activeVersionId: null, versions: [] }
-  record.versions.push(version)
-  record.activeVersionId = versionId
-  canvases.set(canvasId, record)
+  // Persist BEFORE the in-memory commit, and to a record built off to the side
+  // rather than by mutating the live one.
+  //
+  // The old order pushed the version, set it active, and put the record in the
+  // maps, and only THEN wrote canvas.json. If that write threw — a held handle
+  // on the hot, rewritten-every-render file, ENOSPC, a Defender/indexer lock —
+  // the caller got a rejected render (the throw propagates) while the store had
+  // already made the rejected document the ACTIVE, servable version in memory:
+  // `getServableVersion` returned it and the version counter had advanced. That
+  // is the exact fail-open this path claims not to have, and the canvas_render
+  // MCP tool (P3) makes the sink reachable by a prompt-injectable agent, so a
+  // document the agent was told failed to render could be served to the user as
+  // its work (adversarial review, 2026-08-12).
+  //
+  // Now nothing in memory changes until the durable write has succeeded. A
+  // persist failure leaves the live maps untouched — the render fails closed —
+  // and at worst orphans the already-written `versions/<vid>/` dir, which no
+  // record references and the protocol never serves.
+  const base: CanvasRecord = existing ?? { canvasId, sessionId, createdAt, activeVersionId: null, versions: [] }
+  const nextRecord: CanvasRecord = { ...base, versions: [...base.versions, version], activeVersionId: versionId }
+  persist(nextRecord)
+  canvases.set(canvasId, nextRecord)
   sessionIndex.set(sessionId, canvasId)
-  persist(record)
-  emitChanged(record)
+  emitChanged(nextRecord)
   return { canvasId, versionId }
 }
 

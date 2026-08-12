@@ -446,6 +446,74 @@ describe('canvas_render', () => {
     expect((await runCanvasRender({ mode: 'uat', distRoot: '/d', entry: ['a'] }, 'sess-mine', deps())).isError).toBe(true)
   })
 
+  it('caps design html at the untrusted ingress, before the store', async () => {
+    // The store has an 8 MB backstop and the trusted IPC path caps at 2 MB.
+    // Without a cap of its own this model-driven path would be the widest
+    // ingress of the three (adversarial review, 2026-08-12) — so it fails closed
+    // here, and the store is never reached for an oversize document.
+    const reached: unknown[] = []
+    const over = 'x'.repeat(2 * 1024 * 1024 + 1)
+    const out = await runCanvasRender(
+      { mode: 'design', html: over },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          reached.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v3' }
+        },
+      }),
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toMatch(/too large/i)
+    expect(reached).toEqual([])
+
+    // Multi-byte: `length` is chars, the cap is bytes. A string well under the
+    // char cap can still be over the byte cap, and it is the bytes that hit disk.
+    const twoByte = 'é'.repeat(1024 * 1024 + 1) // 2 bytes each in UTF-8
+    const mb = await runCanvasRender({ mode: 'design', html: twoByte }, 'sess-mine', deps({ renderVersion: () => { throw new Error('should not reach') } }))
+    expect(mb.isError).toBe(true)
+
+    // And a document just under the cap is rendered.
+    const ok = await runCanvasRender({ mode: 'design', html: 'x'.repeat(1024) }, 'sess-mine', deps())
+    expect(ok.isError).toBe(false)
+  })
+
+  it('carries a valid entry through to the store', async () => {
+    // The `entry`-present branch: a valid string entry must actually reach the
+    // store (which then confines it via normalizeEntry). A mutation dropping the
+    // branch left the whole suite green until this pinned it.
+    const seen: unknown[] = []
+    await runCanvasRender(
+      { mode: 'uat', distRoot: '/d', entry: 'sub/app.html' },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          seen.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v3' }
+        },
+      }),
+    )
+    expect(seen[0]).toMatchObject({ mode: 'uat', distRoot: '/d', entry: 'sub/app.html' })
+  })
+
+  it('maps a store `invalid entry` rejection to an operator-safe cause', async () => {
+    // The parity arm: a Windows-separator / traversal / device entry passes the
+    // MCP layer (which only type-checks entry) and is refused by the store's
+    // normalizeEntry, surfacing here. It must not relay the store's raw words.
+    const out = await runCanvasRender(
+      { mode: 'uat', distRoot: '/d', entry: '..\\..\\windows\\win.ini' },
+      'sess-mine',
+      deps({
+        renderVersion: () => {
+          throw new Error('invalid entry')
+        },
+      }),
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toMatch(/plain relative path/i)
+    expect(out.text).not.toContain('win.ini')
+  })
+
   it('tells the agent the render is not the user seeing it', async () => {
     // The hand-back IS the protocol (spec §6.1): render, hand back, the user
     // opens the pane. An agent told the page is on screen reports on a screen

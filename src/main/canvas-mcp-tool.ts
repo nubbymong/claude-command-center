@@ -23,6 +23,19 @@ import { wrapUntrustedContent } from '../shared/untrusted-envelope'
 /** More than this and the agent should be scoping, not reading everything. */
 const MAX_SCOPE_IDS = 50
 
+/**
+ * Byte ceiling on a design document on the MCP path.
+ *
+ * The store has its own 8 MB backstop, but this path has to carry its own cap
+ * or the untrusted ingress is four times wider than the trusted one: the IPC
+ * dev path caps at 2 MB, and without this the model-driven tool would let a
+ * prompt-injected agent write up to 8 MB per version, unattended, to the
+ * resources dir (adversarial review, 2026-08-12). Matched to the IPC cap so the
+ * two ingresses to the same store agree, and enforced fail-closed here before
+ * the store is touched.
+ */
+const MAX_DESIGN_HTML_BYTES = 2 * 1024 * 1024
+
 export interface CanvasToolDeps {
   getCanvasState: (sessionId: string) => CanvasState | null
   requestSnapshot: (args: {
@@ -176,10 +189,18 @@ interface RawRenderArgs {
 }
 
 /**
- * A build label is the ONE free-text field on this path, and it is echoed back
- * in an operator-voice confirmation line outside the envelope. Shape-checked
- * rather than length-capped for the reason `scope` was: a newline in a
- * model-supplied argument forged a note line during the adversarial pass.
+ * A build label is the ONE free-text field on this path. It is NOT echoed in
+ * this tool's reply — the reply carries only store-minted ids — but it is stored
+ * on the version (`version.source.buildLabel`) and is destined to be shown to
+ * the user in the Canvas pane. It is shape-checked here, at the untrusted
+ * ingress, rather than length-capped for the reason `scope` was: a newline or a
+ * `note:`/envelope-terminator in a model-supplied argument forged an
+ * operator-voice line during the adversarial pass on the read side, and the
+ * label must be safe to surface without re-sanitising at every future display.
+ *
+ * If this is ever echoed in the reply, it must go INSIDE the untrusted envelope
+ * or keep this shape — the reply is operator voice, and a stored label is still
+ * model-authored.
  */
 const BUILD_LABEL_SHAPE = /^[A-Za-z0-9 _.:@/+-]{1,64}$/
 
@@ -200,6 +221,13 @@ export async function runCanvasRender(
     // ahead of a write is the kind of thing this layer exists to stop early.
     if (typeof rawArgs.html !== 'string' || rawArgs.html.length === 0) {
       return { text: 'A design render needs an html document in `html`.', isError: true }
+    }
+    // Fail closed on size here, not only at the store: this is the untrusted
+    // ingress, and it must not admit a document the trusted IPC path would
+    // refuse. `length` is char count; the cap is bytes, which is what the store
+    // and the IPC schema both measure.
+    if (Buffer.byteLength(rawArgs.html, 'utf8') > MAX_DESIGN_HTML_BYTES) {
+      return { text: 'That document is too large to render.', isError: true }
     }
     source = { mode: 'design', html: rawArgs.html }
   } else {
@@ -236,8 +264,9 @@ export async function runCanvasRender(
   }
 
   // Both ids are ours: one minted by the store, one a `v<n>` counter. Nothing
-  // the model supplied is echoed back except a build label that passed the
-  // shape above.
+  // the model supplied is echoed back at all — not the build label, not the
+  // path, not the html — so this line carries operator authority without
+  // carrying operator-forgeable text.
   return {
     text:
       `Rendered ${rendered.versionId} on canvas ${rendered.canvasId}. ` +
@@ -392,7 +421,7 @@ export function registerCanvasTools(
         .optional()
         .describe('uat mode only. Absolute path of the built directory. It must sit under a folder the user has allowed for this; anything else is refused.'),
       entry: zMod.string().optional().describe("uat mode only. Entry file relative to distRoot. Defaults to 'index.html'."),
-      buildLabel: zMod.string().optional().describe('uat mode only. Optional short label for this build, shown to the user.'),
+      buildLabel: zMod.string().optional().describe('uat mode only. Optional short label recorded with this build (letters, numbers, spaces and . _ : @ / + - only).'),
       cccSessionId: zMod
         .string()
         .optional()
