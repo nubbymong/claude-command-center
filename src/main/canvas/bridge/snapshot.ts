@@ -9,7 +9,7 @@ import type { AxeIssue, CanvasSnapshotOptions, CanvasSnapshotResult, Rect, Snaps
 import { MAX_ISSUES_PER_NODE, keepMostSevere, severityRank } from '../../../shared/canvas'
 import { ensureAnalysis, withRunTimeout, type AnalysisApi, type AxeNodeResult, type AxeViolation } from './analysis-loader'
 import { addOverlapIssues, measurementIssues, type Candidate } from './issues'
-import { boxOf, curatedStyles, directText, effectiveOpacity, isSrOnly, isVisible, resetStyleCache, stateOf } from './measure'
+import { boxOf, curatedStyles, directText, effectiveOpacity, isInert, isSrOnly, isVisible, resetStyleCache, stateOf } from './measure'
 import { hidesItsContent, isInteractive, isMeaningful, isSkipped, nameOf, parentOf, roleOf, squash } from './semantics'
 
 const MAX_NODES = 4000
@@ -96,6 +96,7 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
       const role = roleOf(el)
       const srOnly = isSrOnly(el)
       const opacity = effectiveOpacity(el)
+      const inert = isInert(el)
       node = {
         ref: `e${ctx.nextRef++}`,
         role,
@@ -105,7 +106,7 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
       }
       const uxId = el.getAttribute('data-ux-id')
       if (uxId) node.uxId = uxId
-      const state = stateOf(el, { srOnly, opacity })
+      const state = stateOf(el, { srOnly, opacity, inert })
       if (state) node.state = state
       if (ctx.includeStyles) {
         const styles = curatedStyles(el)
@@ -119,6 +120,7 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
         interactive: isInteractive(el, role),
         srOnly,
         opacity,
+        inert,
         text: directText(el),
       })
     }

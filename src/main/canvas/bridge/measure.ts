@@ -6,7 +6,7 @@
 
 import type { Rect, SnapshotNode } from '../../../shared/canvas'
 import { composite, parseColor, readBackgroundImage, type Rgba } from './color'
-import { holdsTypedText } from './semantics'
+import { holdsTypedText, parentOf } from './semantics'
 
 export type NodeState = NonNullable<SnapshotNode['state']>
 
@@ -261,13 +261,33 @@ export function curatedStyles(el: Element): Record<string, string> | undefined {
   return Object.keys(out).length > 0 ? out : undefined
 }
 
+/**
+ * `inert` on this element or any ancestor.
+ *
+ * A real HTML attribute with real subtree semantics — the browser removes the
+ * subtree from interaction AND from the accessibility tree — so honouring it as
+ * a contrast exemption is right. Reporting it is the part that was missing: it
+ * was the only suppression in the pass that left NO trace at all, where even
+ * the `aria-disabled` variants emit `[disabled]`. One attribute on one wrapper
+ * deleted every contrast finding beneath it and the snapshot said nothing about
+ * why, which is indistinguishable from a page with no defects.
+ */
+export function isInert(el: Element): boolean {
+  let node: Element | null = el
+  for (let depth = 0; node && depth < 32; depth++) {
+    if (node.hasAttribute('inert')) return true
+    node = parentOf(node)
+  }
+  return false
+}
+
 function ariaFlag(el: Element, attr: string): boolean {
   const value = el.getAttribute(attr)
   return value != null && value !== 'false'
 }
 
 /** Form-state semantics — the other HARD P0 run-2b requirement. */
-export function stateOf(el: Element, opts?: { srOnly?: boolean; opacity?: number }): NodeState | undefined {
+export function stateOf(el: Element, opts?: { srOnly?: boolean; opacity?: number; inert?: boolean }): NodeState | undefined {
   const state: NodeState = {}
   const tag = el.tagName.toLowerCase()
   const isControl = tag === 'input' || tag === 'select' || tag === 'textarea'
@@ -297,6 +317,7 @@ export function stateOf(el: Element, opts?: { srOnly?: boolean; opacity?: number
   }
 
   if (ariaFlag(el, 'aria-invalid')) state.ariaInvalid = true
+  if (opts?.inert) state.inert = true
   if (opts?.srOnly) state.srOnly = true
   if (opts?.opacity != null && opts.opacity < 1) state.opacity = opts.opacity
 

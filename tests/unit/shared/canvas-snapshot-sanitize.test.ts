@@ -540,7 +540,7 @@ describe('hostile input', () => {
         role: 'x',
         name: '',
         box: {},
-        state: { opacity: 99, checked: 'yes', disabled: 1, srOnly: 'true' },
+        state: { opacity: 99, checked: 'yes', disabled: 1, srOnly: 'true', inert: 'true' },
         children: [],
       },
     })
@@ -548,6 +548,14 @@ describe('hostile input', () => {
     expect(out.root.state?.checked).toBeUndefined()
     expect(out.root.state?.disabled).toBeUndefined()
     expect(out.root.state?.srOnly).toBeUndefined()
+    expect(out.root.state?.inert).toBeUndefined()
+  })
+
+  it('carries the inert flag, which is why a node has no contrast finding', () => {
+    const out = sanitizeSnapshotResult({
+      root: { ref: 'e0', role: 'x', name: '', box: {}, state: { inert: true }, children: [] },
+    })
+    expect(out.root.state?.inert).toBe(true)
   })
 
   it('bounds every number in the viewport, including the one nothing clamped', () => {

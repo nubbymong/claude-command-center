@@ -419,6 +419,7 @@ function state(value: unknown, budget: Budget, limits: SanitizeLimits): Snapshot
     out.valueLength = Math.min(Math.floor(value.valueLength), VALUE_LENGTH_CEILING)
   }
   if (value.ariaInvalid === true) out.ariaInvalid = true
+  if (value.inert === true) out.inert = true
   if (value.srOnly === true) out.srOnly = true
   if (typeof value.opacity === 'number' && Number.isFinite(value.opacity)) {
     out.opacity = Math.max(0, Math.min(1, value.opacity))
@@ -473,6 +474,7 @@ function weigh(value: SnapshotNode): number {
     if (nodeState.checked !== undefined) total += 15
     if (nodeState.disabled !== undefined) total += 16
     if (nodeState.ariaInvalid !== undefined) total += 19
+    if (nodeState.inert !== undefined) total += 13
     if (nodeState.srOnly !== undefined) total += 14
     if (nodeState.opacity !== undefined) total += 11 + num2str(nodeState.opacity)
   }

@@ -7,7 +7,8 @@
 
 import type { AxeIssue, SnapshotNode } from '../../../shared/canvas'
 import { composite, contrastRatio, formatRatio, parseColor, requiredContrast, type Rgba } from './color'
-import { backdropOf, boxOf, styleOf } from './measure'
+import { backdropOf, boxOf, isVisible, styleOf } from './measure'
+import { parentOf } from './semantics'
 
 export interface Candidate {
   el: Element
@@ -16,6 +17,10 @@ export interface Candidate {
   interactive: boolean
   srOnly: boolean
   opacity: number
+  /** An `inert` ancestor (or the element itself). Computed once in the walk,
+   *  where it is also emitted as node state — an exemption nothing can see is
+   *  the one kind that must never be silent. */
+  inert: boolean
   /** Text owned directly by this element (empty for containers). */
   text: string
 }
@@ -69,8 +74,15 @@ function clippedIssue(c: Candidate): AxeIssue | null {
   if (!cs) return null
   const overflow = `${cs.overflow} ${cs.overflowX} ${cs.overflowY}`
   if (!/hidden|clip/.test(overflow)) return null
-  // An ellipsis is a designed truncation, not a defect.
-  if (cs.textOverflow === 'ellipsis') return null
+
+  // An ellipsis is a designed truncation, not a defect — of the WIDTH, and only
+  // of the width. `text-overflow` cannot put an ellipsis on vertically clipped
+  // text; it is a single-line property and does nothing at all without
+  // `white-space: nowrap`. Applied to both axes it deleted every vertical
+  // clipping finding on any element that had ever been given an ellipsis, which
+  // on a card grid is all of them: the heading truncates as designed, and the
+  // body text silently disappearing under the fold is the actual defect.
+  const ellipsis = cs.textOverflow === 'ellipsis' && /nowrap|pre$/.test(cs.whiteSpace || '')
 
   const el = c.el as Element & { scrollWidth?: number; clientWidth?: number; scrollHeight?: number; clientHeight?: number }
   const sw = el.scrollWidth ?? 0
@@ -78,7 +90,7 @@ function clippedIssue(c: Candidate): AxeIssue | null {
   const sh = el.scrollHeight ?? 0
   const ch = el.clientHeight ?? 0
 
-  if (cw > 0 && sw - cw > 1) {
+  if (!ellipsis && cw > 0 && sw - cw > 1) {
     return {
       rule: 'clipped-content',
       severity: 'serious',
@@ -101,8 +113,24 @@ function clippedIssue(c: Candidate): AxeIssue | null {
 function targetSizeIssue(c: Candidate): AxeIssue | null {
   if (!c.interactive || c.srOnly) return null
   const cs = styleOf(c.el)
-  // Inline targets in a run of text are exempt (SC 2.5.8 inline exception).
-  if (cs && cs.display === 'inline') return null
+  // SC 2.5.8's inline exception is for a target "in a sentence" — its size is
+  // set by the surrounding type, so demanding 24px of it is demanding a
+  // different typeface.
+  //
+  // Keyed on `display: inline` ALONE it exempted far more than that, because
+  // `inline` is `<a>`'s default: every icon-only link on every page — a
+  // 16px social icon, a bare close X — was exempt without the author doing
+  // anything, and the entire fixture set in canvas-bridge-snapshot.test.ts
+  // hand-writes `display:inline-block`, so the suite opted into the rule and
+  // never once tested the default.
+  //
+  // A target with no text at all is not in a sentence; it IS the target. Text
+  // ANYWHERE inside still exempts (`<a><span>Read more</span></a>` is a text
+  // link), which leaves the icon-with-an-sr-only-label case exempt too — a
+  // residual, and the conservative side of one: everything this now reports is
+  // an interactive element with no text and less than 24px, which is a defect
+  // under any reading.
+  if (cs && cs.display === 'inline' && (c.el.textContent ?? '').trim().length > 0) return null
   const { width, height } = c.node.box
   const min = Math.min(width, height)
   if (min <= 0 || min >= MIN_TARGET_PX) return null
@@ -164,34 +192,88 @@ function canBeDisabled(el: Element, tag: string): boolean {
   return role != null && DISABLEABLE_ROLES.has(role.trim().split(/\s+/)[0].toLowerCase())
 }
 
-function isInactive(el: Element): boolean {
-  let node: Element | null = el
-  let depth = 0
-  while (node && depth < 8) {
+/** The real HTML `disabled` IDL attribute, which only the form elements that
+ *  support it ever have. */
+function reallyDisabled(el: Element): boolean {
+  return (el as Partial<HTMLInputElement>).disabled === true
+}
+
+/** An `<option>`/`<optgroup>` means "inactive" only where one can actually
+ *  appear. Loose in the ancestor chain it was a two-tag suppression primitive:
+ *  wrap any subtree in an `<optgroup>` — which renders its contents perfectly
+ *  normally outside a `<select>` — and contrast review for all of it vanished. */
+function insideAList(el: Element): boolean {
+  let node = parentOf(el)
+  for (let depth = 0; node && depth < 4; depth++) {
     const tag = node.tagName.toLowerCase()
-    if (tag === 'option' || tag === 'optgroup') return true
-    // `inert` is a real HTML attribute with subtree semantics — the browser
-    // removes the subtree from interaction and from the a11y tree — so it is
-    // honoured on any ancestor. `disabled`/`aria-disabled` are widget state and
-    // are honoured only where a widget could carry them.
-    if (node.hasAttribute('inert')) return true
-    if (canBeDisabled(node, tag)) {
-      if ((node as Partial<HTMLInputElement>).disabled === true) return true
-      if (node.getAttribute('aria-disabled') === 'true') return true
-    }
-    // A <label> is exempt when the control it labels is — the greying is the
-    // control's, and the label is painted to match it.
-    if (tag === 'label') {
-      const target = node.getAttribute('for')
-      const control = target
-        ? node.ownerDocument?.getElementById(target)
-        : node.querySelector('input, select, textarea, button')
-      if (control && ((control as Partial<HTMLInputElement>).disabled === true || control.getAttribute('aria-disabled') === 'true')) {
-        return true
+    if (tag === 'select' || tag === 'datalist') return true
+    if (tag !== 'optgroup') return false
+    node = parentOf(node)
+  }
+  return false
+}
+
+/**
+ * A `<label>` whose control is disabled AND painted.
+ *
+ * The visibility requirement is the fix, not a refinement. Without it,
+ * `<input disabled style="display:none">` plus a `<label for>` around any
+ * amount of content deleted contrast review for the lot — the exemption's
+ * whole justification is that the label is painted to match the greying of a
+ * control the user can see, and a control that is not rendered greys nothing.
+ */
+function labelsDisabledControl(label: Element): boolean {
+  const target = label.getAttribute('for')
+  const control = target
+    ? label.ownerDocument?.getElementById(target)
+    : label.querySelector('input, select, textarea, button')
+  if (!control) return false
+  if (!reallyDisabled(control) && control.getAttribute('aria-disabled') !== 'true') return false
+  return isVisible(control)
+}
+
+/**
+ * WCAG 1.4.3 exempts inactive components — but only the ones a user can SEE are
+ * inactive, and that is a much smaller set than the previous rule honoured.
+ *
+ * The rule that matters, and the one this now turns on: a real `disabled`
+ * attribute is styled by the user agent, so it greys the whole control and
+ * propagates to descendants. `aria-disabled` is a semantic state with NO visual
+ * effect whatsoever — the page decides what it looks like, and usually that is
+ * nothing. Honouring it on ancestors meant `<a aria-disabled="true">` around a
+ * card, or one attribute on one generic wrapper, silently deleted contrast
+ * review for everything inside while the content stayed at full contrast. Two
+ * keystrokes, no JavaScript, subtree-wide, and the wrapper is not even emitted
+ * so nothing in the snapshot hinted at why.
+ *
+ * So: `aria-disabled` counts on the element ITSELF (a widget claiming to be
+ * disabled; its own text is exempt), real `disabled` counts on any ancestor
+ * (the UA really did grey the subtree), and `inert` counts on any ancestor but
+ * is reported as `[inert]` on every node it covers, because a suppression
+ * nothing can see is the one kind that must never be silent.
+ */
+function isInactive(c: Candidate): boolean {
+  if (c.inert) return true
+  let node: Element | null = c.el
+  for (let depth = 0; node && depth < 8; depth++) {
+    const tag = node.tagName.toLowerCase()
+    if (tag === 'label' && labelsDisabledControl(node)) return true
+    if (depth === 0) {
+      if (tag === 'option' || tag === 'optgroup') {
+        if (insideAList(node)) return true
+      } else if (canBeDisabled(node, tag)) {
+        if (reallyDisabled(node)) return true
+        if (node.getAttribute('aria-disabled') === 'true') return true
       }
+    } else if (reallyDisabled(node)) {
+      // `<fieldset disabled>`, `<select disabled>`, `<optgroup disabled>`,
+      // `<button disabled>` around its own label span: the UA greys all of it,
+      // so all of it is exempt. Only elements that really support the attribute
+      // can reach this — `disabled` on a `<div>` is not an IDL property and
+      // reads `undefined`.
+      return true
     }
-    node = node.parentElement
-    depth++
+    node = parentOf(node)
   }
   return false
 }
@@ -229,7 +311,7 @@ function notAssessed(c: Candidate, why: string, source: Element | null, reported
 function contrastIssue(c: Candidate, flatContrast: boolean, reported?: Set<Element>): AxeIssue | null {
   if (c.srOnly || c.text.length === 0) return null
   if (c.opacity < 0.05) return null
-  if (isInactive(c.el)) return null
+  if (isInactive(c)) return null
   const cs = styleOf(c.el)
   if (!cs) return null
 
@@ -337,6 +419,26 @@ const OVERLAP_FRACTION = 0.25
 const MAX_OVERLAP_COMPARISONS_PER_NODE = 64
 
 /**
+ * How many boxes one node will LOOK at, including the ones it skips for free.
+ *
+ * Larger than the comparison budget and doing a different job. Containment is
+ * tested before the comparison counter — an ancestor overlapping its own
+ * descendant is never a finding, so charging for it let decoys starve the rule
+ * — but `contains` walks an ancestor chain, so "free" cannot mean unbounded.
+ * This is the bound on the loop itself, for the page that stacks every box at
+ * y=0 and defeats the sweep break.
+ *
+ * Below the cap it changes nothing, so a mutation deleting it survives the
+ * suite — recorded here rather than pinned by a test, because the only test
+ * that could pin it would assert the MISS it causes, enshrining a limitation as
+ * desired behaviour. Above the cap the miss is real: 512 decoy descendants in
+ * one y-band followed by a genuine partner will hide that partner. That is the
+ * residual of bounding the work at all, and 512 is eight times the comparison
+ * budget it replaced as the starvable number.
+ */
+const MAX_OVERLAP_SCAN_PER_NODE = 512
+
+/**
  * How many overlaps one node REPORTS. Bounding comparisons alone still let one
  * node accumulate thousands of issue objects on a degenerate page, all of which
  * get structured-cloned across postMessage before any sanitiser sees them.
@@ -377,14 +479,31 @@ export function addOverlapIssues(candidates: Candidate[]): void {
     let reported = 0
     let dropped = 0
     let comparisons = 0
+    let scanned = 0
     for (let j = i + 1; j < sorted.length; j++) {
       const b = sorted[j]
       // The sweep's own bound: nothing below this node's bottom edge can meet it.
       if (b.node.box.y >= aBottom) break
-      // The work bound. Past here we stop LOOKING, so what lies beyond is
-      // unknown — and unknown is never claimed. See the drop count below.
-      if (++comparisons > MAX_OVERLAP_COMPARISONS_PER_NODE) break
+      // The hard work bound, charged for every box LOOKED at. Separate from the
+      // comparison budget below so that skipping a descendant is cheap but not
+      // free — otherwise a page with every box at y=0 makes this quadratic.
+      if (++scanned > MAX_OVERLAP_SCAN_PER_NODE) break
+      // Containment BEFORE the counter. An ancestor and its descendant overlap
+      // by definition and can never be a finding, so charging the budget for
+      // one meant a page could spend it on boxes this rule was never going to
+      // report: sixty-four 1x1 decoy spans nested inside the node exhausted it
+      // before a single genuine partner was reached, and the rule went quiet
+      // for that node with nothing said. Ordinary markup does this by accident
+      // too — an icon grid or a long `<ul>` inside a card is all descendants.
       if (a.el.contains(b.el) || b.el.contains(a.el)) continue
+      // The work bound, now spent only on pairs that could actually be a
+      // finding. Past here we stop LOOKING, so what lies beyond is unknown —
+      // and unknown is never claimed. See the drop count below.
+      //
+      // `scanned` still bounds the loop itself, because `contains` is not free
+      // (it walks the ancestor chain) and the y-band break alone does not bound
+      // a page that stacks everything at y=0.
+      if (++comparisons > MAX_OVERLAP_COMPARISONS_PER_NODE) break
       const area = intersectionArea(a.node.box, b.node.box)
       if (area <= 0) continue
       const smaller = Math.min(a.node.box.width * a.node.box.height, b.node.box.width * b.node.box.height)

@@ -125,6 +125,23 @@ describe('form-state semantics (HARD P2 requirement)', () => {
     )
     expect(serializeSnapshot(s).text.split('\n')[1]).toBe('- "Skip to content" [ref=e7] [box=0,0,1,1] [sr-only]')
   })
+
+  it('marks inert nodes, so the missing contrast finding has a reason', () => {
+    // `inert` genuinely removes a subtree from the accessibility tree, so
+    // withholding contrast findings on it is right — and a withheld finding
+    // that nothing records is indistinguishable from no finding. It was the
+    // last exemption in the measurement pass that printed nothing at all.
+    const s = snap(
+      node({
+        ref: 'e7',
+        name: 'Buy now',
+        role: 'button',
+        box: { x: 0, y: 0, width: 80, height: 24 },
+        state: { inert: true },
+      }),
+    )
+    expect(serializeSnapshot(s).text.split('\n')[1]).toBe('- button "Buy now" [ref=e7] [box=0,0,80,24] [inert]')
+  })
 })
 
 describe('styles (scoped-only, token economy)', () => {

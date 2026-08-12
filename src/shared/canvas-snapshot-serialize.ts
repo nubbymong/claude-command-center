@@ -224,6 +224,10 @@ function stateTokens(state: SnapshotNode['state']): string[] {
   // that carries a field's contents — see SnapshotNode['state'].valueLength.
   if (state.valueLength) out.push(`[chars=${r(state.valueLength)}]`)
   if (state.ariaInvalid) out.push('[aria-invalid]')
+  // Why this node has no contrast finding. `inert` really does remove a subtree
+  // from the a11y tree, so withholding the finding is right — saying nothing
+  // about it is what made the withholding a suppression primitive.
+  if (state.inert) out.push('[inert]')
   // Opacity is only interesting when it's actually reducing visibility.
   if (state.opacity != null && state.opacity < 1) out.push(`[opacity=${round2(state.opacity)}]`)
   // Deliberately invisible: without this the agent reads every visually-hidden

@@ -324,6 +324,18 @@ export interface SnapshotNode {
      */
     valueLength?: number
     ariaInvalid?: boolean
+    /**
+     * `inert` on this element or an ancestor.
+     *
+     * Carried because it SUPPRESSES: `inert` removes a subtree from interaction
+     * and from the accessibility tree, so contrast findings on it are correctly
+     * withheld — and a withheld finding that nothing records is
+     * indistinguishable from no finding. It was the last exemption in the
+     * measurement pass that left no trace at all; the `aria-disabled` family at
+     * least emits `[disabled]`. One attribute on one wrapper, and every defect
+     * beneath it vanished silently.
+     */
+    inert?: boolean
     /** Effective (accumulated) opacity, 0..1 — catches "visible in the DOM but
      *  faded to nothing" that a bare tree misses. */
     opacity?: number
