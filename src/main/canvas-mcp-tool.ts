@@ -92,6 +92,13 @@ function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined,
   if (result.depthLimited) {
     notes.push('the page nests deeper than this walk goes; anything below that depth is absent. Scope to a data-ux-id inside the deep region to reach it')
   }
+  // Not a limit of ours at all, unlike the three around it, and the only one
+  // with NO remedy: a closed shadow root cannot be read by any means available
+  // to a script in the page. Saying so is the whole value — an unreviewed region
+  // reported as a clean one is the failure this note exists to prevent.
+  if (result.hiddenContent) {
+    notes.push('part of this page keeps its content in a closed shadow root; that content is painted but could not be read, and nothing in this tree describes it')
+  }
   // A DIFFERENT limit from the one above, and worth saying so: the node cap
   // drops nodes at capture, this one stops the write-out. Reporting both as
   // "the node limit" is how a 600-row list quietly became 500 rows under a note

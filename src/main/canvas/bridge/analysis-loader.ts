@@ -18,7 +18,11 @@ export interface AxeCheckData {
 
 export interface AxeNodeResult {
   element?: Element
-  target?: string[]
+  /** A plain selector in the light DOM; an ARRAY of selectors, one per shadow
+   *  boundary, for anything inside a shadow tree. See analysis.ts — the narrower
+   *  `string[]` this used to say is what hid the shadow case from both the
+   *  consumer and the compiler. */
+  target?: Array<string | string[]>
   impact?: string | null
   any?: Array<{ data?: AxeCheckData }>
   all?: Array<{ data?: AxeCheckData }>

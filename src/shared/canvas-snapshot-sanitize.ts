@@ -648,6 +648,10 @@ export function sanitizeSnapshotResult(
   // A boolean and nothing else. The frame may say the depth cap bit; that is
   // the whole of what it may say, and it says it in one bit.
   if (source.depthLimited === true || budget.depthLimited) out.depthLimited = true
+  // Same rule, same reason: one bit, minted here from a strict `=== true`, so a
+  // page-authored truthy value cannot set it and no page-authored string can
+  // ride in on it.
+  if (source.hiddenContent === true) out.hiddenContent = true
   // Closed set, not free text: this string is the one field that reaches the
   // agent OUTSIDE the untrusted envelope (as a capture note), so the page must
   // not be able to author it. Anything unrecognised becomes the generic code.

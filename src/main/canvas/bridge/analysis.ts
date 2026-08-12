@@ -19,7 +19,18 @@ export interface AxeCheckData {
 
 export interface AxeNodeResult {
   element?: Element
-  target?: string[]
+  /**
+   * axe's selector path. A plain selector for an element in the light DOM, and
+   * an ARRAY of selectors — one per shadow boundary — for anything inside a
+   * shadow tree.
+   *
+   * Typed `string[]` here for as long as this file has existed, which is not
+   * what axe returns and is why the shadow form was never handled: the
+   * consumer's `typeof target !== 'string'` guard looked like defensive
+   * programming against an impossible case, and TypeScript agreed with it. The
+   * declared type made the bug invisible at both ends.
+   */
+  target?: Array<string | string[]>
   impact?: string | null
   any?: Array<{ data?: AxeCheckData }>
   all?: Array<{ data?: AxeCheckData }>

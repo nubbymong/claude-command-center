@@ -109,6 +109,52 @@ export function isSkipped(el: Element): boolean {
 }
 
 /**
+ * The element one level UP, crossing out of a shadow tree when it runs out of
+ * ordinary parents.
+ *
+ * `parentElement` is null at the top of a shadow tree, so every ancestor walk in
+ * this bridge stopped dead at the shadow boundary and reported the contents of a
+ * web component as if they hung off nothing. `getRootNode().host` is the way
+ * out; guarded because a detached subtree's root is a DocumentFragment with no
+ * host, and the document's root has none either.
+ */
+export function parentOf(el: Element): Element | null {
+  const parent = el.parentElement
+  if (parent) return parent
+  const root = el.getRootNode?.()
+  const host = (root as ShadowRoot | undefined)?.host
+  return host && host !== el ? host : null
+}
+
+/**
+ * A custom element whose content this walk cannot see AT ALL.
+ *
+ * `shadowRoot` is null for a CLOSED root exactly as it is for no root, so the
+ * only signal left is circumstantial and this is it: an element with a hyphen in
+ * its name (so, a custom element), painting a box, holding no light children and
+ * no text of its own, and offering no open root to descend into. Something is on
+ * screen and the tree cannot say what.
+ *
+ * Deliberately narrow. Every clause is there to keep an ordinary light-DOM
+ * component — which is most of them — from tripping it: those have children.
+ */
+export function hidesItsContent(el: Element): boolean {
+  if (el.tagName.indexOf('-') < 0) return false
+  // Belt and braces, not load-bearing: the one caller only reaches this when
+  // `shadowRoot` is already null, so a mutation that deletes this line survives
+  // the suite. Recorded rather than tested around — a genuinely equivalent
+  // mutant should be labelled, and the alternative is a function whose contract
+  // is "correct only if the caller checks first".
+  if (el.shadowRoot) return false
+  // NOT the same test as the caller's. The caller counts EMITTED nodes; this
+  // counts DOM children, and a component holding one unremarkable div has one
+  // of the latter and none of the former. Its content is readable — there is
+  // just nothing in it worth a line — so it must not be reported as unreadable.
+  if (el.children.length > 0) return false
+  return directText(el).length === 0
+}
+
+/**
  * Whether a node earns a line in the snapshot. Wider than P1's hover-oriented
  * filter: text leaves are in, because contrast and clipping findings live on
  * them and a tree that omits them cannot carry the evidence.

@@ -10,7 +10,7 @@ import { MAX_ISSUES_PER_NODE, keepMostSevere, severityRank } from '../../../shar
 import { ensureAnalysis, withRunTimeout, type AnalysisApi, type AxeNodeResult, type AxeViolation } from './analysis-loader'
 import { addOverlapIssues, measurementIssues, type Candidate } from './issues'
 import { boxOf, curatedStyles, directText, effectiveOpacity, isSrOnly, isVisible, resetStyleCache, stateOf } from './measure'
-import { isInteractive, isMeaningful, isSkipped, nameOf, roleOf, squash } from './semantics'
+import { hidesItsContent, isInteractive, isMeaningful, isSkipped, nameOf, parentOf, roleOf, squash } from './semantics'
 
 const MAX_NODES = 4000
 const MAX_DEPTH = 64
@@ -42,6 +42,9 @@ interface WalkContext {
   nextRef: number
   truncated: boolean
   depthLimited: boolean
+  /** Something paints here and offers no tree to read — a closed shadow root
+   *  being the case that produces it. See the walk. */
+  hiddenContent: boolean
 }
 
 /** Failure CODES, never messages: analysisError is surfaced to the agent as a
@@ -78,7 +81,7 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
     // of bare wrappers bottoming out in nothing lost nothing, and a note that
     // fires on a page which lost nothing costs the agent a second capture — the
     // very cost this flag was split out to avoid.
-    if (el.children.length > 0 || isMeaningful(el)) ctx.depthLimited = true
+    if (el.children.length > 0 || el.shadowRoot || isMeaningful(el)) ctx.depthLimited = true
     return null
   }
 
@@ -133,11 +136,71 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
     else children.push(walked)
   }
 
+  // An OPEN shadow root's own children, after the light ones.
+  //
+  // Without this a web component's entire contents were painted, interactive
+  // and completely unreviewed — with `truncated`, `depthLimited` and
+  // `issuesDropped` all unset, so the tool reported success on a bare document
+  // root. That is ordinary markup for Lit, Stencil, Shoelace and Ionic, and one
+  // attribute (`<template shadowrootmode>`) in agent-authored HTML.
+  //
+  // No element is emitted twice by walking both: a slotted light child is
+  // rendered inside the shadow tree but stays a child of its LIGHT parent, and
+  // is reachable from the shadow side only through `assignedElements()`, which
+  // nothing here calls. The nesting a slot implies is therefore not reproduced —
+  // the tree says where each element LIVES, not where it lands — which is the
+  // same trade the wrapper-splicing above already makes.
+  const shadow = el.shadowRoot
+  if (shadow) {
+    for (let i = 0; i < shadow.children.length; i++) {
+      if (ctx.nextRef > MAX_NODES) {
+        ctx.truncated = true
+        break
+      }
+      const walked = walk(shadow.children[i], ctx, depth + 1)
+      if (walked === null) continue
+      if (Array.isArray(walked)) children = children.concat(walked)
+      else children.push(walked)
+    }
+  } else if (children.length === 0 && hidesItsContent(el) && isVisible(el)) {
+    // A CLOSED root, or something else that paints without exposing a tree. Not
+    // knowable, so not guessed at — but it is knowable that a box is painted
+    // here and the walk found nothing in it, and saying so is the difference
+    // between a partial review and a review that reports success.
+    ctx.hiddenContent = true
+  }
+
   // A non-semantic wrapper contributes nothing but its children, which are
   // spliced up a level to keep the tree (and its token cost) shallow.
   if (!node) return children
   node.children = children
   return node
+}
+
+/** How many elements the shadow-piercing scope search will look at. Only spent
+ *  when the flat query left an id unmatched, and a page that large has already
+ *  paid more than this walking itself. */
+const MAX_SCOPE_SEARCH = 20_000
+
+/**
+ * Find scope roots inside open shadow trees, which `querySelectorAll` cannot
+ * reach.
+ *
+ * Runs only as a FALLBACK. The flat query is one call into the engine's
+ * selector index; this is a full tree walk in script, and paying for it on
+ * every capture to serve the minority of pages that use custom elements is the
+ * wrong default. It also stops as soon as every wanted id is accounted for.
+ */
+function searchShadowScope(root: ParentNode, wanted: Set<string>, found: Map<string, Element>, budget: { left: number }): void {
+  const children = root.children
+  for (let i = 0; i < children.length && budget.left > 0 && found.size < wanted.size; i++) {
+    const el = children[i]
+    budget.left--
+    const id = el.getAttribute('data-ux-id')
+    if (id && wanted.has(id) && !found.has(id)) found.set(id, el)
+    if (el.shadowRoot) searchShadowScope(el.shadowRoot, wanted, found, budget)
+    searchShadowScope(el, wanted, found, budget)
+  }
 }
 
 function resolveScope(ids: string[]): { roots: Element[]; unmatched: string[] } {
@@ -150,6 +213,12 @@ function resolveScope(ids: string[]): { roots: Element[]; unmatched: string[] } 
   for (let i = 0; i < all.length; i++) {
     const id = all[i].getAttribute('data-ux-id')
     if (id && wanted.has(id) && !found.has(id)) found.set(id, all[i])
+  }
+  // An id the flat query missed may still be inside an open shadow tree, where a
+  // selector cannot follow. Reporting it as `unmatchedScope` sent the agent to
+  // re-scope against an anchor that IS on the page.
+  if (found.size < wanted.size && document.body) {
+    searchShadowScope(document.body, wanted, found, { left: MAX_SCOPE_SEARCH })
   }
   return {
     roots: ids.filter((id) => found.has(id)).map((id) => found.get(id) as Element),
@@ -198,15 +267,41 @@ function toIssue(violation: AxeViolation, node: AxeNodeResult): AxeIssue {
  */
 const MAX_AXE_ISSUES_PER_NODE = 20
 
+/**
+ * The element an axe result is about.
+ *
+ * `elementRef: true` means `node.element` is normally there and this is one
+ * property read. The selector paths below are the fallback, and the second of
+ * them is not exotic: for anything inside a shadow tree axe reports `target` as
+ * an ARRAY of selectors — `[['my-card', '#go']]` — one per shadow boundary to
+ * cross. That shape hit `typeof selector !== 'string'` and returned null, so a
+ * finding on a web component's own button was silently discarded.
+ */
 function elementOf(node: AxeNodeResult): Element | null {
   if (node.element) return node.element
-  const selector = node.target?.[0]
-  if (typeof selector !== 'string') return null
-  try {
-    return document.querySelector(selector)
-  } catch {
-    return null
+  const target = node.target?.[0]
+  if (typeof target === 'string') {
+    try {
+      return document.querySelector(target)
+    } catch {
+      return null
+    }
   }
+  if (!Array.isArray(target)) return null
+  // Each hop resolves inside the previous hop's shadow root.
+  let scope: ParentNode | null = document
+  let el: Element | null = null
+  for (const step of target) {
+    if (typeof step !== 'string' || !scope) return null
+    try {
+      el = scope.querySelector(step)
+    } catch {
+      return null
+    }
+    if (!el) return null
+    scope = el.shadowRoot
+  }
+  return el
 }
 
 /**
@@ -225,7 +320,9 @@ function nearestNode(el: Element, byElement: Map<Element, SnapshotNode>): Snapsh
   for (let hops = 0; cur && hops < 6; hops++) {
     const node = byElement.get(cur)
     if (node) return node
-    cur = cur.parentElement
+    // Crosses out of a shadow tree, where `parentElement` is null: a finding on
+    // a web component's inner button otherwise had no ancestor at all.
+    cur = parentOf(cur)
   }
   return null
 }
@@ -276,7 +373,7 @@ function sameIssue(a: AxeIssue, b: AxeIssue): boolean {
   )
 }
 
-function joinAxe(violations: AxeViolation[], byElement: Map<Element, SnapshotNode>): void {
+function joinAxe(violations: AxeViolation[], byElement: Map<Element, SnapshotNode>, root: SnapshotNode): void {
   // What THIS pass has put on each node, and only this pass. Sharing a counter
   // with the measurement and overlap passes let the cheapest finding starve the
   // most severe one; see MAX_AXE_ISSUES_PER_NODE.
@@ -284,9 +381,15 @@ function joinAxe(violations: AxeViolation[], byElement: Map<Element, SnapshotNod
   for (const violation of violations ?? []) {
     for (const axeNode of violation.nodes ?? []) {
       const el = elementOf(axeNode)
-      if (!el) continue
-      const node = nearestNode(el, byElement)
-      if (!node) continue
+      if (!el) {
+        // A finding axe HAS and this walk cannot place. Counted on the root
+        // rather than dropped: a number the agent can see is the difference
+        // between a partial answer and a wrong one, and every other producer in
+        // this pipeline already counts what it loses.
+        root.issuesDropped = (root.issuesDropped ?? 0) + 1
+        continue
+      }
+      const node = nearestNode(el, byElement) ?? root
       const issue = toIssue(violation, axeNode)
       // Only when the finding is NOT on this node: an honest same-element
       // finding already has the node's own box and paying for a duplicate of it
@@ -332,9 +435,8 @@ function joinAxe(violations: AxeViolation[], byElement: Map<Element, SnapshotNod
  * has nothing to do with importance: a realistic 24-card grid reported twenty
  * genuine contrast defects and dropped four with nothing said.
  */
-function trimIssues(candidates: Candidate[]): void {
-  for (const candidate of candidates) {
-    const node = candidate.node
+function trimIssues(nodes: Iterable<SnapshotNode>): void {
+  for (const node of nodes) {
     const issues = node.issues
     if (!issues) continue
     const keep = keepMostSevere(issues.length, (i) => severityRank(issues[i].severity), MAX_ISSUES_PER_NODE)
@@ -375,6 +477,7 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
     nextRef: 1,
     truncated: false,
     depthLimited: false,
+    hiddenContent: false,
   }
 
   let children: SnapshotNode[] = []
@@ -450,12 +553,25 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
 
   // Joined after the measurement pass so the dedupe keeps the measured finding
   // when both fire on one node.
-  if (violations) joinAxe(violations, ctx.byElement)
+  if (violations) joinAxe(violations, ctx.byElement, root)
 
   // Last, once every pass has had its say: only here is the per-node total
   // known, and only here can "which twenty" be answered by severity rather than
   // by which pass happened to run first.
-  trimIssues(ctx.candidates)
+  //
+  // The ROOT is in this list as well as the candidates. It is not a candidate —
+  // nothing measures it — but the axe join now uses it as the home for a
+  // finding whose element it cannot place, so it can hold issues like any other
+  // node and must be bounded like any other node.
+  //
+  // Today that bound is already reached one step earlier, because the join's own
+  // per-node cap happens to EQUAL MAX_ISSUES_PER_NODE — so a mutation removing
+  // `root` from this list survives the suite, and it is left in deliberately
+  // rather than tested around. The two are separate numbers that agree by
+  // coincidence, and this is the one the WIRE enforces: raise the join's cap
+  // without this line and a node reaches the sanitiser over the limit, to be
+  // trimmed there by a pass that cannot see severity the way this one can.
+  trimIssues([root, ...ctx.candidates.map((c) => c.node)])
 
   const out: CanvasSnapshotResult = {
     viewport: {
@@ -468,6 +584,7 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   if (unmatched.length > 0) out.unmatchedScope = unmatched
   if (ctx.truncated) out.truncated = true
   if (ctx.depthLimited) out.depthLimited = true
+  if (ctx.hiddenContent) out.hiddenContent = true
   if (analysisError) out.analysisError = analysisError
   return out
 }

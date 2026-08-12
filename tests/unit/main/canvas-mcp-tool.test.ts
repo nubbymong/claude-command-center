@@ -241,6 +241,21 @@ describe('output', () => {
     expect(notes).not.toContain('this tree is partial')
   })
 
+  it('says when part of the page could not be read at all', async () => {
+    // The one limit with NO remedy. A closed shadow root cannot be reached by
+    // any means a page script has, so unlike the depth cap there is no "scope
+    // to a data-ux-id" answer — and unlike the node cap nothing was dropped by
+    // us. Without the note the agent is handed a clean tree for a region that
+    // was never reviewed, which is the worst of the four outcomes.
+    const out = await runCanvasSnapshot({}, 'sess-mine', deps({
+      requestSnapshot: async () => result({ hiddenContent: true }),
+    }))
+    const notes = out.text.slice(0, out.text.indexOf('<untrusted-content'))
+    expect(notes).toContain('closed shadow root')
+    expect(notes).not.toContain('node limit')
+    expect(notes).not.toContain('nests deeper')
+  })
+
   it('json format is available but costs more than the text form', async () => {
     const text = await runCanvasSnapshot({}, 'sess-mine', deps())
     const json = await runCanvasSnapshot({ format: 'json' }, 'sess-mine', deps())

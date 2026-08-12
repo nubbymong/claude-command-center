@@ -424,6 +424,27 @@ describe('hostile input', () => {
       }
     })
 
+    it('relays the frame’s hidden-content signal, and only as a boolean', () => {
+      // Same rule as the depth limit above, and it has to be enforced
+      // separately: two halves of one convention with only one maintained is
+      // this pipeline's recurring bug.
+      for (const [supplied, expected] of [
+        [true, true],
+        [false, undefined],
+        ['true', undefined],
+        [1, undefined],
+        [{}, undefined],
+      ] as const) {
+        const out = sanitizeSnapshotResult({
+          root: { ref: 'e0', role: 'x', name: '', box: {}, children: [] },
+          hiddenContent: supplied,
+        })
+        expect(out.hiddenContent, JSON.stringify(supplied)).toBe(expected)
+        expect(out.truncated).toBeUndefined()
+        expect(out.depthLimited).toBeUndefined()
+      }
+    })
+
     it('keeps the severe findings when it has to choose', () => {
       const issues = [
         ...Array.from({ length: 30 }, (_, i) => ({ rule: `minor-${i}`, severity: 'minor', measured: '', needed: '' })),

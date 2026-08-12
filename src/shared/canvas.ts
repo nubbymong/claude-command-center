@@ -390,6 +390,20 @@ export interface CanvasSnapshotResult {
    * restarts from there.
    */
   depthLimited?: boolean
+  /**
+   * Something on the page paints a box and offers no tree to read.
+   *
+   * A CLOSED shadow root is the case that produces it: `shadowRoot` is null for
+   * one exactly as it is for an element that has none, so the content cannot be
+   * reached by any means a page script has. An OPEN root is walked and needs no
+   * flag.
+   *
+   * Its own bit rather than `truncated`, for the reason `depthLimited` is its
+   * own bit: the three have different answers. Nothing scopes past this one and
+   * no second capture helps — the honest report is that a region of the page was
+   * not reviewed and cannot be.
+   */
+  hiddenContent?: boolean
   /** Analysis was asked for but could not run (chunk blocked, axe threw). The
    *  snapshot is still returned; measurement issues are unaffected. */
   analysisError?: string

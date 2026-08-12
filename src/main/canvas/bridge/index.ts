@@ -41,7 +41,7 @@
 
 import { CANVAS_BRIDGE_NS, type CanvasHitInfo, type CanvasViewportInfo } from '../../../shared/canvas'
 import { boxOf, isVisible } from './measure'
-import { isMeaningful, nameOf, roleOf } from './semantics'
+import { isMeaningful, nameOf, parentOf, roleOf } from './semantics'
 import { captureSnapshot } from './snapshot'
 
 declare global {
@@ -72,27 +72,55 @@ function describe(el: Element): CanvasHitInfo {
   return info
 }
 
+/** How many shadow boundaries a hit test will descend through. Bounded because
+ *  each level is another engine call and components nest. */
+const MAX_HIT_RETARGET = 8
+
 function hitAt(pageX: number, pageY: number): CanvasHitInfo | null {
+  const x = pageX - window.scrollX
+  const y = pageY - window.scrollY
   let el: Element | null = null
   try {
-    el = document.elementFromPoint(pageX - window.scrollX, pageY - window.scrollY)
+    el = document.elementFromPoint(x, y)
   } catch {
     el = null
   }
+  // `document.elementFromPoint` retargets to the shadow HOST, so hovering a
+  // button inside a web component reported the component. Descend to what is
+  // really under the pointer.
+  for (let i = 0; i < MAX_HIT_RETARGET && el?.shadowRoot; i++) {
+    let inner: Element | null = null
+    try {
+      inner = el.shadowRoot.elementFromPoint(x, y)
+    } catch {
+      inner = null
+    }
+    if (!inner || inner === el) break
+    el = inner
+  }
   if (!el || el === document.documentElement || el === document.body) return null
   let cur: Element | null = el
-  while (cur && cur !== document.body && !isMeaningful(cur)) cur = cur.parentElement
+  while (cur && cur !== document.body && !isMeaningful(cur)) cur = parentOf(cur)
   const target = cur && cur !== document.body ? cur : el
   return describe(target)
 }
 
+/** Every element under `root`, descending into open shadow roots — which
+ *  `querySelectorAll('*')` does not do, so a web component's contents had no
+ *  boxes at all. */
+function collectBoxes(root: ParentNode, out: CanvasHitInfo[]): void {
+  const children = root.children
+  for (let i = 0; i < children.length && out.length < MAX_BOXMAP_NODES; i++) {
+    const el = children[i]
+    if (isMeaningful(el) && isVisible(el)) out.push(describe(el))
+    if (el.shadowRoot) collectBoxes(el.shadowRoot, out)
+    collectBoxes(el, out)
+  }
+}
+
 function boxMap(): CanvasHitInfo[] {
   const out: CanvasHitInfo[] = []
-  const all = document.querySelectorAll('*')
-  for (let i = 0; i < all.length && out.length < MAX_BOXMAP_NODES; i++) {
-    const el = all[i]
-    if (isMeaningful(el) && isVisible(el)) out.push(describe(el))
-  }
+  if (document.documentElement) collectBoxes(document.documentElement, out)
   return out
 }
 
