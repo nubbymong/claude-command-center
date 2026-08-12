@@ -158,8 +158,53 @@ pushes it to the renderer → the user opens the Canvas pane → `canvas_snapsho
 reads what a real engine laid out. `toolOn('canvas')` defaults on, so both tools
 are advertised without configuration.
 
-### Before merge
+## `canvas_render` — the adversarial pass (ADR-009)
 
-`canvas_render` is a content-ingress point on the Conductor MCP server and
-**needs its own adversarial pass** (ADR-009) — the author does not attack their
-own change, so that is not this session's to sign off.
+Content ingress on the Conductor MCP server, so it earned its own pass. The
+author of the tool did not attack it: four independent attacker lenses
+(injection/envelope-escape, session-binding/allowlist, blast-radius/fail-posture,
+design/coverage/parity), then a second independent pass against the patched
+code. **Verdict: PASS**, marker recorded on #256.
+
+Two MAJORs, both fixed and regression-tested (each test verified to fail with
+its fix reverted):
+
+- **Fail-open on a persist failure.** `renderVersion` mutated the live maps —
+  pushed the version, set it active, put the record in `canvases`/`sessionIndex`
+  — and only THEN wrote `canvas.json`. A write failure (a held handle on the
+  hot every-render file, ENOSPC, an indexer lock) left the caller with a
+  rejected render while the store had already made the rejected document the
+  ACTIVE, servable version, counter advanced. The IPC path that used this sink
+  is trusted-renderer-only; `canvas_render` is what makes it reachable by a
+  prompt-injectable agent, so a document the agent was told failed could be
+  served to the user as its work. Fixed: the store persists a record built off
+  to the side and commits to memory only once the write succeeds — a failure
+  leaves the live maps untouched, at worst orphaning a `versions/<vid>/` dir no
+  record references. `setActiveVersion` carried the same ordering (benign — it
+  only ever toggles between already-servable versions, and self-heals on
+  restart — but the two writers should not disagree about durability); given the
+  same treatment.
+- **No byte cap at the untrusted ingress.** The design branch checked only
+  non-empty-string, leaning on the store's 8 MB backstop while the trusted IPC
+  path caps at 2 MB — the model-driven tool was the widest of the three
+  ingresses to one store, with no rate limit. Fixed: fails closed at 2 MB,
+  measured in bytes (not chars — the multi-byte case is the one a `.length`
+  check gets wrong), before the store is touched.
+
+Plus a MAJOR doc defect — a security comment and the tool description claimed
+`buildLabel` was echoed back outside the untrusted envelope; it is write-only
+(validated, stored on the version, surfaced nowhere yet). In these files the
+comments are the threat-model of record, so a false one is a trap: a future echo
+or a relaxed shape would reintroduce the injection the shape exists to stop.
+Corrected to match behaviour; the guard stays.
+
+Method note the re-attack earned: one of the first-round regression tests drove
+the sink with a THROWING dep, so `isError` was true whether the cap fired or the
+throw did — it proved nothing about which guard acted. A RECORDING dep that
+asserts the sink was never reached is the discriminating shape. The re-attack
+caught it; it was rewritten.
+
+Non-blocking, surfaced by the pass and left for the owner: `uat` mode is
+advertised but currently inert — `registerCanvasUatRoot` is wired nowhere in
+production, so every UAT render is refused (fail-closed, safe). It cannot
+succeed until the session→project-directory wiring lands.
