@@ -654,6 +654,10 @@ export function sanitizeSnapshotResult(
   // page-authored truthy value cannot set it and no page-authored string can
   // ride in on it.
   if (source.hiddenContent === true) out.hiddenContent = true
+  // Same rule again, and it earns the repetition: every one of these is a bit
+  // the frame may assert about its own completeness, and every one of them is
+  // minted here rather than copied.
+  if (source.overlapLimited === true) out.overlapLimited = true
   // Closed set, not free text: this string is the one field that reaches the
   // agent OUTSIDE the untrusted envelope (as a capture note), so the page must
   // not be able to author it. Anything unrecognised becomes the generic code.

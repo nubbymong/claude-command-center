@@ -699,7 +699,7 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
     ownerHeld.set(host, held + Math.min(issues.length, room))
   }
 
-  addOverlapIssues(ctx.candidates)
+  const overlapLimited = addOverlapIssues(ctx.candidates)
 
   // Joined after the measurement pass so the dedupe keeps the measured finding
   // when both fire on one node.
@@ -735,6 +735,7 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   if (ctx.truncated) out.truncated = true
   if (ctx.depthLimited) out.depthLimited = true
   if (ctx.hiddenContent) out.hiddenContent = true
+  if (overlapLimited) out.overlapLimited = true
   if (analysisError) out.analysisError = analysisError
   return out
 }

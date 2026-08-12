@@ -428,13 +428,18 @@ const MAX_OVERLAP_COMPARISONS_PER_NODE = 64
  * This is the bound on the loop itself, for the page that stacks every box at
  * y=0 and defeats the sweep break.
  *
- * Below the cap it changes nothing, so a mutation deleting it survives the
- * suite — recorded here rather than pinned by a test, because the only test
- * that could pin it would assert the MISS it causes, enshrining a limitation as
- * desired behaviour. Above the cap the miss is real: 512 decoy descendants in
- * one y-band followed by a genuine partner will hide that partner. That is the
- * residual of bounding the work at all, and 512 is eight times the comparison
- * budget it replaced as the starvable number.
+ * Above the cap the miss is real: 512 decoy descendants in one y-band followed
+ * by a genuine partner will hide that partner. That is the residual of bounding
+ * the work at all, and no number removes it — 512 is eight times the comparison
+ * budget it replaced as the starvable one, and still starvable.
+ *
+ * What is no longer true is that the miss is SILENT. Reaching this cap sets
+ * `overlapLimited`, so the node that ran out of budget is distinguishable from
+ * the node that has no overlapping neighbours — which is the difference between
+ * a bounded review and a review that reports success. That is also what let the
+ * cap be pinned by a test at last: the earlier note here recorded that the only
+ * available test would have to assert the MISS, enshrining a limitation as
+ * desired behaviour. The test asserts the DECLARATION instead.
  */
 const MAX_OVERLAP_SCAN_PER_NODE = 512
 
@@ -459,8 +464,14 @@ const MAX_OVERLAPS_PER_NODE = 20
  * on every dropdown, tooltip and sticky header.
  *
  * Mutates each node's `issues`, so it runs once over the whole walked set.
+ *
+ * Returns whether either per-node budget ended a scan early — that is, whether
+ * some node has neighbours in its band that were never compared to it. The
+ * caller turns that into `overlapLimited`. Nothing in the tree could carry it:
+ * a node's own `issuesDropped` declares a finding LOST, which reserves a wire
+ * slot, and nothing here is known to be lost.
  */
-export function addOverlapIssues(candidates: Candidate[]): void {
+export function addOverlapIssues(candidates: Candidate[]): boolean {
   const eligible = candidates.filter((c) => {
     if (c.srOnly || c.opacity < 0.05) return false
     if (c.node.box.width <= 0 || c.node.box.height <= 0) return false
@@ -472,6 +483,7 @@ export function addOverlapIssues(candidates: Candidate[]): void {
 
   // Sweep by vertical position: only boxes whose y-ranges meet can intersect.
   const sorted = eligible.slice().sort((a, b) => a.node.box.y - b.node.box.y)
+  let limited = false
 
   for (let i = 0; i < sorted.length; i++) {
     const a = sorted[i]
@@ -487,7 +499,14 @@ export function addOverlapIssues(candidates: Candidate[]): void {
       // The hard work bound, charged for every box LOOKED at. Separate from the
       // comparison budget below so that skipping a descendant is cheap but not
       // free — otherwise a page with every box at y=0 makes this quadratic.
-      if (++scanned > MAX_OVERLAP_SCAN_PER_NODE) break
+      // Both budget breaks say so. The condition that got here already proves
+      // the claim: this box is inside the band (the sweep break above let it
+      // through) and it is about to go unlooked-at. Whether it OVERLAPS is the
+      // unknown, and the flag does not claim to know.
+      if (++scanned > MAX_OVERLAP_SCAN_PER_NODE) {
+        limited = true
+        break
+      }
       // Containment BEFORE the counter. An ancestor and its descendant overlap
       // by definition and can never be a finding, so charging the budget for
       // one meant a page could spend it on boxes this rule was never going to
@@ -503,7 +522,10 @@ export function addOverlapIssues(candidates: Candidate[]): void {
       // `scanned` still bounds the loop itself, because `contains` is not free
       // (it walks the ancestor chain) and the y-band break alone does not bound
       // a page that stacks everything at y=0.
-      if (++comparisons > MAX_OVERLAP_COMPARISONS_PER_NODE) break
+      if (++comparisons > MAX_OVERLAP_COMPARISONS_PER_NODE) {
+        limited = true
+        break
+      }
       const area = intersectionArea(a.node.box, b.node.box)
       if (area <= 0) continue
       const smaller = Math.min(a.node.box.width * a.node.box.height, b.node.box.width * b.node.box.height)
@@ -533,4 +555,5 @@ export function addOverlapIssues(candidates: Candidate[]): void {
     }
     if (dropped > 0) a.node.issuesDropped = (a.node.issuesDropped ?? 0) + dropped
   }
+  return limited
 }

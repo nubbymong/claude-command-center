@@ -416,6 +416,27 @@ export interface CanvasSnapshotResult {
    * not reviewed and cannot be.
    */
   hiddenContent?: boolean
+  /**
+   * The overlap rule stopped looking at some node before it ran out of
+   * neighbours to look at.
+   *
+   * Two per-node budgets bound that rule, and both were silent: a node that
+   * exhausted one reported "no overlap" in exactly the same words as a node
+   * that genuinely has none. A page can reach either by accident — an icon grid
+   * or a long list inside one card puts hundreds of boxes in one horizontal
+   * band — and a hostile one reaches it on purpose with decoys.
+   *
+   * Its own bit rather than the node's `issuesDropped`, and the distinction is
+   * the one that bit a previous round: declaring a DROP reserves a slot on the
+   * wire for a finding that was lost, so declaring one that may not have
+   * happened evicts a real finding to make room for the announcement. Nothing
+   * here was necessarily lost. What is certainly true — and all this claims —
+   * is that boxes went uncompared.
+   *
+   * Answerable, like `depthLimited`: the budgets are per node and spent on the
+   * candidates around it, so a scoped capture spends fewer of them.
+   */
+  overlapLimited?: boolean
   /** Analysis was asked for but could not run (chunk blocked, axe threw). The
    *  snapshot is still returned; measurement issues are unaffected. */
   analysisError?: string

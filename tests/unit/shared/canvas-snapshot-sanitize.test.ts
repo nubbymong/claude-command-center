@@ -445,6 +445,27 @@ describe('hostile input', () => {
       }
     })
 
+    it('relays the frame’s overlap-limit signal, and only as a boolean', () => {
+      for (const [supplied, expected] of [
+        [true, true],
+        [false, undefined],
+        ['true', undefined],
+        [1, undefined],
+        [{}, undefined],
+      ] as const) {
+        const out = sanitizeSnapshotResult({
+          root: { ref: 'e0', role: 'x', name: '', box: {}, children: [] },
+          overlapLimited: supplied,
+        })
+        expect(out.overlapLimited, JSON.stringify(supplied)).toBe(expected)
+        // One rule stopped early. Nothing was dropped and nothing was left
+        // unwalked, so neither of those may be claimed on its back.
+        expect(out.truncated).toBeUndefined()
+        expect(out.depthLimited).toBeUndefined()
+        expect(out.hiddenContent).toBeUndefined()
+      }
+    })
+
     it('keeps the severe findings when it has to choose', () => {
       const issues = [
         ...Array.from({ length: 30 }, (_, i) => ({ rule: `minor-${i}`, severity: 'minor', measured: '', needed: '' })),

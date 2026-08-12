@@ -256,6 +256,28 @@ describe('output', () => {
     expect(notes).not.toContain('nests deeper')
   })
 
+  it('says when the overlap check ran out of comparisons', async () => {
+    // The narrowest of the limits: one rule stopped, the walk did not. Without
+    // the note a crowded region reports "no overlap" in the same words as a
+    // clean one.
+    const out = await runCanvasSnapshot({}, 'sess-mine', deps({
+      requestSnapshot: async () => result({ overlapLimited: true }),
+    }))
+    const notes = out.text.slice(0, out.text.indexOf('<untrusted-content'))
+    expect(notes).toContain('overlap check ran out of comparisons')
+    expect(notes).toContain('Scope to a data-ux-id')
+    expect(notes).not.toContain('node limit')
+    expect(notes).not.toContain('this tree is partial')
+    expect(notes).not.toContain('closed shadow root')
+  })
+
+  it('says nothing about overlap on an ordinary capture', async () => {
+    // A flag that fires on every page is noise, and noise in the notes is what
+    // makes an agent stop reading them.
+    const out = await runCanvasSnapshot({}, 'sess-mine', deps())
+    expect(out.text).not.toContain('overlap check ran out')
+  })
+
   it('json format is available but costs more than the text form', async () => {
     const text = await runCanvasSnapshot({}, 'sess-mine', deps())
     const json = await runCanvasSnapshot({ format: 'json' }, 'sess-mine', deps())

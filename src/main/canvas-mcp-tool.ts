@@ -99,6 +99,12 @@ function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined,
   if (result.hiddenContent) {
     notes.push('part of this page keeps its content in a closed shadow root; that content is painted but could not be read, and nothing in this tree describes it')
   }
+  // Narrower than the three above: one RULE stopped early, not the walk. Said
+  // anyway, because the alternative is a node reporting "no overlap" in the
+  // same words whether it looked at its neighbours or ran out of budget first.
+  if (result.overlapLimited) {
+    notes.push('the overlap check ran out of comparisons on a crowded part of this page; boxes there were not compared to each other. Scope to a data-ux-id in that region to check it')
+  }
   // A DIFFERENT limit from the one above, and worth saying so: the node cap
   // drops nodes at capture, this one stops the write-out. Reporting both as
   // "the node limit" is how a 600-row list quietly became 500 rows under a note

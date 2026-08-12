@@ -227,6 +227,60 @@ describe('a node with more findings than it can carry', () => {
     expect(dense?.issuesDropped).toBe(44)
   })
 
+  it('says so when the comparison budget ends a scan early', async () => {
+    // Both budgets used to stop silently: a node that ran out reported "no
+    // overlap" in exactly the same words as a node that has none. The flag
+    // claims only what is certainly true — boxes in this node's band were never
+    // compared to it — and not that any of them overlapped.
+    const pileup = Array.from(
+      { length: 200 },
+      (_, i) => `<div data-test-box="0,${i + 1},300,300">row ${i}</div>`,
+    ).join('')
+    document.body.innerHTML = `<div data-ux-id="dense" data-test-box="0,0,300,300">first</div>${pileup}`
+
+    const result = await captureSnapshot({ analysis: false })
+    expect(result.overlapLimited).toBe(true)
+  })
+
+  it('says so when the SCAN budget ends a scan early, which reports nothing at all', async () => {
+    // The other budget, and the one with no evidence of its own: descendants
+    // are skipped for free by the containment test, so a node can burn the
+    // whole scan on boxes it was never going to report and reach its genuine
+    // partner never — with no findings, no drop count, and until now no word
+    // said. 513 descendants, then a real overlap behind them.
+    const decoys = Array.from(
+      { length: 513 },
+      (_, i) => `<span data-test-box="0,${i},1,1">d</span>`,
+    ).join('')
+    document.body.innerHTML =
+      `<div data-ux-id="host" data-test-box="0,0,300,1000">host${decoys}</div>` +
+      `<div data-ux-id="partner" data-test-box="10,520,300,300">partner</div>`
+
+    const result = await captureSnapshot({ analysis: false })
+    expect(result.overlapLimited).toBe(true)
+  })
+
+  it('says nothing about an overlap limit on a page that fits', async () => {
+    // A flag every capture carries is a flag no agent reads. Two boxes that
+    // genuinely overlap, well inside both budgets: the finding is reported and
+    // no limit is claimed.
+    //
+    // The third box is the load-bearing one. The sweep's own break — "nothing
+    // below this node's bottom edge can meet it" — is EXACT and must not raise
+    // the flag, and with only the overlapping pair that break never executes:
+    // the loop runs off the end of the list instead, and a fixture that never
+    // reaches the line cannot say anything about it. This one sits far enough
+    // down the page to end both scans early.
+    document.body.innerHTML =
+      `<div data-ux-id="a" data-test-box="0,0,300,300">a</div>` +
+      `<div data-ux-id="b" data-test-box="10,10,300,300">b</div>` +
+      `<div data-ux-id="far" data-test-box="0,5000,300,300">far</div>`
+
+    const result = await captureSnapshot({ analysis: false })
+    expect(rulesOf(nodeFor(result, 'a'))).toContain('overlap')
+    expect(result.overlapLimited).toBeUndefined()
+  })
+
   it('leaves an ordinary node with no drop count at all', async () => {
     // The counter must not fire on a page that fits, or every snapshot arrives
     // claiming findings are missing and the agent re-scopes forever.
