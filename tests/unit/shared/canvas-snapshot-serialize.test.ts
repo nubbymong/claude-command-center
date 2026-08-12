@@ -211,6 +211,36 @@ describe('robustness', () => {
     expect(line[1]).toMatch(/^- (?:[a-z-]{1,64} )?\[ref=e1\] \[box=0,0,0,0\]$/)
   })
 
+  // Ten codepoints are `So` — not brackets, so the structural filter has no
+  // reason to touch them — and NFKC expands each into `〔…〕`, which are Ps/Pe.
+  // Strip structure first and normalise second and the cleaner MANUFACTURES the
+  // characters it exists to remove: the same shape as the sanitiser's
+  // newline→space rewrite once manufacturing the whitespace variant of the
+  // envelope terminator. The order is the defence.
+  const BRACKET_SMUGGLERS = ['\u{1F12A}', '\u{1F240}', '\u{1F241}', '\u{1F248}']
+
+  it.each(BRACKET_SMUGGLERS)('normalises before it strips structure (%s)', (smuggler) => {
+    // The premise, asserted rather than assumed: not a bracket, becomes two.
+    expect(/\p{Ps}|\p{Pe}/u.test(smuggler)).toBe(false)
+    expect(/\p{Ps}/u.test(smuggler.normalize('NFKC')[0])).toBe(true)
+
+    const s = snap(
+      node({
+        ref: 'e1',
+        role: 'button',
+        name: `Buy ${smuggler} now`,
+        uxId: `id${smuggler}`,
+        styles: { color: `rgb${smuggler}` },
+        issues: [{ rule: `rule${smuggler}`, severity: 'serious', measured: smuggler, needed: smuggler }],
+      }),
+    )
+    const text = serializeSnapshot(s).text
+    // U+3014/U+3015 are the brackets NFKC produces. Checking for THEM rather
+    // than for any Ps/Pe, because the format's own `[` and `]` are Ps/Pe too.
+    expect(text).not.toContain('〔')
+    expect(text).not.toContain('〕')
+  })
+
   it('json format returns the raw snapshot', () => {
     const s = snap(node({ ref: 'e0', role: 'button', name: 'Save', box: { x: 1, y: 2, width: 3, height: 4 } }))
     expect(JSON.parse(serializeSnapshot(s, { format: 'json' }).text)).toEqual(s)

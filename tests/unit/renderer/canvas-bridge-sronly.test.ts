@@ -66,6 +66,41 @@ describe('sr-only suppression (HARD P2 requirement)', () => {
     expect(rules(hidden)).not.toContain('color-contrast')
   })
 
+  it('does NOT accept a full-size positioned overflow-hidden box', async () => {
+    // The size bound is the whole difference between "the 1x1 clipping box every
+    // sr-only recipe uses" and "any positioned panel with `overflow: hidden`" —
+    // which is a card, a modal, a dropdown, most of a design system. Without it
+    // a page suppresses every finding under any such panel with two ordinary
+    // CSS properties.
+    document.body.innerHTML = `
+      <div data-test-box="0,0,400,300" style="position: absolute; overflow: hidden">
+        <a href="#main" data-ux-id="skip" data-test-box="0,0,1,1"
+           style="display: block; color: rgb(200,200,200); background-color: rgb(255,255,255); font-size: 12px">Skip</a>
+      </div>`
+    const inPanel = flatten((await captureSnapshot({ analysis: false })).root).find((n) => n.uxId === 'skip')
+    expect(inPanel?.state?.srOnly).toBeUndefined()
+    expect(rules(inPanel)).toContain('target-size')
+    expect(rules(inPanel)).toContain('color-contrast')
+  })
+
+  it('finds the pattern on a WRAPPER, not only on the element itself', async () => {
+    // The sr-only recipe normally sits on a wrapper and the text is a couple of
+    // elements down — `<div class="sr-only"><span><a>…</a></span></div>` is the
+    // usual shape. Checking only the element itself reports every such label as
+    // a 1px target with unreadable contrast, which is where the P0 run-2 false
+    // positives came from.
+    document.body.innerHTML = `
+      <div data-test-box="0,0,1,1" style="position: absolute; clip: rect(1px, 1px, 1px, 1px)">
+        <span data-test-box="0,0,1,1">
+          <a href="#main" data-ux-id="skip" data-test-box="0,0,1,1"
+             style="display: block; color: rgb(200,200,200); background-color: rgb(255,255,255); font-size: 12px">Skip</a>
+        </span>
+      </div>`
+    const nested = flatten((await captureSnapshot({ analysis: false })).root).find((n) => n.uxId === 'skip')
+    expect(nested?.state?.srOnly).toBe(true)
+    expect(rules(nested)).not.toContain('target-size')
+  })
+
   it('does NOT accept `clip` without positioning — that hides nothing', async () => {
     // CSS `clip` only applies to absolutely positioned elements, so on a static
     // box it is a visual no-op that getComputedStyle still reports. Accepting it

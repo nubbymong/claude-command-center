@@ -49,7 +49,14 @@ interface WalkContext {
 type AnalysisFailure = 'load-failed' | 'run-failed'
 
 function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | SnapshotNode[] | null {
-  if (depth > MAX_DEPTH) return null
+  if (depth > MAX_DEPTH) {
+    // Reported, unlike the node cap beside it, which always was. The depth cap
+    // drops a whole SUBTREE and it drops it here, inside the page — so the
+    // sanitiser downstream cannot know it happened and the agent read a tree
+    // that simply stopped as a page that ends there.
+    ctx.truncated = true
+    return null
+  }
   if (isSkipped(el)) return null
 
   // Refs are allocated on the way DOWN so they run in document order: the agent

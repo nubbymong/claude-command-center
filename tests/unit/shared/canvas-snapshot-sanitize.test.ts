@@ -918,6 +918,29 @@ describe('the cost of enforcing the caps', () => {
     expect(emoji.root.name).toBe('ok \u{1f600}')
   })
 
+  it('does not SPLIT a surrogate pair when it clips', () => {
+    // The cut lands mid-pair for any string of astral characters: 197 is odd,
+    // so the last kept unit is a high surrogate and its partner is on the other
+    // side of the knife. Nothing downstream can repair it — `scrub` already ran
+    // — so the field reaches the agent ending in U+FFFD, a character the page
+    // never wrote.
+    const out = sanitizeSnapshotResult({
+      root: { role: 'document', name: '\u{1f600}'.repeat(300), box: {}, children: [] },
+    })
+    const name = out.root.name
+    expect(name.length).toBeLessThanOrEqual(200)
+    expect(name.endsWith('…')).toBe(true)
+    const lone = [...name].filter((ch) => {
+      const cp = ch.codePointAt(0) as number
+      return cp >= 0xd800 && cp <= 0xdfff
+    })
+    expect(lone).toEqual([])
+    // The control: the cut really did land mid-pair, so the back-off had
+    // something to do. Without it the 197th unit is a high surrogate.
+    const cut = '\u{1f600}'.repeat(300).charCodeAt(196)
+    expect(cut >= 0xd800 && cut <= 0xdbff).toBe(true)
+  })
+
   it('still fills the cap when NFKC makes the text SHORTER', () => {
     // The bounded prefix is grown, not fixed, because composition contracts:
     // Hangul L+V+T collapses three code units into one syllable, and NFKC folds

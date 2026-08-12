@@ -189,6 +189,58 @@ describe('a node with more findings than it can carry', () => {
     expect(dup?.issuesDropped).toBeUndefined()
   })
 
+  it('keeps two DIFFERENT rules that measured the same thing in the same place', async () => {
+    // The dedupe key has four terms and each one has to be there. Dropping
+    // `rule` from it collapses a missing name into a contrast defect whenever
+    // both happen to carry the same (usually empty) measurement.
+    document.body.innerHTML = `<main data-ux-id="two" data-test-box="0,0,900,400">
+      <div class="w" data-test-box="10,20,80,24"><span id="t">text</span></div></main>`
+    violations = [violation('button-name', '#t', 'serious'), violation('link-name', '#t', 'serious')]
+
+    const rules = rulesOf(nodeFor(await captureSnapshot({ analysis: true }), 'two'))
+    expect(rules).toContain('button-name')
+    expect(rules).toContain('link-name')
+  })
+
+  it('keeps two findings that differ only in what the rule NEEDED', async () => {
+    // Same rule, same measured ratio, same place, different requirement —
+    // which is what large text versus small text on the same colours looks
+    // like. Dropping `needed` from the key reports one of them.
+    document.body.innerHTML = `<main data-ux-id="needs" data-test-box="0,0,900,400">
+      <div class="w" data-test-box="10,20,80,24"><span id="t">text</span></div></main>`
+    const at = (needed: string): AxeViolation => ({
+      id: 'color-contrast',
+      impact: 'serious',
+      nodes: [
+        {
+          element: document.querySelector('#t') as Element,
+          impact: 'serious',
+          any: [{ data: { contrastRatio: 3.2, expectedContrastRatio: needed } }],
+        },
+      ],
+    })
+    violations = [at('4.5:1'), at('3:1')]
+
+    const issues = nodeFor(await captureSnapshot({ analysis: true }), 'needs')?.issues ?? []
+    expect(issues.filter((i) => i.rule === 'color-contrast').map((i) => i.needed).sort()).toEqual(['3:1', '4.5:1'])
+  })
+
+  it('does not treat a finding ON the node as the same as one on a descendant', async () => {
+    // `at` is absent when the finding is on the node itself and present when it
+    // is not, so a dedupe that reads two different boxes as equal — including
+    // "no box" versus "a box" — merges a node's own defect with its child's and
+    // reports one. The absence is information.
+    document.body.innerHTML = `<main data-ux-id="self" data-test-box="0,0,900,400">
+      <div class="w" data-test-box="10,20,80,24"><span id="child">text</span></div></main>`
+    violations = [violation('color-contrast', '[data-ux-id="self"]', 'serious'), violation('color-contrast', '#child', 'serious')]
+
+    const issues = (nodeFor(await captureSnapshot({ analysis: true }), 'self')?.issues ?? []).filter(
+      (i) => i.rule === 'color-contrast',
+    )
+    expect(issues).toHaveLength(2)
+    expect(issues.filter((i) => i.at === undefined)).toHaveLength(1)
+  })
+
   it('does not collapse a critical into an identical moderate', async () => {
     // Same rule, same measurement, same place, different impact. The dedupe key
     // omitted severity, so whichever arrived first won — and axe's order is not
