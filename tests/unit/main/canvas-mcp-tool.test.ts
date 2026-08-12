@@ -467,11 +467,25 @@ describe('canvas_render', () => {
     expect(out.text).toMatch(/too large/i)
     expect(reached).toEqual([])
 
-    // Multi-byte: `length` is chars, the cap is bytes. A string well under the
-    // char cap can still be over the byte cap, and it is the bytes that hit disk.
-    const twoByte = 'é'.repeat(1024 * 1024 + 1) // 2 bytes each in UTF-8
-    const mb = await runCanvasRender({ mode: 'design', html: twoByte }, 'sess-mine', deps({ renderVersion: () => { throw new Error('should not reach') } }))
+    // Multi-byte: `length` is chars, the cap is bytes, and it is the bytes that
+    // hit disk. `'é'` is 2 bytes in UTF-8, so this is 2 MB+2 bytes but only
+    // ~1 MB chars — under a char cap, over the byte cap. The dep RECORDS rather
+    // than throws, so this actually discriminates: a `.length`-for-`byteLength`
+    // downgrade would let it reach the store, and this catches that.
+    const twoByte = 'é'.repeat(1024 * 1024 + 1)
+    const mbReached: unknown[] = []
+    const mb = await runCanvasRender(
+      { mode: 'design', html: twoByte },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          mbReached.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v3' }
+        },
+      }),
+    )
     expect(mb.isError).toBe(true)
+    expect(mbReached).toEqual([])
 
     // And a document just under the cap is rendered.
     const ok = await runCanvasRender({ mode: 'design', html: 'x'.repeat(1024) }, 'sess-mine', deps())

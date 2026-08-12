@@ -341,10 +341,18 @@ export function setActiveVersion(sessionId: string, versionId: string): CanvasSt
   const record = getRecordForSession(sessionId)
   if (!record) throw new Error('no canvas for session')
   if (!record.versions.some((v) => v.id === versionId)) throw new Error('unknown version')
-  record.activeVersionId = versionId
-  persist(record)
-  emitChanged(record)
-  return toState(record)
+  // Same persist-before-commit order as renderVersion, for the same reason: a
+  // persist throw must not leave the in-memory active version ahead of disk.
+  // This one can only ever toggle between two ALREADY-servable versions, so the
+  // fail-open here was benign (self-healing on restart) rather than the
+  // serve-a-rejected-document hole renderVersion had — but the two writers
+  // should not disagree about when a change is durable (adversarial review,
+  // 2026-08-12, second pass).
+  const next: CanvasRecord = { ...record, activeVersionId: versionId }
+  persist(next)
+  canvases.set(next.canvasId, next)
+  emitChanged(next)
+  return toState(next)
 }
 
 /** Resolve what the ccc-ux:// protocol may serve for a canvas/version pair.

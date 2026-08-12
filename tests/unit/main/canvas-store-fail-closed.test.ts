@@ -66,4 +66,21 @@ describe('a render whose persist throws leaves nothing behind', () => {
     expect(again.versionId).toBe('v2')
     expect(store.getServableVersion(canvasId, 'v2')).not.toBeNull()
   })
+
+  it('does not advance the active version when setActiveVersion cannot persist', () => {
+    // The same fail-closed property on the other writer. It only ever toggles
+    // between already-servable versions, so the fail-open was benign — but the
+    // two writers must agree about when a change is durable.
+    const { canvasId } = store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>one</p>' })
+    store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>two</p>' })
+    expect(store.getCanvasStateForSession(SID)?.activeVersionId).toBe('v2')
+
+    const jsonPath = path.join(getResourcesDirectory(), 'canvas', canvasId, 'canvas.json')
+    fs.rmSync(jsonPath, { force: true })
+    fs.mkdirSync(jsonPath)
+
+    expect(() => store.setActiveVersion(SID, 'v1')).toThrow()
+    // In memory, the active version did not move to v1 behind a failed write.
+    expect(store.getCanvasStateForSession(SID)?.activeVersionId).toBe('v2')
+  })
 })
