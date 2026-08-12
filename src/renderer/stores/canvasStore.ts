@@ -9,12 +9,20 @@ import type { CanvasState, CanvasVersion } from '../../shared/canvas'
 
 export type CanvasInteractionMode = 'draw' | 'browse'
 
+/** What the pane shows while NOTHING has been rendered: the Agent Canvas
+ *  landing (what this is + how to start), or the classic sketchpad. The
+ *  landing is the default — the old Draw behaviour is one click away, not
+ *  the first thing a user meets (owner feedback 2026-08-13: the empty pane
+ *  was indistinguishable from old Draw and taught nothing). */
+export type CanvasEmptyView = 'intro' | 'sketchpad'
+
 export interface CanvasSessionState {
   canvasId: string | null
   versions: CanvasVersion[]
   activeVersionId: string | null
   /** Browse first: land on the content, explore, then flip to draw. */
   interactionMode: CanvasInteractionMode
+  emptyView: CanvasEmptyView
   loaded: boolean
 }
 
@@ -22,6 +30,7 @@ interface CanvasStoreState {
   bySessionId: Record<string, CanvasSessionState>
   refresh: (sessionId: string) => Promise<void>
   setInteractionMode: (sessionId: string, mode: CanvasInteractionMode) => void
+  setEmptyView: (sessionId: string, view: CanvasEmptyView) => void
   setActiveVersion: (sessionId: string, versionId: string) => Promise<void>
   reset: () => void
 }
@@ -31,6 +40,7 @@ const EMPTY: CanvasSessionState = {
   versions: [],
   activeVersionId: null,
   interactionMode: 'browse',
+  emptyView: 'intro',
   loaded: false,
 }
 
@@ -65,6 +75,15 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
       bySessionId: {
         ...s.bySessionId,
         [sessionId]: { ...(s.bySessionId[sessionId] ?? EMPTY), interactionMode: mode },
+      },
+    }))
+  },
+
+  setEmptyView: (sessionId: string, view: CanvasEmptyView) => {
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...(s.bySessionId[sessionId] ?? EMPTY), emptyView: view },
       },
     }))
   },

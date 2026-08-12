@@ -50,6 +50,9 @@ export interface CanvasReviewSessionState {
   /** Transient highlight driven from the panel (hovered checklist entry):
    *  where the stage should point right now. */
   panelHighlight: { rect: Rect; kind: 'anchored' | 'ghost' } | null
+  /** The "how to review" primer in the notes panel — shown until the user
+   *  dismisses it or has written a first note. Renderer-session state only. */
+  helpDismissed: boolean
 }
 
 const EMPTY: CanvasReviewSessionState = {
@@ -64,6 +67,7 @@ const EMPTY: CanvasReviewSessionState = {
   editingAnnotationId: null,
   resolution: null,
   panelHighlight: null,
+  helpDismissed: false,
 }
 
 /** The label the focus chip and the notes panel show for one chain entry —
@@ -99,6 +103,7 @@ interface CanvasReviewStoreState {
   setEditingAnnotation: (sessionId: string, annotationId: string | null) => void
   setResolution: (sessionId: string, pass: ResolutionPass | null) => void
   setPanelHighlight: (sessionId: string, highlight: CanvasReviewSessionState['panelHighlight']) => void
+  dismissHelp: (sessionId: string) => void
   upsertNote: (sessionId: string, draft: CanvasAnnotationDraft) => Promise<string | null>
   deleteNote: (sessionId: string, annotationId: string) => Promise<void>
   submitReview: (sessionId: string, reviewId: string, sketches: CanvasSketchExport[]) => Promise<Review | null>
@@ -198,6 +203,10 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
 
   setPanelHighlight: (sessionId, highlight) => {
     set((s) => patch(s, sessionId, { panelHighlight: highlight }))
+  },
+
+  dismissHelp: (sessionId) => {
+    set((s) => patch(s, sessionId, { helpDismissed: true }))
   },
 
   upsertNote: async (sessionId, draft) => {

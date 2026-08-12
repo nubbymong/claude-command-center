@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Excalidraw } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
-import ExcalidrawPane from './ExcalidrawPane'
+import CanvasEmptyState from './CanvasEmptyState'
 import CanvasNotesPanel from './CanvasNotesPanel'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
@@ -45,6 +45,7 @@ interface Props {
 export default function AgentCanvasPane({ sessionId }: Props) {
   const canvasState = useCanvasStore((s) => s.bySessionId[sessionId])
   const refresh = useCanvasStore((s) => s.refresh)
+  const togglePane = useExcalidrawStore((s) => s.togglePane)
 
   useEffect(() => {
     void refresh(sessionId)
@@ -55,9 +56,11 @@ export default function AgentCanvasPane({ sessionId }: Props) {
     [canvasState],
   )
 
-  // Empty state = the classic sketchpad, wholesale (spec D2).
+  // Empty state: the Agent Canvas landing — what this surface is and how to
+  // start the loop — with the classic sketchpad one click away (spec D2:
+  // old Draw behaviour is preserved; it is just no longer the greeting).
   if (!canvasState?.canvasId || !activeVersion) {
-    return <ExcalidrawPane sessionId={sessionId} />
+    return <CanvasEmptyState sessionId={sessionId} onClose={() => togglePane(sessionId)} />
   }
   return (
     <CanvasSurface

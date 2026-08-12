@@ -66,6 +66,8 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   const expandFocus = useCanvasReviewStore((s) => s.expandFocus)
   const setEditing = useCanvasReviewStore((s) => s.setEditingAnnotation)
   const setPanelHighlight = useCanvasReviewStore((s) => s.setPanelHighlight)
+  const dismissHelp = useCanvasReviewStore((s) => s.dismissHelp)
+  const helpDismissed = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.helpDismissed ?? false)
 
   const [noteText, setNoteText] = useState('')
   const [attachedSketch, setAttachedSketch] = useState<{ excalidrawElementIds: string[]; bboxPage: Rect } | null>(null)
@@ -239,6 +241,28 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0">
+        {/* ── First-use primer — until the first note exists or it's dismissed ── */}
+        {!helpDismissed && draftNotes.length === 0 && (state?.reviews.length ?? 0) === 0 && (
+          <div className="mx-3 mt-2 mb-1 rounded border border-mauve/40 bg-mauve/5 px-3 py-2.5">
+            <div className="flex items-center">
+              <span className="text-[11px] font-medium text-mauve uppercase tracking-wide">How to review</span>
+              <button
+                onClick={() => dismissHelp(sessionId)}
+                className="ml-auto text-[11px] text-overlay1 hover:text-text"
+                title="Hide this"
+              >
+                ✕
+              </button>
+            </div>
+            <ul className="mt-1.5 flex flex-col gap-1 text-[11px] text-subtext0 leading-relaxed">
+              <li>In <span className="text-text">Browse</span>, click anything on the page to select it — <span className="text-text">↑</span> selects its parent, <span className="text-text">Esc</span> clears.</li>
+              <li><span className="text-text">Region</span> lets you drag a box over an area instead.</li>
+              <li>Sketch in <span className="text-text">Draw</span>, select the strokes, then attach them to a note here.</li>
+              <li>Write notes below, then <span className="text-text">Submit review</span> — your agent picks them up and revises.</li>
+            </ul>
+          </div>
+        )}
+
         {/* ── Resolution checklist (spec §6 step 2) ── */}
         {openNotes.length > 0 && (
           <div className="border-b border-surface0">
