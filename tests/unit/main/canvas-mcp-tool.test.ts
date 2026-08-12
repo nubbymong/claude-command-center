@@ -104,6 +104,32 @@ describe('preconditions', () => {
     expect(out.text).toContain('v1, v2')
   })
 
+  it('refuses a versionId that is not a string, rather than ignoring it', async () => {
+    // Fails CLOSED on shape, the same way canvasId does. Anything that is not a
+    // version id used to fall through to "use the active version", silently
+    // answering a question the model did not ask — and a boxed String or a
+    // one-element array is what a confused caller actually sends.
+    for (const versionId of [1, ['v1'], { id: 'v1' }, true, new String('v1')]) {
+      const out = await runCanvasSnapshot({ versionId }, 'sess-mine', deps())
+      expect(out.isError, `versionId=${JSON.stringify(versionId)}`).toBe(true)
+      expect(out.text).toContain('not a version id')
+    }
+  })
+
+  it('does not let a store read escape into the MCP SDK', async () => {
+    // Reading the store touches the filesystem. A throw here left this function
+    // entirely, and the SDK relays the raw message — including a path — to the
+    // model, unwrapped and outside the untrusted envelope.
+    const out = await runCanvasSnapshot({}, 'sess-mine', deps({
+      getCanvasState: () => {
+        throw new Error('EACCES: permission denied, open /Users/someone/canvas/state.json')
+      },
+    }))
+    expect(out.isError).toBe(true)
+    expect(out.text).not.toContain('EACCES')
+    expect(out.text).not.toContain('/Users/someone')
+  })
+
   it('defaults to the version on screen', async () => {
     const asked: string[] = []
     await runCanvasSnapshot({}, 'sess-mine', deps({

@@ -66,6 +66,28 @@ describe('correlation', () => {
     expect(result.root.name).not.toContain('\n')
   })
 
+  it('decides for itself whether the capture was scoped', async () => {
+    // Styles are the dominant token cost and ride only on scoped nodes. The
+    // bridge enforced that — i.e. code inside the page, which a hostile
+    // document replaces. This side knows the honest answer because it made the
+    // request, so it is the side that must decide, and it must fail closed.
+    const styles = { color: 'rgb(1, 2, 3)', margin: '4px' }
+    const reply = (requestId: string) =>
+      okReply(requestId, {
+        viewport: { width: 100, height: 100, dpr: 1 },
+        root: { ref: 'e0', role: 'document', name: '', box: {}, styles, children: [] },
+      })
+
+    const unscoped = requestCanvasSnapshot({ ...REQUEST, options: {} })
+    resolveCanvasSnapshot(reply(sent[0].requestId))
+    expect((await unscoped).root.styles).toBeUndefined()
+
+    armSender()
+    const scoped = requestCanvasSnapshot({ ...REQUEST, options: { scope: ['card-1'] } })
+    resolveCanvasSnapshot(reply(sent[0].requestId))
+    expect((await scoped).root.styles).toEqual(styles)
+  })
+
   it('rejects with the frame-supplied reason on an error reply', async () => {
     const pending = requestCanvasSnapshot(REQUEST)
     resolveCanvasSnapshot({ requestId: sent[0].requestId, ok: false, error: 'no canvas open' })

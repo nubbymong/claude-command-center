@@ -77,6 +77,59 @@ describe('axe actually runs and its results actually land', () => {
   })
 })
 
+// axe publishes itself onto `window`, and that global IS the object the analysis
+// module calls. The page shares a realm with the bridge and cannot be locked out
+// of it — what these pin is that the ONE-LINE versions do not work, and that
+// nothing silently reports a clean pass when a page has interfered.
+describe('a page cannot quietly switch the analysis off', () => {
+  const axeGlobal = () => (window as unknown as { axe?: Record<string, unknown> }).axe
+
+  // Rule configuration lives in axe's own state, so capturing the function
+  // references does not protect the rule set — only resetting it does.
+  //
+  // Note which attack is NOT here: `{ rules: [{ id, enabled: false }] }` fails
+  // whether or not the reset happens, because the run pins its rule set with
+  // `runOnly`. A test built on that would have asserted a property that holds
+  // for an unrelated reason and reported the reset as guarded when it was not.
+  // These two do work, and are the reason the reset exists.
+  it.each([
+    [
+      'rewrites the rule to use an always-passing check',
+      {
+        checks: [{ id: 'always-ok', evaluate: 'function () { return true; }' }],
+        rules: [{ id: 'link-name', any: ['always-ok'], all: [], none: [] }],
+      },
+    ],
+    ['narrows the rule until it matches nothing', { rules: [{ id: 'link-name', selector: '#nothing-matches' }] }],
+  ])('still reports the finding when the page %s', async (_label, config) => {
+    document.body.innerHTML = `<a data-ux-id="bare" href="#x" data-test-box="0,0,40,40"></a>`
+    // Warm the loader so `window.axe` exists to be tampered with.
+    await captureSnapshot({ analysis: true })
+    ;(axeGlobal()!.configure as (o: unknown) => void)(config)
+
+    const result = await captureSnapshot({ analysis: true })
+    expect(result.analysisError).toBeUndefined()
+    expect(rules(nodeFor(result, 'bare'))).toContain('link-name')
+  })
+
+  it('keeps using the real run() after the page replaces window.axe.run', async () => {
+    // The one-liner: `window.axe.run = async () => ({ violations: [] })`
+    // silences every rule, nothing throws, no analysisError is raised, and the
+    // agent is told the pass ran clean.
+    document.body.innerHTML = `<a data-ux-id="bare" href="#x" data-test-box="0,0,40,40"></a>`
+    await captureSnapshot({ analysis: true })
+    const real = axeGlobal()!.run
+    axeGlobal()!.run = async () => ({ violations: [], incomplete: [], passes: [] })
+    try {
+      const result = await captureSnapshot({ analysis: true })
+      expect(result.analysisError).toBeUndefined()
+      expect(rules(nodeFor(result, 'bare'))).toContain('link-name')
+    } finally {
+      axeGlobal()!.run = real
+    }
+  })
+})
+
 describe('contrast is covered by SOMEBODY on the analysis path', () => {
   // The regression: axe returns color-contrast as `incomplete` — neither pass
   // nor fail — whenever the foreground has alpha, the text overlaps, the content

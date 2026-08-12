@@ -341,6 +341,46 @@ describe('the cost of enforcing the caps', () => {
     expect(result.root.children[0].ref).not.toBe(result.root.children[1].ref)
   })
 
+  it('pays once for a styles object the page referenced many times', () => {
+    // The same identity asymmetry as the node memo, one field over: one styles
+    // object attached to every node costs the page nothing on the wire and used
+    // to cost a full 24-entry scan per node.
+    const styles = Object.fromEntries(Array.from({ length: 24 }, (_, i) => [`margin-${'a'.repeat(i + 1)}`, `${i}px`]))
+    const shared = { role: 'button', name: 'Save', styles, box: {}, children: [] }
+    const { result, calls } = countNormalized(() =>
+      sanitizeSnapshotResult(
+        { root: { role: 'document', name: '', box: {}, children: Array.from({ length: 1000 }, () => shared) } },
+        undefined,
+        { scoped: true },
+      ),
+    )
+    expect(calls).toBeLessThanOrEqual(100)
+    // The memo must not stop the styles being EMITTED on every node.
+    expect(Object.keys(result.root.children[0].styles ?? {})).toHaveLength(24)
+    expect(Object.keys(result.root.children[999].styles ?? {})).toHaveLength(24)
+  })
+
+  it('bounds the style keys it EXAMINES, not just the ones it keeps', () => {
+    // Rejected keys used to be free — they never advanced the count, so a map
+    // of junk names was walked in full for every node. The page pays for the
+    // names once; we paid per node, and 0.3 MB of them froze the UI thread for
+    // 30 seconds, longer than either capture timeout.
+    const junk: Record<string, string> = {}
+    for (let i = 0; i < 50_000; i++) junk[`Not A Property ${i}`] = 'x'
+    junk.color = 'rgb(1, 2, 3)'
+    const { result, calls } = countNormalized(() =>
+      sanitizeSnapshotResult({ root: { role: 'document', name: '', styles: junk, box: {}, children: [] } }, undefined, {
+        scoped: true,
+      }),
+    )
+    // One normalise per key examined. The bound is a multiple of the entry cap,
+    // not of what the page supplied.
+    expect(calls).toBeLessThanOrEqual(24 * 8 + 10)
+    // And the price of the bound: a real property sitting past it is lost. That
+    // is the trade being made, so it is written down rather than discovered.
+    expect(result.root.styles).toBeUndefined()
+  })
+
   it('keeps only the characters it emits, not a view onto what it normalised', () => {
     // V8 answers `slice()` with a view that keeps the whole parent alive. 2,000
     // fields each holding a view onto their own normalised 36,000-character
@@ -499,14 +539,18 @@ describe('the cost of enforcing the caps', () => {
     const biggestOwn = (n: SnapshotNode): number =>
       n.children.reduce((most, c) => Math.max(most, biggestOwn(c)), ownSize(n))
 
-    for (const [scale, maxChars, rounds] of [
-      [12, 100_000, 60],
-      [64, 100_000, 60],
-      [200, 20_000, 60],
+    // `candidates` is sized just above what the ceiling admits: generating more
+    // only burns time, and this runs alongside 470 other files. What keeps the
+    // test sharp is how MANY nodes fit under the ceiling, not how many are
+    // offered — an undercharged field is paid on each one that fits.
+    for (const [scale, maxChars, candidates, rounds] of [
+      [12, 100_000, 800, 60],
+      [64, 100_000, 300, 60],
+      [200, 100_000, 120, 60],
     ] as const) {
       const limits = { ...DEFAULT_SNAPSHOT_LIMITS, maxChars }
       for (let round = 0; round < rounds; round++) {
-        const children = Array.from({ length: 4000 }, () => randomNode(scale))
+        const children = Array.from({ length: candidates }, () => randomNode(scale))
         const out = sanitizeSnapshotResult({ root: { role: 'document', name: '', box: {}, children } }, limits, {
           scoped: true,
         })
