@@ -123,6 +123,203 @@ describe('text in a container that gets no node is still measured', () => {
   })
 })
 
+describe('text that paints outside the box its element reports', () => {
+  // `isVisible` asks the ELEMENT for a border box, and text can be painted
+  // without one. Both branches of the walk were gated on it, so this text was
+  // refused a node for want of a box and then refused a measurement for the
+  // same reason — with `truncated`, `depthLimited` and `hiddenContent` all
+  // unset, so the capture reported success over text it never looked at.
+
+  it('measures a display:contents wrapper, which has no box at all', async () => {
+    // A React fragment or a grid pass-through. The wrapper generates no box;
+    // its text is laid out in the parent's flow and is fully on screen.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="${GREY}; display: contents" data-test-rects="none" data-test-text-box="10,20,120,18">Low contrast<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    const finding = (page?.issues ?? []).find((i) => i.rule === 'color-contrast')
+    expect(finding).toBeDefined()
+    // The box of the TEXT, not of the element that does not have one.
+    expect(finding?.at).toEqual({ x: 10, y: 20, width: 120, height: 18 })
+  })
+
+  it('measures a zero-height box whose text spills out of it', async () => {
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="${GREY}; height: 0; overflow: visible" data-test-box="10,20,300,0" data-test-text-box="10,20,120,18">Low contrast<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    expect((page?.issues ?? []).map((i) => i.rule)).toContain('color-contrast')
+  })
+
+  it('reports nothing when that same text is readable (the control)', async () => {
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="color: rgb(0,0,0); background-color: rgb(255,255,255); font-size: 14px; display: contents" data-test-rects="none" data-test-text-box="10,20,120,18">Fine<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    expect((page?.issues ?? []).map((i) => i.rule)).not.toContain('color-contrast')
+  })
+
+  it('measures a MEANINGFUL container that has no box, which both branches dropped', async () => {
+    // `<p>` earns a node, so it took the emitted branch — and failed it for
+    // want of a box, with the owner branch refusing it for being meaningful.
+    // Two gates, one silent loss.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <p style="${GREY}; display: contents" data-test-rects="none" data-test-text-box="10,20,120,18">Low contrast</p>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    expect((page?.issues ?? []).map((i) => i.rule)).toContain('color-contrast')
+  })
+
+  it('says NOTHING about a zero-height box that clips — the accordion idiom', async () => {
+    // `height: 0; overflow: hidden` is how a collapsed panel is written, and it
+    // is empty on screen. Reporting contrast here would invent a finding on
+    // content a browser does not paint, on one of the commonest idioms there
+    // is — the exact false-positive class this feature is gated on.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="${GREY}; height: 0; overflow: hidden" data-test-box="10,20,300,0" data-test-text-box="10,20,120,18">Low contrast<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    expect((page?.issues ?? []).map((i) => i.rule)).not.toContain('color-contrast')
+  })
+
+  it('says NOTHING about display:none, which also reports no box', async () => {
+    // `display: none` and `display: contents` are indistinguishable by
+    // `getBoundingClientRect` — both are zeros — and the difference between
+    // them is the whole gate.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="${GREY}; display: none" data-test-rects="none" data-test-text-box="10,20,120,18">Low contrast<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    expect((page?.issues ?? []).map((i) => i.rule)).not.toContain('color-contrast')
+  })
+
+  it('says NOTHING about a box-less element that is visibility:hidden', async () => {
+    // The one shape that keeps its layout — so its text MEASURES as painted —
+    // and paints nothing.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="${GREY}; display: contents; visibility: hidden" data-test-rects="none" data-test-text-box="10,20,120,18">Low contrast<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    expect((page?.issues ?? []).map((i) => i.rule)).not.toContain('color-contrast')
+  })
+
+  it('says NOTHING when the text itself measures as empty', async () => {
+    // No `data-test-text-box`, so every run comes back 0×0. A union of nothing
+    // is not a box, and inventing one would put `at` on the page origin.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="${GREY}; display: contents" data-test-rects="none">Low contrast<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    expect((page?.issues ?? []).map((i) => i.rule)).not.toContain('color-contrast')
+  })
+
+  it('says NOTHING about a zero-height SCROLL container', async () => {
+    // `overflow: auto` on a collapsed box is scrollable, and none of it is on
+    // screen. It is not spelled `hidden`, which is the only word the first
+    // version of this guard looked for.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="${GREY}; height: 0; overflow: auto" data-test-box="10,20,300,0" data-test-text-box="10,20,120,18">Low contrast<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    expect((page?.issues ?? []).map((i) => i.rule)).not.toContain('color-contrast')
+  })
+
+  it('says NOTHING about a zero-height box that is visibility:hidden', async () => {
+    // The zero-size branch needs the same `visibility` gate the box-less one
+    // does: the element spills, so the text measures — and paints nothing.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="${GREY}; height: 0; overflow: visible; visibility: hidden" data-test-box="10,20,300,0" data-test-text-box="10,20,120,18">Low contrast<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    expect((page?.issues ?? []).map((i) => i.rule)).not.toContain('color-contrast')
+  })
+
+  it('bounds how many text runs of one element it measures', async () => {
+    // A page is free to give one element a hundred thousand text-node children.
+    // `directText` walks them for a string concat; measuring them costs a layout
+    // query each, so the union is taken over the first few. Here the 40th run is
+    // far away from the 1st: with the bound the union is the 1st alone, without
+    // it the union stretches to cover both.
+    const runs = Array.from({ length: 40 }, (_, i) => `run${i}<b></b>`).join('')
+    const boxes = Array.from({ length: 40 }, (_, i) => (i === 39 ? '800,300,60,18' : '10,20,120,18')).join(';')
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div style="${GREY}; display: contents" data-test-rects="none" data-test-text-box="${boxes}">${runs}</div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    const finding = (page?.issues ?? []).find((i) => i.rule === 'color-contrast')
+    expect(finding?.at).toEqual({ x: 10, y: 20, width: 120, height: 18 })
+  })
+
+  it('does not stretch the box across whitespace between runs', async () => {
+    // Most text nodes on a formatted page are the whitespace between elements.
+    // They paint nothing worth a finding, and measuring them drags `at` out to
+    // cover the gaps — here, a trailing blank run parked far off to the side.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400"><div style="${GREY}; display: contents" data-test-rects="none" data-test-text-box="10,20,120,18;800,300,60,18">Low contrast<i></i> </div></main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    const finding = (page?.issues ?? []).find((i) => i.rule === 'color-contrast')
+    expect(finding?.at).toEqual({ x: 10, y: 20, width: 120, height: 18 })
+  })
+
+  it('leaves a run that measured as nothing out of the union', async () => {
+    // A run the engine gives no box — off-screen in a `content-visibility`
+    // subtree, or simply not laid out yet — is zeros, and zeros are a point at
+    // the page ORIGIN. Folded into the union it drags `at` up to the top-left
+    // corner of the document, which is a marker pointing at the wrong thing
+    // rather than a missing one.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400"><div style="${GREY}; display: contents" data-test-rects="none" data-test-text-box="500,300,120,18;0,0,0,0">Low contrast<i></i>more</div></main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    const finding = (page?.issues ?? []).find((i) => i.rule === 'color-contrast')
+    expect(finding?.at).toEqual({ x: 500, y: 300, width: 120, height: 18 })
+  })
+
+  it('reports the text box in PAGE coordinates, like every other box', async () => {
+    // A Range measures against the viewport, and the snapshot's boxes are all
+    // page-relative — so on a scrolled page an unconverted `at` points at
+    // whatever happens to be that far down the current view instead.
+    const scrolled = { configurable: true, get: () => 120 }
+    Object.defineProperty(window, 'scrollX', scrolled)
+    Object.defineProperty(window, 'scrollY', scrolled)
+    try {
+      document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400"><div style="${GREY}; display: contents" data-test-rects="none" data-test-text-box="10,20,120,18">Low contrast<i></i></div></main>`
+      const result = await captureSnapshot({ analysis: false })
+      const page = flatten(result.root).find((n) => n.uxId === 'page')
+      const finding = (page?.issues ?? []).find((i) => i.rule === 'color-contrast')
+      expect(finding?.at).toEqual({ x: 130, y: 140, width: 120, height: 18 })
+      // The emitted path already converts; the two must agree or the agent
+      // cannot tell which convention a given box is in.
+      expect(page?.box).toEqual({ x: 120, y: 120, width: 900, height: 400 })
+    } finally {
+      Object.defineProperty(window, 'scrollX', { configurable: true, get: () => 0 })
+      Object.defineProperty(window, 'scrollY', { configurable: true, get: () => 0 })
+    }
+  })
+
+  it('still prefers the element box when the element has one', async () => {
+    // The ordinary case must not start reporting text-run boxes: `at` has meant
+    // the owner's own box since round 3 and the axe join agrees with it.
+    document.body.innerHTML = `<main data-ux-id="page" data-test-box="0,0,900,400">
+        <div data-test-box="10,20,300,24" data-test-text-box="11,21,60,12" style="${GREY}">Low contrast<i></i></div>
+      </main>`
+    const result = await captureSnapshot({ analysis: false })
+    const page = flatten(result.root).find((n) => n.uxId === 'page')
+    const finding = (page?.issues ?? []).find((i) => i.rule === 'color-contrast')
+    expect(finding?.at).toEqual({ x: 10, y: 20, width: 300, height: 24 })
+  })
+})
+
 describe('a duplicate data-ux-id reviews every match, not an arbitrary one', () => {
   it('scopes to all the elements carrying the id', async () => {
     // Ids are supposed to be unique and nothing enforces it — a component

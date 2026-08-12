@@ -63,8 +63,141 @@ export function isVisible(el: Element): boolean {
   // Deliberately NOT extended to `aria-hidden`: that content IS painted, so its
   // findings are real. Hiding it from the tree would lose them.
   const cs = styleOf(el)
-  if (cs && (cs.visibility === 'hidden' || cs.visibility === 'collapse')) return false
+  if (cs && paintsNothing(cs)) return false
   return true
+}
+
+/** Keeps its layout but paints nothing and announces nothing. Shared by
+ *  `isVisible` and the spill measurement below, which must agree: the one shape
+ *  whose text MEASURES as painted and is not. */
+function paintsNothing(cs: CSSStyleDeclaration): boolean {
+  return cs.visibility === 'hidden' || cs.visibility === 'collapse'
+}
+
+/**
+ * How many separate text runs of one element are measured.
+ *
+ * The union is an approximation the moment there is more than one run, and a
+ * Range apiece is the most expensive thing on this path. A page is free to give
+ * one element a hundred thousand text-node children — `directText` walks them
+ * for the price of a string concat, this would walk them for the price of a
+ * layout query each — so the union is taken over the first few and the rest ride
+ * on it. Findings are attributed to the ancestor either way; only the `at` hint
+ * narrows.
+ */
+const MAX_TEXT_RUNS = 32
+
+/**
+ * Where this element's OWN text lands, measured on the TEXT rather than on the
+ * element.
+ *
+ * `isVisible` asks the element for a border box, and two ordinary shapes paint
+ * text without a usable one. `display: contents` generates no box at all while
+ * its text is laid out in the parent's flow — a React fragment or a grid
+ * pass-through wrapper, and increasingly common. A `height: 0` (or `width: 0`)
+ * box with the default `overflow: visible` does have a box, and paints its text
+ * fully outside it.
+ *
+ * In both cases the text is on screen and in the accessibility tree, and until
+ * this it was reviewed by NOBODY: the node branch refuses it for want of a box,
+ * the owner branch refused it for the same reason, and `truncated`,
+ * `depthLimited` and `hiddenContent` all stay unset — so the capture reports
+ * success over text it never looked at. That is the class of silent miss the
+ * whole owner pass exists to close, one gate further up.
+ *
+ * Returns null — rather than a zero box — for everything else, which is what
+ * keeps `display: none` out: it is refused here on its lack of boxes, and even
+ * if it were not, its text has no rects to union. `visibility: hidden` is the
+ * one shape that has to be named, because it keeps its layout and would
+ * otherwise measure as painted.
+ */
+export function spilledTextBox(el: Element): Rect | null {
+  if (!el.getClientRects) return null
+  if (el.getClientRects().length === 0) {
+    // No box of its own. `display: contents` still lays its text out; anything
+    // else with no box is not rendered — `display: none`, on this element or on
+    // an ancestor. Ordered so the common hidden subtree (a closed modal, an
+    // inactive tab panel) costs one style read and stops, rather than a Range
+    // per text node to be told the same thing.
+    const cs = styleOf(el)
+    if (!cs || cs.display !== 'contents' || paintsNothing(cs)) return null
+  } else {
+    const rect = el.getBoundingClientRect()
+    // Anything with a real box was already accepted by `isVisible` and measured
+    // there; only a zero-sized one can arrive here.
+    //
+    // Equivalent to the `visibility` line below it, and labelled rather than
+    // tested around: the one caller reaches this only when `isVisible` said no,
+    // and an element with a real box that `isVisible` refuses was refused for
+    // `visibility` — which the next line catches. It stays because it names the
+    // precondition this branch is written against, and a future second caller
+    // (a rule wanting the text box of an element it has NOT already screened)
+    // would otherwise silently measure spill on elements that never spill.
+    if (rect.width > 0 && rect.height > 0) return null
+    const cs = styleOf(el)
+    if (!cs || paintsNothing(cs)) return null
+    // A zero-sized box that CLIPS shows nothing. This is the difference between
+    // the accordion idiom (`height: 0; overflow: hidden`, deliberately empty on
+    // screen) and a collapsed box that spills — and getting it backwards would
+    // invent findings on content a browser does not paint, which is the exact
+    // failure this feature is gated on.
+    //
+    // One test, not one per axis: `visible` alongside a non-`visible` value
+    // computes to `auto`, so an element paints outside its box in both axes or
+    // in neither. `scroll` and `auto` are clips here too — a zero-height scroll
+    // container is scrollable, but nothing of it is on screen.
+    //
+    // Shorthand and longhands read together, as the clipping rule next door
+    // already does: engines disagree about which of the three a computed style
+    // carries, and a disagreement has to mean "clips" rather than "spills" —
+    // that is the direction that stays silent instead of inventing a finding.
+    const overflow = `${cs.overflow} ${cs.overflowX} ${cs.overflowY}`
+    if (/hidden|clip|scroll|auto/.test(overflow)) return null
+  }
+  return textRunsBox(el)
+}
+
+/** The union of the boxes this element's direct text nodes actually occupy. A
+ *  Range is the only way to ask the engine where a text node landed. */
+function textRunsBox(el: Element): Rect | null {
+  const doc = el.ownerDocument
+  if (!doc || typeof doc.createRange !== 'function') return null
+  let left = Infinity
+  let top = Infinity
+  let right = -Infinity
+  let bottom = -Infinity
+  let runs = 0
+  const kids = el.childNodes
+  for (let i = 0; i < kids.length && runs < MAX_TEXT_RUNS; i++) {
+    const kid = kids[i]
+    // Equivalent to the blank check below, and labelled rather than tested
+    // around: an Element's `nodeValue` is null, so the next line turns element
+    // children away on its own. Kept because the two say different things — one
+    // is "this pass measures TEXT", the other is "this run is worth measuring" —
+    // and a blank check that ever learns to look at `textContent` would start
+    // unioning in the boxes of descendants this element does not own.
+    if (kid.nodeType !== 3) continue
+    // Whitespace between elements is a text node too, and it is most of them on
+    // a formatted page. It paints nothing worth a finding and measuring it would
+    // stretch the union across the gaps between real runs.
+    if (!(kid.nodeValue || '').trim()) continue
+    runs++
+    let rect: DOMRect | null = null
+    try {
+      const range = doc.createRange()
+      range.selectNodeContents(kid)
+      rect = range.getBoundingClientRect()
+    } catch {
+      rect = null
+    }
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) continue
+    if (rect.left < left) left = rect.left
+    if (rect.top < top) top = rect.top
+    if (rect.right > right) right = rect.right
+    if (rect.bottom > bottom) bottom = rect.bottom
+  }
+  if (!(right > left) || !(bottom > top)) return null
+  return { x: left + window.scrollX, y: top + window.scrollY, width: right - left, height: bottom - top }
 }
 
 /**

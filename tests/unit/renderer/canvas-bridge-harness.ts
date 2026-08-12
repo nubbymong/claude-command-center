@@ -66,10 +66,21 @@ export function collectEvents(kind: string, ms = 300): Promise<Record<string, un
  * from the stubs:
  *   data-test-box="x,y,w,h"                  → getBoundingClientRect
  *   data-test-scroll="sw,cw,sh,ch"           → scroll/client sizes (clipping)
+ *   data-test-rects="none"                   → getClientRects() is EMPTY
+ *   data-test-text-box="x,y,w,h"             → where this element's own text ran
  *
  * An element with no data-test-box measures 0×0, which the bridge treats as not
  * visible — so a fixture opts elements INTO the tree by giving them a box. Real
  * layout is a browser's job; what these tests pin is the logic on top of it.
+ *
+ * `data-test-rects="none"` is the one distinction jsdom cannot express any other
+ * way, and the bridge turns on it: a box of zero SIZE and NO box are different
+ * states in a browser (`height: 0` versus `display: contents` or `display:
+ * none`), while `getBoundingClientRect` reports zeros for both.
+ *
+ * `data-test-text-box` is read through a Range, because that is what the bridge
+ * uses to find text that paints outside its element's box. It is declared on
+ * the OWNER; every direct text node of that element measures there.
  */
 export function stubLayout(fallback?: { x: number; y: number; width: number; height: number }): void {
   Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
@@ -86,7 +97,34 @@ export function stubLayout(fallback?: { x: number; y: number; width: number; hei
     } as DOMRect
   }
   Element.prototype.getClientRects = function (this: Element): DOMRectList {
+    if (this.getAttribute?.('data-test-rects') === 'none') return [] as unknown as DOMRectList
     return [this.getBoundingClientRect()] as unknown as DOMRectList
+  }
+  Range.prototype.getBoundingClientRect = function (this: Range): DOMRect {
+    const start = this.startContainer
+    const owner = start?.parentElement
+    const spec = owner?.getAttribute?.('data-test-text-box')
+    // One box applies to every run; a `;`-separated list gives each run its own,
+    // positionally over ALL the owner's text children — blank ones included, so
+    // that a fixture can hand a whitespace run a box of its own and see whether
+    // it was measured. That is the only way to tell a union of two runs from a
+    // union of one, which is what bounds the number of runs measured.
+    const runs = spec ? spec.split(';') : []
+    let index = 0
+    if (runs.length > 1 && owner) {
+      for (let i = 0; i < owner.childNodes.length; i++) {
+        const kid = owner.childNodes[i]
+        if (kid === start) break
+        if (kid.nodeType === 3) index++
+      }
+    }
+    const chosen = runs.length > 1 ? runs[index] : runs[0]
+    const [x, y, width, height] = chosen ? chosen.split(',').map(Number) : [0, 0, 0, 0]
+    return {
+      x, y, width, height,
+      left: x, top: y, right: x + width, bottom: y + height,
+      toJSON: () => ({}),
+    } as DOMRect
   }
   const SCROLL_PROPS: Array<[string, number]> = [
     ['scrollWidth', 0],

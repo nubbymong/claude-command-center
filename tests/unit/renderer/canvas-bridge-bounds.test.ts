@@ -84,6 +84,25 @@ describe('the walk is bounded where it is BUILT, not only where it is received',
     expect(attributed).toHaveLength(0)
   })
 
+  it('stops collecting un-emitted text owners at the cap', { timeout: 60_000 }, async () => {
+    // The owner list is the one collection a page fills without earning a node,
+    // so the node cap does not bound it. 4,001 wrappers, each owning text and
+    // each disqualified from a node of its own by one empty child.
+    //
+    // The count is what shows the cap: every owner past the per-host ceiling is
+    // charged as a drop, so 4,000 collected leaves 20 kept and 3,980 counted.
+    // One more collected would be one more counted.
+    const grey = 'color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px'
+    const rows = Array.from(
+      { length: 4001 },
+      (_, i) => `<div data-test-box="0,${i},80,16" style="${grey}">r${i}<i></i></div>`,
+    ).join('')
+    document.body.innerHTML = rows
+
+    const result = await captureSnapshot({ analysis: false })
+    expect(result.root.issuesDropped).toBe(3980)
+  })
+
   it('stops at the depth cap and says so in its own words', async () => {
     // A single chain far past the cap. Non-semantic wrappers splice their
     // children up a level, so each level carries a box AND a role to earn a

@@ -9,7 +9,7 @@ import type { AxeIssue, CanvasSnapshotOptions, CanvasSnapshotResult, Rect, Snaps
 import { MAX_ISSUES_PER_NODE, keepMostSevere, severityRank } from '../../../shared/canvas'
 import { ensureAnalysis, withRunTimeout, type AnalysisApi, type AxeNodeResult, type AxeViolation } from './analysis-loader'
 import { addOverlapIssues, measurementIssues, type Candidate } from './issues'
-import { boxOf, curatedStyles, directText, effectiveOpacity, isInert, isSrOnly, isVisible, resetStyleCache, stateOf } from './measure'
+import { boxOf, curatedStyles, directText, effectiveOpacity, isInert, isSrOnly, isVisible, resetStyleCache, spilledTextBox, stateOf } from './measure'
 import { hidesItsContent, isInteractive, isMeaningful, isSkipped, nameOf, parentOf, roleOf, squash } from './semantics'
 
 const MAX_NODES = 4000
@@ -147,16 +147,22 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
         text: directText(el),
       })
     }
-  } else if (!meaningful && visible && ctx.textOwners.length < MAX_TEXT_OWNERS) {
-    // `!meaningful` is belt and braces: an element the NODE CAP refused took
-    // the branch above and cannot arrive here, so a mutation deleting the
-    // clause survives the suite. It is written anyway because the distinction
-    // it names is the one thing that must stay true of this branch — an element
-    // the cap refused is MEANINGFUL and already declared lost via `truncated`,
-    // and measuring it here would attribute findings to ancestors for nodes the
-    // same report says are missing. Any future rearrangement of the branch
-    // above (an early return, a reordered guard) would let exactly that
-    // through.
+  } else if (ctx.textOwners.length < MAX_TEXT_OWNERS) {
+    // An element the NODE CAP refused took the branch above and cannot arrive
+    // here — the `if` it failed is `meaningful && visible`, and the cap sits
+    // INSIDE that. It matters that it stays that way: an element the cap
+    // refused is meaningful and already declared lost via `truncated`, and
+    // measuring it here would attribute findings to ancestors for nodes the
+    // same report says are missing.
+    //
+    // The condition used to require `!meaningful && visible`, and both halves
+    // were wrong in the same direction. `visible` means "has a border box the
+    // measurement rules can read", and text can be painted without one —
+    // `display: contents`, or a zero-height box that spills. `!meaningful`
+    // then dropped the same text a second time whenever the container happened
+    // to be a text leaf or a `<p>`: meaningful, no box, so the node branch
+    // refused it and this one did too. Both shapes now come through, carrying
+    // the box their TEXT paints in rather than the box their element does not.
     // Text this walk can SEE but will not emit a node for.
     //
     // `<div>Price <span>10</span></div>` is the commonest text container on any
@@ -176,14 +182,20 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
     // produce anything, displacing ones that can.
     const text = directText(el)
     if (text.length > 0) {
-      ctx.textOwners.push({
-        el,
-        box: boxOf(el),
-        srOnly: isSrOnly(el),
-        opacity: effectiveOpacity(el),
-        inert: isInert(el),
-        text,
-      })
+      // `directText` first, and the measurement only after it: most of a hidden
+      // subtree owns no text at all, so a string walk turns the common case
+      // away before anything asks the engine for geometry.
+      const box = visible ? boxOf(el) : spilledTextBox(el)
+      if (box) {
+        ctx.textOwners.push({
+          el,
+          box,
+          srOnly: isSrOnly(el),
+          opacity: effectiveOpacity(el),
+          inert: isInert(el),
+          text,
+        })
+      }
     }
   }
 
