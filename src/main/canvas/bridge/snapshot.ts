@@ -15,6 +15,25 @@ import { hidesItsContent, isInteractive, isMeaningful, isSkipped, nameOf, parent
 const MAX_NODES = 4000
 const MAX_DEPTH = 64
 
+/** How many un-emitted text containers one capture will measure. Each costs a
+ *  backdrop climb and at most one issue, and they are attributed to ancestors
+ *  that are themselves capped — so this only has to stop a pathological page
+ *  from making the pass unbounded. */
+const MAX_TEXT_OWNERS = 4000
+
+/**
+ * Text that is painted but gets no node of its own — measured anyway, and
+ * attributed to the nearest ancestor that IS in the tree.
+ */
+interface TextOwner {
+  el: Element
+  box: Rect
+  srOnly: boolean
+  opacity: number
+  inert: boolean
+  text: string
+}
+
 /**
  * The axe rules worth their runtime here: contrast, and the "this control has no
  * accessible name" family. Everything structural that a reviewer would act on is
@@ -38,6 +57,8 @@ export const AXE_RULES = [
 interface WalkContext {
   includeStyles: boolean
   candidates: Candidate[]
+  /** Painted text with no node of its own — see the walk. */
+  textOwners: TextOwner[]
   byElement: Map<Element, SnapshotNode>
   nextRef: number
   truncated: boolean
@@ -89,7 +110,9 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
   // reads the serialized tree top to bottom, and refs that count downward with it
   // are the difference between a readable snapshot and a lookup table.
   let node: SnapshotNode | null = null
-  if (isMeaningful(el) && isVisible(el)) {
+  const visible = isVisible(el)
+  const meaningful = isMeaningful(el)
+  if (meaningful && visible) {
     if (ctx.nextRef > MAX_NODES) {
       ctx.truncated = true
     } else {
@@ -122,6 +145,44 @@ function walk(el: Element, ctx: WalkContext, depth: number): SnapshotNode | Snap
         opacity,
         inert,
         text: directText(el),
+      })
+    }
+  } else if (!meaningful && visible && ctx.textOwners.length < MAX_TEXT_OWNERS) {
+    // `!meaningful` is belt and braces: an element the NODE CAP refused took
+    // the branch above and cannot arrive here, so a mutation deleting the
+    // clause survives the suite. It is written anyway because the distinction
+    // it names is the one thing that must stay true of this branch — an element
+    // the cap refused is MEANINGFUL and already declared lost via `truncated`,
+    // and measuring it here would attribute findings to ancestors for nodes the
+    // same report says are missing. Any future rearrangement of the branch
+    // above (an early return, a reordered guard) would let exactly that
+    // through.
+    // Text this walk can SEE but will not emit a node for.
+    //
+    // `<div>Price <span>10</span></div>` is the commonest text container on any
+    // page, and it is not "meaningful": a leaf with text earns a line, a
+    // wrapper does not. One empty child element is enough — `<div>text<i></i></div>`
+    // — and with no node there is no candidate, with no candidate there is no
+    // measurement pass, so contrast and clipping on that text were not checked
+    // by anybody. The axe join has climbed to the nearest emitted ancestor
+    // since round 3 for exactly this shape; the measurement pass never did, so
+    // half the rule set silently skipped the same elements the other half went
+    // out of its way to reach.
+    // A work guard, not a rule: an owner with no text produces no finding
+    // anyway (every rule here starts by checking for some), so a mutation
+    // deleting this survives the suite. It is load-bearing for COST — without
+    // it every un-emitted element on the page pays a box read and three
+    // ancestor climbs, and the owner list fills with entries that can never
+    // produce anything, displacing ones that can.
+    const text = directText(el)
+    if (text.length > 0) {
+      ctx.textOwners.push({
+        el,
+        box: boxOf(el),
+        srOnly: isSrOnly(el),
+        opacity: effectiveOpacity(el),
+        inert: isInert(el),
+        text,
       })
     }
   }
@@ -193,13 +254,30 @@ const MAX_SCOPE_SEARCH = 20_000
  * every capture to serve the minority of pages that use custom elements is the
  * wrong default. It also stops as soon as every wanted id is accounted for.
  */
-function searchShadowScope(root: ParentNode, wanted: Set<string>, found: Map<string, Element>, budget: { left: number }): void {
+/**
+ * How many elements one `data-ux-id` may match.
+ *
+ * Ids are supposed to be unique and the authoring contract asks for that, but
+ * nothing enforces it and a duplicate is easy to write — a component rendered
+ * in a list carries the same id on every row. Taking only the first match sent
+ * the whole review to one arbitrary row and said nothing, so the agent read a
+ * clean report of a region it had not asked about.
+ */
+const MAX_SCOPE_MATCHES_PER_ID = 8
+
+function addMatch(found: Map<string, Element[]>, id: string, el: Element): void {
+  const list = found.get(id)
+  if (!list) found.set(id, [el])
+  else if (list.length < MAX_SCOPE_MATCHES_PER_ID) list.push(el)
+}
+
+function searchShadowScope(root: ParentNode, wanted: Set<string>, found: Map<string, Element[]>, budget: { left: number }): void {
   const children = root.children
-  for (let i = 0; i < children.length && budget.left > 0 && found.size < wanted.size; i++) {
+  for (let i = 0; i < children.length && budget.left > 0; i++) {
     const el = children[i]
     budget.left--
     const id = el.getAttribute('data-ux-id')
-    if (id && wanted.has(id) && !found.has(id)) found.set(id, el)
+    if (id && wanted.has(id)) addMatch(found, id, el)
     if (el.shadowRoot) searchShadowScope(el.shadowRoot, wanted, found, budget)
     searchShadowScope(el, wanted, found, budget)
   }
@@ -210,11 +288,11 @@ function resolveScope(ids: string[]): { roots: Element[]; unmatched: string[] } 
   // Attribute comparison rather than a [data-ux-id="…"] selector: exact, needs no
   // CSS.escape, and immune to hostile characters in page-authored ids.
   const wanted = new Set(ids)
-  const found = new Map<string, Element>()
+  const found = new Map<string, Element[]>()
   const all = document.querySelectorAll('[data-ux-id]')
   for (let i = 0; i < all.length; i++) {
     const id = all[i].getAttribute('data-ux-id')
-    if (id && wanted.has(id) && !found.has(id)) found.set(id, all[i])
+    if (id && wanted.has(id)) addMatch(found, id, all[i])
   }
   // An id the flat query missed may still be inside an open shadow tree, where a
   // selector cannot follow. Reporting it as `unmatchedScope` sent the agent to
@@ -222,10 +300,11 @@ function resolveScope(ids: string[]): { roots: Element[]; unmatched: string[] } 
   if (found.size < wanted.size && document.body) {
     searchShadowScope(document.body, wanted, found, { left: MAX_SCOPE_SEARCH })
   }
-  return {
-    roots: ids.filter((id) => found.has(id)).map((id) => found.get(id) as Element),
-    unmatched: ids.filter((id) => !found.has(id)),
+  const roots: Element[] = []
+  for (const id of ids) {
+    for (const el of found.get(id) ?? []) roots.push(el)
   }
+  return { roots, unmatched: ids.filter((id) => !found.has(id)) }
 }
 
 function contrastData(node: AxeNodeResult): { measured: string; needed: string } {
@@ -475,6 +554,7 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
   const ctx: WalkContext = {
     includeStyles: scope.length > 0,
     candidates: [],
+    textOwners: [],
     byElement: new Map(),
     nextRef: 1,
     truncated: false,
@@ -551,6 +631,62 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
     const issues = measurementIssues(candidate, { flatContrast, notAssessedReported })
     if (issues.length > 0) candidate.node.issues = (candidate.node.issues ?? []).concat(issues)
   }
+  // The same rules, over the text this walk saw but did not emit. Attributed to
+  // the nearest ancestor in the tree and carrying the owner's own box in `at`,
+  // which is the convention the axe join has used for this exact shape since
+  // round 3 — the measurement pass simply never had it.
+  //
+  // Capped PER HOST rather than trimmed afterwards: a list of 500 un-emitted
+  // rows all climbing to one `<main>` would otherwise build 500 issue objects
+  // to keep twenty, which is the per-node cost that froze the UI thread one
+  // field over.
+  const ownerHeld = new Map<SnapshotNode, number>()
+  for (const owner of ctx.textOwners) {
+    const host = nearestNode(owner.el, ctx.byElement) ?? root
+    const held = ownerHeld.get(host) ?? 0
+    if (held >= MAX_ISSUES_PER_NODE) {
+      // The `room` arithmetic below reaches the same numbers on its own, so a
+      // mutation deleting this early return survives the suite. It stays for
+      // the cost: past the ceiling there is nothing to gain from a backdrop
+      // climb per row, and a list of 500 un-emitted rows would pay 480 of them
+      // to throw every result away.
+      host.issuesDropped = (host.issuesDropped ?? 0) + 1
+      continue
+    }
+    const flatContrast = !axeRan || !contrastFailed.has(owner.el)
+    const issues = measurementIssues(
+      {
+        el: owner.el,
+        // A stand-in so the rules can read a box. It is never emitted and never
+        // reachable from the tree; only the issues it produces leave here.
+        //
+        // Today only `targetSizeIssue` reads `node.box` and it returns early
+        // for anything non-interactive, so nothing here can observe the value
+        // and a mutation zeroing it survives. Kept honest anyway: the next rule
+        // to read a box would otherwise be measuring a 0x0 element and would
+        // fail quietly, in a pass whose entire purpose is to stop findings
+        // disappearing quietly.
+        node: { ref: '', role: '', name: '', box: owner.box, children: [] },
+        role: '',
+        interactive: false,
+        srOnly: owner.srOnly,
+        opacity: owner.opacity,
+        inert: owner.inert,
+        text: owner.text,
+      },
+      { flatContrast, notAssessedReported },
+    )
+    if (issues.length === 0) continue
+    const room = MAX_ISSUES_PER_NODE - held
+    for (const issue of issues.slice(0, room)) {
+      issue.at = owner.box
+      host.issues = host.issues ?? []
+      host.issues.push(issue)
+    }
+    if (issues.length > room) host.issuesDropped = (host.issuesDropped ?? 0) + (issues.length - room)
+    ownerHeld.set(host, held + Math.min(issues.length, room))
+  }
+
   addOverlapIssues(ctx.candidates)
 
   // Joined after the measurement pass so the dedupe keeps the measured finding

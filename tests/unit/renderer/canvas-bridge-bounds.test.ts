@@ -51,14 +51,37 @@ beforeEach(() => {
 })
 
 describe('the walk is bounded where it is BUILT, not only where it is received', () => {
-  it('stops at the node cap and says the tree is partial', async () => {
-    // 5,000 text leaves, each meaningful and each with a box.
-    const rows = Array.from({ length: 5000 }, (_, i) => `<p data-test-box="0,${i},80,16">r${i}</p>`).join('')
+  // An explicit timeout, because this fixture is the slowest thing in the unit
+  // suite and the default 10s was never headroom: it measures ~1.4s alone and
+  // roughly seven times that under a full parallel run, so it sat one new test
+  // FILE away from failing and eventually got three. The cost is not the walk —
+  // it is jsdom's `getComputedStyle`, which is O(document) per call, making
+  // 5,000 elements quadratic here and nothing like a browser. Timing the bridge
+  // under jsdom measures jsdom.
+  //
+  // The fixture cannot be smaller: MAX_NODES is 4,000 and the point is to
+  // exceed it.
+  it('stops at the node cap and says the tree is partial', { timeout: 60_000 }, async () => {
+    // 5,000 text leaves, each meaningful and each with a box. Low-contrast, so
+    // that anything which measures them leaves evidence behind.
+    const grey = 'color: rgb(170,170,170); background-color: rgb(255,255,255); font-size: 14px'
+    const rows = Array.from({ length: 5000 }, (_, i) => `<p data-test-box="0,${i},80,16" style="${grey}">r${i}</p>`).join('')
     document.body.innerHTML = rows
 
     const result = await captureSnapshot({ analysis: false })
     expect(countNodes(result.root)).toBeLessThanOrEqual(4001)
     expect(result.truncated).toBe(true)
+    // The thousand leaves past the cap must not come back through the
+    // un-emitted-text pass. They are not un-emitted wrappers: they are
+    // MEANINGFUL nodes this capture has already declared lost, and measuring
+    // them anyway would attribute findings to ancestors for nodes the same
+    // report says are missing — a page that says "partial" and then reports on
+    // the part it dropped.
+    //
+    // `at` is the tell: it is set only when a finding is attributed to a node
+    // other than the one it fired on, which is exactly what that pass does.
+    const attributed = flatten(result.root).flatMap((n) => n.issues ?? []).filter((i) => i.at)
+    expect(attributed).toHaveLength(0)
   })
 
   it('stops at the depth cap and says so in its own words', async () => {
