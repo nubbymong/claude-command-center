@@ -7,8 +7,10 @@ import { logWarn } from '../debug-logger'
 
 // Injected hook events. SubagentStart/SubagentStop bracket subagent and
 // dynamic-workflow-agent execution so the status strip can pin its model +
-// effort pills to the main window (see background-context.ts). PreCompact /
-// StopFailure remain unused for now.
+// effort pills to the main window (see background-context.ts). StopFailure
+// (#235) is the session watchdog's authoritative overload/server-error
+// signal — see src/main/watchdog/watchdog-manager.ts. PreCompact remains
+// unused for now.
 export const MVP_EVENTS: HookEventKind[] = [
   'PreToolUse',
   'PostToolUse',
@@ -18,6 +20,7 @@ export const MVP_EVENTS: HookEventKind[] = [
   'UserPromptSubmit',
   'SubagentStart',
   'SubagentStop',
+  'StopFailure',
 ]
 
 export interface InjectArgs {

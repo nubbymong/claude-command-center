@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import WhatsNewModal from './WhatsNewModal'
 import { markWhatsNewSeen } from '../onboarding/whats-new-gate'
 import TrainingWalkthrough from './TrainingWalkthrough'
-import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, DEFAULT_TYPOGRAPHY, gpuRenderingEnabled, UpdateChannel } from '../stores/settingsStore'
+import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, DEFAULT_TYPOGRAPHY, DEFAULT_WATCHDOG_SETTINGS, gpuRenderingEnabled, UpdateChannel } from '../stores/settingsStore'
 import type { AppSettings, StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode, UiFontFamily, TypographyRegionKey, TypographySettings, RegionTypography } from '../stores/settingsStore'
 import { familyCss } from '../utils/typography'
 import { useSessionStore } from '../stores/sessionStore'
@@ -373,6 +373,45 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     The account Sentinel's background analysis runs under. Switch it if that account hits its usage limit. Applies to the next analysis or Re-run.
                   </span>
                 </Field>
+              </Section>
+
+              <Section title="Session Watchdog" icon={<path d="M8 2v4M8 2a6 6 0 1 0 3.5 1.1M11 2l1.5 1.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />}>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.watchdog?.enabled === true}
+                    onChange={(e) => save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), enabled: e.target.checked } })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    Session Watchdog (auto-retry on rate limit / overload)
+                    <span className="block text-[10px] text-overlay0">Auto-types a retry message into a session's terminal after a rate-limit reset, an overload/server-error backoff, or a flagged-safeguard clears. Off by default. Applies to newly launched sessions.</span>
+                  </span>
+                </label>
+                {settings.watchdog?.enabled === true && (
+                  <>
+                    <Field label="Retry message">
+                      <input
+                        type="text"
+                        value={settings.watchdog?.retryMessage ?? DEFAULT_WATCHDOG_SETTINGS.retryMessage}
+                        onChange={(e) => save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), retryMessage: e.target.value } })}
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus:outline-none focus:border-blue/50 transition-colors"
+                      />
+                    </Field>
+                    <Field label="Max retries">
+                      <input
+                        type="number"
+                        min={1}
+                        value={settings.watchdog?.maxRetries ?? DEFAULT_WATCHDOG_SETTINGS.maxRetries}
+                        onChange={(e) => {
+                          const n = parseInt(e.target.value, 10)
+                          save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), maxRetries: Number.isFinite(n) && n > 0 ? n : DEFAULT_WATCHDOG_SETTINGS.maxRetries } })
+                        }}
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 transition-colors"
+                      />
+                    </Field>
+                  </>
+                )}
               </Section>
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>

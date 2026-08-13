@@ -127,3 +127,61 @@ export function ClaudeTypeBadge() {
     </div>
   )
 }
+
+function formatWatchdogCountdown(totalSeconds: number): string {
+  if (totalSeconds >= 3600) return `${Math.round(totalSeconds / 3600)}h`
+  if (totalSeconds >= 60) return `${Math.round(totalSeconds / 60)}m`
+  return `${Math.max(0, totalSeconds)}s`
+}
+
+/**
+ * Session Watchdog (#235) indicator: hourglass + countdown while a
+ * rate-limit/overload/safeguard backoff is in progress, a red badge once the
+ * watchdog gives up, nothing while merely monitoring (or when the feature is
+ * off / never started for this session — watchdog is then undefined).
+ */
+export function WatchdogBadge({ watchdog }: { watchdog?: { status: string; waitUntil: number | null; gaveUp: boolean } }) {
+  // Self-ticking countdown: the session store only updates on a watchdog
+  // STATE CHANGE (waiting entered/cleared/retry sent), not every second, so a
+  // local 1s tick is what keeps the displayed countdown from going stale.
+  const [, forceTick] = useState(0)
+  const waiting = !!watchdog && watchdog.status !== 'monitoring'
+  useEffect(() => {
+    if (!waiting) return
+    const id = setInterval(() => forceTick((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [waiting])
+
+  if (!watchdog) return null
+
+  if (watchdog.gaveUp) {
+    return (
+      <div
+        className="flex items-center justify-center h-4 px-1 rounded shrink-0 bg-red/20 text-red"
+        title="Session Watchdog gave up retrying — check the session"
+      >
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <line x1="12" y1="7" x2="12" y2="13" />
+          <circle cx="12" cy="17" r="1" fill="currentColor" stroke="none" />
+        </svg>
+      </div>
+    )
+  }
+
+  if (!waiting) return null
+
+  const secsLeft = watchdog.waitUntil != null ? Math.round((watchdog.waitUntil - Date.now()) / 1000) : null
+  const label = secsLeft != null ? formatWatchdogCountdown(secsLeft) : ''
+
+  return (
+    <div
+      className="flex items-center gap-0.5 h-4 px-1 rounded shrink-0 bg-yellow/20 text-yellow"
+      title={`Session Watchdog: ${watchdog.status}${label ? ` — retry in ${label}` : ''}`}
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 2h12M6 22h12M8 2c0 4 4 6 4 8s-4 4-4 8M16 2c0 4-4 6-4 8s4 4 4 8" />
+      </svg>
+      {label && <span style={{ fontSize: '8px', fontWeight: 700 }}>{label}</span>}
+    </div>
+  )
+}

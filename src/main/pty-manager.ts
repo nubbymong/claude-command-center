@@ -54,6 +54,7 @@ import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
+import { getWatchdogManager } from './watchdog/watchdog-manager'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -3245,12 +3246,20 @@ export function spawnPty(
     ptyProcess.onData((data) => {
       if (win.isDestroyed()) return
       getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
+      // Watchdog (#235): no-op when off or when this session never got a
+      // watchdog started (shell-only sessions never do — see below).
+      getWatchdogManager()?.feedData(sessionId, data)
       win.webContents.send(`pty:data:${sessionId}`, data)
     })
   }
 
   ptySessions.set(sessionId, { ptyProcess, sessionId })
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
+  // Watchdog (#235): local, interactive Claude sessions only — never SSH,
+  // Codex, or a bare shell (shellOnly). No-op when the feature is off.
+  if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
+    getWatchdogManager()?.startWatchdog(sessionId, { provider: options?.provider, ssh: false, shellOnly: false })
+  }
 
   // Replay any buffered writes (from commands sent before PTY was ready). When a
   // launch line is queued, its timer owns the replay so the buffered write lands
@@ -3369,6 +3378,7 @@ export function spawnPty(
       // per-session bind state so a reused sessionId (restart) binds fresh.
       getTranscriptBinder()?.endRun(sessionId)
       getPtyIntegrityMonitor()?.endSession(sessionId)
+      try { getWatchdogManager()?.stopWatchdog(sessionId) } catch { /* best-effort teardown */ }
       try {
         const gwExit = getGateway()
         if (gwExit) gwExit.unregisterSession(sessionId)

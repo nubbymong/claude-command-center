@@ -391,6 +391,12 @@ export const IPC = {
   CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports)
   CANVAS_ANNOTATION_RESOLVE: 'canvas:annotationResolve', // renderer -> main: approve / dismiss / reannotate an open note
   CANVAS_REVIEW_CHANGED: 'canvas:reviewChanged',       // push: main -> renderer (a review/annotation mutation happened)
+
+  // Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard.
+  // Default off. Push on every state change (main -> renderer); invoke to
+  // hydrate a freshly-mounted renderer with whatever is currently running.
+  WATCHDOG_STATE: 'watchdog:state',
+  WATCHDOG_GET_STATES: 'watchdog:getStates',
 } as const
 
 /** Helper to build per-session PTY data channels */

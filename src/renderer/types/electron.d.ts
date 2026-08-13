@@ -96,6 +96,21 @@ export interface ServiceStatusPayload {
   worst: string
 }
 
+// Mirror of src/main/watchdog/session-watchdog.ts's WatchdogPublicState (#235).
+// Declared locally for the same reason as ServiceComponentStatus above — the
+// renderer/web tsconfig must not pull a main-process module into its type graph.
+export interface WatchdogPublicState {
+  sessionId: string
+  status: 'monitoring' | 'waiting' | 'overload' | 'safeguard'
+  attempts: number
+  overloadAttempts: number
+  safeguardAttempts: number
+  waitUntil: number | null
+  gaveUp: boolean
+  lastAction: string | null
+  updatedAt: number
+}
+
 export interface ElectronAPI {
   /** True for a dev build (npm run dev / ccc); drives DEV window labeling. */
   appIsDev: () => Promise<boolean>
@@ -228,6 +243,11 @@ export interface ElectronAPI {
   }
   effort: {
     onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
+  /** Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard. */
+  watchdog: {
+    getStates: () => Promise<WatchdogPublicState[]>
+    onUpdate: (callback: (state: WatchdogPublicState) => void) => () => void
   }
   registry: {
     get(): Promise<ModelRegistry>

@@ -7,6 +7,11 @@ This product bundles the following software under the MIT License:
 - three.js (r160) -- (c) 2010-2024 three.js authors. See resources/splash/three.js-LICENSE.txt
 - dom-accessibility-api -- (c) Sebastian Silbermann. Bundled into the Agent
   Canvas in-page bridge, unmodified. Source: https://github.com/eps1lon/dom-accessibility-api
+- claude-auto-retry -- (c) 2026 CheapestInference. The session watchdog's
+  detection/timing logic (src/main/watchdog/patterns.ts, time-parser.ts,
+  session-watchdog.ts, config.ts) is derived from
+  https://github.com/cheapestinference/claude-auto-retry. See
+  src/main/watchdog/claude-auto-retry-LICENSE.txt
 
 This product bundles the following software under the Mozilla Public License 2.0:
 - axe-core -- (c) Deque Systems, Inc. Bundled UNMODIFIED into the Agent Canvas
