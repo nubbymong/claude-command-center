@@ -8,6 +8,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
+import { formatInstalledVersion } from '../utils/versionLabel'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import CopilotMeterSettings from './settings/CopilotMeterSettings'
 import { isSentinelEnabled } from '../../shared/sentinel-enabled'
@@ -868,6 +869,11 @@ export function CheckForUpdatesField({ onUpdateRequested }: { onUpdateRequested?
   const [status, setStatus] = useState<UpdateCheckStatus>('idle')
   const [foundVersion, setFoundVersion] = useState<string | null>(null)
   const [installing, setInstalling] = useState(false)
+  // #250: surface the running build (full tag) + release channel in the
+  // up-to-date and update-available states. Channel comes from the store so it
+  // stays in sync with the channel selector and the BottomBar Beta pill; version
+  // is the build-time define already shown in the footer.
+  const channel = useSettingsStore((s) => s.settings.updateChannel)
 
   // Route through App's handler so an install with sessions open goes via the
   // 'update' close dialog (session state saved first). The direct call is only
@@ -942,6 +948,11 @@ export function CheckForUpdatesField({ onUpdateRequested }: { onUpdateRequested?
         )}
         {statusText && status !== 'checking' && (
           <span className={`text-xs ${statusColor}`}>{statusText}</span>
+        )}
+        {(status === 'up-to-date' || status === 'available') && (
+          <span className="text-[10px] text-overlay0" title="Installed version and release channel">
+            Installed: {formatInstalledVersion(__APP_VERSION__, channel)}
+          </span>
         )}
         {updateFound && !installing && (
           <span className="text-[10px] text-overlay0">Restarts the app; open sessions are saved.</span>

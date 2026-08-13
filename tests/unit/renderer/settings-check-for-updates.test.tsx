@@ -16,6 +16,11 @@ import { act } from 'react'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
+// __APP_VERSION__ is an esbuild `define` global at build time; stub it for the
+// jsdom render (CheckForUpdatesField now shows the installed version + channel,
+// #250), mirroring bottom-bar.test.ts.
+;(globalThis as any).__APP_VERSION__ = '9.9.9-test'
+
 const { CheckForUpdatesField } = await import('../../../src/renderer/components/SettingsPage')
 
 function renderComponent(ui: React.ReactElement): { container: HTMLElement; unmount: () => void } {
@@ -80,6 +85,8 @@ describe('Settings > Check for Updates (#142)', () => {
     expect(buttonByText(container, 'Install now')).toBeTruthy()
     expect(buttonByText(container, 'Check now')).toBeUndefined()
     expect(container.textContent).toContain('2.1.0-beta.2')
+    // #250: update-available state also surfaces the installed version + channel.
+    expect(container.textContent).toContain('v9.9.9-test (stable)')
   })
 
   it('stays on "Check now" and reports up to date when there is no update', async () => {
@@ -91,6 +98,8 @@ describe('Settings > Check for Updates (#142)', () => {
 
     expect(buttonByText(container, 'Install now')).toBeUndefined()
     expect(container.textContent).toContain('Up to date')
+    // #250: up-to-date state also surfaces the installed version + channel.
+    expect(container.textContent).toContain('v9.9.9-test (stable)')
   })
 
   it('Install now calls onUpdateRequested (App saves sessions) and NOT installAndRestart', async () => {
