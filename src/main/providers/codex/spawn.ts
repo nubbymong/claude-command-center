@@ -5,7 +5,7 @@ import { execSync } from 'child_process'
 import { sandboxFor, approvalFor } from './permissions'
 import { getResourcesDirectory } from '../../ipc/setup-handlers'
 import type { SpawnOptions } from '../types'
-import { getConductorMcpPort, getConductorMcpSecret } from '../../conductor-mcp-server'
+import { getConductorMcpPort, mcpSessionToken } from '../../conductor-mcp-server'
 import { readConfig } from '../../config-manager'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
@@ -152,7 +152,15 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
   const mcpPort = conductorOn ? getConductorMcpPort() : 0
   if (mcpPort > 0) {
-    flags.push('-c', `mcp_servers.conductor.url=http://localhost:${mcpPort}/mcp?source=codex`)
+    // cccSessionId is the ONLY query param, so the URL stays free of `&` — a
+    // second param would be a cmd.exe command separator on the win32 .cmd-shim
+    // spawn path. `source=codex` is inferred server-side from the /mcp route
+    // (that route is Codex-only), so it need not ride the URL. The per-session
+    // HMAC token (below, via the bearer header) commits to this session id, so
+    // the gate verifies the binding the same way a Claude session's is
+    // (GHSA-q83v-phcc-hgv4); Codex's tools are install-global, but the token
+    // still cannot claim another session's id.
+    flags.push('-c', `mcp_servers.conductor.url=http://localhost:${mcpPort}/mcp?cccSessionId=${encodeURIComponent(opts.sessionId)}`)
     flags.push('-c', 'mcp_servers.conductor.enabled=true')
     flags.push('-c', 'mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN')
   }
@@ -164,9 +172,10 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
     ...process.env,
     CLAUDE_MULTI_SESSION_ID: opts.sessionId,
   } as Record<string, string>
-  // U6: bearer token for the per-spawn conductor MCP entry above.
+  // U6: bearer token for the per-spawn conductor MCP entry above. Per-session
+  // HMAC, matched to the cccSessionId baked into the URL (GHSA-q83v-phcc-hgv4).
   if (mcpPort > 0) {
-    env.CONDUCTOR_MCP_TOKEN = getConductorMcpSecret()
+    env.CONDUCTOR_MCP_TOKEN = mcpSessionToken(opts.sessionId)
   }
 
   // Picker swap: when useResumePicker is true and the picker script is

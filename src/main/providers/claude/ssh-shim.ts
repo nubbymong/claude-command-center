@@ -1,4 +1,4 @@
-import { getConductorMcpPort, getConductorMcpSecret } from '../../conductor-mcp-server'
+import { getConductorMcpPort, mcpSessionToken } from '../../conductor-mcp-server'
 import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 
 /**
@@ -144,7 +144,7 @@ export function generateRemoteSetupScript(
         mcpServers: {
           'conductor': {
             type: 'sse',
-            url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${getConductorMcpSecret()}`,
+            url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`,
           },
         },
       })

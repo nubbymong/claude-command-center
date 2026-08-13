@@ -26,7 +26,9 @@ vi.mock('../../../../src/main/ipc/setup-handlers', () => ({
 // (server not bound) so the existing tests see no MCP flags.
 vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => (globalThis as any).__mockMcpPort ?? 0,
-  getConductorMcpSecret: () => 'test-secret-123',
+  // GHSA-q83v: Codex's bearer token is now HMAC(secret, sessionId). Deterministic
+  // session-specific stub so the assertions can pin THIS session's token.
+  mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
 }))
 
 import * as osMod from 'os'
@@ -121,12 +123,15 @@ describe('CodexProvider', () => {
         sessionId: 'sid',
         codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
       })
-      expect(out.args).toContain('mcp_servers.conductor.url=http://localhost:19333/mcp?source=codex')
+      // GHSA-q83v: cccSessionId is the sole query param; source=codex is inferred
+      // from the /mcp route server-side, keeping the URL free of `&`.
+      expect(out.args).toContain('mcp_servers.conductor.url=http://localhost:19333/mcp?cccSessionId=sid')
       expect(out.args).toContain('mcp_servers.conductor.enabled=true')
       expect(out.args).toContain('mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN')
-      // Token rides a bearer header via env -- NOT the URL -- so the URL has no
-      // `&` and survives the cmd.exe .cmd-shim spawn path.
-      expect(out.env.CONDUCTOR_MCP_TOKEN).toBe('test-secret-123')
+      // Token rides a bearer header via env -- NOT the URL -- and is this
+      // session's per-session HMAC. The URL still has no `&`, so it survives the
+      // cmd.exe .cmd-shim spawn path.
+      expect(out.env.CONDUCTOR_MCP_TOKEN).toBe('tok-sid')
       const urlFlag = out.args.find((a) => a.startsWith('mcp_servers.conductor.url='))
       expect(urlFlag).not.toContain('&')
     } finally {

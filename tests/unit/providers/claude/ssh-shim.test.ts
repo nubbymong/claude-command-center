@@ -7,10 +7,12 @@ import { readFileSync } from 'fs'
 // canonical SSE schema + cccSessionId URL bake). One test below
 // explicitly flips to 0 to cover the empty-mcpServers branch.
 let mockedConductorMcpPort = 19333
-const MOCK_SECRET = 'b'.repeat(64)
 vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => mockedConductorMcpPort,
-  getConductorMcpSecret: () => MOCK_SECRET,
+  // GHSA-q83v: the remote config now carries HMAC(secret, sessionId), not the
+  // raw secret. Deterministic session-specific stub so the assertion proves
+  // THIS session's token is baked in.
+  mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
 }))
 
 import { ClaudeProvider } from '../../../../src/main/providers/claude'
@@ -114,9 +116,9 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     expect(script).toContain('?cccSessionId=sid%2Bwith%20space')
   })
 
-  it('bakes the per-launch MCP secret as &token=<secret> into the remote MCP URL (R-DEC-3)', () => {
+  it('bakes this session\'s per-session token into the remote MCP URL (GHSA-q83v)', () => {
     const script = generateRemoteSetupScript('sid-x', null)
-    expect(script).toContain(`&token=${MOCK_SECRET}`)
+    expect(script).toContain('&token=tok-sid-x')
   })
 
   it('strips BOTH legacy conductor-vision AND conductor entries from shared settings + ~/.claude.json', () => {

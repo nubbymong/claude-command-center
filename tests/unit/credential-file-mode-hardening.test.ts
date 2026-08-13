@@ -37,10 +37,11 @@ vi.mock('node:fs', async (importOriginal) => {
 
 const dirs = vi.hoisted(() => ({ resources: '' }))
 vi.mock('../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => dirs.resources }))
-// generateRemoteSetupScript reads the live MCP port/secret; stub them.
+// generateRemoteSetupScript reads the live MCP port + per-session token; stub them.
 vi.mock('../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 19333,
-  getConductorMcpSecret: () => 'test-secret-xyz',
+  // GHSA-q83v: the shim embeds the per-session HMAC, not the raw secret.
+  mcpSessionToken: (sessionId: string) => `tok-${sessionId}`,
 }))
 
 const { saveAllCredentials } = await import('../../src/main/credential-store')

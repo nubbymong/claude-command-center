@@ -3,7 +3,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // A token that has been world-readable since the feature shipped stays burned
 // after you chmod it — anything that could read it already has. So a fixed build
 // must MINT A NEW ONE once, not re-permission the old one. The stored record
-// carries a version marker; anything without it is discarded.
+// carries a version marker; anything below the current version is discarded.
+//
+// v3 (GHSA-q83v-phcc-hgv4): the secret is now an HMAC key that never leaves the
+// process. But a v2 secret was written verbatim into every session config, so
+// as a key it is known to anything that read one — it too must rotate once.
+// Current version is 3; v2 and unversioned are both discarded.
 
 const h = vi.hoisted(() => ({
   stored: null as { secret?: string; v?: number } | null,
@@ -51,14 +56,27 @@ describe('the MCP auth secret rotates once, off any pre-fix build', () => {
     expect(got).not.toBe(LEGACY)
     expect(got).toMatch(HEX64)
     expect(h.saved).toHaveLength(1)
-    expect(h.saved[0].v).toBe(2)
+    expect(h.saved[0].v).toBe(3)
     // It must say so: a silent rotation looks identical to a bug when a live
     // session suddenly fails MCP auth.
     expect(h.warnings.join(' ')).toMatch(/rotating the auth secret/i)
   })
 
-  it('KEEPS a secret already written by a fixed build', async () => {
+  it('DISCARDS a v2 secret — it was distributed as a bearer token (GHSA-q83v)', async () => {
+    // v2 authenticated fine, but the value itself was written into every
+    // session config, so as an HMAC key it is compromised and must rotate.
     h.stored = { secret: LEGACY, v: 2 }
+
+    const got = await freshSecret()
+
+    expect(got).not.toBe(LEGACY)
+    expect(got).toMatch(HEX64)
+    expect(h.saved[0].v).toBe(3)
+    expect(h.warnings.join(' ')).toMatch(/rotating the auth secret/i)
+  })
+
+  it('KEEPS a secret already written by a fixed build', async () => {
+    h.stored = { secret: LEGACY, v: 3 }
 
     const got = await freshSecret()
 
@@ -73,11 +91,11 @@ describe('the MCP auth secret rotates once, off any pre-fix build', () => {
     const got = await freshSecret()
 
     expect(got).toMatch(HEX64)
-    expect(h.saved[0].v).toBe(2)
+    expect(h.saved[0].v).toBe(3)
   })
 
   it('does not accept a malformed stored value just because it is versioned', async () => {
-    h.stored = { secret: 'not-hex', v: 2 }
+    h.stored = { secret: 'not-hex', v: 3 }
 
     const got = await freshSecret()
 

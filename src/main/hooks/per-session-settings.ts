@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { getConductorMcpPort, getConductorMcpSecret } from '../conductor-mcp-server'
+import { getConductorMcpPort, mcpSessionToken } from '../conductor-mcp-server'
 import { buildStatuslineSetting } from '../providers/claude/statusline-command'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir } from '../account-profiles'
 import { logWarn } from '../debug-logger'
@@ -120,12 +120,14 @@ export function writeLocalSessionMcpConfig(sessionId: string, includeConductor =
   // launches with no built-in tools instead of a dangling endpoint.
   if (mcpPort > 0 && includeConductor) {
     const encodedSid = encodeURIComponent(sessionId)
-    // R-DEC-3: &token=<secret> authenticates this session against the gated
-    // MCP server. The SSE transport preserves the query on its /messages
+    // &token=<per-session HMAC> authenticates this session against the gated MCP
+    // server (GHSA-q83v-phcc-hgv4): the token is HMAC(secret, sessionId), so it
+    // authorises THIS session and no other, and the install secret is never
+    // written here. The SSE transport preserves the query on its /messages
     // endpoint, so follow-up POSTs carry it too.
     mcpServers['conductor'] = {
       type: 'sse',
-      url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodedSid}&token=${getConductorMcpSecret()}`,
+      url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodedSid}&token=${mcpSessionToken(sessionId)}`,
     }
   }
   const cfg = { mcpServers }

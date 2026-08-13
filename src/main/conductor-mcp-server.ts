@@ -112,8 +112,18 @@ export function parseCccSessionIdFromUrl(reqUrl: string): string | null {
  * token baked into its --mcp-config (the reason this is persisted rather than
  * rotated per launch) will fail MCP auth until it is relaunched. That is a
  * one-time upgrade cost and the alternative is keeping a compromised token.
+ *
+ * v3 (GHSA-q83v-phcc-hgv4): through v2 the secret was written VERBATIM into
+ * every session's own --mcp-config as the `?token=`, so it was a shared
+ * credential held by every principal on the machine. It is now used only as an
+ * HMAC KEY: each session's config carries `mcpSessionToken(sessionId)` =
+ * HMAC(secret, sessionId), and the secret itself never leaves this process.
+ * But a v2 secret is known to anything that read a config, so as an HMAC key it
+ * would let such a reader forge a binding for any session — it must be
+ * discarded and a fresh, never-distributed key minted. Same one-time cost: a
+ * session still running with a v2 `?token=` fails auth until relaunched.
  */
-const CONDUCTOR_SECRET_VERSION = 2
+const CONDUCTOR_SECRET_VERSION = 3
 
 let _conductorMcpSecret: string | null = null
 function loadOrCreateConductorMcpSecret(): string {
@@ -130,12 +140,30 @@ function loadOrCreateConductorMcpSecret(): string {
 }
 
 /** The MCP auth secret, persisted across launches (lazy so it loads AFTER the
- *  resources dir is configured, not at module init). Consumed by every MCP-URL
- *  writer (global ~/.claude.json, per-session --mcp-config, SSH shim, Codex TOML)
- *  so registered sessions carry the token, plus the request auth gate + SSE transport. */
+ *  resources dir is configured, not at module init).
+ *
+ *  As of v3 (GHSA-q83v-phcc-hgv4) this is an HMAC KEY, not a bearer token: it
+ *  is NEVER written into a session config or sent off-process. The value that
+ *  each session carries is `mcpSessionToken(sessionId)`; the server verifies a
+ *  presented token against the HMAC of the REQUESTED session id, so a token
+ *  authorises exactly its own session and nothing else. */
 export function getConductorMcpSecret(): string {
   if (_conductorMcpSecret === null) _conductorMcpSecret = loadOrCreateConductorMcpSecret()
   return _conductorMcpSecret
+}
+
+/**
+ * The token a given session presents to the MCP server: HMAC(secret, sessionId).
+ *
+ * This replaces the install-wide secret in every session config (local
+ * --mcp-config, the SSH remote shim, the Codex env token). It commits to the
+ * session id: a party holding one session's token cannot compute another
+ * session's without the key, which never leaves this process. That is the whole
+ * of the GHSA-q83v-phcc-hgv4 fix — the session id stops being an
+ * independently-supplied, unauthenticated parameter.
+ */
+export function mcpSessionToken(sessionId: string): string {
+  return crypto.createHmac('sha256', getConductorMcpSecret()).update(sessionId, 'utf8').digest('hex')
 }
 
 const BEARER_SCHEME = 'bearer'
@@ -278,6 +306,33 @@ function tokensMatch(presented: string, expected: string): boolean {
   const b = Buffer.from(expected, 'utf8')
   if (a.length !== b.length) return false
   return crypto.timingSafeEqual(a, b)
+}
+
+/**
+ * Authenticate a request AND resolve the session it is authorised to act for,
+ * in one step (GHSA-q83v-phcc-hgv4).
+ *
+ * The bound session comes from the token, never from the query string. The
+ * request must carry a `cccSessionId`, and the presented token must equal
+ * `mcpSessionToken(that id)` — i.e. HMAC(secret, id). Because only this process
+ * holds the key, a presented token PROVES the caller was issued that exact
+ * session's credential: claiming another session's id fails the HMAC compare.
+ *
+ * Returns the authenticated session id, or null for any failure (no/short
+ * token, refused Bearer header, missing/oversized cccSessionId, mismatch). The
+ * token extraction and constant-time compare are `isAuthorizedMcpRequest`'s,
+ * unchanged — this only swaps the install-wide secret for the per-session HMAC
+ * as the value compared against, which is the entire defect.
+ */
+export function authenticateMcpRequest(
+  reqUrl: string | undefined,
+  authHeader: string | undefined,
+): string | null {
+  if (!reqUrl) return null
+  const sessionId = parseCccSessionIdFromUrl(reqUrl)
+  if (!sessionId) return null
+  const expected = mcpSessionToken(sessionId)
+  return isAuthorizedMcpRequest(reqUrl, authHeader, expected) ? sessionId : null
 }
 
 /** #435: diagnostic payload for the /messages 404 branch.
@@ -739,7 +794,12 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       // headers on it. We deliberately gate /health too: it leaks vision
       // connection state + browser name + session count, none of which an
       // unauthenticated caller should see.
-      if (!isAuthorizedMcpRequest(req.url, req.headers['authorization'], getConductorMcpSecret())) {
+      // GHSA-q83v-phcc-hgv4: authenticate AND resolve the bound session in one
+      // step. The session id now comes from the authenticated token, never from
+      // the query string — a caller can only act for the session whose HMAC it
+      // presents. `authedSession` is the sole source of the bound id below.
+      const authedSession = authenticateMcpRequest(req.url, req.headers['authorization'])
+      if (!authedSession) {
         if (!authWarnedForPort.has(port)) {
           authWarnedForPort.add(port)
           const ua = req.headers['user-agent']
@@ -752,15 +812,21 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
       if (req.method === 'GET' && req.url && req.url.startsWith('/sse')) {
         const source = parseSourceFromUrl(req.url)
-        const boundSessionId = parseCccSessionIdFromUrl(req.url)
-        logInfo(`[vision-mcp] New SSE connection (source=${source}, sid=${boundSessionId ?? 'none'})`)
+        // The bound session is the AUTHENTICATED one, not a re-parse of the
+        // query — the token proved it.
+        const boundSessionId = authedSession
+        logInfo(`[vision-mcp] New SSE connection (source=${source}, sid=${boundSessionId})`)
         const server = createServer(source, boundSessionId, 'sse')
-        // R-DEC-3: bake the token into the /messages endpoint the SDK advertises
-        // to the client via the SSE `endpoint` event. SSEServerTransport.start()
+        // Bake this session's OWN token + id into the /messages endpoint the SDK
+        // advertises via the SSE `endpoint` event. SSEServerTransport.start()
         // does `new URL(endpoint).searchParams.set('sessionId', ...)`, which
-        // PRESERVES our token param, so the client's follow-up POSTs arrive as
-        // /messages?token=<secret>&sessionId=<sid> and clear the auth gate.
-        const transport = new SSEServerTransport(`/messages?token=${getConductorMcpSecret()}`, res)
+        // PRESERVES both params, so the client's follow-up POSTs arrive as
+        // /messages?token=<hmac>&cccSessionId=<sid>&sessionId=<transportId> and
+        // re-clear the same per-session gate.
+        const transport = new SSEServerTransport(
+          `/messages?token=${mcpSessionToken(boundSessionId)}&cccSessionId=${encodeURIComponent(boundSessionId)}`,
+          res,
+        )
         transports.set(transport.sessionId, transport)
 
         res.on('close', () => {
@@ -827,8 +893,14 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       // SSEServerTransport which is the only route their MCP client supports.
       if (req.url?.startsWith('/mcp') && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
         try {
-          const source = parseSourceFromUrl(req.url)
-          const boundSessionId = parseCccSessionIdFromUrl(req.url)
+          // The /mcp (Streamable HTTP) route is Codex-only — Claude clients use
+          // /sse. Force source='codex' here rather than reading ?source= so the
+          // Codex URL can carry cccSessionId as its ONLY query param (no `&` to
+          // trip the win32 cmd.exe spawn), and so the Codex tool set cannot be
+          // widened by spoofing ?source=claude (GHSA-q83v-phcc-hgv4).
+          const source = 'codex' as const
+          // Authenticated session, not a query re-parse (GHSA-q83v-phcc-hgv4).
+          const boundSessionId = authedSession
           const server = createServer(source, boundSessionId, 'http')
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,  // stateless
