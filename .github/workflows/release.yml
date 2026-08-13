@@ -58,24 +58,15 @@ jobs:
       - name: Install Electron binary
         run: node node_modules/electron/install.js
 
-      # VS 2026-only runner images break @electron/node-gyp's VS discovery
-      # (VS18 absent from its version table). Install VS2022 Build Tools —
-      # also covers electron-builder's internal rebuild. See ci.yml.
-      - name: Install VS2022 Build Tools
-        shell: pwsh
-        run: choco install visualstudio2022buildtools --no-progress -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre --includeRecommended --quiet --norestart"
-
-      - name: Rebuild native modules
-        shell: bash
-        run: |
-          node -e "
-          const { rebuild } = require('@electron/rebuild');
-          rebuild({
-            buildPath: process.cwd(),
-            electronVersion: require('./node_modules/electron/package.json').version,
-            onlyModules: ['node-pty', 'better-sqlite3']
-          }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
-          "
+      # No VS Build Tools / native rebuild on Windows. node-pty and better-sqlite3
+      # ship N-API prebuilt binaries (prebuilds/win32-x64) that load unchanged under
+      # Electron, so we package those as-is (the Package step below passes
+      # -c.npmRebuild=false, matching the local build). This deliberately drops a
+      # release-critical dependency on community.chocolatey.org: its per-IP rate
+      # limiting (behind Cloudflare, ~5/min for *.extension packages, 1-hour ban)
+      # intermittently blocks GitHub's SHARED runner IPs, so the VS Build Tools
+      # install would fail at random with "not valid XML" / unresolved dependency.
+      # macOS/Linux keep their from-source rebuild (they never touched Chocolatey).
 
       - name: Run tests
         run: npx vitest run
@@ -161,7 +152,9 @@ jobs:
             # injected here so unsigned local/dev builds stay possible.
             $extra += "-c.win.signtoolOptions.certificateSha1=$env:SIGN_THUMBPRINT"
           }
-          npx electron-builder --win --publish never @extra
+          # -c.npmRebuild=false: package the shipped N-API prebuilds rather than
+          # recompiling (no VS Build Tools on the runner). Matches the local build.
+          npx electron-builder --win --publish never -c.npmRebuild=false @extra
 
       # Fail loudly rather than ever ship unsigned again: a stable/beta release
       # with signing secrets missing is an error, not a fallback.
