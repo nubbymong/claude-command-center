@@ -30,6 +30,17 @@ if /I "%~1"=="__run" goto :run
 
 REM ---- launcher: resolve repo + flags, refuse a 2nd dev, spawn the window ----
 for %%I in ("%~dp0..") do set "CCC_REPO=%%~fI"
+REM CAPTURE OUR OWN PATH BEFORE THE PARSE LOOP. `shift` shifts %0 as well as
+REM %1..%9, so after parsing even one flag, `%~f0` is no longer this script -- it
+REM is the flag, resolved against the current directory. The `start` below then
+REM launched "<cwd>\--seed-accounts", the child cmd could not find it and exited
+REM instantly, and the window vanished before the log file was ever created.
+REM
+REM That broke EVERY flag (--seed, --seed-accounts, --clean, -nv) while plain
+REM `ccc` worked, because with no arguments the loop exits before it ever shifts.
+REM The tell was in every log header ever written: `vision= seed= clean=`, empty
+REM in runs where a flag had been passed.
+set "CCC_SELF=%~f0"
 set "CCC_DEV_DATA_DIR=%LOCALAPPDATA%\Claude Command Center\dev"
 set "CCC_DISABLE_VISION="
 set "CCC_SEED="
@@ -55,7 +66,7 @@ if errorlevel 9 (
   exit /b 1
 )
 
-start "AI Code Conductor (dev)" cmd /c "%~f0" __run
+start "AI Code Conductor (dev)" cmd /c "%CCC_SELF%" __run
 exit /b 0
 
 :run
