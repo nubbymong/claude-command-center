@@ -353,6 +353,59 @@ describe('MAJOR — a profile id cannot differ from another only by case', () =>
   })
 })
 
+describe('MINOR — a browser that dies on launch does not hold the latch', () => {
+  it('gives up as soon as the browser exits, not at the full timeout', async () => {
+    // Round 4: waitForDebugPort ignored browserExited, so a browser blocked from
+    // starting was waited on for the FULL timeout while single-flight refused
+    // every other account's sign-in for that whole time.
+    duringTeardown.fn = null
+    // No port file ever appears, and the child reports itself exited.
+    const spawnedExited = { exitCode: 0, signalCode: null, killed: false, kill: vi.fn(), on: vi.fn((e: string, cb: () => void) => { if (e === 'exit') cb() }), pid: 4242, once: vi.fn((_e: string, cb: () => void) => cb()) }
+    const cp: any = await import('node:child_process')
+    const realSpawn = cp.spawn
+    try {
+      // readFileSync currently returns a port; make the port unreadable instead.
+      const fs: any = await import('node:fs')
+      const realRead = fs.readFileSync
+      ;(fs as any).readFileSync = () => { throw new Error('ENOENT') }
+      ;(cp as any).spawn = () => spawnedExited
+      _setCdpForTest(cdp('me@example.com', 'ok'))
+
+      const started = Date.now()
+      const s = await runSignIn({ ...RUN, timeoutMs: 4_000, pollMs: 10 })
+      const elapsed = Date.now() - started
+
+      expect(s.phase).toBe('failed')
+      expect(elapsed).toBeLessThan(3_000)      // not the full 4s deadline
+      expect(s.error).toMatch(/closed before it finished starting up/)
+      ;(fs as any).readFileSync = realRead
+    } finally {
+      ;(cp as any).spawn = realSpawn
+    }
+  }, 30_000)
+})
+
+describe('MINOR — clearing a web session cannot hang forever', () => {
+  it('times out instead of leaving sign-out unresolved', async () => {
+    // Round 4: this was the last raw await in the module. A clearStorageData that
+    // never settles left the sign-out and delete IPC calls pending forever, so
+    // the renderer's button stayed busy with nothing to show.
+    const { clearWebSession } = await import('../../src/main/account-web/sign-in')
+    clearStorageData.mockImplementation(() => new Promise(() => {}))
+    vi.useFakeTimers()
+    try {
+      const p = clearWebSession('profile-ddd444')
+      const assertion = expect(p).rejects.toThrow(/timed out/i)
+      await vi.advanceTimersByTimeAsync(11_000)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+      clearStorageData.mockReset()
+      clearStorageData.mockImplementation(async () => {})
+    }
+  })
+})
+
 describe('MINOR — cancel is scoped to the account that asked', () => {
   it('does not cancel another account’s sign-in', async () => {
     _setCdpForTest(cdp('me@example.com', 'ok'))

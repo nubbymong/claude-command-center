@@ -98,9 +98,18 @@ export function resolveBrowserBinary(preferred: AuthBrowser = DEFAULT_AUTH_BROWS
  * port AND proves the endpoint belongs to the browser CCC launched, rather than
  * to whatever got to a published port first.
  */
-async function waitForDebugPort(profileDir: string, deadline: number): Promise<number | null> {
+async function waitForDebugPort(
+  profileDir: string,
+  deadline: number,
+  // WATCH FOR A BROWSER THAT DIED ON THE WAY UP. Without this, a browser blocked
+  // from starting (policy, AV, a bad binary) was waited on for the FULL five
+  // minutes, and single-flight refused every other account's sign-in for that
+  // whole time. The poll loop below already respects browserExited; this loop
+  // runs before it and did not.
+  exited: () => boolean = () => false,
+): Promise<number | null> {
   const file = join(profileDir, DEVTOOLS_PORT_FILE)
-  while (Date.now() < deadline && !cancelled) {
+  while (Date.now() < deadline && !cancelled && !exited()) {
     try {
       const first = readFileSync(file, 'utf-8').split('\n')[0]?.trim()
       const port = Number(first)
@@ -582,13 +591,20 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
     // process that owns this dir writes that file, so this both discovers the
     // port and establishes the endpoint is OUR browser — a fixed port could be
     // answered by anything local that got there first.
-    const port = await waitForDebugPort(profileDir, deadline)
+    const port = await waitForDebugPort(profileDir, deadline, () => browserExited)
     if (port === null) {
       await cleanup(profileDir)
       current = tag({
         phase: 'failed',
         profileId,
-        error: cancelled ? 'Sign-in cancelled.' : 'The browser did not report a debugging port. It may have been blocked from starting.',
+        error: cancelled
+          ? 'Sign-in cancelled.'
+          // Distinguished: "it exited" and "it never answered" want different
+          // things from the user, and blaming the debug port for a browser that
+          // died on launch sends them looking in the wrong place.
+          : browserExited
+            ? 'The sign-in browser closed before it finished starting up. Try again, and if it keeps happening check whether policy or antivirus is blocking it.'
+            : 'The browser did not report a debugging port. It may have been blocked from starting.',
       })
       return current
     }
@@ -756,6 +772,11 @@ export async function clearWebSession(profileId: string): Promise<void> {
   // overlap without the settings panel ever disabling its own button.
   cancelSignIn(profileId)
   const store = electronSession.fromPartition(webPartitionForProfile(profileId))
-  await store.clearStorageData()
+  // BOUNDED, like every other IO in this module. This was the last raw await
+  // left: a `clearStorageData` that never settles left the sign-out and
+  // account-delete IPC calls unresolved forever, so the renderer's button stayed
+  // busy with nothing to show for it. It fails closed either way — the caller
+  // does not remove the record unless this succeeds.
+  await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
   logInfo(`[account-web] cleared the web session for ${profileId}`)
 }
