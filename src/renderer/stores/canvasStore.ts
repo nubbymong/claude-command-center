@@ -6,6 +6,7 @@
 
 import { create } from 'zustand'
 import type { CanvasState, CanvasVersion } from '../../shared/canvas'
+import { useExcalidrawStore } from './excalidrawStore'
 
 export type CanvasInteractionMode = 'draw' | 'browse'
 
@@ -23,6 +24,10 @@ export interface CanvasSessionState {
   /** Browse first: land on the content, explore, then flip to draw. */
   interactionMode: CanvasInteractionMode
   emptyView: CanvasEmptyView
+  /** A render landed while the pane was closed — the hand-back moment the
+   *  user has not seen yet. Drives the Canvas button's attention pulse;
+   *  cleared the moment the pane shows the canvas. */
+  unseenRender: boolean
   loaded: boolean
 }
 
@@ -32,6 +37,8 @@ interface CanvasStoreState {
   setInteractionMode: (sessionId: string, mode: CanvasInteractionMode) => void
   setEmptyView: (sessionId: string, view: CanvasEmptyView) => void
   setActiveVersion: (sessionId: string, versionId: string) => Promise<void>
+  markUnseenRender: (sessionId: string) => void
+  clearUnseenRender: (sessionId: string) => void
   reset: () => void
 }
 
@@ -41,6 +48,7 @@ const EMPTY: CanvasSessionState = {
   activeVersionId: null,
   interactionMode: 'browse',
   emptyView: 'intro',
+  unseenRender: false,
   loaded: false,
 }
 
@@ -88,6 +96,27 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     }))
   },
 
+  markUnseenRender: (sessionId: string) => {
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...(s.bySessionId[sessionId] ?? EMPTY), unseenRender: true },
+      },
+    }))
+  },
+
+  clearUnseenRender: (sessionId: string) => {
+    set((s) => {
+      if (!s.bySessionId[sessionId]?.unseenRender) return {}
+      return {
+        bySessionId: {
+          ...s.bySessionId,
+          [sessionId]: { ...s.bySessionId[sessionId], unseenRender: false },
+        },
+      }
+    })
+  },
+
   setActiveVersion: async (sessionId: string, versionId: string) => {
     try {
       const state = await window.electronAPI.canvas.setActiveVersion({ sessionId, versionId })
@@ -111,6 +140,14 @@ export function setupCanvasListener(): void {
   if (listenerArmed) return
   listenerArmed = true
   window.electronAPI.canvas.onChanged((event) => {
-    void useCanvasStore.getState().refresh(event.sessionId)
+    const store = useCanvasStore.getState()
+    // The hand-back moment (spec §6 step 1): a render that lands while the
+    // pane is CLOSED is news the user has not seen — pulse the Canvas button
+    // until they open it. With the pane open, the surface itself shows the
+    // change (and version switches the user makes in-pane are not news).
+    if (!useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
+      store.markUnseenRender(event.sessionId)
+    }
+    void store.refresh(event.sessionId)
   })
 }

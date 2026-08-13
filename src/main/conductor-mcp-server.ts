@@ -887,6 +887,18 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       res.end()
     })
 
+    // An SSE stream is one HTTP response that never ends, and Node's default
+    // server.requestTimeout (300 000 ms) treats that as a stuck request: every
+    // conductor SSE connection was being destroyed at exactly 5:00 and
+    // silently re-established by the client — and a tool call in flight
+    // across (or racing) that churn was stranded forever, with no error on
+    // either side. Vision calls are short and rarely collided; the first long
+    // interactive canvas session hit it within minutes (VM functional test,
+    // 2026-08-13: a canvas_render whose reply never came). Zero disables the
+    // per-request clock; the DoS posture this timeout exists for does not
+    // apply to a loopback-only, token-gated server.
+    httpServer.requestTimeout = 0
+
     // Listen on localhost only — SSH reverse tunnels connect to localhost on the remote end
     httpServer.listen(port, '127.0.0.1', () => {
       mcpPort = port

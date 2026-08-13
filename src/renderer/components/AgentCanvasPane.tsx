@@ -45,11 +45,18 @@ interface Props {
 export default function AgentCanvasPane({ sessionId }: Props) {
   const canvasState = useCanvasStore((s) => s.bySessionId[sessionId])
   const refresh = useCanvasStore((s) => s.refresh)
+  const clearUnseenRender = useCanvasStore((s) => s.clearUnseenRender)
   const togglePane = useExcalidrawStore((s) => s.togglePane)
 
   useEffect(() => {
     void refresh(sessionId)
   }, [sessionId, refresh])
+
+  // Seeing the pane IS seeing the render: the button's attention pulse ends
+  // here, including for a version that arrives while the pane is already up.
+  useEffect(() => {
+    clearUnseenRender(sessionId)
+  }, [sessionId, canvasState?.activeVersionId, clearUnseenRender])
 
   const activeVersion = useMemo(
     () => canvasState?.versions.find((v) => v.id === canvasState.activeVersionId) ?? null,
