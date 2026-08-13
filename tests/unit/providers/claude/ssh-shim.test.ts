@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { readFileSync } from 'fs'
 
 // P7.8: getConductorMcpPort returns 0 unless the server has actually bound,
 // which never happens in the test sandbox. Mock to a non-zero port so the
@@ -101,7 +102,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     // writeFileSync(mcpPath, ...) literal so the assertion can't be
     // satisfied by an unrelated reference to 'conductor' elsewhere in
     // the script.
-    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600\}\)/)
+    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600,flag:'wx'\}\)/)
     expect(writeMatch).not.toBeNull()
     expect(writeMatch![0]).toContain('conductor')
     expect(writeMatch![0]).not.toContain('conductor-vision')
@@ -187,7 +188,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   // exactly like the port-0 fallback; statusline is independent of this flag.
   it('includeConductorMcp=false writes empty remote mcpServers (no built-in tools)', () => {
     const script = generateRemoteSetupScript('sid-x', null, { includeConductorMcp: false })
-    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600\}\)/)
+    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600,flag:'wx'\}\)/)
     expect(writeMatch).not.toBeNull()
     expect(writeMatch![0]).toContain('\\"mcpServers\\":{}')
     expect(writeMatch![0]).not.toContain('conductor')
@@ -202,7 +203,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     mockedConductorMcpPort = 0
     try {
       const script = generateRemoteSetupScript('sid-x', null)
-      const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600\}\)/)
+      const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600,flag:'wx'\}\)/)
       expect(writeMatch).not.toBeNull()
       // Empty mcpServers literal: {"mcpServers":{}} -> doubly-stringified
       // becomes the substring \"mcpServers\":{} inside the script source.
@@ -212,5 +213,45 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     } finally {
       mockedConductorMcpPort = 19333
     }
+  })
+})
+
+// GHSA-phr3-g5qh-q4v5: the remote ~/.claude is hardened even when it
+// PRE-EXISTS, and the token-bearing writes cannot be redirected through a
+// planted symlink. mkdir's mode is create-only, so a pre-existing 0755 dir
+// (the common case) was never repaired and the rmSync->write pair followed a
+// re-planted link. Both halves of the fix are asserted on the emitted script;
+// each was verified to fail against the pre-fix code.
+describe('SSH remote ~/.claude hardening (GHSA-phr3-g5qh-q4v5)', () => {
+  it('re-asserts 0700 on the dir unconditionally, not only on mkdir create', () => {
+    const script = generateRemoteSetupScript('sid-x', null)
+    // The chmod must be its own statement, so a pre-existing dir is repaired.
+    expect(script).toContain('fs.chmodSync(claudeDir,0o700)')
+    // And it must come before any write into the dir, so the writes land in an
+    // already-locked-down directory (the shim write is the first).
+    expect(script.indexOf('fs.chmodSync(claudeDir,0o700)')).toBeLessThan(script.indexOf('writeFileSync(shimPath'))
+  })
+
+  it('creates BOTH token-bearing files exclusively (flag wx), refusing a re-planted link', () => {
+    const script = generateRemoteSetupScript('sid-x', null)
+    // settings-<sid>.json (hook token) and mcp-<sid>.json (?token= secret):
+    // exclusive create so a symlink planted in the rmSync->write window is
+    // refused with EEXIST rather than followed.
+    expect(script).toMatch(/fs\.writeFileSync\(sesPath,[^;]*,\{mode:0o600,flag:'wx'\}\)/)
+    expect(script).toMatch(/fs\.writeFileSync\(mcpPath,[^;]*,\{mode:0o600,flag:'wx'\}\)/)
+    // The unlink stays as the legitimate-leftover path, paired with each write.
+    expect(script).toContain(`fs.rmSync(sesPath,{force:true})`)
+    expect(script).toContain(`fs.rmSync(mcpPath,{force:true})`)
+  })
+
+  it('does not claim the mkdir mode alone blocks a planted link (comment corrected)', () => {
+    // The old inline comment asserted "the 0700 dir blocks a planted link",
+    // which is false for a pre-existing dir. It is source-only, but pin it so
+    // the overstatement cannot quietly return.
+    const src = readFileSync(
+      new URL('../../../../src/main/providers/claude/ssh-shim.ts', import.meta.url),
+      'utf8',
+    )
+    expect(src).not.toContain('the 0700 dir blocks a planted link')
   })
 })

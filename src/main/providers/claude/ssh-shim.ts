@@ -162,6 +162,15 @@ export function generateRemoteSetupScript(
     `const fs=require('fs'),path=require('path'),os=require('os')`,
     `const home=os.homedir(),claudeDir=path.join(home,'.claude')`,
     `try{fs.mkdirSync(claudeDir,{recursive:true,mode:0o700})}catch{}`,
+    // mkdir's mode applies ONLY when it creates the directory. On any remote
+    // host where the operator has run claude before -- the common case --
+    // ~/.claude already exists and keeps its old mode, typically 0755 under a
+    // default umask, so mkdir above is a mode no-op. Re-assert 0700
+    // unconditionally, the same repair hardenCredentialDir makes locally: a
+    // co-tenant cannot plant a link (or any entry) in a 0700 directory the
+    // operator owns, which is what closes the redirect of the token-bearing
+    // writes below (GHSA-phr3-g5qh-q4v5).
+    `try{fs.chmodSync(claudeDir,0o700)}catch{}`,
     `const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js')`,
     `try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}`,
     // Read the user's shared settings FIRST so the per-session settings file
@@ -186,16 +195,22 @@ export function generateRemoteSetupScript(
     `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
     `const sesCfg=Object.assign({},sBase,{${sesCfgParts.join(',')}})`,
     // settings-<sid>.json can carry the per-session hook token; write it
-    // owner-only. Unlink first so 0600 applies even over a prior 0644 file
-    // (mode is honoured only on create), and the 0700 dir blocks a planted link.
-    `try{fs.rmSync(sesPath,{force:true})}catch{}try{fs.writeFileSync(sesPath,JSON.stringify(sesCfg,null,2),{mode:0o600})}catch{}`,
+    // owner-only. Unlink first to clear a legitimate leftover, then create
+    // EXCLUSIVELY (flag 'wx'): the write refuses (EEXIST) rather than follows a
+    // symlink re-planted in the unlink->write window, and the 0600 mode applies
+    // on this fresh create. The 0700 dir above is the primary defence; 'wx' is
+    // the backstop for a link planted before the chmod (GHSA-phr3-g5qh-q4v5).
+    // A refused write fails closed -- the session launches without the
+    // per-session file, exactly as any other write failure the catch tolerates.
+    `try{fs.rmSync(sesPath,{force:true})}catch{}try{fs.writeFileSync(sesPath,JSON.stringify(sesCfg,null,2),{mode:0o600,flag:'wx'})}catch{}`,
     // Per-session MCP config -- passed via `--mcp-config <path>` on the
     // claude launch. This is the canonical place for mcpServers entries
     // (P7.7.3); writing to --settings has no effect.
     `const mcpPath=path.join(claudeDir,'mcp-${safeSid}.json')`,
-    // mcp-<sid>.json carries the Conductor ?token= secret; owner-only, fresh
-    // create (see the settings write above for why unlink-first + 0600).
-    `try{fs.rmSync(mcpPath,{force:true})}catch{}try{fs.writeFileSync(mcpPath,${JSON.stringify(mcpConfigLiteral)},{mode:0o600})}catch{}`,
+    // mcp-<sid>.json carries the Conductor ?token= secret; owner-only,
+    // exclusive fresh create (see the settings write above for why
+    // unlink-first + flag 'wx' + 0600).
+    `try{fs.rmSync(mcpPath,{force:true})}catch{}try{fs.writeFileSync(mcpPath,${JSON.stringify(mcpConfigLiteral)},{mode:0o600,flag:'wx'})}catch{}`,
     // Strip any legacy statusLine stanza a prior install wrote into the
     // shared settings file; it would override the per-session file.
     `if(s.statusLine&&typeof s.statusLine.command==='string'&&s.statusLine.command.includes('conductor-ssh-statusline'))delete s.statusLine`,
