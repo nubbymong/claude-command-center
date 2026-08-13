@@ -115,7 +115,9 @@ jobs:
       # the job stays green.
       - name: Package Windows installer (release/* branches only)
         if: runner.os == 'Windows' && startsWith(github.head_ref, 'release/')
-        run: npx electron-builder --win
+        # --config.npmRebuild=false: the Windows rebuild step is skipped (prebuilds),
+        # so tell electron-builder not to rebuild either; package the prebuilds as-is.
+        run: npx electron-builder --win --config.npmRebuild=false
 
       - name: Verify native modules unpacked (release/* branches only)
         if: runner.os == 'Windows' && startsWith(github.head_ref, 'release/')

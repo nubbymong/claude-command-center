@@ -152,9 +152,11 @@ jobs:
             # injected here so unsigned local/dev builds stay possible.
             $extra += "-c.win.signtoolOptions.certificateSha1=$env:SIGN_THUMBPRINT"
           }
-          # -c.npmRebuild=false: package the shipped N-API prebuilds rather than
-          # recompiling (no VS Build Tools on the runner). Matches the local build.
-          npx electron-builder --win --publish never -c.npmRebuild=false @extra
+          # --config.npmRebuild=false: package the shipped N-API prebuilds rather
+          # than recompiling (no VS Build Tools on the runner). Long form is
+          # required (short -c. treats the value as a config-file path); matches
+          # the local build.
+          npx electron-builder --win --publish never --config.npmRebuild=false @extra
 
       # Fail loudly rather than ever ship unsigned again: a stable/beta release
       # with signing secrets missing is an error, not a fallback.
