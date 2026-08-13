@@ -15,6 +15,7 @@ import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { buildRemoteSessionCleanupCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
+import { buildSshArgs } from './ssh-args'
 import { resolveClaudeBinary, resolveHostColorScheme } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
@@ -388,26 +389,15 @@ export function spawnPty(
     // ClaudeProvider's SSH-capable surface (see providers/claude/ssh-shim.ts).
     const claudeProvider = getProvider('claude')
     if (!isSshCapable(claudeProvider)) throw new Error('Claude provider must be SSH-capable')
-    const sshArgs = [
-      `${ssh.username}@${ssh.host}`,
-      '-p', String(ssh.port),
-      '-t', // force TTY allocation
-      '-o', 'StrictHostKeyChecking=accept-new'
-    ]
-
-    // Add reverse tunnel for the Conductor MCP server so remote sessions can reach
-    // both fetch_host_screenshot (always) and vision tools (when browser connected).
-    // Host-side target is 127.0.0.1, NOT `localhost`: the MCP server binds IPv4-only
-    // (conductor-mcp-server.ts listens on '127.0.0.1'), but Windows resolves
-    // `localhost` IPv6-first (::1) — a dead address here — so ssh.exe's forward
-    // connect lands on [::1]:port, gets ECONNREFUSED, and the channel dies
-    // ("socket connection closed unexpectedly" on the remote MCP client). Pinning
-    // the middle field to 127.0.0.1 forwards straight to the address the server
-    // actually binds, with no name resolution and no IPv6-fallback dependency.
-    const mcpPort = getConductorMcpPort()
-    if (mcpPort > 0) {
-      sshArgs.push('-R', `${mcpPort}:127.0.0.1:${mcpPort}`)
-    }
+    // Base ssh argv (target, port, TTY, host-key policy) + a win32-only
+    // ControlMaster/ControlPath override (#241) + the Conductor MCP reverse
+    // tunnel, built in ./ssh-args so the exact flag list is unit-tested. The
+    // tunnel host-side target is 127.0.0.1, not `localhost`: the MCP server binds
+    // IPv4-only (conductor-mcp-server.ts listens on '127.0.0.1'), but Windows
+    // resolves `localhost` IPv6-first (::1) -- a dead address that would
+    // ECONNREFUSED and kill the channel ("socket connection closed unexpectedly"
+    // on the remote MCP client).
+    const sshArgs = buildSshArgs(ssh, getConductorMcpPort(), os.platform())
 
     // HTTP Hooks Gateway: when enabled, tunnel the gateway's loopback port so
     // Claude Code inside the SSH session can reach it via http://localhost:<port>.
