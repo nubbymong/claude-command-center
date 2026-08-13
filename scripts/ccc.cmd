@@ -8,10 +8,17 @@ REM cleanup logic is versioned and updates with the code. Your PATH `ccc` is a
 REM thin shim that forwards here (see the shim in %APPDATA%\npm\ccc.cmd).
 REM
 REM   ccc                     start dev (reuse existing dev data), vision ON
-REM   ccc --seed              copy PROD's CONFIG into the dev data dir first
+REM   ccc --seed              copy PROD's CONFIG only into the dev data dir first
+REM   ccc --seed-accounts     copy PROD's signed-in account credentials into dev
 REM   ccc --clean             wipe the dev data dir first (fresh; wizard skipped)
 REM   ccc -nv | --no-vision   vision browser auto-launch OFF
-REM Flags combine, e.g.  ccc --clean --seed -nv
+REM Flags combine, e.g.  ccc --clean --seed --seed-accounts -nv
+REM
+REM --seed and --seed-accounts are SEPARATE because they copy different things and
+REM carry different risk. CONFIG is settings. Accounts are live OAuth tokens, and
+REM copying them leaves dev and prod sharing one refresh token -- whichever
+REM refreshes first invalidates the other. See scripts\seed-dev-accounts.mjs and
+REM issue #257.
 REM
 REM Dev is fully isolated from prod: its OWN data dir (CCC_DEV_DATA_DIR) and
 REM separate MCP/CDP/hooks/vite ports. The window auto-closes on exit and every
@@ -26,13 +33,15 @@ for %%I in ("%~dp0..") do set "CCC_REPO=%%~fI"
 set "CCC_DEV_DATA_DIR=%LOCALAPPDATA%\Claude Command Center\dev"
 set "CCC_DISABLE_VISION="
 set "CCC_SEED="
+set "CCC_SEED_ACCOUNTS="
 set "CCC_CLEAN="
 :parse
 if "%~1"=="" goto parsed
-if /I "%~1"=="-nv"         set "CCC_DISABLE_VISION=1"
-if /I "%~1"=="--no-vision" set "CCC_DISABLE_VISION=1"
-if /I "%~1"=="--seed"      set "CCC_SEED=1"
-if /I "%~1"=="--clean"     set "CCC_CLEAN=1"
+if /I "%~1"=="-nv"             set "CCC_DISABLE_VISION=1"
+if /I "%~1"=="--no-vision"     set "CCC_DISABLE_VISION=1"
+if /I "%~1"=="--seed"          set "CCC_SEED=1"
+if /I "%~1"=="--seed-accounts" set "CCC_SEED_ACCOUNTS=1"
+if /I "%~1"=="--clean"         set "CCC_CLEAN=1"
 shift
 goto parse
 :parsed
@@ -72,11 +81,18 @@ echo [ccc]   dev data: %CCC_DEV_DATA_DIR%
 if defined CCC_DISABLE_VISION echo [ccc]   vision:   DISABLED
 if defined CCC_CLEAN echo [ccc]   --clean:  wiping dev data dir
 if defined CCC_SEED  echo [ccc]   --seed:   copying prod CONFIG into dev
+if defined CCC_SEED_ACCOUNTS echo [ccc]   --seed-accounts: copying prod account credentials into dev
 echo.
 
 REM --- clean / seed the dev data dir BEFORE the log dir is created ---
 if defined CCC_CLEAN powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path $env:CCC_DEV_DATA_DIR) { Remove-Item -LiteralPath $env:CCC_DEV_DATA_DIR -Recurse -Force -EA SilentlyContinue; Write-Host '[ccc] dev data dir wiped.' }"
 if defined CCC_SEED powershell -NoProfile -ExecutionPolicy Bypass -Command "$prodRes=(Get-ItemProperty 'HKCU:\Software\Claude Command Center' -EA SilentlyContinue).ResourcesDirectory; if (-not $prodRes) { $prodRes = Join-Path $env:LOCALAPPDATA 'Claude Command Center\resources' }; $src = Join-Path $prodRes 'CONFIG'; $dst = Join-Path $env:CCC_DEV_DATA_DIR 'resources\CONFIG'; if (Test-Path $src) { New-Item -ItemType Directory -Force -Path $dst | Out-Null; Copy-Item -Path (Join-Path $src '*') -Destination $dst -Recurse -Force -EA SilentlyContinue; Write-Host ('[ccc] seeded dev CONFIG from ' + $src) } else { Write-Host ('[ccc] --seed: prod CONFIG not found at ' + $src) }"
+
+REM Accounts are seeded by a versioned script rather than an inline one-liner: it
+REM asserts every write stays under the dev data dir, backs up what it replaces,
+REM and prints a before/after identity table. Runs here, before electron starts,
+REM because the app rewrites these files from memory on exit.
+if defined CCC_SEED_ACCOUNTS node "%CCC_REPO%\scripts\seed-dev-accounts.mjs"
 
 REM --- log setup (DEV-scoped, under the dev data root) ---
 set "CCC_LOGDIR=%CCC_DEV_DATA_DIR%\dev-logs"
