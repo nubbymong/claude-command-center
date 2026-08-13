@@ -21,6 +21,18 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.9',
+    date: '2026-08-13',
+    highlights: 'Each account can hold its own claude.ai web session, signed in through a dedicated per-account browser and kept fully separate. This is also a security release: two local-attacker vulnerabilities are fixed, with their advisories published alongside it.',
+    changes: [
+      { type: 'feature', description: 'Each account can now hold its own claude.ai web session, signed in through a dedicated per-account browser. Signing in to one account no longer disturbs another account\'s web session, so your accounts stay fully separated end to end.' },
+      { type: 'fix', description: 'Security: the app\'s local Conductor service — which lets a running session take host screenshots and drive the vision browser — used a single token shared across every session on your computer, and trusted an unverified field in each request to say which session was calling. Another local program that obtained that token, or a second session, could impersonate any session and drive those tools. Each session now gets its own token that is cryptographically bound to it, and the app identifies the calling session from the verified token rather than the request; the shared value became a signing key that is never handed out and is rotated on upgrade. Fixed in this release; 2.1.0-beta.8 and earlier are affected. Advisory GHSA-q83v-phcc-hgv4, severity high: it requires another program or session running locally that can reach the app\'s local service.' },
+      { type: 'fix', description: 'Security: when the app sets up a remote SSH session it writes small token files into the remote account\'s ~/.claude folder. If that folder already existed it was not re-secured to your user only, and the token writes could follow a symbolic link planted in advance — letting another user on the remote host read the tokens or redirect the write. The folder is now always secured to your user, and the token files are created fresh and refuse to follow a planted link. Fixed in this release; 2.1.0-beta.8 and earlier are affected. Advisory GHSA-phr3-g5qh-q4v5, severity medium: it requires another user account on the remote SSH host.' },
+      { type: 'fix', description: 'Windows: SSH sessions no longer fail to start when your global SSH configuration enables connection multiplexing (ControlMaster). Windows\' built-in OpenSSH does not support it, which could make every SSH session in the app error out before it connected; the app now turns multiplexing off for its own SSH sessions on Windows and leaves your configuration untouched on macOS and Linux.' },
+      { type: 'improvement', description: 'The Settings "Check for Updates" panel and the bottom-bar update button now show which version and release channel you are currently running, so your installed build is visible at a glance whether or not an update is available.' }
+    ]
+  },
+  {
     version: '2.1.0-beta.8',
     date: '2026-08-11',
     changes: [
