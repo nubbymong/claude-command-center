@@ -7,10 +7,11 @@ import TerminalView, { killSessionPty } from './components/TerminalView'
 import CommandBar from './components/CommandBar'
 import SessionStatusStrip from './components/SessionStatusStrip'
 import WebviewPane from './components/WebviewPane'
-import ExcalidrawPane from './components/ExcalidrawPane'
+import AgentCanvasPane from './components/AgentCanvasPane'
 import LogsPane from './components/LogsPane'
 import { useWebviewStore } from './stores/webviewStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
+import { setupCanvasListener } from './stores/canvasStore'
 import { useLogsStore } from './stores/useLogsStore'
 import BottomBar from './components/BottomBar'
 import UsageDashboard from './components/UsageDashboard'
@@ -413,6 +414,7 @@ export default function App() {
       setupConductorMcpListener()
       setupGitHubListener()
       setupChannelListeners()
+      setupCanvasListener()
       useGitHubStore.getState().loadConfig()
       useConductorMcpStore.getState().loadConfig()
       useConductorMcpStore.getState().fetchStatus()
@@ -888,16 +890,18 @@ export default function App() {
                       />
                     </div>
                   )}
-                  {/* Alt-pane priority: Logs > Webview > Excalidraw. Each
+                  {/* Alt-pane priority: Logs > Webview > Agent Canvas. Each
                       alternative pane replaces the underlying terminal panes.
                       Toggle buttons are independent so multiple flags can be
-                      true; render only the highest-priority one. */}
+                      true; render only the highest-priority one. (The canvas
+                      with no rendered content is the classic Excalidraw
+                      scratchpad — spec D2.) */}
                   {isShowingLogs ? (
                     <LogsPane sessionId={session.id} />
                   ) : isShowingWebview ? (
                     <WebviewPane sessionId={session.id} isActive={session.id === activeSessionId} />
                   ) : isShowingExcalidraw ? (
-                    <ExcalidrawPane sessionId={session.id} />
+                    <AgentCanvasPane sessionId={session.id} />
                   ) : null}
                 </div>
               )
@@ -915,9 +919,10 @@ export default function App() {
             terminal/GitHub-panel row so they span the full content-column
             width and the GitHub panel ends above them. Rendered once for the
             ACTIVE session only -- switching tabs re-resolves these against
-            `activeSession`. The telemetry strip is hidden for shell-only
-            sessions (matches the old per-TerminalView gate). */}
-        {activeSession && !activeSession.shellOnly && (
+            `activeSession`. Shell-only sessions render a minimal variant of the
+            strip — just a Restart control, no telemetry (the strip handles that
+            internally). */}
+        {activeSession && (
           <SessionStatusStrip sessionId={activeSession.id} />
         )}
         {activeSession && (

@@ -4,6 +4,7 @@ import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData } from '../shared/types'
 import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
+import type { CanvasChangedEvent, CanvasRenderSource, CanvasState } from '../shared/canvas'
 
 export interface ElectronAPI {
   /** True when this is a dev build (npm run dev / ccc), false for a packaged
@@ -18,6 +19,7 @@ export interface ElectronAPI {
     list: () => Promise<import('../shared/account-types').AccountProfile[]>
     create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Per-profile credential state: forced-login countdown + identity cross-check. */
@@ -200,6 +202,12 @@ export interface ElectronAPI {
     openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthBrowser: (args: { profileId: string; browser: 'chrome' | 'edge' }) => Promise<{ ok: true } | { ok: false; error: string }>
+  }
+  canvas: {
+    getState: (args: { sessionId: string }) => Promise<CanvasState | null>
+    render: (args: { sessionId: string; source: CanvasRenderSource }) => Promise<{ canvasId: string; versionId: string }>
+    setActiveVersion: (args: { sessionId: string; versionId: string }) => Promise<CanvasState>
+    onChanged: (cb: (e: CanvasChangedEvent) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -503,6 +511,7 @@ const electronAPI: ElectronAPI = {
     list: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_LIST),
     create: (name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CREATE, { name }),
     rename: (id, name) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_RENAME, { id, name }),
+    setActive: (id, active) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_SET_ACTIVE, { id, active }),
     delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
     refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
     authInfo: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_AUTH_INFO),
@@ -696,6 +705,19 @@ const electronAPI: ElectronAPI = {
     openArtifacts: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_OPEN_ARTIFACTS, profileId),
     setAuthMethod: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_METHOD, args),
     setAuthBrowser: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_BROWSER, args),
+  },
+  // Agent Canvas — per-session review surface state + change push. Content
+  // itself loads straight into the canvas iframe over ccc-ux://, not IPC.
+  canvas: {
+    getState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_GET_STATE, args),
+    render: (args: { sessionId: string; source: CanvasRenderSource }) => ipcRenderer.invoke(IPC.CANVAS_RENDER, args),
+    setActiveVersion: (args: { sessionId: string; versionId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_SET_ACTIVE_VERSION, args),
+    onChanged: (cb: (e: CanvasChangedEvent) => void) => {
+      const handler = (_e: unknown, e: CanvasChangedEvent) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_CHANGED, handler)
+    },
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),

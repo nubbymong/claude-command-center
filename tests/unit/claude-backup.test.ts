@@ -156,4 +156,26 @@ describe('backupRealClaudeOnce', () => {
     expect(fs.existsSync(path.join(dest, '.claude.json'))).toBe(true)
     expect(fs.existsSync(staging)).toBe(false)
   })
+
+  it('refuses to back up through a reparse point pre-planted at the staging dir, and copies no token into it', () => {
+    const attacker = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-backup-evil-'))
+    const backupsRoot = path.join(resourcesDir, 'claude-config-backups')
+    fs.mkdirSync(backupsRoot, { recursive: true })
+    const staging = path.join(backupsRoot, 'initial.tmp')
+    try { fs.symlinkSync(attacker, staging, process.platform === 'win32' ? 'junction' : 'dir') }
+    catch { fs.rmSync(attacker, { recursive: true, force: true }); return } // unprivileged link unavailable; skip
+
+    const result = backupRealClaudeOnce({ homeDir, resourcesDir })
+
+    expect(result).toBeNull() // refused; retries next boot rather than copying through the plant
+    expect(fs.existsSync(path.join(attacker, '.claude', '.credentials.json'))).toBe(false)
+    expect(fs.existsSync(path.join(attacker, '.claude.json'))).toBe(false)
+    fs.rmSync(attacker, { recursive: true, force: true })
+  })
+
+  it.runIf(process.platform !== 'win32')('hardens the backed-up credential copy to 0600', () => {
+    const dest = backupRealClaudeOnce({ homeDir, resourcesDir })!
+    const cred = path.join(dest, '.claude', '.credentials.json')
+    expect(fs.statSync(cred).mode & 0o777).toBe(0o600)
+  })
 })

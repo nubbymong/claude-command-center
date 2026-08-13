@@ -1115,13 +1115,13 @@ async function main() {
       console.log('[capture] WARNING: Snap button not found, skipping')
     }
 
-    // Excalidraw — click Draw button to swap terminal for the canvas
-    const drawClicked = await clickToolbarButton(window, 'Open Excalidraw')
+    // Agent Canvas — click Canvas button to swap terminal for the sketchpad
+    const drawClicked = await clickToolbarButton(window, 'Open Agent Canvas')
     if (drawClicked) {
       await window.waitForTimeout(1500) // canvas mount + welcome state
       await capture(window, 'step-excalidraw.jpg', 'Excalidraw scratchpad')
       // Toggle off
-      await clickToolbarButton(window, 'Hide Excalidraw')
+      await clickToolbarButton(window, 'Hide Agent Canvas')
       await window.waitForTimeout(400)
     } else {
       console.log('[capture] WARNING: Excalidraw button not found, skipping')

@@ -101,7 +101,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     // writeFileSync(mcpPath, ...) literal so the assertion can't be
     // satisfied by an unrelated reference to 'conductor' elsewhere in
     // the script.
-    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*"\)/)
+    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600\}\)/)
     expect(writeMatch).not.toBeNull()
     expect(writeMatch![0]).toContain('conductor')
     expect(writeMatch![0]).not.toContain('conductor-vision')
@@ -187,7 +187,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   // exactly like the port-0 fallback; statusline is independent of this flag.
   it('includeConductorMcp=false writes empty remote mcpServers (no built-in tools)', () => {
     const script = generateRemoteSetupScript('sid-x', null, { includeConductorMcp: false })
-    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*"\)/)
+    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600\}\)/)
     expect(writeMatch).not.toBeNull()
     expect(writeMatch![0]).toContain('\\"mcpServers\\":{}')
     expect(writeMatch![0]).not.toContain('conductor')
@@ -202,7 +202,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     mockedConductorMcpPort = 0
     try {
       const script = generateRemoteSetupScript('sid-x', null)
-      const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*"\)/)
+      const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600\}\)/)
       expect(writeMatch).not.toBeNull()
       // Empty mcpServers literal: {"mcpServers":{}} -> doubly-stringified
       // becomes the substring \"mcpServers\":{} inside the script source.

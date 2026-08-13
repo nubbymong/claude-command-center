@@ -13,6 +13,8 @@ import { spawnClaudeHeadless } from './claude-headless'
 import { parseClaudeVersion } from './sentinel/sentinel-version'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerLogs2Handlers } from './ipc/logs2-handlers'
+import { registerCanvasHandlers } from './ipc/canvas-handlers'
+import { registerCccUxSchemePrivileges, registerCccUxProtocolHandler } from './canvas/ccc-ux-protocol'
 
 import { startStatuslineWatcher, setTranscriptPathSink, healGlobalStatusline } from './statusline-watcher'
 import { registerProvider, getProvider } from './providers'
@@ -107,6 +109,11 @@ if (!app.isPackaged && !process.env.CCC_DEV_DATA_DIR) {
 
 // Migrate registry keys from old "Claude Conductor" → new "Claude Command Center"
 migrateRegistryKeys()
+
+// Agent Canvas serving scheme (ccc-ux://). Privilege registration is only
+// honoured BEFORE app ready, so it lives here at module scope; the actual
+// protocol handler is installed inside whenReady, before any window exists.
+registerCccUxSchemePrivileges()
 
 // Lazy getter — can't call getConfigDir() at module load time
 function getWindowStateFile(): string {
@@ -733,6 +740,14 @@ if (!gotTheLock) {
     // matching <meta> CSP in src/renderer/index.html. Both use CSP_POLICY so
     // dev and prod enforce the identical policy.
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      // ccc-ux:// (Agent Canvas) responses carry their OWN per-mode CSP set by
+      // the protocol handler — replacing it with the renderer policy here would
+      // both weaken the canvas policy (localhost connect-src) and break its
+      // content (script-src 'wasm-unsafe-eval' only). Pass them through.
+      if (details.url.startsWith('ccc-ux://')) {
+        callback({ responseHeaders: details.responseHeaders })
+        return
+      }
       callback({
         responseHeaders: {
           ...details.responseHeaders,
@@ -740,6 +755,10 @@ if (!gotTheLock) {
         }
       })
     })
+
+    // Agent Canvas content serving — must be registered before any renderer
+    // exists so a restored session's canvas iframe can load immediately.
+    registerCccUxProtocolHandler()
 
     createSplashWindow()
     try {
@@ -921,6 +940,9 @@ if (!gotTheLock) {
     // the request/response handlers resolve the supervisor lazily per call and
     // reject cleanly when logging is disabled.
     registerLogs2Handlers(getWindow)
+    // Agent Canvas (2.2): renderer read surface + change push over the canvas
+    // store. Serving itself is the ccc-ux:// protocol registered above.
+    registerCanvasHandlers(getWindow)
     // Tokenomics rebuild: start the better-sqlite3 indexing worker supervisor
     // (forked; native dep lives ONLY in the worker — this stays main-clean) and
     // register the new read-surface handlers. The worker ingests from raw

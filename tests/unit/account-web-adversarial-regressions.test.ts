@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
   session: { fromPartition: vi.fn(() => ({ cookies: { set: cookiesSet }, clearStorageData })) },
 }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
-vi.mock('../../src/main/vision-manager', () => ({ getBrowserPaths: () => ['C:/present/chrome.exe'] }))
+vi.mock('../../src/main/browser-paths', () => ({ getBrowserPaths: () => ['C:/present/chrome.exe'] }))
 
 const spawnSyncMock = vi.fn()
 const spawned: any[] = []

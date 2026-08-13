@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-beta.8] - 2026-08-11
+
+### Added
+- Accounts can now be marked inactive. An inactive account still appears in the accounts list but cannot be chosen when you switch a session's account — it shows up greyed and labelled "inactive" in the switch menus. Toggle it from Settings › Accounts; every existing account stays active, and the primary account is always active. Handy for parking an account you are not using without removing it.
+
+### Changed
+- Windows releases are now digitally code-signed. The installer and the app carry a verified publisher, so Windows no longer shows an "unknown publisher" warning when you download or install them. SmartScreen may still show a reputation prompt for a little while — trust accrues to the new certificate with each install. Update downloads continue to be verified by SHA-256 checksum, as before.
+- The product mark now appears in the title bar, and in the empty window before you start a session in place of the old terminal-prompt placeholder — so the app carries the same mark as its icon and start-up screen throughout.
+- Terminal-only ("no AI") sessions now have a Restart control in the bottom-right, the same as Claude sessions — restart re-runs the shell without disturbing your other tabs.
+- The per-session Draw button is now labelled Canvas and opens the same freehand sketchpad as before. This is the groundwork for an upcoming agent-assisted review surface; there is no change to how you sketch today.
+
+### Fixed
+- Terminal-only sessions no longer show a context-usage percentage on their sidebar card. A shell session has no reliable context signal, so the number could be stale or borrowed from another session; it is hidden until terminal integration improves. The model and mode still show.
+- Switching a session's account no longer leaves a usage limit from the previous account showing. Changing accounts mid-session could keep the old account's exhausted-usage state painted on the meter until you restarted; the session now clears it on switch.
+
+## [2.1.0-beta.7] - 2026-08-10
+
+> A security release. Two high-severity local-attacker vulnerabilities are fixed — their advisories publish alongside this release — and every open dependency security alert on the project is cleared.
+
+### Changed
+- Security: updated bundled third-party components to clear every open dependency vulnerability alert on the project, including the id generator, URI parser, network-address parser, diagram renderer and HTML sanitiser the app ships. All updates are minor or patch releases, and the full test suite passed unchanged.
+- A privacy policy now ships with the project, naming exactly what personal information the app handles and where it goes.
+
+### Fixed
+- Security: the token that protects the app's local browser-control service was stored in a file other users of the same computer could read. On a shared machine, another local user who read it could connect to that service and run code inside the app's embedded browser. The token file and the folder holding it are now created private to your user account and repaired to private if found otherwise, the token is rotated on upgrade, and the per-session files that carry it are private too. Fixed in this release; 2.1.0-beta.6 and earlier are affected. Advisory GHSA-58r3-f5hg-vxcq, severity high: it requires another user account on the same machine.
+- Security: files the app saves safely (write-then-swap) used a predictable temporary name in a location where another local user could plant a link in advance, redirecting the write — including the sign-in credential file — and defeating its private-file protection. Staging names are now unpredictable, the swap refuses to follow planted links, and credential copies go through a hardened path. Fixed in this release; 2.1.0-beta.6 and earlier are affected. Advisory GHSA-pwfw-2ggq-569x, severity high: it requires another user account on the same machine.
+- Windows: an Insights run could report itself as failed for no visible reason. Security software on Windows briefly holds a file open just after it has been written, and that could make saving the list of runs fail — more often when the machine was busy. Saving now waits a moment and tries again.
+- Insights could get stuck insisting a report was already being generated when nothing was running, leaving restarting the app as the only way out. If saving the list of runs failed at the wrong moment, the app never cleared its "in progress" marker. That marker is now always cleared, however the run ends.
+- The Saved Configs pin fix from the previous beta now also covers app launch: a pinned panel starts open, rather than pinned-but-collapsed, the first time the sidebar renders.
+
 ## [2.1.0-beta.6] - 2026-08-04
 
 > The app is now AI Code Conductor, with a new icon, start-up animation and a rebuilt session setup dialog. Insights can also look at all of your accounts at once: one click generates every account's report and then a combined report that compares them side by side.
@@ -38,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Security: the Insights page accepted a report identifier without checking it, and that identifier was used to build a file path — so a crafted one could point outside the Insights folder and read another file on your machine. Identifiers are now validated before they are used to build any path, both there and in the equivalent account-profile lookups. Fixed in this release; 2.1.0-beta.5 and earlier are affected. Advisory GHSA-rj3p-wqj3-p7w8, severity low: it needs something already running inside the app to make the request, and nothing in the app sends one.
 - macOS, when upgrading by dragging the new app over: because the application has been renamed, the old "Claude Command Center" app is left behind in your Applications folder rather than being replaced. You can safely drag it to the Trash; your data and accounts belong to the new app. A brand-new install is unaffected.
+- Pinning the Saved Configs list open now survives closing and reopening the app. The pin was being remembered correctly, but the list itself came back collapsed — so it looked pinned, with nothing under it, until you unpinned and re-pinned to bring it back.
+- A pinned Saved Configs list can now be collapsed and expanded with its arrow. Previously pinning it also froze it open, so the arrow did nothing. Collapsing applies to the current session only — a pinned list starts open again next time you launch.
 - Fixed: every button in the sidebar could end up announcing itself with the same label. That broke the guided tour and made the app significantly harder to use with a screen reader.
 - Fixed: two of the tips could never appear, because they were waiting on activity the app never actually recorded.
 - The accounts view now warns when two accounts are signed into the SAME Anthropic account, and explains why it matters: each time one refreshes, it invalidates the other, so they take turns mysteriously expiring. This is easy to cause by accident — sign one account in while your browser is still signed in as another and it happens silently.
@@ -990,6 +1022,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-beta.8]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.8
+[2.1.0-beta.7]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.7
 [2.1.0-beta.6]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.6
 [2.1.0-beta.5]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.5
 [2.1.0-beta.4]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.4

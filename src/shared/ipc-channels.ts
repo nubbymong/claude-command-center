@@ -343,6 +343,7 @@ export const IPC = {
   ACCOUNT_PROFILES_LIST: 'accountProfiles:list',
   ACCOUNT_PROFILES_CREATE: 'accountProfiles:create',
   ACCOUNT_PROFILES_RENAME: 'accountProfiles:rename',
+  ACCOUNT_PROFILES_SET_ACTIVE: 'accountProfiles:setActive',
   ACCOUNT_PROFILES_DELETE: 'accountProfiles:delete',
   ACCOUNT_PROFILES_REFRESH_IDENTITY: 'accountProfiles:refreshIdentity',
   ACCOUNT_PROFILES_AUTH_INFO: 'accountProfiles:authInfo',
@@ -357,6 +358,12 @@ export const IPC = {
   ACCOUNT_IDENTITY_UPDATE: 'identity:accountUpdate',
   ACCOUNT_IDENTITY_GET: 'identity:accountGet',
   ACCOUNT_NEW_DETECTED: 'account:new-detected',
+
+  // Agent Canvas (2.2) — per-session review surface served over ccc-ux://
+  CANVAS_GET_STATE: 'canvas:getState',                 // renderer -> main: { sessionId } -> CanvasState | null
+  CANVAS_RENDER: 'canvas:render',                      // renderer -> main: register a new content version
+  CANVAS_SET_ACTIVE_VERSION: 'canvas:setActiveVersion',// renderer -> main: switch the surfaced version
+  CANVAS_CHANGED: 'canvas:changed',                    // push: main -> renderer (a render/switch happened)
 } as const
 
 /** Helper to build per-session PTY data channels */

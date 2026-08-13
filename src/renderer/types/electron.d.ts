@@ -51,6 +51,11 @@ import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
 import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
 export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
+import type { CanvasChangedEvent, CanvasRenderSource, CanvasState } from '../../shared/canvas'
+export type {
+  CanvasChangedEvent, CanvasHandle, CanvasHitInfo, CanvasMode, CanvasRenderSource,
+  CanvasState, CanvasVersion, CanvasVersionSource, CanvasViewportInfo,
+} from '../../shared/canvas'
 import type {
   ChannelPayload,
   ChannelEnvelopeMeta,
@@ -94,6 +99,7 @@ export interface ElectronAPI {
   accountProfiles: {
     list: () => Promise<import('../../shared/account-types').AccountProfile[]>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    setActive: (id: string, active: boolean) => Promise<{ ok: boolean; error?: string }>
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     /** Per-profile credential state: forced-login countdown + identity cross-check. */
@@ -321,6 +327,13 @@ export interface ElectronAPI {
     openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthBrowser: (args: { profileId: string; browser: 'chrome' | 'edge' }) => Promise<{ ok: true } | { ok: false; error: string }>
+  }
+  /** Agent Canvas — session review-surface state; content loads over ccc-ux://. */
+  canvas: {
+    getState: (args: { sessionId: string }) => Promise<CanvasState | null>
+    render: (args: { sessionId: string; source: CanvasRenderSource }) => Promise<{ canvasId: string; versionId: string }>
+    setActiveVersion: (args: { sessionId: string; versionId: string }) => Promise<CanvasState>
+    onChanged: (cb: (e: CanvasChangedEvent) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<any>

@@ -3,6 +3,8 @@ import path from 'node:path'
 import os from 'node:os'
 import { getConductorMcpPort, getConductorMcpSecret } from '../conductor-mcp-server'
 import { buildStatuslineSetting } from '../providers/claude/statusline-command'
+import { atomicWriteSecure, mkdirSecure, hardenCredentialDir } from '../account-profiles'
+import { logWarn } from '../debug-logger'
 
 /**
  * Path to the local-session settings file. Mirrors the SSH remote layout
@@ -49,11 +51,9 @@ export interface WriteSessionSettingsOptions {
 
 export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionSettingsOptions = {}): string {
   const claudeDir = path.join(os.homedir(), '.claude')
-  try {
-    fs.mkdirSync(claudeDir, { recursive: true })
-  } catch {
-    /* directory may already exist */
-  }
+  // ~/.claude is created securely inside atomicJsonWrite (mkdirSecure + 0700) at
+  // write time -- no plain mkdir here, which would silently accept a pre-planted
+  // junction. The settings.json read below fails closed if the dir is absent.
 
   let shared: Record<string, unknown> = {}
   try {
@@ -113,11 +113,6 @@ export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionS
  * mcpServers object in that case.
  */
 export function writeLocalSessionMcpConfig(sessionId: string, includeConductor = true): string {
-  const claudeDir = path.join(os.homedir(), '.claude')
-  try {
-    fs.mkdirSync(claudeDir, { recursive: true })
-  } catch { /* may exist */ }
-
   const mcpPort = getConductorMcpPort()
   const mcpServers: Record<string, unknown> = {}
   // includeConductor=false (conductorToolsEnabled master off) writes an empty
@@ -154,14 +149,28 @@ export function removeLocalSessionMcpConfig(sessionId: string): void {
   }
 }
 
+/**
+ * Write a per-session file under ~/.claude atomically and owner-only.
+ *
+ * mcp-<sid>.json carries the Conductor MCP bearer token (`?token=<secret>`) --
+ * the sole gate on the loopback MCP server, and thus on `vision_eval` (arbitrary
+ * JS in the embedded browser). Written with no file mode it landed 0644 on
+ * POSIX: any other local user could read the token and drive the server. So
+ * create ~/.claude through mkdirSecure (refuse a pre-planted reparse point) +
+ * hardenCredentialDir (0700), stage-and-rename via atomicWriteSecure with an
+ * explicit 0600, and do NOT fall back to a plain writeFileSync -- the old
+ * fallback followed a planted symlink at the target and dropped the mode. Fail
+ * closed: leave the previous file, log, and never throw (this runs on the spawn
+ * path).
+ */
 function atomicJsonWrite(filePath: string, data: unknown): string {
-  const tmp = `${filePath}.tmp.${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
+  const dir = path.dirname(filePath)
   try {
-    fs.renameSync(tmp, filePath)
-  } catch {
-    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+    mkdirSecure(dir)
+    hardenCredentialDir(dir)
+    atomicWriteSecure(filePath, JSON.stringify(data, null, 2), 0o600)
+  } catch (err) {
+    logWarn(`[per-session] secure write of ${path.basename(filePath)} failed (${String(err)}); left the previous file`)
   }
   return filePath
 }

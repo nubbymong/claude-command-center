@@ -6,10 +6,10 @@ import {
   readFileSync,
   writeFileSync,
   renameSync,
+  unlinkSync,
   copyFileSync,
   readdirSync,
   statSync,
-  chmodSync
 } from 'fs'
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
@@ -23,6 +23,7 @@ import type { AccountProfile } from '../shared/account-types'
 import { isAuthFailure, type ClaudeFailureFacts } from '../shared/claude-auth-errors'
 import { readProfileAuthInfo } from './account-auth-info'
 import { redactSecrets } from './hooks/hook-payload-redactor'
+import { atomicWriteFileSync } from './atomic-write'
 import type { InsightsCatalogue, InsightsData, InsightsRun, InsightsRunMember } from '../shared/types'
 import {
   CROSS_ACCOUNT_MAX_PARALLEL,
@@ -122,13 +123,10 @@ function loadCatalogue(): InsightsCatalogue {
 
 function saveCatalogue(catalogue: InsightsCatalogue): void {
   ensureDir(getInsightsDir())
-  // Atomic: write a tmp then rename over the target so a crash mid-write can't
-  // truncate catalogue.json (which loadCatalogue would then read as an empty
-  // catalogue, hiding every run).
-  const file = getCatalogueFile()
-  const tmp = file + '.tmp'
-  writeFileSync(tmp, JSON.stringify(catalogue, null, 2))
-  renameSync(tmp, file)
+  // Atomic, and retried past the Windows rename race this file was the first to
+  // hit (#213). Staging, exclusive create, retry and cleanup now live in
+  // atomic-write.ts (#233) -- this was the prototype, not a special case.
+  atomicWriteFileSync(getCatalogueFile(), JSON.stringify(catalogue, null, 2))
 }
 
 /** Read-modify-write a single run into the CURRENT on-disk catalogue (replace by
@@ -826,7 +824,9 @@ async function extractKpis(
   }
 
   try {
-    writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(kpiData, null, 2))
+    // kpis.json holds the account's analysed usage data; write it owner-only
+    // through the shared atomic helper (0600), not a bare 0644 writeFileSync.
+    atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(kpiData, null, 2), { mode: 0o600 })
     logInfo('[insights] KPIs extracted and saved')
     return { ok: true }
   } catch (err) {
@@ -869,7 +869,18 @@ function saveExtractionFailure(
 ): void {
   try {
     const target = join(archiveDir, 'kpi-extraction-failure.json')
-    writeFileSync(
+    // 0o600 on POSIX. This file holds the verbatim reply to a prompt that embeds
+    // the previous run's full kpis.json, so it routinely persists a copy of the
+    // user's analysed usage data, and it must not land 0o644 under the default
+    // umask.
+    //
+    // Through the shared atomic write, not a bare writeFileSync + chmod (#233).
+    // The old shape was GHSA-pwfw-2ggq-569x exactly: a mode passed to open(2)
+    // applies only on CREATE, so writing into an existing inode inherited its
+    // permissions, and the compensating chmod followed a link to harden someone
+    // else's file. Exclusive create means the file is always new, so the mode
+    // always applies and the re-assert is no longer needed.
+    atomicWriteFileSync(
       target,
       JSON.stringify(
         {
@@ -884,17 +895,8 @@ function saveExtractionFailure(
         null,
         2
       ),
-      // 0o600 on POSIX. This file holds the verbatim reply to a prompt that embeds
-      // the previous run's full kpis.json, so it routinely persists a copy of the
-      // user's analysed usage data. A plain writeFileSync lands 0o644 under the
-      // default umask — world-readable — which is exactly the failure mode
-      // account-profiles.ts's writeCredentialFile/hardenCredentialFile exist to
-      // prevent. NTFS ACL inheritance masks this on Windows; macOS and Linux ship
-      // too. Mode is ignored on win32, so this is unconditional.
       { mode: 0o600 }
     )
-    // writeFileSync's mode only applies on CREATE, so re-assert for an overwrite.
-    try { chmodSync(target, 0o600) } catch { /* best-effort; win32 ignores modes */ }
     logError(`[insights] Full failed reply saved to ${target}`)
   } catch (err) {
     logError('[insights] Could not save the extraction failure record:', err)
@@ -910,14 +912,19 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
 
   const id = generateRunId()
   const archiveDir = join(getInsightsDir(), id)
-  ensureDir(archiveDir)
-
   const run: InsightsRun = { id, timestamp: Date.now(), status: 'running', accountEmail: account.accountEmail, profileId: account.profileId }
-  upsertRun(run)
-  notifyRenderer(getWindow, run)
-  logInfo(`[insights] Run ${id} account=${account.accountEmail ?? '(default)'} home=${account.home ?? 'global'}`)
 
+  // Everything that can touch the disk lives inside the try, because only its
+  // `finally` releases the lock. ensureDir and the first upsertRun used to run
+  // above it, so a transient failure there (a scanner losing us the catalogue
+  // rename, a full disk) left `key` in `inFlight` forever and every later run
+  // for that account reported "Insights already running" with nothing running.
   try {
+    ensureDir(archiveDir)
+    upsertRun(run)
+    notifyRenderer(getWindow, run)
+    logInfo(`[insights] Run ${id} account=${account.accountEmail ?? '(default)'} home=${account.home ?? 'global'}`)
+
     // Step 1: Run /insights via interactive PTY
     run.statusMessage = 'Step 1/3: Generating report...'
     upsertRun(run)
@@ -1037,7 +1044,6 @@ export async function runCrossAccountInsights(
 
   const id = generateRunId()
   const archiveDir = join(getInsightsDir(), id)
-  ensureDir(archiveDir)
 
   const run: InsightsRun = {
     id,
@@ -1061,10 +1067,14 @@ export async function runCrossAccountInsights(
     const row = run.members?.find(m => m.profileId === profileId)
     if (row) Object.assign(row, patch)
   }
-  publish()
-  logInfo(`[insights] Cross-account run ${id} over ${targets.length} accounts`)
-
+  // Same reason as runInsights: ensureDir and the opening publish() have to be
+  // inside the try, or a transient disk failure there strands CROSS_ACCOUNT_KEY
+  // in `inFlight` and every later roll-up reports "already being generated".
   try {
+    ensureDir(archiveDir)
+    publish()
+    logInfo(`[insights] Cross-account run ${id} over ${targets.length} accounts`)
+
     // Step 1: fan out one normal per-account run each, bounded so a wide
     // multi-account setup doesn't put N interactive Claude PTYs on the machine.
     let done = 0
@@ -1185,7 +1195,8 @@ export async function runCrossAccountInsights(
     }
 
     const data = withNarrative(baseline, narrative)
-    writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(data, null, 2))
+    // Owner-only atomic write (0600): this kpis.json carries cross-account usage.
+    atomicWriteFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(data, null, 2), { mode: 0o600 })
 
     run.status = 'complete'
     run.statusMessage = undefined

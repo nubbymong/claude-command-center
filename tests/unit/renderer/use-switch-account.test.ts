@@ -15,6 +15,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
 import type { Session } from '../../../src/renderer/stores/sessionStore'
+import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
 import { shouldSwitch } from '../../../src/renderer/hooks/useSwitchAccount'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
@@ -99,6 +100,7 @@ describe('useSwitchAccount', () => {
 
   beforeEach(() => {
     useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false })
+    useAccountProfilesStore.setState({ profiles: [] })
     killSessionPtyMock.mockReset()
     clearSpawnedMock.mockReset()
     ptyKillMock.mockReset()
@@ -166,6 +168,41 @@ describe('useSwitchAccount', () => {
 
     const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
     expect(stored!.profileId).toBeUndefined()
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+  })
+
+  it('is a no-op when the target account is inactive (backstop)', () => {
+    useAccountProfilesStore.setState({
+      profiles: [
+        { id: 'profile-b', name: 'B', accountEmail: 'b@example.com', active: false, createdAt: 1 },
+      ],
+    })
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-b') })
+
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
+    expect(stored!.profileId).toBe('profile-a') // unchanged: the switch was refused
+    expect(killSessionPtyMock).not.toHaveBeenCalled()
+    expect(markSessionForResumePickerMock).not.toHaveBeenCalled()
+  })
+
+  it('still switches to an active target when other profiles are inactive', () => {
+    useAccountProfilesStore.setState({
+      profiles: [
+        { id: 'profile-b', name: 'B', accountEmail: 'b@example.com', active: true, createdAt: 1 },
+      ],
+    })
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-b') })
+
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
+    expect(stored!.profileId).toBe('profile-b')
     expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
   })
 

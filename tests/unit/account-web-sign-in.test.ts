@@ -19,7 +19,7 @@ vi.mock('electron', () => ({
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 
 // Keep the real getBrowserPaths out of it; we are not testing binary discovery.
-vi.mock('../../src/main/vision-manager', () => ({
+vi.mock('../../src/main/browser-paths', () => ({
   getBrowserPaths: () => ['C:/nonexistent/chrome.exe'],
 }))
 

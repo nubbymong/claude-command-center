@@ -2,7 +2,7 @@ import { ipcMain, app, dialog } from 'electron'
 import { spawn } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
-import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp } from '../update-watcher'
+import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp, isStoreBuild } from '../update-watcher'
 import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount, InstallerIntegrityError, stillMatchesDigest, createInstallerDir } from '../github-update'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
@@ -15,6 +15,14 @@ let updateInProgress = false
 
 export function registerUpdateHandlers(): void {
   ipcMain.handle('update:check', async () => {
+    // Store builds are updated by the Store. Report "no update" so the UI never
+    // offers one — the download path could not run the installer from inside the
+    // package container, and a self-updating Store app fails certification.
+    if (isStoreBuild()) {
+      logInfo('[update] Store build — updates are handled by the Microsoft Store')
+      return false
+    }
+
     // In dev mode, check the local source watcher first (live-reload workflow).
     // In production, always go straight to GitHub.
     if (!isPackagedApp()) {
@@ -70,6 +78,15 @@ export function registerUpdateHandlers(): void {
   })
 
   ipcMain.handle('update:installAndRestart', async () => {
+    // Belt and braces with the update:check gate above: nothing should be able to
+    // reach here in a Store build, but a scripted invoke bypasses the UI, and
+    // running an NSIS installer from inside the package container would fail in a
+    // confusing way rather than a clear one.
+    if (isStoreBuild()) {
+      logInfo('[update] Refusing self-install — this copy is managed by the Microsoft Store')
+      throw new Error('This copy is installed from the Microsoft Store, which manages its own updates.')
+    }
+
     // ipcMain.handle serialises nothing. Two concurrent runs each prune the
     // staging root keeping only THEIR OWN directory, so each deletes the other's
     // in-flight installer. The renderer latches on `isUpdating`, but that is one

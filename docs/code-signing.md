@@ -16,7 +16,7 @@ CI). Nowhere else.
 | Platform | Status | Mechanism |
 |---|---|---|
 | macOS (.dmg/app) | **Signed + notarized** in CI | `release.yml` imports `APPLE_CERTIFICATE` (base64 `.p12`) into a temp keychain, then `electron-builder --mac` signs with `hardenedRuntime` + `notarize: true` (package.json). |
-| Windows (.exe/NSIS) | **Unsigned** in CI (SmartScreen warns) | Not yet wired — see "CI: Windows" below. |
+| Windows (.exe/NSIS) | **Signed** in CI | SSL.com eSigner CKA (cloud HSM) inside electron-builder — see "CI: Windows" below. |
 | Linux (AppImage) | Intentionally unsigned | No signing convention; verified via `CHECKSUMS.txt`. |
 
 ## Local builds
@@ -24,18 +24,20 @@ CI). Nowhere else.
 electron-builder (v26) auto-signs when the standard env vars are set — **no code
 change needed**. Point the env at a cert file that lives **outside the repo**.
 
-### Windows (traditional OV `.pfx`)
+### Windows
 
-PowerShell, per session (nothing persisted, nothing committed):
+The release certificate is cloud-held (see "CI: Windows" below) — there is no
+`.pfx` to point at. Local Windows builds are normally left **unsigned** (fine
+for dev). To produce a locally signed build, install eSigner CKA on your own
+machine, load the certificate into your user store, then:
 
 ```powershell
-$env:CSC_LINK = "C:\secure\path\outside-repo\codesign.pfx"   # path OR base64 OR file://
-$env:CSC_KEY_PASSWORD = "<pfx password>"                       # or read from a prompt
-npm run package:win
+npx electron-builder --win "-c.win.signtoolOptions.certificateSha1=<thumbprint>"
 ```
 
-Use `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` instead if you want to scope it to
-Windows explicitly (won't touch a mac build in the same shell). Output installer:
+(For a hypothetical file-based cert, electron-builder's standard
+`CSC_LINK`/`CSC_KEY_PASSWORD` — or the Windows-scoped `WIN_CSC_*` variants —
+still work with no code change.) Output installer:
 `dist/ClaudeCommandCenter-<version>.exe`.
 
 Verify the signature:
@@ -55,30 +57,78 @@ Same idea with `CSC_LINK`/`CSC_KEY_PASSWORD` pointing at your Developer ID `.p12
 `npm run package:mac`. (CI already does this — local signing is only for testing
 the signed artifact.)
 
-## CI: Windows (best-practice options)
+## CI: Windows (implemented — SSL.com eSigner CKA)
 
-Pick one when you're ready; then the release workflow gets a small signing step.
+Windows installers are signed in `release.yml` with an SSL.com Personal ID (IV)
+certificate via **eSigner CKA**. The private key lives in SSL.com's cloud HSM
+and never exists as a file anywhere — not on the runner, not in secrets. CKA
+registers a Windows KSP so the cloud key appears in the runner's user
+certificate store, and electron-builder's normal signtool path signs with it
+**during packaging**. That placement is load-bearing: `latest.yml`'s sha512,
+the `.blockmap`, and `CHECKSUMS.txt` all hash the final signed binary — signing
+after packaging would silently break auto-update.
 
-- **Recommended — Azure Trusted Signing** (managed signing service): no
-  exportable private key, short-lived certs, OIDC federation from GitHub Actions
-  (no long-lived secret to rotate). Setup: create a Trusted Signing account +
-  certificate profile in Azure, federate a GitHub OIDC credential, add the
-  `azure/trusted-signing-action` (or electron-builder's `azureSignOptions`) to
-  `release.yml`. This is the modern standard and avoids handling a `.pfx` in CI.
-- **Simpler fallback — `.pfx` in GitHub secrets:** base64 the OV `.pfx`, store as
-  a secret, decode + sign at build time. Reuses the same env-var path as local:
-  - Create the `.b64` **outside the repo** (same rule as the `.pfx` itself) and
-    `cd` there to run the command below; delete it once the secret is set. It is
-    a base64-wrapped private key, not a safer form of one — `*.b64` is
-    gitignored as a backstop, not a license.
-  - `gh secret set WIN_CSC_LINK --repo <owner>/<repo> < cert.b64`  (base64 of the `.pfx`; command never prints it)
-  - `gh secret set WIN_CSC_KEY_PASSWORD --repo <owner>/<repo>`  (prompts, hidden)
-  - workflow: add `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` to the Windows build
-    step's `env:` (electron-builder does the rest). Trade-off: a long-lived key
-    in secrets that must be rotated and revoked carefully.
+The pieces:
 
-DigiCert KeyLocker / other cloud-HSM signtool integrations are equivalent to the
-Azure option (key never exportable) if that's your CA.
+- **`release.yml` (build-windows):** downloads the pinned CKA installer (URL +
+  SHA-256 verified in the workflow), configures it from secrets, loads the
+  certificate, and injects the store thumbprint via
+  `-c.win.signtoolOptions.certificateSha1=…`. Signing runs only when the
+  secrets are present.
+- **`package.json` (`build.win.signtoolOptions`):** `signingHashAlgorithms:
+  ["sha256"]` (electron-builder's default still tries SHA-1, which modern CAs
+  refuse), SSL.com's RFC3161 timestamp server (`http://ts.ssl.com`), and
+  `publisherName: "Nicholas Moger"`. `publisherName` does **not** verify
+  anything at build time — electron-builder's only use of it is to write it into
+  the packaged `app-update.yml`. Keep it equal to the certificate CN so it is
+  correct if electron-updater is ever adopted; it is otherwise inert. The real
+  build-time signature check is the verify gate below.
+
+> **What signing does and does not change for updates.** Signing gives the
+> installer a *verified publisher* in Windows' UAC/SmartScreen prompts — no
+> more "unknown publisher". It does **not** add publisher verification to the
+> in-app updater: this app ships a custom updater (`src/main/github-update.ts`),
+> not electron-updater, and it verifies each downloaded update by **SHA-256
+> against `CHECKSUMS.txt`** (unchanged by this work). `publisherName` above only
+> writes `app-update.yml` (metadata a hypothetical future electron-updater would
+> read) — no current runtime code consults it. If we ever want the updater to
+> also check the Authenticode publisher, that is separate runtime work (and its
+> own adversarial pass).
+- **Verification gate:** after packaging, the workflow fails unless the
+  installer has a Valid Authenticode signature whose leaf **thumbprint matches
+  the certificate loaded at signing time** (and whose CN is the expected one),
+  with an RFC3161 timestamp. This gate — not `publisherName` — is what enforces
+  the signer identity. A stable/beta run without signing secrets fails outright;
+  we never silently ship unsigned again. Only `channel=dev` may build unsigned,
+  and only when the secrets are absent.
+
+**Secrets (Actions):** `ES_USERNAME` (SSL.com account username), `ES_PASSWORD`,
+`ES_TOTP_SECRET` (the eSigner TOTP *secret* from the enrollment QR — not a
+6-digit code). `ES_CREDENTIAL_ID` is also set but **not currently consumed** by
+`release.yml` — CKA auto-selects the sole signing credential; it is reserved for
+if the account ever holds more than one. To rotate the TOTP secret,
+use "reset eSigner PIN or get new QR Code" in the SSL.com portal — the old
+secret dies instantly everywhere it was copied.
+
+**eSigner account requirement:** the eSigner **Malware Blocker** must be
+*disabled* (eSigner portal → Settings). When it is on, the cloud refuses any
+hash that was not pre-scanned — CKA cannot pre-scan, so signing fails with
+"hash needs to be scanned first before submitting for signing". This is
+SSL.com's documented configuration for CKA-based CI signing.
+
+**Test without releasing:**
+
+```bash
+gh workflow run release.yml --ref <branch> -f channel=dev -f skip_vt=true -f dry_run=true
+```
+
+`dry_run` builds, signs and verifies the Windows installer only — no macOS or
+Linux jobs, no tag, no release; the artifact hangs off the workflow run.
+
+**SmartScreen expectations:** signatures are valid immediately, but SmartScreen
+reputation accrues to the certificate over time — early installs may still see
+a reputation prompt (with the publisher named, not "Unknown"). Reputation
+survives app renames; it keys on the certificate.
 
 ## Setting GitHub secrets safely
 

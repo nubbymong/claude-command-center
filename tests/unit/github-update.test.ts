@@ -665,6 +665,45 @@ describe('github-update', () => {
       expect(result!.installerUrl).toBe(expected.url)
     })
 
+    it('never confuses the Store (.appx) package with a direct-download installer', async () => {
+      // The Store artifact is AI-Code-Conductor-<v>-store.appx — it starts with an
+      // ACCEPTED prefix (AI-Code-Conductor-), so only the extension keeps the
+      // updater from serving it. Prove the real matcher rejects it on every
+      // platform, and still picks the genuine installer when both are present.
+      const platformInstaller: Record<string, { name: string; url: string }> = {
+        darwin: { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', url: 'https://x/mac.dmg' },
+        linux: { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', url: 'https://x/linux.AppImage' },
+        win32: { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', url: 'https://x/win.exe' },
+      }
+      const good = platformInstaller[process.platform] ?? platformInstaller.win32
+
+      // appx alone → not installable on any platform → null (never offered)
+      httpsState.nextResponse = {
+        statusCode: 200,
+        body: [
+          { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
+            { name: 'CHECKSUMS.txt', browser_download_url: 'https://x/c.txt' },
+            { name: 'AI-Code-Conductor-1.2.125-store.appx', browser_download_url: 'https://x/store.appx' },
+          ] },
+        ],
+      }
+      expect(await checkGitHubRelease()).toBeNull()
+
+      // appx alongside the real installer → the real installer wins, never the appx
+      httpsState.nextResponse = {
+        statusCode: 200,
+        body: [
+          { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
+            { name: 'CHECKSUMS.txt', browser_download_url: 'https://x/c.txt' },
+            { name: 'AI-Code-Conductor-1.2.125-store.appx', browser_download_url: 'https://x/store.appx' },
+            { name: good.name, browser_download_url: good.url },
+          ] },
+        ],
+      }
+      const both = await checkGitHubRelease()
+      expect(both!.installerName).toBe(good.name)
+    })
+
     it('returns null entirely when no installer asset exists for this platform', async () => {
       // No matching asset — we must not offer an update the user cannot install
       httpsState.nextResponse = {

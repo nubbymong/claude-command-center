@@ -25,6 +25,7 @@ import { BrowserWindow, nativeImage } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
 import { getConductorMcpPort } from './conductor-mcp-server'
+import { getBrowserPaths } from './browser-paths'
 import type { GlobalVisionConfig } from '../shared/types'
 
 // chrome-remote-interface (lazy require so a missing optional dep never crashes
@@ -602,39 +603,14 @@ export function tryReconnectGlobalVision(): void { if (globalManager) globalMana
 // === Browser launching (unchanged) ===
 
 /** Candidate executable paths per browser. Pure + exported for unit testing —
- *  `platform` is a parameter because process.platform is baked at test runtime. */
-export function getBrowserPaths(browser: 'chrome' | 'edge', platform: NodeJS.Platform = process.platform): string[] {
-  if (platform === 'darwin') {
-    if (browser === 'edge') return ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge']
-    return ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
-  }
-  if (platform === 'linux') {
-    if (browser === 'edge') return [
-      '/usr/bin/microsoft-edge',
-      '/usr/bin/microsoft-edge-stable',
-      '/opt/microsoft/msedge/msedge',
-    ]
-    // Chromium counts as "chrome" here — same engine, same CDP protocol.
-    // Snap chromium (/snap/bin/chromium) is deliberately absent: snap
-    // confinement blocks the --user-data-dir under /tmp, so it spawns but the
-    // debug port never comes up and vision hangs on "launching" instead of
-    // cleanly disabling. deb/rpm builds only.
-    return [
-      '/usr/bin/google-chrome',
-      '/usr/bin/google-chrome-stable',
-      '/usr/bin/chromium',
-      '/usr/bin/chromium-browser',
-    ]
-  }
-  if (browser === 'edge') return [
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-  ]
-  return [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  ]
-}
+ *  `platform` is a parameter because process.platform is baked at test runtime.
+ *
+ *  Moved to ./browser-paths so a caller wanting one list of paths does not pull
+ *  this module (and conductor-mcp-server -> update-watcher -> app.isPackaged) in
+ *  behind it. Re-exported here because existing importers reference it from
+ *  vision-manager; the import above is what binds it for THIS module's own use,
+ *  which a bare `export ... from` would not do. */
+export { getBrowserPaths }
 
 // Any browser CCC itself spawns is detached + unref'd, so without an explicit
 // kill it survives app quit forever (orphan process tree + an open CDP debug port

@@ -16,7 +16,7 @@ vi.mock('../../src/main/debug-logger', () => ({
   logInfo: (m: string) => { logs.push(m) },
   logError: (m: string) => { logs.push(m) },
 }))
-vi.mock('../../src/main/vision-manager', () => ({ getBrowserPaths: () => [] }))
+vi.mock('../../src/main/browser-paths', () => ({ getBrowserPaths: () => [] }))
 vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn() }))
 vi.mock('node:fs', () => ({
   existsSync: (...a: any[]) => (existsSyncMock as any)(...a),

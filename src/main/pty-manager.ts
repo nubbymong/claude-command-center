@@ -1328,7 +1328,15 @@ export function spawnPty(
             logError(`[pty] Failed to inject hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
           }
         }
-        extraFlags += ` --settings ${quoteArgForShell(sesPath, os.platform() === 'win32')}`
+        // Only pass --settings if the file was actually written. The per-session
+        // writers fail closed now (no insecure fallback), so a transient write
+        // failure can leave no file -- and claude exits 1 on a missing --settings
+        // path. Omit the flag instead so the session still launches on defaults.
+        if (fs.existsSync(sesPath)) {
+          extraFlags += ` --settings ${quoteArgForShell(sesPath, os.platform() === 'win32')}`
+        } else {
+          logWarn(`[pty] per-session settings not written for ${sessionId}; launching without --settings`)
+        }
       } catch (err) {
         logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
@@ -1337,7 +1345,14 @@ export function spawnPty(
         // mcp-config carries no conductor entry. Read fresh per spawn.
         const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
         const mcpCfgPath = writeLocalSessionMcpConfig(sessionId, conductorOn)
-        extraFlags += ` --mcp-config ${quoteArgForShell(mcpCfgPath, os.platform() === 'win32')}`
+        // Only pass --mcp-config if the file exists: the writer fails closed, and
+        // claude exits 1 on a missing --mcp-config path. Omit it on a write
+        // failure so the session still launches (without built-in conductor tools).
+        if (fs.existsSync(mcpCfgPath)) {
+          extraFlags += ` --mcp-config ${quoteArgForShell(mcpCfgPath, os.platform() === 'win32')}`
+        } else {
+          logWarn(`[pty] per-session MCP config not written for ${sessionId}; launching without --mcp-config`)
+        }
       } catch (err) {
         logError(`[pty] Failed to seed per-session MCP config for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }

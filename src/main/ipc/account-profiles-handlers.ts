@@ -6,6 +6,7 @@ import {
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
   captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileHomeFromCanonical,
 } from '../account-profiles'
+import { isAccountActive } from '../../shared/account-types'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession } from '../claude-account-identity'
 import { fetchAllAccountsUsage, fetchAccountUsage } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
@@ -45,6 +46,32 @@ export function registerAccountProfilesHandlers(): void {
     return { ok: true }
   })
 
+  // Mark an account active/inactive. Inactive accounts stay listed but cannot be
+  // chosen when switching a session's account (enforced in the switch surfaces
+  // and, as a backstop, in useSwitchAccount).
+  ipcMain.handle(IPC.ACCOUNT_PROFILES_SET_ACTIVE, (_e, p: { id: string; active: boolean }) => {
+    if (!p || !isValidProfileId(p.id)) return { ok: false }
+    const profs = listProfiles()
+    const prof = profs.find((x) => x.id === p.id)
+    if (!prof) return { ok: false }
+    // The primary account is always active -- it can't be deleted either, and
+    // keeping it selectable guarantees the switcher can never be left empty.
+    if (prof.isPrimary && p.active === false) {
+      return { ok: false, error: 'The primary account cannot be deactivated.' }
+    }
+    // Backstop for machines that never captured a primary (the default global was
+    // never logged in): refuse to deactivate the LAST active account, otherwise
+    // the switcher and the launch gate would have nothing selectable left.
+    if (p.active === false && !profs.some((x) => x.id !== p.id && isAccountActive(x))) {
+      return { ok: false, error: 'At least one account must stay active.' }
+    }
+    upsertProfile({ ...prof, active: p.active !== false })
+    return { ok: true }
+  })
+
+  // ASYNC because the delete now AWAITS the web-session clear before it destroys
+  // anything (#216). Losing the `async` here in a merge would make that await a
+  // no-op returned to the caller and quietly restore the bug it fixed.
   ipcMain.handle(IPC.ACCOUNT_PROFILES_DELETE, async (_e, p: { id: string }) => {
     // safeTeardownProfile validates the id + asserts path containment + refuses a
     // reparse-point root; it throws on an invalid/escaping id.

@@ -92,6 +92,7 @@ A change is **security-sensitive (adversarial review REQUIRED)** if it touches a
 | PTY spawn / argv / shell construction (`src/main/pty*`, launcher arg building, `ccc` scripts) | command + argument injection into a real shell |
 | credential / token / keychain / DPAPI / account-profile code | secret handling |
 | updater + installer verification (`src/main/updater*`, checksum logic) | code-execution path on the user's machine |
+| release-signing + updater-trust config (`.github/workflows/release.yml` signing steps, `build.win.signtoolOptions` incl. `publisherName`, macOS notarization) | supply-chain of the shipped binary + what installed clients are told to trust |
 | file-path resolution that crosses a user-selected resources dir | path traversal |
 | Electron `webPreferences`, `contextIsolation`, `sandbox`, CSP, `will-navigate` handlers | the sandbox itself |
 | dependency bumps that change a **runtime** package's major version | new attack surface, silently |

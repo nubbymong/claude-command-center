@@ -18,7 +18,7 @@ vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.f
 
 // EDGE IS ABSENT ON THIS FAKE MACHINE, Chrome is present — the case that makes a
 // fallback happen at all, given Edge is the default.
-vi.mock('../../src/main/vision-manager', () => ({
+vi.mock('../../src/main/browser-paths', () => ({
   getBrowserPaths: (b: 'chrome' | 'edge') =>
     b === 'edge' ? ['C:/none/msedge.exe'] : ['C:/present/chrome.exe'],
 }))

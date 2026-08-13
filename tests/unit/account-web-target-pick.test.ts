@@ -14,7 +14,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('electron', () => ({ session: { fromPartition: vi.fn() } }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
-vi.mock('../../src/main/vision-manager', () => ({ getBrowserPaths: () => [] }))
+vi.mock('../../src/main/browser-paths', () => ({ getBrowserPaths: () => [] }))
 vi.mock('node:child_process', () => ({ spawn: vi.fn(), spawnSync: vi.fn() }))
 vi.mock('node:fs', () => ({
   existsSync: () => false, readFileSync: () => '', readdirSync: () => [], rmSync: vi.fn(),

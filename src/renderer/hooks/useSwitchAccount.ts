@@ -2,6 +2,8 @@ import { useCallback } from 'react'
 import { Session } from '../stores/sessionStore'
 import { persistLastUsedAccount } from '../session-persistence'
 import { useRestartSession } from './useRestartSession'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { isAccountActive } from '../../shared/account-types'
 
 /**
  * Guard for the mid-session account switch. A switch is only meaningful when
@@ -48,6 +50,14 @@ export function useSwitchAccount(
       if ((session.provider ?? 'claude') !== 'claude' || session.sshConfig || session.shellOnly) return
       // 1. No-op when the chosen account is already the active one.
       if (!shouldSwitch(session.profileId, newProfileId)) return
+      // 1b. Backstop: never switch TO an account that has been marked inactive.
+      //     The switch surfaces already hide/disable it; this guards the hook so
+      //     a stale menu or a programmatic call can't slip past. (undefined =>
+      //     the default account, which has no profile row and is always allowed.)
+      if (newProfileId) {
+        const target = useAccountProfilesStore.getState().profiles.find((p) => p.id === newProfileId)
+        if (target && !isAccountActive(target)) return
+      }
       // 2. Pin the new profile (undefined => default account) AND flush it to disk
       //    eagerly so a crash can't lose the switch. updateSession runs
       //    synchronously inside, before restart() reads session.profileId.

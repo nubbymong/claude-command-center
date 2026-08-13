@@ -26,7 +26,10 @@ import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { session as electronSession } from 'electron'
 import { logError, logInfo } from '../debug-logger'
-import { getBrowserPaths } from '../vision-manager'
+// From `browser-paths`, NOT `vision-manager`. Importing it from there dragged the
+// vision stack — and `conductor-mcp-server` -> `update-watcher` -> `app.isPackaged`
+// — into this module's graph, which broke an unrelated test three hops away.
+import { getBrowserPaths } from '../browser-paths'
 import {
   AUTH_BROWSER_LABELS,
   DEFAULT_AUTH_BROWSER,

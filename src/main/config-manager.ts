@@ -5,9 +5,10 @@
  */
 
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError, logWarn } from './debug-logger'
+import { atomicWriteSecure, mkdirSecure, hardenCredentialDir, hardenCredentialFile } from './account-profiles'
 
 // All config file names
 const CONFIG_FILES = {
@@ -36,6 +37,35 @@ const CONFIG_FILES = {
 
 export type ConfigKey = keyof typeof CONFIG_FILES
 
+/**
+ * Config keys whose CONTENT is itself a credential, and which therefore must not
+ * be world-readable.
+ *
+ * `conductorSecret` is the 32-byte token that authenticates every request to the
+ * loopback Conductor MCP server. That server's own comment is explicit that
+ * loopback is not an authorisation boundary and the secret is the only gate --
+ * and it exposes `vision_eval`, arbitrary JS in the embedded browser. A
+ * world-readable copy of it is a local privilege escalation.
+ *
+ * `sshCredentials` is here as defence in depth, NOT because it leaks: its values
+ * are encrypted with Electron safeStorage and a cross-user reader learns only
+ * which configIds have a stored credential. See credential-store.ts's threat
+ * model. Tightening the mode costs nothing and removes it from the argument.
+ */
+const SECRET_CONFIG_KEYS = new Set<ConfigKey>(['conductorSecret', 'sshCredentials'])
+const SECRET_FILE_MODE = 0o600
+
+function modeFor(key: ConfigKey): number | undefined {
+  return SECRET_CONFIG_KEYS.has(key) ? SECRET_FILE_MODE : undefined
+}
+
+/** The on-disk file NAMES of the secret configs -- used to re-harden a secret
+ *  file after it is copied into a daily backup (copyFileSync preserves the
+ *  source mode, but a pre-fix 0644 copy must not survive in the backup). */
+const SECRET_FILE_NAMES: ReadonlySet<string> = new Set(
+  [...SECRET_CONFIG_KEYS].map((k) => CONFIG_FILES[k]),
+)
+
 let _configDir: string | null = null
 
 export function getConfigDir(): string {
@@ -47,10 +77,20 @@ export function getConfigDir(): string {
 
 export function ensureConfigDir(): void {
   const dir = getConfigDir()
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-    logInfo(`[config-manager] Created CONFIG directory: ${dir}`)
-  }
+  const existed = existsSync(dir)
+  // mkdirSecure, not a bare mkdirSync: CONFIG holds conductor-secret.json, which
+  // is the ONLY thing authenticating requests to the loopback MCP server (and so
+  // to vision_eval). `mkdir -p` silently accepts a pre-existing junction, so an
+  // unprivileged reparse point planted here would redirect every config write --
+  // the secret included -- into attacker space, where the file inherits their
+  // ACL. Same class as the identity dir, which got this in GHSA-pwfw-2ggq-569x;
+  // the config dir never did.
+  mkdirSecure(dir)
+  // 0700 on POSIX. Re-asserted on EVERY call, not only on create, because
+  // existing installs were made at the umask default (0755 observed) and would
+  // otherwise stay world-readable forever after an upgrade.
+  hardenCredentialDir(dir)
+  if (!existed) logInfo(`[config-manager] Created CONFIG directory: ${dir}`)
 }
 
 // ── Daily safety-net backups ──
@@ -83,7 +123,14 @@ export function snapshotConfig(): void {
       return
     }
 
-    mkdirSync(todayDir, { recursive: true })
+    // CONFIG holds conductor-secret.json + ssh-credentials.json, so the backup
+    // subtree must be as locked down as CONFIG itself: mkdirSecure refuses a
+    // planted junction on the backup path, and 0700 on both the _backups root
+    // and the day folder stops another local user from even listing which
+    // credentials exist (these dirs were previously created 0755).
+    mkdirSecure(todayDir)
+    hardenCredentialDir(backupRoot)
+    hardenCredentialDir(todayDir)
 
     let copied = 0
     for (const name of readdirSync(configDir)) {
@@ -93,7 +140,11 @@ export function snapshotConfig(): void {
       const src = join(configDir, name)
       try {
         if (!statSync(src).isFile()) continue
-        copyFileSync(src, join(todayDir, name))
+        const dest = join(todayDir, name)
+        copyFileSync(src, dest)
+        // copyFileSync preserves the (now 0600) source mode, but re-assert for a
+        // secret file backed up from an older 0644 build before this shipped.
+        if (SECRET_FILE_NAMES.has(name)) hardenCredentialFile(dest)
         copied++
       } catch (err) {
         logError(`[config-manager] Failed to back up ${name}: ${err}`)
@@ -155,12 +206,14 @@ export function readConfig<T = unknown>(key: ConfigKey): T | null {
 }
 
 /**
- * Write a config file atomically (write per-pid .tmp then rename over the
- * destination). renameSync is an atomic replace on POSIX (rename(2)) and on
- * Windows (MoveFileExW + REPLACE_EXISTING) whether or not the destination
- * exists — a crash mid-write leaves the previous file intact, never a torn
- * one. The previous copyFileSync-when-target-exists branch truncated the
- * destination in place (same bug fixed in session-state.ts, P7.7.16).
+ * Write a config file atomically via the shared helper (#233) — staging,
+ * exclusive create, the rename retry and cleanup all live in atomic-write.ts.
+ *
+ * Losing the Windows rename race used to return false here, silently dropping a
+ * config save because a scanner held the file for a few milliseconds.
+ *
+ * The previous copyFileSync-when-target-exists branch truncated the destination
+ * in place (same bug fixed in session-state.ts, P7.7.16).
  */
 export function writeConfig(key: ConfigKey, data: unknown): boolean {
   // Fail closed on an unregistered key. The CONFIG_FILES[key] lookup ran
@@ -173,17 +226,32 @@ export function writeConfig(key: ConfigKey, data: unknown): boolean {
     logError(`[config-manager] Refusing to write unknown config key: ${String(key)}`)
     return false
   }
-  ensureConfigDir()
   const filePath = join(getConfigDir(), fileName)
-  const tmpPath = `${filePath}.tmp.${process.pid}`
   try {
-    const json = JSON.stringify(data, null, 2)
-    writeFileSync(tmpPath, json, 'utf-8')
-    renameSync(tmpPath, filePath)
+    // ensureConfigDir() is INSIDE the try on purpose: mkdirSecure throws when
+    // CONFIG is a planted reparse point (correct -- we must never write the
+    // secret into it), but writeConfig has ALWAYS returned false on failure and
+    // its callers (config-saver; the cloud-agent/team persisters that run from
+    // callbacks with no try/catch of their own) depend on that. Letting the
+    // throw escape bricked a legit symlinked-CONFIG layout and could crash the
+    // main process via the global rethrow.
+    ensureConfigDir()
+    // atomicWriteSecure, not a hand-rolled tmp+rename: exclusive create means a
+    // link planted at the staging path is refused, AND -- the part that matters
+    // here -- the mode is honoured, because open(2) applies a mode only on
+    // creation. A plain writeFileSync into an existing inode silently keeps that
+    // inode's permissions. Post-#233 this is a thin alias over the shared
+    // atomicWriteFileSync, so it carries the wx/random-staging properties too.
+    atomicWriteSecure(filePath, JSON.stringify(data, null, 2), modeFor(key))
+    // Re-assert for the case the file already existed at 0644 from an older
+    // build; the rename above replaces the inode, so this is belt and braces.
+    if (SECRET_CONFIG_KEYS.has(key)) hardenCredentialFile(filePath)
     return true
   } catch (err) {
+    // Unchanged contract: log and return false. What changed is that a transient
+    // Windows rename failure is now retried instead of silently dropping the
+    // save (#233), and the staging file can no longer be a planted link.
     logError(`[config-manager] Failed to write ${key}: ${err}`)
-    try { if (existsSync(tmpPath)) unlinkSync(tmpPath) } catch { /* ignore */ }
     return false
   }
 }
@@ -208,7 +276,17 @@ export function configHasData(): boolean {
  * Also returns needsMigration flag if CONFIG/ is empty.
  */
 export function loadAllConfig(): { data: Record<string, unknown>; needsMigration: boolean } {
-  ensureConfigDir()
+  try {
+    ensureConfigDir()
+  } catch (err) {
+    // CONFIG is a planted reparse point (mkdirSecure refuses it). Fail closed:
+    // hydrate empty rather than throwing (the renderer surfaces an uncaught
+    // throw as a hard load failure) and rather than reading THROUGH the junction
+    // (which would ingest attacker-controlled config). writeConfig likewise
+    // returns false, so any migration this triggers cannot persist into it.
+    logError(`[config-manager] ensureConfigDir failed during loadAll (${err}); hydrating empty`)
+    return { data: {}, needsMigration: true }
+  }
   const hasData = configHasData()
 
   const data: Record<string, unknown> = {}

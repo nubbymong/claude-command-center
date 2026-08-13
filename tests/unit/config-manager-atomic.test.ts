@@ -11,8 +11,10 @@ const fsControl = vi.hoisted(() => ({
   copyCalls: 0,
 }))
 
-vi.mock('fs', async (importOriginal) => {
-  const real = await importOriginal<typeof import('fs')>()
+// Both specifiers: writeConfig stages through account-profiles' atomicWriteSecure,
+// which imports 'node:fs'. Injecting into 'fs' alone left the real write running,
+// so the fault never fired and the assertions passed vacuously.
+function injectFaults(real: typeof import('fs')) {
   return {
     ...real,
     copyFileSync: ((...args: Parameters<typeof real.copyFileSync>) => {
@@ -34,6 +36,16 @@ vi.mock('fs', async (importOriginal) => {
       return real.renameSync(...args)
     }) as typeof real.renameSync,
   }
+}
+
+vi.mock('fs', async (importOriginal) => {
+  const patched = injectFaults(await importOriginal<typeof import('fs')>())
+  return { ...patched, default: patched }
+})
+vi.mock('node:fs', async (importOriginal) => {
+  const mod = await importOriginal<any>()
+  const patched = injectFaults(mod.default ?? mod)
+  return { ...patched, default: patched }
 })
 
 vi.mock('../../src/main/ipc/setup-handlers', () => {
