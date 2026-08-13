@@ -47,6 +47,15 @@ export interface CanvasToolDeps {
     options: CanvasSnapshotOptions
   }) => Promise<CanvasSnapshotResult>
   renderVersion: (sessionId: string, source: CanvasRenderSource) => { canvasId: string; versionId: string }
+  /**
+   * Read a design document the agent wrote to disk (`htmlPath`). Injected so
+   * this module touches no filesystem; the caller enforces regular-file and
+   * size checks and throws — those messages are never relayed (they contain a
+   * model-supplied path). The path is model-supplied and read with the app's
+   * own privileges: flagged for the deferred security batch, noting the agent
+   * can already read files directly through its own tools.
+   */
+  readDesignFile: (absPath: string) => Buffer
   /** The review store's read for canvas_review. Throws map to the closed
    *  refusal vocabulary in reviewFailureReason. */
   getReviewPayload: (
@@ -197,10 +206,26 @@ function renderFailureReason(err: unknown): string {
 interface RawRenderArgs {
   mode?: unknown
   html?: unknown
+  htmlPath?: unknown
   distRoot?: unknown
   entry?: unknown
   buildLabel?: unknown
   cccSessionId?: unknown
+}
+
+/** An absolute path on either OS: `X:\`/`X:/` or a POSIX root. Checked here so
+ *  a relative path is refused before any dependency touches the filesystem. */
+function isAbsolutePathShape(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/')
+}
+
+/** Operator-authored causes for a refused htmlPath read. The dependency's own
+ *  message carries a model-supplied path and is never relayed. */
+function designFileFailureReason(err: unknown): string {
+  const message = err instanceof Error ? err.message : ''
+  if (/too large/i.test(message)) return 'that html file is too large to render.'
+  if (/not a regular file/i.test(message)) return 'that path is not a regular html file.'
+  return 'that html file could not be read. Check the path you wrote it to.'
 }
 
 /**
@@ -231,20 +256,48 @@ export async function runCanvasRender(
 
   let source: CanvasRenderSource
   if (mode === 'design') {
-    // Shape first, and fail closed on it: the store's own check is `typeof
-    // !== 'string'`, and an array of strings reaching a byte-length measure
-    // ahead of a write is the kind of thing this layer exists to stop early.
-    if (typeof rawArgs.html !== 'string' || rawArgs.html.length === 0) {
-      return { text: 'A design render needs an html document in `html`.', isError: true }
+    const hasInline = rawArgs.html != null
+    const hasPath = rawArgs.htmlPath != null
+    if (hasInline && hasPath) {
+      return { text: 'A design render takes `htmlPath` or `html`, not both.', isError: true }
     }
-    // Fail closed on size here, not only at the store: this is the untrusted
-    // ingress, and it must not admit a document the trusted IPC path would
-    // refuse. `length` is char count; the cap is bytes, which is what the store
-    // and the IPC schema both measure.
-    if (Buffer.byteLength(rawArgs.html, 'utf8') > MAX_DESIGN_HTML_BYTES) {
-      return { text: 'That document is too large to render.', isError: true }
+    let html: string
+    if (hasPath) {
+      // The preferred ingress: the agent writes the document to disk with its
+      // own tools and passes the path, so the (terminal-rendered) tool call
+      // stays one line instead of the whole document.
+      if (typeof rawArgs.htmlPath !== 'string' || rawArgs.htmlPath.length === 0 || !isAbsolutePathShape(rawArgs.htmlPath)) {
+        return { text: '`htmlPath` must be the absolute path of the html file you wrote.', isError: true }
+      }
+      let bytes: Buffer
+      try {
+        bytes = deps.readDesignFile(rawArgs.htmlPath)
+      } catch (err) {
+        return { text: `Could not render the canvas: ${designFileFailureReason(err)}`, isError: true }
+      }
+      // Re-measured here even though the reader guards too: this is the
+      // untrusted ingress and the cap must hold in THIS file's logic.
+      if (bytes.length === 0 || bytes.length > MAX_DESIGN_HTML_BYTES) {
+        return { text: 'That html file is too large to render.', isError: true }
+      }
+      html = bytes.toString('utf8')
+    } else {
+      // Shape first, and fail closed on it: the store's own check is `typeof
+      // !== 'string'`, and an array of strings reaching a byte-length measure
+      // ahead of a write is the kind of thing this layer exists to stop early.
+      if (typeof rawArgs.html !== 'string' || rawArgs.html.length === 0) {
+        return { text: 'A design render needs the html file path in `htmlPath` (preferred) or a document in `html`.', isError: true }
+      }
+      // Fail closed on size here, not only at the store: this is the untrusted
+      // ingress, and it must not admit a document the trusted IPC path would
+      // refuse. `length` is char count; the cap is bytes, which is what the store
+      // and the IPC schema both measure.
+      if (Buffer.byteLength(rawArgs.html, 'utf8') > MAX_DESIGN_HTML_BYTES) {
+        return { text: 'That document is too large to render.', isError: true }
+      }
+      html = rawArgs.html
     }
-    source = { mode: 'design', html: rawArgs.html }
+    source = { mode: 'design', html }
   } else {
     if (typeof rawArgs.distRoot !== 'string' || rawArgs.distRoot.length === 0) {
       return { text: 'A uat render needs the built directory in `distRoot`.', isError: true }
@@ -567,13 +620,17 @@ export function registerCanvasTools(
 
   server.tool(
     'canvas_render',
-    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': you supply a complete HTML document and it is served from the canvas\'s own origin — use this to show a proposed screen. \'uat\': you supply the path of a directory the user has already allowed, and the built app in it is served — use this to review the real product. Every call creates a new version; nothing is overwritten. The canvas is per-session and this tool always renders to THIS session\'s canvas. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
+    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': write a complete HTML document to a file with your own tools, then pass its absolute path as htmlPath — use this to show a proposed screen. \'uat\': you supply the path of a directory the user has already allowed, and the built app in it is served — use this to review the real product. Every call creates a new version; nothing is overwritten. The canvas is per-session and this tool always renders to THIS session\'s canvas. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
     {
-      mode: zMod.enum(['design', 'uat']).describe("'design' renders the html you supply; 'uat' serves a directory the user has allowed."),
+      mode: zMod.enum(['design', 'uat']).describe("'design' renders the html document you wrote; 'uat' serves a directory the user has allowed."),
+      htmlPath: zMod
+        .string()
+        .optional()
+        .describe('design mode, preferred. Absolute path of the complete HTML file you wrote. Put a data-ux-id on anything you will want to ask about later.'),
       html: zMod
         .string()
         .optional()
-        .describe('design mode only. A complete HTML document. Put a data-ux-id on anything you will want to ask about later.'),
+        .describe('design mode, fallback when you cannot write files. The complete HTML document inline — this floods the user\'s tool-approval prompt, so prefer htmlPath.'),
       distRoot: zMod
         .string()
         .optional()

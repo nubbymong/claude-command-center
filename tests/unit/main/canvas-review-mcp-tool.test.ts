@@ -75,6 +75,9 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
       submittedReviewIds: ['R1', 'R2'],
     }),
     readAttachment: () => PNG_BYTES,
+    readDesignFile: () => {
+      throw new Error('no design files in this fixture')
+    },
     ...overrides,
   }
 }

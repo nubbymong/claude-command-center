@@ -401,6 +401,17 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
     [],
   )
 
+  // The glass is an annotation layer, not the Excalidraw app: no welcome
+  // screen, no image tool (file dialogs don't belong over a page under
+  // review); the leftover chrome is hidden by the glass-scoped CSS.
+  const glassUIOptions = useMemo(() => ({ welcomeScreen: false, tools: { image: false } }), [])
+
+  const modeStrip = marqueeArmed
+    ? { color: 'text-peach', label: 'Region', hint: 'drag a rectangle over the area — Esc cancels' }
+    : mode === 'draw'
+      ? { color: 'text-mauve', label: 'Draw', hint: 'sketch on the glass; select strokes, then attach them to a note' }
+      : { color: 'text-blue', label: 'Browse', hint: 'the page is live — hover to inspect, click to select · ↑ parent · Esc clear' }
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
       {/* Pane chrome. */}
@@ -430,20 +441,26 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
         {/* THE control of this surface: who owns the pointer (spec §6). */}
         <div className="flex rounded border border-surface1 overflow-hidden" role="group" aria-label="Canvas interaction mode">
           <button
-            onClick={() => setInteractionMode(sessionId, 'browse')}
+            onClick={() => {
+              setMarqueeArmed(sessionId, false)
+              setInteractionMode(sessionId, 'browse')
+            }}
             aria-pressed={mode === 'browse' && !marqueeArmed}
             className={`px-2.5 py-0.5 text-xs transition-colors ${
-              mode === 'browse' && !marqueeArmed ? 'bg-surface1 text-text' : 'bg-surface0/60 text-overlay1 hover:text-text'
+              mode === 'browse' && !marqueeArmed ? 'bg-blue/20 text-blue font-medium' : 'bg-surface0/60 text-overlay1 hover:text-text'
             }`}
             title="Browse mode — the content is interactive; hover to inspect, click to select"
           >
             Browse
           </button>
           <button
-            onClick={() => setInteractionMode(sessionId, 'draw')}
+            onClick={() => {
+              setMarqueeArmed(sessionId, false)
+              setInteractionMode(sessionId, 'draw')
+            }}
             aria-pressed={mode === 'draw' && !marqueeArmed}
             className={`px-2.5 py-0.5 text-xs transition-colors border-l border-surface1 ${
-              mode === 'draw' && !marqueeArmed ? 'bg-surface1 text-text' : 'bg-surface0/60 text-overlay1 hover:text-text'
+              mode === 'draw' && !marqueeArmed ? 'bg-mauve/20 text-mauve font-medium' : 'bg-surface0/60 text-overlay1 hover:text-text'
             }`}
             title="Draw mode — the glass is interactive; sketch over the content"
           >
@@ -454,7 +471,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
             aria-pressed={marqueeArmed}
             disabled={!viewport}
             className={`px-2.5 py-0.5 text-xs transition-colors border-l border-surface1 disabled:opacity-40 ${
-              marqueeArmed ? 'bg-surface1 text-peach' : 'bg-surface0/60 text-overlay1 hover:text-text'
+              marqueeArmed ? 'bg-peach/20 text-peach font-medium' : 'bg-surface0/60 text-overlay1 hover:text-text'
             }`}
             title="Region — drag a rectangle to select an area for a note (Esc cancels)"
           >
@@ -470,9 +487,19 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
         </button>
       </div>
 
+      {/* Mode strip — always says whose surface the pointer is on and what to
+          do with it (owner feedback 2026-08-13: nothing said what mode the
+          canvas was in). */}
+      <div className="flex items-center gap-2 px-3 py-1 border-b border-surface0 bg-mantle text-[10px] shrink-0">
+        <span className={`font-semibold uppercase tracking-wide ${modeStrip.color}`}>{modeStrip.label}</span>
+        <span className="text-overlay1">{modeStrip.hint}</span>
+      </div>
+
       <div className="flex-1 flex min-h-0">
-        {/* Stage: content iframe below, glass above, transient overlay on top. */}
-        <div className="flex-1 min-w-0 relative">
+        {/* Stage: content iframe below, glass above, transient overlay on top.
+            overflow-hidden so highlight boxes for offscreen page coords can
+            never bleed over the chrome around the stage. */}
+        <div className="flex-1 min-w-0 relative overflow-hidden">
           <iframe
             // Keyed on the URL so a version switch mounts a NEW element. Reusing
             // one iframe leaves the OLD document in contentWindow until the new
@@ -505,11 +532,19 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
               theme="light"
               initialData={glassInitialData}
               onScrollChange={handleGlassScrolled}
+              // Outside draw mode the glass is inert: view mode drops the tool
+              // island so nothing floats over the page being reviewed. Zen
+              // mode + the glass-scoped CSS keep draw mode down to the tools.
+              viewModeEnabled={mode !== 'draw' || marqueeArmed}
+              zenModeEnabled
+              UIOptions={glassUIOptions}
             />
           </div>
           {/* Transient highlight overlay — plain divs, never Excalidraw elements
-              (D7): browse hover, the locked selection, panel-driven highlights. */}
-          <div className="absolute inset-0 pointer-events-none" data-canvas-layer="overlay">
+              (D7): browse hover, the locked selection, panel-driven highlights.
+              Clipped to the stage so a box for offscreen page coords cannot
+              paint over the surrounding chrome. */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden" data-canvas-layer="overlay">
             {mode === 'browse' && !marqueeArmed && hoverStageRect && (
               <div
                 className="absolute border-2 border-blue rounded-sm"

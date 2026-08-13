@@ -730,6 +730,12 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
         readAttachment: (absPath) => fs.readFileSync(absPath),
+        readDesignFile: (absPath) => {
+          const st = fs.statSync(absPath)
+          if (!st.isFile()) throw new Error('not a regular file')
+          if (st.size > 2 * 1024 * 1024) throw new Error('design file too large')
+          return fs.readFileSync(absPath)
+        },
       })
     }
 

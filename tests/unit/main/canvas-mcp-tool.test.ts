@@ -44,6 +44,9 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
     readAttachment: () => {
       throw new Error('no attachments in this fixture')
     },
+    readDesignFile: () => {
+      throw new Error('no design files in this fixture')
+    },
     ...overrides,
   }
 }
@@ -324,7 +327,7 @@ describe('registration', () => {
     // The description has to say the render is not the same thing as the user
     // seeing it, or the agent renders and then reports a screen nobody opened.
     expect(String(description)).toMatch(/hand back/i)
-    expect(Object.keys(shape as object).sort()).toEqual(['buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'mode'])
+    expect(Object.keys(shape as object).sort()).toEqual(['buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'mode'])
     expect(typeof handler).toBe('function')
   })
 
@@ -637,5 +640,85 @@ describe('canvas_render', () => {
     const reply = await tools.canvas_render({ mode: 'design', html: '<p>hi</p>' })
     expect(reply.isError).toBe(true)
     expect(reply.content[0].text).toContain('no bound Conductor session')
+  })
+})
+
+describe('canvas_render htmlPath (the terminal-friendly design ingress)', () => {
+  it('renders the file the agent wrote, and the reply echoes neither path nor content', async () => {
+    const seen: string[] = []
+    const rendered: string[] = []
+    const out = await runCanvasRender(
+      { mode: 'design', htmlPath: 'C:/work/mock.html' },
+      'sess-mine',
+      deps({
+        readDesignFile: (p) => {
+          seen.push(p)
+          return Buffer.from('<!doctype html><p>hello</p>')
+        },
+        renderVersion: (_sid, source) => {
+          if (source.mode === 'design') rendered.push(source.html)
+          return { canvasId: 'canvas-abc', versionId: 'v4' }
+        },
+      }),
+    )
+    expect(out.isError).toBe(false)
+    expect(seen).toEqual(['C:/work/mock.html'])
+    expect(rendered).toEqual(['<!doctype html><p>hello</p>'])
+    expect(out.text).not.toContain('mock.html')
+  })
+
+  it('refuses html and htmlPath together', async () => {
+    const out = await runCanvasRender(
+      { mode: 'design', html: '<p>x</p>', htmlPath: 'C:/a.html' },
+      'sess-mine',
+      deps(),
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toContain('not both')
+  })
+
+  it('refuses a relative path BEFORE any dependency touches the filesystem', async () => {
+    const seen: string[] = []
+    const out = await runCanvasRender(
+      { mode: 'design', htmlPath: 'mock.html' },
+      'sess-mine',
+      deps({
+        readDesignFile: (p) => {
+          seen.push(p)
+          return Buffer.from('<p>x</p>')
+        },
+      }),
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toContain('absolute path')
+    // The recording dep proves the sink was never reached — an isError alone
+    // would not distinguish which guard fired.
+    expect(seen).toEqual([])
+  })
+
+  it('maps reader failures to the closed vocabulary and never relays the path', async () => {
+    const out = await runCanvasRender(
+      { mode: 'design', htmlPath: 'C:/Users/someone/secret.html' },
+      'sess-mine',
+      deps({
+        readDesignFile: () => {
+          throw new Error('ENOENT: C:/Users/someone/secret.html')
+        },
+      }),
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toContain('could not be read')
+    expect(out.text).not.toContain('someone')
+    expect(out.text).not.toContain('ENOENT')
+  })
+
+  it('re-measures the byte cap on what was actually read', async () => {
+    const out = await runCanvasRender(
+      { mode: 'design', htmlPath: 'C:/big.html' },
+      'sess-mine',
+      deps({ readDesignFile: () => Buffer.alloc(3 * 1024 * 1024, 0x61) }),
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toContain('too large')
   })
 })

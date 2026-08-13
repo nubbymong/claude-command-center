@@ -432,3 +432,19 @@ body {
 .logs-md-body h4 { font-weight: 600; margin: 0.5rem 0 0.25rem; line-height: 1.3; }
 .logs-md-body hr { border: 0; border-top: 1px solid var(--border-subtle); margin: 0.75rem 0; }
 
+
+/* ── Agent Canvas glass: Excalidraw as a pinned annotation layer ──────────
+   On the canvas the glass is NOT the Excalidraw app: its camera is pinned to
+   the content (zoom is re-pinned to 1, scenes are per-session), and every
+   floating island it draws sits ON TOP of the page under review. Hide the
+   app chrome — main menu (open/save/reset), library sidebar, help, and the
+   whole footer (zoom + undo buttons; Ctrl+Z still works) — leaving only the
+   top tool island, which draw mode needs. The classic sketchpad pane keeps
+   full chrome; this is scoped to the canvas glass layer only. */
+[data-canvas-layer='glass'] .main-menu-trigger,
+[data-canvas-layer='glass'] .default-sidebar-trigger,
+[data-canvas-layer='glass'] .sidebar-trigger,
+[data-canvas-layer='glass'] .help-icon,
+[data-canvas-layer='glass'] .layer-ui__wrapper__footer {
+  display: none !important;
+}
