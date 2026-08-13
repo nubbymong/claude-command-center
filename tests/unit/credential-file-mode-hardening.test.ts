@@ -97,18 +97,20 @@ describe('(C) ssh-shim remote setup script', () => {
     expect(script()).toContain('mkdirSync(claudeDir,{recursive:true,mode:0o700})')
   })
 
-  it('writes the remote mcp token file owner-only with a fresh create', () => {
+  it('writes the remote mcp token file owner-only with a fresh exclusive create', () => {
     const s = script()
     expect(s).toContain('rmSync(mcpPath,{force:true})')
-    expect(s).toMatch(/writeFileSync\(mcpPath,[^)]*,\{mode:0o600\}\)/)
+    // rm + flag:'wx' (exclusive create): never reuses or follows a pre-existing
+    // path, and the file is born 0600 — both halves are load-bearing.
+    expect(s).toMatch(/writeFileSync\(mcpPath,[^)]*,\{mode:0o600,flag:'wx'\}\)/)
     // The unfixed shape — a bare writeFileSync(mcpPath, literal) with no mode — is gone.
     expect(s).not.toMatch(/writeFileSync\(mcpPath,\$\{[^}]*\}\)\}catch/)
   })
 
-  it('writes the remote per-session settings (hook token) owner-only', () => {
+  it('writes the remote per-session settings (hook token) owner-only with a fresh exclusive create', () => {
     const s = script()
     expect(s).toContain('rmSync(sesPath,{force:true})')
-    expect(s).toContain('writeFileSync(sesPath,JSON.stringify(sesCfg,null,2),{mode:0o600})')
+    expect(s).toContain("writeFileSync(sesPath,JSON.stringify(sesCfg,null,2),{mode:0o600,flag:'wx'})")
   })
 })
 

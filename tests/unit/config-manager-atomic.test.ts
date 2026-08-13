@@ -113,7 +113,13 @@ describe('writeConfig atomicity (real fs)', () => {
   it('repeated overwrites leave exactly the final content and no debris', () => {
     for (let i = 1; i <= 5; i++) expect(writeConfig('settings', { v: i })).toBe(true)
     expect(readConfig('settings')).toEqual({ v: 5 })
+    // Don't exact-match the raw dir listing: an atomic-write `.tmp` staging file
+    // occasionally lingers when the assertion runs, which flaked this ~1 in 3
+    // (#183). Assert what actually matters instead, mirroring tmpLeftovers() used
+    // by the sibling tests: the real file exists and no staging debris is left.
     const entries = realFs.readdirSync(getConfigDir())
-    expect(entries).toEqual(['settings.json'])
+    expect(entries, `expected settings.json present, got: [${entries.join(', ')}]`).toContain('settings.json')
+    const leftovers = tmpLeftovers()
+    expect(leftovers, `atomic-write staging debris left behind: [${leftovers.join(', ')}]`).toEqual([])
   })
 })
