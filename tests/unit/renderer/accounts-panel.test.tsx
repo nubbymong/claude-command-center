@@ -48,6 +48,22 @@ const configSaveMock = vi.fn<[string, unknown], Promise<unknown>>().mockResolved
   config: {
     save: configSaveMock,
   },
+  // The panel renders AccountWebSession for every account, and that component
+  // calls accountWeb.status on mount. Without this the call rejected on
+  // `undefined`, which vitest reported as a dozen unhandled rejections and a
+  // non-zero exit while every assertion still passed — a red suite with no red
+  // test. This panel's tests are not about the web session, so the surface is
+  // stubbed rather than exercised here.
+  accountWeb: {
+    status: vi.fn().mockResolvedValue({ ok: false, error: 'not under test' }),
+    signIn: vi.fn().mockResolvedValue({ ok: false, error: 'not under test' }),
+    signInState: vi.fn().mockResolvedValue({ ok: true, state: { phase: 'idle' } }),
+    cancel: vi.fn().mockResolvedValue({ ok: true }),
+    signOut: vi.fn().mockResolvedValue({ ok: true }),
+    openArtifacts: vi.fn().mockResolvedValue({ ok: true }),
+    setAuthMethod: vi.fn().mockResolvedValue({ ok: true }),
+    setAuthBrowser: vi.fn().mockResolvedValue({ ok: true }),
+  },
 }
 
 // window.confirm stub (jsdom returns false by default without a stub)

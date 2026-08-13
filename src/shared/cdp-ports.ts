@@ -16,3 +16,4 @@ export const CDP_PORT_DEV = 9322
 export function resolveCdpPort(isPackaged: boolean): number {
   return isPackaged ? CDP_PORT_PROD : CDP_PORT_DEV
 }
+

@@ -101,6 +101,27 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
   const [sessionRenameValue, setSessionRenameValue] = useState('')
   const [sessionContextMenu, setSessionContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null)
+
+  // #216: which accounts currently hold a claude.ai web session. Refreshed when a
+  // session context menu opens, so "Open artifacts" is enabled only when it can
+  // actually work — an item that opens a sign-in wall is worse than a disabled one.
+  const [webSessionAccounts, setWebSessionAccounts] = useState<Set<string>>(new Set())
+  const refreshWebSessions = React.useCallback(async (profileId?: string) => {
+    if (!profileId) return
+    const r = await window.electronAPI.accountWeb.status(profileId)
+    setWebSessionAccounts((prev) => {
+      const next = new Set(prev)
+      if (r.ok && r.web?.status === 'active') next.add(profileId)
+      else next.delete(profileId)
+      return next
+    })
+  }, [])
+
+  /** Acquire this account's claude.ai web session, then refresh the menu state. */
+  const authenticateWebForSession = React.useCallback(async (profileId: string) => {
+    await window.electronAPI.accountWeb.signIn(profileId)
+    await refreshWebSessions(profileId)
+  }, [refreshWebSessions])
   const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null)
   const [sectionRenameValue, setSectionRenameValue] = useState('')
   const [sessionSectionCollapsed, setSessionSectionCollapsed] = useState<Record<string, boolean>>({})
@@ -568,7 +589,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
         onRenameFinish={handleFinishSessionRename}
         onRenameCancel={() => { setRenamingSessionId(null); setSessionRenameValue('') }}
         onClick={(e) => handleSessionClick(session.id, e)}
-        onContextMenu={(e) => { e.preventDefault(); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        onContextMenu={(e) => { e.preventDefault(); void refreshWebSessions(session.profileId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
       />
@@ -1032,6 +1053,33 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
             profiles={accountProfiles}
             accountAliases={accountAliases}
             onSwitchAccount={(profileId) => switchMenuAccount(s.id, profileId)}
+            // #216: account actions on the session itself. Gated to a local
+            // session with a resolved account — an SSH session's browser and
+            // credentials live on another machine, and a shell-only session has
+            // no /login to run.
+            hasWebSession={!!s.profileId && webSessionAccounts.has(s.profileId)}
+            onOpenArtifacts={
+              s.profileId && s.sessionType === 'local'
+                ? () => { void window.electronAPI.accountWeb.openArtifacts(s.profileId!) }
+                : undefined
+            }
+            onAuthenticateWeb={
+              s.profileId && s.sessionType === 'local'
+                ? () => { void authenticateWebForSession(s.profileId!) }
+                : undefined
+            }
+            onSignInCode={
+              !s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude'
+                ? () => {
+                    // Restores what the old add-account flow actually DID: put the
+                    // login in front of the user instead of telling them a command.
+                    // /login is the in-session form, so it reuses this terminal and
+                    // this account's config dir rather than starting anything new.
+                    window.electronAPI.pty.write(s.id, '/login\r')
+                    onViewChange('sessions')
+                  }
+                : undefined
+            }
           />
         ) : null
       })()}

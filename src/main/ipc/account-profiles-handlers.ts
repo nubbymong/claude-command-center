@@ -11,6 +11,9 @@ import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProf
 import { fetchAllAccountsUsage, fetchAccountUsage } from '../usage/account-usage'
 import { readAllProfileAuthInfo } from '../account-auth-info'
 import { logError } from '../debug-logger'
+import { clearWebSession } from '../account-web/sign-in'
+import { removeWebSession } from '../account-web/session-store'
+import { closeArtifacts } from '../account-web/artifacts'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
@@ -66,7 +69,10 @@ export function registerAccountProfilesHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_DELETE, (_e, p: { id: string }) => {
+  // ASYNC because the delete now AWAITS the web-session clear before it destroys
+  // anything (#216). Losing the `async` here in a merge would make that await a
+  // no-op returned to the caller and quietly restore the bug it fixed.
+  ipcMain.handle(IPC.ACCOUNT_PROFILES_DELETE, async (_e, p: { id: string }) => {
     // safeTeardownProfile validates the id + asserts path containment + refuses a
     // reparse-point root; it throws on an invalid/escaping id.
     if (!p || !isValidProfileId(p.id)) return { ok: false, error: 'invalid profile id' }
@@ -77,6 +83,32 @@ export function registerAccountProfilesHandlers(): void {
     if (isProfileInUseByLiveSession(p.id)) {
       return { ok: false, error: 'This account is in use by an open session. Close its sessions and try again.' }
     }
+    // #216: the profile dir is not the whole account. This account's claude.ai
+    // WEB session lives in an Electron partition, so without this a delete
+    // leaves live cookies on disk indefinitely and an artifacts window open.
+    //
+    // CLEARED FIRST, AND AWAITED. Two orderings were wrong before this one.
+    // Firing it off with `void` and dropping the record regardless left a live
+    // session in `persist:claude-web-<id>` with nothing referencing it and
+    // `ok: true` reported. Awaiting it AFTER safeTeardownProfile was no better:
+    // that call already removes the profile dir and its metadata, so a failure
+    // here returned "so it was not removed" about an account that was already
+    // gone. Clearing before any destructive step is what makes that message
+    // true, and it fails closed — the account survives to be deleted again.
+    closeArtifacts(p.id)
+    try {
+      await clearWebSession(p.id)
+    } catch (err) {
+      logError(`[account-profiles] could not clear the web session for ${p.id}:`, err)
+      return {
+        ok: false,
+        error: `The account's claude.ai session could not be cleared, so the account was not removed: ${err instanceof Error ? err.message : String(err)}`,
+      }
+    }
+    // Drop the record next to the clear that made it meaningless, rather than
+    // after the teardown below: if that throws, the account survives with a
+    // record claiming a web session whose partition has already been wiped.
+    removeWebSession(p.id)
     // safeTeardownProfile can throw on a Windows file lock (e.g. an actively-rewritten
     // .claude.json) mid-recursion -- return a structured failure instead of rejecting
     // the invoke, so the renderer can surface it rather than swallowing the rejection.

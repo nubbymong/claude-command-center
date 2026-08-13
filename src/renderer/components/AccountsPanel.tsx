@@ -13,6 +13,7 @@ import type { IdentityColorKey } from '../../shared/identity-colors'
 import { isAccountActive, type AccountProfile } from '../../shared/account-types'
 import ToggleSwitch from './github/config/ToggleSwitch'
 import { Section } from './SettingsPage'
+import { AccountWebSession } from './settings/AccountWebSession'
 
 // ---- props ------------------------------------------------------------------
 
@@ -235,6 +236,13 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
             onPick={handlePickColour}
           />
         )}
+        {/* #216: both halves of this account's authentication. Shown per account
+            because the claude.ai web session is per account by construction —
+            one partition each — and because the code-session token and the web
+            session fail in ways that look nothing alike. */}
+        <div className="mt-2">
+          <AccountWebSession profileId={profile.id} accountName={profile.name} />
+        </div>
         {deleteError && (
           <p
             className="text-[11px] text-red mt-1.5"

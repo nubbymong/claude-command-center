@@ -307,6 +307,27 @@ export interface ElectronAPI {
     /** Live push from the worker when a tailed transcript appends messages. */
     onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
+  /** Per-account claude.ai web session (#216). */
+  accountWeb: {
+    status: (profileId: string) => Promise<
+      | {
+          ok: true
+          web: any
+          cli: any
+          authCommand: string
+          authMethod: 'claudeai' | 'sso' | 'console'
+          authBrowser: 'chrome' | 'edge'
+        }
+      | { ok: false; error: string }
+    >
+    signIn: (profileId: string) => Promise<{ ok: true; state: any } | { ok: false; error: string }>
+    signInState: () => Promise<{ ok: true; state: any } | { ok: false; error: string }>
+    cancel: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    signOut: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    setAuthBrowser: (args: { profileId: string; browser: 'chrome' | 'edge' }) => Promise<{ ok: true } | { ok: false; error: string }>
+  }
   /** Agent Canvas — session review-surface state; content loads over ccc-ux://. */
   canvas: {
     getState: (args: { sessionId: string }) => Promise<CanvasState | null>

@@ -182,6 +182,27 @@ export interface ElectronAPI {
     sessionConfig: (args: { sessionId: string }) => Promise<{ configId: string | null } | null>
     onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
+  /** Per-account claude.ai web session (#216). */
+  accountWeb: {
+    status: (profileId: string) => Promise<
+      | {
+          ok: true
+          web: any
+          cli: any
+          authCommand: string
+          authMethod: 'claudeai' | 'sso' | 'console'
+          authBrowser: 'chrome' | 'edge'
+        }
+      | { ok: false; error: string }
+    >
+    signIn: (profileId: string) => Promise<{ ok: true; state: any } | { ok: false; error: string }>
+    signInState: () => Promise<{ ok: true; state: any } | { ok: false; error: string }>
+    cancel: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    signOut: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+    setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    setAuthBrowser: (args: { profileId: string; browser: 'chrome' | 'edge' }) => Promise<{ ok: true } | { ok: false; error: string }>
+  }
   canvas: {
     getState: (args: { sessionId: string }) => Promise<CanvasState | null>
     render: (args: { sessionId: string; source: CanvasRenderSource }) => Promise<{ canvasId: string; versionId: string }>
@@ -674,6 +695,16 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.LOGS2_NEW_MESSAGES, handler)
       return () => ipcRenderer.removeListener(IPC.LOGS2_NEW_MESSAGES, handler)
     },
+  },
+  accountWeb: {
+    status: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_STATUS, profileId),
+    signIn: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SIGN_IN, profileId),
+    signInState: () => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SIGN_IN_STATE),
+    cancel: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_CANCEL, profileId),
+    signOut: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SIGN_OUT, profileId),
+    openArtifacts: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_OPEN_ARTIFACTS, profileId),
+    setAuthMethod: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_METHOD, args),
+    setAuthBrowser: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_BROWSER, args),
   },
   // Agent Canvas — per-session review surface state + change push. Content
   // itself loads straight into the canvas iframe over ccc-ux://, not IPC.
