@@ -126,6 +126,22 @@ jobs:
           $dir = Join-Path $env:RUNNER_TEMP 'eSignerCKA'
           Start-Process $setup -ArgumentList '/CURRENTUSER','/VERYSILENT','/SUPPRESSMSGBOXES',"/DIR=$dir" -Wait
           Get-ChildItem $dir -Filter '*.exe' | ForEach-Object { Write-Host "installed: $($_.Name)" }
+          # Register the eSigner KSP explicitly, matching SSL.com's canonical CKA
+          # workflow (install -> vc_redist -> RegisterKSP -> eSignerCSP.Config ->
+          # config/load). The silent installer only lays these files down; without
+          # running them the cert loads but 64-bit signtool reports "no private key"
+          # (After Private Key filter, 0 certs) and never reaches SSL.com. The x64
+          # eSignerKSP also needs the x64 VC++ runtime/SxS assemblies -- the CKA
+          # installer bundles only vc_redist.x86; the (now-removed) VS Build Tools
+          # install used to supply the x64 side incidentally, which is why signing
+          # regressed when that step went away.
+          $vcx64 = Join-Path $dir 'vc_redist.x64.exe'
+          if (-not (Test-Path $vcx64)) { Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $vcx64 }
+          Start-Process $vcx64 -ArgumentList '/install','/quiet','/norestart' -Wait
+          $registerKsp = Join-Path $dir 'RegisterKSP.exe'
+          if (Test-Path $registerKsp) { & $registerKsp 2>&1 | Out-Null; Write-Host "RegisterKSP exit: $LASTEXITCODE" }
+          $cspConfig = Join-Path $dir 'eSignerCSP.Config.exe'
+          if (Test-Path $cspConfig) { & $cspConfig 2>&1 | Out-Null; Write-Host "eSignerCSP.Config exit: $LASTEXITCODE" }
           $tool = @('eSignerCKATool.exe', 'eSignerCKA.exe') |
             ForEach-Object { Join-Path $dir $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $tool) { throw "eSigner CKA CLI not found in $dir" }
