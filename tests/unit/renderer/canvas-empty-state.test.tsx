@@ -67,7 +67,7 @@ describe('the landing (intro view)', () => {
     expect(container.textContent).toContain('nothing rendered yet')
     expect(container.textContent).toContain('The review loop')
     expect(container.textContent).toContain('Submit review')
-    expect(container.textContent).toContain('canvas_render')
+    expect(container.textContent).toContain('Agent Canvas')
     // The classic pane is NOT mounted on the greeting.
     expect(container.querySelector('[data-testid="sketchpad"]')).toBeNull()
   })
@@ -78,10 +78,23 @@ describe('the landing (intro view)', () => {
     expect(ptyWriteMock).toHaveBeenCalledTimes(1)
     const [sessionId, text] = ptyWriteMock.mock.calls[0]
     expect(sessionId).toBe(SID)
-    expect(text).toContain('canvas_render')
-    expect(text).toContain('data-ux-id')
+    expect(text).toContain('Agent Canvas')
     // The user presses Enter, not us — a trailing newline would SEND it.
     expect(text).not.toMatch(/[\r\n]/)
+  })
+
+  it('asks in plain words — the starter prompt names no MCP tool (the skill carries the workflow)', () => {
+    // Owner feedback 2026-08-14: "the user has to have too much knowledge
+    // about the mcps". The agent-canvas skill (canvas-plugin.ts) teaches
+    // htmlPath / data-ux-id / the loop, so the user never types a tool name.
+    render()
+    click(buttonByText('Type it into the terminal'))
+    const [, text] = ptyWriteMock.mock.calls[0]
+    for (const jargon of ['canvas_render', 'canvas_snapshot', 'canvas_review', 'data-ux-id', 'mcp']) {
+      expect(String(text).toLowerCase()).not.toContain(jargon.toLowerCase())
+    }
+    // ...and the same jargon is absent from the landing copy the user reads.
+    expect(container.textContent).not.toContain('canvas_render')
   })
 })
 

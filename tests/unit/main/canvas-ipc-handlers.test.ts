@@ -18,6 +18,7 @@ const storeMock = vi.hoisted(() => ({
   getCanvasStateForSession: vi.fn(),
   renderVersion: vi.fn(),
   setActiveVersion: vi.fn(),
+  setCanvasSessionInfoResolver: vi.fn(),
   changeListeners: [] as Array<(e: unknown) => void>,
 }))
 
@@ -25,6 +26,9 @@ vi.mock('../../../src/main/canvas/canvas-store', () => ({
   getCanvasStateForSession: storeMock.getCanvasStateForSession,
   renderVersion: storeMock.renderVersion,
   setActiveVersion: storeMock.setActiveVersion,
+  // Continuity glue (2026-08-14): registration installs the session-info
+  // resolver that stamps canvas records with cwd + conversation.
+  setCanvasSessionInfoResolver: storeMock.setCanvasSessionInfoResolver,
   onCanvasChanged: (cb: (e: unknown) => void) => {
     storeMock.changeListeners.push(cb)
     return () => {}
@@ -64,6 +68,13 @@ describe('registration', () => {
 
   it('listens for snapshot replies from the renderer', () => {
     expect(listeners.has(IPC.CANVAS_SNAPSHOT_RESULT)).toBe(true)
+  })
+
+  it('installs the canvas session-info resolver (continuity stamps)', () => {
+    // Without this, canvas records carry no cwd/conversation and a restarted
+    // session can never adopt its own canvas back.
+    expect(storeMock.setCanvasSessionInfoResolver).toHaveBeenCalledTimes(1)
+    expect(typeof storeMock.setCanvasSessionInfoResolver.mock.calls[0][0]).toBe('function')
   })
 })
 
