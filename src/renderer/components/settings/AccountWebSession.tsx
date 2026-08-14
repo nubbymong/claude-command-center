@@ -67,7 +67,13 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     if (!busy) return
     const t = setInterval(async () => {
       const r = await api.signInState()
-      if (r.ok) setPhase(r.state.phase)
+      if (r.ok) {
+        setPhase(r.state.phase)
+        // Mirror the live notice (e.g. a Cloudflare challenge in progress) while
+        // the sign-in runs, not only on the final result — and clear it once the
+        // challenge is gone, so a stale "verifying you" banner does not linger. #269.
+        setNotice(typeof r.state.notice === 'string' ? r.state.notice : '')
+      }
     }, 1000)
     return () => clearInterval(t)
   }, [busy])

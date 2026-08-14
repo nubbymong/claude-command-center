@@ -158,6 +158,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   // session currently has its context menu open; it reads the live session and
   // no-ops when the chosen account equals the current one.
   const accountProfiles = useAccountProfilesStore((s) => s.profiles)
+  // A session with no EXPLICIT account profile runs on the default/global home,
+  // which is the primary account — so its web session and artifacts belong to the
+  // primary. Without this fallback the account context-menu items vanished on a
+  // fresh install (the common case: default account, no profile assigned), which
+  // is exactly when a user first needs them. #269.
+  const primaryProfileId = accountProfiles.find((p) => p.isPrimary)?.id
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
   const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length })
@@ -1057,15 +1063,15 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
             // session with a resolved account — an SSH session's browser and
             // credentials live on another machine, and a shell-only session has
             // no /login to run.
-            hasWebSession={!!s.profileId && webSessionAccounts.has(s.profileId)}
+            hasWebSession={!!(s.profileId ?? primaryProfileId) && webSessionAccounts.has((s.profileId ?? primaryProfileId)!)}
             onOpenArtifacts={
-              s.profileId && s.sessionType === 'local'
-                ? () => { void window.electronAPI.accountWeb.openArtifacts(s.profileId!) }
+              (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
+                ? () => { void window.electronAPI.accountWeb.openArtifacts((s.profileId ?? primaryProfileId)!) }
                 : undefined
             }
             onAuthenticateWeb={
-              s.profileId && s.sessionType === 'local'
-                ? () => { void authenticateWebForSession(s.profileId!) }
+              (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
+                ? () => { void authenticateWebForSession((s.profileId ?? primaryProfileId)!) }
                 : undefined
             }
             onSignInCode={

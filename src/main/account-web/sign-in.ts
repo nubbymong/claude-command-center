@@ -326,6 +326,8 @@ export function sweepAbandonedProfiles(dataDir: string): void {
 export interface CdpTarget {
   type?: string
   url?: string
+  /** Page title — used only to spot a Cloudflare "Just a moment..." interstitial. */
+  title?: string
   id?: string
   webSocketDebuggerUrl?: string
 }
@@ -425,7 +427,47 @@ async function closeQuietly(client: any): Promise<void> {
   try { await withTimeout(Promise.resolve(client?.close?.()), IO_CALL_TIMEOUT_MS, 'CDP close') } catch { /* closing anyway */ }
 }
 
-/** Ask the page for the signed-in account, via claude.ai's own bootstrap. */
+/**
+ * True when the connected target's own reported URL is claude.ai.
+ *
+ * ORIGIN GATE, AND IT RUNS NO PAGE SCRIPT. `Target.getTargetInfo` reads target
+ * metadata over CDP; it does not execute anything in the document. That matters
+ * because this runs on every poll while the human is still on the page, and the
+ * one thing this flow must NOT do during that window is run script in the login
+ * page — see readAccountEmail (#269).
+ */
+async function targetIsClaudeAi(client: any): Promise<boolean> {
+  if (typeof client?.Target?.getTargetInfo !== 'function') return false
+  try {
+    const url = (await withTimeout<any>(client.Target.getTargetInfo(), IO_CALL_TIMEOUT_MS, 'getTargetInfo'))?.targetInfo?.url
+    return typeof url === 'string' && isClaudeUrl(url)
+  } catch {
+    return false   // asked, and could not find out. Not the same as "it is fine".
+  }
+}
+
+/** Cloudflare's managed-challenge surfaces, by target URL/title. Pure. */
+export function isCloudflareChallenge(t: CdpTarget): boolean {
+  const url = (t?.url ?? '').toLowerCase()
+  const title = (t?.title ?? '').toLowerCase()
+  return (
+    url.includes('challenges.cloudflare.com') ||
+    url.includes('/cdn-cgi/challenge-platform/') ||
+    title === 'just a moment...'
+  )
+}
+
+/**
+ * Ask the page for the signed-in account, via claude.ai's own bootstrap.
+ *
+ * THE ONE CALL IN THIS FLOW THAT RUNS SCRIPT IN THE LOGIN PAGE, and #269 is why
+ * it now runs at most once, only AFTER a real session cookie has appeared.
+ * Cloudflare's Turnstile treats an attached debugger evaluating in the page as
+ * automation and re-arms its "verify you are human" challenge indefinitely, so
+ * calling this every poll (as the first version did) made the very challenge it
+ * needed the user to clear un-clearable. Once the session cookie exists the
+ * challenge is demonstrably already cleared, so a single evaluate here is safe.
+ */
 async function readAccountEmail(client: any): Promise<string | null> {
   try {
     // The fetch below is ORIGIN-RELATIVE, so it only means what we think if the
@@ -622,6 +664,11 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
       let targets: CdpTarget[] = []
       try { targets = await withTimeout(getCDP().List({ port }), IO_CALL_TIMEOUT_MS, 'target list') } catch { continue }
 
+      // Tell the user when Cloudflare is challenging, from the target list alone
+      // (no attach). Without this the challenge just looked like nothing
+      // happening until the five-minute timeout blamed a closed window (#269).
+      const challenge = targets.some(isCloudflareChallenge)
+
       for (const t of pickSignInTargets(targets)) {
         let client: any = null
         try {
@@ -632,16 +679,38 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
           )
         } catch { continue }
 
-        const email = await readAccountEmail(client)
-        if (!email) { await closeQuietly(client); continue }
-
-        // Authenticated. Harvest.
-        current = tag({ phase: 'harvesting', profileId })
+        // ORIGIN FIRST, THEN COOKIES, THEN — ONLY IF SIGNED IN — the identity read.
+        // Reordered for #269: the old flow ran `readAccountEmail` (which executes
+        // script in the page) on EVERY poll, and Cloudflare's Turnstile treats
+        // that as automation and re-arms the challenge forever. Neither the origin
+        // check nor the cookie read runs page script, so during the challenge this
+        // loop now touches the page without ever scripting it, and the human can
+        // actually clear the check.
+        if (!(await targetIsClaudeAi(client))) { await closeQuietly(client); continue }
         const all: CdpCookie[] = (await withTimeout<any>(client.Network.getAllCookies(), IO_CALL_TIMEOUT_MS, 'getAllCookies'))?.cookies ?? []
         const harvest = harvestClaudeCookies(all)
 
         if (!harvest.hasSessionCookie) {
-          // Keep waiting rather than declaring success on a cookie-less jar.
+          // No session yet. This is where the whole Cloudflare challenge is spent,
+          // and the point is that NO page script has run to get here.
+          current = tag(challenge
+            ? {
+                phase: 'awaiting-user',
+                profileId,
+                notice: 'Cloudflare is verifying you are human — finish the check in the browser window. It can take a moment, and may re-appear once or twice before it clears.',
+              }
+            : { phase: 'awaiting-user', profileId })
+          await closeQuietly(client)
+          continue
+        }
+
+        // A real session cookie exists, so any challenge is already cleared. NOW
+        // it is safe to run the single page-script identity read.
+        current = tag({ phase: 'harvesting', profileId })
+        const email = await readAccountEmail(client)
+        if (!email) {
+          // Have the cookie but the identity call did not answer yet — do not
+          // store a session with no account. Try again next poll.
           current = tag({ phase: 'awaiting-user', profileId })
           await closeQuietly(client)
           continue
