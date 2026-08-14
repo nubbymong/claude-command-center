@@ -364,6 +364,18 @@ export const IPC = {
   CANVAS_RENDER: 'canvas:render',                      // renderer -> main: register a new content version
   CANVAS_SET_ACTIVE_VERSION: 'canvas:setActiveVersion',// renderer -> main: switch the surfaced version
   CANVAS_CHANGED: 'canvas:changed',                    // push: main -> renderer (a render/switch happened)
+  CANVAS_SNAPSHOT_REQUEST: 'canvas:snapshotRequest',   // push: main -> renderer: capture the live frame (id-correlated)
+  CANVAS_SNAPSHOT_RESULT: 'canvas:snapshotResult',     // renderer -> main: the reply to one snapshotRequest
+  CANVAS_LIST_RECLAIMABLE: 'canvas:listReclaimable',   // renderer -> main: { sessionId } -> ReclaimableCanvas[] (read-only)
+  CANVAS_RECLAIM: 'canvas:reclaim',                    // renderer -> main: the USER moves a named canvas to this session
+
+  // Agent Canvas P3 — reviews & annotations (the review loop, spec §6)
+  CANVAS_REVIEW_GET_STATE: 'canvas:reviewGetState',    // renderer -> main: { sessionId } -> CanvasReviewState | null
+  CANVAS_ANNOTATION_UPSERT: 'canvas:annotationUpsert', // renderer -> main: create/update a draft note
+  CANVAS_ANNOTATION_DELETE: 'canvas:annotationDelete', // renderer -> main: remove a draft note
+  CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports)
+  CANVAS_ANNOTATION_RESOLVE: 'canvas:annotationResolve', // renderer -> main: approve / dismiss / reannotate an open note
+  CANVAS_REVIEW_CHANGED: 'canvas:reviewChanged',       // push: main -> renderer (a review/annotation mutation happened)
 } as const
 
 /** Helper to build per-session PTY data channels */

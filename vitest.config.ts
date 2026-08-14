@@ -1,7 +1,11 @@
 import { defineConfig, configDefaults } from 'vitest/config'
 import { resolve } from 'path'
+import { canvasBridgePlugin } from './scripts/vite-plugin-canvas-bridge.mjs'
 
 export default defineConfig({
+  // Tests drive the SAME bundled bridge string the app serves — no second,
+  // hand-maintained copy of the in-page script to drift.
+  plugins: [canvasBridgePlugin()],
   esbuild: {
     jsx: 'automatic',
     jsxImportSource: 'react',

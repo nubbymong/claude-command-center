@@ -3,6 +3,7 @@ import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import PageFrame from './PageFrame'
 import CompatBadge from './sentinel/CompatBadge'
 import VisionSubTool from './conductor-mcp/VisionSubTool'
+import AgentCanvasSubTool from './conductor-mcp/AgentCanvasSubTool'
 import CodexReviewSubTool from './conductor-mcp/CodexReviewSubTool'
 import HostTransferSubTool from './conductor-mcp/HostTransferSubTool'
 
@@ -75,6 +76,7 @@ export default function ConductorMcpPage() {
             </div>
 
             <VisionSubTool />
+            <AgentCanvasSubTool />
             <CodexReviewSubTool />
             <HostTransferSubTool />
           </>

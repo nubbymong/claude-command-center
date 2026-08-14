@@ -9,6 +9,8 @@ import { loadCredential } from '../credential-store'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
+import { registerCanvasUatRoot } from '../canvas/canvas-store'
+import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -255,6 +257,26 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     if (options?.shellOnly && options.configId && options.terminalOptions?.hasSecretArg) {
       const argSecret = loadCredential(options.configId + '_argsecret') ?? undefined
       if (argSecret) resolvedOptions = { ...resolvedOptions, terminalSecret: argSecret }
+    }
+
+    // Agent Canvas UAT (spec §10 P3): a session's own project directory is the
+    // one base its agent may serve built output from (`canvas_render` uat mode
+    // resolves distRoot against these). LOCAL sessions only — an SSH session's
+    // cwd names a path on the REMOTE machine, and allowlisting it here would
+    // let an unrelated local directory of the same name be served.
+    if (!options?.ssh) {
+      if (options?.cwd) registerCanvasUatRoot(options.cwd)
+      if (options?.resume?.cwd) registerCanvasUatRoot(options.resume.cwd)
+      // Canvas continuity: stamp this session's work identity and let it adopt
+      // an orphaned canvas from a previous session of the same conversation /
+      // project (the VM "repush" bug, 2026-08-14). Local sessions only, same
+      // reasoning as the UAT roots above.
+      noteSessionSpawnForCanvas(sessionId, {
+        cwd: options?.resume?.cwd ?? options?.cwd,
+        resumeUuid: options?.resume?.uuid,
+        // Part of the adoption key: a canvas never crosses accounts.
+        profileId: options?.profileId,
+      })
     }
 
     spawnPty(win, sessionId, resolvedOptions)

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
-// The in-page bridge script, evaluated for real in jsdom. In a top-level
-// window, window.parent === window, so the bridge's replies (posted to the
-// parent) arrive on this window's own message listeners — the test IS the
-// host. Requests are dispatched as MessageEvents with source: window, which
-// satisfies the bridge's only-my-parent gate.
+// The bridge's transport and hover surface: lifecycle, request handling, the
+// only-my-parent trust gate, and the unsolicited viewport/pointer events.
+//
+// Drives the BUNDLED bridge (see canvas-bridge-harness) — the same string
+// ccc-ux:// serves. The semantic snapshot has its own suite in
+// canvas-bridge-snapshot.test.ts.
 
 import { describe, it, expect, beforeAll, afterEach } from 'vitest'
-import bridgeSource from '../../../src/main/canvas/bridge/canvas-bridge.js?raw'
+import { bridgeRequest, collectEvents, installBridge, stubLayout } from './canvas-bridge-harness'
 import { CANVAS_BRIDGE_NS } from '../../../src/shared/canvas'
 
 interface BridgeReply {
@@ -17,50 +18,10 @@ interface BridgeReply {
   error?: string
 }
 
-let nextId = 1
-
-function request(type: string, extra: Record<string, unknown> = {}): Promise<BridgeReply> {
-  const id = nextId++
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`no reply for ${type}`)), 1000)
-    const onMessage = (event: MessageEvent) => {
-      const msg = event.data as BridgeReply | undefined
-      if (!msg || msg.ns !== CANVAS_BRIDGE_NS || msg.id !== id || typeof (msg as { type?: unknown }).type === 'string') return
-      clearTimeout(timer)
-      window.removeEventListener('message', onMessage)
-      resolve(msg)
-    }
-    window.addEventListener('message', onMessage)
-    window.dispatchEvent(
-      new MessageEvent('message', { data: { ns: CANVAS_BRIDGE_NS, id, type, ...extra }, source: window }),
-    )
-  })
-}
-
-function collectEvents(kind: string, ms = 300): Promise<Record<string, unknown>[]> {
-  return new Promise((resolve) => {
-    const seen: Record<string, unknown>[] = []
-    const onMessage = (event: MessageEvent) => {
-      const msg = event.data as { ns?: string; type?: string } | undefined
-      if (msg?.ns === CANVAS_BRIDGE_NS && msg.type === kind) seen.push(msg as Record<string, unknown>)
-    }
-    window.addEventListener('message', onMessage)
-    setTimeout(() => {
-      window.removeEventListener('message', onMessage)
-      resolve(seen)
-    }, ms)
-  })
-}
-
 beforeAll(() => {
   // jsdom has no layout: give every element a synthetic box so the bridge's
   // visibility filter (getClientRects().length && width/height > 0) passes.
-  Element.prototype.getBoundingClientRect = function () {
-    return { left: 10, top: 20, right: 110, bottom: 50, width: 100, height: 30, x: 10, y: 20, toJSON: () => ({}) } as DOMRect
-  }
-  Element.prototype.getClientRects = function () {
-    return [this.getBoundingClientRect()] as unknown as DOMRectList
-  }
+  stubLayout({ x: 10, y: 20, width: 100, height: 30 })
   document.body.innerHTML = `
     <header><h1>Fixture</h1></header>
     <main>
@@ -73,9 +34,7 @@ beforeAll(() => {
         <span aria-label="Close dialog" role="button">×</span>
       </div>
     </main>`
-  // The bridge is served as a plain classic script; evaluate it the same way.
-  // eslint-disable-next-line no-eval
-  ;(0, eval)(bridgeSource)
+  installBridge()
 })
 
 afterEach(() => {
@@ -89,7 +48,7 @@ describe('lifecycle', () => {
     // can land after the first listener attaches), THEN prove a re-eval stays
     // silent: the guard flag must prevent a second install/announce.
     await collectEvents('ready', 150)
-    ;(0, eval)(bridgeSource)
+    installBridge()
     const after = await collectEvents('ready', 150)
     expect(after.length).toBe(0)
   })
@@ -97,7 +56,7 @@ describe('lifecycle', () => {
 
 describe('requests', () => {
   it('boxMap reports meaningful elements with roles, names, and boxes', async () => {
-    const reply = await request('boxMap')
+    const reply = await bridgeRequest('boxMap')
     expect(reply.ok).toBe(true)
     const rows = reply.result as Array<{ role: string; name: string; tag: string; uxId?: string }>
     const byTag = (tag: string) => rows.filter((r) => r.tag === tag)
@@ -118,19 +77,19 @@ describe('requests', () => {
   })
 
   it('snapshot returns a rooted tree', async () => {
-    const reply = await request('snapshot')
+    const reply = await bridgeRequest('snapshot', { analysis: false })
     expect(reply.ok).toBe(true)
-    const root = reply.result as { role: string; tag: string; children: unknown[] }
-    expect(root.tag).toBe('body')
-    expect(root.role).toBe('document')
-    expect(Array.isArray(root.children)).toBe(true)
-    expect(JSON.stringify(root)).toContain('save-btn')
+    const result = reply.result as { root: { ref: string; role: string; children: unknown[] } }
+    expect(result.root.ref).toBe('e0')
+    expect(result.root.role).toBe('document')
+    expect(Array.isArray(result.root.children)).toBe(true)
+    expect(JSON.stringify(result.root)).toContain('save-btn')
   })
 
   it('elementAtPoint walks to the nearest meaningful ancestor', async () => {
     const button = document.querySelector('[data-ux-id="save-btn"]')!
     ;(document as { elementFromPoint?: unknown }).elementFromPoint = () => button.firstChild?.parentElement ?? button
-    const reply = await request('elementAtPoint', { x: 10, y: 10 })
+    const reply = await bridgeRequest('elementAtPoint', { x: 10, y: 10 })
     expect(reply.ok).toBe(true)
     expect((reply.result as { uxId?: string }).uxId).toBe('save-btn')
   })
@@ -139,13 +98,13 @@ describe('requests', () => {
     ;(document as { elementFromPoint?: unknown }).elementFromPoint = () => {
       throw new Error('not implemented')
     }
-    const reply = await request('elementAtPoint', { x: 5, y: 5 })
+    const reply = await bridgeRequest('elementAtPoint', { x: 5, y: 5 })
     expect(reply.ok).toBe(true)
     expect(reply.result).toBeNull()
   })
 
   it('answers unknown request types with an error reply', async () => {
-    const reply = await request('formatHardDrive')
+    const reply = await bridgeRequest('formatHardDrive')
     expect(reply.ok).toBe(false)
     expect(reply.error).toContain('unknown request')
   })

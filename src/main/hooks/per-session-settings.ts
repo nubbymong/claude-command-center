@@ -47,7 +47,31 @@ export interface WriteSessionSettingsOptions {
    *  it into the user's global ~/.claude/settings.json. Overrides any statusLine
    *  inherited from the shared-settings clone. */
   resourcesDir?: string
+  /** 2026-08-14 (SEC-BATCH FLAG): union CCC's own Agent Canvas tools into
+   *  permissions.allow so the render->review loop doesn't stall in approval
+   *  prompts. Additive only — the user's deny/ask lists are never touched and
+   *  a deny still wins under Claude's permission semantics. */
+  allowCanvasTools?: boolean
 }
+
+/**
+ * Canvas tools that may skip the approval prompt.
+ *
+ * ONLY the two READS, and only because they read CCC's own state: the snapshot
+ * of a page this app rendered, and the notes the user wrote in this app's own
+ * UI. Neither takes a path or any other argument that widens what it can touch.
+ *
+ * `canvas_render` is deliberately NOT here. It accepts `htmlPath`, an absolute
+ * path the MODEL supplies, read with the app's privileges. Pre-allowing it
+ * removed the last human gate on that read — adversarial review (2026-08-14)
+ * drove it to a private key with no prompt and nothing on screen. The read is
+ * now confined to the session's project directory (resolveInsideCanvasRoot),
+ * but confinement and prompt-suppression should not land in the same change:
+ * the prompt costs one keypress per render and it is the thing that would have
+ * caught that. The UX problem it was added for — a 37 KB document flooding the
+ * approval prompt — is already fixed by `htmlPath` being one line.
+ */
+const CANVAS_TOOL_PERMISSIONS = ['mcp__conductor__canvas_snapshot', 'mcp__conductor__canvas_review']
 
 export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionSettingsOptions = {}): string {
   const claudeDir = path.join(os.homedir(), '.claude')
@@ -84,6 +108,25 @@ export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionS
   // shared clone so external `claude` runs outside CCC keep their native line.
   if (opts.resourcesDir) {
     sesCfg.statusLine = buildStatuslineSetting(opts.resourcesDir)
+  }
+
+  // Union the canvas tools into permissions.allow, preserving everything the
+  // user already has there. Shape-defensive: a malformed permissions value in
+  // the shared file is left exactly as it was (never "repaired" into shape).
+  if (opts.allowCanvasTools) {
+    const permissions = sesCfg.permissions
+    if (permissions === undefined) {
+      sesCfg.permissions = { allow: [...CANVAS_TOOL_PERMISSIONS] }
+    } else if (permissions && typeof permissions === 'object' && !Array.isArray(permissions)) {
+      const perm = { ...(permissions as Record<string, unknown>) }
+      const allow = Array.isArray(perm.allow) ? perm.allow : perm.allow === undefined ? [] : null
+      if (allow !== null) {
+        const merged = [...allow]
+        for (const tool of CANVAS_TOOL_PERMISSIONS) if (!merged.includes(tool)) merged.push(tool)
+        perm.allow = merged
+        sesCfg.permissions = perm
+      }
+    }
   }
 
   const sesPath = getLocalSessionSettingsPath(sessionId)

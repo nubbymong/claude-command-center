@@ -35,6 +35,7 @@ import {
   removeLocalSessionMcpConfig,
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
+import { ensureCanvasPlugin } from './canvas/canvas-plugin'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
@@ -1295,21 +1296,36 @@ export function spawnPty(
       // overrides. P7.7.3: also seed a per-session MCP config file
       // (--mcp-config), because claude.exe ignores mcpServers in --settings
       // and reads it ONLY from --mcp-config or ~/.claude.json.
+      //
+      // Read the app settings ONCE for this spawn: the settings block, the MCP
+      // block and the canvas-plugin block below all key off them, and reading
+      // fresh per spawn is what lets a Settings toggle apply to the next
+      // session without an app restart.
+      const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+      // Built-in tools master (onboarding p6 / Settings): also gates the
+      // canvas workflow plugin + pre-allowed canvas tools — without the
+      // conductor MCP entry there is nothing for either to talk to.
+      const conductorOn = appSettings?.conductorToolsEnabled !== false
       try {
         // v1.5.12: thread the CCC AppSettings.disableClaudeWorkflows flag
         // through so Claude Code's dynamic-workflow feature can be killed
         // at the per-session level without the user hand-editing
-        // ~/.claude/settings.json. Read fresh on every spawn so a Settings
-        // toggle takes effect on the next session without an app restart.
-        const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean }>('settings')
+        // ~/.claude/settings.json.
         const disableWorkflows = !!appSettings?.disableClaudeWorkflows
         // Master status-line switch (onboarding p4 / Settings -> Status line):
         // absent means ON (pre-upgrade configs). Off = no resourcesDir, so the
         // per-session clone gets no statusLine key and Claude runs without the
-        // bundled script. Read fresh per spawn; sessions already running keep
-        // theirs until restarted.
+        // bundled script. Sessions already running keep theirs until restarted.
         const statusLineOn = appSettings?.statusLineEnabled !== false
-        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows, resourcesDir: statusLineOn ? getResourcesDirectory() : undefined })
+        const sesPath = writeLocalSessionSettings(sessionId, {
+          disableWorkflows,
+          resourcesDir: statusLineOn ? getResourcesDirectory() : undefined,
+          // SEC-BATCH FLAG (2026-08-14): pre-allow CCC's own canvas tools so
+          // the render->review loop doesn't stall in approval prompts (the VM
+          // transcript lost 11 minutes to one). Additive allow only — a user
+          // deny still wins under Claude's permission semantics.
+          allowCanvasTools: conductorOn,
+        })
         // injectHooks rewrites the per-session settings file to point Claude's
         // hook events at our local gateway, which drives the session attention
         // pulse, statusline ingest, and conversation logging. Skipped only when
@@ -1338,9 +1354,6 @@ export function spawnPty(
         logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
       try {
-        // Built-in tools master (onboarding p6 / Settings): off = the session's
-        // mcp-config carries no conductor entry. Read fresh per spawn.
-        const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
         const mcpCfgPath = writeLocalSessionMcpConfig(sessionId, conductorOn)
         // Only pass --mcp-config if the file exists: the writer fails closed, and
         // claude exits 1 on a missing --mcp-config path. Omit it on a write
@@ -1352,6 +1365,25 @@ export function spawnPty(
         }
       } catch (err) {
         logError(`[pty] Failed to seed per-session MCP config for ${sessionId}: ${(err as Error)?.message ?? err}`)
+      }
+
+      // Agent Canvas workflow plugin (P6 seed): the skill that drives the
+      // render->review loop so the user never has to know a tool name.
+      // Session-scoped via --plugin-dir (nothing written to ~/.claude).
+      // Skipped for pinned legacy CLI versions — they may predate the flag,
+      // and an unknown flag fails the whole launch.
+      if (conductorOn && !options?.legacyVersion?.enabled) {
+        try {
+          // existsSync for the same reason --settings and --mcp-config check:
+          // a flag pointing at a missing path is at best ignored and at worst
+          // exits the CLI, and this one is appended to every session.
+          const pluginDir = ensureCanvasPlugin()
+          if (pluginDir && fs.existsSync(pluginDir)) {
+            extraFlags += ` --plugin-dir ${quoteArgForShell(pluginDir, os.platform() === 'win32')}`
+          }
+        } catch (err) {
+          logWarn(`[pty] canvas plugin unavailable for ${sessionId}: ${(err as Error)?.message ?? err}`)
+        }
       }
 
       // Build --agents flag if agent templates are configured

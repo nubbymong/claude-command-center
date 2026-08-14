@@ -71,12 +71,14 @@ export interface ConductorToolsSettings {
   vision: boolean
   codexReview: boolean
   hostTransfer: boolean
+  canvas: boolean
 }
 
 export const DEFAULT_CONDUCTOR_TOOLS: ConductorToolsSettings = {
   vision: true,
   codexReview: true,
   hostTransfer: true,
+  canvas: true,
 }
 
 export type UpdateChannel = 'stable' | 'beta'

@@ -40,6 +40,10 @@ import { isPackagedApp } from './update-watcher'
 import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
+import { registerCanvasTools } from './canvas-mcp-tool'
+import { getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
+import { getReviewPayload } from './canvas/canvas-review-store'
+import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
  *  The Codex TOML writer appends `?source=codex` so the server can skip
@@ -559,11 +563,11 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // off; this filter is belt-and-braces for stale session configs.
     const toolCfg = readConfig<{
       conductorToolsEnabled?: boolean
-      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean }
+      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean; canvas?: boolean }
       codexEnabled?: boolean
     }>('settings')
     const toolsMaster = toolCfg?.conductorToolsEnabled !== false
-    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer') =>
+    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer' | 'canvas') =>
       toolsMaster && toolCfg?.conductorTools?.[k] !== false
 
     // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
@@ -769,6 +773,47 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       )
     }
 
+    // Agent Canvas: both tools are about the session's OWN canvas — the
+    // snapshot reads its rendered page and the render writes to it — so like
+    // codex_review they bind to the transport's session id and refuse a
+    // model-supplied one (#188). Not advertised to Codex, which connects without
+    // a bound session id — every call would refuse, so offering it is a lie.
+    if (source !== 'codex' && toolOn('canvas')) {
+      registerCanvasTools(server, z, () => boundSessionId, {
+        getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
+        requestSnapshot: (args) => requestCanvasSnapshot(args),
+        renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
+        getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
+        readAttachment: (absPath) => fs.readFileSync(absPath),
+        /**
+         * Read a design document the agent wrote to disk (`htmlPath`).
+         *
+         * CONFINED to the session's own registered canvas roots (its project
+         * directory), with the same realpath containment `distRoot` uses.
+         * Unconfined, this was an arbitrary-file read on a model-supplied
+         * absolute path executed with the app's privileges: adversarial review
+         * (2026-08-14) drove it to read a private key and land the bytes in the
+         * canvas dir, servable and readable back through canvas_snapshot. The
+         * approval prompt was the only thing standing in front of it, which is
+         * not a boundary — an approval prompt cannot be the containment for a
+         * path the model chose.
+         */
+        readDesignFile: (absPath) => {
+          const real = resolveInsideCanvasRoot(absPath)
+          const st = fs.statSync(real)
+          if (!st.isFile()) throw new Error('not a regular file')
+          // A HARD LINK defeats realpath: `mklink /H` needs no privilege and no
+          // Developer Mode, and the link inside the project resolves to itself,
+          // not to the file it shares an inode with. Round 2 of the adversarial
+          // pass walked a private key back out through one. A design document
+          // the agent just wrote always has exactly one name.
+          if (typeof st.nlink === 'number' && st.nlink !== 1) throw new Error('not a regular file')
+          if (st.size > 2 * 1024 * 1024) throw new Error('design file too large')
+          return fs.readFileSync(real)
+        },
+      })
+    }
+
     return server
   }
 
@@ -939,6 +984,18 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       res.writeHead(404)
       res.end()
     })
+
+    // An SSE stream is one HTTP response that never ends, and Node's default
+    // server.requestTimeout (300 000 ms) treats that as a stuck request: every
+    // conductor SSE connection was being destroyed at exactly 5:00 and
+    // silently re-established by the client — and a tool call in flight
+    // across (or racing) that churn was stranded forever, with no error on
+    // either side. Vision calls are short and rarely collided; the first long
+    // interactive canvas session hit it within minutes (VM functional test,
+    // 2026-08-13: a canvas_render whose reply never came). Zero disables the
+    // per-request clock; the DoS posture this timeout exists for does not
+    // apply to a loopback-only, token-gated server.
+    httpServer.requestTimeout = 0
 
     // Listen on localhost only — SSH reverse tunnels connect to localhost on the remote end
     httpServer.listen(port, '127.0.0.1', () => {

@@ -26,10 +26,17 @@
 import { protocol } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
-import { CANVAS_BRIDGE_PATH, CANVAS_ID_RE, CANVAS_VERSION_ID_RE, CCC_UX_SCHEME } from '../../shared/canvas'
+import {
+  CANVAS_ANALYSIS_PATH,
+  CANVAS_BRIDGE_PATH,
+  CANVAS_ID_RE,
+  CANVAS_VERSION_ID_RE,
+  CCC_UX_SCHEME,
+} from '../../shared/canvas'
 import { validatePath } from '../utils/path-validator'
 import { getServableVersion, ServableVersion } from './canvas-store'
-import bridgeSource from './bridge/canvas-bridge.js?raw'
+import bridgeSource from 'virtual:canvas-bridge'
+import analysisSource from 'virtual:canvas-analysis'
 
 // Spec §3.1 default policy, with an explicit script-src and the same
 // defense-in-depth backstops the app renderer carries (object/base/form).
@@ -181,9 +188,28 @@ export async function handleCccUxRequest(request: Request): Promise<Response> {
     if (!CANVAS_ID_RE.test(canvasId)) return notFound()
 
     // The bridge is version-independent and mounted on an absolute path so an
-    // injected <script src> survives any document location.
+    // injected <script src> survives any document location. The analysis chunk
+    // sits beside it and is fetched by the bridge's own dynamic import() the
+    // first time a snapshot asks for issue analysis.
     if (url.pathname === CANVAS_BRIDGE_PATH) {
       return new Response(method === 'HEAD' ? null : bridgeSource, {
+        status: 200,
+        headers: baseHeaders(MIME_BY_EXT['.js']),
+      })
+    }
+    if (url.pathname === CANVAS_ANALYSIS_PATH) {
+      // ~600 KB, served `no-store` like the bridge.
+      //
+      // It previously carried `public, max-age=31536000, immutable` on a path
+      // with no build identifier — but a canvasId is PERSISTED, so that URL is
+      // stable across app upgrades while its body changes with every build. A
+      // year-long immutable entry could keep serving the PREVIOUS axe-core into
+      // the frame after an update (silently declining a security bump), and a new
+      // bridge paired with an old chunk trips "exposed no run()" — i.e. the rule
+      // pass stops running, which is exactly the invisible failure this feature
+      // has already had twice. Re-serving an in-process string measures ~1 ms,
+      // and a page can defeat any cache with `fetch(…, {cache:'reload'})` anyway.
+      return new Response(method === 'HEAD' ? null : analysisSource, {
         status: 200,
         headers: baseHeaders(MIME_BY_EXT['.js']),
       })
@@ -237,6 +263,10 @@ export async function handleCccUxRequest(request: Request): Promise<Response> {
       } catch {
         return notFound()
       }
+      // Equivalent under test and labelled rather than tested around: reading a
+      // directory throws in `serveFile` and the catch at the bottom turns that
+      // into the same 404. It stays because "fails closed twice" is the design —
+      // this branch refuses on purpose, the other refuses by accident.
       if (stat.isDirectory()) return notFound()
       const realEntry = fs.realpathSync.native(filePath)
       if (realEntry !== realRoot && !realEntry.startsWith(realRoot + path.sep)) return notFound()

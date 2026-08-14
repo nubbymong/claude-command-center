@@ -5,9 +5,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { IPC } from '../../../src/shared/ipc-channels'
 
 const handlers = new Map<string, (...a: unknown[]) => unknown>()
+const listeners = new Map<string, (...a: unknown[]) => unknown>()
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (ch: string, fn: (...a: unknown[]) => unknown) => handlers.set(ch, fn),
+    on: (ch: string, fn: (...a: unknown[]) => unknown) => listeners.set(ch, fn),
   },
   BrowserWindow: vi.fn(),
 }))
@@ -16,6 +18,7 @@ const storeMock = vi.hoisted(() => ({
   getCanvasStateForSession: vi.fn(),
   renderVersion: vi.fn(),
   setActiveVersion: vi.fn(),
+  setCanvasSessionInfoResolver: vi.fn(),
   changeListeners: [] as Array<(e: unknown) => void>,
 }))
 
@@ -23,6 +26,9 @@ vi.mock('../../../src/main/canvas/canvas-store', () => ({
   getCanvasStateForSession: storeMock.getCanvasStateForSession,
   renderVersion: storeMock.renderVersion,
   setActiveVersion: storeMock.setActiveVersion,
+  // Continuity glue (2026-08-14): registration installs the session-info
+  // resolver that stamps canvas records with cwd + conversation.
+  setCanvasSessionInfoResolver: storeMock.setCanvasSessionInfoResolver,
   onCanvasChanged: (cb: (e: unknown) => void) => {
     storeMock.changeListeners.push(cb)
     return () => {}
@@ -30,6 +36,7 @@ vi.mock('../../../src/main/canvas/canvas-store', () => ({
 }))
 
 const { registerCanvasHandlers } = await import('../../../src/main/ipc/canvas-handlers')
+const { requestCanvasSnapshot, _resetSnapshotBrokerForTest } = await import('../../../src/main/canvas/canvas-snapshot-broker')
 
 const SID = 'a1b2c3d4e5f6a7b8c9d0e1f2'
 const invoke = (ch: string, args: unknown) => handlers.get(ch)!({} as never, args)
@@ -39,6 +46,8 @@ let destroyed: boolean
 
 beforeEach(() => {
   handlers.clear()
+  listeners.clear()
+  _resetSnapshotBrokerForTest()
   storeMock.changeListeners.length = 0
   vi.clearAllMocks()
   sent = []
@@ -55,6 +64,41 @@ describe('registration', () => {
     expect(handlers.has(IPC.CANVAS_GET_STATE)).toBe(true)
     expect(handlers.has(IPC.CANVAS_RENDER)).toBe(true)
     expect(handlers.has(IPC.CANVAS_SET_ACTIVE_VERSION)).toBe(true)
+  })
+
+  it('listens for snapshot replies from the renderer', () => {
+    expect(listeners.has(IPC.CANVAS_SNAPSHOT_RESULT)).toBe(true)
+  })
+
+  it('installs the canvas session-info resolver (continuity stamps)', () => {
+    // Without this, canvas records carry no cwd/conversation and a restarted
+    // session can never adopt its own canvas back.
+    expect(storeMock.setCanvasSessionInfoResolver).toHaveBeenCalledTimes(1)
+    expect(typeof storeMock.setCanvasSessionInfoResolver.mock.calls[0][0]).toBe('function')
+  })
+})
+
+describe('snapshot capture (main -> renderer request)', () => {
+  it('pushes the request to the window and resolves on the matching reply', async () => {
+    const pending = requestCanvasSnapshot({ sessionId: SID, canvasId: 'c1', versionId: 'v1', options: {} })
+    const pushed = sent.find((s) => s.channel === IPC.CANVAS_SNAPSHOT_REQUEST)
+    expect(pushed).toBeDefined()
+    const { requestId } = pushed!.payload as { requestId: string }
+    expect(requestId).toMatch(/^[0-9a-f]{24}$/)
+
+    listeners.get(IPC.CANVAS_SNAPSHOT_RESULT)!({} as never, {
+      requestId,
+      ok: true,
+      result: { viewport: { width: 800, height: 600, dpr: 1 }, root: { ref: 'e0', role: 'document', name: 'ok', box: {}, children: [] } },
+    })
+    await expect(pending).resolves.toMatchObject({ root: { name: 'ok' } })
+  })
+
+  it('reports no window rather than hanging when it is gone', async () => {
+    destroyed = true
+    await expect(
+      requestCanvasSnapshot({ sessionId: SID, canvasId: 'c1', versionId: 'v1', options: {} }),
+    ).rejects.toThrow(/window is not available/)
   })
 })
 

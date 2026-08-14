@@ -23,6 +23,7 @@ import {
   CanvasRenderSource,
   CanvasState,
   CanvasVersion,
+  ReclaimableCanvas,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
@@ -31,6 +32,13 @@ const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** Defensive cap on a design document; the IPC schema caps tighter. */
 const MAX_DESIGN_HTML_BYTES = 8 * 1024 * 1024
 const MAX_VERSIONS_PER_CANVAS = 500
+
+/** A Claude conversation uuid as it appears in transcript basenames. Kept loose
+ *  (hex + dashes) — it is a MATCHING key, never a path segment. */
+const CONVERSATION_UUID_RE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/
+const MAX_CWD_CHARS = 1024
+/** Account-profile ids are app-minted; bounded defensively like the others. */
+const PROFILE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 
 /**
  * UAT versions serve a project's built `dist/` from an absolute path the CALLER
@@ -75,6 +83,39 @@ function distRootAllowed(distRoot: string): boolean {
   return false
 }
 
+/**
+ * Resolve a caller-supplied absolute file path, confined to the registered
+ * canvas roots (the sessions' own project directories).
+ *
+ * This is the containment for `canvas_render`'s `htmlPath` — a path the MODEL
+ * chooses, read with the app's privileges. Unconfined it was an arbitrary-file
+ * read (adversarial review 2026-08-14 drove it to a private key), and the only
+ * thing in front of it was a human approval prompt, which is not containment.
+ * Same allowlist and same realpath discipline `distRoot` already uses, so a
+ * symlink inside the project cannot point out of it.
+ *
+ * Throws (never returns a path outside a root); the thrown message is mapped
+ * to a closed operator vocabulary by the caller and never relayed verbatim.
+ */
+export function resolveInsideCanvasRoot(absPath: string): string {
+  if (typeof absPath !== 'string' || absPath.length === 0 || !path.isAbsolute(absPath)) {
+    throw new Error('path is not under a registered canvas root')
+  }
+  if (uatRoots.size === 0) throw new Error('path is not under a registered canvas root')
+  let real: string
+  try {
+    // realpath the FILE, not just its parent: this is what makes a symlink
+    // planted inside the project unable to reach outside it.
+    real = fs.realpathSync.native(absPath)
+  } catch {
+    throw new Error('path is not under a registered canvas root')
+  }
+  for (const base of uatRoots) {
+    if (real === base || real.startsWith(base + path.sep)) return real
+  }
+  throw new Error('path is not under a registered canvas root')
+}
+
 /** A version `entry` must be a plain relative file path. Boolean form of
  *  `normalizeEntry`, for validating records loaded from disk / re-served. */
 function isSafeEntry(entry: unknown): entry is string {
@@ -89,6 +130,63 @@ function isSafeEntry(entry: unknown): entry is string {
 
 interface CanvasRecord extends CanvasState {
   createdAt: string
+  /**
+   * Continuity stamps (2026-08-14, the VM "repush" bug). The CCC session id a
+   * canvas is keyed to is more ephemeral than the work it anchors: quit the
+   * app, open a fresh tile in the same project, resume the same conversation —
+   * new session id, stranded canvas. These two identify the WORK so a new
+   * session can adopt it: the project directory the owning session ran in, and
+   * the Claude conversation the canvas was last rendered under. First render
+   * stamps them (via the injected session-info resolver); `cwd` never drifts
+   * afterwards, `conversationUuid` tracks the latest render.
+   */
+  cwd?: string
+  conversationUuid?: string
+  /** The account profile the owning session ran under. Part of the adoption
+   *  key: a canvas must never cross accounts (adversarial review 2026-08-14). */
+  profileId?: string
+}
+
+/**
+ * The constraints that still apply even when the USER picks a canvas by id.
+ *
+ * There is no identity-matching key here any more, and that is the point. Two
+ * rounds of adversarial review killed every automatic rule: the project
+ * directory is ambiguous (two tiles on one repo), the conversation uuid is
+ * derived from the transcript binder and is both heuristic and agent-writable,
+ * and "is the owner still current" has no reliable oracle. A canvas carries
+ * the user's private review notes, so moving one is an authorization decision
+ * — and the only party able to make it is the user, who is asked (see
+ * canvas-session-link.listReclaimableCanvases).
+ *
+ * What remains is a floor the user's choice cannot lower: an account never
+ * changes, and a canvas whose owner might still come back is never taken.
+ */
+export interface CanvasAdoptionQuery {
+  /** The account profile this session runs under. Must equal the record's
+   *  stamp — an unstamped legacy record never crosses into a profiled session
+   *  and vice versa. */
+  profileId?: string
+  /**
+   * True when the given session can still come back and claim its canvas by
+   * id — a live PTY, or a tile still in the saved-session list. Fails SAFE:
+   * uncertain means current, and current means untouchable.
+   */
+  isSessionCurrent: (sessionId: string) => boolean
+}
+
+export type { ReclaimableCanvas }
+
+/** What renderVersion stamps onto records; resolved per session by the pty
+ *  layer (canvas-session-link) so this store stays lifecycle-blind. */
+export type CanvasSessionInfoResolver = (
+  sessionId: string,
+) => { cwd?: string; conversationUuid?: string; profileId?: string } | null
+
+let sessionInfoResolver: CanvasSessionInfoResolver | null = null
+
+export function setCanvasSessionInfoResolver(resolver: CanvasSessionInfoResolver | null): void {
+  sessionInfoResolver = resolver
 }
 
 /** What the ccc-ux:// protocol needs to serve a version. `contentRoot` is the
@@ -156,6 +254,11 @@ function isValidRecord(value: unknown): value is CanvasRecord {
   const r = value as Partial<CanvasRecord>
   if (typeof r.canvasId !== 'string' || !CANVAS_ID_RE.test(r.canvasId)) return false
   if (typeof r.sessionId !== 'string' || !SESSION_ID_RE.test(r.sessionId)) return false
+  // Continuity stamps are optional, but a present one must be OUR shape — the
+  // same strictness as every other field of a record read back from disk.
+  if (r.cwd !== undefined && (typeof r.cwd !== 'string' || r.cwd.length === 0 || r.cwd.length > MAX_CWD_CHARS)) return false
+  if (r.conversationUuid !== undefined && (typeof r.conversationUuid !== 'string' || !CONVERSATION_UUID_RE.test(r.conversationUuid))) return false
+  if (r.profileId !== undefined && (typeof r.profileId !== 'string' || !PROFILE_ID_RE.test(r.profileId))) return false
   if (r.activeVersionId !== null && (typeof r.activeVersionId !== 'string' || !CANVAS_VERSION_ID_RE.test(r.activeVersionId))) return false
   if (!Array.isArray(r.versions)) return false
   for (const v of r.versions) {
@@ -285,14 +388,58 @@ export function renderVersion(
     throw new Error('unknown render mode')
   }
 
-  // Commit only now that the version is fully materialized.
-  const record: CanvasRecord = existing ?? { canvasId, sessionId, createdAt, activeVersionId: null, versions: [] }
-  record.versions.push(version)
-  record.activeVersionId = versionId
-  canvases.set(canvasId, record)
+  // Persist BEFORE the in-memory commit, and to a record built off to the side
+  // rather than by mutating the live one.
+  //
+  // The old order pushed the version, set it active, and put the record in the
+  // maps, and only THEN wrote canvas.json. If that write threw — a held handle
+  // on the hot, rewritten-every-render file, ENOSPC, a Defender/indexer lock —
+  // the caller got a rejected render (the throw propagates) while the store had
+  // already made the rejected document the ACTIVE, servable version in memory:
+  // `getServableVersion` returned it and the version counter had advanced. That
+  // is the exact fail-open this path claims not to have, and the canvas_render
+  // MCP tool (P3) makes the sink reachable by a prompt-injectable agent, so a
+  // document the agent was told failed to render could be served to the user as
+  // its work (adversarial review, 2026-08-12).
+  //
+  // Now nothing in memory changes until the durable write has succeeded. A
+  // persist failure leaves the live maps untouched — the render fails closed —
+  // and at worst orphans the already-written `versions/<vid>/` dir, which no
+  // record references and the protocol never serves.
+  // Continuity stamps (adoption keys): cwd is stamped once and never drifts —
+  // the canvas belongs to the project it was born in; conversationUuid tracks
+  // the LATEST render, so a canvas re-rendered under a resumed conversation
+  // follows that conversation. Resolver failures stamp nothing (fail open —
+  // stamps improve adoption, their absence must never refuse a render).
+  let info: ReturnType<CanvasSessionInfoResolver> = null
+  try {
+    info = sessionInfoResolver ? sessionInfoResolver(sessionId) : null
+  } catch {
+    info = null
+  }
+  const cwdStamp =
+    typeof info?.cwd === 'string' && info.cwd.length > 0 && info.cwd.length <= MAX_CWD_CHARS ? info.cwd : undefined
+  const conversationStamp =
+    typeof info?.conversationUuid === 'string' && CONVERSATION_UUID_RE.test(info.conversationUuid)
+      ? info.conversationUuid
+      : undefined
+  const profileStamp =
+    typeof info?.profileId === 'string' && PROFILE_ID_RE.test(info.profileId) ? info.profileId : undefined
+
+  const base: CanvasRecord = existing ?? { canvasId, sessionId, createdAt, activeVersionId: null, versions: [] }
+  const nextRecord: CanvasRecord = {
+    ...base,
+    ...(cwdStamp && !base.cwd ? { cwd: cwdStamp } : {}),
+    ...(conversationStamp ? { conversationUuid: conversationStamp } : {}),
+    // Stamped once, like cwd: the account a canvas was born under is fixed.
+    ...(profileStamp && !base.profileId ? { profileId: profileStamp } : {}),
+    versions: [...base.versions, version],
+    activeVersionId: versionId,
+  }
+  persist(nextRecord)
+  canvases.set(canvasId, nextRecord)
   sessionIndex.set(sessionId, canvasId)
-  persist(record)
-  emitChanged(record)
+  emitChanged(nextRecord)
   return { canvasId, versionId }
 }
 
@@ -325,10 +472,129 @@ export function setActiveVersion(sessionId: string, versionId: string): CanvasSt
   const record = getRecordForSession(sessionId)
   if (!record) throw new Error('no canvas for session')
   if (!record.versions.some((v) => v.id === versionId)) throw new Error('unknown version')
-  record.activeVersionId = versionId
-  persist(record)
-  emitChanged(record)
-  return toState(record)
+  // Same persist-before-commit order as renderVersion, for the same reason: a
+  // persist throw must not leave the in-memory active version ahead of disk.
+  // This one can only ever toggle between two ALREADY-servable versions, so the
+  // fail-open here was benign (self-healing on restart) rather than the
+  // serve-a-rejected-document hole renderVersion had — but the two writers
+  // should not disagree about when a change is durable (adversarial review,
+  // 2026-08-12, second pass).
+  const next: CanvasRecord = { ...record, activeVersionId: versionId }
+  persist(next)
+  canvases.set(next.canvasId, next)
+  emitChanged(next)
+  return toState(next)
+}
+
+/**
+ * Let a session that owns NO canvas reclaim the canvas of the SAME CONVERSATION
+ * (2026-08-14, the VM "repush" bug: app restart → fresh tile → same
+ * conversation resumed → the canvas stranded under the dead session id and a
+ * second render minted a parallel canvas, both called "v1").
+ *
+ * THE MATCH KEY IS THE CONVERSATION, AND ONLY THE CONVERSATION.
+ *
+ * The first cut of this also adopted on a project-directory match. Adversarial
+ * review (2026-08-14) showed that to be a canvas-theft primitive reachable in
+ * the app's most ordinary state, with no attacker required: two tiles open on
+ * one repo is normal usage; a PTY exit (`/exit`, a crash, the Restart button)
+ * makes the first session stop looking "current"; the second tile would then
+ * inherit the first's canvas AND the user's private review notes — and, since
+ * nothing consulted the account, across two different Claude accounts. Three
+ * further findings (Windows Unicode case-folding matching two DISTINCT real
+ * directories, a relative/'.' cwd resolving onto one shared key, no realpath)
+ * were all consequences of treating a directory as an identity. It is not one.
+ * Resuming a conversation is.
+ *
+ * Both halves of the key must agree and neither may be absent:
+ *   - `conversationUuid` — required; no conversation, no adoption;
+ *   - `profileId` — the account, compared exactly, `undefined` included, so a
+ *     canvas never crosses accounts in either direction.
+ *
+ * A canvas is only adoptable when its owner session is not current per the
+ * caller's check — a live PTY or a saved tile keeps its canvas reclaimable by
+ * id, and this function will not touch it. That check fails SAFE (see
+ * canvas-session-link).
+ *
+ * The re-bind persists BEFORE memory moves (the renderVersion discipline), and
+ * the caller is expected to re-bind the canvas's review store next
+ * (rebindReviewsToSession) — reviews.json carries the owner session id too.
+ */
+function normalizedProfile(query: CanvasAdoptionQuery): string | undefined {
+  return typeof query.profileId === 'string' && PROFILE_ID_RE.test(query.profileId) ? query.profileId : undefined
+}
+
+/** Is `record` one this session could be OFFERED? Shared by the lister and the
+ *  reclaim, so the list can never advertise something reclaim would refuse. */
+function isReclaimCandidate(record: CanvasRecord, sessionId: string, query: CanvasAdoptionQuery): boolean {
+  if (record.sessionId === sessionId) return false
+  if (record.versions.length === 0) return false // nothing to inherit
+  // Exact, `undefined` included: an unstamped legacy record does not cross
+  // into a profiled session, and a profiled record does not cross out.
+  if (record.profileId !== normalizedProfile(query)) return false
+  try {
+    if (query.isSessionCurrent(record.sessionId)) return false
+  } catch {
+    return false // cannot tell → treat as current → untouchable
+  }
+  return true
+}
+
+/** Canvases this session could reclaim, for the user to choose from. Pure read
+ *  — nothing moves until the user names one. */
+export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdoptionQuery): ReclaimableCanvas[] {
+  if (!SESSION_ID_RE.test(sessionId)) return []
+  ensureDiskScanned()
+  if (sessionIndex.has(sessionId)) return [] // already owns one
+  const out: ReclaimableCanvas[] = []
+  for (const record of canvases.values()) {
+    if (!isReclaimCandidate(record, sessionId, query)) continue
+    out.push({
+      canvasId: record.canvasId,
+      versionCount: record.versions.length,
+      lastRenderedAt: record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt,
+      ...(record.cwd ? { cwd: record.cwd } : {}),
+    })
+  }
+  return out
+}
+
+/**
+ * Move the canvas the USER named to this session.
+ *
+ * Addressed by id, never matched: the canvas the user picked out of
+ * listOrphanCandidateCanvases is the one that moves. The floor still applies —
+ * same account, owner not current — so a stale id or a canvas that came back
+ * to life is refused rather than taken.
+ *
+ * Persists BEFORE memory moves (the renderVersion discipline), and the caller
+ * re-binds the review store next (rebindReviewsToSession) — reviews.json
+ * carries the owner session id too.
+ */
+export function adoptCanvasForSession(
+  sessionId: string,
+  canvasId: string,
+  query: CanvasAdoptionQuery,
+): { canvasId: string; activeVersionId: string | null } | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return null
+  ensureDiskScanned()
+  if (sessionIndex.has(sessionId)) return null
+
+  const best = canvases.get(canvasId)
+  if (!best || !isReclaimCandidate(best, sessionId, query)) return null
+
+  // Only the owner changes. The stamps are the record's identity — rewriting
+  // them here is how the first cut let an adopting session redefine what the
+  // canvas "is" (it re-stamped cwd to the adopter's directory).
+  const next: CanvasRecord = { ...best, sessionId }
+  persist(next)
+  const previousOwner = best.sessionId
+  canvases.set(next.canvasId, next)
+  if (sessionIndex.get(previousOwner) === next.canvasId) sessionIndex.delete(previousOwner)
+  sessionIndex.set(sessionId, next.canvasId)
+  emitChanged(next)
+  return { canvasId: next.canvasId, activeVersionId: next.activeVersionId }
 }
 
 /** Resolve what the ccc-ux:// protocol may serve for a canvas/version pair.
@@ -359,4 +625,5 @@ export function _resetCanvasStoreForTest(): void {
   sessionIndex.clear()
   uatRoots.clear()
   diskScanned = false
+  sessionInfoResolver = null
 }
