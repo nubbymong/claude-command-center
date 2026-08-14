@@ -249,9 +249,10 @@ jobs:
           # exe's sha512, so replacing one without the others breaks the updater
           # (matters for rolling re-releases onto an existing tag).
           #
-          # The .appx is optional — `continue-on-error` above means it may not
-          # exist, so it cannot be part of the if-no-files-found: error contract.
-          # It is picked up by the wildcard when present.
+          # The .appx is deliberately absent from this list: `continue-on-error`
+          # above means it may not exist, so it cannot be part of this step's
+          # if-no-files-found: error contract. It ships in its own
+          # "Upload Store MSIX" artifact below, gated on that step succeeding.
           path: |
             dist/${{ steps.version.outputs.installer }}
             dist/${{ steps.version.outputs.installer }}.blockmap
