@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
@@ -24,6 +24,10 @@ import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
 import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
+// Direct from data-paths, not the handlers barrel: this runs at module scope
+// before app-ready, so it must not pull the IPC registration side of that module
+// in ahead of time.
+import { devSessionDataDir } from './data-paths'
 import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
@@ -105,6 +109,65 @@ if (!app.isPackaged && !process.env.CCC_DEV_DATA_DIR) {
         ? join(homedir(), '.claude-conductor', 'data')
         : join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Claude Command Center')
   process.env.CCC_DEV_DATA_DIR = join(base, 'dev')
+}
+
+// ...and point Electron's SESSION data at the dev root too (#261). `persist:`
+// partitions live under `sessionData`, which defaults to `userData`, so without
+// this a dev instance wrote the per-account claude.ai web sessions (#216) into the
+// very same %APPDATA%\claude-conductor\Partitions a PROD install uses — dev and
+// prod shared them, signing out in one revoked the other, and `ccc --clean` left a
+// live sessionKey on disk because the partition was never under the dev data dir.
+//
+// MUST be before app-ready and before any session exists, which is why it sits at
+// module scope next to the block above. Dev/E2E only: `devSessionDataDir` returns
+// null for a packaged build, so production keeps Electron's default and nobody
+// gets logged out by a path move.
+const devSessionDir = devSessionDataDir(process.env, app.isPackaged)
+if (devSessionDir) {
+  try {
+    mkdirSync(devSessionDir, { recursive: true })
+    app.setPath('sessionData', devSessionDir)
+    // Logged via logInfo, NOT console.log: debug-logger does not patch console or
+    // hook stdout, so a console line reaches the terminal and the `ccc` tee but
+    // never the debug log an operator actually reads — and it is absent entirely
+    // under a bare `npm run dev`. The failure mode here is invisible otherwise:
+    // partitions just appear in the shared location and nothing says they did.
+    logInfo(`[setup] Dev session data redirected to: ${devSessionDir}`)
+    warnAboutOrphanedSharedPartitions(devSessionDir)
+  } catch (err) {
+    // Not fatal: worst case partitions land in the default location, which is
+    // exactly the pre-#261 behaviour. Say so rather than failing to boot.
+    logError(`[setup] could not redirect dev sessionData to ${devSessionDir}: ${(err as Error)?.message ?? err}`)
+  }
+}
+
+/**
+ * Point out claude.ai partitions this dev instance left in the SHARED location
+ * before the redirect existed (#261).
+ *
+ * WARN, NEVER DELETE. Those directories hold live `sessionKey` cookies and after
+ * the redirect nothing references them: `ccc --clean` cannot reach them (wrong
+ * root) and `sweepAbandonedProfiles` only walks `<dataDir>/account-web`. So they
+ * would sit there forever, which is the very complaint the redirect is meant to
+ * fix. But automatic removal is NOT safe: `ccc --seed-accounts` copies prod's
+ * account profiles into dev, so a partition named for a dev profile id can be
+ * the PROD install's live session. Deleting it would sign the user out of their
+ * real account to tidy up a dev artifact. Naming the path and leaving the choice
+ * to a human is the correct trade here.
+ */
+function warnAboutOrphanedSharedPartitions(newLocation: string): void {
+  try {
+    const shared = join(app.getPath('userData'), 'Partitions')
+    if (shared === join(newLocation, 'Partitions') || !existsSync(shared)) return
+    const orphans = readdirSync(shared).filter((n) => n.startsWith('claude-web-'))
+    if (!orphans.length) return
+    logInfo(
+      `[setup] ${orphans.length} claude.ai web session partition(s) remain in the SHARED location `
+      + `and are no longer used by this dev instance: ${shared}. They hold live session cookies. `
+      + `Remove them by hand ONLY if you are sure they are not your production install's `
+      + `(see docs/dev-alongside-prod.md).`,
+    )
+  } catch { /* advisory only — never let a warning break boot */ }
 }
 
 // Migrate registry keys from old "Claude Conductor" → new "Claude Command Center"

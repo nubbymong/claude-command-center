@@ -66,6 +66,7 @@ The dev data dir starts empty. To work with your real configs:
 |---|---|---|
 | Data root | `…\Claude Command Center\` (or registry) | `…\Claude Command Center\dev\` |
 | CONFIG / sessions / transcripts / logs / profiles | under the data root | under the dev data root |
+| Electron session data (cookies, localStorage, caches) and the per-account **claude.ai web session** partitions | `userData` (Electron's default) | `…\dev\session\` (#261) |
 | MCP server port | 19333 | 19433 |
 | Vision CDP port | 9222 | 9322 |
 | Hooks gateway port | 19334 | 19434 |
@@ -84,6 +85,19 @@ The dev switch activates whenever the build is **unpackaged** (`app.isPackaged
 
 - CCC's own state is isolated, but the underlying **Claude CLI global home
   (`~/.claude`) is shared** between dev and prod. Avoid running the *same
-  account's* Claude session in both instances at the same time (OAuth token
-  rotation can contend).
+  account's* Claude session in both instances at the same time — OAuth refresh
+  tokens ROTATE, and this is not theoretical: observed on 2026-08-12, two profile
+  homes had ended up resolving to one account, a refresh in one invalidated the
+  copies in the others, and two of four accounts were left with blank
+  `accessToken`/`refreshToken` values reporting `loggedIn=False`. Recovering meant
+  copying prod's credentials back in (`ccc --seed-accounts`).
 - First isolated dev launch is empty unless you `--seed`.
+- **claude.ai web session partitions created before #261** live in the SHARED
+  location (`<userData>\Partitions\claude-web-*`) and are no longer used by dev
+  after the redirect. They hold live session cookies, and nothing will ever remove
+  them — `ccc --clean` cannot reach them (wrong root) and the startup sweep only
+  walks `<dataDir>\account-web`. Dev logs a one-time warning naming the path at
+  boot. **Delete them by hand only if you are sure they are not your production
+  install's**: `ccc --seed-accounts` copies prod's account profiles into dev, so a
+  partition named for a dev profile id can be prod's live session. That is why the
+  app warns instead of tidying up for you.
