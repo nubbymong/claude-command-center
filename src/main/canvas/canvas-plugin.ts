@@ -128,6 +128,49 @@ resolved yourself — resolution is theirs.
   render; they only ever review in the pane.
 `
 
+/** Exactly what this tree may contain, relative to the plugin root. Anything
+ *  else present means someone other than us wrote here. */
+const OWNED_FILES = ['.claude-plugin/plugin.json', 'skills/agent-canvas/SKILL.md']
+const OWNED_DIRS = ['.claude-plugin', 'skills', 'skills/agent-canvas']
+
+/** True when the tree on disk is EXACTLY what we wrote — no extra entry at any
+ *  level. A plugin root auto-loads `hooks/`, `.mcp.json`, `commands/` and
+ *  `agents/`, so one unexpected entry is unapproved code execution in every
+ *  session spawned afterwards. */
+function treeIsPristine(pluginDir: string): boolean {
+  const expected: Array<[string, Set<string>]> = [
+    ['', new Set(['.claude-plugin', 'skills'])],
+    ['.claude-plugin', new Set(['plugin.json'])],
+    ['skills', new Set(['agent-canvas'])],
+    ['skills/agent-canvas', new Set(['SKILL.md'])],
+  ]
+  for (const [rel, allowed] of expected) {
+    let entries: string[]
+    try {
+      entries = fs.readdirSync(path.join(pluginDir, rel))
+    } catch {
+      return false
+    }
+    if (entries.length !== allowed.size) return false
+    for (const entry of entries) if (!allowed.has(entry)) return false
+  }
+  for (const rel of OWNED_FILES) {
+    try {
+      if (!fs.statSync(path.join(pluginDir, rel)).isFile()) return false
+    } catch {
+      return false
+    }
+  }
+  for (const rel of OWNED_DIRS) {
+    try {
+      if (!fs.lstatSync(path.join(pluginDir, rel)).isDirectory()) return false
+    } catch {
+      return false
+    }
+  }
+  return true
+}
+
 let ensured: string | undefined
 
 /**
@@ -151,7 +194,14 @@ let ensured: string | undefined
  * that was not ready at first spawn.
  */
 export function ensureCanvasPlugin(): string | null {
-  if (ensured !== undefined) return ensured
+  // VERIFIED on every call, not memoised into a one-time wipe. The memo made
+  // the wipe run once per app process, so a hooks entry planted after the
+  // first spawn was loaded by every session for the rest of the run — hours or
+  // days in a desktop app people leave open (adversarial review round 2). The
+  // check is two readdirs on the spawn path; a tree that is not exactly ours
+  // is rebuilt from nothing.
+  if (ensured !== undefined && treeIsPristine(ensured)) return ensured
+  ensured = undefined
   try {
     const pluginDir = path.join(getResourcesDirectory(), 'canvas-plugin')
     // CCC-owned tree: anything already here is not ours (or is a stale copy

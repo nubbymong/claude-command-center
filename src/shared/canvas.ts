@@ -562,6 +562,25 @@ export interface SnapshotNode {
 // never trusts what comes back (see canvas-snapshot-sanitize.ts).
 
 /** main → renderer: take a snapshot of the live frame for this canvas. */
+/**
+ * One canvas from an earlier session that the user could reclaim, described
+ * well enough for them to recognise it in the Canvas pane.
+ *
+ * The user picks; nothing is matched automatically. Two rounds of adversarial
+ * review established that no identity the main process can infer (project
+ * directory, conversation uuid, "is the owner still alive") is trustworthy
+ * enough to move the user's private review notes between sessions on its own.
+ */
+export interface ReclaimableCanvas {
+  canvasId: string
+  versionCount: number
+  lastRenderedAt: string
+  /** The project it was rendered in — a LABEL, never an authorization key. */
+  cwd?: string
+  /** Whether it matches the asking session's project, for ordering only. */
+  sameProject?: boolean
+}
+
 export interface CanvasSnapshotRequestEvent {
   requestId: string
   sessionId: string

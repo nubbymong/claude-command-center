@@ -54,6 +54,7 @@ export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeveri
 import type {
   CanvasAnnotationDraft, CanvasChangedEvent, CanvasRenderSource, CanvasReviewChangedEvent,
   CanvasReviewState, CanvasSketchExport, CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasState,
+  ReclaimableCanvas,
 } from '../../shared/canvas'
 export type {
   AnchorRef, Annotation, AnnotationScope, AnnotationState,
@@ -61,7 +62,7 @@ export type {
   CanvasReviewChangedEvent, CanvasReviewState, CanvasSketchExport,
   CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasSnapshotResult,
   CanvasState, CanvasVersion, CanvasVersionSource, CanvasViewportInfo,
-  FocusObject, Review,
+  FocusObject, ReclaimableCanvas, Review,
 } from '../../shared/canvas'
 import type {
   ChannelPayload,
@@ -324,6 +325,10 @@ export interface ElectronAPI {
      *  answers exactly once per requestId via sendSnapshotResult. */
     onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
     sendSnapshotResult: (reply: CanvasSnapshotReply) => void
+    /** Canvases from earlier sessions this one could reclaim (read-only). */
+    listReclaimable: (args: { sessionId: string }) => Promise<ReclaimableCanvas[]>
+    /** The user reclaims a named canvas — the only path that moves ownership. */
+    reclaim: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; state: CanvasState | null }>
     // P3 — the review loop (drafts, submit, resolution)
     reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>

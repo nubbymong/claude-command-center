@@ -58,6 +58,14 @@ const FRAME_TTL_MS = 45_000
  * reintroduced the global form one layer down.
  */
 const MAX_HEADLESS_FRAMES_PER_SESSION = 2
+/**
+ * And an aggregate ceiling ON TOP of it — the two solve different problems and
+ * the app needs both. Replacing the global cap with a per-session one (round 1
+ * of this pass) traded starvation for an unbounded total: nothing else in the
+ * stack bounds the number of session identities, so 200 of them meant 400
+ * hidden page loads in the one renderer process that also draws every terminal.
+ */
+const MAX_HEADLESS_FRAMES_TOTAL = 8
 
 interface HeadlessFrame {
   key: string
@@ -106,6 +114,9 @@ function scheduleSweep(): void {
 }
 
 function mountFrame(event: CanvasSnapshotRequestEvent): HeadlessFrame {
+  if (frames.size >= MAX_HEADLESS_FRAMES_TOTAL) {
+    throw new Error('off-screen frame limit reached')
+  }
   let mine = 0
   for (const frame of frames.values()) if (frame.sessionId === event.sessionId) mine++
   if (mine >= MAX_HEADLESS_FRAMES_PER_SESSION) {

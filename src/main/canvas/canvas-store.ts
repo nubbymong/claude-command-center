@@ -23,6 +23,7 @@ import {
   CanvasRenderSource,
   CanvasState,
   CanvasVersion,
+  ReclaimableCanvas,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
@@ -147,33 +148,34 @@ interface CanvasRecord extends CanvasState {
 }
 
 /**
- * How a session with NO canvas of its own may claim an orphaned one.
+ * The constraints that still apply even when the USER picks a canvas by id.
  *
- * ADOPTION REQUIRES A CONVERSATION MATCH. It deliberately does NOT happen on a
- * project-directory match: adversarial review (2026-08-14) demonstrated that
- * cwd-alone adoption is a canvas-theft primitive in the app's most ordinary
- * state — two tiles open on one repo is normal usage, a PTY exit (`/exit`, a
- * crash, the Restart button) makes the first session look "not current", and
- * the second tile would inherit the first's canvas AND the user's private
- * review notes, across accounts. Resuming the same conversation is the only
- * signal that actually means "this is the same work".
+ * There is no identity-matching key here any more, and that is the point. Two
+ * rounds of adversarial review killed every automatic rule: the project
+ * directory is ambiguous (two tiles on one repo), the conversation uuid is
+ * derived from the transcript binder and is both heuristic and agent-writable,
+ * and "is the owner still current" has no reliable oracle. A canvas carries
+ * the user's private review notes, so moving one is an authorization decision
+ * — and the only party able to make it is the user, who is asked (see
+ * canvas-session-link.listReclaimableCanvases).
+ *
+ * What remains is a floor the user's choice cannot lower: an account never
+ * changes, and a canvas whose owner might still come back is never taken.
  */
 export interface CanvasAdoptionQuery {
-  /** REQUIRED. The Claude conversation this session is resuming; adoption is
-   *  refused outright without it. */
-  conversationUuid?: string
   /** The account profile this session runs under. Must equal the record's
    *  stamp — an unstamped legacy record never crosses into a profiled session
    *  and vice versa. */
   profileId?: string
   /**
    * True when the given session can still come back and claim its canvas by
-   * id — a live PTY, or a tile still in the saved-session list. Adoption must
-   * never race a restoring tile at boot (spawn order is arbitrary), so this
-   * check fails SAFE: uncertain means current, and current means untouchable.
+   * id — a live PTY, or a tile still in the saved-session list. Fails SAFE:
+   * uncertain means current, and current means untouchable.
    */
   isSessionCurrent: (sessionId: string) => boolean
 }
+
+export type { ReclaimableCanvas }
 
 /** What renderVersion stamps onto records; resolved per session by the pty
  *  layer (canvas-session-link) so this store stays lifecycle-blind. */
@@ -518,48 +520,69 @@ export function setActiveVersion(sessionId: string, versionId: string): CanvasSt
  * the caller is expected to re-bind the canvas's review store next
  * (rebindReviewsToSession) — reviews.json carries the owner session id too.
  */
+function normalizedProfile(query: CanvasAdoptionQuery): string | undefined {
+  return typeof query.profileId === 'string' && PROFILE_ID_RE.test(query.profileId) ? query.profileId : undefined
+}
+
+/** Is `record` one this session could be OFFERED? Shared by the lister and the
+ *  reclaim, so the list can never advertise something reclaim would refuse. */
+function isReclaimCandidate(record: CanvasRecord, sessionId: string, query: CanvasAdoptionQuery): boolean {
+  if (record.sessionId === sessionId) return false
+  if (record.versions.length === 0) return false // nothing to inherit
+  // Exact, `undefined` included: an unstamped legacy record does not cross
+  // into a profiled session, and a profiled record does not cross out.
+  if (record.profileId !== normalizedProfile(query)) return false
+  try {
+    if (query.isSessionCurrent(record.sessionId)) return false
+  } catch {
+    return false // cannot tell → treat as current → untouchable
+  }
+  return true
+}
+
+/** Canvases this session could reclaim, for the user to choose from. Pure read
+ *  — nothing moves until the user names one. */
+export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdoptionQuery): ReclaimableCanvas[] {
+  if (!SESSION_ID_RE.test(sessionId)) return []
+  ensureDiskScanned()
+  if (sessionIndex.has(sessionId)) return [] // already owns one
+  const out: ReclaimableCanvas[] = []
+  for (const record of canvases.values()) {
+    if (!isReclaimCandidate(record, sessionId, query)) continue
+    out.push({
+      canvasId: record.canvasId,
+      versionCount: record.versions.length,
+      lastRenderedAt: record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt,
+      ...(record.cwd ? { cwd: record.cwd } : {}),
+    })
+  }
+  return out
+}
+
+/**
+ * Move the canvas the USER named to this session.
+ *
+ * Addressed by id, never matched: the canvas the user picked out of
+ * listOrphanCandidateCanvases is the one that moves. The floor still applies —
+ * same account, owner not current — so a stale id or a canvas that came back
+ * to life is refused rather than taken.
+ *
+ * Persists BEFORE memory moves (the renderVersion discipline), and the caller
+ * re-binds the review store next (rebindReviewsToSession) — reviews.json
+ * carries the owner session id too.
+ */
 export function adoptCanvasForSession(
   sessionId: string,
+  canvasId: string,
   query: CanvasAdoptionQuery,
 ): { canvasId: string; activeVersionId: string | null } | null {
   if (!SESSION_ID_RE.test(sessionId)) return null
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return null
   ensureDiskScanned()
   if (sessionIndex.has(sessionId)) return null
 
-  const wantConversation =
-    typeof query.conversationUuid === 'string' && CONVERSATION_UUID_RE.test(query.conversationUuid)
-      ? query.conversationUuid.toLowerCase()
-      : null
-  // Fail closed: without a conversation there is nothing that legitimately
-  // identifies this work, and a directory is not a substitute for one.
-  if (!wantConversation) return null
-
-  const wantProfile =
-    typeof query.profileId === 'string' && PROFILE_ID_RE.test(query.profileId) ? query.profileId : undefined
-
-  let best: CanvasRecord | null = null
-  let bestTime = ''
-  for (const record of canvases.values()) {
-    if (record.sessionId === sessionId) continue
-    if (record.versions.length === 0) continue // nothing to inherit
-    if (record.conversationUuid?.toLowerCase() !== wantConversation) continue
-    // Exact, `undefined` included: an unstamped legacy record does not cross
-    // into a profiled session, and a profiled record does not cross out.
-    if (record.profileId !== wantProfile) continue
-    let current = true
-    try {
-      current = query.isSessionCurrent(record.sessionId)
-    } catch {
-      current = true // cannot tell → treat as current → untouchable
-    }
-    if (current) continue
-    const time = record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt
-    if (best === null || time > bestTime) {
-      best = record
-      bestTime = time
-    }
-  }
-  if (!best) return null
+  const best = canvases.get(canvasId)
+  if (!best || !isReclaimCandidate(best, sessionId, query)) return null
 
   // Only the owner changes. The stamps are the record's identity — rewriting
   // them here is how the first cut let an adopting session redefine what the

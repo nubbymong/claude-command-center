@@ -1,6 +1,7 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import ExcalidrawPane from './ExcalidrawPane'
 import { useCanvasStore } from '../stores/canvasStore'
+import type { ReclaimableCanvas } from '../../shared/canvas'
 
 interface Props {
   sessionId: string
@@ -36,6 +37,47 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   const setEmptyView = useCanvasStore((s) => s.setEmptyView)
   const [typed, setTyped] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [reclaimable, setReclaimable] = useState<ReclaimableCanvas[]>([])
+  const [reclaiming, setReclaiming] = useState<string | null>(null)
+  const refreshCanvas = useCanvasStore((s) => s.refresh)
+
+  // What this session could take back. A pure read — nothing moves until the
+  // user clicks Reopen.
+  useEffect(() => {
+    let cancelled = false
+    void window.electronAPI.canvas
+      .listReclaimable({ sessionId })
+      .then((list) => {
+        if (!cancelled) setReclaimable(Array.isArray(list) ? list : [])
+      })
+      .catch(() => {
+        /* nothing to offer is the safe default */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId])
+
+  const reclaim = useCallback(
+    async (canvasId: string) => {
+      setReclaiming(canvasId)
+      try {
+        const result = await window.electronAPI.canvas.reclaim({ sessionId, canvasId })
+        if (result?.ok) {
+          // The pane swaps to the canvas surface as soon as the store has it.
+          await refreshCanvas(sessionId)
+        } else {
+          // Refused (the owner came back, or it is gone) — drop it from the list.
+          setReclaimable((list) => list.filter((c) => c.canvasId !== canvasId))
+        }
+      } catch {
+        setReclaimable((list) => list.filter((c) => c.canvasId !== canvasId))
+      } finally {
+        setReclaiming(null)
+      }
+    },
+    [sessionId, refreshCanvas],
+  )
 
   const typeIntoTerminal = useCallback(() => {
     // No newline: the terminal shows the request, the user sends it.
@@ -136,6 +178,50 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
               ))}
             </ol>
           </div>
+
+          {/* Reclaim — a canvas from an earlier session (spec D2 continuity).
+              Offered, never taken: moving a canvas moves the user's private
+              review notes with it, and only the user can authorise that. */}
+          {reclaimable.length > 0 && (
+            <div className="rounded-lg border border-peach/40 bg-peach/5 p-4">
+              <div className="text-[11px] font-medium text-peach uppercase tracking-wide mb-2">
+                Pick up where you left off
+              </div>
+              <p className="text-[13px] text-subtext0 mb-3">
+                {reclaimable.length === 1
+                  ? 'A canvas from an earlier session is still here, with its versions and your notes.'
+                  : `${reclaimable.length} canvases from earlier sessions are still here, with their versions and your notes.`}
+              </p>
+              <ul className="flex flex-col gap-1.5">
+                {reclaimable.map((c) => (
+                  <li
+                    key={c.canvasId}
+                    className="flex items-center gap-3 rounded border border-surface1 bg-crust px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12px] text-text">
+                        {c.versionCount} version{c.versionCount === 1 ? '' : 's'}
+                        <span className="text-overlay1"> · last rendered {new Date(c.lastRenderedAt).toLocaleString()}</span>
+                      </div>
+                      {c.cwd && (
+                        <div className="text-[11px] text-overlay1 truncate" title={c.cwd}>
+                          {c.sameProject ? 'this project' : c.cwd}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => void reclaim(c.canvasId)}
+                      disabled={reclaiming !== null}
+                      className="shrink-0 px-2.5 py-1 text-[12px] rounded border border-peach/50 text-peach hover:bg-peach/10 disabled:opacity-40 transition-colors"
+                      title="Reopen this canvas in this session, with its version history and notes"
+                    >
+                      {reclaiming === c.canvasId ? 'Reopening…' : 'Reopen'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Getting started */}
           <div className="rounded-lg border border-mauve/40 bg-mauve/5 p-4">

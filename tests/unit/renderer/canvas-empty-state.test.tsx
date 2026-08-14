@@ -24,9 +24,16 @@ vi.mock('../../../src/renderer/components/ExcalidrawPane', () => ({
 }))
 
 const ptyWriteMock = vi.fn()
+const listReclaimableMock = vi.fn(async () => [] as unknown[])
+const reclaimMock = vi.fn(async () => ({ ok: true, state: null }))
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
   pty: { ...((globalThis as any).window?.electronAPI?.pty ?? {}), write: ptyWriteMock },
+  canvas: {
+    ...((globalThis as any).window?.electronAPI?.canvas ?? {}),
+    listReclaimable: listReclaimableMock,
+    reclaim: reclaimMock,
+  },
 }
 
 const SID = 'session-1'
@@ -95,6 +102,49 @@ describe('the landing (intro view)', () => {
     }
     // ...and the same jargon is absent from the landing copy the user reads.
     expect(container.textContent).not.toContain('canvas_render')
+  })
+})
+
+describe('reclaiming an earlier canvas (the user is the authorization)', () => {
+  // Moving a canvas moves the user's private review notes with it. Two rounds
+  // of adversarial review showed no inferred identity is safe to do that on,
+  // so the pane OFFERS and the user clicks. Nothing may move on its own.
+  const candidate = {
+    canvasId: 'abc123def456abc123def456',
+    versionCount: 3,
+    lastRenderedAt: '2026-08-13T19:15:53.893Z',
+    cwd: 'C:\\proj',
+    sameProject: true,
+  }
+
+  it('offers a candidate without taking it, and only moves it when clicked', async () => {
+    listReclaimableMock.mockResolvedValueOnce([candidate])
+    render()
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Offered, described well enough to recognise...
+    expect(container.textContent).toContain('Pick up where you left off')
+    expect(container.textContent).toContain('3 versions')
+    // ...and NOTHING has moved yet.
+    expect(reclaimMock).not.toHaveBeenCalled()
+
+    click(buttonByText('Reopen'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(reclaimMock).toHaveBeenCalledTimes(1)
+    expect(reclaimMock).toHaveBeenCalledWith({ sessionId: SID, canvasId: candidate.canvasId })
+  })
+
+  it('shows nothing when there is nothing to reclaim', async () => {
+    listReclaimableMock.mockResolvedValueOnce([])
+    render()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(container.textContent).not.toContain('Pick up where you left off')
   })
 })
 

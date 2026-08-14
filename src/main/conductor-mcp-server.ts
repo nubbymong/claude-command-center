@@ -42,7 +42,6 @@ import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
 import { getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
-import { ensureCanvasAdopted } from './canvas/canvas-session-link'
 import { getReviewPayload } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 
@@ -728,14 +727,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       registerCanvasTools(server, z, () => boundSessionId, {
         getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
         requestSnapshot: (args) => requestCanvasSnapshot(args),
-        renderVersion: (sessionId, canvasSource) => {
-          // A session that is resuming a conversation reclaims that
-          // conversation's canvas BEFORE it renders — otherwise this render
-          // mints a parallel canvas whose first version is another "v1",
-          // which is the bug the whole continuity change exists to fix.
-          ensureCanvasAdopted(sessionId)
-          return renderVersion(sessionId, canvasSource)
-        },
+        renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
         readAttachment: (absPath) => fs.readFileSync(absPath),
         /**
@@ -755,6 +747,12 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
           const real = resolveInsideCanvasRoot(absPath)
           const st = fs.statSync(real)
           if (!st.isFile()) throw new Error('not a regular file')
+          // A HARD LINK defeats realpath: `mklink /H` needs no privilege and no
+          // Developer Mode, and the link inside the project resolves to itself,
+          // not to the file it shares an inode with. Round 2 of the adversarial
+          // pass walked a private key back out through one. A design document
+          // the agent just wrote always has exactly one name.
+          if (typeof st.nlink === 'number' && st.nlink !== 1) throw new Error('not a regular file')
           if (st.size > 2 * 1024 * 1024) throw new Error('design file too large')
           return fs.readFileSync(real)
         },

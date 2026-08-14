@@ -27,7 +27,11 @@ import {
   upsertAnnotation,
 } from '../canvas/canvas-review-store'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
-import { ensureCanvasAdopted, installCanvasSessionLink } from '../canvas/canvas-session-link'
+import {
+  installCanvasSessionLink,
+  listReclaimableCanvases,
+  reclaimCanvasForSession,
+} from '../canvas/canvas-session-link'
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -58,6 +62,11 @@ const renderSourceSchema = z.discriminatedUnion('mode', [
 ])
 
 const getStateSchema = z.object({ sessionId: sessionIdSchema }).strict()
+
+/** Canvas ids are app-minted (see CANVAS_ID_RE); bounded here at the seam. */
+const reclaimSchema = z
+  .object({ sessionId: sessionIdSchema, canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
+  .strict()
 
 const renderSchema = z
   .object({
@@ -173,11 +182,24 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
 
   ipcMain.handle(IPC.CANVAS_GET_STATE, async (_e, args: unknown) => {
     const { sessionId } = getStateSchema.parse(args)
-    // Opening the pane is one of the two moments a session actually needs its
-    // canvas, and by now the transcript binder knows the conversation even if
-    // spawn did not (an in-Claude `/resume`). Idempotent once settled.
-    ensureCanvasAdopted(sessionId)
+    // Read-shaped and read-only. An earlier cut ran canvas adoption from here;
+    // a GET that can transfer ownership of the user's review notes is the
+    // wrong shape for the operation as well as the wrong authorization model.
     return getCanvasStateForSession(sessionId)
+  })
+
+  // What this session could reclaim, for the user to choose from. Pure read.
+  ipcMain.handle(IPC.CANVAS_LIST_RECLAIMABLE, async (_e, args: unknown) => {
+    const { sessionId } = getStateSchema.parse(args)
+    return listReclaimableCanvases(sessionId)
+  })
+
+  // The ONLY path that moves a canvas between sessions, and it exists because
+  // the user clicked the canvas they want back.
+  ipcMain.handle(IPC.CANVAS_RECLAIM, async (_e, args: unknown) => {
+    const { sessionId, canvasId } = reclaimSchema.parse(args)
+    const ok = reclaimCanvasForSession(sessionId, canvasId)
+    return { ok, state: getCanvasStateForSession(sessionId) }
   })
 
   ipcMain.handle(IPC.CANVAS_RENDER, async (_e, args: unknown) => {

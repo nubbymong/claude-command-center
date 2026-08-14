@@ -19,7 +19,12 @@
 // faster-spawning sibling.
 
 import * as path from 'path'
-import { adoptCanvasForSession, getCanvasStateForSession, setCanvasSessionInfoResolver } from './canvas-store'
+import {
+  adoptCanvasForSession,
+  listOrphanCandidateCanvases,
+  setCanvasSessionInfoResolver,
+  type ReclaimableCanvas,
+} from './canvas-store'
 import { rebindReviewsToSession } from './canvas-review-store'
 import { getSessionMeta } from '../session-registry'
 import { getTranscriptBinder } from '../logging/logging-service'
@@ -95,74 +100,82 @@ function savedTileIds(): Set<string> | null {
   }
 }
 
-function tryAdopt(sessionId: string, info: SpawnInfo): void {
-  const conversationUuid = conversationUuidFor(sessionId)
-  if (!conversationUuid) return // nothing identifies this work yet
-
-  const savedIds = savedTileIds()
-  const adopted = adoptCanvasForSession(sessionId, {
-    conversationUuid,
-    profileId: info.profileId,
-    isSessionCurrent: (sid) => {
-      if (getSessionMeta(sid)) return true // live PTY this run
-      if (!savedIds) return true // cannot tell → untouchable
-      return savedIds.has(sid) // saved tile → reclaims by id on restore
-    },
-  })
-  if (adopted) {
-    info.settled = true
-    rebindReviewsToSession(adopted.canvasId, sessionId)
-    logInfo(
-      `[canvas] session ${sessionId} adopted canvas ${adopted.canvasId}` +
-        ` (active ${adopted.activeVersionId ?? 'none'}, conversation ${conversationUuid})`,
-    )
-  }
-}
-
 /**
- * Record a LOCAL session's spawn and give it its canvas back if it has one to
- * reclaim. Called from the pty:spawn handler for non-SSH sessions.
+ * Record a LOCAL session's spawn. Registers the identity used to LABEL a
+ * canvas; it does not move ownership of anything (see below).
  */
 export function noteSessionSpawnForCanvas(
   sessionId: string,
   opts: { cwd?: string; resumeUuid?: string; profileId?: string },
 ): void {
-  const info: SpawnInfo = { cwd: opts.cwd, resumeUuid: opts.resumeUuid, profileId: opts.profileId }
-  spawnInfo.set(sessionId, info)
-  try {
-    tryAdopt(sessionId, info)
-  } catch (err) {
-    // Adoption is a convenience, never a spawn blocker.
-    console.warn('[canvas] adoption failed:', err)
-  }
+  spawnInfo.set(sessionId, { cwd: opts.cwd, resumeUuid: opts.resumeUuid, profileId: opts.profileId })
 }
 
 /**
- * Re-attempt adoption for a session that still owns no canvas.
+ * Canvases this session could reclaim, for the user to choose from.
  *
- * Spawn is too early for the common case: when the user resumes a conversation
- * from INSIDE Claude (rather than through a CCC tile restore), there is no
- * spawn-time resume uuid and the transcript binder only learns the
- * conversation seconds later. Without this the session would render a fresh
- * "v1" onto a brand-new canvas — the exact bug this feature exists to fix. So
- * the two moments that actually need the canvas call here first: the renderer
- * asking for canvas state (pane open / refresh) and the agent rendering.
+ * WHY THIS IS A LIST AND NOT AN AUTOMATIC MOVE — the finding that killed two
+ * rounds of fixes. A canvas carries the user's private review notes, so moving
+ * one between sessions is an authorization decision, and the main process has
+ * nothing trustworthy to authorize it WITH:
  *
- * Cheap and idempotent: one map lookup once a session has settled.
+ *   - the project directory is ambiguous (two tiles on one repo is ordinary
+ *     usage, and the second would inherit the first's notes);
+ *   - the conversation uuid comes from the transcript binder, which is a
+ *     heuristic when the exact sources have not bound, and is writable by the
+ *     agent through more than one route — round 2 demonstrated three;
+ *   - "is the owner still current" has no reliable oracle either: the
+ *     saved-tile file is empty for almost all of an app run, so a tile whose
+ *     PTY merely exited looks abandoned.
+ *
+ * Every automatic rule built on those was a canvas-theft primitive. The user,
+ * however, knows exactly which work is theirs — so they pick, from a list that
+ * says what each canvas is. That is one click, and it cannot be forged.
+ *
+ * The cwd is used here only to ORDER and LABEL candidates, never to authorize:
+ * a wrong guess costs a less relevant list entry, not someone's notes.
  */
-export function ensureCanvasAdopted(sessionId: string): void {
+export function listReclaimableCanvases(sessionId: string): ReclaimableCanvas[] {
   const info = spawnInfo.get(sessionId)
-  if (!info || info.settled) return
-  // Already owns one (rendered its own, or adopted earlier) — nothing to do.
-  if (getCanvasStateForSession(sessionId)) {
-    info.settled = true
-    return
-  }
-  try {
-    tryAdopt(sessionId, info)
-  } catch (err) {
-    console.warn('[canvas] adoption retry failed:', err)
-  }
+  const savedIds = savedTileIds()
+  const ownCwd = info?.cwd
+  return listOrphanCandidateCanvases(sessionId, {
+    profileId: info?.profileId,
+    isSessionCurrent: (sid) => {
+      if (getSessionMeta(sid)) return true // live PTY this run
+      if (!savedIds) return true // cannot tell → not offered
+      return savedIds.has(sid)
+    },
+  })
+    .map((c) => ({ ...c, sameProject: !!ownCwd && !!c.cwd && c.cwd === ownCwd }))
+    .sort((a, b) => {
+      if (a.sameProject !== b.sameProject) return a.sameProject ? -1 : 1
+      return b.lastRenderedAt.localeCompare(a.lastRenderedAt)
+    })
+}
+
+/**
+ * Move a canvas to this session because the USER asked for it, by id, from the
+ * list above. This is the only path that transfers ownership.
+ */
+export function reclaimCanvasForSession(sessionId: string, canvasId: string): boolean {
+  const info = spawnInfo.get(sessionId)
+  const savedIds = savedTileIds()
+  const adopted = adoptCanvasForSession(sessionId, canvasId, {
+    profileId: info?.profileId,
+    isSessionCurrent: (sid) => {
+      if (getSessionMeta(sid)) return true
+      if (!savedIds) return true
+      return savedIds.has(sid)
+    },
+  })
+  if (!adopted) return false
+  rebindReviewsToSession(adopted.canvasId, sessionId)
+  logInfo(
+    `[canvas] session ${sessionId} reclaimed canvas ${adopted.canvasId} at the user's request` +
+      ` (active ${adopted.activeVersionId ?? 'none'})`,
+  )
+  return true
 }
 
 /** Drop a session's link state when its PTY is gone for good. */
