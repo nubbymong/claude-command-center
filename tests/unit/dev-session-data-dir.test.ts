@@ -16,16 +16,26 @@ vi.mock('electron', () => ({ app: { getPath: () => 'C:/fake/userData', isPackage
 
 const { devSessionDataDir } = await import('../../src/main/data-paths')
 
+/**
+ * A platform-ABSOLUTE path.
+ *
+ * `devSessionDataDir` refuses a relative root, and `path.isAbsolute` is
+ * platform-dependent: `C:/data/dev` is absolute on Windows and RELATIVE on
+ * POSIX. Hardcoding Windows literals made these tests pass on Windows and fail on
+ * macOS, which is what the CI matrix exists to catch.
+ */
+const abs = (...seg: string[]): string => join(process.platform === 'win32' ? 'C:\\' : '/', ...seg)
+
 describe('devSessionDataDir', () => {
   it('returns null for a packaged build, so prod keeps Electron’s default', () => {
     // The whole point of scoping this to dev: moving prod's partitions would log
     // out everyone who already signed in on a build that created one there.
-    expect(devSessionDataDir({ CCC_DEV_DATA_DIR: 'C:/data/dev' }, true)).toBeNull()
+    expect(devSessionDataDir({ CCC_DEV_DATA_DIR: abs('data', 'dev') }, true)).toBeNull()
   })
 
   it('puts dev session data under the dev data root', () => {
-    expect(devSessionDataDir({ CCC_DEV_DATA_DIR: 'C:/data/dev' }, false))
-      .toBe(join('C:/data/dev', 'session'))
+    expect(devSessionDataDir({ CCC_DEV_DATA_DIR: abs('data', 'dev') }, false))
+      .toBe(join(abs('data', 'dev'), 'session'))
   })
 
   it('returns null when there is no dev override rather than guessing a path', () => {
@@ -35,14 +45,14 @@ describe('devSessionDataDir', () => {
   it('covers E2E too, and prefers it over the dev dir', () => {
     // An E2E run's data root is disposable; a partition outside it would survive
     // the teardown that is supposed to remove it.
-    expect(devSessionDataDir({ CCC_E2E_DATA_DIR: 'C:/tmp/e2e', CCC_DEV_DATA_DIR: 'C:/data/dev' }, false))
-      .toBe(join('C:/tmp/e2e', 'session'))
+    expect(devSessionDataDir({ CCC_E2E_DATA_DIR: abs('tmp', 'e2e'), CCC_DEV_DATA_DIR: abs('data', 'dev') }, false))
+      .toBe(join(abs('tmp', 'e2e'), 'session'))
   })
 
   it('is a SUBDIRECTORY of the data root, so --clean removes it', () => {
     // `ccc --clean` deletes the dev data dir wholesale. The session dir has to be
     // inside it for that to clear the web sessions, which is the bug being fixed.
-    const root = 'C:/data/dev'
+    const root = abs('data', 'dev')
     const got = devSessionDataDir({ CCC_DEV_DATA_DIR: root }, false)!
     // Separator-normalised: `join` yields backslashes on Windows and forward
     // slashes elsewhere, and the containment claim is about the path, not its
@@ -72,9 +82,9 @@ describe('devSessionDataDir', () => {
     // so `isPackaged` is not the question — and without this, an E2E run against a
     // packaged exe would send its data to a disposable root while leaving the
     // claude.ai partition in prod's %APPDATA%, surviving teardown.
-    expect(devSessionDataDir({ CCC_E2E_DATA_DIR: 'C:/tmp/e2e' }, true))
-      .toBe(join('C:/tmp/e2e', 'session'))
+    expect(devSessionDataDir({ CCC_E2E_DATA_DIR: abs('tmp', 'e2e') }, true))
+      .toBe(join(abs('tmp', 'e2e'), 'session'))
     // A packaged build with only the DEV var set is still left alone.
-    expect(devSessionDataDir({ CCC_DEV_DATA_DIR: 'C:/data/dev' }, true)).toBeNull()
+    expect(devSessionDataDir({ CCC_DEV_DATA_DIR: abs('data', 'dev') }, true)).toBeNull()
   })
 })
