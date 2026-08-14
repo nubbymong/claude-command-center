@@ -167,27 +167,35 @@ export function registerUpdateHandlers(): void {
     }
 
     // 3. Dev-only fallback: look for a locally-built installer in the source folder.
-    // Uses the same naming convention as electron-builder's `artifactName`:
-    //   Windows: ClaudeCommandCenter-Beta-${version}.exe
-    //   macOS:   ClaudeCommandCenter-Beta-${version}-mac.dmg
+    // Mirrors electron-builder's `artifactName` (package.json build.*):
+    //   Windows: AI-Code-Conductor-${version}.exe
+    //   macOS:   AI-Code-Conductor-${version}-mac.dmg
     // Checks both a `-latest` convenience file and the versioned file, in both
-    // repo root and `dist/`.
+    // repo root and `dist/`. The legacy brand names are still probed LAST so a
+    // dist/ left over from before the rename keeps working locally; they cost
+    // nothing but an existsSync and this path never runs in a packaged build.
     if (!installerPath && !isPackagedApp()) {
       const projectRoot = getProjectRootPath()
       if (projectRoot) {
         const isMac = process.platform === 'darwin'
         const ext = isMac ? '.dmg' : '.exe'
         const macSuffix = isMac ? '-mac' : ''
-        const candidates: string[] = [
-          path.join(projectRoot, `ClaudeCommandCenter-latest${macSuffix}${ext}`),
-          path.join(projectRoot, 'dist', `ClaudeCommandCenter-latest${macSuffix}${ext}`),
-        ]
+        const brands = ['AI-Code-Conductor', 'ClaudeCommandCenter']
+        const candidates: string[] = []
+        for (const brand of brands) {
+          candidates.push(
+            path.join(projectRoot, `${brand}-latest${macSuffix}${ext}`),
+            path.join(projectRoot, 'dist', `${brand}-latest${macSuffix}${ext}`),
+          )
+        }
         try {
           const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
-          candidates.push(
-            path.join(projectRoot, `ClaudeCommandCenter-Beta-${pkg.version}${macSuffix}${ext}`),
-            path.join(projectRoot, 'dist', `ClaudeCommandCenter-Beta-${pkg.version}${macSuffix}${ext}`),
-          )
+          for (const brand of brands) {
+            candidates.push(
+              path.join(projectRoot, `${brand}-${pkg.version}${macSuffix}${ext}`),
+              path.join(projectRoot, 'dist', `${brand}-${pkg.version}${macSuffix}${ext}`),
+            )
+          }
         } catch { /* fall through */ }
 
         const src = candidates.find((p) => fs.existsSync(p))

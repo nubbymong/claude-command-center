@@ -141,7 +141,7 @@ const MAX_MANIFEST_BYTES = 1024 * 1024
 /**
  * Extensions to gate. Deliberately a strict SUPERSET of what the client will
  * fetch (`installerExtForPlatform` in github-update.ts, which is
- * case-SENSITIVE and additionally requires a `ClaudeCommandCenter-` prefix):
+ * case-SENSITIVE and additionally requires one of its INSTALLER_PREFIXES):
  * over-covering can only fail a release that would have worked, while
  * under-covering ships the dead end this gate exists to prevent.
  *

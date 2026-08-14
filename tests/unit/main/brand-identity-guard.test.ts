@@ -11,13 +11,28 @@ import { join } from 'path'
  *   - win/mac executableName pin the exe / .app bundle filename (the NSIS
  *     assisted installer appends APP_FILENAME to any install dir that does not
  *     contain it, and the mac drag-install replaces only on filename collision)
- *   - artifactName keeps the ClaudeCommandCenter- prefix (the updater in every
- *     installed client matches release assets by that literal prefix; a
- *     non-match is indistinguishable from "up to date")
+ *   - artifactName now carries the CURRENT brand, which is only safe because
+ *     the updater accepts both prefixes (since 2.1.0-beta.6); that tolerance is
+ *     pinned by its own test below and must outlive the rename
  *   - a top-level productName must never exist (Electron app.name would follow
  *     it and relocate userData away from %APPDATA%/claude-conductor)
  */
 const pkg = JSON.parse(readFileSync(join(__dirname, '../../../package.json'), 'utf-8'))
+
+const readNsh = () => readFileSync(join(__dirname, '../../../build/installer.nsh'), 'utf-8')
+
+/**
+ * The body of one NSIS macro, so an assertion cannot be satisfied by a match
+ * somewhere else in the file. That is not hypothetical: an earlier round of this
+ * guard used whole-file `toContain` for the legacy folder names, and stayed
+ * GREEN while the detection list was gutted — because the same names also appear
+ * in the customInstall cleanup calls and in the comments.
+ */
+function nshMacro(name: string): string {
+  const m = readNsh().match(new RegExp(`^!macro ${name}\\b[\\s\\S]*?^!macroend`, 'm'))
+  if (!m) throw new Error(`macro ${name} not found in build/installer.nsh`)
+  return m[0]
+}
 
 describe('brand identity guard', () => {
   it('display name is AI Code Conductor, set only under build', () => {
@@ -43,12 +58,12 @@ describe('brand identity guard', () => {
   })
 
   it('the installer still relocates a legacy install folder instead of nesting inside it', () => {
-    const nsh = readFileSync(join(__dirname, '../../../build/installer.nsh'), 'utf-8')
-    // customInit must run the step-up, and it must recognise both legacy folder
+    const nsh = readNsh()
+    // customInit must run the step-up, and it must recognise the legacy folder
     // names; without this an upgrade installs to <old folder>\AI Code Conductor.
     expect(nsh).toMatch(/!macro customInit/)
     expect(nsh).toMatch(/GetParent/)
-    expect(nsh).toContain('"Claude Command Center"')
+    expect(nshMacro('customInit')).toMatch(/StrCpy \$INSTDIR "\$R4\\\$\{APP_FILENAME\}"/)
     // And the old folder has to be cleaned up, or the machine keeps a dead copy
     // that nothing can uninstall (the single uninstall entry now points at the
     // new folder).
@@ -56,10 +71,245 @@ describe('brand identity guard', () => {
     expect(nsh).toMatch(/RMDir \/r "\$\{DIR\}"/)
   })
 
-  it('release artifact names keep the frozen ClaudeCommandCenter- prefix', () => {
-    expect(pkg.build.nsis.artifactName).toBe('ClaudeCommandCenter-${version}.${ext}')
-    expect(pkg.build.mac.artifactName).toBe('ClaudeCommandCenter-${version}-mac.${ext}')
-    expect(pkg.build.linux.artifactName).toBe('ClaudeCommandCenter-${version}-linux-${arch}.${ext}')
+  it('the relocation recognises the " Beta"-suffixed folder names too', () => {
+    // The original check compared only against "Claude Command Center" and
+    // "Claude Conductor". Real installs were in "Claude Conductor Beta" and
+    // "Claude Command Center Beta", which matched NEITHER — so the relocation
+    // never fired and each rename installed INSIDE the previous folder:
+    //   …\Claude Conductor Beta\Claude Command Center Beta\AI Code Conductor
+    // Missing any of these names re-opens that nesting.
+    const detect = nshMacro('IsLegacyBrandFolder')
+    for (const name of [
+      '"Claude Command Center"',
+      '"Claude Conductor"',
+      '"Claude Command Center Beta"',
+      '"Claude Conductor Beta"',
+    ]) {
+      expect(detect).toContain(name)
+    }
+    // ...and "claude-conductor" must NOT be one of them. It is this repo's npm
+    // `name`, never an install directory: electron-builder only falls back to
+    // the sanitised package name when productFilename fails
+    // /^[-_+0-9a-zA-Z .]+$/ (targetUtil.js getWindowsInstallationDirName), and
+    // every brand name here passes. It IS, however, the obvious directory name
+    // for a source checkout — so listing it aims the sweep at working copies for
+    // no upside at all.
+    expect(detect).not.toContain('claude-conductor')
+
+    const nsh = readNsh()
+    // The walk has to look at ANCESTORS, not just the last component — a nested
+    // install's tail is already the current brand name.
+    expect(nsh).toMatch(/GetFileName/)
+    expect(nsh).toMatch(/\$\{Loop\}/)
+    // ...but it must STOP at the first component that is neither a legacy name
+    // nor the app name. customInstall RMDir /r's siblings of whatever this
+    // resolves to, so an unbounded climb would let an install at
+    //   C:\Claude Conductor\dev\AI Code Conductor
+    // treat C:\Claude Conductor as the legacy root.
+    expect(nsh).toMatch(/\$\{ElseIf\}\s+\$R7\s+!=\s+"\$\{APP_FILENAME\}"/)
+  })
+
+  it('the sweep demands proof of ownership before RMDir /r', () => {
+    // RMDir /r is irreversible and FOLLOWS DIRECTORY JUNCTIONS — verified with
+    // the real makensis: with the reparse check removed, RMDir /r on a
+    // `mklink /J` junction emptied the tree it pointed at. A folder-name match
+    // is therefore not remotely enough. Scoped to the macro body, because every
+    // one of these tokens also appears in prose elsewhere in the file.
+    //
+    // These are PRESENCE assertions and cannot catch a flipped guard — a
+    // measured fact, not a worry: 6/6 polarity mutants stayed green here.
+    // installer-nsis-behaviour.test.ts compiles these macros with the real
+    // makensis and checks what survives on disk; that is what actually holds
+    // them. Keep both — this one names the shape, that one enforces it.
+    const body = nshMacro('RemoveLegacyInstall')
+    // 1. never the directory we are installing into. Compared CANONICALLY: a
+    //    raw StrCmp is defeated by an 8.3 short-name $INSTDIR
+    //    (`/S /D=C:\PROGRA~1\CLAUDE~1`), which swept the just-installed folder.
+    expect(body).toMatch(/PathsOverlapCanon "\$\{DIR\}" "\$INSTDIR"/)
+    // 2. never a junction / symlink / mount point
+    expect(body).toMatch(/GetFileAttributes\}\s+"\$\{DIR\}"\s+"REPARSE_POINT"/)
+    // 3. the data/resources directories must be KNOWN. PathsOverlap(dir, "") is
+    //    0, so an unreadable DataDirectory used to switch the next check off
+    //    entirely — and ReadUserPath is HKCU-only, so both come back empty on
+    //    an all-users install elevated by a different admin.
+    expect(body).toMatch(/\$\{If\} \$R3 == ""\s*\n\s*\$\{OrIf\} \$R4 == ""/)
+    // 4. never anything overlapping either of them. Shipped builds defaulted
+    //    DataDirectory to "$LOCALAPPDATA\Claude Command Center" — a name this
+    //    sweep looks for — so an install into %LOCALAPPDATA% would delete the
+    //    user's sessions, logs and CONFIG, twenty lines after customInstall
+    //    adopted that path.
+    expect(body).toMatch(/PathsOverlapCanon "\$\{DIR\}" "\$R3"/)
+    expect(body).toMatch(/PathsOverlapCanon "\$\{DIR\}" "\$R4"/)
+    // 5. positive proof it is an install root and not a source checkout
+    expect(body).toMatch(/ProveLegacyInstallRoot "\$\{DIR\}"/)
+    // ...and the deletion itself still has to be there.
+    expect(body).toMatch(/RMDir \/r "\$\{DIR\}"/)
+    // The data/resources paths must actually be loaded before the sweep runs,
+    // from every brand key.
+    const install = nshMacro('customInstall')
+    expect(install).toMatch(/ReadUserPath "DataDirectory" \$R3/)
+    expect(install).toMatch(/ReadUserPath "ResourcesDirectory" \$R4/)
+    expect(nshMacro('ReadUserPath')).toContain('Software\\Claude Conductor')
+    // The cleanup list must not name the npm package directory either.
+    expect(install).not.toContain('claude-conductor')
+    // An explicit /D= directory's siblings are not this installer's business.
+    expect(install).toMatch(/GetDParameter/)
+  })
+
+  it('ownership is proved down the nesting CHAIN, not just at its top', () => {
+    // The uninstaller in
+    //   …\Claude Conductor Beta\Claude Command Center Beta\AI Code Conductor
+    // exists ONLY at the leaf: electron-builder's uninstaller does
+    // RMDir /r $INSTDIR before SetOutPath recreates the chain one level deeper,
+    // so every outer level holds nothing but the next folder. Demanding
+    // "Uninstall *.exe" at the candidate itself therefore could NEVER be
+    // satisfied on the outer root — while ForgetPreviousInstallIn still cleared
+    // the ARP record for that shape, orphaning the whole tree.
+    const prove = nshMacro('ProveLegacyInstallRoot')
+    expect(prove).toMatch(/Call CccProveInstallRoot/)
+    // ...or the uninstaller the replaced install recorded, captured before the
+    // commit point overwrote it.
+    expect(prove).toContain('$cccLegacyUninstaller')
+    expect(nshMacro('customInit')).toMatch(/CaptureRecordedUninstaller/)
+
+    // The walk itself: it must look INSIDE the candidate, only follow folders
+    // that can be a link in a nesting chain, skip reparse points, and treat a
+    // wildcard hit as proof only when it is a FILE — IfFileExists with a
+    // wildcard is FindFirstFile, which matches DIRECTORIES (measured: a folder
+    // called "Uninstall whatever.exe" satisfied the old proof and the sibling
+    // source checkout was deleted).
+    const header = nshMacro('customHeader')
+    expect(header).toMatch(/FindFirst \$cccProveHandle \$cccProveName "\$cccProveCur\\Uninstall \*\.exe"/)
+    expect(header).toMatch(/\$\{IfNot\} \$\{FileExists\} "\$cccProveCur\\\$cccProveName\\\*\.\*"/)
+    expect(header).toMatch(/IsChainFolder "\$cccProveName"/)
+    expect(header).toMatch(/GetFileAttributes\} "\$cccProveCur\\\$cccProveName" "REPARSE_POINT"/)
+  })
+
+  it('the uninstall record is only dropped once the install is committing', () => {
+    // customInit runs inside .onInit — BEFORE the licence, install-mode,
+    // directory and data-directory pages. Clearing the Add/Remove Programs
+    // record there meant cancelling the wizard (or declining UAC) left the app
+    // fully installed with no ARP entry, uninstallable by neither user nor MDM.
+    // installSection.nsh inserts CHECK_APP_RUNNING immediately before
+    // uninstallOldVersion, which is both after the user committed and before the
+    // only place the old uninstaller is ever run.
+    expect(nshMacro('customInit')).not.toMatch(/DeleteRegKey/)
+    expect(nshMacro('customCheckAppRunning')).toMatch(/ForgetBrokenPreviousInstall/)
+
+    // And the delete has to follow the hive it was asked about. appId is frozen,
+    // so a per-user and a per-machine install share the key PATH but are two
+    // separate installations: an unconditional `DeleteRegKey HKCU` from an
+    // /allusers run destroyed a healthy per-user record, after which
+    // uninstallOldVersion HKEY_CURRENT_USER read an empty UninstallString and
+    // returned — orphaning that copy on disk.
+    const forget = nshMacro('ForgetPreviousInstallIn')
+    expect(forget).toMatch(/DeleteRegKey \$\{ROOT_KEY\} "\$\{UNINSTALL_REGISTRY_KEY\}"/)
+    expect(forget).not.toMatch(/DeleteRegKey HKCU/)
+    expect(forget).not.toMatch(/DeleteRegKey SHELL_CONTEXT/)
+
+    // The "is the previous install still there?" test reads the RECORDED
+    // uninstaller, not $INSTDIR\<app>.exe. The old exe-existence gate wrongly
+    // condemned any beta.5-or-older install sitting in a non-legacy-named
+    // folder, where the executable was still called Claude Command Center.exe.
+    const classify = nshMacro('ClassifyUninstallRecord')
+    expect(classify).toMatch(/ReadRegStr \$R0 \$\{ROOT_KEY\} "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString"/)
+    expect(classify).toMatch(/\$\{ElseIfNot\} \$\{FileExists\} "\$R1"/)
+    expect(readNsh()).not.toMatch(/FileExists\} "\$INSTDIR\\\$\{APP_EXECUTABLE_FILENAME\}"/)
+  })
+
+  it('the elevated inner instance, which never reaches the commit point, is covered too', () => {
+    // installSection.nsh:35-37 guards CHECK_APP_RUNNING with ${ifNot}
+    // ${UAC_IsInnerInstance}, so ForgetBrokenPreviousInstall never runs in the
+    // elevated instance — but customInit is inserted UNGUARDED
+    // (installer.nsi:79-81), so the retarget does. uninstallOldVersion then read
+    // that retargeted InstallLocation and ran the OLD uninstaller with
+    // _?=<new dir>; uninstaller.nsh:187 does RMDir /r $INSTDIR, on the directory
+    // this run was about to install into.
+    const init = nshMacro('customInit')
+    expect(init).toMatch(/\$\{If\} \$\{UAC_IsInnerInstance\}/)
+    expect(init).toMatch(/SuspendUninstallRecordIn HKCU \$cccSavedPerUserUninstallString/)
+    expect(init).toMatch(/SuspendUninstallRecordIn HKLM \$cccSavedPerMachineUninstallString/)
+
+    // It removes ONE value, not the key: uninstallOldVersion returns
+    // immediately on an empty UninstallString (installUtil.nsh:156-164), and a
+    // single string is restorable.
+    const suspend = nshMacro('SuspendUninstallRecordIn')
+    expect(suspend).toMatch(/DeleteRegValue \$\{HIVE\} "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString"/)
+    expect(suspend).not.toMatch(/DeleteRegKey/)
+    // ...and restored if the wizard the inner instance still shows is cancelled.
+    const header = nshMacro('customHeader')
+    expect(header).toMatch(/WriteRegStr HKCU "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString" "\$cccSavedPerUserUninstallString"/)
+    expect(header).toMatch(/WriteRegStr HKLM "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString" "\$cccSavedPerMachineUninstallString"/)
+  })
+
+  it('the relocation also neutralises the registry seed that would undo it', () => {
+    // $INSTDIR is seeded from ${INSTALL_REGISTRY_KEY}\InstallLocation, and on
+    // any interactive run that read happens AGAIN after customInit: the
+    // install-mode page's Leave (multiUserUi.nsh:184,187) and every skip path in
+    // its Pre re-run setInstallModePerUser / setInstallModePerAllUsers. The
+    // in-app updater launches the installer with no arguments, so auto-update IS
+    // that path — leaving just `StrCpy $INSTDIR` here would re-nest the install
+    // AND leave the old tree orphaned.
+    const init = nshMacro('customInit')
+    expect(init).toMatch(/RetargetRecordedInstallLocation HKCU/)
+    expect(init).toMatch(/RetargetRecordedInstallLocation HKLM/)
+    const retarget = nshMacro('RetargetRecordedInstallLocation')
+    expect(retarget).toMatch(/ReadRegStr \$R3 \$\{HIVE\} "\$\{INSTALL_REGISTRY_KEY\}" "InstallLocation"/)
+    expect(retarget).toMatch(/WriteRegStr \$\{HIVE\} "\$\{INSTALL_REGISTRY_KEY\}" "InstallLocation" "\$INSTDIR"/)
+    // Only a record that names the tree being left behind is touched.
+    expect(retarget).toMatch(/IsSameOrInside "\$\{LEGACY_ROOT\}"/)
+
+    // ...and it is undone if the wizard never installs anything: that value is
+    // where the UNINSTALLER gets its $INSTDIR from, so a dangling one would make
+    // a later uninstall delete nothing and then drop the ARP entry. MUI2 owns
+    // Function .onUserAbort, so this has to ride its callback.
+    const nsh = readNsh()
+    expect(nsh).toMatch(/!define MUI_CUSTOMFUNCTION_ABORT "CccRestoreInstallLocation"/)
+    expect(nsh).toMatch(/Function CccRestoreInstallLocation/)
+    expect(nsh).toMatch(/Function \.onInstFailed/)
+
+    // An explicit /D= is the operator's directory and is never relocated.
+    expect(init).toMatch(/GetDParameter/)
+  })
+
+  it('release artifacts carry the current brand name, on every platform', () => {
+    // These WERE frozen to ClaudeCommandCenter- because the updater in shipped
+    // clients matched release assets by that literal prefix, so renaming them
+    // would have made every install see "no matching asset" — indistinguishable
+    // from "up to date", and unfixable, since the fix only ships in the build
+    // they can no longer see. Releases worked around it by publishing each
+    // installer TWICE, under both names.
+    //
+    // 2.1.0-beta.6 taught the updater BOTH prefixes (see the next test), so any
+    // client that can reach a new release already resolves the brand name and
+    // the duplicate is dead weight — its .blockmap and latest*.yml never even
+    // referenced it. Only installs on beta.5 or older are left behind, and they
+    // can download from the release page by hand.
+    expect(pkg.build.nsis.artifactName).toBe('AI-Code-Conductor-${version}.${ext}')
+    expect(pkg.build.mac.artifactName).toBe('AI-Code-Conductor-${version}-mac.${ext}')
+    expect(pkg.build.linux.artifactName).toBe('AI-Code-Conductor-${version}-linux-${arch}.${ext}')
+  })
+
+  it('the updater still accepts the LEGACY prefix, which is what makes the rename safe', () => {
+    // This is the load-bearing half of the rename and the reason the assertion
+    // above could change at all. Dropping 'ClaudeCommandCenter-' from this list
+    // is harmless for assets published from now on, but it would strand any
+    // client still running a build whose release assets carried the old name if
+    // one is ever re-published. Keep both until beta-era installs are gone.
+    const updater = readFileSync(join(__dirname, '../../../src/main/github-update.ts'), 'utf-8')
+    const line = updater.match(/const INSTALLER_PREFIXES = \[([^\]]+)\]/)
+    expect(line).not.toBeNull()
+    expect(line![1]).toContain("'ClaudeCommandCenter-'")
+    expect(line![1]).toContain("'AI-Code-Conductor-'")
+  })
+
+  it('releases publish ONE set of installers — no legacy duplicate', () => {
+    // The duplicate-copy step is what put two names on every release. If it
+    // comes back, so does the "which one do I download?" confusion, and the
+    // copies carry no matching .blockmap.
+    const workflow = readFileSync(join(__dirname, '../../../.github/workflows/release.yml'), 'utf-8')
+    expect(workflow).not.toMatch(/cp -- "\$f" "\$clean"/)
+    expect(workflow).toContain('INSTALLER="AI-Code-Conductor-${VERSION}.exe"')
   })
 
   it('npm name and appId stay frozen (userData path + NSIS upgrade GUID)', () => {

@@ -172,7 +172,20 @@ export function generateRemoteSetupScript(
     // writes below (GHSA-phr3-g5qh-q4v5).
     `try{fs.chmodSync(claudeDir,0o700)}catch{}`,
     `const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js')`,
-    `try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}`,
+    // Unlink-then-exclusive-create, matching the two writes below.
+    //
+    // The chmod above closes this for a link planted AFTER we harden the
+    // directory, but not for one that was already sitting there -- and a plain
+    // writeFileSync FOLLOWS an existing symlink, so a pre-existing link at this
+    // path redirects the write to wherever it points. Every other write in this
+    // function was given rmSync + flag:'wx' for exactly that reason; this one
+    // was missed. `wx` also means we never silently write through something we
+    // did not create: if the unlink fails, the create fails too.
+    //
+    // The content is our own (the shim source), so the exposure is a redirected
+    // WRITE rather than a leaked secret -- weaker than the token files, but the
+    // same primitive, and it is the last write here without the guard.
+    `try{fs.rmSync(shimPath,{force:true})}catch{}try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755,flag:'wx'})}catch{}`,
     // Read the user's shared settings FIRST so the per-session settings file
     // can inherit every top-level key (outputStyle, permissions, future
     // additions). The two CCC-owned keys (statusLine, hooks) then override

@@ -1096,10 +1096,17 @@ export function spawnPty(
       // Explicitly cd to ensure the shell is in the right directory
       // (PowerShell profiles can change cwd before the user sees the prompt)
       const isWin = os.platform() === 'win32'
-      const escapedShellCwd = resolvedCwd.replace(/'/g, "''")
+      // Through the shared helper, NOT a local re-escape. This line is the
+      // shell-only twin of the Claude launch path and carries the identical
+      // value (resolveCwd of the config's workingDirectory) into the identical
+      // PowerShell construct — so the hand-rolled ASCII-only doubling here was
+      // the same injection, reachable the same way, and it fires on the `cd`
+      // before any binary runs. -LiteralPath because Set-Location otherwise
+      // treats its argument as a WILDCARD: a real directory named `proj[1m]`
+      // never matches, and the session silently starts in the wrong place.
       const cdCmd = isWin
-        ? `Set-Location '${escapedShellCwd}'`
-        : `cd '${resolvedCwd.replace(/'/g, "'\\''")}' 2>/dev/null; clear`
+        ? `Set-Location -LiteralPath ${quoteArgForShell(resolvedCwd, true)}`
+        : `cd ${quoteArgForShell(resolvedCwd, false)} 2>/dev/null; clear`
 
       // Terminal-only first-run command. `{secret}` becomes a REFERENCE to the
       // CCC_ARG_SECRET env var (set from the keychain in buildClaudeLocalSpawn),
@@ -1351,15 +1358,13 @@ export function spawnPty(
       let agentsFlag = ''
       if (options?.agentsConfig && options.agentsConfig.length > 0) {
         const agentsJson = JSON.stringify(options.agentsConfig)
-        if (os.platform() === 'win32') {
-          // PowerShell: single-quote the JSON, escape internal single quotes by doubling
-          const escaped = agentsJson.replace(/'/g, "''")
-          agentsFlag = ` --agents '${escaped}'`
-        } else {
-          // Bash: single-quote the JSON, escape internal single quotes
-          const escaped = agentsJson.replace(/'/g, "'\\''")
-          agentsFlag = ` --agents '${escaped}'`
-        }
+        // Through the shared helper. Agent templates are free text a user
+        // types (and JSON from the resources dir), so a curly apostrophe in a
+        // description is ORDINARY PROSE — it broke launches by accident long
+        // before anyone crafted one deliberately. The old hand-inlined
+        // doubling escaped U+0027 only, and this value is concatenated
+        // straight into the same launch line the quoting fix hardened.
+        agentsFlag = ` --agents ${quoteArgForShell(agentsJson, os.platform() === 'win32')}`
         logInfo(`[pty] Agents flag for ${sessionId}: ${agentsFlag.slice(0, 200)}...`)
       }
 

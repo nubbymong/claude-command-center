@@ -89,7 +89,7 @@ jobs:
               *)    TAG="v${VERSION}"      ;;
             esac
           fi
-          INSTALLER="ClaudeCommandCenter-${VERSION}.exe"
+          INSTALLER="AI-Code-Conductor-${VERSION}.exe"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
@@ -207,6 +207,40 @@ jobs:
             Write-Host 'dev build left unsigned (signing secrets not configured)'
           }
 
+      # ── MSIX/AppX for the Microsoft Store (#225) ──
+      # A SEPARATE electron-builder invocation, deliberately: folding `appx` into
+      # build.win.target would put it inside the same run as nsis, where a Store
+      # packaging failure takes the whole Windows release down with it. Here the
+      # NSIS installer is already built, verified and about to be uploaded, so a
+      # failure below costs the Store package and nothing else.
+      #
+      # NOT SIGNED, and that is correct: build.appx.publisher is a Store identity
+      # (CN=<Partner Center GUID>), so electron-builder skips signing with
+      # "Windows Store only build" and Microsoft signs it on ingestion. Signing it
+      # with our own cert would make the publisher disagree with the manifest
+      # identity and the package would be rejected.
+      #
+      # Note the manifest version is the 4-part numeric form (2.1.0.0) — MSIX has
+      # no concept of a prerelease suffix, so `-beta.N` is dropped. Two betas on
+      # the same base version therefore produce the SAME package version; bump the
+      # base before submitting a second one to the Store.
+      - name: Package Microsoft Store MSIX
+        id: msix
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npx electron-builder --win appx --publish never --config.npmRebuild=false
+          $pkg = Get-ChildItem dist -Filter *.appx | Select-Object -First 1
+          if (-not $pkg) { throw 'appx target produced no package' }
+          Write-Host "Store package: $($pkg.Name) ($([math]::Round($pkg.Length/1MB,1)) MB)"
+          "appx=$($pkg.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Note a failed Store package
+        if: ${{ steps.msix.outcome == 'failure' }}
+        shell: bash
+        run: echo "::warning::The Microsoft Store MSIX did not build. The Windows installer is unaffected and the release continues."
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v7
         with:
@@ -214,10 +248,23 @@ jobs:
           # exe + blockmap + latest.yml travel together: latest.yml carries the
           # exe's sha512, so replacing one without the others breaks the updater
           # (matters for rolling re-releases onto an existing tag).
+          #
+          # The .appx is deliberately absent from this list: `continue-on-error`
+          # above means it may not exist, so it cannot be part of this step's
+          # if-no-files-found: error contract. It ships in its own
+          # "Upload Store MSIX" artifact below, gated on that step succeeding.
           path: |
             dist/${{ steps.version.outputs.installer }}
             dist/${{ steps.version.outputs.installer }}.blockmap
             dist/latest.yml
+          if-no-files-found: error
+
+      - name: Upload Store MSIX
+        if: ${{ steps.msix.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-msix
+          path: dist/*.appx
           if-no-files-found: error
 
   # ── Build macOS app ──
@@ -438,27 +485,23 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
-      # Publish each installer a second time under the current brand name, so a
-      # fresh download carries no legacy name. The ClaudeCommandCenter-* copies
-      # MUST stay: every installed client matches release assets by that literal
-      # prefix, and latest*.yml still points at them, so removing them would
-      # strand existing installs on "no update available". Only the installers
-      # are duplicated — .blockmap and latest*.yml are updater-internal and are
-      # resolved by name from the legacy asset.
-      - name: Add cleanly-named download copies
-        run: |
-          cd artifacts
-          for f in *.exe *.dmg *.AppImage; do
-            [ -e "$f" ] || continue
-            clean="${f/ClaudeCommandCenter-/AI-Code-Conductor-}"
-            if [ "$clean" != "$f" ]; then
-              cp -- "$f" "$clean"
-              echo "added $clean"
-            fi
-          done
-          ls -la
-
-      # Runs AFTER the copies so users can verify whichever name they downloaded.
+      # One name, one set of assets.
+      #
+      # Releases used to publish every installer TWICE — once as
+      # ClaudeCommandCenter-* and once as AI-Code-Conductor-* — because the
+      # updater in shipped clients matched release assets by the literal legacy
+      # prefix, so dropping it would have stranded them on "no update
+      # available", unfixably. Since 2.1.0-beta.6 the updater accepts BOTH
+      # prefixes (INSTALLER_PREFIXES in src/main/github-update.ts), so every
+      # client that can reach this release already resolves the brand name.
+      # Only installs on beta.5 or older are left behind, and they can download
+      # from the release page by hand.
+      #
+      # electron-builder now emits the brand name directly (build.*.artifactName
+      # in package.json), so the .blockmap and latest*.yml — which reference the
+      # installer BY NAME — line up with the installer that actually ships. The
+      # duplicate copies never had matching blockmaps, which is exactly the kind
+      # of mismatch the manifest gate below exists to catch.
       - name: Generate checksums
         run: |
           cd artifacts
@@ -475,10 +518,8 @@ jobs:
           CHANNEL="${{ inputs.channel }}"
 
           TITLE="${TAG}"
-          # Display names only. Asset filenames deliberately keep the
-          # ClaudeCommandCenter- prefix (the updater in every installed client
-          # matches release assets by that literal prefix; renaming them
-          # strands existing installs silently).
+          # Display names. Asset filenames carry the same brand name — see the
+          # checksums step above for why the legacy duplicate is gone.
           case "$CHANNEL" in
             stable)
               RELEASE_NAME="AI Code Conductor"
@@ -510,7 +551,7 @@ jobs:
               echo ""
             fi
             echo "---"
-            echo "Installer files keep the ClaudeCommandCenter- name so existing installs keep receiving updates."
+            echo "Upgrading from 2.1.0-beta.5 or earlier? Download the installer from this page — that build's updater looked for the old file name."
             echo ""
             echo "AI Code Conductor is an independent community project — not affiliated with or endorsed by Anthropic. Claude and Claude Code are Anthropic trademarks."
             echo ""

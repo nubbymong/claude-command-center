@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "2.1.0-beta.9",
+  "version": "2.1.0-beta.10",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
@@ -145,7 +145,7 @@
         }
       ],
       "category": "public.app-category.developer-tools",
-      "artifactName": "ClaudeCommandCenter-${version}-mac.${ext}",
+      "artifactName": "AI-Code-Conductor-${version}-mac.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -162,7 +162,7 @@
         }
       ],
       "category": "Development",
-      "artifactName": "ClaudeCommandCenter-${version}-linux-${arch}.${ext}"
+      "artifactName": "AI-Code-Conductor-${version}-linux-${arch}.${ext}"
     },
     "dmg": {
       "sign": false,
@@ -187,7 +187,7 @@
       "shortcutName": "AI Code Conductor",
       "runAfterFinish": true,
       "uninstallDisplayName": "AI Code Conductor",
-      "artifactName": "ClaudeCommandCenter-${version}.${ext}"
+      "artifactName": "AI-Code-Conductor-${version}.${ext}"
     },
     "directories": {
       "output": "dist",

@@ -46,23 +46,29 @@ function goldenNoResume(opts: {
   // ORIGINAL: escapedCwd always used win32 doubling, posix re-escaped it inline.
   const escapedCwd = cwd.replace(/'/g, "''")
   const posixCwd = escapedCwd.replace(/'/g, "'\\''")
+  // The binary and picker paths are SINGLE-quoted. This is a deliberate,
+  // security-driven move of the golden: they used to be interpolated into
+  // DOUBLE quotes, where PowerShell expands `$(...)` and POSIX expands
+  // `$(...)`/backticks — a path containing either executed at launch. The
+  // shape is otherwise byte-identical to the pre-refactor construction.
+  const quotedBin = `'${claudeBin.replace(/'/g, win32 ? "''" : "'\\''")}'`
+  const quotedPicker = pickerScript ? `'${pickerScript.replace(/'/g, win32 ? "''" : "'\\''")}'` : null
   if (useResumePicker) {
     // P1.1: the picker branch now also forwards agentsFlag (it previously
     // dropped --agents on a restored session). Oracle updated to the fixed shape.
-    if (pickerScript && win32) {
-      const escapedScript = pickerScript.replace(/'/g, "''")
-      return `Set-Location '${escapedCwd}'; node '${escapedScript}'${agentsFlag}${extraFlags}; exit`
-    } else if (pickerScript) {
-      return `cd '${posixCwd}' && node '${pickerScript.replace(/'/g, "'\\''")}'${agentsFlag}${extraFlags}; exit`
+    if (quotedPicker) {
+      return win32
+        ? `Set-Location '${escapedCwd}'; node ${quotedPicker}${agentsFlag}${extraFlags}; exit`
+        : `cd '${posixCwd}' && node ${quotedPicker}${agentsFlag}${extraFlags}; exit`
     } else {
       return win32
-        ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${agentsFlag}${extraFlags}; exit`
-        : `cd '${posixCwd}' && "${claudeBin}"${agentsFlag}${extraFlags}; exit`
+        ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}; exit`
+        : `cd '${posixCwd}' && ${quotedBin}${agentsFlag}${extraFlags}; exit`
     }
   }
   return win32
-    ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${agentsFlag}${extraFlags}; exit`
-    : `cd '${posixCwd}' && "${claudeBin}"${agentsFlag}${extraFlags}; exit`
+    ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}; exit`
+    : `cd '${posixCwd}' && ${quotedBin}${agentsFlag}${extraFlags}; exit`
 }
 
 describe('buildClaudeLaunchCommand — GOLDEN (no resumeUuid, byte-identical)', () => {
@@ -158,7 +164,7 @@ describe('buildClaudeLaunchCommand — RESUME (resumeUuid present)', () => {
     expect(out).not.toContain('resume-picker.js')
     expect(out).not.toContain('node ')
     // direct claude launch with --resume first
-    expect(out).toBe(`Set-Location '${CWD.replace(/'/g, "''")}'; & "${CLAUDE}" --resume ${UUID}${AGENTS}${EXTRA}; exit`)
+    expect(out).toBe(`Set-Location '${CWD.replace(/'/g, "''")}'; & '${CLAUDE}' --resume ${UUID}${AGENTS}${EXTRA}; exit`)
     // ordering: --resume precedes --settings / --mcp-config / --agents
     expect(out.indexOf('--resume')).toBeLessThan(out.indexOf('--settings'))
     expect(out.indexOf('--resume')).toBeLessThan(out.indexOf('--agents'))
@@ -172,7 +178,7 @@ describe('buildClaudeLaunchCommand — RESUME (resumeUuid present)', () => {
       resumeUuid: UUID,
     })
     expect(out).not.toContain('resume-picker.js')
-    expect(out).toBe(`cd '/work/wt' && "/usr/bin/claude" --resume ${UUID}${AGENTS}${EXTRA}; exit`)
+    expect(out).toBe(`cd '/work/wt' && '/usr/bin/claude' --resume ${UUID}${AGENTS}${EXTRA}; exit`)
   })
 
   it('resume bypasses the picker even when useResumePicker is true', () => {
