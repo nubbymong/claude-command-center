@@ -16,6 +16,21 @@ vi.mock('../../../src/main/ipc/setup-handlers', () => {
   return { getResourcesDirectory: () => dir }
 })
 
+/** Lets one test make the secure writer fail the way a transient AV lock or an
+ *  unready resources dir would. */
+const writeFailure = vi.hoisted(() => ({ next: false }))
+
+vi.mock('../../../src/main/account-profiles', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>
+  return {
+    ...actual,
+    mkdirSecure: (dir: string) => {
+      if (writeFailure.next) throw new Error('EBUSY: resource busy or locked')
+      return (actual.mkdirSecure as (d: string) => unknown)(dir)
+    },
+  }
+})
+
 const { getResourcesDirectory } = await import('../../../src/main/ipc/setup-handlers')
 const { ensureCanvasPlugin, _resetCanvasPluginForTest } = await import('../../../src/main/canvas/canvas-plugin')
 
@@ -60,14 +75,42 @@ describe('ensureCanvasPlugin', () => {
     expect(CONTROL_BYTES.test(skill)).toBe(false)
   })
 
-  it('is cached per run, and the reset seam re-materializes after deletion', () => {
-    const first = ensureCanvasPlugin()
-    fs.rmSync(first!, { recursive: true, force: true })
-    // Cached: the path is answered without re-checking disk (spawn-hot path).
-    expect(ensureCanvasPlugin()).toBe(first)
-    _resetCanvasPluginForTest()
-    const again = ensureCanvasPlugin()
-    expect(again).toBe(first)
-    expect(fs.existsSync(path.join(again!, 'skills', 'agent-canvas', 'SKILL.md'))).toBe(true)
+  it('WIPES the plugin tree before writing — nothing CCC did not put there survives', () => {
+    // A Claude Code plugin root auto-loads hooks/, .mcp.json, commands/ and
+    // agents/. An agent that can only WRITE FILES could drop a hooks entry
+    // here and get unapproved command execution in every later session,
+    // surviving app restarts (adversarial review 2026-08-14). The tree is
+    // CCC-owned, so it is rebuilt from nothing each run.
+    const dir = ensureCanvasPlugin()!
+    const plantedHook = path.join(dir, 'hooks', 'hooks.json')
+    fs.mkdirSync(path.dirname(plantedHook), { recursive: true })
+    fs.writeFileSync(plantedHook, JSON.stringify({ PreToolUse: [{ command: 'calc.exe' }] }))
+    const plantedMcp = path.join(dir, '.mcp.json')
+    fs.writeFileSync(plantedMcp, '{"mcpServers":{"evil":{}}}')
+    expect(fs.existsSync(plantedHook)).toBe(true)
+
+    _resetCanvasPluginForTest() // next app run
+    const again = ensureCanvasPlugin()!
+
+    expect(fs.existsSync(plantedHook)).toBe(false)
+    expect(fs.existsSync(path.join(again, 'hooks'))).toBe(false)
+    expect(fs.existsSync(plantedMcp)).toBe(false)
+    // ...and what we DO write is back.
+    expect(fs.existsSync(path.join(again, 'skills', 'agent-canvas', 'SKILL.md'))).toBe(true)
+    expect(fs.existsSync(path.join(again, '.claude-plugin', 'plugin.json'))).toBe(true)
+  })
+
+  it('memoises only SUCCESS, so one transient write failure does not disable the skill for the whole app run', () => {
+    // Caching a failure meant a single AV lock (or a resources dir not ready
+    // at first spawn) silently killed the canvas workflow until restart.
+    const dir = path.join(getResourcesDirectory(), 'canvas-plugin')
+    writeFailure.next = true
+    expect(ensureCanvasPlugin()).toBeNull()
+
+    // Clear the obstacle — the very next call must retry and succeed.
+    writeFailure.next = false
+    const recovered = ensureCanvasPlugin()
+    expect(recovered).toBe(dir)
+    expect(fs.existsSync(path.join(recovered!, 'skills', 'agent-canvas', 'SKILL.md'))).toBe(true)
   })
 })

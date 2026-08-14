@@ -11,11 +11,12 @@ import path from 'node:path'
 import os from 'node:os'
 import { writeLocalSessionSettings } from '../../../src/main/hooks/per-session-settings'
 
-const CANVAS_TOOLS = [
-  'mcp__conductor__canvas_render',
-  'mcp__conductor__canvas_snapshot',
-  'mcp__conductor__canvas_review',
-]
+// The two READS only. canvas_render is deliberately absent: it takes an
+// absolute `htmlPath` the model supplies, and pre-allowing it removed the last
+// human gate on that read (adversarial review 2026-08-14 drove it to a private
+// key). Adding it back here without confining the read is the regression this
+// list exists to prevent.
+const CANVAS_TOOLS = ['mcp__conductor__canvas_snapshot', 'mcp__conductor__canvas_review']
 
 describe('writeLocalSessionSettings -- canvas tool pre-allow', () => {
   let fakeHome = ''
@@ -58,8 +59,16 @@ describe('writeLocalSessionSettings -- canvas tool pre-allow', () => {
       'mcp__conductor__canvas_snapshot',
       'mcp__conductor__canvas_review',
     ])
+    // The user's own pre-existing canvas_render entry is preserved (it was
+    // theirs to make); what we must never do is ADD it ourselves.
     expect(cfg.permissions.deny).toEqual(['mcp__conductor__vision_eval'])
     expect(cfg.permissions.ask).toEqual(['WebFetch'])
+  })
+
+  it('never pre-allows canvas_render — its htmlPath read must stay behind a human gate', () => {
+    const p = writeLocalSessionSettings('sid-2b', { allowCanvasTools: true })
+    const cfg = JSON.parse(fs.readFileSync(p, 'utf-8'))
+    expect(cfg.permissions.allow).not.toContain('mcp__conductor__canvas_render')
   })
 
   it('leaves a malformed permissions value exactly as found', () => {

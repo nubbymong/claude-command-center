@@ -242,6 +242,11 @@ function designFileFailureReason(err: unknown): string {
   const message = err instanceof Error ? err.message : ''
   if (/too large/i.test(message)) return 'that html file is too large to render.'
   if (/not a regular file/i.test(message)) return 'that path is not a regular html file.'
+  if (/registered canvas root/i.test(message)) {
+    // The confinement (resolveInsideCanvasRoot). Says what to do instead
+    // without echoing the path the model supplied.
+    return 'that file is outside this session’s project folder. Write the html inside the project you are working in, then render that path.'
+  }
   return 'that html file could not be read. Check the path you wrote it to.'
 }
 

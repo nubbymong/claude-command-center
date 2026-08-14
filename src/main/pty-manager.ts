@@ -1377,8 +1377,11 @@ export function spawnPty(
       // and an unknown flag fails the whole launch.
       if (conductorOn && !options?.legacyVersion?.enabled) {
         try {
+          // existsSync for the same reason --settings and --mcp-config check:
+          // a flag pointing at a missing path is at best ignored and at worst
+          // exits the CLI, and this one is appended to every session.
           const pluginDir = ensureCanvasPlugin()
-          if (pluginDir) {
+          if (pluginDir && fs.existsSync(pluginDir)) {
             extraFlags += ` --plugin-dir ${quoteArgForShell(pluginDir, os.platform() === 'win32')}`
           }
         } catch (err) {

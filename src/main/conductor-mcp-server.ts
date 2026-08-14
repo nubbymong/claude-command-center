@@ -41,7 +41,8 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
-import { getCanvasStateForSession, renderVersion } from './canvas/canvas-store'
+import { getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
+import { ensureCanvasAdopted } from './canvas/canvas-session-link'
 import { getReviewPayload } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 
@@ -727,14 +728,35 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       registerCanvasTools(server, z, () => boundSessionId, {
         getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
         requestSnapshot: (args) => requestCanvasSnapshot(args),
-        renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
+        renderVersion: (sessionId, canvasSource) => {
+          // A session that is resuming a conversation reclaims that
+          // conversation's canvas BEFORE it renders — otherwise this render
+          // mints a parallel canvas whose first version is another "v1",
+          // which is the bug the whole continuity change exists to fix.
+          ensureCanvasAdopted(sessionId)
+          return renderVersion(sessionId, canvasSource)
+        },
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
         readAttachment: (absPath) => fs.readFileSync(absPath),
+        /**
+         * Read a design document the agent wrote to disk (`htmlPath`).
+         *
+         * CONFINED to the session's own registered canvas roots (its project
+         * directory), with the same realpath containment `distRoot` uses.
+         * Unconfined, this was an arbitrary-file read on a model-supplied
+         * absolute path executed with the app's privileges: adversarial review
+         * (2026-08-14) drove it to read a private key and land the bytes in the
+         * canvas dir, servable and readable back through canvas_snapshot. The
+         * approval prompt was the only thing standing in front of it, which is
+         * not a boundary — an approval prompt cannot be the containment for a
+         * path the model chose.
+         */
         readDesignFile: (absPath) => {
-          const st = fs.statSync(absPath)
+          const real = resolveInsideCanvasRoot(absPath)
+          const st = fs.statSync(real)
           if (!st.isFile()) throw new Error('not a regular file')
           if (st.size > 2 * 1024 * 1024) throw new Error('design file too large')
-          return fs.readFileSync(absPath)
+          return fs.readFileSync(real)
         },
       })
     }

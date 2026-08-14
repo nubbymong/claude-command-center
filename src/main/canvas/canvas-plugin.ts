@@ -13,8 +13,9 @@
 // per session via `--plugin-dir`. Session-scoped by construction: nothing is
 // written to the user's ~/.claude, and external `claude` runs are untouched.
 
+import * as fs from 'fs'
 import * as path from 'path'
-import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
+import { atomicWriteSecure, hardenCredentialDir, mkdirSecure } from '../account-profiles'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
 import { logWarn } from '../debug-logger'
 
@@ -58,12 +59,16 @@ Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`
    buttons, form fields, cards). NEVER rename an existing id on revision —
    ids are what the user's notes re-anchor to across versions. New elements
    get new ids; edited elements keep theirs.
-3. Write the file to your scratchpad, then render BY PATH:
+3. Write the file **inside the project you are working in** (e.g.
+   \`<project>/.ccc-canvas/settings-mockup.html\`), then render BY PATH:
 
    canvas_render { mode: "design", htmlPath: "<absolute path>" }
 
-   Never pass the document inline in \`html\` when you can write a file — the
-   inline form floods the user's tool-approval prompt with the whole document.
+   The canvas only reads files under the session's project folder — a path
+   outside it is refused, so do not write the mockup to a temp or scratch
+   directory. Never pass the document inline in \`html\` when you can write a
+   file: the inline form floods the user's approval prompt with the whole
+   document (it once cost a user eleven minutes on one render).
 4. Self-check before handing back: \`canvas_snapshot\` scoped to the
    data-ux-ids you care about. It works with the pane closed (the page is
    laid out off-screen and the reply says so). Fix real findings — clipped
@@ -123,31 +128,54 @@ resolved yourself — resolution is theirs.
   render; they only ever review in the pane.
 `
 
-let ensured: string | null | undefined
+let ensured: string | undefined
 
 /**
  * Materialize the plugin under the resources dir and return its path for
  * `--plugin-dir`, or null when it could not be written (the session then
  * launches without it — the plugin is a convenience, never a spawn blocker).
- * Written once per app run; content is embedded, so an app update refreshes
- * the on-disk plugin at its next launch.
+ *
+ * The directory is WIPED and rewritten first, every app run.
+ *
+ * That is not tidiness, it is the security property. A Claude Code plugin root
+ * loads by convention `hooks/hooks.json`, `.mcp.json`, `commands/`, `agents/`
+ * and `skills/` — so pointing `--plugin-dir` at a directory CCC does not fully
+ * control turns it into an execution surface: adversarial review (2026-08-14)
+ * noted that an agent with nothing but file-write could drop a `hooks/` entry
+ * there and get unapproved command execution in every later session, surviving
+ * app restarts. Nothing but the two files below may live in this tree, and the
+ * cheapest way to guarantee that is to not carry anything forward.
+ *
+ * Only SUCCESS is memoised: caching a failure would disable the workflow skill
+ * for the rest of the app's life after one transient AV lock or a resources dir
+ * that was not ready at first spawn.
  */
 export function ensureCanvasPlugin(): string | null {
   if (ensured !== undefined) return ensured
   try {
     const pluginDir = path.join(getResourcesDirectory(), 'canvas-plugin')
+    // CCC-owned tree: anything already here is not ours (or is a stale copy
+    // from an older version) and does not get to survive.
+    fs.rmSync(pluginDir, { recursive: true, force: true })
     const manifestDir = path.join(pluginDir, '.claude-plugin')
     const skillDir = path.join(pluginDir, 'skills', 'agent-canvas')
     mkdirSecure(manifestDir)
     mkdirSecure(skillDir)
-    atomicWriteSecure(path.join(manifestDir, 'plugin.json'), JSON.stringify(PLUGIN_MANIFEST, null, 2))
-    atomicWriteSecure(path.join(skillDir, 'SKILL.md'), SKILL_MD)
+    // Owner-only, explicitly: mkdirSecure/atomicWriteSecure refuse planted
+    // symlinks but do NOT harden the mode unless asked, so on POSIX this tree
+    // would land 0755/0644. SKILL.md is instruction content fed to the agent
+    // every session — its integrity is the whole point.
+    hardenCredentialDir(pluginDir)
+    hardenCredentialDir(manifestDir)
+    hardenCredentialDir(skillDir)
+    atomicWriteSecure(path.join(manifestDir, 'plugin.json'), JSON.stringify(PLUGIN_MANIFEST, null, 2), 0o600)
+    atomicWriteSecure(path.join(skillDir, 'SKILL.md'), SKILL_MD, 0o600)
     ensured = pluginDir
+    return ensured
   } catch (err) {
     logWarn(`[canvas-plugin] could not materialize the canvas plugin: ${String(err)}`)
-    ensured = null
+    return null
   }
-  return ensured
 }
 
 /** Test seam. */

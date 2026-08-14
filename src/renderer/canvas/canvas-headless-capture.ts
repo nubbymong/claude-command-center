@@ -39,17 +39,33 @@ export const HEADLESS_VIEWPORT = { width: 1280, height: 800 }
 const READY_TIMEOUT_MS = 20_000
 /** Matches the live path's FRAME_TIMEOUT_MS. */
 const CAPTURE_TIMEOUT_MS = 25_000
+/**
+ * How long an idle frame may linger, measured from when it was MOUNTED —
+ * never refreshed on use.
+ *
+ * The first cut refreshed this on every capture and kept the frame after the
+ * reply, which made a hidden, executing page survive as long as an agent kept
+ * polling: unbounded silent script execution the user could not see (a
+ * MAJOR from the 2026-08-14 adversarial pass). Frames are now torn down as
+ * soon as the capture that needed them is answered; this ceiling only bounds
+ * the window in which a mounted-but-never-answered frame can sit.
+ */
 const FRAME_TTL_MS = 45_000
-/** More simultaneous hidden documents than this is a runaway, not a workflow
- *  (the broker additionally caps in-flight captures per session). */
-const MAX_HEADLESS_FRAMES = 3
+/**
+ * PER SESSION, not global — the same decision, for the same reason, as the
+ * main-side broker's MAX_IN_FLIGHT_PER_SESSION: a global cap let one looping
+ * session starve every other session's captures. The first cut of this file
+ * reintroduced the global form one layer down.
+ */
+const MAX_HEADLESS_FRAMES_PER_SESSION = 2
 
 interface HeadlessFrame {
   key: string
+  sessionId: string
   container: HTMLDivElement
   iframe: HTMLIFrameElement
   ready: Promise<Window>
-  lastUsed: number
+  mountedAt: number
   disposed: boolean
 }
 
@@ -57,8 +73,11 @@ const frames = new Map<string, HeadlessFrame>()
 let sweepTimer: ReturnType<typeof setTimeout> | null = null
 let timing = { readyTimeoutMs: READY_TIMEOUT_MS, frameTtlMs: FRAME_TTL_MS }
 
-function keyOf(canvasId: string, versionId: string): string {
-  return `${canvasId}/${versionId}`
+/** Per-FRAME, not per canvas+version: frames are one-shot now, and two
+ *  concurrent captures of the same version must not collide in the map (the
+ *  second would evict the first's entry and leak its element). */
+function keyOf(event: CanvasSnapshotRequestEvent): string {
+  return `${event.requestId}/${event.canvasId}/${event.versionId}`
 }
 
 function dispose(frame: HeadlessFrame): void {
@@ -78,14 +97,18 @@ function scheduleSweep(): void {
     sweepTimer = null
     const now = Date.now()
     for (const frame of [...frames.values()]) {
-      if (now - frame.lastUsed >= timing.frameTtlMs) dispose(frame)
+      // From mount, never from last use: a frame must not be able to renew its
+      // own lease by being used.
+      if (now - frame.mountedAt >= timing.frameTtlMs) dispose(frame)
     }
     if (frames.size > 0) scheduleSweep()
   }, timing.frameTtlMs)
 }
 
 function mountFrame(event: CanvasSnapshotRequestEvent): HeadlessFrame {
-  if (frames.size >= MAX_HEADLESS_FRAMES) {
+  let mine = 0
+  for (const frame of frames.values()) if (frame.sessionId === event.sessionId) mine++
+  if (mine >= MAX_HEADLESS_FRAMES_PER_SESSION) {
     // Refused, never evicted: evicting the oldest could kill a capture that is
     // mid-flight in it. The message shape is part of the MCP tool's closed
     // failure vocabulary (captureFailureReason).
@@ -118,10 +141,11 @@ function mountFrame(event: CanvasSnapshotRequestEvent): HeadlessFrame {
   document.body.appendChild(container)
 
   const frame: HeadlessFrame = {
-    key: keyOf(event.canvasId, event.versionId),
+    key: keyOf(event),
+    sessionId: event.sessionId,
     container,
     iframe,
-    lastUsed: Date.now(),
+    mountedAt: Date.now(),
     disposed: false,
     ready: Promise.resolve(window), // replaced below, before anyone can await it
   }
@@ -165,11 +189,9 @@ function mountFrame(event: CanvasSnapshotRequestEvent): HeadlessFrame {
  */
 export async function captureHeadless(event: CanvasSnapshotRequestEvent): Promise<CanvasSnapshotReply> {
   const fail = (error: string): CanvasSnapshotReply => ({ requestId: event.requestId, ok: false, error })
+  let frame: HeadlessFrame | undefined
   try {
-    let frame = frames.get(keyOf(event.canvasId, event.versionId))
-    if (!frame || frame.disposed) frame = mountFrame(event)
-    frame.lastUsed = Date.now()
-
+    frame = mountFrame(event)
     const target = await frame.ready
     if (frame.disposed) return fail('The canvas frame is not loaded yet.')
 
@@ -180,7 +202,6 @@ export async function captureHeadless(event: CanvasSnapshotRequestEvent): Promis
       { type: 'snapshot', scope: options.scope, analysis: options.analysis },
       CAPTURE_TIMEOUT_MS,
     )
-    frame.lastUsed = Date.now()
     return {
       requestId: event.requestId,
       ok: true,
@@ -191,6 +212,14 @@ export async function captureHeadless(event: CanvasSnapshotRequestEvent): Promis
     }
   } catch (err) {
     return fail(err instanceof Error ? err.message : String(err))
+  } finally {
+    // ALWAYS, on every exit path. A hidden frame exists to answer exactly one
+    // capture; keeping it warm across calls (the first cut did, refreshing its
+    // TTL each time) let an agent hold an invisible page executing for as long
+    // as it kept polling. A page the user cannot see does not get to outlive
+    // the question it was mounted to answer — the cost is re-loading the
+    // document on a follow-up scoped call, which is the correct trade.
+    if (frame) dispose(frame)
   }
 }
 

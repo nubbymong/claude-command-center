@@ -50,8 +50,14 @@ function reviewsJson(canvasId: string): Record<string, unknown> {
 }
 
 /** Render one design version for a session with the given stamps in place. */
-function renderAs(sessionId: string, cwd: string | undefined, conversationUuid: string | undefined, body: string) {
-  store.setCanvasSessionInfoResolver(() => ({ cwd, conversationUuid }))
+function renderAs(
+  sessionId: string,
+  cwd: string | undefined,
+  conversationUuid: string | undefined,
+  body: string,
+  profileId?: string,
+) {
+  store.setCanvasSessionInfoResolver(() => ({ cwd, conversationUuid, profileId }))
   return store.renderVersion(sessionId, { mode: 'design', html: `<!doctype html><p>${body}</p>` })
 }
 
@@ -104,11 +110,11 @@ describe('renderVersion stamps the work identity', () => {
 })
 
 describe('adoptCanvasForSession', () => {
-  it('moves an orphaned canvas to a new session by cwd, and the next render continues its versions', () => {
+  it('moves an orphaned canvas to the session resuming its conversation, and the next render continues its versions', () => {
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
     restart()
 
-    const adopted = store.adoptCanvasForSession(SID_B, { cwd: CWD, isSessionCurrent: notCurrent })
+    const adopted = store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })
     expect(adopted).toEqual({ canvasId, activeVersionId: 'v1' })
 
     // The new session sees the canvas; the old session no longer owns it.
@@ -122,32 +128,79 @@ describe('adoptCanvasForSession', () => {
     expect(next).toEqual({ canvasId, versionId: 'v2' })
   })
 
-  it('prefers the conversation match over a more recent cwd match', () => {
-    // Older canvas under conversation 1; newer canvas in the same cwd under
-    // conversation 2. A session resuming conversation 1 wants the FIRST.
-    const conv = renderAs(SID_A, CWD, CONV_1, 'conv-match')
-    const newer = renderAs(SID_B, CWD, CONV_2, 'newer-cwd-match')
-    expect(conv.canvasId).not.toBe(newer.canvasId)
+  // ── The theft vector the 2026-08-14 adversarial pass found ────────────────
+  // Adoption on a project-directory match handed one session's canvas AND the
+  // user's private review notes to any other session in the same folder, with
+  // no attacker involved (two tiles on one repo + a routine PTY exit). The
+  // directory is not an identity; the conversation is.
+
+  it('NEVER adopts on a project-directory match alone', () => {
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'private work')
     restart()
 
-    const adopted = store.adoptCanvasForSession(SID_C, {
-      cwd: CWD,
-      conversationUuid: CONV_1,
-      isSessionCurrent: notCurrent,
-    })
-    expect(adopted?.canvasId).toBe(conv.canvasId)
+    // Same cwd, no conversation: a second tile in the same folder gets nothing.
+    expect(store.adoptCanvasForSession(SID_B, { isSessionCurrent: notCurrent })).toBeNull()
+    // ...and the canvas stays exactly where it was.
+    expect(canvasJson(canvasId).sessionId).toBe(SID_A)
+    expect(store.getCanvasStateForSession(SID_B)).toBeNull()
+    expect(store.getCanvasStateForSession(SID_A)?.canvasId).toBe(canvasId)
   })
 
-  it('falls back to the most recently rendered cwd match', async () => {
-    const first = renderAs(SID_A, CWD, undefined, 'older')
+  it('refuses a DIFFERENT conversation even in the same directory', () => {
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
+    restart()
+    expect(
+      store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_2, isSessionCurrent: notCurrent }),
+    ).toBeNull()
+    expect(canvasJson(canvasId).sessionId).toBe(SID_A)
+  })
+
+  it('never crosses accounts: profileId must match exactly, undefined included', () => {
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'work account', 'profile-work')
+    restart()
+    // Same conversation, different account → refused.
+    expect(
+      store.adoptCanvasForSession(SID_B, {
+        conversationUuid: CONV_1,
+        profileId: 'profile-personal',
+        isSessionCurrent: notCurrent,
+      }),
+    ).toBeNull()
+    // Same conversation, NO account → still refused (a profiled record does
+    // not cross out to an unprofiled session).
+    expect(store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })).toBeNull()
+    expect(canvasJson(canvasId).sessionId).toBe(SID_A)
+    // The matching account does adopt.
+    const ok = store.adoptCanvasForSession(SID_B, {
+      conversationUuid: CONV_1,
+      profileId: 'profile-work',
+      isSessionCurrent: notCurrent,
+    })
+    expect(ok?.canvasId).toBe(canvasId)
+  })
+
+  it('an unprofiled legacy record does not cross into a profiled session', () => {
+    renderAs(SID_A, CWD, CONV_1, 'legacy')
+    restart()
+    expect(
+      store.adoptCanvasForSession(SID_B, {
+        conversationUuid: CONV_1,
+        profileId: 'profile-work',
+        isSessionCurrent: notCurrent,
+      }),
+    ).toBeNull()
+  })
+
+  it('takes the most recently rendered canvas when two share a conversation', async () => {
+    const first = renderAs(SID_A, CWD, CONV_1, 'older')
     // Version timestamps are ISO strings; ensure strict ordering.
     await new Promise((r) => setTimeout(r, 5))
-    const second = renderAs(SID_B, CWD, undefined, 'newer')
+    const second = renderAs(SID_B, OTHER_CWD, CONV_1, 'newer')
+    expect(first.canvasId).not.toBe(second.canvasId)
     restart()
 
-    const adopted = store.adoptCanvasForSession(SID_C, { cwd: CWD, isSessionCurrent: notCurrent })
+    const adopted = store.adoptCanvasForSession(SID_C, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })
     expect(adopted?.canvasId).toBe(second.canvasId)
-    expect(first.canvasId).not.toBe(second.canvasId)
   })
 
   it('never touches a canvas whose owner is still current, and never re-homes a session that owns one', () => {
@@ -155,16 +208,33 @@ describe('adoptCanvasForSession', () => {
     restart()
 
     // Owner live or saved → untouchable; the asker gets nothing.
-    expect(store.adoptCanvasForSession(SID_B, { cwd: CWD, isSessionCurrent: allCurrent })).toBeNull()
+    expect(
+      store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: allCurrent }),
+    ).toBeNull()
     expect(canvasJson(canvasId).sessionId).toBe(SID_A)
 
     // A session that already owns a canvas never adopts another.
-    renderAs(SID_B, OTHER_CWD, undefined, 'mine')
-    const again = store.adoptCanvasForSession(SID_B, { cwd: CWD, isSessionCurrent: notCurrent })
+    renderAs(SID_B, OTHER_CWD, CONV_2, 'mine')
+    const again = store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })
     expect(again).toBeNull()
   })
 
-  it('adopts nothing without a matching stamp (legacy records stay put)', () => {
+  it('fails SAFE when the currency check throws — uncertain means untouchable', () => {
+    // The documented property, and previously nothing could trip it: a guard
+    // no input can exercise is worse than none (adversarial review).
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
+    restart()
+    const adopted = store.adoptCanvasForSession(SID_B, {
+      conversationUuid: CONV_1,
+      isSessionCurrent: () => {
+        throw new Error('session registry unavailable')
+      },
+    })
+    expect(adopted).toBeNull()
+    expect(canvasJson(canvasId).sessionId).toBe(SID_A)
+  })
+
+  it('adopts nothing without a conversation stamp (legacy records stay put)', () => {
     // A record from before the stamps existed: strip them off disk.
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'legacy')
     const record = canvasJson(canvasId)
@@ -178,17 +248,89 @@ describe('adoptCanvasForSession', () => {
 
     // No stamps → no match → no adoption; but the record itself still loads
     // for its own session (backward compatibility).
-    expect(store.adoptCanvasForSession(SID_B, { cwd: CWD, isSessionCurrent: notCurrent })).toBeNull()
+    expect(store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })).toBeNull()
     expect(store.getCanvasStateForSession(SID_A)?.canvasId).toBe(canvasId)
   })
 
-  const winIt = process.platform === 'win32' ? it : it.skip
-  winIt('matches cwd case-insensitively with trailing separators on Windows', () => {
-    const { canvasId } = renderAs(SID_A, CWD, undefined, 'one')
+  it('leaves the adopted record’s own stamps alone (the adopter does not redefine what the canvas is)', () => {
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
     restart()
-    const sloppy = CWD.toUpperCase() + path.sep
-    const adopted = store.adoptCanvasForSession(SID_B, { cwd: sloppy, isSessionCurrent: notCurrent })
-    expect(adopted?.canvasId).toBe(canvasId)
+    store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })
+    const record = canvasJson(canvasId)
+    expect(record.sessionId).toBe(SID_B) // only the owner moves
+    expect(record.cwd).toBe(CWD)
+    expect(record.conversationUuid).toBe(CONV_1)
+  })
+
+  it('skips a zero-version record rather than handing over an empty canvas', () => {
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
+    const record = canvasJson(canvasId)
+    record.versions = []
+    record.activeVersionId = null
+    fs.writeFileSync(
+      path.join(getResourcesDirectory(), 'canvas', canvasId, 'canvas.json'),
+      JSON.stringify(record, null, 2),
+    )
+    restart()
+    expect(store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })).toBeNull()
+  })
+
+  it('announces the move so the pane can repaint', () => {
+    const seen: Array<{ sessionId: string; canvasId: string }> = []
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
+    restart()
+    const off = store.onCanvasChanged((e) => seen.push({ sessionId: e.sessionId, canvasId: e.canvasId }))
+    store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })
+    off()
+    expect(seen).toEqual([{ sessionId: SID_B, canvasId }])
+  })
+
+  it('fails closed when the durable write fails — memory never moves ahead of disk', () => {
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
+    restart()
+    // Load the record into memory FIRST — the scan reads canvas.json, and the
+    // sabotage below makes it unreadable.
+    expect(store.getCanvasStateForSession(SID_A)?.canvasId).toBe(canvasId)
+    // Same technique as canvas-store-fail-closed: make the atomic write land
+    // on a directory so persist() throws.
+    const jsonPath = path.join(getResourcesDirectory(), 'canvas', canvasId, 'canvas.json')
+    const saved = fs.readFileSync(jsonPath, 'utf8')
+    fs.rmSync(jsonPath, { force: true })
+    fs.mkdirSync(jsonPath)
+    expect(() =>
+      store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent }),
+    ).toThrow()
+    // Neither session's view moved.
+    expect(store.getCanvasStateForSession(SID_B)).toBeNull()
+    expect(store.getCanvasStateForSession(SID_A)?.canvasId).toBe(canvasId)
+    fs.rmSync(jsonPath, { recursive: true, force: true })
+    fs.writeFileSync(jsonPath, saved)
+  })
+})
+
+describe('resolveInsideCanvasRoot (the htmlPath confinement)', () => {
+  it('refuses everything when no root is registered, and confines to a registered one', () => {
+    const projectDir = path.join(getResourcesDirectory(), 'confine-proj')
+    const outsideDir = path.join(getResourcesDirectory(), 'confine-outside')
+    fs.mkdirSync(projectDir, { recursive: true })
+    fs.mkdirSync(outsideDir, { recursive: true })
+    const inside = path.join(projectDir, 'mockup.html')
+    const outside = path.join(outsideDir, 'secret.txt')
+    fs.writeFileSync(inside, '<!doctype html><p>ok</p>')
+    fs.writeFileSync(outside, 'PRIVATE KEY')
+
+    // Default-empty allowlist: nothing resolves.
+    expect(() => store.resolveInsideCanvasRoot(inside)).toThrow(/registered canvas root/i)
+
+    store.registerCanvasUatRoot(projectDir)
+    expect(store.resolveInsideCanvasRoot(inside)).toBe(fs.realpathSync.native(inside))
+    // The read that the adversarial pass drove to a private key.
+    expect(() => store.resolveInsideCanvasRoot(outside)).toThrow(/registered canvas root/i)
+    // Traversal out of a registered root, and a relative path.
+    expect(() => store.resolveInsideCanvasRoot(path.join(projectDir, '..', 'confine-outside', 'secret.txt'))).toThrow(
+      /registered canvas root/i,
+    )
+    expect(() => store.resolveInsideCanvasRoot('mockup.html')).toThrow(/registered canvas root/i)
   })
 })
 
@@ -210,7 +352,7 @@ describe('reviews follow the adoption', () => {
     const { reviewId } = submitOneReview(SID_A)
     restart()
 
-    const adopted = store.adoptCanvasForSession(SID_B, { cwd: CWD, isSessionCurrent: notCurrent })
+    const adopted = store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })
     expect(adopted?.canvasId).toBe(canvasId)
     reviews.rebindReviewsToSession(canvasId, SID_B)
 
@@ -230,7 +372,7 @@ describe('reviews follow the adoption', () => {
     restart()
 
     // Canvas re-binds, then the app dies before the review rebind runs.
-    store.adoptCanvasForSession(SID_B, { cwd: CWD, isSessionCurrent: notCurrent })
+    store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })
     restart()
 
     // Next launch: the canvas record says SID_B, reviews.json still says SID_A.
@@ -258,7 +400,7 @@ describe('reviews follow the adoption', () => {
     )
     restart()
 
-    store.adoptCanvasForSession(SID_B, { cwd: CWD, isSessionCurrent: notCurrent })
+    store.adoptCanvasForSession(SID_B, { conversationUuid: CONV_1, isSessionCurrent: notCurrent })
     reviews.rebindReviewsToSession(canvasId, SID_B)
     // Broken store: reads answer empty, mutations refuse, file untouched.
     expect(reviews.getReviewStateForSession(SID_B)?.reviews).toEqual([])

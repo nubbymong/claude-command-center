@@ -120,8 +120,11 @@ describe('captureHeadless', () => {
     expect(reply.ok === false && reply.error).toContain('did not finish loading in time')
   })
 
-  it('reuses the laid-out frame for a follow-up capture of the same version', async () => {
-    const first = captureHeadless(EVENT)
+  it('TEARS THE FRAME DOWN as soon as the capture is answered — a page the user cannot see never outlives its question', async () => {
+    // The property, and the reason for it: the first cut kept the frame warm
+    // and refreshed its TTL on every use, so an agent that kept polling held
+    // an invisible page executing indefinitely (adversarial review 2026-08-14).
+    const pending = captureHeadless(EVENT)
     const iframe = mountedIframe()
     const posted = tapFrame(iframe)
     fromFrame(iframe, { type: 'ready' })
@@ -131,19 +134,19 @@ describe('captureHeadless', () => {
       ok: true,
       result: { viewport: { width: 1280, height: 800, dpr: 1 }, root: { ref: 'e0', role: 'document', name: 'p', box: {}, children: [] } },
     })
-    await first
-
-    const second = captureHeadless(EVENT)
-    await microtasks()
-    expect(document.querySelectorAll('[data-canvas-headless]')).toHaveLength(1) // same frame, no remount
-    expect(posted).toHaveLength(2)
-    fromFrame(iframe, {
-      id: posted[1].msg.id,
-      ok: true,
-      result: { viewport: { width: 1280, height: 800, dpr: 1 }, root: { ref: 'e0', role: 'document', name: 'p', box: {}, children: [] } },
-    })
-    const reply = await second
+    const reply = await pending
     expect(reply.ok).toBe(true)
+    // Gone immediately — not on a timer, not on the next call.
+    expect(document.querySelectorAll('[data-canvas-headless]')).toHaveLength(0)
+    expect(_headlessFramesForTest().size).toBe(0)
+  })
+
+  it('tears the frame down when the capture FAILS too', async () => {
+    _configureHeadlessForTest({ readyTimeoutMs: 40 })
+    const reply = await captureHeadless(EVENT)
+    expect(reply.ok).toBe(false)
+    expect(document.querySelectorAll('[data-canvas-headless]')).toHaveLength(0)
+    expect(_headlessFramesForTest().size).toBe(0)
   })
 
   it('fails with the loading reason when the bridge never announces, and unmounts the frame', async () => {
@@ -155,33 +158,30 @@ describe('captureHeadless', () => {
     expect(_headlessFramesForTest().size).toBe(0)
   })
 
-  it('refuses a fourth simultaneous hidden document', async () => {
+  it('caps concurrent hidden frames PER SESSION, never globally', async () => {
+    // A global cap let one looping session starve every other session's
+    // captures — the exact mistake the main-side broker documents having
+    // fixed. One session's two slots must not deny a different session.
     _configureHeadlessForTest({ readyTimeoutMs: 5_000 })
-    void captureHeadless({ ...EVENT, versionId: 'v1' })
-    void captureHeadless({ ...EVENT, versionId: 'v2' })
-    void captureHeadless({ ...EVENT, versionId: 'v3' })
-    const reply = await captureHeadless({ ...EVENT, versionId: 'v4' })
-    expect(reply.ok).toBe(false)
-    expect(reply.ok === false && reply.error).toContain('off-screen frame limit')
-    _resetHeadlessCaptureForTest() // release the three hanging readies
+    void captureHeadless({ ...EVENT, requestId: 'a1', versionId: 'v1' })
+    void captureHeadless({ ...EVENT, requestId: 'a2', versionId: 'v2' })
+    const denied = await captureHeadless({ ...EVENT, requestId: 'a3', versionId: 'v3' })
+    expect(denied.ok).toBe(false)
+    expect(denied.ok === false && denied.error).toContain('off-screen frame limit')
+
+    // A DIFFERENT session is unaffected — it gets its own frame.
+    void captureHeadless({ ...EVENT, requestId: 'b1', sessionId: 'sess-2', versionId: 'v1' })
+    await microtasks()
+    expect(_headlessFramesForTest().size).toBe(3)
+    _resetHeadlessCaptureForTest() // release the hanging readies
   })
 
-  it('sweeps idle frames out on the TTL', async () => {
-    _configureHeadlessForTest({ frameTtlMs: 30 })
-    const pending = captureHeadless(EVENT)
-    const iframe = mountedIframe()
-    const posted = tapFrame(iframe)
-    fromFrame(iframe, { type: 'ready' })
+  it('sweeps a frame that never answered, timed from MOUNT so it cannot renew its own lease', async () => {
+    _configureHeadlessForTest({ readyTimeoutMs: 5_000, frameTtlMs: 40 })
+    void captureHeadless(EVENT)
     await microtasks()
-    fromFrame(iframe, {
-      id: posted[0].msg.id,
-      ok: true,
-      result: { viewport: { width: 1280, height: 800, dpr: 1 }, root: { ref: 'e0', role: 'document', name: 'p', box: {}, children: [] } },
-    })
-    await pending
-
     expect(_headlessFramesForTest().size).toBe(1)
-    await new Promise((r) => setTimeout(r, 90))
+    await new Promise((r) => setTimeout(r, 120))
     expect(_headlessFramesForTest().size).toBe(0)
     expect(document.querySelectorAll('[data-canvas-headless]')).toHaveLength(0)
   })

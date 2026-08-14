@@ -27,7 +27,7 @@ import {
   upsertAnnotation,
 } from '../canvas/canvas-review-store'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
-import { installCanvasSessionLink } from '../canvas/canvas-session-link'
+import { ensureCanvasAdopted, installCanvasSessionLink } from '../canvas/canvas-session-link'
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -173,6 +173,10 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
 
   ipcMain.handle(IPC.CANVAS_GET_STATE, async (_e, args: unknown) => {
     const { sessionId } = getStateSchema.parse(args)
+    // Opening the pane is one of the two moments a session actually needs its
+    // canvas, and by now the transcript binder knows the conversation even if
+    // spawn did not (an in-Claude `/resume`). Idempotent once settled.
+    ensureCanvasAdopted(sessionId)
     return getCanvasStateForSession(sessionId)
   })
 
