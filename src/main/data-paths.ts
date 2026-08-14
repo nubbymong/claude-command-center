@@ -100,6 +100,51 @@ export function getDataDirectory(): string {
   return cachedDataDir
 }
 
+/**
+ * Where a DEV instance should keep Electron's `sessionData`, or null for prod.
+ *
+ * PURE, so the decision is testable without booting Electron. Called from
+ * index.ts at module scope, because `app.setPath` only has any effect before the
+ * first session is created.
+ *
+ * WHY THIS EXISTS. Electron stores `persist:` partitions under `sessionData`,
+ * which defaults to `userData` — and nothing redirected either, so the
+ * per-account claude.ai web sessions (#216) went to
+ * `%APPDATA%\claude-conductor\Partitions` no matter which data dir the instance
+ * was using. Dev and prod therefore SHARED them: signing out in dev revoked
+ * prod's session for that account, and `ccc --clean` wiped the dev data dir while
+ * leaving a live `sessionKey` on disk, because the partition was never under it.
+ * `sweepAbandonedProfiles` could not help either — it only walks
+ * `<dataDir>/account-web` (#261).
+ *
+ * DEV ONLY, DELIBERATELY. `userData` is Electron's own default for session data
+ * and is not wrong for prod; relocating prod would force a re-login for anyone who
+ * had already signed in on a build that created a partition there, which is a real
+ * cost with no matching benefit. Packaged builds get null and are untouched.
+ *
+ * Returns null when there is no dev override, so the caller does nothing at all
+ * rather than setting a path it computed from a guess.
+ */
+export function devSessionDataDir(
+  env: NodeJS.ProcessEnv = process.env,
+  isPackaged = true,
+): string | null {
+  // E2E FIRST AND UNCONDITIONALLY, matching getDataDirectory's own ordering
+  // above. Its whole point is a disposable data root, and a partition outside it
+  // would survive the teardown that is supposed to remove it. An explicit E2E
+  // override is never a real user's install, so `isPackaged` is not the question.
+  const root = env.CCC_E2E_DATA_DIR || (isPackaged ? undefined : env.CCC_DEV_DATA_DIR)
+  if (!root) return null
+  // ABSOLUTE ONLY. `app.setPath` rejects a relative path, and the caller creates
+  // the directory BEFORE calling it — so a relative root meant `mkdirSync` quietly
+  // made `<cwd>/<root>/session` (inside the repo, in one observed run) and then
+  // `setPath` threw into a catch, leaving dev writing claude.ai sessionKeys to
+  // prod's location exactly as before. Refusing here turns a swallowed throw into
+  // a decision with a test.
+  if (!path.isAbsolute(root)) return null
+  return path.join(root, 'session')
+}
+
 // Read resources directory from registry (cached after first call)
 export function getResourcesDirectory(): string {
   if (cachedResourcesDir) return cachedResourcesDir
