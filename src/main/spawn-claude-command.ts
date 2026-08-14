@@ -46,12 +46,31 @@ export interface BuildClaudeLaunchCommandOptions {
 }
 
 /**
+ * Every character PowerShell accepts as a single-quote DELIMITER.
+ *
+ * PowerShell's tokenizer treats the ASCII apostrophe and four Unicode
+ * quotation marks interchangeably: U+2018 LEFT, U+2019 RIGHT, U+201A LOW-9 and
+ * U+201B HIGH-REVERSED-9. Escaping only U+0027 therefore leaves four ways to
+ * terminate a quoted string early — and all four are legal in NTFS directory
+ * names, so an ordinary folder name can carry one (a curly apostrophe is what
+ * word processors produce, and those names get pasted into paths).
+ *
+ * POSIX shells have no equivalent: only U+0027 delimits there, which is why
+ * the posix branch below is unchanged.
+ */
+const PS_SINGLE_QUOTE_CLASS = /[\u0027\u2018\u2019\u201A\u201B]/g
+
+/**
  * Escape a path for single-quoting in the target shell.
- *   - win32 (PowerShell): double the single quotes.
+ *   - win32 (PowerShell): double every single-quote delimiter (see above).
  *   - posix (sh): close-quote, backslash-escape, reopen-quote.
+ *
+ * Doubling is the correct escape for ALL of them: PowerShell reads a doubled
+ * delimiter inside a single-quoted string as one literal character, whichever
+ * of the five it is.
  */
 function escapeForCwdQuote(p: string, isWin32: boolean): string {
-  return isWin32 ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
+  return isWin32 ? p.replace(PS_SINGLE_QUOTE_CLASS, (c) => c + c) : p.replace(/'/g, "'\\''")
 }
 
 /**
@@ -235,6 +254,22 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
   const { cwd, claudeBin, extraFlags, agentsFlag, useResumePicker, pickerScript, resumeUuid } = opts
   const isWin32 = opts.platform === 'win32'
   const escapedCwd = escapeForCwdQuote(cwd, isWin32)
+  // SINGLE-quoted, not double.
+  //
+  // `& "${claudeBin}"` looked safe because a binary path is not user text —
+  // but it IS a path, and it comes from the resources directory or a `where`
+  // lookup, so a directory name decides its contents. Inside DOUBLE quotes
+  // both shells expand: PowerShell evaluates `$(...)` and POSIX evaluates
+  // `$(...)` and backticks, at runtime, and both were verified executing.
+  // Single quotes are literal in PowerShell and POSIX alike, and `& 'name'` /
+  // `'name' args` still invoke a bare command name, a spaced path and an
+  // absolute path exactly as before.
+  const quotedBin = `'${escapeForCwdQuote(claudeBin, isWin32)}'`
+  // Same shape of value (it also lives under the resources directory), and it
+  // was being escaped by two hand-inlined copies of the helper — which is
+  // precisely how it would have kept the old behaviour after the helper was
+  // fixed. One helper, one call site each.
+  const quotedPicker = pickerScript ? `'${escapeForCwdQuote(pickerScript, isWin32)}'` : null
 
   // RESUME path: bypass the picker, launch claude directly with --resume first.
   // The --resume verb must precede every other flag (resume-picker.js:299), so
@@ -242,8 +277,8 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
   if (resumeUuid) {
     const resumeFlag = ` --resume ${resumeUuid}`
     return isWin32
-      ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${resumeFlag}${agentsFlag}${extraFlags}; exit`
-      : `cd '${escapedCwd}' && "${claudeBin}"${resumeFlag}${agentsFlag}${extraFlags}; exit`
+      ? `Set-Location '${escapedCwd}'; & ${quotedBin}${resumeFlag}${agentsFlag}${extraFlags}; exit`
+      : `cd '${escapedCwd}' && ${quotedBin}${resumeFlag}${agentsFlag}${extraFlags}; exit`
   }
 
   // No-resume behaviour. P1.1: the picker-script branch forwards agentsFlag too
@@ -251,20 +286,18 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
   // restored session). resume-picker.js forwards its own argv to
   // `claude --resume <id> ...`, so the flag survives the launch.
   if (useResumePicker) {
-    if (pickerScript && isWin32) {
-      const escapedScript = pickerScript.replace(/'/g, "''")
-      return `Set-Location '${escapedCwd}'; node '${escapedScript}'${agentsFlag}${extraFlags}; exit`
-    } else if (pickerScript) {
-      return `cd '${escapedCwd}' && node '${pickerScript.replace(/'/g, "'\\''")}'${agentsFlag}${extraFlags}; exit`
-    } else {
-      // Fallback: no picker script found, launch Claude directly.
+    if (quotedPicker) {
       return isWin32
-        ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${agentsFlag}${extraFlags}; exit`
-        : `cd '${escapedCwd}' && "${claudeBin}"${agentsFlag}${extraFlags}; exit`
+        ? `Set-Location '${escapedCwd}'; node ${quotedPicker}${agentsFlag}${extraFlags}; exit`
+        : `cd '${escapedCwd}' && node ${quotedPicker}${agentsFlag}${extraFlags}; exit`
     }
+    // Fallback: no picker script found, launch Claude directly.
+    return isWin32
+      ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}; exit`
+      : `cd '${escapedCwd}' && ${quotedBin}${agentsFlag}${extraFlags}; exit`
   }
 
   return isWin32
-    ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${agentsFlag}${extraFlags}; exit`
-    : `cd '${escapedCwd}' && "${claudeBin}"${agentsFlag}${extraFlags}; exit`
+    ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}; exit`
+    : `cd '${escapedCwd}' && ${quotedBin}${agentsFlag}${extraFlags}; exit`
 }
