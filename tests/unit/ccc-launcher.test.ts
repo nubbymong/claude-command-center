@@ -74,6 +74,26 @@ describe('ccc.cmd — a failing run has to leave something behind', () => {
   })
 })
 
+describe('ccc.cmd — --clean must not launch against a half-wiped data dir (#264)', () => {
+  it('re-checks that the data dir is actually gone after the wipe', () => {
+    // Since #261 moved sessionData under the dev data root, --clean deletes a LIVE
+    // session store when an instance is using the dir. Chromium's locked files
+    // survive Remove-Item, and the old code swallowed that and launched anyway.
+    const clean = CMD.slice(CMD.indexOf('if defined CCC_CLEAN'))
+    // The wipe is followed by a second Test-Path on the SAME dir, i.e. a verify.
+    expect(clean).toMatch(/Remove-Item[\s\S]*Test-Path \$d/)
+  })
+
+  it('aborts loudly instead of continuing when the wipe was incomplete', () => {
+    const clean = CMD.slice(CMD.indexOf('if defined CCC_CLEAN'))
+    const abort = clean.slice(0, clean.indexOf('--- log setup'))
+    expect(abort).toMatch(/exit 3/)          // the powershell side signals it
+    expect(abort).toMatch(/if errorlevel 3/) // the batch side catches it
+    expect(abort).toMatch(/pause/)           // and holds the window so it is seen
+    expect(abort).toMatch(/goto :eof/)       // and does NOT fall through to launch
+  })
+})
+
 describe('ccc.cmd — flags stay distinct', () => {
   it('parses --seed and --seed-accounts as separate flags', () => {
     // Different things at different risk: CONFIG is settings, accounts are live
