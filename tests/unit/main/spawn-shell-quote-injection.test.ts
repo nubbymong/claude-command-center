@@ -32,27 +32,41 @@ const PS_QUOTE_NAMES = ['APOSTROPHE', 'LEFT SINGLE', 'RIGHT SINGLE', 'LOW-9', 'H
  * A doubled delimiter inside a quoted run is a literal character, and (unlike
  * POSIX) PowerShell lets ANY of the five open or close a run.
  */
+/** The four characters PowerShell accepts as DOUBLE-quote delimiters. */
+const PS_DQUOTE_CHARS = ['"', '“', '”', '„']
+
 function outsideSingleQuotes(command: string): string {
   let out = ''
-  let inQuote = false
+  let quote: string | null = null // the delimiter that opened the current run
   for (let i = 0; i < command.length; i++) {
     const c = command[i]
-    const isDelim = PS_QUOTE_CHARS.includes(c)
-    if (!isDelim) {
-      if (!inQuote) out += c
+    if (quote === null) {
+      // A double-quoted run must be tracked too, or an apostrophe INSIDE one
+      // ("don't") desynchronises the scanner and every later region is misread
+      // as quoted — which made this helper report "safe" for a command a real
+      // shell executed (independent review, 2026-08-14). It is the oracle for
+      // this whole file, so it has to model both quote families.
+      if (PS_QUOTE_CHARS.includes(c) || PS_DQUOTE_CHARS.includes(c)) {
+        quote = c
+        continue
+      }
+      out += c
       continue
     }
-    if (!inQuote) {
-      inQuote = true
-      continue
-    }
+    const sameFamily = PS_QUOTE_CHARS.includes(quote)
+      ? PS_QUOTE_CHARS.includes(c)
+      : PS_DQUOTE_CHARS.includes(c)
+    if (!sameFamily) continue // a quote of the other family is literal in here
     // Inside a run: a doubled delimiter is an escaped literal, not a close.
     if (command[i + 1] === c) {
       i++
       continue
     }
-    inQuote = false
+    quote = null
   }
+  // An unterminated run means the line would not parse at all; refuse to judge
+  // rather than silently dropping the tail and calling it safe.
+  if (quote !== null) throw new Error('unterminated quote: this command would not parse')
   return out
 }
 
@@ -153,7 +167,7 @@ describe('the binary and picker paths are single-quoted, so no shell expands the
     })
   }
 
-  it('win32: a smart quote in claudeBin cannot escape either (the picker path too)', () => {
+  it('win32: a smart quote in claudeBin cannot escape', () => {
     for (const q of PS_QUOTE_CHARS) {
       const out = buildClaudeLaunchCommand({
         platform: 'win32',
@@ -166,6 +180,82 @@ describe('the binary and picker paths are single-quoted, so no shell expands the
       })
       expect(outsideSingleQuotes(out)).not.toContain('PWNED')
     }
+  })
+
+  it('win32: a smart quote in the PICKER path cannot escape', () => {
+    // This was asserted in a title but never exercised: the case passed
+    // `pickerScript: null`, so reverting the picker escaping left the whole
+    // suite green (independent review, 2026-08-14). A guard that cannot fail
+    // is worse than no guard.
+    for (const q of PS_QUOTE_CHARS) {
+      const out = buildClaudeLaunchCommand({
+        platform: 'win32',
+        cwd: 'C:\\proj',
+        claudeBin: 'claude',
+        extraFlags: '',
+        agentsFlag: '',
+        useResumePicker: true,
+        pickerScript: `C:\\res${q}; ${PAYLOAD}; ${q}\\resume-picker.js`,
+      })
+      expect(outsideSingleQuotes(out)).not.toContain('PWNED')
+    }
+  })
+
+  it('posix: a single quote in the picker path cannot escape', () => {
+    const out = buildClaudeLaunchCommand({
+      platform: 'posix',
+      cwd: '/proj',
+      claudeBin: 'claude',
+      extraFlags: '',
+      agentsFlag: '',
+      useResumePicker: true,
+      pickerScript: `/res'; ${PAYLOAD}; '/resume-picker.js`,
+    })
+    expect(out).toContain("'/res'\\''; Write-Output PWNED; '\\''/resume-picker.js'")
+  })
+
+  it('refuses a resumeUuid that is not a uuid — the one value interpolated UNQUOTED', () => {
+    // Every current caller gates this with the same anchored regex, but the
+    // function is exported and "the caller checks" is a comment, not a
+    // boundary. Anchored, so a trailing `; …` is refused rather than launched.
+    for (const bad of [
+      `11111111-2222-3333-4444-555555555555; ${PAYLOAD}; `,
+      "11111111-2222-3333-4444-555555555555' ; echo x",
+      'not-a-uuid',
+      '11111111-2222-3333-4444-555555555555\n--dangerously-skip-permissions',
+    ]) {
+      expect(() =>
+        buildClaudeLaunchCommand({
+          platform: 'win32', cwd: 'C:\\p', claudeBin: 'claude',
+          extraFlags: '', agentsFlag: '', useResumePicker: false,
+          pickerScript: null, resumeUuid: bad,
+        }),
+      ).toThrow(/resumeUuid/)
+    }
+    // ...a real uuid still launches...
+    const ok = buildClaudeLaunchCommand({
+      platform: 'win32', cwd: 'C:\\p', claudeBin: 'claude',
+      extraFlags: '', agentsFlag: '', useResumePicker: false,
+      pickerScript: null, resumeUuid: '11111111-2222-3333-4444-555555555555',
+    })
+    expect(ok).toContain('--resume 11111111-2222-3333-4444-555555555555')
+    // ...and an absent/empty uuid is NOT an error, it is the no-resume path.
+    expect(() =>
+      buildClaudeLaunchCommand({
+        platform: 'win32', cwd: 'C:\\p', claudeBin: 'claude',
+        extraFlags: '', agentsFlag: '', useResumePicker: false,
+        pickerScript: null, resumeUuid: '',
+      }),
+    ).not.toThrow()
+  })
+
+  it('the outsideSingleQuotes oracle models double-quoted runs (it is the whole suite’s judge)', () => {
+    // An apostrophe inside a double-quoted value used to desynchronise the
+    // scanner, making it report "safe" for a line PowerShell really executed.
+    const real = `Set-Location 'C:\\p'; & 'C:\\claude.cmd' --agents "don't"; ${PAYLOAD}; exit`
+    expect(outsideSingleQuotes(real)).toContain('PWNED')
+    // ...and an unparseable line is refused rather than judged safe.
+    expect(() => outsideSingleQuotes("Set-Location 'C:\\unterminated")).toThrow(/unterminated/)
   })
 
   it('posix: a single quote in the paths still uses close-escape-reopen', () => {

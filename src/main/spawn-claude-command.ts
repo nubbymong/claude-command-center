@@ -6,8 +6,13 @@
  * Electron. No default export (project convention). No side effects.
  *
  * Behaviour contract:
- *   - When `resumeUuid` is ABSENT the produced string is BYTE-IDENTICAL to the
- *     pre-refactor inline construction (picker / picker-fallback / direct).
+ *   - When `resumeUuid` is ABSENT the produced string matches the pre-refactor
+ *     inline construction (picker / picker-fallback / direct) EXCEPT for the
+ *     binary and picker paths, which are now single-quoted rather than
+ *     double-quoted. That is a deliberate security change, not drift: inside
+ *     double quotes PowerShell expands `$(...)` and POSIX expands `$(...)` and
+ *     backticks, and these values are PATHS whose contents a directory name
+ *     decides. Byte-identity holds for every other part of the line.
  *   - When `resumeUuid` is PRESENT the resume-picker branch is BYPASSED and the
  *     command launches Claude directly with `--resume <uuid>` FIRST, before
  *     --settings / --mcp-config / --agents etc. (mirrors the ordering in
@@ -275,6 +280,12 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
   // The --resume verb must precede every other flag (resume-picker.js:299), so
   // it is injected before agentsFlag/extraFlags here.
   if (resumeUuid) {
+    // Re-validated HERE, not trusted from the caller. The uuid is the one value
+    // on this line that is interpolated UNQUOTED, and every current caller does
+    // gate it with the same anchored regex — but "the caller checks" is a
+    // comment, not a boundary, and this function is exported. Anchored, so a
+    // uuid with a trailing `; …` is refused rather than launched.
+    if (!UUID_RE.test(resumeUuid)) throw new Error('buildClaudeLaunchCommand: resumeUuid is not a uuid')
     const resumeFlag = ` --resume ${resumeUuid}`
     return isWin32
       ? `Set-Location '${escapedCwd}'; & ${quotedBin}${resumeFlag}${agentsFlag}${extraFlags}; exit`
