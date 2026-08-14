@@ -13,6 +13,7 @@
 import type { CanvasSnapshotReply, CanvasSnapshotRequestEvent } from '../../shared/canvas'
 import { sanitizeSnapshotResult } from '../../shared/canvas-snapshot-sanitize'
 import { askCanvasFrame } from './canvas-frame-rpc'
+import { captureHeadless } from './canvas-headless-capture'
 
 export interface LiveCanvasFrame {
   sessionId: string
@@ -52,10 +53,15 @@ export async function handleSnapshotRequest(
   const fail = (error: string): CanvasSnapshotReply => ({ requestId: event.requestId, ok: false, error })
 
   const frame = frames.get(event.sessionId)
-  if (!frame) return fail('No Agent Canvas is open for this session. Open the Canvas pane and try again.')
-  if (frame.canvasId !== event.canvasId) return fail('The open canvas does not match the one requested.')
-  if (frame.versionId !== event.versionId) {
-    return fail(`The canvas is showing ${frame.versionId}, not ${event.versionId}. Switch versions, or snapshot the active one.`)
+  const liveMatches = !!frame && frame.canvasId === event.canvasId && frame.versionId === event.versionId
+  if (!liveMatches) {
+    // Pane closed, on another canvas, or on another version: lay the requested
+    // version out in a hidden off-screen frame instead of failing. The old
+    // hard refusals here broke the product's DEFAULT flow — the agent reads
+    // its render while the user is at the terminal, where the pane is closed
+    // by design (canvas replaces chat, spec D2/D3). A matching live pane stays
+    // preferred below: it measures the viewport the user actually sees.
+    return captureHeadless(event)
   }
   const target = frame.getWindow()
   if (!target) return fail('The canvas frame is not loaded yet.')

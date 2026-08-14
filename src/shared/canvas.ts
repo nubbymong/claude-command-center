@@ -567,12 +567,23 @@ export interface CanvasSnapshotRequestEvent {
   sessionId: string
   canvasId: string
   versionId: string
+  /** The version's servable entry file (store-authored, from the version
+   *  record). Lets the renderer lay the page out in a hidden frame when the
+   *  pane is not open on this canvas+version (headless capture). */
+  entry: string
   options: CanvasSnapshotOptions
 }
 
 /** renderer → main: the answer, or why there isn't one. */
 export type CanvasSnapshotReply =
-  | { requestId: string; ok: true; result: CanvasSnapshotResult }
+  | {
+      requestId: string
+      ok: true
+      result: CanvasSnapshotResult
+      /** True when the page was laid out in a hidden off-screen frame rather
+       *  than captured from the pane the user is looking at. */
+      headless?: boolean
+    }
   | { requestId: string; ok: false; error: string }
 
 /** What the in-page bridge returns for a snapshot request. The main process
@@ -581,6 +592,10 @@ export type CanvasSnapshotReply =
 export interface CanvasSnapshotResult {
   viewport: { width: number; height: number; dpr: number }
   root: SnapshotNode
+  /** Renderer-host-authored (never the page's): this capture came from a
+   *  hidden off-screen frame, not the pane the user has open. The broker
+   *  stamps it from the reply envelope after sanitisation. */
+  headless?: boolean
   /** Scope ids that matched nothing on the page. */
   unmatchedScope?: string[]
   /** The node cap was hit — the tree is partial. */

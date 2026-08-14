@@ -44,6 +44,9 @@ export interface CanvasToolDeps {
     sessionId: string
     canvasId: string
     versionId: string
+    /** The version's servable entry (store-authored) — carried to the renderer
+     *  so a closed pane can be answered by a hidden off-screen frame. */
+    entry: string
     options: CanvasSnapshotOptions
   }) => Promise<CanvasSnapshotResult>
   renderVersion: (sessionId: string, source: CanvasRenderSource) => { canvasId: string; versionId: string }
@@ -118,6 +121,14 @@ function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined,
   // 6 KB operator-voice channel for anything shape-legal.
   if (scope) notes.push(`scoped to ${scope.length} id(s)`)
 
+  // Renderer-host-authored (stamped by the broker from the reply envelope,
+  // unreachable from the sanitised body): the page was laid out off-screen.
+  // Worth a note for two reasons — the viewport is the hidden frame's, not one
+  // the user chose, and the user has NOT seen this version on screen.
+  if (result.headless) {
+    notes.push('captured off-screen: the Canvas pane was not open on this version, so the page was laid out in a hidden frame at the reported viewport size. The user has not seen it — hand back so they can open the canvas')
+  }
+
   if (result.unmatchedScope?.length && scope) {
     // Iterate OUR scope, not the page's list: the page can neither add an id the
     // agent never asked for nor inflate the count by repeating one.
@@ -170,8 +181,14 @@ function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined,
  *  never relayed — it is page-controlled and lands outside the envelope. */
 function captureFailureReason(err: unknown): string {
   const message = err instanceof Error ? err.message : ''
+  // Legacy shape, kept for safety: the live-pane mismatch cases now fall back
+  // to a hidden off-screen frame instead of failing, so this reason should
+  // only surface if that fallback is itself unavailable.
   if (/no Agent Canvas is open|does not match|showing/i.test(message)) {
     return 'the Agent Canvas is not open on the requested canvas and version. Ask the user to open it.'
+  }
+  if (/off-screen frame limit/i.test(message)) {
+    return 'too many hidden captures are already running. Try again in a moment.'
   }
   if (/not loaded yet|in time/i.test(message)) return 'the canvas page did not finish loading in time. Try again in a moment.'
   if (/in flight/i.test(message)) return 'another capture is already running for this session. Try again in a moment.'
@@ -338,7 +355,8 @@ export async function runCanvasRender(
   return {
     text:
       `Rendered ${rendered.versionId} on canvas ${rendered.canvasId}. ` +
-      'It is not on screen until the user opens the Canvas pane — hand back to them, then call canvas_snapshot to read what was actually laid out.',
+      'You can call canvas_snapshot now to self-check the layout (it works even while the pane is closed). ' +
+      'The user sees it when they open the Canvas pane (its button is pulsing) — hand back and tell them in plain words what to look at.',
     isError: false,
   }
 }
@@ -382,7 +400,8 @@ export async function runCanvasSnapshot(
   }
   const requestedVersion = typeof rawArgs.versionId === 'string' && rawArgs.versionId.length > 0 ? rawArgs.versionId : null
   const versionId = requestedVersion ?? state.activeVersionId
-  if (!state.versions.some((v) => v.id === versionId)) {
+  const version = state.versions.find((v) => v.id === versionId)
+  if (!version) {
     // The id is NOT echoed. Tool arguments are model-generated, this string is
     // unwrapped operator voice, and `scope` had to be hardened for exactly this
     // reason — an unbounded echo here would have been the same hole.
@@ -399,6 +418,10 @@ export async function runCanvasSnapshot(
       sessionId,
       canvasId: state.canvasId,
       versionId,
+      // Store-authored (the version record), never model-supplied: the
+      // renderer builds the hidden frame's URL from it when the pane is not
+      // open on this canvas+version.
+      entry: version.source.entry,
       options: { scope, analysis: true },
     })
   } catch (err) {
@@ -583,7 +606,7 @@ export function registerCanvasTools(
 ): void {
   server.tool(
     'canvas_snapshot',
-    'Read the CURRENTLY RENDERED Agent Canvas page as a compact semantic tree: role, accessible name, box, form state, and measured findings (clipped text, targets below the WCAG minimum, overlapping content, contrast). These are layout-time facts the page source cannot tell you. It is gathered by instrumentation running INSIDE the page, so it is the page\'s own report of itself rather than independent ground truth — a page that runs scripts can misreport, and a clean result means "nothing was reported", not "nothing is wrong". Prefer a scoped call: pass the data-ux-id values you care about, and only those nodes carry styles. Requires the Canvas pane to be open on this session.',
+    'Read the rendered Agent Canvas page as a compact semantic tree: role, accessible name, box, form state, and measured findings (clipped text, targets below the WCAG minimum, overlapping content, contrast). These are layout-time facts the page source cannot tell you. It is gathered by instrumentation running INSIDE the page, so it is the page\'s own report of itself rather than independent ground truth — a page that runs scripts can misreport, and a clean result means "nothing was reported", not "nothing is wrong". Prefer a scoped call: pass the data-ux-id values you care about, and only those nodes carry styles. Works whether or not the Canvas pane is open: with the pane closed the page is laid out in a hidden frame and the reply says so.',
     {
       canvasId: zMod
         .string()

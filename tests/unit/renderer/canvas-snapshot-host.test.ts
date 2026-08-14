@@ -1,14 +1,30 @@
 // @vitest-environment jsdom
-// The renderer's middle hop. Most of what matters here is what happens when
-// there is nothing to capture: the agent must get a reason it can act on rather
-// than a hang.
+// The renderer's middle hop. A request that no live pane can answer is not a
+// failure any more — it delegates to the hidden off-screen capture (the agent
+// reads its render while the user is at the terminal, where the pane is closed
+// by design). A MATCHING live pane still answers directly: it measures the
+// viewport the user actually sees.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+vi.mock('../../../src/renderer/canvas/canvas-headless-capture', () => ({
+  captureHeadless: vi.fn(async (event: { requestId: string }) => ({
+    requestId: event.requestId,
+    ok: true,
+    headless: true,
+    result: {
+      viewport: { width: 1280, height: 800, dpr: 1 },
+      root: { ref: 'e0', role: 'document', name: 'hidden', box: { x: 0, y: 0, width: 0, height: 0 }, children: [] },
+    },
+  })),
+}))
+
 import {
   handleSnapshotRequest,
   registerCanvasFrame,
   _framesForTest,
 } from '../../../src/renderer/canvas/canvas-snapshot-host'
+import { captureHeadless } from '../../../src/renderer/canvas/canvas-headless-capture'
 import { CANVAS_BRIDGE_NS } from '../../../src/shared/canvas'
 
 const EVENT = {
@@ -16,6 +32,7 @@ const EVENT = {
   sessionId: 'sess-1',
   canvasId: 'canvas-1',
   versionId: 'v2',
+  entry: 'index.html',
   options: {},
 }
 
@@ -42,34 +59,43 @@ beforeEach(() => {
   _framesForTest().clear()
   document.body.innerHTML = ''
   makeFrame()
+  vi.mocked(captureHeadless).mockClear()
 })
 
 afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('no live frame', () => {
-  it('tells the agent to open the canvas instead of hanging', async () => {
+describe('no matching live frame → headless delegation', () => {
+  it('goes headless when no pane is open, and relays the headless reply verbatim', async () => {
     const reply = await handleSnapshotRequest(EVENT)
-    expect(reply.ok).toBe(false)
-    expect(reply.ok === false && reply.error).toContain('No Agent Canvas is open')
+    expect(captureHeadless).toHaveBeenCalledTimes(1)
+    expect(captureHeadless).toHaveBeenCalledWith(EVENT)
+    expect(reply.ok).toBe(true)
+    expect(reply.ok === true && reply.headless).toBe(true)
+    expect(reply.requestId).toBe(EVENT.requestId)
   })
 
-  it('refuses a canvas that is not the one on screen', async () => {
+  it('goes headless when the open canvas is a different one', async () => {
     registerCanvasFrame({ ...EVENT, canvasId: 'canvas-other', getWindow: () => frameWindow, isReady: () => true })
     const reply = await handleSnapshotRequest(EVENT)
-    expect(reply.ok === false && reply.error).toContain('does not match')
+    expect(captureHeadless).toHaveBeenCalledTimes(1)
+    expect(reply.ok).toBe(true)
+    expect(posted).toHaveLength(0) // the mismatched live frame was never asked
   })
 
-  it('refuses a version that is not the one on screen, and names what is', async () => {
+  it('goes headless when the pane shows a different version of this canvas', async () => {
     registerCanvasFrame({ ...EVENT, versionId: 'v1', getWindow: () => frameWindow, isReady: () => true })
     const reply = await handleSnapshotRequest(EVENT)
-    expect(reply.ok === false && reply.error).toContain('showing v1')
+    expect(captureHeadless).toHaveBeenCalledTimes(1)
+    expect(reply.ok).toBe(true)
+    expect(posted).toHaveLength(0)
   })
 
-  it('reports a frame that has not loaded yet', async () => {
+  it('a MATCHING pane that has not loaded yet still fails fast (headless would re-load the same document)', async () => {
     registerCanvasFrame({ ...EVENT, getWindow: () => null, isReady: () => true })
     const reply = await handleSnapshotRequest(EVENT)
+    expect(captureHeadless).not.toHaveBeenCalled()
     expect(reply.ok === false && reply.error).toContain('not loaded yet')
   })
 

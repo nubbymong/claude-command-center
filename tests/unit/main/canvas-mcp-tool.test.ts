@@ -552,11 +552,13 @@ describe('canvas_render', () => {
   it('tells the agent the render is not the user seeing it', async () => {
     // The hand-back IS the protocol (spec §6.1): render, hand back, the user
     // opens the pane. An agent told the page is on screen reports on a screen
-    // nobody opened, and then reads a snapshot from the version before it.
+    // nobody opened. (Since headless capture, the reply also says self-checking
+    // via canvas_snapshot no longer waits on the pane.)
     const out = await runCanvasRender({ mode: 'design', html: '<p>hi</p>' }, 'sess-mine', deps())
     expect(out.isError).toBe(false)
-    expect(out.text).toMatch(/not on screen/i)
+    expect(out.text).toMatch(/when they open the Canvas pane/i)
     expect(out.text).toMatch(/hand back/i)
+    expect(out.text).toMatch(/canvas_snapshot/)
   })
 
   it('refuses a build label that is not a short plain label', async () => {

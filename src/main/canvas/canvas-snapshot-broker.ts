@@ -55,6 +55,9 @@ export interface SnapshotRequest {
   sessionId: string
   canvasId: string
   versionId: string
+  /** Servable entry of the version (store-authored) — the renderer needs it to
+   *  lay the page out headless when the pane is not open on this version. */
+  entry: string
   options: CanvasSnapshotOptions
 }
 
@@ -75,7 +78,9 @@ export function requestCanvasSnapshot(request: SnapshotRequest): Promise<CanvasS
   return new Promise<CanvasSnapshotResult>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(requestId)
-      reject(new Error('The canvas frame did not answer in time. Is the Agent Canvas open on this session?'))
+      // No "is the pane open?" hint any more: a closed pane goes headless now,
+      // so a timeout is load/compute slowness, not a missing surface.
+      reject(new Error('The canvas frame did not answer in time.'))
     }, SNAPSHOT_TIMEOUT_MS)
     pending.set(requestId, {
       sessionId: request.sessionId,
@@ -99,7 +104,11 @@ export function resolveCanvasSnapshot(raw: unknown): void {
   clearTimeout(waiting.timer)
 
   if (reply.ok === true) {
-    waiting.resolve(sanitizeSnapshotResult((reply as { result?: unknown }).result, undefined, { scoped: waiting.scoped }))
+    // `headless` is stamped OUTSIDE the sanitiser, from the reply envelope: it
+    // is authored by our renderer host (which frame answered), never by the
+    // page, and must not be forgeable from inside the sanitised result body.
+    const sanitized = sanitizeSnapshotResult((reply as { result?: unknown }).result, undefined, { scoped: waiting.scoped })
+    waiting.resolve((reply as { headless?: unknown }).headless === true ? { ...sanitized, headless: true } : sanitized)
     return
   }
   const error = (reply as { error?: unknown }).error
