@@ -11,9 +11,9 @@ import { join } from 'path'
  *   - win/mac executableName pin the exe / .app bundle filename (the NSIS
  *     assisted installer appends APP_FILENAME to any install dir that does not
  *     contain it, and the mac drag-install replaces only on filename collision)
- *   - artifactName keeps the ClaudeCommandCenter- prefix (the updater in every
- *     installed client matches release assets by that literal prefix; a
- *     non-match is indistinguishable from "up to date")
+ *   - artifactName now carries the CURRENT brand, which is only safe because
+ *     the updater accepts both prefixes (since 2.1.0-beta.6); that tolerance is
+ *     pinned by its own test below and must outlive the rename
  *   - a top-level productName must never exist (Electron app.name would follow
  *     it and relocate userData away from %APPDATA%/claude-conductor)
  */
@@ -56,10 +56,87 @@ describe('brand identity guard', () => {
     expect(nsh).toMatch(/RMDir \/r "\$\{DIR\}"/)
   })
 
-  it('release artifact names keep the frozen ClaudeCommandCenter- prefix', () => {
-    expect(pkg.build.nsis.artifactName).toBe('ClaudeCommandCenter-${version}.${ext}')
-    expect(pkg.build.mac.artifactName).toBe('ClaudeCommandCenter-${version}-mac.${ext}')
-    expect(pkg.build.linux.artifactName).toBe('ClaudeCommandCenter-${version}-linux-${arch}.${ext}')
+  it('the relocation recognises the " Beta"-suffixed folder names too', () => {
+    // The original check compared only against "Claude Command Center" and
+    // "Claude Conductor". Real installs were in "Claude Conductor Beta" and
+    // "Claude Command Center Beta", which matched NEITHER — so the relocation
+    // never fired and each rename installed INSIDE the previous folder:
+    //   …\Claude Conductor Beta\Claude Command Center Beta\AI Code Conductor
+    // Missing any of these names re-opens that nesting.
+    const nsh = readFileSync(join(__dirname, '../../../build/installer.nsh'), 'utf-8')
+    // Scoped to the DETECTION macro, not the whole file: every one of these
+    // names also appears in the customInstall cleanup calls, so a whole-file
+    // `toContain` stayed green when the detection list was gutted (caught by
+    // mutation-testing this very guard).
+    const detect = nsh.match(/!macro IsLegacyBrandFolder[\s\S]*?!macroend/)
+    expect(detect, 'IsLegacyBrandFolder macro not found').not.toBeNull()
+    for (const name of [
+      '"Claude Command Center"',
+      '"Claude Conductor"',
+      '"Claude Command Center Beta"',
+      '"Claude Conductor Beta"',
+    ]) {
+      expect(detect![0]).toContain(name)
+    }
+    // And the walk has to look at ANCESTORS, not just the last component —
+    // a nested install's tail is already the current brand name.
+    expect(nsh).toMatch(/GetFileName/)
+    expect(nsh).toMatch(/\$\{Loop\}/)
+  })
+
+  it('a broken previous install is cleared silently instead of prompting', () => {
+    // electron-builder runs the recorded old uninstaller, retries 5x, and on
+    // failure shows "$(appCannotBeClosed)" — a message about the APP being
+    // open, raised when the UNINSTALLER failed. With no UninstallString it
+    // returns immediately, so clearing a record we know is broken is what keeps
+    // the upgrade silent. Both root keys, because the record can be in either.
+    const nsh = readFileSync(join(__dirname, '../../../build/installer.nsh'), 'utf-8')
+    expect(nsh).toMatch(/!macro ForgetPreviousInstall/)
+    expect(nsh).toMatch(/DeleteRegKey SHELL_CONTEXT "\$\{UNINSTALL_REGISTRY_KEY\}"/)
+    expect(nsh).toMatch(/DeleteRegKey HKCU "\$\{UNINSTALL_REGISTRY_KEY\}"/)
+    // Fired both for a legacy tree and for a recorded install whose binary is
+    // simply gone.
+    expect(nsh).toMatch(/IfNot\} \$\{FileExists\} "\$INSTDIR\\\$\{APP_EXECUTABLE_FILENAME\}"/)
+  })
+
+  it('release artifacts carry the current brand name, on every platform', () => {
+    // These WERE frozen to ClaudeCommandCenter- because the updater in shipped
+    // clients matched release assets by that literal prefix, so renaming them
+    // would have made every install see "no matching asset" — indistinguishable
+    // from "up to date", and unfixable, since the fix only ships in the build
+    // they can no longer see. Releases worked around it by publishing each
+    // installer TWICE, under both names.
+    //
+    // 2.1.0-beta.6 taught the updater BOTH prefixes (see the next test), so any
+    // client that can reach a new release already resolves the brand name and
+    // the duplicate is dead weight — its .blockmap and latest*.yml never even
+    // referenced it. Only installs on beta.5 or older are left behind, and they
+    // can download from the release page by hand.
+    expect(pkg.build.nsis.artifactName).toBe('AI-Code-Conductor-${version}.${ext}')
+    expect(pkg.build.mac.artifactName).toBe('AI-Code-Conductor-${version}-mac.${ext}')
+    expect(pkg.build.linux.artifactName).toBe('AI-Code-Conductor-${version}-linux-${arch}.${ext}')
+  })
+
+  it('the updater still accepts the LEGACY prefix, which is what makes the rename safe', () => {
+    // This is the load-bearing half of the rename and the reason the assertion
+    // above could change at all. Dropping 'ClaudeCommandCenter-' from this list
+    // is harmless for assets published from now on, but it would strand any
+    // client still running a build whose release assets carried the old name if
+    // one is ever re-published. Keep both until beta-era installs are gone.
+    const updater = readFileSync(join(__dirname, '../../../src/main/github-update.ts'), 'utf-8')
+    const line = updater.match(/const INSTALLER_PREFIXES = \[([^\]]+)\]/)
+    expect(line).not.toBeNull()
+    expect(line![1]).toContain("'ClaudeCommandCenter-'")
+    expect(line![1]).toContain("'AI-Code-Conductor-'")
+  })
+
+  it('releases publish ONE set of installers — no legacy duplicate', () => {
+    // The duplicate-copy step is what put two names on every release. If it
+    // comes back, so does the "which one do I download?" confusion, and the
+    // copies carry no matching .blockmap.
+    const workflow = readFileSync(join(__dirname, '../../../.github/workflows/release.yml'), 'utf-8')
+    expect(workflow).not.toMatch(/cp -- "\$f" "\$clean"/)
+    expect(workflow).toContain('INSTALLER="AI-Code-Conductor-${VERSION}.exe"')
   })
 
   it('npm name and appId stay frozen (userData path + NSIS upgrade GUID)', () => {

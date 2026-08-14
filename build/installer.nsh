@@ -93,18 +93,104 @@
 ; even if an earlier relocation was interrupted before it could.
 !include "FileFunc.nsh"
 
+; Is ${NAME} one of the folder names this app has shipped under? Sets ${OUT} to
+; 1 or 0. Every rename added a name here; the " Beta" variants are the ones the
+; first version of this check missed, which is how installs ended up NESTED
+; (see customInit).
+!macro IsLegacyBrandFolder NAME OUT
+  StrCpy ${OUT} 0
+  ${If} ${NAME} == "Claude Command Center"
+  ${OrIf} ${NAME} == "Claude Conductor"
+  ${OrIf} ${NAME} == "Claude Command Center Beta"
+  ${OrIf} ${NAME} == "Claude Conductor Beta"
+  ${OrIf} ${NAME} == "claude-conductor"
+    StrCpy ${OUT} 1
+  ${EndIf}
+!macroend
+
+; Forget the recorded previous installation, in BOTH root keys.
+;
+; This is what stops electron-builder's uninstallOldVersion from running an old
+; uninstaller that cannot succeed: with no UninstallString it clears errors and
+; returns immediately (installUtil.nsh), so the install proceeds silently
+; instead of retrying five times and reporting "$(appCannotBeClosed)" — a
+; message about the APP BEING OPEN that is actually emitted when the old
+; UNINSTALLER fails. Only ever inserted on a path we have already established
+; is broken; a healthy same-folder upgrade still runs its uninstaller normally.
+!macro ForgetPreviousInstall
+  DeleteRegKey SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}"
+  DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY}"
+  !ifdef UNINSTALL_REGISTRY_KEY_2
+    DeleteRegKey SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY_2}"
+    DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY_2}"
+  !endif
+!macroend
+
 !macro customInit
-  ${GetFileName} "$INSTDIR" $0
-  ${If} $0 == "Claude Command Center"
-  ${OrIf} $0 == "Claude Conductor"
-    DetailPrint "Relocating install from legacy folder: $INSTDIR"
-    ${GetParent} "$INSTDIR" $1
+  ; ---- 1. Find the OUTERMOST legacy folder in $INSTDIR's path -------------
+  ; $INSTDIR is seeded from the previous installation by initMultiUser, so on a
+  ; broken upgrade it can be nested several deep:
+  ;   …\Programs\Claude Conductor Beta\Claude Command Center Beta\AI Code Conductor
+  ; That happened because each rename only compared the LAST path component
+  ; against two exact names; a " Beta"-suffixed folder matched neither, so the
+  ; relocation never fired and instFilesPre appended the new name INSIDE the old
+  ; folder. Every rename made it one level deeper. Walking the whole path (not
+  ; just its tail) is what makes this self-healing however deep it already is.
+  StrCpy $R9 ""            ; outermost legacy dir found, "" = none
+  StrCpy $R8 "$INSTDIR"
+  StrCpy $R6 0             ; depth guard
+  ${Do}
+    ${GetFileName} "$R8" $R7
+    StrCmp $R7 "" 0 +2
+      ${ExitDo}
+    !insertmacro IsLegacyBrandFolder "$R7" $R5
+    ${If} $R5 == 1
+      StrCpy $R9 "$R8"
+    ${EndIf}
+    ${GetParent} "$R8" $R8
+    StrCmp $R8 "" 0 +2
+      ${ExitDo}
+    IntOp $R6 $R6 + 1
+    ${If} $R6 > 8
+      ${ExitDo}
+    ${EndIf}
+  ${Loop}
+
+  ${If} $R9 != ""
+    ; A legacy tree. Relocate beside it, never inside it: the parent of the
+    ; OUTERMOST legacy folder is the real install root (…\Programs).
+    ${GetParent} "$R9" $R4
+    DetailPrint "Relocating install out of legacy folder: $R9"
     ; Set the FINAL path here rather than just stepping up to the parent and
     ; letting instFilesPre append. A silent install (/S) skips MUI pages, so the
     ; page PRE callbacks never fire — leaving $INSTDIR at the parent would then
     ; install straight into …\Programs. Writing the full path is correct in both
     ; modes, and makes instFilesPre's check a no-op because the name is present.
-    StrCpy $INSTDIR "$1\${APP_FILENAME}"
+    StrCpy $INSTDIR "$R4\${APP_FILENAME}"
+    ; The recorded uninstaller lives in the tree customInstall is about to
+    ; delete, and on the observed failure it returned non-zero five times in a
+    ; row. Drop the record so it is never invoked.
+    !insertmacro ForgetPreviousInstall
+  ${Else}
+    ; ---- 2. Not legacy — but is the previous install still THERE? ----------
+    ; $INSTDIR was seeded by initMultiUser from the recorded previous install,
+    ; so if the app binary is not at that path the recorded install is gone
+    ; (removed by hand, or by an upgrade that failed part-way) and its
+    ; UninstallString points at an uninstaller that no longer exists.
+    ; electron-builder runs it anyway, fails five times, and shows the same
+    ; misleading "cannot be closed" dialog — with nothing for the user to close.
+    ;
+    ; Deliberately a file-existence test rather than parsing UninstallString:
+    ; GetInQuotes lives in installUtil.nsh, which installer.nsi includes AFTER
+    ; the point customInit is inserted, so it cannot be called from here.
+    ;
+    ; On a genuine fresh install this is a no-op (there is no record to clear),
+    ; and on a healthy same-folder upgrade the binary IS present, so the old
+    ; uninstaller still runs exactly as it does today.
+    ${IfNot} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+      DetailPrint "No previous install at $INSTDIR — clearing any stale uninstall record"
+      !insertmacro ForgetPreviousInstall
+    ${EndIf}
   ${EndIf}
 !macroend
 
@@ -129,9 +215,18 @@
   ; directories and is untouched. appId is frozen, so this install has already
   ; overwritten the single uninstall entry to point at $INSTDIR — leaving the old
   ; folder would just orphan a copy that nothing can uninstall.
+  ; Every name this app has shipped under. RMDir /r on the OUTERMOST legacy
+  ; folder takes any nested tree with it, which is what clears the
+  ;   …\Claude Conductor Beta\Claude Command Center Beta\AI Code Conductor
+  ; shape that the old two-name check let accumulate. RemoveLegacyInstall
+  ; refuses to touch $INSTDIR itself, so relocating first (customInit) is what
+  ; makes this safe.
   ${GetParent} "$INSTDIR" $R2
+  !insertmacro RemoveLegacyInstall "$R2\Claude Conductor Beta" "Claude Conductor Beta"
+  !insertmacro RemoveLegacyInstall "$R2\Claude Command Center Beta" "Claude Command Center Beta"
   !insertmacro RemoveLegacyInstall "$R2\Claude Command Center" "Claude Command Center"
   !insertmacro RemoveLegacyInstall "$R2\Claude Conductor" "Claude Conductor"
+  !insertmacro RemoveLegacyInstall "$R2\claude-conductor" "claude-conductor"
 !macroend
 
 ; ============================================================

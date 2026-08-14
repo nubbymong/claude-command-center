@@ -72,7 +72,10 @@
   --terminal-foreground: #eef2f7;
 
   --accent: #3fbecb;
-  --brand: #c47b4a;
+  /* Brand accent (Beta pill, prerelease chip, drop targets). Blue since the AI
+     Code Conductor rename — it was the same orange as the old --ob-deep, which
+     is why the Beta pill kept looking like the pre-rename product. */
+  --brand: #2f9bff;
 
   --status-success: #7bd88f;
   --status-warning: #ecc14e;
@@ -107,12 +110,20 @@
   --shadow-fab: 0 3px 10px rgba(0,0,0,.4);
   --highlight-inset: inset 0 1px 0 rgba(255,255,255,.04);
 
-  /* Onboarding harness — brand orange (NOT the app teal); scoped to the first-run flow. */
-  --ob: #e8915c;
-  --ob-bright: #f0a06a;
-  --ob-deep: #c47b4a;
-  --ob-soft: rgba(232,145,92,.14);
-  --ob-line: rgba(232,145,92,.45);
+  /* Onboarding harness — the AI Code Conductor brand blue (NOT the app teal);
+     scoped to the first-run flow. This family was orange under the previous
+     branding. BrandMark had already been redrawn in the brand azure, so the
+     tour showed a BLUE logo sitting inside ORANGE chrome. The values below are
+     the monogram's own gradient stop (#2F9BFF) lightened and deepened for the
+     bright/deep roles, so the flow matches the mark, the splash and the icon. */
+  --ob: #2f9bff;
+  --ob-bright: #5cb0ff;
+  --ob-deep: #1b7fd9;
+  --ob-soft: rgba(47,155,255,.14);
+  --ob-line: rgba(47,155,255,.45);
+  /* Text ON a filled --ob surface. Near-black navy: the previous #1a0d05 was a
+     dark BROWN chosen for orange and reads muddy over blue. */
+  --ob-on: #04121f;
   --field: #0c1117;
   --serif: 'Georgia', 'Times New Roman', serif;
 }
@@ -177,7 +188,8 @@
   --terminal-foreground: #11161f;
 
   --accent: #15808d;
-  --brand: #b3612e;
+  /* Brand accent, darkened for contrast as text/border on the light substrate. */
+  --brand: #1668c4;
 
   --status-success: #2d8349;
   --status-warning: #946a12;
@@ -205,12 +217,15 @@
   --shadow-raised: -11px 0 26px rgba(0,0,0,.20);
   --highlight-inset: inset 0 1px 0 rgba(255,255,255,.5); /* inverted: light substrate needs a bright top highlight */
 
-  /* Onboarding harness — brand orange, light values. */
-  --ob: #b3612e;
-  --ob-bright: #c47b4a;
-  --ob-deep: #9a4f29;
-  --ob-soft: rgba(179,97,46,.10);
-  --ob-line: rgba(179,97,46,.5);
+  /* Onboarding harness — brand blue, light values (darkened for contrast on
+     the light substrate, same treatment as --accent and the effort ramp). */
+  --ob: #1668c4;
+  --ob-bright: #2f9bff;
+  --ob-deep: #10508f;
+  --ob-soft: rgba(22,104,196,.10);
+  --ob-line: rgba(22,104,196,.5);
+  /* Filled --ob is dark enough in light mode that near-white reads best. */
+  --ob-on: #f2f6fb;
   --field: #cdd5e0;
 }
 

@@ -89,7 +89,7 @@ jobs:
               *)    TAG="v${VERSION}"      ;;
             esac
           fi
-          INSTALLER="ClaudeCommandCenter-${VERSION}.exe"
+          INSTALLER="AI-Code-Conductor-${VERSION}.exe"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
@@ -438,27 +438,23 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
-      # Publish each installer a second time under the current brand name, so a
-      # fresh download carries no legacy name. The ClaudeCommandCenter-* copies
-      # MUST stay: every installed client matches release assets by that literal
-      # prefix, and latest*.yml still points at them, so removing them would
-      # strand existing installs on "no update available". Only the installers
-      # are duplicated — .blockmap and latest*.yml are updater-internal and are
-      # resolved by name from the legacy asset.
-      - name: Add cleanly-named download copies
-        run: |
-          cd artifacts
-          for f in *.exe *.dmg *.AppImage; do
-            [ -e "$f" ] || continue
-            clean="${f/ClaudeCommandCenter-/AI-Code-Conductor-}"
-            if [ "$clean" != "$f" ]; then
-              cp -- "$f" "$clean"
-              echo "added $clean"
-            fi
-          done
-          ls -la
-
-      # Runs AFTER the copies so users can verify whichever name they downloaded.
+      # One name, one set of assets.
+      #
+      # Releases used to publish every installer TWICE — once as
+      # ClaudeCommandCenter-* and once as AI-Code-Conductor-* — because the
+      # updater in shipped clients matched release assets by the literal legacy
+      # prefix, so dropping it would have stranded them on "no update
+      # available", unfixably. Since 2.1.0-beta.6 the updater accepts BOTH
+      # prefixes (INSTALLER_PREFIXES in src/main/github-update.ts), so every
+      # client that can reach this release already resolves the brand name.
+      # Only installs on beta.5 or older are left behind, and they can download
+      # from the release page by hand.
+      #
+      # electron-builder now emits the brand name directly (build.*.artifactName
+      # in package.json), so the .blockmap and latest*.yml — which reference the
+      # installer BY NAME — line up with the installer that actually ships. The
+      # duplicate copies never had matching blockmaps, which is exactly the kind
+      # of mismatch the manifest gate below exists to catch.
       - name: Generate checksums
         run: |
           cd artifacts
@@ -475,10 +471,8 @@ jobs:
           CHANNEL="${{ inputs.channel }}"
 
           TITLE="${TAG}"
-          # Display names only. Asset filenames deliberately keep the
-          # ClaudeCommandCenter- prefix (the updater in every installed client
-          # matches release assets by that literal prefix; renaming them
-          # strands existing installs silently).
+          # Display names. Asset filenames carry the same brand name — see the
+          # checksums step above for why the legacy duplicate is gone.
           case "$CHANNEL" in
             stable)
               RELEASE_NAME="AI Code Conductor"
@@ -510,7 +504,7 @@ jobs:
               echo ""
             fi
             echo "---"
-            echo "Installer files keep the ClaudeCommandCenter- name so existing installs keep receiving updates."
+            echo "Upgrading from 2.1.0-beta.5 or earlier? Download the installer from this page — that build's updater looked for the old file name."
             echo ""
             echo "AI Code Conductor is an independent community project — not affiliated with or endorsed by Anthropic. Claude and Claude Code are Anthropic trademarks."
             echo ""

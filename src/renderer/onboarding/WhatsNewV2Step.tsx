@@ -1,3 +1,11 @@
+import { releaseLine } from '../utils/versionLabel'
+
+declare const __APP_VERSION__: string
+
+// The release line this build belongs to ("2.1"), not a hard-coded number: the
+// heading used to say "What's new in 2.0" on every 2.1 beta.
+const LINE = releaseLine(typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '')
+
 const SPARKLES = String.fromCodePoint(0x2728)
 const LOCK = String.fromCodePoint(0x1f512)
 const GEAR = String.fromCodePoint(0x2699)
@@ -39,7 +47,7 @@ const CARDS: { icon: string; title: string; desc: string; beta?: boolean }[] = [
   {
     icon: BOLT,
     title: 'A newer engine',
-    desc: 'Electron 42, React 19 and xterm.js 6 under the hood: a faster renderer on a current security baseline.',
+    desc: 'Electron 43, React 19 and xterm.js 6 under the hood: a faster renderer on a current security baseline.',
   },
 ]
 
@@ -48,9 +56,9 @@ export function WhatsNewV2Step({ onNext }: { onNext: () => void }) {
     <>
       <div className="p2">
         <div className="p2-inner" style={{ width: 'min(880px, 95vw)' }}>
-          <h2 className="h2">What's new in 2.0</h2>
+          <h2 className="h2">What's new in {LINE}</h2>
           <p className="p2-sub">
-            AI Code Conductor 2.0 is a big release. The short version, before we set it up together:
+            AI Code Conductor {LINE} is a big release. The short version, before we set it up together:
           </p>
 
           <div className="gh-grid">

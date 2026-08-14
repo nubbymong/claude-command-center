@@ -141,7 +141,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
             width: rect.width + PAD * 2,
             height: rect.height + PAD * 2,
             borderRadius: 12,
-            boxShadow: '0 0 0 9999px rgba(6,9,13,0.68), 0 0 0 2px var(--ob, #e8915c)',
+            boxShadow: '0 0 0 9999px rgba(6,9,13,0.68), 0 0 0 2px var(--ob, #2f9bff)',
             transition: 'top .18s, left .18s, width .18s, height .18s',
             pointerEvents: 'none',
           }}
@@ -191,7 +191,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
             <button
               onClick={next}
               type="button"
-              style={{ border: 0, borderRadius: 9, padding: '8px 18px', fontSize: 13, fontWeight: 670, cursor: 'pointer', background: 'linear-gradient(135deg, var(--ob-bright, #f0a06a), var(--ob-deep, #c47b4a))', color: '#1a0d05' }}
+              style={{ border: 0, borderRadius: 9, padding: '8px 18px', fontSize: 13, fontWeight: 670, cursor: 'pointer', background: 'linear-gradient(135deg, var(--ob-bright, #5cb0ff), var(--ob-deep, #1b7fd9))', color: 'var(--ob-on, #04121f)' }}
             >
               {step.cta ?? 'Next →'}
             </button>
