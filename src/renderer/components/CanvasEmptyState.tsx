@@ -8,9 +8,12 @@ interface Props {
 }
 
 /** What one keypress asks the agent to do. Typed into the terminal WITHOUT a
- *  newline — the user reads it, can edit it, and presses Enter themselves. */
+ *  newline — the user reads it, can edit it, and presses Enter themselves.
+ *  Plain words, no tool names: the agent-canvas skill (canvas-plugin.ts)
+ *  carries the workflow — htmlPath, data-ux-ids, self-check, hand-back — so
+ *  the user never has to speak MCP (owner feedback 2026-08-14). */
 const STARTER_PROMPT =
-  'Render a design mockup of what you are building onto my Agent Canvas with canvas_render, and put data-ux-id attributes on the key elements.'
+  'Show me a design mockup of what you are building on my Agent Canvas.'
 
 const LOOP_STEPS: Array<{ title: string; detail: string }> = [
   { title: 'Agent renders', detail: 'a real page appears here' },
