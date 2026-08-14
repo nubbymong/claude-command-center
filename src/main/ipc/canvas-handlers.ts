@@ -27,6 +27,7 @@ import {
   upsertAnnotation,
 } from '../canvas/canvas-review-store'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
+import { installCanvasSessionLink } from '../canvas/canvas-session-link'
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -165,6 +166,11 @@ const annotationResolveSchema = z
 // ---------------------------------------------------------------------------
 
 export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): void {
+  // Continuity glue: canvas records get stamped with each session's cwd +
+  // conversation so adoption (canvas-session-link) can move a canvas to the
+  // session that carries the same work after a restart.
+  installCanvasSessionLink()
+
   ipcMain.handle(IPC.CANVAS_GET_STATE, async (_e, args: unknown) => {
     const { sessionId } = getStateSchema.parse(args)
     return getCanvasStateForSession(sessionId)

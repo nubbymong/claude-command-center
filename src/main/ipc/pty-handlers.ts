@@ -10,6 +10,7 @@ import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
 import { registerCanvasUatRoot } from '../canvas/canvas-store'
+import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -266,6 +267,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     if (!options?.ssh) {
       if (options?.cwd) registerCanvasUatRoot(options.cwd)
       if (options?.resume?.cwd) registerCanvasUatRoot(options.resume.cwd)
+      // Canvas continuity: stamp this session's work identity and let it adopt
+      // an orphaned canvas from a previous session of the same conversation /
+      // project (the VM "repush" bug, 2026-08-14). Local sessions only, same
+      // reasoning as the UAT roots above.
+      noteSessionSpawnForCanvas(sessionId, {
+        cwd: options?.resume?.cwd ?? options?.cwd,
+        resumeUuid: options?.resume?.uuid,
+      })
     }
 
     spawnPty(win, sessionId, resolvedOptions)

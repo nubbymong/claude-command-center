@@ -32,6 +32,11 @@ const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 const MAX_DESIGN_HTML_BYTES = 8 * 1024 * 1024
 const MAX_VERSIONS_PER_CANVAS = 500
 
+/** A Claude conversation uuid as it appears in transcript basenames. Kept loose
+ *  (hex + dashes) — it is a MATCHING key, never a path segment. */
+const CONVERSATION_UUID_RE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/
+const MAX_CWD_CHARS = 1024
+
 /**
  * UAT versions serve a project's built `dist/` from an absolute path the CALLER
  * supplies. That path is NOT trusted: unconfined, a caller could register `C:\`
@@ -89,6 +94,43 @@ function isSafeEntry(entry: unknown): entry is string {
 
 interface CanvasRecord extends CanvasState {
   createdAt: string
+  /**
+   * Continuity stamps (2026-08-14, the VM "repush" bug). The CCC session id a
+   * canvas is keyed to is more ephemeral than the work it anchors: quit the
+   * app, open a fresh tile in the same project, resume the same conversation —
+   * new session id, stranded canvas. These two identify the WORK so a new
+   * session can adopt it: the project directory the owning session ran in, and
+   * the Claude conversation the canvas was last rendered under. First render
+   * stamps them (via the injected session-info resolver); `cwd` never drifts
+   * afterwards, `conversationUuid` tracks the latest render.
+   */
+  cwd?: string
+  conversationUuid?: string
+}
+
+/** How a session with NO canvas of its own may claim an orphaned one. */
+export interface CanvasAdoptionQuery {
+  cwd?: string
+  conversationUuid?: string
+  /**
+   * True when the given session can still come back and claim its canvas by
+   * id — a live PTY, or a tile still in the saved-session list. Adoption must
+   * never race a restoring tile at boot (spawn order is arbitrary), so this
+   * check fails SAFE: uncertain means current, and current means untouchable.
+   */
+  isSessionCurrent: (sessionId: string) => boolean
+}
+
+/** What renderVersion stamps onto records; resolved per session by the pty
+ *  layer (canvas-session-link) so this store stays lifecycle-blind. */
+export type CanvasSessionInfoResolver = (
+  sessionId: string,
+) => { cwd?: string; conversationUuid?: string } | null
+
+let sessionInfoResolver: CanvasSessionInfoResolver | null = null
+
+export function setCanvasSessionInfoResolver(resolver: CanvasSessionInfoResolver | null): void {
+  sessionInfoResolver = resolver
 }
 
 /** What the ccc-ux:// protocol needs to serve a version. `contentRoot` is the
@@ -156,6 +198,10 @@ function isValidRecord(value: unknown): value is CanvasRecord {
   const r = value as Partial<CanvasRecord>
   if (typeof r.canvasId !== 'string' || !CANVAS_ID_RE.test(r.canvasId)) return false
   if (typeof r.sessionId !== 'string' || !SESSION_ID_RE.test(r.sessionId)) return false
+  // Continuity stamps are optional, but a present one must be OUR shape — the
+  // same strictness as every other field of a record read back from disk.
+  if (r.cwd !== undefined && (typeof r.cwd !== 'string' || r.cwd.length === 0 || r.cwd.length > MAX_CWD_CHARS)) return false
+  if (r.conversationUuid !== undefined && (typeof r.conversationUuid !== 'string' || !CONVERSATION_UUID_RE.test(r.conversationUuid))) return false
   if (r.activeVersionId !== null && (typeof r.activeVersionId !== 'string' || !CANVAS_VERSION_ID_RE.test(r.activeVersionId))) return false
   if (!Array.isArray(r.versions)) return false
   for (const v of r.versions) {
@@ -303,8 +349,32 @@ export function renderVersion(
   // persist failure leaves the live maps untouched — the render fails closed —
   // and at worst orphans the already-written `versions/<vid>/` dir, which no
   // record references and the protocol never serves.
+  // Continuity stamps (adoption keys): cwd is stamped once and never drifts —
+  // the canvas belongs to the project it was born in; conversationUuid tracks
+  // the LATEST render, so a canvas re-rendered under a resumed conversation
+  // follows that conversation. Resolver failures stamp nothing (fail open —
+  // stamps improve adoption, their absence must never refuse a render).
+  let info: { cwd?: string; conversationUuid?: string } | null = null
+  try {
+    info = sessionInfoResolver ? sessionInfoResolver(sessionId) : null
+  } catch {
+    info = null
+  }
+  const cwdStamp =
+    typeof info?.cwd === 'string' && info.cwd.length > 0 && info.cwd.length <= MAX_CWD_CHARS ? info.cwd : undefined
+  const conversationStamp =
+    typeof info?.conversationUuid === 'string' && CONVERSATION_UUID_RE.test(info.conversationUuid)
+      ? info.conversationUuid
+      : undefined
+
   const base: CanvasRecord = existing ?? { canvasId, sessionId, createdAt, activeVersionId: null, versions: [] }
-  const nextRecord: CanvasRecord = { ...base, versions: [...base.versions, version], activeVersionId: versionId }
+  const nextRecord: CanvasRecord = {
+    ...base,
+    ...(cwdStamp && !base.cwd ? { cwd: cwdStamp } : {}),
+    ...(conversationStamp ? { conversationUuid: conversationStamp } : {}),
+    versions: [...base.versions, version],
+    activeVersionId: versionId,
+  }
   persist(nextRecord)
   canvases.set(canvasId, nextRecord)
   sessionIndex.set(sessionId, canvasId)
@@ -355,6 +425,99 @@ export function setActiveVersion(sessionId: string, versionId: string): CanvasSt
   return toState(next)
 }
 
+/** Comparable form of a project directory: resolved, trailing separators
+ *  dropped, case-folded on Windows (its filesystems compare case-insensitively). */
+function normalizeCwdForCompare(p: string): string | null {
+  if (typeof p !== 'string' || p.length === 0 || p.length > MAX_CWD_CHARS) return null
+  let resolved: string
+  try {
+    resolved = path.resolve(p)
+  } catch {
+    return null
+  }
+  const trimmed = resolved.replace(/[\\/]+$/, '')
+  if (trimmed.length === 0) return null
+  return process.platform === 'win32' ? trimmed.toLowerCase() : trimmed
+}
+
+/**
+ * Let a session that owns NO canvas claim an orphaned one (2026-08-14, the VM
+ * "repush" bug: app restart → fresh tile → same conversation resumed → the
+ * canvas stranded under the dead session id and a second render minted a
+ * parallel canvas, both called "v1").
+ *
+ * Matching is by the work's durable identities, strongest first: the exact
+ * conversation (resume), then the project directory; ties go to the most
+ * recently rendered. A canvas is only orphaned when its owner session is not
+ * current per the caller's check — a live PTY or a saved tile keeps its canvas
+ * reclaimable by id, and this function will not touch it.
+ *
+ * The re-bind persists BEFORE memory moves (the renderVersion discipline), and
+ * the caller is expected to re-bind the canvas's review store next
+ * (rebindReviewsToSession) — reviews.json carries the owner session id too.
+ */
+export function adoptCanvasForSession(
+  sessionId: string,
+  query: CanvasAdoptionQuery,
+): { canvasId: string; activeVersionId: string | null } | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null
+  ensureDiskScanned()
+  if (sessionIndex.has(sessionId)) return null
+
+  const wantCwd = query.cwd ? normalizeCwdForCompare(query.cwd) : null
+  const wantConversation =
+    typeof query.conversationUuid === 'string' && CONVERSATION_UUID_RE.test(query.conversationUuid)
+      ? query.conversationUuid.toLowerCase()
+      : null
+  if (!wantCwd && !wantConversation) return null
+
+  let best: CanvasRecord | null = null
+  let bestByConversation = false
+  let bestTime = ''
+  for (const record of canvases.values()) {
+    if (record.sessionId === sessionId) continue
+    if (record.versions.length === 0) continue // nothing to inherit
+    let current = true
+    try {
+      current = query.isSessionCurrent(record.sessionId)
+    } catch {
+      current = true // cannot tell → treat as current → untouchable
+    }
+    if (current) continue
+    const conversationMatch =
+      !!wantConversation && record.conversationUuid?.toLowerCase() === wantConversation
+    const cwdMatch = !!wantCwd && !!record.cwd && normalizeCwdForCompare(record.cwd) === wantCwd
+    if (!conversationMatch && !cwdMatch) continue
+    const time = record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt
+    const better =
+      best === null ||
+      (conversationMatch && !bestByConversation) ||
+      (conversationMatch === bestByConversation && time > bestTime)
+    if (better) {
+      best = record
+      bestByConversation = conversationMatch
+      bestTime = time
+    }
+  }
+  if (!best) return null
+
+  const next: CanvasRecord = {
+    ...best,
+    sessionId,
+    // The canvas moves to this session's identity wholesale: its project dir
+    // (unchanged in the common case) and the conversation now driving it.
+    ...(query.cwd && query.cwd.length <= MAX_CWD_CHARS ? { cwd: query.cwd } : {}),
+    ...(wantConversation ? { conversationUuid: query.conversationUuid } : {}),
+  }
+  persist(next)
+  const previousOwner = best.sessionId
+  canvases.set(next.canvasId, next)
+  if (sessionIndex.get(previousOwner) === next.canvasId) sessionIndex.delete(previousOwner)
+  sessionIndex.set(sessionId, next.canvasId)
+  emitChanged(next)
+  return { canvasId: next.canvasId, activeVersionId: next.activeVersionId }
+}
+
 /** Resolve what the ccc-ux:// protocol may serve for a canvas/version pair.
  *  Returns null for anything unknown — the protocol answers 404, never throws. */
 export function getServableVersion(canvasId: string, versionId: string): ServableVersion | null {
@@ -383,4 +546,5 @@ export function _resetCanvasStoreForTest(): void {
   sessionIndex.clear()
   uatRoots.clear()
   diskScanned = false
+  sessionInfoResolver = null
 }

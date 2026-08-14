@@ -235,6 +235,21 @@ function isValidRecord(value: unknown, canvasId: string): value is ReviewFileRec
 
 // ── Load / access ───────────────────────────────────────────────────────────
 
+/** The record re-stamped onto a new owner session — every review's embedded
+ *  handle moves with it, so the strict validation stays satisfiable. */
+function reboundRecord(record: ReviewFileRecord, sessionId: string): ReviewFileRecord {
+  return {
+    ...record,
+    sessionId,
+    reviews: record.reviews.map((r) => ({
+      ...r,
+      canvas: { ...r.canvas, sessionId },
+      annotationIds: [...r.annotationIds],
+    })),
+    annotations: record.annotations.map(cloneAnnotation),
+  }
+}
+
 function loadRecord(canvasId: string, sessionId: string): ReviewFileRecord | null {
   const existing = records.get(canvasId)
   if (existing) return existing
@@ -247,21 +262,59 @@ function loadRecord(canvasId: string, sessionId: string): ReviewFileRecord | nul
   }
   try {
     const parsed: unknown = JSON.parse(raw)
-    if (!isValidRecord(parsed, canvasId) || parsed.sessionId !== sessionId) {
+    if (!isValidRecord(parsed, canvasId)) {
       broken.add(canvasId)
       return null
     }
+    let record: ReviewFileRecord = parsed
+    if (record.sessionId !== sessionId) {
+      // NOT corruption: the caller's sessionId came from the canvas record,
+      // which is authoritative for ownership, and canvas adoption moves it
+      // (canvas-session-link). An internally-valid file under a stale owner is
+      // re-stamped — refusing it would mark every adopted canvas's reviews
+      // broken. Real shape corruption still lands in `broken` above.
+      record = reboundRecord(record, sessionId)
+      try {
+        persist(record)
+      } catch {
+        /* disk heal failed — the in-memory view is still correct, and the next
+           successful mutation persists the re-bound record anyway */
+      }
+    }
     // Heal counters upward if skewed; ids must never repeat.
-    const maxReview = parsed.reviews.reduce((max, r) => Math.max(max, Number(r.id.slice(1))), 0)
-    const maxAnnotation = parsed.annotations.reduce((max, a) => Math.max(max, Number(a.id.slice(1))), 0)
-    parsed.nextReview = Math.max(parsed.nextReview, maxReview + 1)
-    parsed.nextAnnotation = Math.max(parsed.nextAnnotation, maxAnnotation + 1)
-    records.set(canvasId, parsed)
-    return parsed
+    const maxReview = record.reviews.reduce((max, r) => Math.max(max, Number(r.id.slice(1))), 0)
+    const maxAnnotation = record.annotations.reduce((max, a) => Math.max(max, Number(a.id.slice(1))), 0)
+    record.nextReview = Math.max(record.nextReview, maxReview + 1)
+    record.nextAnnotation = Math.max(record.nextAnnotation, maxAnnotation + 1)
+    records.set(canvasId, record)
+    return record
   } catch {
     broken.add(canvasId)
     return null
   }
+}
+
+/**
+ * Move a canvas's review store to a new owner session (canvas adoption,
+ * 2026-08-14). reviews.json embeds the owner session id at the record level
+ * and inside every review's canvas handle; after the canvas record re-binds,
+ * this brings the review side into agreement. Loading under the new session
+ * would self-heal anyway (above) — calling this at adoption time makes the
+ * move durable immediately and pushes the change event while the canvas one
+ * is fresh. A broken store stays broken: preserved evidence is never touched.
+ */
+export function rebindReviewsToSession(canvasId: string, sessionId: string): void {
+  if (!SESSION_ID_RE.test(sessionId)) return
+  if (broken.has(canvasId)) return
+  const record = loadRecord(canvasId, sessionId)
+  if (!record) return
+  if (record.sessionId === sessionId) {
+    // loadRecord already healed the file on this call (or it always matched);
+    // either way the maps and disk agree — just let listeners know.
+    emitChanged(record)
+    return
+  }
+  commit(reboundRecord(record, sessionId))
 }
 
 interface SessionCanvas {
