@@ -96,7 +96,27 @@ if defined CCC_SEED_ACCOUNTS echo [ccc]   --seed-accounts: copying prod account 
 echo.
 
 REM --- clean the dev data dir BEFORE the log dir is created ---
-if defined CCC_CLEAN powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path $env:CCC_DEV_DATA_DIR) { Remove-Item -LiteralPath $env:CCC_DEV_DATA_DIR -Recurse -Force -EA SilentlyContinue; Write-Host '[ccc] dev data dir wiped.' }"
+REM FAILS LOUDLY ON A PARTIAL WIPE. Since #261 moved Electron's sessionData under
+REM the dev data root, `--clean` now deletes a LIVE session store if an instance is
+REM using this data dir. Chromium holds locks on LevelDB and Network files, so
+REM Remove-Item leaves those behind -- and swallowing that (the old
+REM `-EA SilentlyContinue` with no check) launched straight into a half-deleted
+REM profile holding a stale-but-live claude.ai session. The port-5173 refusal above
+REM covers the usual case, but it races an instance that has not bound the port yet
+REM and does not help when CCC_DEV_DATA_DIR is pointed by hand at a dir another
+REM instance owns. So: attempt the wipe, then VERIFY it is gone; if not, stop rather
+REM than run against wreckage.
+if defined CCC_CLEAN (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=$env:CCC_DEV_DATA_DIR; if (Test-Path $d) { Remove-Item -LiteralPath $d -Recurse -Force -EA SilentlyContinue; if (Test-Path $d) { Write-Host '[ccc] --clean: could NOT fully wipe the dev data dir -- files are locked, which means an instance is still using it:'; Write-Host ('[ccc]   ' + $d); exit 3 } else { Write-Host '[ccc] dev data dir wiped.' } }"
+  if errorlevel 3 (
+    echo.
+    echo [ccc] Refusing to launch against a half-deleted data dir. Close any running
+    echo [ccc] dev instance ^(or one sharing this CCC_DEV_DATA_DIR^) and try again.
+    echo.
+    pause
+    goto :eof
+  )
+)
 
 REM --- log setup (DEV-scoped, under the dev data root) ---
 REM DELIBERATELY BEFORE THE SEED STEPS. It used to come after them, so anything
