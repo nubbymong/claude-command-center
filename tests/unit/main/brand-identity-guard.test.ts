@@ -115,20 +115,33 @@ describe('brand identity guard', () => {
     // `mklink /J` junction emptied the tree it pointed at. A folder-name match
     // is therefore not remotely enough. Scoped to the macro body, because every
     // one of these tokens also appears in prose elsewhere in the file.
+    //
+    // These are PRESENCE assertions and cannot catch a flipped guard — a
+    // measured fact, not a worry: 6/6 polarity mutants stayed green here.
+    // installer-nsis-behaviour.test.ts compiles these macros with the real
+    // makensis and checks what survives on disk; that is what actually holds
+    // them. Keep both — this one names the shape, that one enforces it.
     const body = nshMacro('RemoveLegacyInstall')
-    // 1. never the directory we are installing into
-    expect(body).toMatch(/\$\{If\}\s+"\$\{DIR\}"\s+==\s+"\$INSTDIR"/)
+    // 1. never the directory we are installing into. Compared CANONICALLY: a
+    //    raw StrCmp is defeated by an 8.3 short-name $INSTDIR
+    //    (`/S /D=C:\PROGRA~1\CLAUDE~1`), which swept the just-installed folder.
+    expect(body).toMatch(/PathsOverlapCanon "\$\{DIR\}" "\$INSTDIR"/)
     // 2. never a junction / symlink / mount point
     expect(body).toMatch(/GetFileAttributes\}\s+"\$\{DIR\}"\s+"REPARSE_POINT"/)
-    // 3. never anything overlapping the user's data or resources directory.
-    //    Shipped builds defaulted DataDirectory to
-    //    "$LOCALAPPDATA\Claude Command Center" — a name this sweep looks for —
-    //    so an install into %LOCALAPPDATA% would delete the user's sessions,
-    //    logs and CONFIG, twenty lines after customInstall adopted that path.
-    expect(body).toMatch(/PathsOverlap "\$\{DIR\}" "\$R3"/)
-    expect(body).toMatch(/PathsOverlap "\$\{DIR\}" "\$R4"/)
-    // 4. positive proof it is an install root and not a source checkout
-    expect(body).toMatch(/FileExists\}\s+"\$\{DIR\}\\Uninstall \*\.exe"/)
+    // 3. the data/resources directories must be KNOWN. PathsOverlap(dir, "") is
+    //    0, so an unreadable DataDirectory used to switch the next check off
+    //    entirely — and ReadUserPath is HKCU-only, so both come back empty on
+    //    an all-users install elevated by a different admin.
+    expect(body).toMatch(/\$\{If\} \$R3 == ""\s*\n\s*\$\{OrIf\} \$R4 == ""/)
+    // 4. never anything overlapping either of them. Shipped builds defaulted
+    //    DataDirectory to "$LOCALAPPDATA\Claude Command Center" — a name this
+    //    sweep looks for — so an install into %LOCALAPPDATA% would delete the
+    //    user's sessions, logs and CONFIG, twenty lines after customInstall
+    //    adopted that path.
+    expect(body).toMatch(/PathsOverlapCanon "\$\{DIR\}" "\$R3"/)
+    expect(body).toMatch(/PathsOverlapCanon "\$\{DIR\}" "\$R4"/)
+    // 5. positive proof it is an install root and not a source checkout
+    expect(body).toMatch(/ProveLegacyInstallRoot "\$\{DIR\}"/)
     // ...and the deletion itself still has to be there.
     expect(body).toMatch(/RMDir \/r "\$\{DIR\}"/)
     // The data/resources paths must actually be loaded before the sweep runs,
@@ -139,6 +152,37 @@ describe('brand identity guard', () => {
     expect(nshMacro('ReadUserPath')).toContain('Software\\Claude Conductor')
     // The cleanup list must not name the npm package directory either.
     expect(install).not.toContain('claude-conductor')
+    // An explicit /D= directory's siblings are not this installer's business.
+    expect(install).toMatch(/GetDParameter/)
+  })
+
+  it('ownership is proved down the nesting CHAIN, not just at its top', () => {
+    // The uninstaller in
+    //   …\Claude Conductor Beta\Claude Command Center Beta\AI Code Conductor
+    // exists ONLY at the leaf: electron-builder's uninstaller does
+    // RMDir /r $INSTDIR before SetOutPath recreates the chain one level deeper,
+    // so every outer level holds nothing but the next folder. Demanding
+    // "Uninstall *.exe" at the candidate itself therefore could NEVER be
+    // satisfied on the outer root — while ForgetPreviousInstallIn still cleared
+    // the ARP record for that shape, orphaning the whole tree.
+    const prove = nshMacro('ProveLegacyInstallRoot')
+    expect(prove).toMatch(/Call CccProveInstallRoot/)
+    // ...or the uninstaller the replaced install recorded, captured before the
+    // commit point overwrote it.
+    expect(prove).toContain('$cccLegacyUninstaller')
+    expect(nshMacro('customInit')).toMatch(/CaptureRecordedUninstaller/)
+
+    // The walk itself: it must look INSIDE the candidate, only follow folders
+    // that can be a link in a nesting chain, skip reparse points, and treat a
+    // wildcard hit as proof only when it is a FILE — IfFileExists with a
+    // wildcard is FindFirstFile, which matches DIRECTORIES (measured: a folder
+    // called "Uninstall whatever.exe" satisfied the old proof and the sibling
+    // source checkout was deleted).
+    const header = nshMacro('customHeader')
+    expect(header).toMatch(/FindFirst \$cccProveHandle \$cccProveName "\$cccProveCur\\Uninstall \*\.exe"/)
+    expect(header).toMatch(/\$\{IfNot\} \$\{FileExists\} "\$cccProveCur\\\$cccProveName\\\*\.\*"/)
+    expect(header).toMatch(/IsChainFolder "\$cccProveName"/)
+    expect(header).toMatch(/GetFileAttributes\} "\$cccProveCur\\\$cccProveName" "REPARSE_POINT"/)
   })
 
   it('the uninstall record is only dropped once the install is committing', () => {
@@ -167,9 +211,35 @@ describe('brand identity guard', () => {
     // uninstaller, not $INSTDIR\<app>.exe. The old exe-existence gate wrongly
     // condemned any beta.5-or-older install sitting in a non-legacy-named
     // folder, where the executable was still called Claude Command Center.exe.
-    expect(forget).toMatch(/ReadRegStr \$R0 \$\{ROOT_KEY\} "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString"/)
-    expect(forget).toMatch(/\$\{ElseIfNot\} \$\{FileExists\} "\$R1"/)
+    const classify = nshMacro('ClassifyUninstallRecord')
+    expect(classify).toMatch(/ReadRegStr \$R0 \$\{ROOT_KEY\} "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString"/)
+    expect(classify).toMatch(/\$\{ElseIfNot\} \$\{FileExists\} "\$R1"/)
     expect(readNsh()).not.toMatch(/FileExists\} "\$INSTDIR\\\$\{APP_EXECUTABLE_FILENAME\}"/)
+  })
+
+  it('the elevated inner instance, which never reaches the commit point, is covered too', () => {
+    // installSection.nsh:35-37 guards CHECK_APP_RUNNING with ${ifNot}
+    // ${UAC_IsInnerInstance}, so ForgetBrokenPreviousInstall never runs in the
+    // elevated instance — but customInit is inserted UNGUARDED
+    // (installer.nsi:79-81), so the retarget does. uninstallOldVersion then read
+    // that retargeted InstallLocation and ran the OLD uninstaller with
+    // _?=<new dir>; uninstaller.nsh:187 does RMDir /r $INSTDIR, on the directory
+    // this run was about to install into.
+    const init = nshMacro('customInit')
+    expect(init).toMatch(/\$\{If\} \$\{UAC_IsInnerInstance\}/)
+    expect(init).toMatch(/SuspendUninstallRecordIn HKCU \$cccSavedPerUserUninstallString/)
+    expect(init).toMatch(/SuspendUninstallRecordIn HKLM \$cccSavedPerMachineUninstallString/)
+
+    // It removes ONE value, not the key: uninstallOldVersion returns
+    // immediately on an empty UninstallString (installUtil.nsh:156-164), and a
+    // single string is restorable.
+    const suspend = nshMacro('SuspendUninstallRecordIn')
+    expect(suspend).toMatch(/DeleteRegValue \$\{HIVE\} "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString"/)
+    expect(suspend).not.toMatch(/DeleteRegKey/)
+    // ...and restored if the wizard the inner instance still shows is cancelled.
+    const header = nshMacro('customHeader')
+    expect(header).toMatch(/WriteRegStr HKCU "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString" "\$cccSavedPerUserUninstallString"/)
+    expect(header).toMatch(/WriteRegStr HKLM "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString" "\$cccSavedPerMachineUninstallString"/)
   })
 
   it('the relocation also neutralises the registry seed that would undo it', () => {

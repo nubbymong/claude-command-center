@@ -10,6 +10,12 @@
 ; to beat `!insertmacro addLangs` lives here, while anything needing
 ; ${INSTALL_REGISTRY_KEY} (defined by multiUser.nsh) has to sit inside a macro
 ; electron-builder inserts later (customHeader / customInit / customInstall).
+;
+; The same ordering rule applies to MACROS from electron-builder's own templates:
+; installUtil.nsh is included by installer.nsi AFTER Function .onInit, so
+; `!insertmacro GetInQuotes` cannot be used from customInit (a Call is resolved
+; at link time, a macro insertion is not). That is why the quote stripping below
+; is our own CccGetInQuotes rather than electron-builder's.
 
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
@@ -40,6 +46,18 @@
   ${EndIf}
 !macroend
 
+; ${OUT} = 1 when ${NAME} is a folder name that can appear as a LINK in a nesting
+; chain: a legacy brand folder, or the current app folder that every rename
+; appended one level deeper. This is the same bound FindLegacyRoot climbs, used
+; in the other direction by CccProveInstallRoot when it descends.
+!macro IsChainFolder NAME OUT
+  !insertmacro IsLegacyBrandFolder "${NAME}" ${OUT}
+  ${If} ${OUT} != 1
+  ${AndIf} "${NAME}" == "${APP_FILENAME}"
+    StrCpy ${OUT} 1
+  ${EndIf}
+!macroend
+
 ; ${OUT} = 1 when ${PATH} is ${DIR} itself, or something inside ${DIR}.
 ; Comparison is case-insensitive because LogicLib's == compiles to StrCmp, which
 ; is — matching Windows path semantics. Defines no labels of its own, so it is
@@ -65,6 +83,78 @@
   !insertmacro IsSameOrInside "${A}" "${B}" ${OUT}
   ${If} ${OUT} != 1
     !insertmacro IsSameOrInside "${B}" "${A}" ${OUT}
+  ${EndIf}
+!macroend
+
+; Two comparable spellings of ${PATH}.
+;   ${OUT_PLAIN} — separators normalised to "\" and any trailing separator
+;     dropped. A DataDirectory recorded as "C:/Users/x/Claude Command Center"
+;     is a real, measured case: a raw prefix compare against the backslash form
+;     silently returns "no overlap" and the data directory gets deleted.
+;   ${OUT_SHORT} — the same path resolved through the filesystem, which collapses
+;     8.3 short names ("C:\PROGRA~1\CLAUDE~1"), "." and ".." to one spelling.
+;     GetFullPathName sets the error flag and yields "" for a path that does not
+;     exist, so this falls back to ${OUT_PLAIN} there.
+; Both forms are kept because a comparison usually has one side that exists (the
+; candidate on disk) and one that may not (a directory read out of the registry);
+; callers compare plain-to-plain AND short-to-short so either spelling matches.
+; Scratch: $cccCanonWork $cccCanonChar $cccCanonIdx $cccCanonTmp.
+!macro CanonPathPair PATH OUT_PLAIN OUT_SHORT
+  StrCpy ${OUT_PLAIN} ""
+  StrCpy ${OUT_SHORT} ""
+  ${If} "${PATH}" != ""
+    StrCpy $cccCanonWork ""
+    StrCpy $cccCanonIdx 0
+    ${Do}
+      StrCpy $cccCanonChar "${PATH}" 1 $cccCanonIdx
+      ${If} $cccCanonChar == ""
+        ${ExitDo}
+      ${EndIf}
+      ${If} $cccCanonChar == "/"
+        StrCpy $cccCanonChar "\"
+      ${EndIf}
+      StrCpy $cccCanonWork "$cccCanonWork$cccCanonChar"
+      IntOp $cccCanonIdx $cccCanonIdx + 1
+      ${If} $cccCanonIdx > 512
+        ${ExitDo}
+      ${EndIf}
+    ${Loop}
+    ; Trailing separators, but never below "X:\".
+    ${Do}
+      StrLen $cccCanonIdx "$cccCanonWork"
+      ${If} $cccCanonIdx < 4
+        ${ExitDo}
+      ${EndIf}
+      StrCpy $cccCanonChar "$cccCanonWork" 1 -1
+      ${If} $cccCanonChar != "\"
+        ${ExitDo}
+      ${EndIf}
+      StrCpy $cccCanonWork "$cccCanonWork" -1
+    ${Loop}
+    StrCpy ${OUT_PLAIN} "$cccCanonWork"
+    ClearErrors
+    GetFullPathName /SHORT $cccCanonTmp "$cccCanonWork"
+    ${If} ${Errors}
+    ${OrIf} $cccCanonTmp == ""
+      StrCpy ${OUT_SHORT} "$cccCanonWork"
+    ${Else}
+      StrCpy ${OUT_SHORT} "$cccCanonTmp"
+    ${EndIf}
+    ClearErrors
+  ${EndIf}
+!macroend
+
+; PathsOverlap over BOTH canonical spellings. Use this — never a raw StrCmp or a
+; raw PathsOverlap — for any comparison that decides whether something may be
+; deleted: a raw compare is defeated by a forward slash, a trailing separator or
+; an 8.3 short name, all three measured.
+; Scratch: $cccCanon* (via CanonPathPair) and $R5 $R6 $R7 (via IsSameOrInside).
+!macro PathsOverlapCanon A B OUT
+  !insertmacro CanonPathPair "${A}" $cccCanonA $cccCanonAS
+  !insertmacro CanonPathPair "${B}" $cccCanonB $cccCanonBS
+  !insertmacro PathsOverlap "$cccCanonA" "$cccCanonB" ${OUT}
+  ${If} ${OUT} != 1
+    !insertmacro PathsOverlap "$cccCanonAS" "$cccCanonBS" ${OUT}
   ${EndIf}
 !macroend
 
@@ -115,6 +205,11 @@
 !macroend
 
 ; Read one of the user-chosen directories, newest brand key first.
+;
+; HKCU only, because that is the only hive the app itself ever writes
+; (src/main/registry.ts) — so on an all-users install elevated by a DIFFERENT
+; admin account these come back empty, and RemoveLegacyInstall refuses to delete
+; anything rather than sweeping with the data-directory guard switched off.
 !macro ReadUserPath NAME OUT
   ReadRegStr ${OUT} HKCU "Software\AI Code Conductor" "${NAME}"
   ${If} ${OUT} == ""
@@ -122,6 +217,40 @@
   ${EndIf}
   ${If} ${OUT} == ""
     ReadRegStr ${OUT} HKCU "Software\Claude Conductor" "${NAME}"
+  ${EndIf}
+!macroend
+
+; The path inside the first pair of double quotes of ${STR}, or "".
+; electron-builder has a GetInQuotes of its own, but its MACRO is only defined
+; once installUtil.nsh has been included — which happens after Function .onInit,
+; where customInit needs this. Same shape: an UninstallString is
+; '"<dir>\Uninstall <app>.exe" /currentuser'.
+; Scratch: $cccQuoteWork $cccQuoteChar $cccQuoteIdx.
+!macro CccGetInQuotes STR OUT
+  StrCpy ${OUT} ""
+  StrCpy $cccQuoteWork "${STR}"
+  StrCpy $cccQuoteChar "$cccQuoteWork" 1
+  ${If} $cccQuoteChar == '"'
+    StrCpy $cccQuoteWork "$cccQuoteWork" "" 1
+    StrCpy $cccQuoteIdx 0
+    ${Do}
+      StrCpy $cccQuoteChar "$cccQuoteWork" 1 $cccQuoteIdx
+      ${If} $cccQuoteChar == ""
+        StrCpy $cccQuoteIdx 0
+        ${ExitDo}
+      ${EndIf}
+      ${If} $cccQuoteChar == '"'
+        ${ExitDo}
+      ${EndIf}
+      IntOp $cccQuoteIdx $cccQuoteIdx + 1
+      ${If} $cccQuoteIdx > 512
+        StrCpy $cccQuoteIdx 0
+        ${ExitDo}
+      ${EndIf}
+    ${Loop}
+    ${If} $cccQuoteIdx > 0
+      StrCpy ${OUT} "$cccQuoteWork" $cccQuoteIdx
+    ${EndIf}
   ${EndIf}
 !macroend
 
@@ -136,24 +265,36 @@
 ; real makensis: a junction made with `mklink /J` had its TARGET tree deleted,
 ; and ${FileExists} "<junction>\*.*" reports true *through* the junction. A
 ; matching folder NAME is nowhere near enough on its own. All of these must hold:
-;   1. it is not the directory we are installing into;
+;   1. it does not overlap the directory we are installing into. Compared
+;      canonically, not with StrCmp: `/S /D=C:\PROGRA~1\CLAUDE~1` gave $INSTDIR
+;      an 8.3 spelling that no raw compare against the long form matched, and the
+;      just-installed directory was swept;
 ;   2. it exists;
 ;   3. it is not a reparse point (junction / symlink / mount point);
-;   4. it does not overlap the user's data or resources directory in either
-;      direction — shipped builds defaulted DataDirectory to
-;      "$LOCALAPPDATA\Claude Command Center" and ResourcesDirectory to
-;      "…\Claude Command Center\resources" (git show 8c0085e:build/installer.nsh),
-;      and "Claude Command Center" is a name this sweep looks for, so an install
-;      into %LOCALAPPDATA% would otherwise destroy the user's sessions, logs and
-;      CONFIG — twenty lines after customInstall adopted that very path;
-;   5. it contains an "Uninstall *.exe" — positive proof that it is an NSIS
-;      install root, and not a source checkout that happens to share the name.
+;   4. the user's data AND resources directories are both KNOWN. Empty means the
+;      overlap test below cannot say anything, not that there is no overlap —
+;      measured: PathsOverlap(dir, "") is 0, so an unreadable DataDirectory used
+;      to turn the guard off entirely and CONFIG/settings.json was destroyed;
+;   5. it does not overlap either of them in either direction — shipped builds
+;      defaulted DataDirectory to "$LOCALAPPDATA\Claude Command Center" and
+;      ResourcesDirectory to "…\Claude Command Center\resources"
+;      (git show 8c0085e:build/installer.nsh), and "Claude Command Center" is a
+;      name this sweep looks for, so an install into %LOCALAPPDATA% would
+;      otherwise destroy the user's sessions, logs and CONFIG — twenty lines
+;      after customInstall adopted that very path;
+;   6. it is provably an install root of THIS app (CccProveInstallRoot, or the
+;      uninstaller the replaced install recorded), not a source checkout that
+;      happens to share the name.
 ; Expects $R3 = DataDirectory and $R4 = ResourcesDirectory.
-; Scratch: $R5 $R6 $R7 $R8 $R9.
+; Scratch: $R5 $R6 $R7 $R8 $R9 and $ccc* — never $R2, which customInstall holds.
+;
+; Known, deliberately out of scope: a junction sitting INSIDE a proven install
+; root is still followed by RMDir /r. Logged separately.
 !macro RemoveLegacyInstall DIR NAME
   StrCpy $R8 1
 
-  ${If} "${DIR}" == "$INSTDIR"
+  !insertmacro PathsOverlapCanon "${DIR}" "$INSTDIR" $R9
+  ${If} $R9 == 1
     StrCpy $R8 0
   ${EndIf}
 
@@ -173,7 +314,15 @@
   ${EndIf}
 
   ${If} $R8 == 1
-    !insertmacro PathsOverlap "${DIR}" "$R3" $R9
+    ${If} $R3 == ""
+    ${OrIf} $R4 == ""
+      DetailPrint "Data/resources directories unknown — refusing to delete ${DIR}"
+      StrCpy $R8 0
+    ${EndIf}
+  ${EndIf}
+
+  ${If} $R8 == 1
+    !insertmacro PathsOverlapCanon "${DIR}" "$R3" $R9
     ${If} $R9 == 1
       DetailPrint "Refusing to delete the data directory: ${DIR}"
       StrCpy $R8 0
@@ -181,7 +330,7 @@
   ${EndIf}
 
   ${If} $R8 == 1
-    !insertmacro PathsOverlap "${DIR}" "$R4" $R9
+    !insertmacro PathsOverlapCanon "${DIR}" "$R4" $R9
     ${If} $R9 == 1
       DetailPrint "Refusing to delete the resources directory: ${DIR}"
       StrCpy $R8 0
@@ -189,9 +338,11 @@
   ${EndIf}
 
   ${If} $R8 == 1
-  ${AndIfNot} ${FileExists} "${DIR}\Uninstall *.exe"
-    DetailPrint "Not an install of this app, leaving it alone: ${DIR}"
-    StrCpy $R8 0
+    !insertmacro ProveLegacyInstallRoot "${DIR}" $R9
+    ${If} $R9 != 1
+      DetailPrint "Not an install of this app, leaving it alone: ${DIR}"
+      StrCpy $R8 0
+    ${EndIf}
   ${EndIf}
 
   ${If} $R8 == 1
@@ -202,16 +353,53 @@
   ${EndIf}
 !macroend
 
-; Drop the recorded previous installation in ${ROOT_KEY}, but only when that
-; record is one of:
-;   a) unusable — the uninstaller it names is gone (removed by hand, or by an
-;      upgrade that failed part-way). electron-builder runs it anyway, retries
-;      five times and then shows "$(appCannotBeClosed)" (installUtil.nsh
-;      uninstallOldVersion) — a message about the APP being open, raised when the
-;      UNINSTALLER failed, with nothing for the user to close. With no
-;      UninstallString it returns immediately instead;
-;   b) pointing into the legacy folder beside $INSTDIR that this run relocated
-;      out of and customInstall is about to delete.
+; ${OUT} = 1 when ${DIR} is provably an install root of this app.
+;
+; TWO independent proofs, because either one alone leaves the owner's real case
+; unprovable:
+;
+;   A. an "Uninstall *.exe" FILE at ${DIR} or anywhere down the legacy nesting
+;      chain below it (CccProveInstallRoot). Requiring it AT ${DIR} was a
+;      regression: in
+;        …\Programs\Claude Conductor Beta\Claude Command Center Beta\AI Code Conductor
+;      the uninstaller exists ONLY at the leaf, because electron-builder's
+;      uninstaller does RMDir /r $INSTDIR before SetOutPath recreates the chain
+;      one level deeper — every outer level holds nothing but the next folder.
+;      IfFileExists with a wildcard is not recursive (measured), so the proof
+;      could never be satisfied on the outer root and several hundred MB of app
+;      was left behind with its ARP record already cleared.
+;
+;   B. the uninstaller the install we are REPLACING recorded, captured by
+;      customInit before anything rewrote the record, still on disk and inside
+;      ${DIR}. This survives a legacy tree whose chain we cannot walk, and it is
+;      strictly stronger than a name match: Windows itself named that file as the
+;      way to remove this app.
+;
+; Scratch: $R5 $R6 $R7 and $ccc* — ${OUT} must not be one of those.
+!macro ProveLegacyInstallRoot DIR OUT
+  StrCpy $cccProveDir "${DIR}"
+  Call CccProveInstallRoot
+  StrCpy ${OUT} $cccProveResult
+
+  ${If} ${OUT} != 1
+  ${AndIf} $cccLegacyUninstaller != ""
+  ${AndIf} ${FileExists} "$cccLegacyUninstaller"
+  ${AndIfNot} ${FileExists} "$cccLegacyUninstaller\*.*"
+    !insertmacro CanonPathPair "${DIR}" $cccCanonA $cccCanonAS
+    !insertmacro CanonPathPair "$cccLegacyUninstaller" $cccCanonB $cccCanonBS
+    !insertmacro IsSameOrInside "$cccCanonA" "$cccCanonB" ${OUT}
+    ${If} ${OUT} != 1
+      !insertmacro IsSameOrInside "$cccCanonAS" "$cccCanonBS" ${OUT}
+    ${EndIf}
+    ${If} ${OUT} == 1
+      DetailPrint "Ownership proved by the recorded uninstaller: $cccLegacyUninstaller"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+; Drop the recorded previous installation in ${ROOT_KEY}, but only when
+; ClassifyUninstallRecord says it is unusable or points into the legacy folder
+; this run relocated out of.
 ;
 ; Judged per hive, with the caller naming the hive explicitly. appId is frozen,
 ; so a per-user and a per-machine installation share the same registry key PATH
@@ -219,22 +407,49 @@
 ; would destroy a healthy per-user install's record, and installSection.nsh then
 ; calls uninstallOldVersion HKEY_CURRENT_USER, reads an empty UninstallString and
 ; returns — leaving that copy on disk with nothing able to remove it.
-; Scratch: $R0 $R1 $R2 $R3 $R4 (+ $R5-$R9 via FindLegacyRoot).
+; Scratch: $R0 $R1 $R3 $R4 $R9 and $ccc* (via ClassifyUninstallRecord).
 !macro ForgetPreviousInstallIn ROOT_KEY
+  !insertmacro ClassifyUninstallRecord ${ROOT_KEY}
+  ${If} $cccRecordVerdict != ""
+    DetailPrint "Clearing the previous uninstall record ($cccRecordVerdict): $cccRecordUninstaller"
+    DeleteRegKey ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY}"
+    ; Dead code for this app: electron-builder only defines
+    ; UNINSTALL_REGISTRY_KEY_2 when the GUID contains a backslash
+    ; (NsisTarget.js:176-178), and ours is UUID.v5(appId) =
+    ; 0210f08e-15d0-5073-901d-684e27f31b7d. Kept so that setting a custom
+    ; nsis.guid would still be handled.
+    !ifdef UNINSTALL_REGISTRY_KEY_2
+      DeleteRegKey ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY_2}"
+    !endif
+  ${EndIf}
+!macroend
+
+; Judge the uninstall record in ${ROOT_KEY}. Sets:
+;   $cccRecordUninstaller — the uninstaller path it names ("" if unparseable)
+;   $cccRecordVerdict     — "" to keep it, otherwise why it must not be run:
+;     "unparseable" / "missing" — electron-builder runs it anyway, retries five
+;       times and then shows "$(appCannotBeClosed)" (installUtil.nsh
+;       uninstallOldVersion) — a message about the APP being open, raised when
+;       the UNINSTALLER failed, with nothing for the user to close. With no
+;       UninstallString it returns immediately instead;
+;     "legacy" — it points into the legacy folder beside $INSTDIR that this run
+;       relocated out of and customInstall is about to delete. Running it is
+;       worse than useless: uninstallOldVersion resolves its working directory
+;       from ${INSTALL_REGISTRY_KEY}\InstallLocation, which customInit has just
+;       RETARGETED at the new $INSTDIR, so the old uninstaller would RMDir /r the
+;       directory this run is about to install into.
+; Scratch: $R0 $R1 $R3 $R4 $R9 (+ $R5-$R8 via FindLegacyRoot).
+!macro ClassifyUninstallRecord ROOT_KEY
+  StrCpy $cccRecordVerdict ""
+  StrCpy $cccRecordUninstaller ""
   ReadRegStr $R0 ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY}" "UninstallString"
   ${If} $R0 != ""
-    StrCpy $R2 0
-    ; UninstallString is '"<dir>\Uninstall <app>.exe" /currentuser'. GetInQuotes
-    ; is a Function in installUtil.nsh, which installer.nsi includes AFTER the
-    ; point this is inserted from — but a Call is a forward reference NSIS
-    ; resolves at link time, and both live in the !ifndef BUILD_UNINSTALLER pass.
-    !insertmacro GetInQuotes $R1 "$R0"
+    !insertmacro CccGetInQuotes "$R0" $R1
+    StrCpy $cccRecordUninstaller "$R1"
     ${If} $R1 == ""
-      StrCpy $R2 1
-      DetailPrint "Uninstall record has no parseable path — clearing it"
+      StrCpy $cccRecordVerdict "unparseable"
     ${ElseIfNot} ${FileExists} "$R1"
-      StrCpy $R2 1
-      DetailPrint "Recorded uninstaller is gone ($R1) — clearing the record"
+      StrCpy $cccRecordVerdict "missing"
     ${Else}
       ${GetParent} "$R1" $R3
       !insertmacro FindLegacyRoot "$R3" $R9
@@ -242,21 +457,9 @@
         ${GetParent} "$R9" $R4
         ${GetParent} "$INSTDIR" $R3
         ${If} $R4 == $R3
-          StrCpy $R2 1
-          DetailPrint "Uninstall record points into the legacy folder being replaced ($R9) — clearing it"
+          StrCpy $cccRecordVerdict "legacy"
         ${EndIf}
       ${EndIf}
-    ${EndIf}
-    ${If} $R2 == 1
-      DeleteRegKey ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY}"
-      ; Dead code for this app: electron-builder only defines
-      ; UNINSTALL_REGISTRY_KEY_2 when the GUID contains a backslash
-      ; (NsisTarget.js:176-178), and ours is UUID.v5(appId) =
-      ; 0210f08e-15d0-5073-901d-684e27f31b7d. Kept so that setting a custom
-      ; nsis.guid would still be handled.
-      !ifdef UNINSTALL_REGISTRY_KEY_2
-        DeleteRegKey ${ROOT_KEY} "${UNINSTALL_REGISTRY_KEY_2}"
-      !endif
     ${EndIf}
   ${EndIf}
 !macroend
@@ -273,6 +476,44 @@
   ClearErrors
 !macroend
 
+; Remove ONLY the UninstallString value, remembering it in ${SAVE_VAR} so
+; CccRestoreInstallLocation can put it back.
+;
+; uninstallOldVersion returns immediately when UninstallString is empty
+; (installUtil.nsh:156-164), which is the whole point: this is the narrowest
+; edit that stops the old uninstaller running, and unlike DeleteRegKey it is
+; reversible from a single saved string. registryAddInstallInfo rewrites the
+; value a few lines after uninstallOldVersion, so on the success path nothing is
+; lost either way.
+; Scratch: $R0 $R1 $R3 $R4 $R9 and $ccc* (via ClassifyUninstallRecord).
+!macro SuspendUninstallRecordIn HIVE SAVE_VAR
+  !insertmacro ClassifyUninstallRecord ${HIVE}
+  ${If} $cccRecordVerdict != ""
+    ReadRegStr ${SAVE_VAR} ${HIVE} "${UNINSTALL_REGISTRY_KEY}" "UninstallString"
+    DeleteRegValue ${HIVE} "${UNINSTALL_REGISTRY_KEY}" "UninstallString"
+    DetailPrint "Suspended the previous uninstall record ($cccRecordVerdict) so it cannot be aimed at $INSTDIR"
+  ${EndIf}
+!macroend
+
+; Remember the uninstaller of the install being replaced, before this run
+; rewrites any of it. customInstall needs it as proof of ownership, and by then
+; the commit point has cleared the record and registryAddInstallInfo has written
+; a new one pointing at $INSTDIR.
+; Scratch: $R0 $R1 $R3 $R4 $R9 and $ccc* (via ClassifyUninstallRecord).
+!macro CaptureRecordedUninstaller
+  StrCpy $cccLegacyUninstaller ""
+  !insertmacro ClassifyUninstallRecord SHELL_CONTEXT
+  StrCpy $cccLegacyUninstaller "$cccRecordUninstaller"
+  ${If} $cccLegacyUninstaller == ""
+    !insertmacro ClassifyUninstallRecord HKCU
+    StrCpy $cccLegacyUninstaller "$cccRecordUninstaller"
+  ${EndIf}
+  ${If} $cccLegacyUninstaller == ""
+    !insertmacro ClassifyUninstallRecord HKLM
+    StrCpy $cccLegacyUninstaller "$cccRecordUninstaller"
+  ${EndIf}
+!macroend
+
 ; ============================================================
 ; CANCEL SAFETY
 ; ============================================================
@@ -281,7 +522,8 @@
 ; $INSTDIR are resolved (multiUser.nsh setInstallModePerUser -> uninstaller.nsh
 ; "RMDir /r $INSTDIR"), so leaving it pointing at a directory that was never
 ; created would make a later Add/Remove-Programs uninstall delete nothing and
-; then drop the entry. Put it back if the wizard never reaches the install.
+; then drop the entry. Put it back if the wizard never reaches the install. Same
+; for the UninstallString the elevated inner instance suspends.
 ;
 ; MUI2 defines Function .onUserAbort itself (Interface.nsh
 ; MUI_FUNCTION_ABORTWARNING, inserted by MUI_LANGUAGE), so this hooks its
@@ -289,6 +531,9 @@
 ; not compile. The define has to be in place before electron-builder's
 ; `!insertmacro addLangs`, which is why it sits at file scope rather than in
 ; customHeader.
+;
+; Known, deliberately out of scope: the Quit paths that leave .onInit without
+; going through MUI's abort callback still skip this. Logged separately.
 !ifndef BUILD_UNINSTALLER
   !define MUI_CUSTOMFUNCTION_ABORT "CccRestoreInstallLocation"
 !endif
@@ -299,6 +544,35 @@
   !ifndef BUILD_UNINSTALLER
     Var cccSavedPerUserInstallLocation
     Var cccSavedPerMachineInstallLocation
+    Var cccSavedPerUserUninstallString
+    Var cccSavedPerMachineUninstallString
+
+    Var cccLegacyUninstaller
+    Var cccRecordVerdict
+    Var cccRecordUninstaller
+
+    Var cccCanonA
+    Var cccCanonAS
+    Var cccCanonB
+    Var cccCanonBS
+    Var cccCanonWork
+    Var cccCanonChar
+    Var cccCanonIdx
+    Var cccCanonTmp
+
+    Var cccQuoteWork
+    Var cccQuoteChar
+    Var cccQuoteIdx
+
+    Var cccProveDir
+    Var cccProveResult
+    Var cccProveCur
+    Var cccProveName
+    Var cccProveHandle
+    Var cccProveHit
+    Var cccProveFlag
+    Var cccProvePending
+    Var cccProveSeen
 
     Function CccRestoreInstallLocation
       ${If} $cccSavedPerUserInstallLocation != ""
@@ -309,10 +583,105 @@
         WriteRegStr HKLM "${INSTALL_REGISTRY_KEY}" "InstallLocation" "$cccSavedPerMachineInstallLocation"
         StrCpy $cccSavedPerMachineInstallLocation ""
       ${EndIf}
+      ${If} $cccSavedPerUserUninstallString != ""
+        WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" "UninstallString" "$cccSavedPerUserUninstallString"
+        StrCpy $cccSavedPerUserUninstallString ""
+      ${EndIf}
+      ${If} $cccSavedPerMachineUninstallString != ""
+        WriteRegStr HKLM "${UNINSTALL_REGISTRY_KEY}" "UninstallString" "$cccSavedPerMachineUninstallString"
+        StrCpy $cccSavedPerMachineUninstallString ""
+      ${EndIf}
     FunctionEnd
 
     Function .onInstFailed
       Call CccRestoreInstallLocation
+    FunctionEnd
+
+    ; $cccProveResult = 1 when $cccProveDir, or a legacy-chain folder below it,
+    ; holds an "Uninstall *.exe" FILE.
+    ;
+    ; A FILE, checked by name through FindFirst: IfFileExists with a wildcard is
+    ; FindFirstFile, which matches DIRECTORIES too — measured, a directory called
+    ; "Uninstall whatever.exe\" satisfied the old proof and the sibling source
+    ; checkout was deleted.
+    ;
+    ; The descent is a depth-first walk over the NSIS stack, bounded to 24 nodes,
+    ; and it only ever steps into a folder whose NAME can be a link in a nesting
+    ; chain (IsChainFolder) — the same bound FindLegacyRoot climbs. Anything
+    ; wider would let an unrelated vendored installer somewhere under a source
+    ; checkout prove ownership of the checkout. Reparse points are skipped so a
+    ; junction cannot manufacture a proof out of a tree that lives elsewhere.
+    Function CccProveInstallRoot
+      StrCpy $cccProveResult 0
+      StrCpy $cccProveSeen 0
+      StrCpy $cccProvePending 1
+      Push "$cccProveDir"
+
+      ${Do}
+        ${If} $cccProvePending < 1
+          ${ExitDo}
+        ${EndIf}
+        Pop $cccProveCur
+        IntOp $cccProvePending $cccProvePending - 1
+        IntOp $cccProveSeen $cccProveSeen + 1
+        ${If} $cccProveSeen > 24
+          ${ExitDo}
+        ${EndIf}
+
+        StrCpy $cccProveHit 0
+        ClearErrors
+        FindFirst $cccProveHandle $cccProveName "$cccProveCur\Uninstall *.exe"
+        ${Do}
+          ${If} $cccProveName == ""
+            ${ExitDo}
+          ${EndIf}
+          ${IfNot} ${FileExists} "$cccProveCur\$cccProveName\*.*"
+            StrCpy $cccProveHit 1
+            ${ExitDo}
+          ${EndIf}
+          FindNext $cccProveHandle $cccProveName
+        ${Loop}
+        FindClose $cccProveHandle
+        ClearErrors
+
+        ${If} $cccProveHit == 1
+          StrCpy $cccProveResult 1
+          ${ExitDo}
+        ${EndIf}
+
+        ClearErrors
+        FindFirst $cccProveHandle $cccProveName "$cccProveCur\*.*"
+        ${Do}
+          ${If} $cccProveName == ""
+            ${ExitDo}
+          ${EndIf}
+          ${If} $cccProveName != "."
+          ${AndIf} $cccProveName != ".."
+          ${AndIf} ${FileExists} "$cccProveCur\$cccProveName\*.*"
+            !insertmacro IsChainFolder "$cccProveName" $cccProveFlag
+            ${If} $cccProveFlag == 1
+              ${GetFileAttributes} "$cccProveCur\$cccProveName" "REPARSE_POINT" $cccProveHit
+              ${If} $cccProveHit == 0
+                Push "$cccProveCur\$cccProveName"
+                IntOp $cccProvePending $cccProvePending + 1
+              ${EndIf}
+            ${EndIf}
+          ${EndIf}
+          FindNext $cccProveHandle $cccProveName
+        ${Loop}
+        FindClose $cccProveHandle
+        ClearErrors
+      ${Loop}
+
+      ; Whatever is still queued has to come off the stack, or the caller's
+      ; frame is corrupt.
+      ${Do}
+        ${If} $cccProvePending < 1
+          ${ExitDo}
+        ${EndIf}
+        Pop $cccProveCur
+        IntOp $cccProvePending $cccProvePending - 1
+      ${Loop}
     FunctionEnd
   !endif
 !macroend
@@ -373,11 +742,10 @@
     ; or declining UAC left the app fully installed with no Add/Remove Programs
     ; entry at all, uninstallable by neither the user nor an MDM.
     ;
-    ; Known gap: for an /allusers install that has to elevate, the whole of
-    ; CHECK_APP_RUNNING is skipped in the elevated inner instance
-    ; (installSection.nsh guards it with ${ifNot} ${UAC_IsInnerInstance}), so
-    ; nothing is cleared there and the old uninstaller runs exactly as it did
-    ; before this file cleared anything. Pre-existing behaviour, not a regression.
+    ; installSection.nsh guards this whole macro with ${ifNot}
+    ; ${UAC_IsInnerInstance}, so an /allusers install that had to elevate never
+    ; reaches this line. customInit covers that case with the narrower,
+    ; reversible SuspendUninstallRecordIn.
     !insertmacro ForgetBrokenPreviousInstall
   !endif
 !macroend
@@ -437,7 +805,14 @@
 !macroend
 
 !macro customInit
-  ; ---- 0. An explicit /D= is the operator's choice ------------------------
+  ; ---- 0. Remember what the previous install recorded ---------------------
+  ; Read before this run touches anything: customCheckAppRunning clears the
+  ; record at the commit point and registryAddInstallInfo replaces it, so by the
+  ; time customInstall wants to prove which folder is the old install, the only
+  ; copy of the answer is this variable.
+  !insertmacro CaptureRecordedUninstaller
+
+  ; ---- 1. An explicit /D= is the operator's choice ------------------------
   ; initMultiUser applies /D= last, so $INSTDIR already holds the requested
   ; directory by the time this runs. Relocating it — and then letting
   ; customInstall consider its siblings for deletion — would silently override a
@@ -447,7 +822,7 @@
   ${If} $R0 != ""
     DetailPrint "Explicit /D= install directory — leaving $INSTDIR alone"
   ${Else}
-    ; ---- 1. Find the OUTERMOST legacy folder in $INSTDIR's path -----------
+    ; ---- 2. Find the OUTERMOST legacy folder in $INSTDIR's path -----------
     !insertmacro FindLegacyRoot "$INSTDIR" $R9
 
     ${If} $R9 != ""
@@ -463,14 +838,35 @@
       ; already present.
       StrCpy $INSTDIR "$R4\${APP_FILENAME}"
 
-      ; ---- 2. Stop the install-mode page undoing it ----------------------
+      ; ---- 3. Stop the install-mode page undoing it ----------------------
       !insertmacro RetargetRecordedInstallLocation HKCU "$R9" $cccSavedPerUserInstallLocation
       !insertmacro RetargetRecordedInstallLocation HKLM "$R9" $cccSavedPerMachineInstallLocation
+
+      ; ---- 4. The elevated inner instance never reaches the commit point --
+      ; installSection.nsh:35-37 guards CHECK_APP_RUNNING with ${ifNot}
+      ; ${UAC_IsInnerInstance}, so ForgetBrokenPreviousInstall does not run in
+      ; the elevated instance — while the retarget above DOES, because customInit
+      ; is inserted unguarded (installer.nsi:79-81) and the HKLM value can only
+      ; be written by the elevated instance in the first place. Left alone, the
+      ; next thing that instance does is uninstallOldVersion, which reads the
+      ; retargeted InstallLocation, runs the OLD uninstaller with _?=<new dir>,
+      ; and that uninstaller does RMDir /r $INSTDIR on the directory this run is
+      ; about to install into.
+      ;
+      ; So the record is suspended here instead — the narrowest possible edit
+      ; (one value), remembered and restored by CccRestoreInstallLocation if the
+      ; wizard the inner instance is still going to show gets cancelled. Both
+      ; hives, because installSection.nsh calls uninstallOldVersion for
+      ; SHELL_CONTEXT and, on an /allusers run, HKEY_CURRENT_USER as well.
+      ${If} ${UAC_IsInnerInstance}
+        !insertmacro SuspendUninstallRecordIn HKCU $cccSavedPerUserUninstallString
+        !insertmacro SuspendUninstallRecordIn HKLM $cccSavedPerMachineUninstallString
+      ${EndIf}
     ${EndIf}
   ${EndIf}
-  ; The uninstall RECORD is deliberately NOT touched here — see the commit point
-  ; in customCheckAppRunning for why it can only be cleared once the install is
-  ; actually going ahead.
+  ; The uninstall RECORD is otherwise deliberately NOT touched here — see the
+  ; commit point in customCheckAppRunning for why it can only be cleared once the
+  ; install is actually going ahead.
   ;
   ; A ReadRegStr against a key that is not there sets the error flag, and .onInit
   ; hands straight over to the wizard; do not leave it set.
@@ -484,6 +880,10 @@
   ; are only copied where the brand key does not already have one, and the legacy
   ; keys are left in place (the app deletes only the original one — see
   ; registry.ts) so a rollback can still resolve the data directory.
+  ;
+  ; This runs BEFORE the sweep on purpose: ReadUserPath below is what keeps the
+  ; sweep away from the user's data, and on an upgrade the only place those paths
+  ; exist yet is a legacy key.
   !insertmacro AdoptLegacyValue "DataDirectory"
   !insertmacro AdoptLegacyValue "ResourcesDirectory"
   !insertmacro AdoptLegacyValue "SourcePath"
@@ -508,14 +908,25 @@
   ; reachable at all — and it demands positive proof of ownership before deleting
   ; anything, because a name match alone would also match a source checkout, a
   ; junction, or the user's data directory.
-  !insertmacro ReadUserPath "DataDirectory" $R3
-  !insertmacro ReadUserPath "ResourcesDirectory" $R4
+  ;
+  ; An explicit /D= skips the sweep entirely, for the same reason customInit
+  ; skips the relocation: the siblings of a hand-picked directory are not this
+  ; installer's business, and $INSTDIR may then be spelt in a form ($INSTDIR as
+  ; an 8.3 short name) that no comparison here should have to survive.
+  !insertmacro GetDParameter $R0
+  ${If} $R0 != ""
+    DetailPrint "Explicit /D= install directory — skipping the legacy folder sweep"
+  ${Else}
+    !insertmacro ReadUserPath "DataDirectory" $R3
+    !insertmacro ReadUserPath "ResourcesDirectory" $R4
 
-  ${GetParent} "$INSTDIR" $R2
-  !insertmacro RemoveLegacyInstall "$R2\Claude Conductor Beta" "Claude Conductor Beta"
-  !insertmacro RemoveLegacyInstall "$R2\Claude Command Center Beta" "Claude Command Center Beta"
-  !insertmacro RemoveLegacyInstall "$R2\Claude Command Center" "Claude Command Center"
-  !insertmacro RemoveLegacyInstall "$R2\Claude Conductor" "Claude Conductor"
+    ${GetParent} "$INSTDIR" $R2
+    !insertmacro RemoveLegacyInstall "$R2\Claude Conductor Beta" "Claude Conductor Beta"
+    !insertmacro RemoveLegacyInstall "$R2\Claude Command Center Beta" "Claude Command Center Beta"
+    !insertmacro RemoveLegacyInstall "$R2\Claude Command Center" "Claude Command Center"
+    !insertmacro RemoveLegacyInstall "$R2\Claude Conductor" "Claude Conductor"
+  ${EndIf}
+  ClearErrors
 !macroend
 
 ; Copy one setting forward into the current brand key if it does not have one
