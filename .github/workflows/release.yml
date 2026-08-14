@@ -207,6 +207,40 @@ jobs:
             Write-Host 'dev build left unsigned (signing secrets not configured)'
           }
 
+      # ── MSIX/AppX for the Microsoft Store (#225) ──
+      # A SEPARATE electron-builder invocation, deliberately: folding `appx` into
+      # build.win.target would put it inside the same run as nsis, where a Store
+      # packaging failure takes the whole Windows release down with it. Here the
+      # NSIS installer is already built, verified and about to be uploaded, so a
+      # failure below costs the Store package and nothing else.
+      #
+      # NOT SIGNED, and that is correct: build.appx.publisher is a Store identity
+      # (CN=<Partner Center GUID>), so electron-builder skips signing with
+      # "Windows Store only build" and Microsoft signs it on ingestion. Signing it
+      # with our own cert would make the publisher disagree with the manifest
+      # identity and the package would be rejected.
+      #
+      # Note the manifest version is the 4-part numeric form (2.1.0.0) — MSIX has
+      # no concept of a prerelease suffix, so `-beta.N` is dropped. Two betas on
+      # the same base version therefore produce the SAME package version; bump the
+      # base before submitting a second one to the Store.
+      - name: Package Microsoft Store MSIX
+        id: msix
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npx electron-builder --win appx --publish never --config.npmRebuild=false
+          $pkg = Get-ChildItem dist -Filter *.appx | Select-Object -First 1
+          if (-not $pkg) { throw 'appx target produced no package' }
+          Write-Host "Store package: $($pkg.Name) ($([math]::Round($pkg.Length/1MB,1)) MB)"
+          "appx=$($pkg.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Note a failed Store package
+        if: ${{ steps.msix.outcome == 'failure' }}
+        shell: bash
+        run: echo "::warning::The Microsoft Store MSIX did not build. The Windows installer is unaffected and the release continues."
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v7
         with:
@@ -214,10 +248,22 @@ jobs:
           # exe + blockmap + latest.yml travel together: latest.yml carries the
           # exe's sha512, so replacing one without the others breaks the updater
           # (matters for rolling re-releases onto an existing tag).
+          #
+          # The .appx is optional — `continue-on-error` above means it may not
+          # exist, so it cannot be part of the if-no-files-found: error contract.
+          # It is picked up by the wildcard when present.
           path: |
             dist/${{ steps.version.outputs.installer }}
             dist/${{ steps.version.outputs.installer }}.blockmap
             dist/latest.yml
+          if-no-files-found: error
+
+      - name: Upload Store MSIX
+        if: ${{ steps.msix.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-msix
+          path: dist/*.appx
           if-no-files-found: error
 
   # ── Build macOS app ──

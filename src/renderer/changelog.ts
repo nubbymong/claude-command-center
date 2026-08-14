@@ -21,6 +21,19 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.10',
+    date: '2026-08-14',
+    highlights: 'Fixes an upgrade that could fail with "AI Code Conductor cannot be closed" even with nothing running, and settles the rename: downloads now carry one name, and the first-run tour finally matches the brand.',
+    changes: [
+      { type: 'fix', description: 'Upgrading could stop partway with "AI Code Conductor cannot be closed. Please close it manually and click Retry" — with the app shut down, after a reboot, and with no such program running anywhere. The message was misleading: it appears when the installer cannot run the previous version\'s uninstaller, not because anything is open. Installations in that state are now detected and repaired silently, with nothing for you to do.' },
+      { type: 'fix', description: 'Earlier renames could leave the app installed inside a folder named after the previous one, nesting a level deeper each time. The installer now recognises every folder name the app has shipped under, moves the installation to a clean folder, and removes the old tree. Your settings, data and resources folder are untouched.' },
+      { type: 'improvement', description: 'Downloads now carry a single name. Releases used to attach every installer twice — once under the old product name and once under the current one — which made it unclear which file to take. Only AI-Code-Conductor-… is published now. If you are on 2.1.0-beta.5 or older, download this release by hand from the releases page: that build looks for the old file name and will not see the update.' },
+      { type: 'improvement', description: 'The first-run tour and guided setup now use the AI Code Conductor blue instead of the previous product\'s orange, so the logo no longer sits inside mismatched styling, and the "What\'s new" page shows the version you are actually installing rather than always saying 2.0.' },
+      { type: 'improvement', description: 'A Microsoft Store package is now built alongside the Windows installer — the first step towards listing the app in the Store.' },
+      { type: 'fix', description: 'Security hardening: one file written during SSH session setup — the status-line helper — could follow a symbolic link planted in advance in the remote account\'s ~/.claude folder, redirecting where it was written. It is now created fresh and refuses to follow a planted link, matching the protection already applied to the token files written beside it. Reported privately.' }
+    ]
+  },
+  {
     version: '2.1.0-beta.9',
     date: '2026-08-13',
     highlights: 'Each account can hold its own claude.ai web session, signed in through a dedicated per-account browser and kept fully separate. This is also a security release: two local-attacker vulnerabilities are fixed, with their advisories published alongside it.',
