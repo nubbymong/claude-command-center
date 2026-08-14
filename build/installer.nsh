@@ -136,7 +136,16 @@
   ; relocation never fired and instFilesPre appended the new name INSIDE the old
   ; folder. Every rename made it one level deeper. Walking the whole path (not
   ; just its tail) is what makes this self-healing however deep it already is.
-  StrCpy $R9 ""            ; outermost legacy dir found, "" = none
+  ;
+  ; The walk stops at the first component that is NEITHER a legacy name NOR the
+  ; current app name, so it only ever spans an actual nesting CHAIN. That bound
+  ; is load-bearing, because customInstall RMDir /r's what this finds: without
+  ; it, an install at
+  ;   C:\Claude Conductor\dev\AI Code Conductor
+  ; would resolve "C:\Claude Conductor" as the legacy root and delete a
+  ; directory full of unrelated files. "dev" is neither, so the climb halts
+  ; there and nothing above it is ever considered.
+  StrCpy $R9 ""            ; outermost legacy dir in the chain, "" = none
   StrCpy $R8 "$INSTDIR"
   StrCpy $R6 0             ; depth guard
   ${Do}
@@ -146,6 +155,9 @@
     !insertmacro IsLegacyBrandFolder "$R7" $R5
     ${If} $R5 == 1
       StrCpy $R9 "$R8"
+    ${ElseIf} $R7 != "${APP_FILENAME}"
+      ; A real parent directory — the nesting chain ends here.
+      ${ExitDo}
     ${EndIf}
     ${GetParent} "$R8" $R8
     StrCmp $R8 "" 0 +2

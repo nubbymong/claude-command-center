@@ -82,6 +82,12 @@ describe('brand identity guard', () => {
     // a nested install's tail is already the current brand name.
     expect(nsh).toMatch(/GetFileName/)
     expect(nsh).toMatch(/\$\{Loop\}/)
+    // ...but it must STOP at the first component that is neither a legacy name
+    // nor the app name. customInstall RMDir /r's whatever this resolves to, so
+    // an unbounded climb would let an install at
+    //   C:\Claude Conductor\dev\AI Code Conductor
+    // delete C:\Claude Conductor wholesale.
+    expect(nsh).toMatch(/\$\{ElseIf\}\s+\$R7\s+!=\s+"\$\{APP_FILENAME\}"/)
   })
 
   it('a broken previous install is cleared silently instead of prompting', () => {
