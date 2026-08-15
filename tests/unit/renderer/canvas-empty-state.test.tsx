@@ -71,7 +71,8 @@ describe('the landing (intro view)', () => {
   it('is the default, names the surface, and explains the loop and the controls', () => {
     render()
     expect(container.textContent).toContain('Agent Canvas')
-    expect(container.textContent).toContain('nothing rendered yet')
+    // The eyebrow. Sentence case in the DOM — the sheet upper-cases it in CSS.
+    expect(container.textContent).toContain('Nothing rendered yet')
     expect(container.textContent).toContain('The review loop')
     expect(container.textContent).toContain('Submit review')
     expect(container.textContent).toContain('Agent Canvas')
@@ -79,9 +80,37 @@ describe('the landing (intro view)', () => {
     expect(container.querySelector('[data-testid="sketchpad"]')).toBeNull()
   })
 
+  it('draws the loop as five ordered steps', () => {
+    // The numbering encodes a real sequence (and the return arc from 05 back to
+    // 02 is the feature) — so the order and the count are contract, not decor.
+    render()
+    const steps = Array.from(container.querySelectorAll('ol > li'))
+    expect(steps).toHaveLength(5)
+    expect(steps.map((li) => li.querySelector('h4')?.textContent)).toEqual([
+      'Agent renders',
+      'You annotate',
+      'Submit review',
+      'Agent revises',
+      'You resolve',
+    ])
+    expect(steps.map((li) => li.querySelector('span')?.textContent)).toEqual(['01', '02', '03', '04', '05'])
+  })
+
+  it('still teaches the control vocabulary, one click away', () => {
+    // Disclosed rather than always-on so the sheet stays a sheet — but nothing
+    // the landing used to explain may go missing.
+    render()
+    expect(container.textContent).not.toContain('drag a rectangle when a note is about an area')
+    click(buttonByText('Once something is rendered'))
+    for (const control of ['Browse', 'Region', 'Draw', 'Submit review']) {
+      expect(container.textContent).toContain(control)
+    }
+    expect(container.textContent).toContain('drag a rectangle when a note is about an area')
+  })
+
   it('types the starter prompt into the terminal WITHOUT a newline', () => {
     render()
-    click(buttonByText('Type it into the terminal'))
+    click(buttonByText('Put this in the terminal'))
     expect(ptyWriteMock).toHaveBeenCalledTimes(1)
     const [sessionId, text] = ptyWriteMock.mock.calls[0]
     expect(sessionId).toBe(SID)
@@ -95,7 +124,7 @@ describe('the landing (intro view)', () => {
     // about the mcps". The agent-canvas skill (canvas-plugin.ts) teaches
     // htmlPath / data-ux-id / the loop, so the user never types a tool name.
     render()
-    click(buttonByText('Type it into the terminal'))
+    click(buttonByText('Put this in the terminal'))
     const [, text] = ptyWriteMock.mock.calls[0]
     for (const jargon of ['canvas_render', 'canvas_snapshot', 'canvas_review', 'data-ux-id', 'mcp']) {
       expect(String(text).toLowerCase()).not.toContain(jargon.toLowerCase())
@@ -151,7 +180,7 @@ describe('reclaiming an earlier canvas (the user is the authorization)', () => {
 describe('the sketchpad escape hatch (spec D2)', () => {
   it('is one click away, and one click back', () => {
     render()
-    click(buttonByText('Sketchpad'))
+    click(buttonByText('Open the sketchpad instead'))
     expect(container.querySelector('[data-testid="sketchpad"]')).toBeTruthy()
     expect(useCanvasStore.getState().bySessionId[SID].emptyView).toBe('sketchpad')
 

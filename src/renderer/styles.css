@@ -463,3 +463,48 @@ body {
 [data-canvas-layer='glass'] .layer-ui__wrapper__footer {
   display: none !important;
 }
+
+/* ── Agent Canvas landing: the empty state IS the canvas, unfilled ─────────
+   The stage is a query CONTAINER, not a viewport breakpoint consumer: the
+   canvas pane is user-resizable and docks beside the terminal, so a viewport
+   media query would still paint five columns inside a 320px pane. Everything
+   that has to answer to the pane's width lives here (sheet padding, the loop
+   track, the return arc, the headline); the rest stays in Tailwind classes on
+   the component. Tailwind v4 emits utilities inside @layer, so these unlayered
+   rules win without !important — do not also set these properties as classes. */
+.canvas-stage {
+  container-type: inline-size;
+}
+.canvas-sheet {
+  padding: 52px 56px 44px;
+}
+.canvas-headline {
+  font-size: 27px;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+.canvas-loop-track {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+@container (max-width: 760px) {
+  .canvas-sheet { padding: 32px 22px 26px; }
+  .canvas-headline { font-size: 22px; }
+  .canvas-loop-track { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  /* The return arc is drawn for the five-across track. Once the track wraps it
+     points at the wrong steps, so it goes rather than lie. */
+  .canvas-loop-arc { display: none; }
+}
+@container (max-width: 420px) {
+  .canvas-loop-track { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+}
+/* Nothing on this surface animates to convey meaning — honour the OS setting
+   (same treatment as footer-update-pulse above). */
+@media (prefers-reduced-motion: reduce) {
+  .canvas-landing,
+  .canvas-landing * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

@@ -22,6 +22,46 @@ import { finite, safeAnchorResolutions, safeHit, safeInspectResult, safeViewport
 import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
 import { askCanvasFrame } from '../canvas/canvas-frame-rpc'
 import { openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
+import { relativeTime } from '../utils/relativeTime'
+
+/** JetBrains Mono ships with the app (@font-face in styles.css) but Tailwind's
+ *  `font-mono` resolves to the generic stack, so mono is named explicitly. */
+const MONO = "'JetBrains Mono', ui-monospace, monospace"
+
+/** How long a frame may sit silent before the pane stops claiming it is
+ *  loading. A 404, a CSP-blocked bridge script and a crashed page otherwise
+ *  look exactly like a slow one — forever. */
+const FRAME_READY_TIMEOUT_MS = 8000
+
+/** Wall-clock of a render, or null when the stored stamp will not parse. */
+function versionClock(iso: string): string | null {
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return null
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+/** What KIND of thing this version is, in the user's words. A UAT render is
+ *  the app under test, so its build label (when the agent supplied one) is the
+ *  most useful thing we can say about it. */
+function versionKind(version: CanvasVersion): string {
+  if (version.source.mode === 'uat') return version.source.buildLabel?.trim() || 'live app'
+  return 'design mock'
+}
+
+/** Full stamp for the label's tooltip — the human line is deliberately short. */
+function versionTooltip(version: CanvasVersion): string {
+  const ms = Date.parse(version.createdAt)
+  const when = Number.isFinite(ms) ? new Date(ms).toLocaleString() : version.createdAt
+  return `${version.id} — ${versionKind(version)}, rendered ${when}`
+}
+
+/** One picker row: `v3 · 14:07 · 2m ago`. Raw ids told the user nothing about
+ *  which render they were switching to. */
+function versionOptionLabel(version: CanvasVersion, now: number): string {
+  const ms = Date.parse(version.createdAt)
+  if (!Number.isFinite(ms)) return `${version.id} · ${versionKind(version)}`
+  return `${version.id} · ${versionClock(version.createdAt)} · ${relativeTime(ms, now)}`
+}
 
 interface Props {
   sessionId: string
@@ -125,6 +165,13 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
   const [viewport, setViewport] = useState<CanvasViewportInfo | null>(null)
   const [hover, setHover] = useState<HoverState | null>(null)
   const [marqueeDrag, setMarqueeDrag] = useState<MarqueeDrag | null>(null)
+  // Load health. `frameLoaded` is the browser's own load event (it fires for an
+  // error document too, so it is not by itself a health signal); `loadTimedOut`
+  // is what turns "still loading" into "this did not work".
+  const [frameLoaded, setFrameLoaded] = useState(false)
+  const [loadTimedOut, setLoadTimedOut] = useState(false)
+  // Bumping this re-mounts the iframe: the retry affordance for a dead render.
+  const [reloadNonce, setReloadNonce] = useState(0)
 
   const contentUrl = useMemo(
     () => canvasContentUrl(canvasId, version.id, version.source.entry),
@@ -243,14 +290,27 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
     return () => window.removeEventListener('keydown', onKey)
   }, [sessionId, handleReportedKey])
 
-  // New version → the frame reloads; bridge state starts over.
+  // New version (or a retry) → the frame reloads; bridge state starts over.
   useEffect(() => {
     bridgeReadyRef.current = false
     setBridgeReady(false)
     setViewport(null)
     setHover(null)
     setMarqueeDrag(null)
-  }, [contentUrl])
+    setFrameLoaded(false)
+    setLoadTimedOut(false)
+  }, [contentUrl, reloadNonce])
+
+  // …and a frame that never reports in stops pretending to load. Without this
+  // a 404, a CSP-blocked bridge script or a crashed page all read as "slow"
+  // indefinitely, which is the one thing the user cannot act on.
+  useEffect(() => {
+    if (bridgeReady) return
+    const timer = window.setTimeout(() => setLoadTimedOut(true), FRAME_READY_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [contentUrl, reloadNonce, bridgeReady])
+
+  const retryFrame = useCallback(() => setReloadNonce((n) => n + 1), [])
 
   // Publish this frame so `canvas_snapshot` (main) has something to capture.
   // Only while mounted: with no live frame there is no rendered page, and the
@@ -412,43 +472,65 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
       ? { color: 'text-mauve', label: 'Draw', hint: 'sketch on the glass; select strokes, then attach them to a note' }
       : { color: 'text-blue', label: 'Browse', hint: 'the page is live — hover to inspect, click to select · ↑ parent · Esc clear' }
 
+  const segmentClass = (active: boolean) =>
+    `px-2.5 py-[5px] rounded text-[11.5px] font-medium leading-none transition-colors focus-ring disabled:opacity-40 ${
+      active
+        ? 'bg-[var(--surface-overlay)] text-[var(--text-primary)]'
+        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+    }`
+
+  const versionClockLabel = versionClock(version.createdAt)
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
-      {/* Pane chrome. */}
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-surface0 bg-crust shrink-0">
-        <span className="text-[11px] font-medium text-subtext1">Agent Canvas</span>
+      {/* Pane chrome — 38px, one type size, and the mode switch given real
+          weight because it decides where the user's clicks land. */}
+      <div className="h-[38px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)] border-b border-[var(--border-subtle)]">
+        <span className="w-[5px] h-[5px] shrink-0 rounded-full bg-[var(--brand)]" aria-hidden="true" />
+        <span className="shrink-0 text-[12px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]">
+          Agent Canvas
+        </span>
+        {/* The version identity, in words a person can act on. It lives here
+            because a version EXISTS — the empty state's own chrome carries no
+            version label and no picker, because there is nothing to version. */}
         <span
-          className="px-1.5 py-0.5 text-[10px] rounded bg-surface0 text-overlay1 border border-surface1/60"
-          title={`Rendered ${new Date(version.createdAt).toLocaleString()}`}
+          className="min-w-0 truncate text-[11.5px] text-[var(--text-primary)]"
+          title={versionTooltip(version)}
         >
-          {version.id} · {version.mode}
+          <span className="text-[var(--text-secondary)]" style={{ fontFamily: MONO }}>
+            {version.id}
+          </span>
+          {versionClockLabel ? ` · ${versionClockLabel}` : ''} · {versionKind(version)}
         </span>
         {versions.length > 1 && (
           <select
             value={version.id}
             onChange={(e) => void setActiveVersion(sessionId, e.target.value)}
-            className="text-[10px] bg-surface0 text-overlay1 border border-surface1/60 rounded px-1 py-0.5"
+            className="shrink-0 text-[11.5px] rounded px-1.5 py-0.5 bg-[var(--surface-panel)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] transition-colors focus-ring"
+            aria-label="Switch version"
             title="Switch version"
           >
             {versions.map((v) => (
               <option key={v.id} value={v.id}>
-                {v.id}
+                {versionOptionLabel(v, Date.now())}
               </option>
             ))}
           </select>
         )}
         <div className="flex-1" />
         {/* THE control of this surface: who owns the pointer (spec §6). */}
-        <div className="flex rounded border border-surface1 overflow-hidden" role="group" aria-label="Canvas interaction mode">
+        <div
+          className="shrink-0 flex items-center gap-[2px] p-[2px] rounded-md bg-[var(--surface-panel)] border border-[var(--border-subtle)]"
+          role="group"
+          aria-label="Canvas interaction mode"
+        >
           <button
             onClick={() => {
               setMarqueeArmed(sessionId, false)
               setInteractionMode(sessionId, 'browse')
             }}
             aria-pressed={mode === 'browse' && !marqueeArmed}
-            className={`px-2.5 py-0.5 text-xs transition-colors ${
-              mode === 'browse' && !marqueeArmed ? 'bg-blue/20 text-blue font-medium' : 'bg-surface0/60 text-overlay1 hover:text-text'
-            }`}
+            className={segmentClass(mode === 'browse' && !marqueeArmed)}
             title="Browse mode — the content is interactive; hover to inspect, click to select"
           >
             Browse
@@ -459,9 +541,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
               setInteractionMode(sessionId, 'draw')
             }}
             aria-pressed={mode === 'draw' && !marqueeArmed}
-            className={`px-2.5 py-0.5 text-xs transition-colors border-l border-surface1 ${
-              mode === 'draw' && !marqueeArmed ? 'bg-mauve/20 text-mauve font-medium' : 'bg-surface0/60 text-overlay1 hover:text-text'
-            }`}
+            className={segmentClass(mode === 'draw' && !marqueeArmed)}
             title="Draw mode — the glass is interactive; sketch over the content"
           >
             Draw
@@ -470,9 +550,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
             onClick={() => setMarqueeArmed(sessionId, !marqueeArmed)}
             aria-pressed={marqueeArmed}
             disabled={!viewport}
-            className={`px-2.5 py-0.5 text-xs transition-colors border-l border-surface1 disabled:opacity-40 ${
-              marqueeArmed ? 'bg-peach/20 text-peach font-medium' : 'bg-surface0/60 text-overlay1 hover:text-text'
-            }`}
+            className={segmentClass(marqueeArmed)}
             title="Region — drag a rectangle to select an area for a note (Esc cancels)"
           >
             Region
@@ -480,19 +558,22 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
         </div>
         <button
           onClick={() => togglePane(sessionId)}
-          className="px-2.5 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text transition-colors"
+          aria-label="Close Agent Canvas"
           title="Close Agent Canvas"
+          className="shrink-0 p-[5px] rounded leading-none text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring"
         >
-          Close
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+            <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" />
+          </svg>
         </button>
       </div>
 
       {/* Mode strip — always says whose surface the pointer is on and what to
           do with it (owner feedback 2026-08-13: nothing said what mode the
           canvas was in). */}
-      <div className="flex items-center gap-2 px-3 py-1 border-b border-surface0 bg-mantle text-[10px] shrink-0">
-        <span className={`font-semibold uppercase tracking-wide ${modeStrip.color}`}>{modeStrip.label}</span>
-        <span className="text-overlay1">{modeStrip.hint}</span>
+      <div className="flex items-center gap-2 px-3 py-1 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[11px] shrink-0">
+        <span className={`font-semibold uppercase tracking-wide shrink-0 ${modeStrip.color}`}>{modeStrip.label}</span>
+        <span className="text-[var(--text-secondary)] truncate">{modeStrip.hint}</span>
       </div>
 
       <div className="flex-1 flex min-h-0">
@@ -506,16 +587,22 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
             // src commits, and versions share a canvas origin — so a snapshot
             // taken in that window would be answered by the previous version and
             // then stamped with the new version's id.
-            key={contentUrl}
+            // The nonce is the retry: same URL, new element, fresh load.
+            key={`${contentUrl}#${reloadNonce}`}
             ref={iframeRef}
             src={contentUrl}
             title="Agent Canvas content"
+            onLoad={() => setFrameLoaded(true)}
             // Same-origin is safe here: the frame's ccc-ux://<canvasId> origin is
             // never the app's own origin, so the content cannot reach the host
             // document; scripts+forms are what real pages need (spec §3.2, D14).
             sandbox="allow-scripts allow-same-origin allow-forms"
             referrerPolicy="no-referrer"
-            className="absolute inset-0 w-full h-full border-0 bg-white"
+            // The pre-paint frame is the APP's stage colour, not white: a white
+            // flash in a dark pane read as a broken render every time a version
+            // arrived. (The Excalidraw glass below stays theme="light" — that
+            // one is deliberate, see the comment on glassInitialData.)
+            className="absolute inset-0 w-full h-full border-0 bg-[var(--surface-stage)]"
           />
           {/* Glass — Excalidraw over the content, transparent board, pointer
               only in draw mode. A sibling overlay, never injected (D7). */}
@@ -634,13 +721,38 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
               )}
             </div>
           )}
-          {!bridgeReady && (
-            <div className="absolute inset-x-0 bottom-2 flex justify-center pointer-events-none">
-              <span className="px-2 py-0.5 text-[10px] rounded bg-crust/90 text-overlay1 border border-surface1/60">
+          {/* Load status. A dead render has to SAY so: before this, a 404, a
+              CSP-blocked bridge script and a crashed page all sat on "Loading
+              content…" forever, indistinguishable from a slow one. aria-live so
+              the change reaches a screen reader, not just the eye. */}
+          {/* The region itself is always mounted — a live region added to the
+              DOM together with its first message is not reliably announced. */}
+          <div
+            className="absolute inset-x-0 bottom-2 px-3 flex justify-center pointer-events-none"
+            role="status"
+            aria-live="polite"
+          >
+            {!bridgeReady && !loadTimedOut && (
+              <span className="px-2 py-0.5 text-[11px] rounded bg-[var(--surface-panel)] text-[var(--text-secondary)] border border-[var(--border-subtle)]">
                 Loading content…
               </span>
-            </div>
-          )}
+            )}
+            {!bridgeReady && loadTimedOut && (
+              <div className="pointer-events-auto flex items-center gap-2 max-w-full px-2.5 py-1.5 rounded-md bg-[var(--surface-overlay)] border border-[var(--border-strong)] shadow-lg">
+                <span className="text-[11px] text-[var(--text-primary)] truncate">
+                  {frameLoaded
+                    ? "This version loaded but never reported in — its page didn't run, so notes can't anchor to it."
+                    : "This version didn't load."}
+                </span>
+                <button
+                  onClick={retryFrame}
+                  className="shrink-0 px-2 py-0.5 text-[11px] font-medium rounded bg-[var(--surface-panel)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors focus-ring"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Notes panel — docked (spec D3). */}
