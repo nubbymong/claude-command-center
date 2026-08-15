@@ -575,8 +575,20 @@ export interface ReclaimableCanvas {
   canvasId: string
   versionCount: number
   lastRenderedAt: string
-  /** The project it was rendered in — a LABEL, never an authorization key. */
+  /** The project it was rendered in — a LABEL, never an authorization key.
+   *  Format/bidi control characters are stripped in main before it is sent. */
   cwd?: string
+  /**
+   * First 8 characters of the Claude conversation this canvas was last
+   * rendered under — the thing that actually TELLS TWO CANVASES APART.
+   *
+   * Without it, two canvases from one project render identically on the card
+   * (constant title, version count, timestamp, cwd), and a mis-click re-binds
+   * another project's private review notes to this session — which the
+   * pre-allowed `canvas_review` tool can then read. Absent when the canvas was
+   * never rendered under a conversation the binder could name.
+   */
+  conversationShortId?: string
   /** Whether it matches the asking session's project, for ordering only. */
   sameProject?: boolean
 }

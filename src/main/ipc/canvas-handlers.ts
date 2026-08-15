@@ -63,9 +63,27 @@ const renderSourceSchema = z.discriminatedUnion('mode', [
 
 const getStateSchema = z.object({ sessionId: sessionIdSchema }).strict()
 
+/**
+ * The tiles the user currently has open, as the renderer sees them.
+ *
+ * Optional and bounded. It can only make MORE sessions count as "still here",
+ * so a missing or bogus id costs a candidate that would have been offered — it
+ * can never make an unavailable canvas takeable. That is what makes accepting
+ * it from the renderer safe.
+ */
+const openTileSessionIdsSchema = z.array(sessionIdSchema).max(256).optional()
+
+const listReclaimableSchema = z
+  .object({ sessionId: sessionIdSchema, openTileSessionIds: openTileSessionIdsSchema })
+  .strict()
+
 /** Canvas ids are app-minted (see CANVAS_ID_RE); bounded here at the seam. */
 const reclaimSchema = z
-  .object({ sessionId: sessionIdSchema, canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
+    openTileSessionIds: openTileSessionIdsSchema,
+  })
   .strict()
 
 const renderSchema = z
@@ -190,15 +208,15 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
 
   // What this session could reclaim, for the user to choose from. Pure read.
   ipcMain.handle(IPC.CANVAS_LIST_RECLAIMABLE, async (_e, args: unknown) => {
-    const { sessionId } = getStateSchema.parse(args)
-    return listReclaimableCanvases(sessionId)
+    const { sessionId, openTileSessionIds } = listReclaimableSchema.parse(args)
+    return listReclaimableCanvases(sessionId, openTileSessionIds ?? [])
   })
 
   // The ONLY path that moves a canvas between sessions, and it exists because
   // the user clicked the canvas they want back.
   ipcMain.handle(IPC.CANVAS_RECLAIM, async (_e, args: unknown) => {
-    const { sessionId, canvasId } = reclaimSchema.parse(args)
-    const ok = reclaimCanvasForSession(sessionId, canvasId)
+    const { sessionId, canvasId, openTileSessionIds } = reclaimSchema.parse(args)
+    const ok = reclaimCanvasForSession(sessionId, canvasId, openTileSessionIds ?? [])
     return { ok, state: getCanvasStateForSession(sessionId) }
   })
 

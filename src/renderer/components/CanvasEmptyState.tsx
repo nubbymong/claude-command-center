@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import ExcalidrawPane from './ExcalidrawPane'
 import { useCanvasStore } from '../stores/canvasStore'
+import { useSessionStore } from '../stores/sessionStore'
 import { relativeTime } from '../utils/relativeTime'
 import type { ReclaimableCanvas } from '../../shared/canvas'
 
@@ -95,10 +96,17 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
 
   // What this session could take back. A pure read — nothing moves until the
   // user clicks Reopen.
+  //
+  // The open tiles go WITH the ask. Main has no reliable way to tell that a
+  // session whose PTY exited still has a tile on screen (the saved-tile file
+  // exists only between a graceful Save & Close and the next restore), so it
+  // was offering canvases whose own tile was open and visible. The renderer is
+  // the only party that knows, and the hint can only shorten the list.
   useEffect(() => {
     let cancelled = false
+    const openTileSessionIds = useSessionStore.getState().sessions.map((s) => s.id)
     void window.electronAPI.canvas
-      .listReclaimable({ sessionId })
+      .listReclaimable({ sessionId, openTileSessionIds })
       .then((list) => {
         if (!cancelled) setReclaimable(Array.isArray(list) ? list : [])
       })
@@ -114,7 +122,10 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
     async (canvasId: string) => {
       setReclaiming(canvasId)
       try {
-        const result = await window.electronAPI.canvas.reclaim({ sessionId, canvasId })
+        // Re-read the tiles at CLICK time, not at list time: main applies the
+        // same rule on both calls and the truth may have changed in between.
+        const openTileSessionIds = useSessionStore.getState().sessions.map((s) => s.id)
+        const result = await window.electronAPI.canvas.reclaim({ sessionId, canvasId, openTileSessionIds })
         if (result?.ok) {
           // The pane swaps to the canvas surface as soon as the store has it.
           await refreshCanvas(sessionId)
@@ -370,8 +381,15 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
                       <path d="M14 8A6 6 0 1 1 8 2a6 6 0 0 1 4.5 2M13 2v3h-3" />
                     </svg>
                     <div className="min-w-0 flex-1">
-                      <div className="text-[12.5px] font-semibold text-[var(--text-primary)] mb-0.5">
-                        A canvas from an earlier session
+                      {/* The TITLE is what the user reads before clicking, and
+                          a constant one made two canvases from the same project
+                          indistinguishable — a mis-click re-binds another
+                          project's private review notes to this session. The
+                          conversation (or, failing that, the canvas's own id)
+                          is what actually differs, so it goes in the name. */}
+                      <div className="text-[12.5px] font-semibold text-[var(--text-primary)] mb-0.5 truncate">
+                        Canvas from conversation{' '}
+                        <span style={{ fontFamily: MONO }}>{canvasLabel(c)}</span>
                       </div>
                       <div
                         className="text-[11.5px] text-[var(--text-secondary)] truncate"
@@ -413,4 +431,17 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
 function lastRenderedLabel(iso: string): string {
   const ms = Date.parse(iso)
   return Number.isFinite(ms) ? relativeTime(ms) : iso
+}
+
+/**
+ * The short name that tells one candidate from another.
+ *
+ * The conversation is the right answer (two canvases from one project are two
+ * conversations), and the canvas id is the fallback for a canvas that was never
+ * rendered under a conversation the binder could name — it is at least unique,
+ * which is the whole job here. Both are already `[0-9a-f]` by construction; the
+ * slice bounds what a card can be made to render regardless.
+ */
+function canvasLabel(c: ReclaimableCanvas): string {
+  return (c.conversationShortId || c.canvasId).slice(0, 8)
 }

@@ -64,7 +64,13 @@ function hardLink(target: string, link: string): void {
 }
 
 /** Write a canvas.json straight to disk — the reload path, which is the only
- *  way a record the current write ingress would refuse can exist at all. */
+ *  way a record the current write ingress would refuse can exist at all.
+ *
+ *  SIGNED, with the store's own key. Records now carry a MAC and an unsigned
+ *  one is refused before any of these guards runs — an unsigned fixture would
+ *  make every test below pass without exercising the thing it names. What is
+ *  under test here is a record CCC WROTE (under an older, laxer build) whose
+ *  contents are dangerous, not a planted one. */
 function writeCanvasJson(
   canvasId: string,
   versions: Array<{ id: string; mode: 'uat' | 'design'; source: Record<string, unknown> }>,
@@ -72,15 +78,16 @@ function writeCanvasJson(
 ): void {
   const dir = path.join(getResourcesDirectory(), 'canvas', canvasId)
   fs.mkdirSync(dir, { recursive: true })
+  const record = {
+    canvasId,
+    sessionId: SID,
+    createdAt: new Date(0).toISOString(),
+    activeVersionId: activeVersionId ?? versions[versions.length - 1]?.id ?? null,
+    versions: versions.map((v) => ({ ...v, createdAt: new Date(0).toISOString() })),
+  }
   fs.writeFileSync(
     path.join(dir, 'canvas.json'),
-    JSON.stringify({
-      canvasId,
-      sessionId: SID,
-      createdAt: new Date(0).toISOString(),
-      activeVersionId: activeVersionId ?? versions[versions.length - 1]?.id ?? null,
-      versions: versions.map((v) => ({ ...v, createdAt: new Date(0).toISOString() })),
-    }),
+    JSON.stringify({ ...record, mac: store._canvasRecordMacForTest(record) }),
   )
 }
 

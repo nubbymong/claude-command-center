@@ -141,6 +141,11 @@ function mountFrame(event: CanvasSnapshotRequestEvent): HeadlessFrame {
   // safe for the same reason — the frame's ccc-ux://<canvasId> origin is never
   // the app's own origin, so content cannot reach this document.
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms')
+  // Delegate NOTHING. An empty allow list is the parent's half of the
+  // permissions ceiling the ccc-ux:// response header sets on the document
+  // itself, and it matters most here: this frame has no UI, so a permission
+  // prompt in it would be invisible (adversarial review, 2026-08-15).
+  iframe.setAttribute('allow', '')
   iframe.referrerPolicy = 'no-referrer'
   iframe.title = 'Agent Canvas off-screen capture'
   iframe.style.width = '100%'

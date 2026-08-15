@@ -122,7 +122,15 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
 
     const offered = store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent })
     expect(offered).toEqual([
-      { canvasId, versionCount: 1, lastRenderedAt: expect.any(String), cwd: CWD },
+      {
+        canvasId,
+        versionCount: 1,
+        lastRenderedAt: expect.any(String),
+        cwd: CWD,
+        // The disambiguator: two canvases from one project are otherwise
+        // identical on the reclaim card.
+        conversationShortId: CONV_1.slice(0, 8),
+      },
     ])
 
     const adopted = store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })
@@ -233,9 +241,12 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     const record = canvasJson(canvasId)
     record.versions = []
     record.activeVersionId = null
+    // Re-signed: an edited record fails its MAC and would be refused wholesale,
+    // so the zero-version rule this test is about would never be consulted.
+    delete record.mac
     fs.writeFileSync(
       path.join(getResourcesDirectory(), 'canvas', canvasId, 'canvas.json'),
-      JSON.stringify(record, null, 2),
+      JSON.stringify({ ...record, mac: store._canvasRecordMacForTest(record) }, null, 2),
     )
     restart()
     expect(store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent })).toEqual([])

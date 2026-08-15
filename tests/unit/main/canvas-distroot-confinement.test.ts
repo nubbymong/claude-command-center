@@ -94,15 +94,20 @@ describe('UAT distRoot confinement (default-deny allowlist)', () => {
     const canvasId = 'poisoned0000000000000001'
     const dir = path.join(getResourcesDirectory(), 'canvas', canvasId)
     fs.mkdirSync(dir, { recursive: true })
+    // SIGNED with the store's own key: an unsigned record is refused at the
+    // signature and this test would pass without the distRoot check ever
+    // running. What is under test is a record CCC wrote whose registered base
+    // is gone, not a planted one (that case is canvas-record-provenance).
+    const poisoned = {
+      canvasId,
+      sessionId: SID,
+      createdAt: new Date(0).toISOString(),
+      activeVersionId: 'v1',
+      versions: [{ id: 'v1', mode: 'uat', createdAt: new Date(0).toISOString(), source: { mode: 'uat', distRoot: secretDir, entry: 'index.html' } }],
+    }
     fs.writeFileSync(
       path.join(dir, 'canvas.json'),
-      JSON.stringify({
-        canvasId,
-        sessionId: SID,
-        createdAt: new Date(0).toISOString(),
-        activeVersionId: 'v1',
-        versions: [{ id: 'v1', mode: 'uat', createdAt: new Date(0).toISOString(), source: { mode: 'uat', distRoot: secretDir, entry: 'index.html' } }],
-      }),
+      JSON.stringify({ ...poisoned, mac: store._canvasRecordMacForTest(poisoned) }),
     )
     store._resetCanvasStoreForTest() // "restart" — lazy rescan will find it
     // The record loads (shape is valid) but nothing serves: distRoot is unconfined.
@@ -117,15 +122,18 @@ describe('entry re-validation on the disk-reload path (ADS / traversal)', () => 
     const dir = path.join(getResourcesDirectory(), 'canvas', canvasId, 'versions', 'v1')
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'index.html'), '<html><body>ok</body></html>')
+    // Signed, for the reason above: this is an OLDER BUILD's record, not a
+    // planted one — the entry check is what must drop it.
+    const legacy = {
+      canvasId,
+      sessionId: SID,
+      createdAt: new Date(0).toISOString(),
+      activeVersionId: 'v1',
+      versions: [{ id: 'v1', mode: 'design', createdAt: new Date(0).toISOString(), source: { mode: 'design', entry: 'index.html:hidden' } }],
+    }
     fs.writeFileSync(
       path.join(getResourcesDirectory(), 'canvas', canvasId, 'canvas.json'),
-      JSON.stringify({
-        canvasId,
-        sessionId: SID,
-        createdAt: new Date(0).toISOString(),
-        activeVersionId: 'v1',
-        versions: [{ id: 'v1', mode: 'design', createdAt: new Date(0).toISOString(), source: { mode: 'design', entry: 'index.html:hidden' } }],
-      }),
+      JSON.stringify({ ...legacy, mac: store._canvasRecordMacForTest(legacy) }),
     )
     store._resetCanvasStoreForTest()
     // The colon entry is STRUCTURALLY dangerous, so the version is dropped on

@@ -223,10 +223,16 @@ export interface ElectronAPI {
      *  answers exactly once per requestId via sendSnapshotResult. */
     onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
     sendSnapshotResult: (reply: CanvasSnapshotReply) => void
-    /** Canvases from earlier sessions this one could reclaim (read-only). */
-    listReclaimable: (args: { sessionId: string }) => Promise<ReclaimableCanvas[]>
+    /** Canvases from earlier sessions this one could reclaim (read-only).
+     *  `openTileSessionIds` are the tiles the user has on screen; main uses
+     *  them only to EXCLUDE candidates whose own tile is still live. */
+    listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ReclaimableCanvas[]>
     /** The user reclaims a named canvas — the only path that moves ownership. */
-    reclaim: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; state: CanvasState | null }>
+    reclaim: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; state: CanvasState | null }>
     // P3 — the review loop (drafts, submit, resolution)
     reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
@@ -754,8 +760,10 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.CANVAS_SNAPSHOT_REQUEST, handler)
     },
     sendSnapshotResult: (reply: CanvasSnapshotReply) => ipcRenderer.send(IPC.CANVAS_SNAPSHOT_RESULT, reply),
-    listReclaimable: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_LIST_RECLAIMABLE, args),
-    reclaim: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_RECLAIM, args),
+    listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_LIST_RECLAIMABLE, args),
+    reclaim: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_RECLAIM, args),
     reviewGetState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_GET_STATE, args),
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_UPSERT, args),

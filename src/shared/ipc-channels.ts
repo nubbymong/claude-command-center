@@ -366,7 +366,7 @@ export const IPC = {
   CANVAS_CHANGED: 'canvas:changed',                    // push: main -> renderer (a render/switch happened)
   CANVAS_SNAPSHOT_REQUEST: 'canvas:snapshotRequest',   // push: main -> renderer: capture the live frame (id-correlated)
   CANVAS_SNAPSHOT_RESULT: 'canvas:snapshotResult',     // renderer -> main: the reply to one snapshotRequest
-  CANVAS_LIST_RECLAIMABLE: 'canvas:listReclaimable',   // renderer -> main: { sessionId } -> ReclaimableCanvas[] (read-only)
+  CANVAS_LIST_RECLAIMABLE: 'canvas:listReclaimable',   // renderer -> main: { sessionId, openTileSessionIds? } -> ReclaimableCanvas[] (read-only)
   CANVAS_RECLAIM: 'canvas:reclaim',                    // renderer -> main: the USER moves a named canvas to this session
 
   // Agent Canvas P3 — reviews & annotations (the review loop, spec §6)

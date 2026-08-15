@@ -35,7 +35,8 @@ import { mimeForImage } from './clipboard-file'
 import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
-import { readConfig, saveConfig } from './config-manager'
+import { readConfig } from './config-manager'
+import { getInstallSecret } from './install-secret'
 import { isPackagedApp } from './update-watcher'
 import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
@@ -90,59 +91,11 @@ export function parseCccSessionIdFromUrl(reqUrl: string): string | null {
 
 // === R-DEC-3: per-launch auth secret ===
 //
-// The MCP server listens on a loopback port and exposes vision_* tools --
-// including vision_eval (arbitrary JS in the embedded browser) -- plus
-// cross-session actions. Loopback is NOT an authorisation boundary: any
-// local process (or a malicious page in a browser the user opened) could
-// drive it, so we require a 32-byte secret on EVERY request, embedded into the
-// MCP registration URLs CCC writes for Claude/Codex (?token=<secret>) so
-// legitimate sessions authenticate transparently. The secret is PERSISTED once
-// (CONFIG/conductor-secret.json) and reused across launches: a live SSH session
-// bakes the token into its --mcp-config, so if a restart / crash-relaunch rotated
-// the secret, that still-running session's MCP would fail every request as "not
-// authenticated" (SSE closed) with no recovery but relaunching the session. It is
-// already effectively on disk (in each session's mcp-config), so central
-// persistence adds no new exposure; loopback remains not an auth boundary.
-/**
- * Bumped when a stored secret must be considered burned regardless of its value.
- *
- * v2: every secret written by an earlier build was persisted through writeConfig
- * with no file mode, so it landed 0644 -- world-readable -- and on Windows into a
- * config dir created without a reparse-point check. Re-permissioning it does not
- * help: anything that could read it already has. So a secret stored without this
- * marker is DISCARDED and a fresh one minted, once, on first launch of a fixed
- * build.
- *
- * The cost is understood and accepted: a session already running with the old
- * token baked into its --mcp-config (the reason this is persisted rather than
- * rotated per launch) will fail MCP auth until it is relaunched. That is a
- * one-time upgrade cost and the alternative is keeping a compromised token.
- *
- * v3 (GHSA-q83v-phcc-hgv4): through v2 the secret was written VERBATIM into
- * every session's own --mcp-config as the `?token=`, so it was a shared
- * credential held by every principal on the machine. It is now used only as an
- * HMAC KEY: each session's config carries `mcpSessionToken(sessionId)` =
- * HMAC(secret, sessionId), and the secret itself never leaves this process.
- * But a v2 secret is known to anything that read a config, so as an HMAC key it
- * would let such a reader forge a binding for any session — it must be
- * discarded and a fresh, never-distributed key minted. Same one-time cost: a
- * session still running with a v2 `?token=` fails auth until relaunched.
- */
-const CONDUCTOR_SECRET_VERSION = 3
-
-let _conductorMcpSecret: string | null = null
-function loadOrCreateConductorMcpSecret(): string {
-  try {
-    const saved = readConfig<{ secret?: string; v?: number }>('conductorSecret')
-    if (saved?.secret && /^[0-9a-f]{64}$/.test(saved.secret)) {
-      if (saved.v === CONDUCTOR_SECRET_VERSION) return saved.secret
-      logWarn('[conductor-mcp] rotating the auth secret: the stored one predates the file-mode fix and must be treated as compromised')
-    }
-  } catch { /* fall through and mint a fresh one */ }
-  const secret = crypto.randomBytes(32).toString('hex')
-  try { saveConfig('conductorSecret', { secret, v: CONDUCTOR_SECRET_VERSION }) } catch (err) { logWarn(`[conductor-mcp] could not persist auth secret: ${err}`) }
-  return secret
-}
+// The secret itself (and the rotation rules that go with it) now lives in
+// ./install-secret — it acquired a second consumer (the canvas store's record
+// MAC), and one file may not own a value two subsystems key off. Nothing about
+// its semantics changed in the move; see that module for the full R-DEC-3 /
+// GHSA-q83v-phcc-hgv4 history.
 
 /** The MCP auth secret, persisted across launches (lazy so it loads AFTER the
  *  resources dir is configured, not at module init).
@@ -153,8 +106,7 @@ function loadOrCreateConductorMcpSecret(): string {
  *  presented token against the HMAC of the REQUESTED session id, so a token
  *  authorises exactly its own session and nothing else. */
 export function getConductorMcpSecret(): string {
-  if (_conductorMcpSecret === null) _conductorMcpSecret = loadOrCreateConductorMcpSecret()
-  return _conductorMcpSecret
+  return getInstallSecret()
 }
 
 /**

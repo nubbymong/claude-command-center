@@ -13,6 +13,7 @@
 // fans out through onCanvasChanged() so the renderer stays current no matter
 // who rendered.
 
+import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -27,6 +28,7 @@ import {
   ReclaimableCanvas,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
+import { deriveInstallKey } from '../install-secret'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
 import { isHomeOrAncestor } from '../path-utils'
 
@@ -336,10 +338,102 @@ function versionDir(canvasId: string, versionId: string): string {
   return path.join(canvasDir(canvasId), 'versions', versionId)
 }
 
+// ---------------------------------------------------------------------------
+// Record authentication
+// ---------------------------------------------------------------------------
+//
+// WHY A canvas.json NEEDS A MAC (adversarial review, 2026-08-15).
+//
+// `sanitizeRecord` below checks SHAPE. Nothing in it — nothing anywhere —
+// bound a record to something CCC actually wrote, so anyone able to create a
+// file under `<resources>/canvas/` could hand-write `<24-hex>/canvas.json`
+// naming a victim `sessionId` and a `distRoot` of their choosing, and after the
+// next app start the store served it and the reclaim card offered it to the
+// user as their own earlier work. It survived a restart, which made it the one
+// disk-persistent deception primitive in this feature.
+//
+// It compounded: `record.sessionId` is the AUTHORIZATION key for serving
+// (`getServableVersion` resolves a UAT distRoot against the roots registered
+// for the OWNER session named in the record), so an unauthenticated on-disk
+// field decided whose allowlist applied.
+//
+// So: every record is written with an HMAC over its whole content, keyed by a
+// subkey of the install secret that never leaves this process, and a record
+// that does not verify is REFUSED — not repaired, not shown unlabelled, not
+// served. The key is derived through `deriveInstallKey` rather than minted here
+// so there is one secret on this install and one place that mints it.
+//
+// COST, STATED: a canvas.json written before this shipped carries no `mac` and
+// is refused on the next start, with a warning naming the directory. Nothing is
+// deleted — the user can still see the files — but the canvas is gone from the
+// app. That is the correct direction for a record whose provenance cannot be
+// established, and it is a one-time cost on a feature that has not shipped.
+
+const CANVAS_RECORD_MAC_PURPOSE = 'canvas-record-v1'
+
+let _canvasRecordKey: Buffer | null = null
+function canvasRecordKey(): Buffer {
+  if (_canvasRecordKey === null) _canvasRecordKey = deriveInstallKey(CANVAS_RECORD_MAC_PURPOSE)
+  return _canvasRecordKey
+}
+
+/**
+ * A canonical byte-string for a record: key order cannot change the MAC, and
+ * two different records cannot produce one string.
+ *
+ * Written out rather than `JSON.stringify(record)` because stringify's key
+ * order is insertion order — the same record loaded, sanitized and re-persisted
+ * can serialize differently, which would make a MAC over it fail against
+ * itself. Every value is length-prefixed by JSON quoting, so no concatenation
+ * ambiguity ("ab"+"c" vs "a"+"bc") exists.
+ *
+ * `undefined` members are skipped exactly as JSON.stringify skips them, so what
+ * is authenticated is what is written.
+ */
+function canonicalize(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null'
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined && typeof v !== 'function')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalize(v)}`).join(',')}}`
+}
+
+/** The MAC of a record, over everything in it except the MAC itself. */
+function canvasRecordMac(record: CanvasRecord): string {
+  return crypto
+    .createHmac('sha256', canvasRecordKey())
+    .update(`${CANVAS_RECORD_MAC_PURPOSE}\n${canonicalize(record)}`, 'utf8')
+    .digest('hex')
+}
+
+/**
+ * Did WE write this? Constant-time, and false for anything malformed.
+ *
+ * Takes the raw parsed JSON: the MAC covers the bytes as persisted, before any
+ * sanitisation, so an unknown extra field a planted file carries is inside the
+ * authenticated blob rather than beside it.
+ */
+export function verifyCanvasRecordMac(parsed: unknown): boolean {
+  if (typeof parsed !== 'object' || parsed === null) return false
+  const { mac, ...rest } = parsed as Record<string, unknown>
+  if (typeof mac !== 'string' || !/^[0-9a-f]{64}$/.test(mac)) return false
+  let expected: string
+  try {
+    expected = canvasRecordMac(rest as unknown as CanvasRecord)
+  } catch {
+    return false // no key (no resources dir yet) ⇒ nothing verifies ⇒ nothing loads
+  }
+  return crypto.timingSafeEqual(Buffer.from(mac, 'hex'), Buffer.from(expected, 'hex'))
+}
+
 function persist(record: CanvasRecord): void {
   const dir = canvasDir(record.canvasId)
   mkdirSecure(dir)
-  atomicWriteSecure(canvasJsonPath(record.canvasId), JSON.stringify(record, null, 2))
+  atomicWriteSecure(
+    canvasJsonPath(record.canvasId),
+    JSON.stringify({ ...record, mac: canvasRecordMac(record) }, null, 2),
+  )
 }
 
 /** Is one version of a record structurally safe to keep? A false here means the
@@ -404,13 +498,27 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     activeVersionId = versions[versions.length - 1]?.id ?? null
   }
 
-  return { ...(r as CanvasRecord), versions, activeVersionId }
+  // The MAC is the envelope, not part of the record: strip it so the in-memory
+  // record (and therefore the NEXT persist, which re-MACs) never carries a
+  // stale one inside the authenticated content.
+  const { mac: _mac, ...rest } = r as Partial<CanvasRecord> & { mac?: unknown }
+  return { ...(rest as CanvasRecord), versions, activeVersionId }
 }
 
 function loadFromDisk(canvasId: string): CanvasRecord | null {
   try {
     const raw = fs.readFileSync(canvasJsonPath(canvasId), 'utf8')
     const parsed: unknown = JSON.parse(raw)
+    // Provenance BEFORE shape. A planted record is well-shaped by construction
+    // — shape validation was never the thing standing between a hand-written
+    // canvas.json and the user being offered it as their own work.
+    if (!verifyCanvasRecordMac(parsed)) {
+      console.warn(
+        `[canvas-store] refusing ${canvasJsonPath(canvasId)}: it carries no valid signature, so this app did not write it ` +
+          '(a canvas.json from a build before record signing landed will also read this way).',
+      )
+      return null
+    }
     const record = sanitizeRecord(parsed)
     if (!record || record.canvasId !== canvasId) return null
     return record
@@ -733,6 +841,29 @@ function isReclaimCandidate(record: CanvasRecord, sessionId: string, query: Canv
   return true
 }
 
+/**
+ * Characters that reorder or hide the text around them: the bidi overrides and
+ * isolates, the zero-width joiners/spaces, and the deprecated interlinear
+ * annotation marks.
+ *
+ * Stripped from the `cwd` before it leaves this process. It is a path the user
+ * is shown so they can tell one canvas from another, and a `U+202E` in it flips
+ * the rest of the line — `C:\work\<RLO>gnp.evil\` reads as a different
+ * directory than it is. The strip happens HERE rather than in the component so
+ * the value never exists in a renderable form anywhere.
+ */
+// eslint-disable-next-line no-control-regex
+const FORMAT_CONTROLS_RE = /[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/g
+
+/** Never render a stamp from the future: it would sort above every real canvas
+ *  in the reclaim list. Server-generated today (so this is a floor against
+ *  clock skew rather than against a caller), and cheap enough to keep. */
+function clampToNow(iso: string): string {
+  const ms = Date.parse(iso)
+  const now = Date.now()
+  return Number.isFinite(ms) && ms <= now ? iso : new Date(now).toISOString()
+}
+
 /** Canvases this session could reclaim, for the user to choose from. Pure read
  *  — nothing moves until the user names one. */
 export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdoptionQuery): ReclaimableCanvas[] {
@@ -742,11 +873,19 @@ export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdop
   const out: ReclaimableCanvas[] = []
   for (const record of canvases.values()) {
     if (!isReclaimCandidate(record, sessionId, query)) continue
+    const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
     out.push({
       canvasId: record.canvasId,
       versionCount: record.versions.length,
-      lastRenderedAt: record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt,
-      ...(record.cwd ? { cwd: record.cwd } : {}),
+      lastRenderedAt: clampToNow(record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt),
+      // The disambiguator. Two canvases from one project were previously
+      // indistinguishable on the card — same title, same cwd, often the same
+      // version count — and picking the wrong one re-binds ANOTHER project's
+      // private review notes to this session, which the pre-allowed
+      // `canvas_review` can then read. The conversation is what actually
+      // differs between them, so it is what the user is shown.
+      ...(record.conversationUuid ? { conversationShortId: record.conversationUuid.slice(0, 8) } : {}),
+      ...(cwd ? { cwd } : {}),
     })
   }
   return out
@@ -825,6 +964,19 @@ export function getServableVersion(canvasId: string, versionId: string): Servabl
   return { mode: 'uat', contentRoot: version.source.distRoot, entry: version.source.entry }
 }
 
+/**
+ * Test seam: the MAC this store would write for a record.
+ *
+ * Exists so a test can express "a record CCC WROTE, whose contents are then
+ * hostile" (an older build's entry, a zero-version record) as distinct from
+ * "a record CCC never wrote". Without it every hand-written fixture is refused
+ * at the signature and the guard the test is actually about never runs — the
+ * test passes while testing nothing.
+ */
+export function _canvasRecordMacForTest(record: unknown): string {
+  return canvasRecordMac(record as CanvasRecord)
+}
+
 /** Test seam: drop all in-memory state so each test starts cold. */
 export function _resetCanvasStoreForTest(): void {
   canvases.clear()
@@ -832,4 +984,5 @@ export function _resetCanvasStoreForTest(): void {
   uatRootsBySession.clear()
   diskScanned = false
   sessionInfoResolver = null
+  _canvasRecordKey = null
 }

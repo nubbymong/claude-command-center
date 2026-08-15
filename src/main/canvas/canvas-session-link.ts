@@ -112,6 +112,20 @@ export function noteSessionSpawnForCanvas(
 }
 
 /**
+ * How many candidates the pane is ever offered.
+ *
+ * A reclaim card the user has to read is a card they can mis-click, and the
+ * list is uncapped input to a component that renders every entry. The most
+ * relevant survive (the sort runs first), which is what a user scanning for
+ * their own work would have looked at anyway.
+ */
+const MAX_RECLAIM_CANDIDATES = 12
+
+/** Bound on the open-tile hint below. It can only ever REMOVE candidates, so
+ *  the cap is about work done, not about trust. */
+const MAX_OPEN_TILE_HINTS = 256
+
+/**
  * Canvases this session could reclaim, for the user to choose from.
  *
  * WHY THIS IS A LIST AND NOT AN AUTOMATIC MOVE — the finding that killed two
@@ -134,40 +148,67 @@ export function noteSessionSpawnForCanvas(
  *
  * The cwd is used here only to ORDER and LABEL candidates, never to authorize:
  * a wrong guess costs a less relevant list entry, not someone's notes.
+ *
+ * `openTileSessionIds` — THE MISSING ORACLE (adversarial review, 2026-08-15).
+ * The two existing "is the owner still current" tests answer for a session with
+ * a live PTY and for one in the saved-tile file; between them sits the ordinary
+ * case they both miss — a tile the user has OPEN whose PTY has exited (`/exit`,
+ * a crash, the Restart button) during a run in which no state file exists. Such
+ * a canvas was offered to a new session as "an earlier session" while its own
+ * tile sat on screen showing it. Only the renderer knows which tiles are open,
+ * so it says. This input can only ADD sessions to the current set — a missing
+ * or wrong id falls through to the checks that were already there — so it
+ * tightens the answer and can never widen it, which is why a renderer-supplied
+ * hint is admissible here at all.
  */
-export function listReclaimableCanvases(sessionId: string): ReclaimableCanvas[] {
-  const info = spawnInfo.get(sessionId)
+/** The "can this session still come back for its canvas" test, built ONCE so
+ *  the lister and the reclaim can never disagree — a list that refuses while
+ *  the by-id reclaim allows is the hole, not the fix. */
+function currentSessionOracle(openTileSessionIds: string[]): (sid: string) => boolean {
   const savedIds = savedTileIds()
+  const openIds = new Set(
+    (Array.isArray(openTileSessionIds) ? openTileSessionIds : [])
+      .slice(0, MAX_OPEN_TILE_HINTS)
+      .filter((id): id is string => typeof id === 'string'),
+  )
+  return (sid) => {
+    if (getSessionMeta(sid)) return true // live PTY this run
+    if (openIds.has(sid)) return true // tile still on screen, PTY or not
+    if (!savedIds) return true // cannot tell → not offered
+    return savedIds.has(sid)
+  }
+}
+
+export function listReclaimableCanvases(sessionId: string, openTileSessionIds: string[] = []): ReclaimableCanvas[] {
+  const info = spawnInfo.get(sessionId)
   const ownCwd = info?.cwd
   return listOrphanCandidateCanvases(sessionId, {
     profileId: info?.profileId,
-    isSessionCurrent: (sid) => {
-      if (getSessionMeta(sid)) return true // live PTY this run
-      if (!savedIds) return true // cannot tell → not offered
-      return savedIds.has(sid)
-    },
+    isSessionCurrent: currentSessionOracle(openTileSessionIds),
   })
     .map((c) => ({ ...c, sameProject: !!ownCwd && !!c.cwd && c.cwd === ownCwd }))
     .sort((a, b) => {
       if (a.sameProject !== b.sameProject) return a.sameProject ? -1 : 1
       return b.lastRenderedAt.localeCompare(a.lastRenderedAt)
     })
+    .slice(0, MAX_RECLAIM_CANDIDATES)
 }
 
 /**
  * Move a canvas to this session because the USER asked for it, by id, from the
  * list above. This is the only path that transfers ownership.
  */
-export function reclaimCanvasForSession(sessionId: string, canvasId: string): boolean {
+export function reclaimCanvasForSession(
+  sessionId: string,
+  canvasId: string,
+  openTileSessionIds: string[] = [],
+): boolean {
   const info = spawnInfo.get(sessionId)
-  const savedIds = savedTileIds()
   const adopted = adoptCanvasForSession(sessionId, canvasId, {
     profileId: info?.profileId,
-    isSessionCurrent: (sid) => {
-      if (getSessionMeta(sid)) return true
-      if (!savedIds) return true
-      return savedIds.has(sid)
-    },
+    // The SAME oracle the list used. Reclaim is addressed by id, so a canvas
+    // the list correctly refused to offer must not be takeable by naming it.
+    isSessionCurrent: currentSessionOracle(openTileSessionIds),
   })
   if (!adopted) return false
   rebindReviewsToSession(adopted.canvasId, sessionId)

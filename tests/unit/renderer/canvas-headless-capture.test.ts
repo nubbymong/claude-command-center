@@ -71,6 +71,11 @@ describe('captureHeadless', () => {
 
     const iframe = mountedIframe()
     expect(iframe.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin allow-forms')
+    // Delegates no powerful feature. This frame has no UI at all, so anything
+    // it were granted would be granted invisibly (adversarial review
+    // 2026-08-15) — the empty allow list is the parent's half of the ceiling
+    // the ccc-ux:// Permissions-Policy header sets on the document.
+    expect(iframe.getAttribute('allow')).toBe('')
     expect(iframe.referrerPolicy).toBe('no-referrer')
     expect(iframe.src).toContain('ccc-ux://canvas-1/v2/index.html')
     const container = iframe.parentElement as HTMLDivElement

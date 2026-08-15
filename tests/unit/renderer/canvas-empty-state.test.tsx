@@ -14,6 +14,7 @@ import { act } from 'react'
 import CanvasEmptyState from '../../../src/renderer/components/CanvasEmptyState'
 import { useCanvasStore } from '../../../src/renderer/stores/canvasStore'
 import { useCanvasReviewStore } from '../../../src/renderer/stores/canvasReviewStore'
+import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -144,6 +145,7 @@ describe('reclaiming an earlier canvas (the user is the authorization)', () => {
     lastRenderedAt: '2026-08-13T19:15:53.893Z',
     cwd: 'C:\\proj',
     sameProject: true,
+    conversationShortId: '8c25bfdc',
   }
 
   it('offers a candidate without taking it, and only moves it when clicked', async () => {
@@ -164,7 +166,57 @@ describe('reclaiming an earlier canvas (the user is the authorization)', () => {
       await Promise.resolve()
     })
     expect(reclaimMock).toHaveBeenCalledTimes(1)
-    expect(reclaimMock).toHaveBeenCalledWith({ sessionId: SID, canvasId: candidate.canvasId })
+    expect(reclaimMock).toHaveBeenCalledWith({
+      sessionId: SID,
+      canvasId: candidate.canvasId,
+      openTileSessionIds: [],
+    })
+  })
+
+  it('names each candidate by its conversation, so two from one project differ', async () => {
+    // A constant title plus a version count, a timestamp and a cwd is what two
+    // canvases from the SAME project both look like — and a mis-click re-binds
+    // the other project's private review notes to this session.
+    const sibling = { ...candidate, canvasId: 'def456abc123def456abc123', conversationShortId: '59596c8b' }
+    listReclaimableMock.mockResolvedValueOnce([candidate, sibling])
+    render()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const titles = Array.from(container.querySelectorAll('li > div > div:first-child')).map((d) => d.textContent)
+    expect(titles).toHaveLength(2)
+    expect(new Set(titles).size, `both candidates rendered as "${titles[0]}"`).toBe(2)
+    expect(titles.join(' ')).toContain('8c25bfdc')
+    expect(titles.join(' ')).toContain('59596c8b')
+  })
+
+  it('falls back to the canvas id when no conversation is known — never a constant', async () => {
+    const anonymous = { ...candidate, conversationShortId: undefined }
+    const sibling = { ...anonymous, canvasId: 'def456abc123def456abc123' }
+    listReclaimableMock.mockResolvedValueOnce([anonymous, sibling])
+    render()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const titles = Array.from(container.querySelectorAll('li > div > div:first-child')).map((d) => d.textContent)
+    expect(new Set(titles).size).toBe(2)
+  })
+
+  it('tells main which tiles are open, so a live one is never offered back', async () => {
+    // Main has no reliable oracle for this: the saved-tile file exists only
+    // between a graceful Save & Close and the next restore, so during a normal
+    // run it reports nobody open. The renderer is the only party that knows.
+    useSessionStore.setState({ sessions: [{ id: 'tile-a' }, { id: 'tile-b' }] as never })
+    listReclaimableMock.mockResolvedValueOnce([])
+    render()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(listReclaimableMock).toHaveBeenCalledWith({
+      sessionId: SID,
+      openTileSessionIds: ['tile-a', 'tile-b'],
+    })
+    useSessionStore.setState({ sessions: [] })
   })
 
   it('shows nothing when there is nothing to reclaim', async () => {
