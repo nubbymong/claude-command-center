@@ -115,18 +115,47 @@ export function hardenCredentialFile(file: string): void {
 //     invocation as its grants. The strip can never land without them, so there
 //     is no window where the app locks itself out of its own data, and no need
 //     for a two-step grant-then-strip.
-//   * ~7ms per call (73ms for 10), which is what lets this stay unmemoised on
-//     the synchronous paths that reach it: a session spawn (~4 calls), and
+//   * `/inheritance:r` removes INHERITED ACEs ONLY. Explicit ones survive it,
+//     and `/grant:r` only replaces the principals it names -- so on a directory
+//     whose broad grant is EXPLICIT rather than inherited, the strip-and-grant
+//     that shipped left the broad grant exactly where it was. Measured: a dir
+//     seeded with an explicit `Authenticated Users:(OI)(CI)F` still had it
+//     afterwards, alongside the two ACEs we had just added. That is the whole
+//     ACE this change exists to remove, so the DACL is now REPLACED, not added
+//     to: every principal currently on it is `/remove`d in the same invocation,
+//     ahead of the grants.
+//   * Option order inside one invocation is honoured, and it is load-bearing:
+//     remove-then-grant leaves exactly the two intended ACEs, while the same
+//     options as grant-then-remove leave an EMPTY DACL. Both measured.
+//   * A `/remove` naming a principal that is not on the DACL succeeds (it has
+//     to: `/inheritance:r` runs first and may already have taken the inherited
+//     ACEs the remove list was read from). `/remove` without `:g`/`:d` takes
+//     deny ACEs too -- a planted deny would otherwise survive as a denial of
+//     service. Both measured.
+//   * ~25ms per icacls call, read or write (10 calls: 247ms read, 258ms
+//     strip-and-grant, 512ms for the read+replace pair). The "~7ms" this
+//     comment used to claim was wrong by 3x and mattered, because these calls
+//     sit on synchronous paths: a session spawn (~4 calls) and
 //     `ensureConfigDir`, which runs on every config write and so on every
-//     debounced UI save. Both are user-action scoped, never per-frame.
+//     debounced UI save.
+//
+// Which is why the DACL is READ first and the write is skipped when it already
+// says exactly what we would write. The steady state -- every call after the
+// first on a given directory -- is then ONE call, the same cost as the single
+// write that shipped, and the pair is paid only when something genuinely needs
+// repairing. The skip cannot mask an attacker's grant that a write would have
+// removed: to hold a DACL in that shape they need WRITE_DAC, i.e. they own the
+// directory, and an owner can re-grant themselves the instant any write of ours
+// returns. Hardening is not a defence against the owner of the directory.
 //
 // Unmemoised is a DECISION, not an oversight. A path-keyed memo would be wrong
 // twice over: `ensureCanvasPlugin` deletes and recreates its tree, so a
 // recreated directory is back on its parent's ACL while the memo still calls it
 // done -- and re-asserting on every call is the whole reason the POSIX branch
-// repairs installs made by older builds. Caching this would trade a measured
-// 7ms for a cache-invalidation bug in the exact place a memo has already
-// produced one (the canvas plugin's integrity check, which this change fixes).
+// repairs installs made by older builds. The read-first skip gets the same
+// saving that a memo was tempting for, without a cache to invalidate: it asks
+// the filesystem rather than remembering, so a recreated directory reads as
+// unhardened and is repaired.
 //   * Children need no pass of their own. Windows resolves inheritance live, so
 //     existing and future subdirectories/files reflect the new DACL at once.
 const IS_WINDOWS = process.platform === 'win32'
@@ -146,6 +175,17 @@ const ICACLS_TIMEOUT_MS = 5000
 const ACL_PRINCIPAL_BAD_RE = /[:()\\/*",;]|[\u0000-\u001F\u007F]/
 function isAclPrincipalPart(s: string): boolean {
   return s.length > 0 && s.length <= 256 && !ACL_PRINCIPAL_BAD_RE.test(s)
+}
+
+/** As above, for a principal read back OUT of a DACL, where `\` and spaces are
+ *  ordinary (`NT AUTHORITY\SYSTEM`) and only the control bytes are not. Written
+ *  by char code so this file contains no control characters of its own. */
+function hasControlChar(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c < 0x20 || c === 0x7f) return true
+  }
+  return false
 }
 
 function currentUserName(): string {
@@ -171,9 +211,104 @@ export function windowsAclPrincipals(user: string = currentUserName(), domain: s
   return isAclPrincipalPart(domain) ? [`${domain}\\${user}`, user] : [user]
 }
 
+/** The DACL entries icacls reports for `target`, one `principal:(flags)` per
+ *  entry. Empty when the DACL cannot be read at all, which is a fallback
+ *  signal and not an "it is empty" claim -- see `hardenDirAclWindows`.
+ *
+ *  icacls echoes the path on the first line, immediately followed by that
+ *  line's ACE; later ACEs are indented. `:(` appears in every ACE and in
+ *  neither the echoed path nor the trailing "Successfully processed" summary. */
+export function windowsAclEntries(target: string): string[] {
+  let out: string
+  try {
+    // stdout captured, stderr discarded: an unreadable directory is a normal
+    // outcome here (it falls back), not something to print on every config write.
+    out = execFileSync(ICACLS, [target], {
+      encoding: 'utf8', windowsHide: true, timeout: ICACLS_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch { return [] }
+  return out
+    .split(/\r?\n/)
+    .map((line) => (line.startsWith(target) ? line.slice(target.length) : line).trim())
+    .filter((line) => line.includes(':('))
+}
+
+/** An ACE's principal is everything ahead of its first `:(`. */
+function aclEntryPrincipal(entry: string): string {
+  return entry.slice(0, entry.indexOf(':('))
+}
+
+/** How many principals one invocation will name back. A DACL longer than this
+ *  is not a directory this app made; bound the argv rather than grow it, and
+ *  bound it by REFUSING the batch rather than truncating it -- a truncated
+ *  remove list would leave whichever principals fell off the end in place while
+ *  the grants below made the result look deliberate. */
+const ACL_MAX_REMOVALS = 32
+
 /**
- * Restrict `dir`'s Windows DACL to the current user + SYSTEM, dropping every
- * inherited ACE. Returns whether it was applied.
+ * `/remove <principal>` arguments for every principal on `entries`, spelled the
+ * way icacls printed them -- which is the spelling it accepts back.
+ *
+ * Exported (with `windowsAclPrincipals`) so the parsing runs on every leg of the
+ * CI matrix, not only the Windows one.
+ *
+ * An entry that cannot be named back SAFELY is skipped rather than failing the
+ * batch: removing the other principals is still an improvement, and the caller
+ * treats a partial result as a partial result. The rejects are the ones that
+ * would be READ AS SOMETHING ELSE rather than merely fail to resolve -- a
+ * leading `/` is an icacls option, `*` marks a literal SID, and `"` and control
+ * bytes have no business in an account name. `\` and spaces are NOT rejected:
+ * `NT AUTHORITY\SYSTEM` and `BUILTIN\Administrators` are the two most common
+ * entries there are. A bare SID (an ACE whose account no longer resolves, which
+ * icacls prints unadorned) is handed back with the `*` prefix that makes icacls
+ * read it as a SID instead of a name.
+ */
+export function windowsAclRemovalArgs(entries: string[]): string[] {
+  if (entries.length > ACL_MAX_REMOVALS) return []
+  const args: string[] = []
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    const raw = aclEntryPrincipal(entry)
+    if (raw.length === 0 || raw.length > 256) continue
+    if (/^[/*]/.test(raw) || raw.includes(String.fromCharCode(34)) || hasControlChar(raw)) continue
+    const principal = /^S-1-[\d-]+$/.test(raw) ? `*${raw}` : raw
+    if (seen.has(principal)) continue
+    seen.add(principal)
+    args.push('/remove', principal)
+  }
+  return args
+}
+
+/**
+ * Whether `entries` is ALREADY the DACL this module writes: exactly two ACEs,
+ * neither inherited, both Full Control with the container/object inherit flags,
+ * one of them the current user. The other is SYSTEM, whose display name is
+ * localized and so is matched structurally rather than by name (it is granted
+ * by SID for the same reason).
+ *
+ * `user` is a parameter rather than a read baked into the body so this runs on
+ * every leg of the CI matrix.
+ */
+export function windowsAclIsOwnerOnly(entries: string[], user: string): boolean {
+  if (entries.length !== 2 || user.length === 0) return false
+  if (!entries.every((e) => !e.includes('(I)') && e.endsWith(':(OI)(CI)(F)'))) return false
+  // The printed spelling may be `DOMAIN\user` whatever spelling was granted, so
+  // compare the account half.
+  const account = (p: string): string => p.slice(p.lastIndexOf('\\') + 1).toLowerCase()
+  return entries.map((e) => account(aclEntryPrincipal(e))).includes(user.toLowerCase())
+}
+
+function icacls(args: string[]): boolean {
+  try {
+    execFileSync(ICACLS, args, { stdio: 'ignore', windowsHide: true, timeout: ICACLS_TIMEOUT_MS })
+    return true
+  } catch { return false /* a principal did not resolve, or icacls is unavailable */ }
+}
+
+/**
+ * REPLACE `dir`'s Windows DACL with the current user + SYSTEM: drop every
+ * inherited ACE, remove every explicit one, grant those two. Returns whether it
+ * was applied.
  *
  * Never throws. Every caller sits on a session-spawn or config-write path where
  * a permissions failure must not be fatal -- including the case where a mocked
@@ -181,13 +316,21 @@ export function windowsAclPrincipals(user: string = currentUserName(), domain: s
  */
 export function hardenDirAclWindows(dir: string): boolean {
   if (!IS_WINDOWS) return false
-  for (const principal of windowsAclPrincipals()) {
-    try {
-      execFileSync(ICACLS, [dir, '/inheritance:r', '/grant:r', `${principal}:(OI)(CI)F`, `${SYSTEM_SID}:(OI)(CI)F`], {
-        stdio: 'ignore', windowsHide: true, timeout: ICACLS_TIMEOUT_MS
-      })
-      return true
-    } catch { /* this spelling did not resolve (or icacls is unavailable) */ }
+  const spellings = windowsAclPrincipals()
+  if (spellings.length === 0) return false
+
+  const entries = windowsAclEntries(dir)
+  if (windowsAclIsOwnerOnly(entries, currentUserName())) return true
+
+  const removals = windowsAclRemovalArgs(entries)
+  for (const principal of spellings) {
+    const grants = ['/grant:r', `${principal}:(OI)(CI)F`, `${SYSTEM_SID}:(OI)(CI)F`]
+    // The replace. Its removals are spelling-independent, so a failure here is
+    // either this spelling (the next one is tried below) or one principal that
+    // could not be named back -- and in that case the strip-and-grant that
+    // shipped is still applied, so this is never WORSE than the old behaviour.
+    if (removals.length > 0 && icacls([dir, '/inheritance:r', ...removals, ...grants])) return true
+    if (icacls([dir, '/inheritance:r', ...grants])) return true
   }
   return false
 }
