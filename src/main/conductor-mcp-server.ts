@@ -44,6 +44,7 @@ import { registerCanvasTools } from './canvas-mcp-tool'
 import { getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
 import { getReviewPayload } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
+import { readCheckedFile } from './utils/safe-file-read'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
  *  The Codex TOML writer appends `?source=codex` so the server can skip
@@ -788,28 +789,36 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         /**
          * Read a design document the agent wrote to disk (`htmlPath`).
          *
-         * CONFINED to the session's own registered canvas roots (its project
-         * directory), with the same realpath containment `distRoot` uses.
+         * CONFINED to the roots registered for THIS session — the project
+         * directory its own PTY was launched in, never the home directory, and
+         * gone when that PTY exits — with the same realpath containment
+         * `distRoot` uses. The session id is the TRANSPORT-bound one that
+         * `runCanvasRender` already refuses to take from the model (#188); it
+         * is threaded through as an argument rather than closed over so this
+         * boundary cannot be read as "some session's roots".
+         *
          * Unconfined, this was an arbitrary-file read on a model-supplied
          * absolute path executed with the app's privileges: adversarial review
          * (2026-08-14) drove it to read a private key and land the bytes in the
          * canvas dir, servable and readable back through canvas_snapshot. The
          * approval prompt was the only thing standing in front of it, which is
          * not a boundary — an approval prompt cannot be the containment for a
-         * path the model chose.
+         * path the model chose. A second pass (2026-08-15) showed the confinement
+         * was still install-wide (every local session's cwd, never revoked) and
+         * that the file check itself was a TOCTOU which failed OPEN on any
+         * volume that does not report link counts; both are fixed here and in
+         * readCheckedFile.
          */
-        readDesignFile: (absPath) => {
-          const real = resolveInsideCanvasRoot(absPath)
-          const st = fs.statSync(real)
-          if (!st.isFile()) throw new Error('not a regular file')
-          // A HARD LINK defeats realpath: `mklink /H` needs no privilege and no
-          // Developer Mode, and the link inside the project resolves to itself,
-          // not to the file it shares an inode with. Round 2 of the adversarial
-          // pass walked a private key back out through one. A design document
-          // the agent just wrote always has exactly one name.
-          if (typeof st.nlink === 'number' && st.nlink !== 1) throw new Error('not a regular file')
-          if (st.size > 2 * 1024 * 1024) throw new Error('design file too large')
-          return fs.readFileSync(real)
+        readDesignFile: (absPath, canvasSessionId) => {
+          const real = resolveInsideCanvasRoot(absPath, canvasSessionId)
+          // One open, every check on that fd, read from that fd: the object the
+          // checks describe is the object whose bytes come back. A HARD LINK
+          // defeats realpath (`mklink /H` needs no privilege and no Developer
+          // Mode, and the link inside the project resolves to itself, not to
+          // the file it shares an inode with — round 2 walked a private key out
+          // through one), so a file with more than one name, or a link count
+          // the volume will not report, is refused.
+          return readCheckedFile(real, 2 * 1024 * 1024)
         },
       })
     }

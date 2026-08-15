@@ -17,7 +17,17 @@
 //      the realpath of the root, so a symlink planted INSIDE the tree cannot
 //      escape it (the root itself may legitimately be a link — worktrees,
 //      junctioned resources — so it is trusted as the anchor, same stance as
-//      mkdirSecure's trust roots).
+//      mkdirSecure's trust roots);
+//   4. object discipline — the file is opened ONCE and every check runs on
+//      that fd (readCheckedFile), and a file with more than one name is
+//      refused. Layer 3 is about paths; a HARD LINK is a second name for an
+//      inode elsewhere, so it satisfies layer 3 completely while serving
+//      someone else's bytes (adversarial review 2026-08-15 walked an OAuth
+//      token out of a served root through one).
+//
+// And the version's ROOT is not global: `getServableVersion` re-checks a UAT
+// distRoot against the roots registered for the canvas's OWNING SESSION, which
+// are revoked when that session's PTY exits.
 //
 // Every HTML response gets the bridge script injected (spec: template-injected
 // at serve time — content authors never bundle it) and a restrictive
@@ -34,6 +44,7 @@ import {
   CCC_UX_SCHEME,
 } from '../../shared/canvas'
 import { validatePath } from '../utils/path-validator'
+import { readCheckedFile } from '../utils/safe-file-read'
 import { getServableVersion, ServableVersion } from './canvas-store'
 import bridgeSource from 'virtual:canvas-bridge'
 import analysisSource from 'virtual:canvas-analysis'
@@ -154,17 +165,51 @@ export function injectBridgeTag(html: string): string {
   return html + tag
 }
 
-function serveFile(filePath: string, servable: ServableVersion, isEntryHtml: boolean, method: string): Response {
+/**
+ * Serve one already-contained file. Returns null when the file must not be
+ * served at all (the caller answers the uniform 404).
+ *
+ * Exported for tests, the same reason `sanitizeContentPath` is: the entry
+ * guard below is only reachable end-to-end through a FILE symlink that changes
+ * the extension under realpath, which needs a privilege Windows does not grant
+ * by default — an unreachable-in-CI guard is an untested one.
+ *
+ * BLOCKER 1, second half (adversarial review, 2026-08-15). Two changes:
+ *
+ *  1. The content type comes from the file's OWN extension. It used to be
+ *     `isEntryHtml || ext === '.html'` — the entry was FORCED to `text/html`
+ *     whatever it actually was, and the bridge was injected into it. A version
+ *     whose entry named `.credentials.json` therefore came back `200 text/html`
+ *     with a working bridge, and `canvas_snapshot` — which the agent already
+ *     holds — read the contents back out of the DOM. An entry that is not an
+ *     HTML file is now refused outright rather than dressed up as one.
+ *  2. The read goes through `readCheckedFile`: one open, all checks on that fd.
+ *     The protocol had NO link check at any layer, so a hard link planted
+ *     inside a served root defeated the realpath layer with nothing to delete
+ *     and nothing to see — the pass walked an OAuth token out through one.
+ */
+export function serveFile(
+  filePath: string,
+  servable: ServableVersion,
+  isEntry: boolean,
+  method: string,
+): Response | null {
   const ext = path.extname(filePath).toLowerCase()
-  const isHtml = isEntryHtml || ext === '.html' || ext === '.htm'
+  const isHtml = ext === '.html' || ext === '.htm'
+  // The entry is the DOCUMENT — the thing the frame loads as a page and the one
+  // file the bridge is injected into. `normalizeEntry` already refuses a
+  // non-HTML entry at both write ingresses; this is the serve-side half, so a
+  // record that reached memory another way (disk reload, an older build's
+  // record) cannot promote a data file into the document slot either.
+  if (isEntry && !isHtml) return null
   const csp = servable.mode === 'design' ? DESIGN_CSP : UAT_CSP
   const contentType = isHtml ? MIME_BY_EXT['.html'] : (MIME_BY_EXT[ext] ?? 'application/octet-stream')
 
+  const data = readCheckedFile(filePath, MAX_SERVED_FILE_BYTES)
   if (isHtml) {
-    const html = injectBridgeTag(fs.readFileSync(filePath, 'utf8'))
+    const html = injectBridgeTag(data.toString('utf8'))
     return new Response(method === 'HEAD' ? null : html, { status: 200, headers: baseHeaders(contentType, csp) })
   }
-  const data = fs.readFileSync(filePath)
   const body = method === 'HEAD' ? null : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
   return new Response(body, { status: 200, headers: baseHeaders(contentType, csp) })
 }
@@ -274,7 +319,7 @@ export async function handleCccUxRequest(request: Request): Promise<Response> {
       // Serve the canonical (link-resolved) path, matching the main branch — no
       // window between the containment check and the read where the lexical
       // path could resolve elsewhere.
-      return serveFile(realEntry, servable, true, method)
+      return serveFile(realEntry, servable, true, method) ?? notFound()
     }
 
     let realTarget: string
@@ -286,7 +331,7 @@ export async function handleCccUxRequest(request: Request): Promise<Response> {
     if (realTarget !== realRoot && !realTarget.startsWith(realRoot + path.sep)) return notFound()
     if (stat.size > MAX_SERVED_FILE_BYTES) return notFound()
 
-    return serveFile(realTarget, servable, isEntryRequest, method)
+    return serveFile(realTarget, servable, isEntryRequest, method) ?? notFound()
   } catch (err) {
     console.warn('[ccc-ux] request failed:', err)
     return notFound()

@@ -283,17 +283,17 @@ describe('resolveInsideCanvasRoot (the htmlPath confinement)', () => {
     fs.writeFileSync(outside, 'PRIVATE KEY')
 
     // Default-empty allowlist: nothing resolves.
-    expect(() => store.resolveInsideCanvasRoot(inside)).toThrow(/registered canvas root/i)
+    expect(() => store.resolveInsideCanvasRoot(inside, SID_A)).toThrow(/registered canvas root/i)
 
-    store.registerCanvasUatRoot(projectDir)
-    expect(store.resolveInsideCanvasRoot(inside)).toBe(fs.realpathSync.native(inside))
+    expect(store.registerCanvasUatRoot(SID_A, projectDir)).toBe(true)
+    expect(store.resolveInsideCanvasRoot(inside, SID_A)).toBe(fs.realpathSync.native(inside))
     // The read that the adversarial pass drove to a private key.
-    expect(() => store.resolveInsideCanvasRoot(outside)).toThrow(/registered canvas root/i)
+    expect(() => store.resolveInsideCanvasRoot(outside, SID_A)).toThrow(/registered canvas root/i)
     // Traversal out of a registered root, and a relative path.
-    expect(() => store.resolveInsideCanvasRoot(path.join(projectDir, '..', 'confine-outside', 'secret.txt'))).toThrow(
+    expect(() => store.resolveInsideCanvasRoot(path.join(projectDir, '..', 'confine-outside', 'secret.txt'), SID_A)).toThrow(
       /registered canvas root/i,
     )
-    expect(() => store.resolveInsideCanvasRoot('mockup.html')).toThrow(/registered canvas root/i)
+    expect(() => store.resolveInsideCanvasRoot('mockup.html', SID_A)).toThrow(/registered canvas root/i)
   })
 })
 

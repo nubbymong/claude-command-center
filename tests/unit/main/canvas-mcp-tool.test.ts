@@ -610,10 +610,15 @@ describe('canvas_render', () => {
 
   it('maps the refusals the user can actually act on', async () => {
     const cases: [string, string][] = [
-      ['distRoot is not under a registered canvas UAT root', 'allowed'],
+      // The refusal names the allowlist as it actually is — this session's own
+      // project folder — rather than the "folder the user has allowed" the old
+      // wording invented, which sent the agent to ask for a control the Canvas
+      // pane does not have (adversarial review, 2026-08-15).
+      ['distRoot is not under a registered canvas UAT root', 'project folder'],
       ['canvas x is at its version cap (50)', 'version limit'],
       ['distRoot does not exist', 'does not exist'],
       ['design document too large', 'too large'],
+      ['entry must be an html file', '.html file'],
     ]
     for (const [thrown, expected] of cases) {
       const out = await runCanvasRender(

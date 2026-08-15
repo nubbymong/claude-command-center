@@ -180,7 +180,7 @@ function makeDist(): string {
   fs.writeFileSync(path.join(dist, 'secret-sibling.txt'), 'inside-ok')
   // UAT roots are default-deny: the base the dist sits under must be registered
   // before renderVersion will accept it (serving still stays inside `dist`).
-  registerCanvasUatRoot(path.dirname(dist))
+  registerCanvasUatRoot(SID, path.dirname(dist))
   return dist
 }
 
@@ -257,7 +257,7 @@ describe('confinement', () => {
 
   it('does not follow a directory link inside the tree to outside it', async (ctx) => {
     const dist = makeDist()
-    registerCanvasUatRoot(path.dirname(dist))
+    registerCanvasUatRoot(SID, path.dirname(dist))
     outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-outside-'))
     fs.writeFileSync(path.join(outsideDir, 'leak.txt'), 'LEAKED')
     let linked = false
@@ -290,7 +290,7 @@ describe('confinement', () => {
     // link goes on the DIRECTORY — a junction, which needs no privilege on
     // Windows, where a file symlink does.
     const dist = makeDist()
-    registerCanvasUatRoot(path.dirname(dist))
+    registerCanvasUatRoot(SID, path.dirname(dist))
     outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-outside-entry-'))
     fs.writeFileSync(path.join(outsideDir, 'index.html'), 'LEAKED')
 

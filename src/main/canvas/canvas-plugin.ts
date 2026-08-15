@@ -64,10 +64,13 @@ Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`
 
    canvas_render { mode: "design", htmlPath: "<absolute path>" }
 
-   The canvas only reads files under the session's project folder — a path
-   outside it is refused, so do not write the mockup to a temp or scratch
-   directory. Never pass the document inline in \`html\` when you can write a
-   file: the inline form floods the user's approval prompt with the whole
+   The canvas only reads files under THIS session's own project folder — the
+   directory this session was launched in. A path outside it is refused, so do
+   not write the mockup to a temp or scratch directory, and note that another
+   session's project folder is refused too. (A session launched in the user's
+   home folder has no project folder at all and cannot render by path; say so
+   and move on.) Never pass the document inline in \`html\` when you can write
+   a file: the inline form floods the user's approval prompt with the whole
    document (it once cost a user eleven minutes on one render).
 4. Self-check before handing back: \`canvas_snapshot\` scoped to the
    data-ux-ids you care about. It works with the pane closed (the page is
@@ -84,9 +87,9 @@ Build the project to a static directory with its own build command, then:
 
    canvas_render { mode: "uat", distRoot: "<absolute dist path>" }
 
-- \`distRoot\` must sit under a folder the user has allowed; the session's own
-  project folder is allowed automatically. If refused, ask the user to add
-  the folder in the Canvas pane — one sentence, then wait.
+- \`distRoot\` must sit inside THIS session's own project folder — build there
+  (\`<project>/dist\`), not into a temp directory. There is no way for the user
+  to grant another folder, so if it is refused, move the build and retry.
 - Pages that need a backend: mock the data layer inside the build. The canvas
   serves static files only, and a dead fetch shows up as a broken page.
 
@@ -112,8 +115,9 @@ resolved yourself — resolution is theirs.
 
 ## Exceptions you may hit
 
-- Render refused ("not under a folder the user has allowed"): ask them to add
-  the folder in the Canvas pane.
+- Render refused ("not inside this session's project folder"): write or build
+  the file inside the project this session was launched in, then retry. Do not
+  ask the user to allow a folder — nothing in the app grants one.
 - "version limit" on render: the canvas is full — continue in a new session.
 - Snapshot "did not finish loading in time": heavy page — retry once, then
   continue without the self-check and say you did.

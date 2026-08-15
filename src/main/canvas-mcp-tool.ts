@@ -52,13 +52,18 @@ export interface CanvasToolDeps {
   renderVersion: (sessionId: string, source: CanvasRenderSource) => { canvasId: string; versionId: string }
   /**
    * Read a design document the agent wrote to disk (`htmlPath`). Injected so
-   * this module touches no filesystem; the caller enforces regular-file and
-   * size checks and throws — those messages are never relayed (they contain a
-   * model-supplied path). The path is model-supplied and read with the app's
-   * own privileges: flagged for the deferred security batch, noting the agent
-   * can already read files directly through its own tools.
+   * this module touches no filesystem; the caller confines the path to the
+   * roots registered for `sessionId` and enforces the regular-file and size
+   * checks, and throws — those messages are never relayed (they are built from
+   * a model-supplied path).
+   *
+   * `sessionId` is passed EXPLICITLY, and it is always the transport-bound id
+   * this module resolved (never `rawArgs.cccSessionId`): the path is
+   * model-supplied and read with the app's privileges, so which session's roots
+   * confine it is part of the boundary, not an implementation detail of the
+   * caller.
    */
-  readDesignFile: (absPath: string) => Buffer
+  readDesignFile: (absPath: string, sessionId: string) => Buffer
   /** The review store's read for canvas_review. Throws map to the closed
    *  refusal vocabulary in reviewFailureReason. */
   getReviewPayload: (
@@ -211,11 +216,16 @@ function renderFailureReason(err: unknown): string {
     return 'this canvas has reached its version limit. Start a new session to render again.'
   }
   if (/registered canvas UAT root/i.test(message)) {
-    return 'that directory is not under a folder the user has allowed the canvas to serve. Ask the user to add it in the Canvas pane.'
+    // Says what the allowlist actually IS. The old wording ("a folder the user
+    // has allowed … ask the user to add it in the Canvas pane") described a
+    // control that does not exist, and sent the agent to ask for something the
+    // user cannot grant.
+    return 'that directory is not inside this session’s project folder, which is the only place the canvas serves from. Build inside the project you are working in and render that path.'
   }
   if (/distRoot does not exist|not a directory/i.test(message)) return 'that build directory does not exist.'
   if (/document too large/i.test(message)) return 'that document is too large to render.'
   if (/requires html/i.test(message)) return 'a design render needs an html document.'
+  if (/entry must be an html file/i.test(message)) return 'the entry must be an .html file.'
   if (/invalid entry/i.test(message)) return 'that entry file name is not a plain relative path.'
   return 'the canvas could not be rendered.'
 }
@@ -244,8 +254,12 @@ function designFileFailureReason(err: unknown): string {
   if (/not a regular file/i.test(message)) return 'that path is not a regular html file.'
   if (/registered canvas root/i.test(message)) {
     // The confinement (resolveInsideCanvasRoot). Says what to do instead
-    // without echoing the path the model supplied.
-    return 'that file is outside this session’s project folder. Write the html inside the project you are working in, then render that path.'
+    // without echoing the path the model supplied. True as written since the
+    // allowlist became per-session: the roots this read resolves against are
+    // this session's own launch directory and nothing else — not another
+    // session's project, and nothing at all when the session was launched in
+    // the home directory.
+    return 'that file is outside this session’s project folder, which is the only place the canvas reads from. Write the html inside the project you are working in, then render that path. (A session launched in your home folder has no project folder and cannot render by path.)'
   }
   return 'that html file could not be read. Check the path you wrote it to.'
 }
@@ -293,7 +307,9 @@ export async function runCanvasRender(
       }
       let bytes: Buffer
       try {
-        bytes = deps.readDesignFile(rawArgs.htmlPath)
+        // `sessionId` is this function's TRANSPORT-bound argument — the same
+        // one the render itself is keyed to — never rawArgs.cccSessionId.
+        bytes = deps.readDesignFile(rawArgs.htmlPath, sessionId)
       } catch (err) {
         return { text: `Could not render the canvas: ${designFileFailureReason(err)}`, isError: true }
       }
@@ -648,13 +664,13 @@ export function registerCanvasTools(
 
   server.tool(
     'canvas_render',
-    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': write a complete HTML document to a file with your own tools, then pass its absolute path as htmlPath — use this to show a proposed screen. \'uat\': you supply the path of a directory the user has already allowed, and the built app in it is served — use this to review the real product. Every call creates a new version; nothing is overwritten. The canvas is per-session and this tool always renders to THIS session\'s canvas. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
+    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': write a complete HTML document to a file INSIDE this session\'s project folder, then pass its absolute path as htmlPath — use this to show a proposed screen. \'uat\': you supply the path of a built directory, also inside the project folder, and the app in it is served — use this to review the real product. Both modes read only from this session\'s own project folder; a path outside it is refused. Every call creates a new version; nothing is overwritten. The canvas is per-session and this tool always renders to THIS session\'s canvas. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
     {
-      mode: zMod.enum(['design', 'uat']).describe("'design' renders the html document you wrote; 'uat' serves a directory the user has allowed."),
+      mode: zMod.enum(['design', 'uat']).describe("'design' renders the html document you wrote; 'uat' serves a built directory."),
       htmlPath: zMod
         .string()
         .optional()
-        .describe('design mode, preferred. Absolute path of the complete HTML file you wrote. Put a data-ux-id on anything you will want to ask about later.'),
+        .describe('design mode, preferred. Absolute path of the complete HTML file you wrote, inside this session’s project folder. Put a data-ux-id on anything you will want to ask about later.'),
       html: zMod
         .string()
         .optional()
@@ -662,8 +678,8 @@ export function registerCanvasTools(
       distRoot: zMod
         .string()
         .optional()
-        .describe('uat mode only. Absolute path of the built directory. It must sit under a folder the user has allowed for this; anything else is refused.'),
-      entry: zMod.string().optional().describe("uat mode only. Entry file relative to distRoot. Defaults to 'index.html'."),
+        .describe('uat mode only. Absolute path of the built directory. It must sit inside this session’s project folder; anything else is refused.'),
+      entry: zMod.string().optional().describe("uat mode only. Entry .html file relative to distRoot. Defaults to 'index.html'."),
       buildLabel: zMod.string().optional().describe('uat mode only. Optional short label recorded with this build (letters, numbers, spaces and . _ : @ / + - only).'),
       cccSessionId: zMod
         .string()

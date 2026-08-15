@@ -27,6 +27,7 @@ import {
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
+import { isHomeOrAncestor } from '../path-utils'
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** Defensive cap on a design document; the IPC schema caps tighter. */
@@ -41,51 +42,106 @@ const MAX_CWD_CHARS = 1024
 const PROFILE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 
 /**
+ * The canvas serving allowlist, PER SESSION.
+ *
  * UAT versions serve a project's built `dist/` from an absolute path the CALLER
- * supplies. That path is NOT trusted: unconfined, a caller could register `C:\`
- * or a home dir and turn the ccc-ux:// protocol into a whole-disk file server
- * (adversarial review, 2026-08-11). So a `distRoot` is accepted ONLY when it
- * resolves at or under a base that was explicitly registered as a canvas UAT
- * root. This is an ALLOWLIST, never a denylist, and it is DEFAULT-EMPTY: with
- * no base registered, every UAT render is refused (fail closed). P1 wires no
- * base yet — design mode, which writes into the canvas dir and needs no
- * distRoot, is the exercised path — so UAT is inert-but-safe until the P3
- * session/MCP path registers a session's own project directory here.
+ * supplies, and `canvas_render`'s `htmlPath` reads a file the MODEL names. Both
+ * paths are untrusted: unconfined, a caller could name `C:\` or a home dir and
+ * turn the ccc-ux:// protocol into a whole-disk file server (adversarial
+ * review, 2026-08-11). So a path is accepted ONLY when it resolves at or under
+ * a base explicitly registered for THAT session. This is an ALLOWLIST, never a
+ * denylist, and it is DEFAULT-EMPTY: with no base registered, every UAT render
+ * and every htmlPath read is refused (fail closed).
+ *
+ * WHY IT IS KEYED BY SESSION (adversarial review, 2026-08-15 — BLOCKER 1). The
+ * first cut was one global `Set<string>` that every spawn added to and nothing
+ * ever removed. Three consequences, all reachable without an attacker doing
+ * anything clever:
+ *   - one session's prompt-injected agent could serve ANOTHER session's project
+ *     (every local session on the machine had contributed its cwd);
+ *   - an SSH session's agent, whose own cwd is remote and therefore registers
+ *     nothing, still reached every local project through the shared set;
+ *   - a root survived the session that justified it for the life of the app,
+ *     with no production revocation at all.
+ * Now: a root belongs to the session it was registered for, that session is the
+ * only one that can resolve through it, and the set dies with the session's PTY
+ * (revokeCanvasUatRoots, called from the pty cleanup path).
  */
-const uatRoots = new Set<string>()
+const uatRootsBySession = new Map<string, Set<string>>()
 
-/** Register a directory under which UAT `distRoot`s may live. Idempotent;
- *  a base that does not resolve is silently ignored. A relative base is
- *  refused outright — `path.resolve('')`/`resolve('.')` would silently
- *  allowlist the process cwd (adversarial review, 2026-08-11). */
-export function registerCanvasUatRoot(baseDir: string): void {
-  if (typeof baseDir !== 'string' || !path.isAbsolute(baseDir)) return
-  try {
-    uatRoots.add(fs.realpathSync.native(path.resolve(baseDir)))
-  } catch {
-    /* an unresolvable base is simply not added */
-  }
-}
-
-/** True iff `distRoot` physically resolves at/under a registered UAT base.
- *  realpath both sides so a symlinked base or distRoot cannot dodge the check. */
-function distRootAllowed(distRoot: string): boolean {
-  if (uatRoots.size === 0) return false
+/**
+ * Register a directory under which one session's canvas paths may live.
+ *
+ * Idempotent. Returns true only when the base was actually added, so the caller
+ * can log a refusal. Everything here is a FLOOR under the caller's own checks,
+ * not a substitute for them:
+ *   - a relative base is refused outright — `path.resolve('')`/`resolve('.')`
+ *     would silently allowlist the process cwd (adversarial review 2026-08-11);
+ *   - a base that does not resolve is not added;
+ *   - a FILE is not a root. `resolveInsideCanvasRoot` treats a root as its own
+ *     first legal target, so registering `~/.ssh/id_rsa` would have served
+ *     exactly that file (adversarial review 2026-08-15);
+ *   - the home directory (or any ancestor of it) is refused, the same refusal
+ *     and the same helper codex_review has carried since #188 — `~/.ssh`,
+ *     `~/.claude` and `~/.aws` all resolve INSIDE a home root with no '..', so
+ *     containment holds while the root itself is the whole exposure.
+ */
+export function registerCanvasUatRoot(sessionId: string, baseDir: string): boolean {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return false
+  if (typeof baseDir !== 'string' || !path.isAbsolute(baseDir)) return false
   let real: string
   try {
-    real = fs.realpathSync.native(distRoot)
+    real = fs.realpathSync.native(path.resolve(baseDir))
+  } catch {
+    return false // an unresolvable base is simply not added
+  }
+  try {
+    if (!fs.statSync(real).isDirectory()) return false
   } catch {
     return false
   }
-  for (const base of uatRoots) {
-    if (real === base || real.startsWith(base + path.sep)) return true
+  if (isHomeOrAncestor(real)) return false
+  let roots = uatRootsBySession.get(sessionId)
+  if (!roots) {
+    roots = new Set<string>()
+    uatRootsBySession.set(sessionId, roots)
   }
-  return false
+  roots.add(real)
+  return true
+}
+
+/** Drop every root a session was allowed to serve. Called when its PTY is gone
+ *  (pty-manager cleanupSessionResources) — a root outlives nothing. */
+export function revokeCanvasUatRoots(sessionId: string): void {
+  uatRootsBySession.delete(sessionId)
+}
+
+/** True iff `candidate` physically resolves at/under a base registered for
+ *  THIS session. realpath both sides so a symlinked base or candidate cannot
+ *  dodge the check. Unknown session ⇒ no roots ⇒ false (fail closed). */
+function resolvesUnderSessionRoot(candidate: string, sessionId: string): string | null {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return null
+  const roots = uatRootsBySession.get(sessionId)
+  if (!roots || roots.size === 0) return null
+  let real: string
+  try {
+    real = fs.realpathSync.native(candidate)
+  } catch {
+    return null
+  }
+  for (const base of roots) {
+    if (real === base || real.startsWith(base + path.sep)) return real
+  }
+  return null
+}
+
+function distRootAllowed(distRoot: string, sessionId: string): boolean {
+  return resolvesUnderSessionRoot(distRoot, sessionId) !== null
 }
 
 /**
- * Resolve a caller-supplied absolute file path, confined to the registered
- * canvas roots (the sessions' own project directories).
+ * Resolve a caller-supplied absolute file path, confined to the roots
+ * registered for `sessionId` (that session's own project directory).
  *
  * This is the containment for `canvas_render`'s `htmlPath` — a path the MODEL
  * chooses, read with the app's privileges. Unconfined it was an arbitrary-file
@@ -94,26 +150,23 @@ function distRootAllowed(distRoot: string): boolean {
  * Same allowlist and same realpath discipline `distRoot` already uses, so a
  * symlink inside the project cannot point out of it.
  *
+ * `sessionId` MUST be the transport-bound session (conductor-mcp-server's
+ * `boundSessionId`), never one the model supplied — the #188 precedent. Passing
+ * a model-chosen id here would re-open exactly the cross-session read that
+ * keying the allowlist by session closed.
+ *
  * Throws (never returns a path outside a root); the thrown message is mapped
  * to a closed operator vocabulary by the caller and never relayed verbatim.
  */
-export function resolveInsideCanvasRoot(absPath: string): string {
+export function resolveInsideCanvasRoot(absPath: string, sessionId: string): string {
   if (typeof absPath !== 'string' || absPath.length === 0 || !path.isAbsolute(absPath)) {
     throw new Error('path is not under a registered canvas root')
   }
-  if (uatRoots.size === 0) throw new Error('path is not under a registered canvas root')
-  let real: string
-  try {
-    // realpath the FILE, not just its parent: this is what makes a symlink
-    // planted inside the project unable to reach outside it.
-    real = fs.realpathSync.native(absPath)
-  } catch {
-    throw new Error('path is not under a registered canvas root')
-  }
-  for (const base of uatRoots) {
-    if (real === base || real.startsWith(base + path.sep)) return real
-  }
-  throw new Error('path is not under a registered canvas root')
+  // realpath the FILE, not just its parent: this is what makes a symlink
+  // planted inside the project unable to reach outside it.
+  const real = resolvesUnderSessionRoot(absPath, sessionId)
+  if (real === null) throw new Error('path is not under a registered canvas root')
+  return real
 }
 
 /** A version `entry` must be a plain relative file path. Boolean form of
@@ -374,9 +427,10 @@ export function renderVersion(
       throw new Error('distRoot does not exist')
     }
     if (!stat.isDirectory()) throw new Error('distRoot is not a directory')
-    // Fail closed: a UAT root must sit under a registered base, or it is not a
-    // canvas — this is the whole-disk-file-server defense (adversarial review).
-    if (!distRootAllowed(distRoot)) throw new Error('distRoot is not under a registered canvas UAT root')
+    // Fail closed: a UAT root must sit under a base registered for THIS session,
+    // or it is not a canvas — the whole-disk-file-server defense (adversarial
+    // review 2026-08-11), now per-session (2026-08-15).
+    if (!distRootAllowed(distRoot, sessionId)) throw new Error('distRoot is not under a registered canvas UAT root')
     const entry = normalizeEntry(source.entry ?? 'index.html')
     version = {
       id: versionId,
@@ -447,13 +501,25 @@ export function renderVersion(
  *  open a device rather than a file. Matched on the pre-extension basename. */
 const WIN_RESERVED_BASENAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9]|conin\$|conout\$)$/i
 
+/** The entry is the DOCUMENT: it is served as text/html and it is the one file
+ *  the bridge script is injected into. Nothing else may hold that position. */
+const HTML_ENTRY_RE = /\.(html|htm)$/i
+
 /**
- * An entry must be a plain relative file path. The boundary is self-sufficient:
- * it rejects traversal, absolutes, drive/ADS colons, and backslashes, AND the
- * Win32 forms that a pure `path`/string check misses but libuv would silently
- * normalize (trailing dot/space stripping, all-dot segments, device names) —
- * so the confinement never relies on the fs layer's behaviour (adversarial
- * review, 2026-08-11).
+ * An entry must be a plain relative path to an HTML file. The boundary is
+ * self-sufficient: it rejects traversal, absolutes, drive/ADS colons, and
+ * backslashes, AND the Win32 forms that a pure `path`/string check misses but
+ * libuv would silently normalize (trailing dot/space stripping, all-dot
+ * segments, device names) — so the confinement never relies on the fs layer's
+ * behaviour (adversarial review, 2026-08-11).
+ *
+ * The `.html`/`.htm` requirement is the render half of BLOCKER 1 (adversarial
+ * review, 2026-08-15): the protocol used to force the ENTRY to `text/html`
+ * whatever it actually was and inject the bridge into it, so a version whose
+ * entry named `.credentials.json` came back `200 text/html` with the bridge
+ * attached and was then readable by the pre-allowed `canvas_snapshot`. Refusing
+ * the entry here is the first of the two fixes; the protocol refuses to serve a
+ * non-HTML entry as a document as well, so neither ingress leans on the other.
  */
 function normalizeEntry(entry: string): string {
   const clean = entry.replace(/^\/+/, '')
@@ -465,6 +531,7 @@ function normalizeEntry(entry: string): string {
     if (/[. ]$/.test(seg)) throw new Error('invalid entry') // Win32 strips a trailing '.'/' '
     if (WIN_RESERVED_BASENAME.test(seg.split('.')[0])) throw new Error('invalid entry')
   }
+  if (!HTML_ENTRY_RE.test(segments[segments.length - 1])) throw new Error('entry must be an html file')
   return segments.join('/')
 }
 
@@ -614,8 +681,15 @@ export function getServableVersion(canvasId: string, versionId: string): Servabl
   }
   // Re-check distRoot containment on every serve: this is what confines a UAT
   // record loaded from disk after a restart, and honours a base that was later
-  // de-registered. No registered base ⇒ nothing served.
-  if (!distRootAllowed(version.source.distRoot)) return null
+  // de-registered (a session's roots are revoked when its PTY exits). No
+  // registered base ⇒ nothing served.
+  //
+  // The session checked is the canvas's OWNER, taken from the record — the
+  // ccc-ux:// protocol has no transport session to bind to, and it does not
+  // need one: a canvas belongs to exactly one session (spec D2) and the canvas
+  // id is the URL's HOST, so "whose roots apply" is answered by the record
+  // rather than by anything the request carries.
+  if (!distRootAllowed(version.source.distRoot, record.sessionId)) return null
   return { mode: 'uat', contentRoot: version.source.distRoot, entry: version.source.entry }
 }
 
@@ -623,7 +697,7 @@ export function getServableVersion(canvasId: string, versionId: string): Servabl
 export function _resetCanvasStoreForTest(): void {
   canvases.clear()
   sessionIndex.clear()
-  uatRoots.clear()
+  uatRootsBySession.clear()
   diskScanned = false
   sessionInfoResolver = null
 }

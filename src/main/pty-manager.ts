@@ -36,6 +36,8 @@ import {
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
+import { registerCanvasUatRoot, revokeCanvasUatRoots } from './canvas/canvas-store'
+import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
@@ -1252,10 +1254,28 @@ export function spawnPty(
       // mode:'paths' (containment holds, but the ROOT is wrong). Since universal
       // opt-in removed the per-config gate that used to bound this, block it at
       // the source: no legitimate review targets the bare home dir.
+      //
+      // The Agent Canvas serving allowlist rides the SAME decision, for the
+      // same reason and against the same directory (adversarial review,
+      // 2026-08-15 — BLOCKER 1). It used to be registered at the IPC seam from
+      // the raw renderer-supplied `options.cwd` / `options.resume.cwd`, neither
+      // of which had been resolved or home-checked, and `resume.cwd` comes out
+      // of a transcript JSONL the agent can write — so the model chose what the
+      // canvas was allowed to serve. Registering here means only the cwd the
+      // main process itself resolved can ever become a served root, and a
+      // home-rooted session gets NO canvas root at all rather than the whole
+      // home directory. Keyed to this session; revoked when its PTY exits.
       if (isHomeOrAncestor(claudeCwd)) {
-        logWarn(`[pty] codex_review NOT registered for ${sessionId}: launch cwd resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home). Set a real project directory to enable review.`)
+        logWarn(`[pty] codex_review + canvas serving NOT registered for ${sessionId}: launch cwd resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home). Set a real project directory to enable review.`)
       } else {
         registerCodexReviewSession(sessionId, claudeCwd)
+        // Floor-checked again inside the store (absolute, real, a directory,
+        // not home) — two independent refusals rather than one, because this is
+        // the only thing standing between a prompt-injected agent and a file
+        // read with the app's privileges.
+        if (!registerCanvasUatRoot(sessionId, claudeCwd)) {
+          logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the launch cwd was refused by the canvas store.`)
+        }
       }
 
       // Explicitly cd to the project directory, then launch Claude.
@@ -1583,6 +1603,20 @@ export function spawnPty(
       try { syncPrimaryCredentialsWithGlobal() } catch { /* best-effort */ }
       // Bug 4: release this session's pinned vision browser target/context.
       try { teardownVisionSession(sessionId) } catch { /* best-effort */ }
+      // Canvas link state (the cwd / resume uuid / profile used to LABEL and
+      // order the reclaim list). `forgetSessionForCanvas` had no caller at all
+      // until now, so spawnInfo grew for the life of the install and a dead
+      // session's project directory kept ordering other sessions' reclaim
+      // lists (adversarial review, 2026-08-15).
+      //
+      // It is HERE and not in cleanupSessionResources on purpose: the entry is
+      // written by the pty:spawn IPC handler BEFORE spawnPty runs, and spawnPty
+      // opens with killPty → cleanupSessionResources, so clearing it there
+      // would wipe every restart's stamps a moment after they were set. This
+      // block only runs when no newer PTY has taken the session over — i.e.
+      // when the PTY really is gone for good, which is the contract the
+      // function documents.
+      forgetSessionForCanvas(sessionId)
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }
@@ -1771,6 +1805,15 @@ function cleanupSessionResources(sessionId: string): void {
   // otherwise defeat the home-dir refusal and the "SSH never registers"
   // invariant. Idempotent: a no-op when the session was never registered.
   unregisterCodexReviewSession(sessionId)
+  // SECURITY (adversarial review, 2026-08-15 — BLOCKER 1): the canvas serving
+  // allowlist dies with the session, for the identical reason. The first cut
+  // had NO production revocation at all — a root registered by any local spawn
+  // stayed servable for the life of the app process, so a session that exited
+  // hours ago still contributed a readable project to whichever agent was
+  // running now. Re-established per spawn (spawnPty calls killPty → here before
+  // it re-registers), so a session that restarts into a home-rooted, SSH,
+  // shell-only or Codex state inherits nothing.
+  revokeCanvasUatRoots(sessionId)
 }
 
 // U8: grace before killing an SSH PTY so the in-band remote-cleanup command has

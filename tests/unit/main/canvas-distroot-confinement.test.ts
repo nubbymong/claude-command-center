@@ -63,9 +63,9 @@ describe('UAT distRoot confinement (default-deny allowlist)', () => {
   it('ignores a relative/empty base so it cannot silently allowlist cwd', () => {
     secretDir = makeSecretDir()
     // '' and '.' resolve to process.cwd(); registering them must be a no-op.
-    store.registerCanvasUatRoot('')
-    store.registerCanvasUatRoot('.')
-    store.registerCanvasUatRoot('relative/path')
+    expect(store.registerCanvasUatRoot(SID, '')).toBe(false)
+    expect(store.registerCanvasUatRoot(SID, '.')).toBe(false)
+    expect(store.registerCanvasUatRoot(SID, 'relative/path')).toBe(false)
     expect(() => store.renderVersion(SID, { mode: 'uat', distRoot: secretDir })).toThrow(/registered canvas UAT root/i)
   })
 
@@ -73,14 +73,14 @@ describe('UAT distRoot confinement (default-deny allowlist)', () => {
     secretDir = makeSecretDir()
     // Register an unrelated base; the secret dir is not under it.
     const otherBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-base-'))
-    store.registerCanvasUatRoot(otherBase)
+    store.registerCanvasUatRoot(SID, otherBase)
     expect(() => store.renderVersion(SID, { mode: 'uat', distRoot: secretDir })).toThrow(/registered canvas UAT root/i)
     fs.rmSync(otherBase, { recursive: true, force: true })
   })
 
   it('accepts a distRoot UNDER a registered base and still confines serving to it', async () => {
     secretDir = makeSecretDir()
-    store.registerCanvasUatRoot(path.dirname(secretDir))
+    store.registerCanvasUatRoot(SID, path.dirname(secretDir))
     const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: secretDir })
     // The registered dir serves (it is the content root)…
     expect((await get(`ccc-ux://${canvasId}/v1/id_rsa`)).status).toBe(200)
