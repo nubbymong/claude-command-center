@@ -23,7 +23,11 @@
 //      refused. Layer 3 is about paths; a HARD LINK is a second name for an
 //      inode elsewhere, so it satisfies layer 3 completely while serving
 //      someone else's bytes (adversarial review 2026-08-15 walked an OAuth
-//      token out of a served root through one).
+//      token out of a served root through one). Layer 4 binds the ENTRY
+//      document in both modes and every file of a design version; a UAT
+//      subordinate asset is exempt and logged, because hardlink-deduplicated
+//      build output is ordinary and refusing it broke real dist trees (see
+//      serveFile).
 //
 // And the version's ROOT is not global: `getServableVersion` re-checks a UAT
 // distRoot against the roots registered for the canvas's OWNING SESSION, which
@@ -45,7 +49,7 @@ import {
 } from '../../shared/canvas'
 import { validatePath } from '../utils/path-validator'
 import { readCheckedFile } from '../utils/safe-file-read'
-import { getServableVersion, ServableVersion } from './canvas-store'
+import { getServableVersion, isHtmlDocumentPath, ServableVersion } from './canvas-store'
 import bridgeSource from 'virtual:canvas-bridge'
 import analysisSource from 'virtual:canvas-analysis'
 
@@ -195,7 +199,13 @@ export function serveFile(
   method: string,
 ): Response | null {
   const ext = path.extname(filePath).toLowerCase()
-  const isHtml = ext === '.html' || ext === '.htm'
+  // ONE predicate, shared with the store's write ingress. It used to be spelled
+  // here as an extension compare and there as `/\.(html|htm)$/i`, which disagree
+  // on the string `.html` (`path.extname('.html')` is ''): the store accepted an
+  // entry this function then refused, so a canvas could be rendered and never
+  // served. Two definitions of "is HTML" either strand content or, drifting the
+  // other way, admit a document one half never agreed to.
+  const isHtml = isHtmlDocumentPath(filePath)
   // The entry is the DOCUMENT — the thing the frame loads as a page and the one
   // file the bridge is injected into. `normalizeEntry` already refuses a
   // non-HTML entry at both write ingresses; this is the serve-side half, so a
@@ -205,7 +215,40 @@ export function serveFile(
   const csp = servable.mode === 'design' ? DESIGN_CSP : UAT_CSP
   const contentType = isHtml ? MIME_BY_EXT['.html'] : (MIME_BY_EXT[ext] ?? 'application/octet-stream')
 
-  const data = readCheckedFile(filePath, MAX_SERVED_FILE_BYTES)
+  // Link discipline, scoped to what it is for.
+  //
+  // The ENTRY keeps the hard refusal in every mode: it is the document the
+  // bridge is injected into and the one canvas_snapshot reads back out of the
+  // DOM, so it is the object a hard-linked secret has to occupy to be exfiltrated
+  // directly. DESIGN content keeps it too — a design version's root is CCC's own
+  // `<resources>/canvas/<id>/versions/<vid>/`, written by the store itself, where
+  // a second name for an inode is never legitimate and never accidental.
+  //
+  // A UAT SUBORDINATE ASSET is the one case where multiplicity is ordinary: the
+  // content root is a real `dist/`, and pnpm, `cp -al` and Nx/Turbo/Bazel cache
+  // restores all populate one with hard links. Refusing those turned a normal
+  // monorepo build into a page whose every chunk 404'd — with only a generic
+  // console.warn from the outer catch, so the user saw a blank UAT pane and no
+  // reason for it. Containment still holds for these (lexical + realpath + the
+  // per-session root), and the anomaly is LOGGED rather than silently allowed.
+  const requireSingleLink = isEntry || servable.mode === 'design'
+  let data: Buffer
+  try {
+    data = readCheckedFile(filePath, MAX_SERVED_FILE_BYTES, {
+      requireSingleLink,
+      onLinkAnomaly: (nlink) => {
+        console.warn(
+          `[ccc-ux] serving a multiply-linked UAT asset (nlink=${nlink ?? 'unreported'}): ${filePath} — ` +
+            'normal for hardlink-deduplicated build output (pnpm, cp -al, Nx/Turbo/Bazel cache restore).',
+        )
+      },
+    })
+  } catch (err) {
+    // Named and reasoned, not the outer catch's uniform shrug: this is the one
+    // 404 a user cannot diagnose from the outside. The response stays identical.
+    console.warn(`[ccc-ux] refused to serve ${filePath} (entry=${isEntry}, mode=${servable.mode}): ${(err as Error)?.message ?? err}`)
+    return null
+  }
   if (isHtml) {
     const html = injectBridgeTag(data.toString('utf8'))
     return new Response(method === 'HEAD' ? null : html, { status: 200, headers: baseHeaders(contentType, csp) })

@@ -112,7 +112,7 @@ describe('UAT distRoot confinement (default-deny allowlist)', () => {
 })
 
 describe('entry re-validation on the disk-reload path (ADS / traversal)', () => {
-  it('drops a record whose entry carries an ADS colon', async () => {
+  it('drops the VERSION whose entry carries an ADS colon', async () => {
     const canvasId = 'adsentry00000000000000001'
     const dir = path.join(getResourcesDirectory(), 'canvas', canvasId, 'versions', 'v1')
     fs.mkdirSync(dir, { recursive: true })
@@ -128,8 +128,14 @@ describe('entry re-validation on the disk-reload path (ADS / traversal)', () => 
       }),
     )
     store._resetCanvasStoreForTest()
-    // isValidRecord rejects the colon entry → the whole canvas is skipped.
-    expect(store.getCanvasStateForSession(SID)).toBeNull()
+    // The colon entry is STRUCTURALLY dangerous, so the version is dropped on
+    // load — it is not kept-but-unservable the way a merely non-HTML entry is.
+    // The record itself survives (a sibling good version would too); with its
+    // only version gone it has nothing left to show and nothing to serve.
+    const state = store.getCanvasStateForSession(SID)
+    expect(state?.versions).toEqual([])
+    expect(state?.activeVersionId).toBeNull()
+    expect(store.getServableVersion(canvasId, 'v1')).toBeNull()
     expect((await get(`ccc-ux://${canvasId}/v1/`)).status).toBe(404)
   })
 })

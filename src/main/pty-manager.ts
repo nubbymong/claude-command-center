@@ -1254,28 +1254,52 @@ export function spawnPty(
       // mode:'paths' (containment holds, but the ROOT is wrong). Since universal
       // opt-in removed the per-config gate that used to bound this, block it at
       // the source: no legitimate review targets the bare home dir.
-      //
-      // The Agent Canvas serving allowlist rides the SAME decision, for the
-      // same reason and against the same directory (adversarial review,
-      // 2026-08-15 — BLOCKER 1). It used to be registered at the IPC seam from
-      // the raw renderer-supplied `options.cwd` / `options.resume.cwd`, neither
-      // of which had been resolved or home-checked, and `resume.cwd` comes out
-      // of a transcript JSONL the agent can write — so the model chose what the
-      // canvas was allowed to serve. Registering here means only the cwd the
-      // main process itself resolved can ever become a served root, and a
-      // home-rooted session gets NO canvas root at all rather than the whole
-      // home directory. Keyed to this session; revoked when its PTY exits.
       if (isHomeOrAncestor(claudeCwd)) {
-        logWarn(`[pty] codex_review + canvas serving NOT registered for ${sessionId}: launch cwd resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home). Set a real project directory to enable review.`)
+        logWarn(`[pty] codex_review NOT registered for ${sessionId}: launch cwd resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home). Set a real project directory to enable review.`)
       } else {
         registerCodexReviewSession(sessionId, claudeCwd)
-        // Floor-checked again inside the store (absolute, real, a directory,
-        // not home) — two independent refusals rather than one, because this is
-        // the only thing standing between a prompt-injected agent and a file
-        // read with the app's privileges.
-        if (!registerCanvasUatRoot(sessionId, claudeCwd)) {
-          logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the launch cwd was refused by the canvas store.`)
-        }
+      }
+
+      // The Agent Canvas serving allowlist rides the same decision, for the same
+      // reason — but NOT against the same directory (adversarial review,
+      // 2026-08-15, second pass).
+      //
+      // `claudeCwd` is TRANSCRIPT-DERIVED whenever an exact-resume applies. It
+      // starts as `resolvedCwd` and is then overwritten with
+      // `resolveResumeLaunch(effectiveTarget).claudeCwd`, which is
+      // `target.cwd` — and `target` is either the persisted `options.resume` or
+      // the self-captured `resolveResumeTargetFromTranscript()`, whose cwd is
+      // THE FIRST `cwd` STRING IN THE TRANSCRIPT JSONL, verbatim. That file is
+      // one the agent can write. So an agent that rewrites its own transcript's
+      // first line to `"cwd":"C:\\Users\\<u>\\.claude"` and creates the matching
+      // mangled projects directory names its own served root the next time the
+      // user hits Restart or Switch-account. `isHomeOrAncestor` does not catch
+      // it: `~/.claude` is a CHILD of home, not an ancestor. From there
+      // `canvas_render { htmlPath: '…/.claude/.credentials.json' }` reads the
+      // OAuth token and the pre-allowed `canvas_snapshot` reads it back out of
+      // the DOM. The previous fix moved the registration to this file and
+      // claimed "no served root is derived from transcript content any more";
+      // moving the CALL did not change where the VALUE came from.
+      //
+      // So the canvas root is `resolvedCwd` — `resolveCwd(options.cwd)`, the
+      // session's CONFIGURED project directory, which no transcript can reach —
+      // and never the resume override. The cost is bounded and known: a session
+      // that exact-resumes a conversation from OUTSIDE its configured project
+      // directory can serve nothing (renders are refused, not misdirected).
+      //
+      // codex_review above deliberately keeps `claudeCwd`: changing what it
+      // reviews is a separate behavioural decision, and its exposure is
+      // different in kind (it reads for a review the user reads, with no
+      // pre-allowed tool reading the bytes back). It is flagged, not changed.
+      if (isHomeOrAncestor(resolvedCwd)) {
+        logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the configured project directory resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home).`)
+      } else if (!registerCanvasUatRoot(sessionId, resolvedCwd)) {
+        // Floor-checked again inside the store (absolute, real, a directory, not
+        // home, not a volume root, not a dot-dir under home) — two independent
+        // refusals rather than one, because this is the only thing standing
+        // between a prompt-injected agent and a file read with the app's
+        // privileges.
+        logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the configured project directory was refused by the canvas store.`)
       }
 
       // Explicitly cd to the project directory, then launch Claude.

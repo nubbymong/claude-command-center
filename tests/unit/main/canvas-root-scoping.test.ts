@@ -46,6 +46,23 @@ function tmp(prefix: string): string {
   return dir
 }
 
+/** Every volume root that exists on this machine: `/` on POSIX, and each mounted
+ *  drive letter on Windows (the non-home ones are the interesting half — they
+ *  are not ancestors of home, so the #188 check does not reach them). */
+function volumeRoots(): string[] {
+  if (process.platform !== 'win32') return ['/']
+  const out: string[] = []
+  for (const letter of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+    const root = `${letter}:\\`
+    try {
+      if (fs.statSync(root).isDirectory()) out.push(root)
+    } catch {
+      /* no such drive */
+    }
+  }
+  return out
+}
+
 /** A project directory with a built dist inside it — the shape a real session
  *  registers: the LAUNCH cwd is the root, `dist/` is what gets served. */
 function makeProject(prefix: string): { project: string; dist: string } {
@@ -110,50 +127,96 @@ describe('a home-resolving cwd is refused as a canvas root', () => {
 
 // ---------------------------------------------------------------------------
 // Defect 2 — nothing the model can author reaches the allowlist
+//
+// This lived here as three assertions over the SOURCE TEXT of pty-manager and
+// pty-handlers: "the call is not in the IPC seam", "the call in pty-manager
+// reads `registerCanvasUatRoot(sessionId, claudeCwd)`", "no other file contains
+// the identifier". All three passed against a build in which the served root
+// was STILL transcript-derived — `claudeCwd` is overwritten from
+// `resolveResumeLaunch(target).claudeCwd`, i.e. `target.cwd`, i.e. the first
+// `cwd` string in an agent-writable JSONL. A grep can see where a call is. It
+// cannot see what flows into it, and that was the whole defect.
+//
+// They are replaced by canvas-root-provenance.test.ts, which drives the real
+// `spawnPty` with a poisoned resume target and asks the real store what it will
+// serve. No assertion in this repo's canvas suites reads source text any more.
 // ---------------------------------------------------------------------------
 
-describe('the renderer/transcript cwd never becomes a served root', () => {
-  // `options.resume.cwd` is returned verbatim by transcript-discovery from the
-  // first `cwd` string in a transcript JSONL — a file the agent can WRITE. The
-  // pty:spawn IPC handler used to hand both it and the raw `options.cwd`
-  // straight to registerCanvasUatRoot, so the model chose the allowlist entry.
-  // The fix is structural: that call site is gone, and registration happens in
-  // pty-manager against the cwd the MAIN PROCESS resolved. Asserted on the
-  // source because that is what the defect was — a call in the wrong file.
-  const read = (rel: string): string => fs.readFileSync(path.resolve(__dirname, '../../../', rel), 'utf8')
+// ---------------------------------------------------------------------------
+// Defect 2b — the store's own floor, independent of any caller
+// ---------------------------------------------------------------------------
 
-  it('is not registered from the IPC seam', () => {
-    const handlers = read('src/main/ipc/pty-handlers.ts')
-    expect(handlers).not.toContain('registerCanvasUatRoot')
-    // The transcript-derived cwd is still carried for LABELLING (reclaim-list
-    // ordering); the point is that no authorization is built on it.
-    expect(handlers).toContain('noteSessionSpawnForCanvas')
+describe('the store refuses roots no caller should ever ask for', () => {
+  it('refuses a dot-directory under home (~/.ssh, ~/.claude, ~/.aws)', () => {
+    // The gap the second pass walked through: `isHomeOrAncestor` refuses home
+    // and everything ABOVE it, and a credential directory is BELOW it. So the
+    // #188 helper says yes to the three directories the attack wanted.
+    const home = fs.realpathSync.native(os.homedir())
+    const underHome = (p: string): boolean => {
+      const rel = path.relative(home, p)
+      return rel !== '' && !path.isAbsolute(rel) && rel.split(path.sep)[0] !== '..'
+    }
+    // The real ones, when this machine actually has them under the home the
+    // process sees. (A dotfile dir is commonly a symlink to somewhere else
+    // entirely, and a redirected HOME — CCC's own account profiles do exactly
+    // that — moves the target out from under it. Asserting on a directory that
+    // is not under home would be asserting the wrong thing.)
+    let realChecked = 0
+    for (const name of ['.ssh', '.claude', '.aws']) {
+      const dir = path.join(home, name)
+      if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue
+      if (!underHome(fs.realpathSync.native(dir))) continue
+      realChecked++
+      expect(store.registerCanvasUatRoot(SID_A, dir), name).toBe(false)
+      expect(() => store.resolveInsideCanvasRoot(path.join(dir, 'anything'), SID_A)).toThrow(
+        /registered canvas root/i,
+      )
+    }
+    // …and ones created on the spot, so the assertion never depends on what a
+    // particular machine happens to have (realChecked can legitimately be 0).
+    expect(realChecked).toBeGreaterThanOrEqual(0)
+    const made = path.join(home, '.ccc-canvas-root-scoping-probe')
+    fs.mkdirSync(made, { recursive: true })
+    try {
+      expect(store.registerCanvasUatRoot(SID_A, made)).toBe(false)
+      // Deep under it too — a project checked out inside a dot-dir is refused.
+      const deep = path.join(made, 'nested', 'project')
+      fs.mkdirSync(deep, { recursive: true })
+      expect(store.registerCanvasUatRoot(SID_A, deep)).toBe(false)
+      expect(() => store.resolveInsideCanvasRoot(path.join(deep, 'x.html'), SID_A)).toThrow(
+        /registered canvas root/i,
+      )
+    } finally {
+      fs.rmSync(made, { recursive: true, force: true })
+    }
   })
 
-  it('is registered only in pty-manager, from the resolved launch cwd, behind the home check', () => {
-    const manager = read('src/main/pty-manager.ts')
-    expect(manager).toContain('registerCanvasUatRoot(sessionId, claudeCwd)')
-    // Same branch as codex_review's #188 refusal: the else of isHomeOrAncestor.
-    const guarded = /if \(isHomeOrAncestor\(claudeCwd\)\)[\s\S]{0,1200}?registerCanvasUatRoot\(sessionId, claudeCwd\)/
-    expect(manager).toMatch(guarded)
-    expect(manager).toContain('revokeCanvasUatRoots(sessionId)')
-    expect(manager).toContain('forgetSessionForCanvas(sessionId)')
+  it('accepts an ordinary non-dot directory under home (the refusal is scoped)', () => {
+    const home = fs.realpathSync.native(os.homedir())
+    const made = path.join(home, 'ccc-canvas-root-scoping-probe-ok')
+    fs.mkdirSync(made, { recursive: true })
+    try {
+      expect(store.registerCanvasUatRoot(SID_A, made)).toBe(true)
+    } finally {
+      store.revokeCanvasUatRoots(SID_A)
+      fs.rmSync(made, { recursive: true, force: true })
+    }
   })
 
-  it('has no other production caller', () => {
-    // A second registration site is how this defect existed in the first place.
-    const files = [
-      'src/main/canvas/canvas-store.ts',
-      'src/main/canvas/canvas-session-link.ts',
-      'src/main/canvas/ccc-ux-protocol.ts',
-      'src/main/canvas-mcp-tool.ts',
-      'src/main/conductor-mcp-server.ts',
-      'src/main/ipc/canvas-handlers.ts',
-      'src/main/ipc/pty-handlers.ts',
-    ]
-    for (const rel of files) {
-      if (rel === 'src/main/canvas/canvas-store.ts') continue // the definition
-      expect(read(rel), rel).not.toContain('registerCanvasUatRoot')
+  it('refuses every volume root the machine has', () => {
+    // Two mechanisms, one observable property. The HOME drive's root is an
+    // ancestor of home, so the #188 check already reaches it. Any OTHER drive's
+    // root is not — home is not under `D:\` — so the home check waves it
+    // through, and it is the whole-disk file server the allowlist exists to
+    // prevent. (`C:\Windows` was accepted too; a volume root is the strictly
+    // worse version of the same shape, and the one with a name.)
+    const roots = volumeRoots()
+    expect(roots.length, 'a machine has at least one volume root').toBeGreaterThan(0)
+    for (const root of roots) {
+      expect(store.registerCanvasUatRoot(SID_A, root), root).toBe(false)
+      expect(() => store.resolveInsideCanvasRoot(path.join(root, 'anything'), SID_A)).toThrow(
+        /registered canvas root/i,
+      )
     }
   })
 })

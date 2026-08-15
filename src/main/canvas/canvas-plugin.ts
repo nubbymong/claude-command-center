@@ -65,11 +65,12 @@ Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`
    canvas_render { mode: "design", htmlPath: "<absolute path>" }
 
    The canvas only reads files under THIS session's own project folder — the
-   directory this session was launched in. A path outside it is refused, so do
-   not write the mockup to a temp or scratch directory, and note that another
-   session's project folder is refused too. (A session launched in the user's
-   home folder has no project folder at all and cannot render by path; say so
-   and move on.) Never pass the document inline in \`html\` when you can write
+   directory configured for this session in CCC. A path outside it is refused,
+   so do not write the mockup to a temp or scratch directory, and note that
+   another session's project folder is refused too. (A session whose configured
+   folder is the user's home folder has no project folder at all and cannot
+   render by path; nor can one resuming a conversation from outside its
+   configured folder — say so and move on.) Never pass the document inline in \`html\` when you can write
    a file: the inline form floods the user's approval prompt with the whole
    document (it once cost a user eleven minutes on one render).
 4. Self-check before handing back: \`canvas_snapshot\` scoped to the
@@ -116,8 +117,8 @@ resolved yourself — resolution is theirs.
 ## Exceptions you may hit
 
 - Render refused ("not inside this session's project folder"): write or build
-  the file inside the project this session was launched in, then retry. Do not
-  ask the user to allow a folder — nothing in the app grants one.
+  the file inside the project folder configured for this session, then retry.
+  Do not ask the user to allow a folder — nothing in the app grants one.
 - "version limit" on render: the canvas is full — continue in a new session.
 - Snapshot "did not finish loading in time": heavy page — retry once, then
   continue without the self-check and say you did.

@@ -268,10 +268,13 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // (transcript-discovery.getCwdFromTranscript), a file the agent can WRITE —
     // so the model named its own allowlist entry.
     //
-    // Registration now happens in pty-manager, after the spawn, against the
-    // cwd the main process itself resolved (`claudeCwd`), with the same
-    // home-directory refusal codex_review has carried since #188. Only content
-    // the main process derived may become a served root.
+    // Registration now happens in pty-manager, after the spawn, against
+    // `resolveCwd(options.cwd)` — the session's CONFIGURED project directory —
+    // with the same home-directory refusal codex_review has carried since #188.
+    // Explicitly NOT the post-resume-override launch cwd: that value is
+    // `target.cwd`, i.e. transcript content, so registering it would have
+    // laundered the same model-chosen path through a different file (second
+    // pass, 2026-08-15). Only the configured directory may become a served root.
     if (!options?.ssh) {
       // Canvas continuity: stamp this session's work identity and let it adopt
       // an orphaned canvas from a previous session of the same conversation /

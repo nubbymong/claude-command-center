@@ -182,3 +182,75 @@ describe('readCheckedFile', () => {
     for (const call of readSyncCalls) expect(call[0]).toBe(opened[0])
   })
 })
+
+describe('readCheckedFile — the link refusal is opt-out, per call, and reported', () => {
+  // Blanket-refusing every multiply-linked file broke hardlink-deduplicated
+  // build output (pnpm, `cp -al`, Nx/Turbo/Bazel cache restores) served as UAT
+  // assets. The exemption is a parameter the CALLER passes for one read, never
+  // a mode; and taking it does not make the fact invisible.
+  it('reads a multiply-linked file when the caller opts out, and reports the count', () => {
+    const dir = tmp('ccc-read-optout-')
+    const source = path.join(dir, 'chunk-source.js')
+    realFs.writeFileSync(source, 'console.log(1)')
+    const link = path.join(dir, 'chunk.js')
+    hardLink(source, link)
+
+    const seen: Array<number | null> = []
+    const bytes = readCheckedFile(link, 1024, {
+      requireSingleLink: false,
+      onLinkAnomaly: (n) => seen.push(n),
+    })
+    expect(bytes.toString('utf8')).toBe('console.log(1)')
+    expect(seen).toEqual([2])
+  })
+
+  it('reports null — not silence — when the volume will not say', () => {
+    const file = path.join(tmp('ccc-read-optout-nonlink-'), 'chunk.js')
+    realFs.writeFileSync(file, 'x')
+    hideNlink = true
+    const seen: Array<number | null> = []
+    try {
+      expect(readCheckedFile(file, 1024, { requireSingleLink: false, onLinkAnomaly: (n) => seen.push(n) }).toString('utf8')).toBe('x')
+    } finally {
+      hideNlink = false
+    }
+    expect(seen).toEqual([null])
+  })
+
+  it('does not call back for an ordinary single-named file', () => {
+    const file = path.join(tmp('ccc-read-optout-plain-'), 'chunk.js')
+    realFs.writeFileSync(file, 'y')
+    const seen: Array<number | null> = []
+    readCheckedFile(file, 1024, { requireSingleLink: false, onLinkAnomaly: (n) => seen.push(n) })
+    expect(seen).toEqual([])
+  })
+
+  it('still refuses by DEFAULT, and when the caller asks for the check explicitly', () => {
+    // The half that makes the opt-out safe: it has to be asked for. A default
+    // that flipped to permissive would disarm every existing call site at once.
+    const dir = tmp('ccc-read-optin-')
+    const victim = path.join(dir, 'credentials.json')
+    realFs.writeFileSync(victim, SECRET)
+    const link = path.join(dir, 'mockup.html')
+    hardLink(victim, link)
+    expect(() => readCheckedFile(link, 1024)).toThrow(/not a regular file/i)
+    expect(() => readCheckedFile(link, 1024, {})).toThrow(/not a regular file/i)
+    expect(() => readCheckedFile(link, 1024, { requireSingleLink: true })).toThrow(/not a regular file/i)
+  })
+
+  it('a throwing reporter does not sink the read', () => {
+    const dir = tmp('ccc-read-optout-throw-')
+    const source = path.join(dir, 'a.js')
+    realFs.writeFileSync(source, 'z')
+    const link = path.join(dir, 'b.js')
+    hardLink(source, link)
+    expect(
+      readCheckedFile(link, 1024, {
+        requireSingleLink: false,
+        onLinkAnomaly: () => {
+          throw new Error('logger exploded')
+        },
+      }).toString('utf8'),
+    ).toBe('z')
+  })
+})

@@ -256,10 +256,12 @@ function designFileFailureReason(err: unknown): string {
     // The confinement (resolveInsideCanvasRoot). Says what to do instead
     // without echoing the path the model supplied. True as written since the
     // allowlist became per-session: the roots this read resolves against are
-    // this session's own launch directory and nothing else — not another
-    // session's project, and nothing at all when the session was launched in
-    // the home directory.
-    return 'that file is outside this session’s project folder, which is the only place the canvas reads from. Write the html inside the project you are working in, then render that path. (A session launched in your home folder has no project folder and cannot render by path.)'
+    // this session's own CONFIGURED project directory and nothing else — not
+    // another session's project, not the directory a resumed conversation
+    // happens to run in (that value comes out of a transcript the model can
+    // write), and nothing at all when the configured directory is the home
+    // directory.
+    return 'that file is outside this session’s project folder, which is the only place the canvas reads from. Write the html inside the project folder configured for this session, then render that path. (A session configured on your home folder has no project folder and cannot render by path.)'
   }
   return 'that html file could not be read. Check the path you wrote it to.'
 }

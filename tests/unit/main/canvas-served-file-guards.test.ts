@@ -63,6 +63,27 @@ function hardLink(target: string, link: string): void {
   expect(fs.statSync(link).nlink, 'precondition: the runner must support hard links').toBe(2)
 }
 
+/** Write a canvas.json straight to disk — the reload path, which is the only
+ *  way a record the current write ingress would refuse can exist at all. */
+function writeCanvasJson(
+  canvasId: string,
+  versions: Array<{ id: string; mode: 'uat' | 'design'; source: Record<string, unknown> }>,
+  activeVersionId?: string,
+): void {
+  const dir = path.join(getResourcesDirectory(), 'canvas', canvasId)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(
+    path.join(dir, 'canvas.json'),
+    JSON.stringify({
+      canvasId,
+      sessionId: SID,
+      createdAt: new Date(0).toISOString(),
+      activeVersionId: activeVersionId ?? versions[versions.length - 1]?.id ?? null,
+      versions: versions.map((v) => ({ ...v, createdAt: new Date(0).toISOString() })),
+    }),
+  )
+}
+
 beforeEach(() => {
   store._resetCanvasStoreForTest()
   fs.rmSync(path.join(getResourcesDirectory(), 'canvas'), { recursive: true, force: true })
@@ -99,41 +120,105 @@ describe('a non-HTML entry is never served as HTML', () => {
     expect(() => store.renderVersion(SID, { mode: 'uat', distRoot: dist, entry: 'app.HTM' })).not.toThrow()
   })
 
-  it('drops a disk-poisoned record whose entry names a data file', async () => {
+  it('never serves a disk-poisoned version whose entry names a data file', async () => {
     const { dist } = makeProject('ccc-entry-disk-')
     fs.writeFileSync(path.join(dist, '.credentials.json'), SECRET)
     const canvasId = 'entrypoison00000000000001'
-    const dir = path.join(getResourcesDirectory(), 'canvas', canvasId)
-    fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(
-      path.join(dir, 'canvas.json'),
-      JSON.stringify({
-        canvasId,
-        sessionId: SID,
-        createdAt: new Date(0).toISOString(),
-        activeVersionId: 'v1',
-        versions: [
-          {
-            id: 'v1',
-            mode: 'uat',
-            createdAt: new Date(0).toISOString(),
-            source: { mode: 'uat', distRoot: dist, entry: '.credentials.json' },
-          },
-        ],
-      }),
-    )
+    writeCanvasJson(canvasId, [
+      { id: 'v1', mode: 'uat', source: { mode: 'uat', distRoot: dist, entry: '.credentials.json' } },
+    ])
     store._resetCanvasStoreForTest()
     store.registerCanvasUatRoot(SID, path.dirname(dist))
-    // The record never even loads: the entry is re-validated on the reload path
-    // (isValidRecord → isSafeEntry → normalizeEntry), so the whole canvas is
-    // skipped rather than repaired. Asserted separately from the 404 below
-    // because the two are INDEPENDENT guards — the serve-side refusal would
-    // answer 404 on its own, and a test pinned only to the status code cannot
-    // tell which of them is still there.
-    expect(store.getCanvasStateForSession(SID)).toBeNull()
+
+    // The version is refused at serve time — one version, by itself, and by two
+    // independent guards (getServableVersion's own HTML check, and serveFile's).
+    // Asserted separately from the 404 because a test pinned only to the status
+    // code cannot tell which of them is still there.
+    expect(store.getServableVersion(canvasId, 'v1')).toBeNull()
     const res = await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v1/`))
     expect(res.status).toBe(404)
     expect(await res.text()).not.toContain(SECRET)
+  })
+
+  it('drops only the poisoned VERSION — the good ones beside it survive the load', async () => {
+    // Regression: `isValidRecord` returned false for the whole record when any
+    // one version failed, so a single legacy entry the current build will not
+    // accept discarded every good design version beside it, and the user's
+    // canvas came back empty after a restart.
+    const { dist } = makeProject('ccc-entry-mixed-')
+    fs.writeFileSync(path.join(dist, '.credentials.json'), SECRET)
+    fs.writeFileSync(path.join(dist, 'good.html'), '<html><head></head><body>GOOD</body></html>')
+    const canvasId = 'entrymixed00000000000001'
+    writeCanvasJson(
+      canvasId,
+      [
+        { id: 'v1', mode: 'uat', source: { mode: 'uat', distRoot: dist, entry: 'good.html' } },
+        // not html — kept, never served
+        { id: 'v2', mode: 'uat', source: { mode: 'uat', distRoot: dist, entry: '.credentials.json' } },
+        // structurally dangerous — dropped from the record entirely
+        { id: 'v3', mode: 'uat', source: { mode: 'uat', distRoot: dist, entry: '../escape.html' } },
+      ],
+      'v3',
+    )
+    store._resetCanvasStoreForTest()
+    store.registerCanvasUatRoot(SID, path.dirname(dist))
+
+    const state = store.getCanvasStateForSession(SID)
+    expect(state).not.toBeNull()
+    expect(state!.versions.map((v) => v.id)).toEqual(['v1', 'v2'])
+    // The active version named a dropped one; it re-points to a surviving one
+    // rather than leaving the pane pointed at nothing.
+    expect(state!.activeVersionId).toBe('v2')
+
+    // The good version really serves…
+    const ok = await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v1/`))
+    expect(ok.status).toBe(200)
+    expect(await ok.text()).toContain('GOOD')
+    // …the non-html one never does…
+    expect((await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v2/`))).status).toBe(404)
+    // …and the traversing one is not in the record at all.
+    expect(store.getServableVersion(canvasId, 'v3')).toBeNull()
+
+    const { versionId } = store.renderVersion(SID, { mode: 'design', html: '<html><body>next</body></html>' })
+    expect(versionId).toBe('v3')
+  })
+
+  it('a render after a dropped MIDDLE version does not reuse a surviving id', async () => {
+    // Dropping versions puts gaps in the list, and `v${versions.length + 1}` —
+    // which was correct only for a contiguous list — then mints an id a
+    // surviving version already holds. Two versions, one serve key: the second
+    // render would overwrite the first in every lookup.
+    const { dist } = makeProject('ccc-entry-gap-')
+    fs.writeFileSync(path.join(dist, 'two.html'), '<html><head></head><body>TWO</body></html>')
+    fs.writeFileSync(path.join(dist, 'three.html'), '<html><head></head><body>THREE</body></html>')
+    const canvasId = 'entrygap0000000000000001'
+    writeCanvasJson(canvasId, [
+      { id: 'v1', mode: 'uat', source: { mode: 'uat', distRoot: dist, entry: '../escape.html' } }, // dropped
+      { id: 'v2', mode: 'uat', source: { mode: 'uat', distRoot: dist, entry: 'two.html' } },
+      { id: 'v3', mode: 'uat', source: { mode: 'uat', distRoot: dist, entry: 'three.html' } },
+    ])
+    store._resetCanvasStoreForTest()
+    store.registerCanvasUatRoot(SID, path.dirname(dist))
+    expect(store.getCanvasStateForSession(SID)!.versions.map((v) => v.id)).toEqual(['v2', 'v3'])
+
+    const { versionId } = store.renderVersion(SID, { mode: 'design', html: '<html><head></head><body>FOUR</body></html>' })
+    expect(versionId).toBe('v4')
+    // v3 still serves its own content, not the new render's.
+    expect(await (await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v3/`))).text()).toContain('THREE')
+    expect(await (await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v4/`))).text()).toContain('FOUR')
+  })
+
+  it('refuses an entry of ".html" — one predicate decides, at both ends', () => {
+    // `/\.(html|htm)$/i` matches the whole string '.html'; `path.extname('.html')`
+    // is ''. The store used the first and the protocol the second, so this entry
+    // rendered and could never be served. Now both call isHtmlDocumentPath.
+    const { dist } = makeProject('ccc-entry-dotonly-')
+    fs.writeFileSync(path.join(dist, '.html'), '<html><head></head><body>x</body></html>')
+    expect(() => store.renderVersion(SID, { mode: 'uat', distRoot: dist, entry: '.html' })).toThrow(
+      /entry must be an html file/i,
+    )
+    const servable = { mode: 'uat' as const, contentRoot: dist, entry: '.html' }
+    expect(serveFile(path.join(dist, '.html'), servable, true, 'GET')).toBeNull()
   })
 
   it('serveFile refuses to make a document out of a non-html file', () => {
@@ -166,32 +251,81 @@ describe('a non-HTML entry is never served as HTML', () => {
 // ---------------------------------------------------------------------------
 
 describe('a hard link planted inside a served root is refused by the protocol', () => {
-  it('does not serve an OAuth token hard-linked into the dist', async () => {
+  it('serves a multiply-linked SUBORDINATE asset, and says so', async () => {
+    // DELIBERATE SCOPE, not an oversight. Applying the link refusal to every
+    // file of a served dist broke hardlink-deduplicated build output (pnpm,
+    // `cp -al`, Nx/Turbo/Bazel cache restores): every chunk 404'd and the outer
+    // catch logged nothing that named the file, so the user got a blank UAT
+    // pane with no diagnosis. Containment still holds for these — lexical,
+    // realpath, and the per-session root — and the anomaly is logged.
+    //
+    // What is NOT relaxed is the two objects the boundary exists for: the entry
+    // document (below) and readDesignFile's model-named htmlPath.
     const { project, dist } = makeProject('ccc-link-serve-')
-    const victim = path.join(project, 'stand-in-for-dot-claude.json')
-    fs.writeFileSync(victim, SECRET)
-    hardLink(victim, path.join(dist, 'assets.json'))
+    const victim = path.join(project, 'chunk-source.js')
+    fs.writeFileSync(victim, 'console.log(1)')
+    hardLink(victim, path.join(dist, 'chunk.js'))
 
-    const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
-    const res = await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v1/assets.json`))
-    expect(res.status).toBe(404)
-    expect(await res.text()).not.toContain(SECRET)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
+      const res = await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v1/chunk.js`))
+      expect(res.status).toBe(200)
+      expect(await res.text()).toContain('console.log(1)')
+      // Diagnosable: the log names the file and the link count, not a shrug.
+      const lines = warn.mock.calls.map((c) => String(c[0]))
+      expect(lines.some((l) => l.includes('multiply-linked') && l.includes('chunk.js') && l.includes('nlink=2'))).toBe(
+        true,
+      )
+    } finally {
+      warn.mockRestore()
+    }
     // Realpath says the link lives inside the root — that is precisely why
-    // layers 1-3 all passed and a fourth was needed.
-    expect(fs.realpathSync.native(path.join(dist, 'assets.json')).startsWith(fs.realpathSync.native(dist))).toBe(true)
+    // layers 1-3 all passed and a fourth was needed for the entry.
+    expect(fs.realpathSync.native(path.join(dist, 'chunk.js')).startsWith(fs.realpathSync.native(dist))).toBe(true)
   })
 
-  it('refuses a hard-linked ENTRY document too', async () => {
+  it('refuses a multiply-linked file in a DESIGN version, subordinate or not', async () => {
+    // A design version's content root is CCC's own
+    // `<resources>/canvas/<id>/versions/<vid>/`, written by the store itself. No
+    // build tool populates it, so a second name for an inode there is never
+    // ordinary — the build-output exemption has no reason to reach it.
+    const { project } = makeProject('ccc-link-design-')
+    const { canvasId } = store.renderVersion(SID, { mode: 'design', html: '<html><head></head><body>d</body></html>' })
+    const victim = path.join(project, 'token.json')
+    fs.writeFileSync(victim, SECRET)
+    const versionDir = path.join(getResourcesDirectory(), 'canvas', canvasId, 'versions', 'v1')
+    hardLink(victim, path.join(versionDir, 'aside.json'))
+
+    const res = await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v1/aside.json`))
+    expect(res.status).toBe(404)
+    expect(await res.text()).not.toContain(SECRET)
+  })
+
+  it('refuses a hard-linked ENTRY document too, and names it in the log', async () => {
     const { project, dist } = makeProject('ccc-link-entry-')
     const victim = path.join(project, 'secret.html')
     fs.writeFileSync(victim, `<html><body>${SECRET}</body></html>`)
     fs.rmSync(path.join(dist, 'index.html'))
     hardLink(victim, path.join(dist, 'index.html'))
 
-    const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
-    const res = await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v1/`))
-    expect(res.status).toBe(404)
-    expect(await res.text()).not.toContain(SECRET)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
+      const res = await handleCccUxRequest(new Request(`ccc-ux://${canvasId}/v1/`))
+      expect(res.status).toBe(404)
+      expect(await res.text()).not.toContain(SECRET)
+      // A uniform 404 is right for the CALLER and useless for the operator. The
+      // refusal that is kept has to be diagnosable from the main-process log:
+      // which file, which reason. (It stays in the log — never in the response
+      // — so nothing about it reaches the model.)
+      const lines = warn.mock.calls.map((c) => String(c[0]))
+      expect(
+        lines.some((l) => l.includes('refused to serve') && l.includes('index.html') && l.includes('entry=true')),
+      ).toBe(true)
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('still serves the ordinary single-named files beside it', async () => {

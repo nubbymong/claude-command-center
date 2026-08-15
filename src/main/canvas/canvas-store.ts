@@ -14,6 +14,7 @@
 // who rendered.
 
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import { randomId } from '../../shared/id'
 import {
@@ -69,6 +70,30 @@ const PROFILE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
  */
 const uatRootsBySession = new Map<string, Set<string>>()
 
+/** `C:\`, `D:\`, `/`, `\\server\share\` — a whole volume is not a project. */
+function isVolumeRoot(p: string): boolean {
+  // `C:\` → dirname is itself; `path.parse('/').root === '/'`. Both spellings
+  // are checked because a UNC share root satisfies one and not the other.
+  return path.dirname(p) === p || path.parse(p).root === p
+}
+
+/** True when `p` is at or under a dot-prefixed directory inside the home dir. */
+function isDotDirUnderHome(p: string): boolean {
+  let home: string
+  try {
+    home = fs.realpathSync.native(os.homedir())
+  } catch {
+    home = path.resolve(os.homedir())
+  }
+  // path.relative is case-insensitive on win32, which is what makes a
+  // `c:\users\me\.ssh` spelling land in the same place as `C:\Users\Me\.ssh`.
+  const rel = path.relative(home, p)
+  if (rel === '' || path.isAbsolute(rel)) return false
+  const segments = rel.split(/[\\/]/).filter((s) => s.length > 0)
+  if (segments.length === 0 || segments[0] === '..') return false // not under home
+  return segments.some((s) => s.startsWith('.'))
+}
+
 /**
  * Register a directory under which one session's canvas paths may live.
  *
@@ -84,7 +109,21 @@ const uatRootsBySession = new Map<string, Set<string>>()
  *   - the home directory (or any ancestor of it) is refused, the same refusal
  *     and the same helper codex_review has carried since #188 — `~/.ssh`,
  *     `~/.claude` and `~/.aws` all resolve INSIDE a home root with no '..', so
- *     containment holds while the root itself is the whole exposure.
+ *     containment holds while the root itself is the whole exposure;
+ *   - a VOLUME ROOT (`C:\`, `D:\`, `/`, `\\server\share\`) is refused. It is not
+ *     home and it is not an ancestor of home on another drive, so the home check
+ *     passes it — and it is the whole-disk file server the allowlist exists to
+ *     prevent (`registerCanvasUatRoot(sid, 'C:\\Windows')` was accepted too, but
+ *     a Windows dir is at least not the user's secrets; a volume root is both);
+ *   - a DOT-DIRECTORY under home is refused (`~/.ssh`, `~/.claude`, `~/.aws`,
+ *     `~/.config`, `~/.gnupg`, and anything under them). Home itself is already
+ *     refused, but a CHILD of home is not an ancestor of home, so the #188 check
+ *     is blind to exactly the three directories the attack wanted. Dot-prefixed
+ *     directories under home are where per-user credentials live by convention
+ *     on every platform, and no build output lives there.
+ *
+ * Over-denial is the intended direction: a refused root costs a canvas render,
+ * an accepted one costs a credential.
  */
 export function registerCanvasUatRoot(sessionId: string, baseDir: string): boolean {
   if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return false
@@ -101,6 +140,8 @@ export function registerCanvasUatRoot(sessionId: string, baseDir: string): boole
     return false
   }
   if (isHomeOrAncestor(real)) return false
+  if (isVolumeRoot(real)) return false
+  if (isDotDirUnderHome(real)) return false
   let roots = uatRootsBySession.get(sessionId)
   if (!roots) {
     roots = new Set<string>()
@@ -170,11 +211,12 @@ export function resolveInsideCanvasRoot(absPath: string, sessionId: string): str
 }
 
 /** A version `entry` must be a plain relative file path. Boolean form of
- *  `normalizeEntry`, for validating records loaded from disk / re-served. */
+ *  `normalizeEntryPath`, for validating records loaded from disk / re-served.
+ *  Deliberately NOT the HTML check — see normalizeEntryPath. */
 function isSafeEntry(entry: unknown): entry is string {
   if (typeof entry !== 'string') return false
   try {
-    normalizeEntry(entry)
+    normalizeEntryPath(entry)
     return true
   } catch {
     return false
@@ -300,40 +342,78 @@ function persist(record: CanvasRecord): void {
   atomicWriteSecure(canvasJsonPath(record.canvasId), JSON.stringify(record, null, 2))
 }
 
-/** Minimal shape validation for a canvas.json read back from disk. A corrupt
- *  or hand-edited file is skipped (never served), not repaired. */
-function isValidRecord(value: unknown): value is CanvasRecord {
-  if (typeof value !== 'object' || value === null) return false
+/** Is one version of a record structurally safe to keep? A false here means the
+ *  version could do something dangerous if served (traverse, name a device), so
+ *  it is DROPPED. "Not an HTML document" is not checked — that version is kept
+ *  and simply refused at serve time (getServableVersion). */
+function isKeepableVersion(v: unknown): v is CanvasVersion {
+  const ver = v as Partial<CanvasVersion> | undefined
+  if (typeof ver?.id !== 'string' || !CANVAS_VERSION_ID_RE.test(ver.id)) return false
+  if (ver.source?.mode !== 'uat' && ver.source?.mode !== 'design') return false
+  // A hand-edited record must not smuggle a traversing/colon/device `entry`
+  // past the live-render normalizer (the empty-path + SPA branches serve the
+  // entry WITHOUT re-running the URL segment filter). distRoot containment is
+  // re-checked at serve time (getServableVersion) so a de-registered base is
+  // also honoured, but reject an obviously-broken distRoot shape here too.
+  if (!isSafeEntry(ver.source.entry)) return false
+  if (ver.source.mode === 'uat' && (typeof ver.source.distRoot !== 'string' || ver.source.distRoot.length === 0)) return false
+  return true
+}
+
+/**
+ * Shape validation for a canvas.json read back from disk. A corrupt or
+ * hand-edited file is never repaired and never served as-is — but the unit of
+ * rejection is the VERSION, not the whole canvas.
+ *
+ * The first cut returned false for the whole record when any single version
+ * failed, which made a canvas an all-or-nothing object: one legacy version with
+ * an entry the current build will not accept (a pre-BLOCKER-1 `.xhtml`, say)
+ * discarded every good design version beside it, along with the user's history.
+ * A record's own identity fields still fail the record — those describe the
+ * canvas rather than one item in it.
+ *
+ * Returns a record whose `versions` are all keepable and whose `activeVersionId`
+ * still names one of them (or null). Nothing is written back: the in-memory
+ * record is the sanitized one and the next render persists that shape.
+ */
+function sanitizeRecord(value: unknown): CanvasRecord | null {
+  if (typeof value !== 'object' || value === null) return null
   const r = value as Partial<CanvasRecord>
-  if (typeof r.canvasId !== 'string' || !CANVAS_ID_RE.test(r.canvasId)) return false
-  if (typeof r.sessionId !== 'string' || !SESSION_ID_RE.test(r.sessionId)) return false
+  if (typeof r.canvasId !== 'string' || !CANVAS_ID_RE.test(r.canvasId)) return null
+  if (typeof r.sessionId !== 'string' || !SESSION_ID_RE.test(r.sessionId)) return null
   // Continuity stamps are optional, but a present one must be OUR shape — the
   // same strictness as every other field of a record read back from disk.
-  if (r.cwd !== undefined && (typeof r.cwd !== 'string' || r.cwd.length === 0 || r.cwd.length > MAX_CWD_CHARS)) return false
-  if (r.conversationUuid !== undefined && (typeof r.conversationUuid !== 'string' || !CONVERSATION_UUID_RE.test(r.conversationUuid))) return false
-  if (r.profileId !== undefined && (typeof r.profileId !== 'string' || !PROFILE_ID_RE.test(r.profileId))) return false
-  if (r.activeVersionId !== null && (typeof r.activeVersionId !== 'string' || !CANVAS_VERSION_ID_RE.test(r.activeVersionId))) return false
-  if (!Array.isArray(r.versions)) return false
+  if (r.cwd !== undefined && (typeof r.cwd !== 'string' || r.cwd.length === 0 || r.cwd.length > MAX_CWD_CHARS)) return null
+  if (r.conversationUuid !== undefined && (typeof r.conversationUuid !== 'string' || !CONVERSATION_UUID_RE.test(r.conversationUuid))) return null
+  if (r.profileId !== undefined && (typeof r.profileId !== 'string' || !PROFILE_ID_RE.test(r.profileId))) return null
+  if (r.activeVersionId !== null && (typeof r.activeVersionId !== 'string' || !CANVAS_VERSION_ID_RE.test(r.activeVersionId))) return null
+  if (!Array.isArray(r.versions)) return null
+
+  const versions: CanvasVersion[] = []
   for (const v of r.versions) {
-    if (typeof v?.id !== 'string' || !CANVAS_VERSION_ID_RE.test(v.id)) return false
-    if (v.source?.mode !== 'uat' && v.source?.mode !== 'design') return false
-    // A hand-edited record must not smuggle a traversing/colon/device `entry`
-    // past the live-render normalizer (the empty-path + SPA branches serve the
-    // entry WITHOUT re-running the URL segment filter). distRoot containment is
-    // re-checked at serve time (getServableVersion) so a de-registered base is
-    // also honoured, but reject an obviously-broken distRoot shape here too.
-    if (!isSafeEntry(v.source.entry)) return false
-    if (v.source.mode === 'uat' && (typeof v.source.distRoot !== 'string' || v.source.distRoot.length === 0)) return false
+    if (!isKeepableVersion(v)) continue
+    if (versions.some((kept) => kept.id === v.id)) continue // ids are the serve key
+    versions.push(v)
   }
-  return true
+  // The active version must still exist. Only re-pointed when the one it named
+  // was dropped — falling back to the newest SURVIVING version keeps the pane
+  // showing something rather than an id that resolves to nothing. An explicit
+  // null stays null.
+  let activeVersionId = r.activeVersionId
+  if (activeVersionId !== null && !versions.some((v) => v.id === activeVersionId)) {
+    activeVersionId = versions[versions.length - 1]?.id ?? null
+  }
+
+  return { ...(r as CanvasRecord), versions, activeVersionId }
 }
 
 function loadFromDisk(canvasId: string): CanvasRecord | null {
   try {
     const raw = fs.readFileSync(canvasJsonPath(canvasId), 'utf8')
     const parsed: unknown = JSON.parse(raw)
-    if (!isValidRecord(parsed) || parsed.canvasId !== canvasId) return null
-    return parsed
+    const record = sanitizeRecord(parsed)
+    if (!record || record.canvasId !== canvasId) return null
+    return record
   } catch {
     return null
   }
@@ -387,6 +467,18 @@ export function getCanvasStateForSession(sessionId: string): CanvasState | null 
   return record ? toState(record) : null
 }
 
+/** The next linear version id: one past the highest number already present.
+ *  Identical to `length + 1` for a contiguous list, and correct for one with a
+ *  gap (a version dropped by sanitizeRecord). */
+function nextVersionId(versions: CanvasVersion[]): string {
+  let max = 0
+  for (const v of versions) {
+    const n = Number.parseInt(v.id.slice(1), 10)
+    if (Number.isFinite(n) && n > max) max = n
+  }
+  return `v${max + 1}`
+}
+
 /**
  * Register a new content version for the session's canvas (creating the canvas
  * on first render) and make it active. This is THE ingress for content — the
@@ -407,7 +499,11 @@ export function renderVersion(
   // canvas state is created or mutated — a rejected render leaves nothing
   // behind (no empty canvas, no half-written version).
   const canvasId = existing?.canvasId ?? randomId()
-  const versionId = `v${(existing?.versions.length ?? 0) + 1}`
+  // Highest existing number + 1, not `length + 1`. A record loaded from disk may
+  // legitimately have gaps now that sanitizeRecord drops individual versions
+  // ([v1, v3] has length 2), and `length + 1` would mint a SECOND 'v3' — two
+  // versions with one serve key.
+  const versionId = nextVersionId(existing?.versions ?? [])
   const createdAt = new Date().toISOString()
   let version: CanvasVersion
 
@@ -501,27 +597,39 @@ export function renderVersion(
  *  open a device rather than a file. Matched on the pre-extension basename. */
 const WIN_RESERVED_BASENAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9]|conin\$|conout\$)$/i
 
-/** The entry is the DOCUMENT: it is served as text/html and it is the one file
- *  the bridge script is injected into. Nothing else may hold that position. */
-const HTML_ENTRY_RE = /\.(html|htm)$/i
+/**
+ * THE definition of "this path names an HTML document", used by both halves of
+ * the boundary — the write ingress here and `serveFile` in ccc-ux-protocol.
+ *
+ * It is one exported function rather than a regex on one side and
+ * `path.extname` on the other because those two disagreed: `/\.(html|htm)$/i`
+ * matches the whole string `.html`, while `path.extname('.html')` is `''`. An
+ * entry of `".html"` therefore passed the render check and was then refused by
+ * the serve check — harmless in that direction, and a bypass in the other. Two
+ * spellings of one predicate is the defect; the extension-based one is kept
+ * because it is the one the MIME lookup already keys off.
+ */
+export function isHtmlDocumentPath(p: string): boolean {
+  const ext = path.extname(p).toLowerCase()
+  return ext === '.html' || ext === '.htm'
+}
 
 /**
- * An entry must be a plain relative path to an HTML file. The boundary is
- * self-sufficient: it rejects traversal, absolutes, drive/ADS colons, and
- * backslashes, AND the Win32 forms that a pure `path`/string check misses but
- * libuv would silently normalize (trailing dot/space stripping, all-dot
- * segments, device names) — so the confinement never relies on the fs layer's
- * behaviour (adversarial review, 2026-08-11).
+ * An entry must be a plain relative path. The boundary is self-sufficient: it
+ * rejects traversal, absolutes, drive/ADS colons, and backslashes, AND the
+ * Win32 forms that a pure `path`/string check misses but libuv would silently
+ * normalize (trailing dot/space stripping, all-dot segments, device names) — so
+ * the confinement never relies on the fs layer's behaviour (adversarial review,
+ * 2026-08-11).
  *
- * The `.html`/`.htm` requirement is the render half of BLOCKER 1 (adversarial
- * review, 2026-08-15): the protocol used to force the ENTRY to `text/html`
- * whatever it actually was and inject the bridge into it, so a version whose
- * entry named `.credentials.json` came back `200 text/html` with the bridge
- * attached and was then readable by the pre-allowed `canvas_snapshot`. Refusing
- * the entry here is the first of the two fixes; the protocol refuses to serve a
- * non-HTML entry as a document as well, so neither ingress leans on the other.
+ * STRUCTURAL ONLY — no HTML requirement. That split matters: this predicate is
+ * what `isValidRecord` runs over a record read back from disk, and a violation
+ * there means the entry is DANGEROUS (it could traverse). "Is not an HTML file"
+ * is a different statement — it means the version is not servable, not that the
+ * record is corrupt — and folding the two together made one legacy version
+ * invalidate an entire canvas, taking every good design version with it.
  */
-function normalizeEntry(entry: string): string {
+function normalizeEntryPath(entry: string): string {
   const clean = entry.replace(/^\/+/, '')
   if (clean.length === 0 || clean.length > 512) throw new Error('invalid entry')
   const segments = clean.split('/')
@@ -531,8 +639,26 @@ function normalizeEntry(entry: string): string {
     if (/[. ]$/.test(seg)) throw new Error('invalid entry') // Win32 strips a trailing '.'/' '
     if (WIN_RESERVED_BASENAME.test(seg.split('.')[0])) throw new Error('invalid entry')
   }
-  if (!HTML_ENTRY_RE.test(segments[segments.length - 1])) throw new Error('entry must be an html file')
   return segments.join('/')
+}
+
+/**
+ * The WRITE ingress: structural safety plus the HTML requirement.
+ *
+ * The `.html`/`.htm` requirement is the render half of BLOCKER 1 (adversarial
+ * review, 2026-08-15): the protocol used to force the ENTRY to `text/html`
+ * whatever it actually was and inject the bridge into it, so a version whose
+ * entry named `.credentials.json` came back `200 text/html` with the bridge
+ * attached and was then readable by the pre-allowed `canvas_snapshot`. Refusing
+ * the entry here is the first of the two fixes; the protocol refuses to serve a
+ * non-HTML entry as a document as well, so neither ingress leans on the other.
+ * Nothing new can be WRITTEN with a non-HTML entry; a record that already
+ * carries one keeps its other versions and loses only that version's serve.
+ */
+function normalizeEntry(entry: string): string {
+  const normalized = normalizeEntryPath(entry)
+  if (!isHtmlDocumentPath(normalized)) throw new Error('entry must be an html file')
+  return normalized
 }
 
 export function setActiveVersion(sessionId: string, versionId: string): CanvasState {
@@ -676,6 +802,12 @@ export function getServableVersion(canvasId: string, versionId: string): Servabl
   // as the served path WITHOUT the URL segment filter, so a record that reached
   // memory another way (disk reload) must not carry a colon/traversal entry.
   if (!isSafeEntry(version.source.entry)) return null
+  // …and the entry must be an HTML DOCUMENT. This is the half that survives a
+  // record the current write ingress would never have produced: a legacy or
+  // hand-edited version whose entry names a data file is kept in the record
+  // (its siblings are still good) and refused HERE, one version at a time,
+  // rather than being dressed up as text/html with the bridge injected.
+  if (!isHtmlDocumentPath(version.source.entry)) return null
   if (version.source.mode === 'design') {
     return { mode: 'design', contentRoot: versionDir(canvasId, versionId), entry: version.source.entry }
   }
