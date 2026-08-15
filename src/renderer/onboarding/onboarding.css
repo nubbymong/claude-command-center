@@ -1,6 +1,6 @@
 /* Onboarding harness — CSS lifted verbatim from
    docs/superpowers/mockups/2026-06-30-onboarding-flow.html, scoped under .ob-root,
-   bound to the app's v2 semantic tokens + the --ob* orange family (styles.css). */
+   bound to the app's v2 semantic tokens + the --ob* azure family (styles.css). */
 
 .ob-root {
   position: fixed;
@@ -216,7 +216,16 @@
 .ob-root .gh-card { display: flex; gap: 10px; align-items: flex-start; padding: 11px 13px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); }
 .ob-root .gh-ic { width: 30px; height: 30px; border-radius: 8px; background: var(--ob-soft); color: var(--ob); display: grid; place-items: center; font-size: 15px; flex: none; }
 .ob-root .gh-t { font-size: 13px; font-weight: 650; color: var(--text-primary); }
-.ob-root .gh-d { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.45; }
+/* --text-secondary, not --text-muted: this is the card's body copy at 11.5px and
+   muted measures ~3.3-4.1:1 on these surfaces. Hierarchy comes from the size and
+   weight step against .gh-t, not from dimming it below the 4.5:1 floor. */
+.ob-root .gh-d { font-size: 11.5px; color: var(--text-secondary); margin-top: 2px; line-height: 1.45; }
+/* Two-way choice living inside a recap card (Transparency: update channel).
+   Same accent language as .oo-btn, sized down to sit under .gh-d. */
+.ob-root .gh-choice { display: inline-flex; gap: 3px; margin-top: 8px; padding: 3px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-sunken); }
+.ob-root .gh-cbtn { border: 0; background: none; color: var(--text-secondary); font: inherit; font-size: 11.5px; font-weight: 620; padding: 4px 12px; border-radius: 6px; cursor: pointer; transition: .14s; }
+.ob-root .gh-cbtn:hover:not(.on) { color: var(--text-primary); }
+.ob-root .gh-cbtn.on { background: var(--ob); color: var(--ob-on, #04121f); }
 .ob-root .gh-tag { display: inline-block; font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
 .ob-root .gh-freebie { font-size: 12px; color: var(--text-muted); text-align: center; margin: 0 0 16px; }
 .ob-root .gh-freebie b { color: var(--text-secondary); }

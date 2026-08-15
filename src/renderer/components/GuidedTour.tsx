@@ -108,6 +108,13 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
     }
   }
 
+  // The counter must describe the tour that will actually run: next()/back()
+  // skip steps whose anchor isn't mounted, so STEPS.length over-promised (a
+  // collapsed sidebar made it "4 of 6" and then finish). Count what is
+  // reachable right now, always including the step on screen.
+  const reachable = STEPS.filter((s, n) => n === i || available(s))
+  const position = reachable.indexOf(step) + 1
+
   // Callout placement: beside the anchor when there is one, else centered.
   let cardStyle: React.CSSProperties
   if (rect) {
@@ -163,7 +170,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           <span style={{ fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted, #6a7480)' }}>
-            {i + 1} of {STEPS.length}
+            {position} of {reachable.length}
           </span>
         </div>
         <div style={{ fontSize: 16, fontWeight: 650, marginBottom: 6 }}>{step.title}</div>

@@ -8,11 +8,13 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 19 steps', () => {
+    it('has exactly 20 steps', () => {
       // v1.5.12 added dynamic-workflows; permission-tray step removed with the
       // feature; v2-readiness added multi-account + sentinel steps (16 -> 18);
-      // v2.0.0 added the ai-usage-meter step (18 -> 19).
-      expect(trainingSteps).toHaveLength(19)
+      // v2.0.0 added the ai-usage-meter step (18 -> 19); the Agent Canvas got
+      // an entry of its own (19 -> 20) -- FinishStep promises the Feature Guide
+      // "explains every feature", and it was the one shipped feature missing.
+      expect(trainingSteps).toHaveLength(20)
     })
 
     it('every step has required fields', () => {

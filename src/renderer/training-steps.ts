@@ -167,7 +167,7 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Browser automation via a global MCP server -- every Claude session shares one Chrome instance. Take screenshots, navigate, click, type, and inspect pages without leaving the terminal. Works over SSH too via automatic reverse tunnels.',
     highlights: [
-      '18 browser-vision tools (one of three sub-tools on the Conductor MCP server) exposed to Claude',
+      '18 browser-vision tools (one of four sub-tools on the Conductor MCP server) exposed to Claude',
       'One global Chrome -- all sessions share state, so cookies + login persist',
       'Reverse tunnel auto-injected on SSH connect (-R <port>) -- remote sessions reach the local Conductor MCP server',
       'A dot on the Conductor MCP nav icon shows MCP server health: green = running, red = stopped',
@@ -185,6 +185,37 @@ export const trainingSteps: TrainingStep[] = [
       '17 vision tools available to Claude: **screenshot, navigate, click, type** and more',
       'Works over **SSH** too -- reverse tunnels connect remote sessions automatically',
     ],
+    screenshotFilename: 'step-vision.jpg',
+  },
+  {
+    id: 'agent-canvas',
+    title: 'Agent Canvas',
+    sinceVersion: '2.1.0',
+    section: 'integrations',
+    summary:
+      'A review surface for anything visual the agent makes. Ask for a mockup, a plan, or the app you are building; it renders a real page into the session pane. You mark up what is wrong -- notes pinned to elements, freehand sketch over the top -- and send the whole review back for the next version. Distinct from the Excalidraw Sketchpad, which is your own freehand pad.',
+    highlights: [
+      'The agent renders with **canvas_render** -- every call is a new version, nothing is overwritten',
+      '**canvas_snapshot** reads the laid-out page back: names, boxes, form state, and measured problems (clipped text, targets below the minimum size, weak contrast)',
+      'Annotate on the glass over the page -- pin a note to an element, box a region, or sketch freehand',
+      'Submit drops a one-line marker in the chat; the agent fetches your notes and sketches with **canvas_review**',
+      'Per session and local: design renders come from an HTML file the agent writes, and app builds are served only from folders you have opened sessions in',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Session toolbar → Canvas' },
+      { label: 'First render', value: 'Canvas landing → Put this in the terminal' },
+      { label: 'Send a review', value: 'Notes panel → Submit' },
+    ],
+    proTip:
+      'Ask for the round trip explicitly -- "render it and I will mark it up". Pointing at the pixel that is wrong costs you one sentence and saves the agent a guess.',
+    bullets: [
+      '**A real page**, laid out by the browser engine in the session pane',
+      '**Mark it up**: element notes, region boxes, freehand sketch',
+      'One **Submit** hands every note back through canvas_review',
+      '**Versioned** -- each render is kept, so you can compare what changed',
+    ],
+    // No dedicated capture yet; the Vision shot is the nearest surface (a real
+    // page under the agent's eye). Future capture: step-agent-canvas.jpg.
     screenshotFilename: 'step-vision.jpg',
   },
   {
@@ -221,25 +252,28 @@ export const trainingSteps: TrainingStep[] = [
   },
   {
     id: 'excalidraw',
-    title: 'Excalidraw Scratchpad',
+    // "Sketchpad", not "Canvas": the Agent Canvas is a different feature that
+    // shares the toolbar button, and the in-app landing already calls this one
+    // the sketchpad ("Open the sketchpad instead").
+    title: 'Excalidraw Sketchpad',
     sinceVersion: '1.4.0',
     section: 'productivity',
     summary:
-      'A per-session whiteboard for diagramming, planning, or sketching ideas before you describe them to Claude. Drawings persist with the session and pair cleanly with Freeze for annotating screenshots.',
+      'A per-session whiteboard for diagramming, planning, or sketching ideas before you describe them to Claude. Drawings persist with the session and pair cleanly with Freeze for annotating screenshots. It is your own pad -- the Agent Canvas next door is where the agent renders pages for you to review.',
     highlights: [
-      'Per-session canvas -- switching sessions swaps the drawing in place',
+      'Per-session sketchpad -- switching sessions swaps the drawing in place',
       'Full Excalidraw toolset: shapes, arrows, text, freehand, libraries',
       'Drawings auto-save to the session config -- closing and reopening the app restores them',
       'Freeze the webview pane to import a snapshot and draw straight over it',
       'Replaces the terminal in place -- no fullscreen modal eating the toolbar',
     ],
     howToTrigger: [
-      { label: 'Open', value: 'Session toolbar → Canvas' },
-      { label: 'Switch back', value: 'Click Canvas again, or pick a different session' },
+      { label: 'Open', value: 'Session toolbar → Canvas → Open the sketchpad instead' },
+      { label: 'Switch back', value: 'Agent Canvas (bottom-right), or Canvas again to close the pane' },
       { label: 'New drawing', value: 'Left rail → + (rename with ✎, delete with ×)' },
     ],
     proTip:
-      'Sketch the architecture of what you want to build, then ask Claude to look at the drawing in Excalidraw -- it will fetch the canvas via the vision MCP and reason about it directly.',
+      'Sketch the architecture of what you want to build, hit Copy in the sketchpad toolbar, and paste the image straight into the prompt -- Claude reads the drawing directly. (Sketching ON an agent-rendered page is the Agent Canvas: those sketches travel back with canvas_review.)',
     bullets: [
       '**Per-session whiteboard** for diagrams, planning, or quick sketches',
       'Drawings **persist** with the session config across restarts',

@@ -22,3 +22,27 @@ export function releaseLine(version: string): string {
   const m = /^(\d+)\.(\d+)/.exec(String(version || '').trim())
   return m ? `${m[1]}.${m[2]}` : String(version || '')
 }
+
+/**
+ * Does this build carry a prerelease suffix -- `2.1.0-beta.10`, `2.2.0-rc.1`?
+ *
+ * Anything that does not parse as semver (an empty/absent __APP_VERSION__ in a
+ * test or dev context) is treated as NOT a prerelease, so the caller's default
+ * stays the conservative one.
+ */
+export function isPrereleaseVersion(version: string): boolean {
+  const m = /^v?\d+\.\d+\.\d+(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?/.exec(String(version || '').trim())
+  return !!m && !!m[1]
+}
+
+/**
+ * The update channel a build should arrive on.
+ *
+ * `updateChannel` defaults to 'stable', so someone who deliberately installed a
+ * beta build received no further betas and got no signal about it (the beta
+ * re-onboarding gate reads the same value, so that was dead for them too). The
+ * onboarding Transparency recap pre-selects this and lets the user override it.
+ */
+export function defaultUpdateChannelForVersion(version: string): UpdateChannel {
+  return isPrereleaseVersion(version) ? 'beta' : 'stable'
+}

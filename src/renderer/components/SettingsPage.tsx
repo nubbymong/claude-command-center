@@ -181,7 +181,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 <Field label="Update Channel">
                   <select
                     value={settings.updateChannel}
-                    onChange={(e) => save({ updateChannel: e.target.value as UpdateChannel })}
+                    // updateChannelChosen records that this is a real choice, so the
+                    // onboarding recap never pre-selects over the top of it.
+                    onChange={(e) => save({ updateChannel: e.target.value as UpdateChannel, updateChannelChosen: true })}
                     className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
                   >
                     <option value="stable">Stable -- production releases only</option>

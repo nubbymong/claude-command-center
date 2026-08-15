@@ -144,6 +144,12 @@ export interface AppSettings {
    *  Same denylist model (by label); absent/empty = show every discovered bucket. */
   footerHiddenUsageBuckets?: string[]
   updateChannel: UpdateChannel
+  /** True once the user has explicitly picked an update channel (onboarding
+   *  Transparency recap, or Settings -> General). Absent/false means
+   *  `updateChannel` is still just the default, which lets onboarding
+   *  pre-select the channel matching the running build WITHOUT ever
+   *  overriding a real choice. */
+  updateChannelChosen?: boolean
   showTips: boolean
   // Agent Hub first-run "How it works" banner: true once the user dismisses it.
   // Optional/absent = not yet dismissed (banner shows).

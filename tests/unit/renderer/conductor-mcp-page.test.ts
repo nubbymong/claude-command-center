@@ -79,4 +79,21 @@ describe('ConductorMcpPage umbrella (P7.4)', () => {
     const html = container.innerHTML
     expect(html).toContain('Available')
   })
+
+  it('names every tool the server takes down with it when it is not running', () => {
+    // The degraded state used to list three tools while four ship, so the
+    // canvas looked like it had failed for some other reason.
+    mockState.serverRunning = false
+    try {
+      act(() => { root.render(React.createElement(ConductorMcpPage)) })
+      const text = container.textContent ?? ''
+      expect(text).toContain('Conductor MCP server is not running')
+      expect(text).toContain('Vision')
+      expect(text).toContain('Codex review')
+      expect(text).toContain('host transfer')
+      expect(text).toContain('Agent Canvas')
+    } finally {
+      mockState.serverRunning = true
+    }
+  })
 })

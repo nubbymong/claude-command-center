@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react'
-import { useSettingsStore } from '../stores/settingsStore'
+import { useEffect, useState, type ReactNode } from 'react'
+import { useSettingsStore, type UpdateChannel } from '../stores/settingsStore'
 import { useGitHubStore } from '../stores/githubStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { defaultUpdateChannelForVersion } from '../utils/versionLabel'
+
+declare const __APP_VERSION__: string
 
 const PALETTE = String.fromCodePoint(0x1f3a8)
 const PERSON = String.fromCodePoint(0x1f464)
@@ -11,11 +14,18 @@ const SPARK = String.fromCodePoint(0x2733)
 const GEAR = String.fromCodePoint(0x2699)
 const CHART = String.fromCodePoint(0x1f4ca)
 const SHIELD = String.fromCodePoint(0x1f6e1)
+const REFRESH = String.fromCodePoint(0x21bb)
+const BELL = String.fromCodePoint(0x1f514)
 
 // p8 Transparency: an honest recap of everything the flow configured (all
 // values below are read live from the real stores) + the two remaining
 // consent decisions (log indexing, Sentinel) + this machine's name (replaces
 // the legacy boot prompt). Advancing marks the logging consent as seen.
+//
+// Two recap rows are load-bearing rather than informational: the update channel
+// (a beta install that stays on 'stable' silently stops receiving betas, so the
+// row both discloses and sets it) and the session-events listener (on by
+// default and never mentioned anywhere else in the flow).
 export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   const settings = useSettingsStore((s) => s.settings)
   const ghProfiles = useGitHubStore((s) => s.profiles)
@@ -23,15 +33,34 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const [globalEmail, setGlobalEmail] = useState<string | null>(null)
 
+  // The channel this build belongs to. A prerelease install that silently sits
+  // on 'stable' receives no further prereleases and says nothing about it.
+  const buildChannel = defaultUpdateChannelForVersion(
+    typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '',
+  )
+
   useEffect(() => {
     void useGitHubStore.getState().loadConfig()
     void useAccountProfilesStore.getState().hydrate()
     void window.electronAPI.accountProfiles.globalEmail().then(setGlobalEmail).catch(() => {})
   }, [])
 
+  // Pre-select the channel that matches the running build -- once, and never
+  // over an explicit choice (updateChannelChosen). Written rather than merely
+  // displayed: the updater and the beta re-onboarding gate both read the
+  // PERSISTED value, so a pre-selection that isn't saved fixes nothing.
+  useEffect(() => {
+    const s = useSettingsStore.getState()
+    if (buildChannel === 'stable') return
+    if (s.settings.updateChannelChosen || s.settings.updateChannel === buildChannel) return
+    void s.updateSettings({ updateChannel: buildChannel })
+  }, [buildChannel])
+
   const save = (patch: Parameters<ReturnType<typeof useSettingsStore.getState>['updateSettings']>[0]) => {
     void useSettingsStore.getState().updateSettings(patch)
   }
+
+  const pickChannel = (channel: UpdateChannel) => save({ updateChannel: channel, updateChannelChosen: true })
 
   const email = profiles.find((p) => p.isPrimary)?.accountEmail || profiles[0]?.accountEmail || globalEmail
   const toolGates = [
@@ -43,7 +72,8 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
   const toolCount = toolGates.filter(Boolean).length
   const themeLabel = settings.theme === 'system' ? 'System' : settings.theme === 'light' ? 'Light' : 'Dark'
 
-  const recap: { icon: string; label: string; value: string }[] = [
+  const channel = settings.updateChannel === 'beta' ? 'beta' : 'stable'
+  const recap: { icon: string; label: string; value: string; control?: ReactNode }[] = [
     { icon: PALETTE, label: 'Theme', value: themeLabel },
     { icon: PERSON, label: 'Account', value: email ?? 'Sign in at first session' },
     {
@@ -81,6 +111,39 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
           ? `On: ${toolCount} of ${toolGates.length} tools`
           : 'Off (Settings → General)',
     },
+    {
+      icon: REFRESH,
+      label: 'Updates',
+      // Reads correctly either way round: a prerelease install is asked to keep
+      // its prereleases, a stable install is asked whether it wants them.
+      value:
+        buildChannel === 'beta'
+          ? "You're on a beta build. Keep receiving beta releases, or switch to stable-only?"
+          : "You're on a stable build. Stay on stable releases only, or take betas too?",
+      control: (
+        <div className="gh-choice" role="group" aria-label="Update channel">
+          {(['stable', 'beta'] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              className={channel === c ? 'gh-cbtn on focus-ring' : 'gh-cbtn focus-ring'}
+              aria-pressed={channel === c}
+              onClick={() => pickChannel(c)}
+            >
+              {c === 'stable' ? 'Stable only' : 'Beta releases'}
+            </button>
+          ))}
+        </div>
+      ),
+    },
+    {
+      icon: BELL,
+      label: 'Session events',
+      value:
+        settings.hooksEnabled !== false
+          ? 'On: a local-only listener (127.0.0.1) receives tool-call and permission events from your sessions. No telemetry.'
+          : 'Off (Settings → Hooks)',
+    },
   ]
 
   const loggingOn = settings.loggingEnabled !== false
@@ -106,6 +169,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
                 <div>
                   <div className="gh-t">{r.label}</div>
                   <div className="gh-d">{r.value}</div>
+                  {r.control}
                 </div>
               </div>
             ))}
