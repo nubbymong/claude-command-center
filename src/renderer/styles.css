@@ -342,6 +342,21 @@ body {
   .footer-update-pulse { animation: none; }
 }
 
+/* Footer multi-account "+N" overflow popover. Anchored above the runtime
+   footer (position: fixed off the chip's rect -- the footer is overflow-hidden),
+   so it enters upward. Appear-only, like the GitHub panel below. Respects
+   prefers-reduced-motion -- no animation when reduced. */
+@keyframes account-overflow-pop-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.account-overflow-pop {
+  animation: account-overflow-pop-in 160ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .account-overflow-pop { animation: none; }
+}
+
 /* Collapsed GitHub panel: floating logo FAB (both the not-configured and
    the user-collapsed states). It overlays the terminal's top-right corner
    instead of a thin vertical rail. Muted at rest, warming to the mauve
