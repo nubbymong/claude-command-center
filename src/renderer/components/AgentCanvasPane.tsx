@@ -8,19 +8,18 @@ import { useCanvasStore } from '../stores/canvasStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import {
   MAX_RESOLVE_ANCHORS,
-  CANVAS_BRIDGE_NS,
-  CanvasBridgeEvent,
   CanvasHitInfo,
   CanvasViewportInfo,
   CanvasVersion,
   canvasContentUrl,
-  canvasOrigin,
   type AnchorRef,
 } from '../../shared/canvas'
 import { contentPageRectToStage, stageToContentPagePoint, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
-import { finite, safeAnchorResolutions, safeHit, safeInspectResult, safeViewport } from '../utils/canvas-geometry-guard'
+import { safeAnchorResolutions, safeInspectResult } from '../utils/canvas-geometry-guard'
 import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
 import { askCanvasFrame } from '../canvas/canvas-frame-rpc'
+import { createCanvasInboundChannel } from '../canvas/canvas-inbound-channel'
+import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
 import { openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { relativeTime } from '../utils/relativeTime'
 
@@ -159,9 +158,16 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
   const modeRef = useRef(mode)
   const versionIdRef = useRef(version.id)
+  /** One outstanding inspect per frame — a page-driven click cannot open a
+   *  second one while the first is unanswered. */
+  const inspectPendingRef = useRef(false)
 
   const [bridgeReady, setBridgeReady] = useState(false)
   const bridgeReadyRef = useRef(false)
+  /** The page flooded the bridge and its channel was dropped: live inspection
+   *  is over for this load, and the user is told rather than left with a pane
+   *  that has quietly stopped responding. */
+  const [bridgeFlooded, setBridgeFlooded] = useState(false)
   const [viewport, setViewport] = useState<CanvasViewportInfo | null>(null)
   const [hover, setHover] = useState<HoverState | null>(null)
   const [marqueeDrag, setMarqueeDrag] = useState<MarqueeDrag | null>(null)
@@ -202,11 +208,14 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
 
   /** A reported content click (browse mode) becomes a locked selection: ask
    *  the frame for the chain at that point, then lock its deepest entry. The
-   *  page's own click behaviour already happened — the bridge only observed. */
+   *  page's own click behaviour already happened — the bridge only observed.
+   *  Coalesced to ONE outstanding inspect: a click cannot be answered twice,
+   *  and the RPC layer's per-frame cap is a backstop, not the design. */
   const inspectAndLock = useCallback(
     async (pageX: number, pageY: number) => {
       const target = iframeRef.current?.contentWindow
-      if (!target) return
+      if (!target || inspectPendingRef.current) return
+      inspectPendingRef.current = true
       try {
         const raw = await askCanvasFrame(target, canvasId, { type: 'inspect', x: pageX, y: pageY }, 5000)
         const { chain } = safeInspectResult(raw)
@@ -215,6 +224,8 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
         }
       } catch {
         /* frame busy or navigating — the hover chip still works */
+      } finally {
+        inspectPendingRef.current = false
       }
     },
     [canvasId, sessionId],
@@ -234,43 +245,40 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
     [sessionId],
   )
 
-  // Bridge listener — accepts messages only from OUR iframe's window, and only
-  // the canvas namespace. The bridge is read-only: everything arriving here is
-  // a report about the content, never an instruction (spec D8, §5.4).
+  // Bridge listener. Messages are accepted only from OUR iframe's window and
+  // only in the canvas namespace — but the bridge and the page's own scripts
+  // share that window, so those two checks cannot tell them apart. `ready`,
+  // `viewport` and `pointer` are reports the host merely paints (spec D8,
+  // §5.4); `contentClick` and `contentKey` MUTATE host state, and the channel
+  // gates them on what the host can see for itself (see
+  // canvas-inbound-channel). Delivery is coalesced per animation frame and the
+  // channel is dropped past a flood budget.
   useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      const frameWindow = iframeRef.current?.contentWindow
-      if (!frameWindow || event.source !== frameWindow) return
-      // Fail closed: a non-string origin (shouldn't happen) is rejected too.
-      // Exact, not a prefix: another canvas's document would satisfy a prefix
-      // test. Matches the snapshot path's check.
-      if (event.origin !== canvasOrigin(canvasId)) return
-      const msg = event.data as CanvasBridgeEvent | null
-      if (!msg || msg.ns !== CANVAS_BRIDGE_NS || !('type' in msg)) return
-      if (msg.type === 'ready') {
-        bridgeReadyRef.current = true
-        setBridgeReady(true)
-      } else if (msg.type === 'viewport') {
-        const vp = safeViewport(msg.viewport)
-        setViewport(vp)
-        setHover(null)
-        viewportRef.current = vp
-        repinGlass()
-      } else if (msg.type === 'pointer') {
-        setHover(msg.hit ? { hit: safeHit(msg.hit) } : null)
-      } else if (msg.type === 'contentClick') {
-        // Click-to-lock (spec §6 step 3) — browse mode only; in draw mode the
-        // glass owns the pointer and a frame click cannot happen anyway.
-        if (modeRef.current === 'browse') {
-          void inspectAndLock(finite((msg as { pageX?: unknown }).pageX, 0), finite((msg as { pageY?: unknown }).pageY, 0))
-        }
-      } else if (msg.type === 'contentKey') {
-        const key = (msg as { key?: unknown }).key
-        if (key === 'Escape' || key === 'ArrowUp') handleReportedKey(key)
-      }
-    }
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
+    return createCanvasInboundChannel({
+      canvasId,
+      getFrameWindow: () => iframeRef.current?.contentWindow ?? null,
+      getFrameElement: () => iframeRef.current,
+      handlers: {
+        onReady: () => {
+          bridgeReadyRef.current = true
+          setBridgeReady(true)
+        },
+        onViewport: (vp) => {
+          setViewport(vp)
+          setHover(null)
+          viewportRef.current = vp
+          repinGlass()
+        },
+        onPointer: (hit) => setHover(hit ? { hit } : null),
+        onContentClick: (pageX, pageY) => {
+          // Click-to-lock (spec §6 step 3) — browse mode only; in draw mode the
+          // glass owns the pointer and a frame click cannot happen anyway.
+          if (modeRef.current === 'browse') void inspectAndLock(pageX, pageY)
+        },
+        onContentKey: handleReportedKey,
+        onFlood: () => setBridgeFlooded(true),
+      },
+    })
   }, [repinGlass, canvasId, inspectAndLock, handleReportedKey])
 
   // The same two keys, host-side, for when the HOST document has keyboard
@@ -299,6 +307,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
     setMarqueeDrag(null)
     setFrameLoaded(false)
     setLoadTimedOut(false)
+    setBridgeFlooded(false)
   }, [contentUrl, reloadNonce])
 
   // …and a frame that never reports in stops pretending to load. Without this
@@ -367,7 +376,10 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
       try {
         const raw = await askCanvasFrame(target, canvasId, { type: 'resolveAnchors', anchors: flat }, 10_000)
         if (cancelled) return
-        const results = safeAnchorResolutions(raw, flat.length)
+        // Checked against the anchors WE sent, not merely counted against them:
+        // the page writes this reply and it decides what the checklist tells
+        // the reviewer about their own open notes.
+        const results = safeAnchorResolutions(raw, flat)
         const merged = { ...done }
         for (const span of spans) {
           const slice = results.slice(span.start, span.start + span.count)
@@ -440,6 +452,10 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
     if (!focus || !viewport) return null
     return contentPageRectToStage(focus.bboxPage, viewport)
   }, [focus, viewport])
+
+  /** An element lock's label came out of an inspect reply — the page's own
+   *  account of what the user clicked. A region's came from the marquee. */
+  const focusIsPageReported = (focus?.targets.length ?? 0) > 0
 
   const highlightStageRect = useMemo(() => {
     if (!panelHighlight || !viewport) return null
@@ -662,24 +678,45 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
                     left: Math.max(0, focusStageRect.x),
                     top: Math.max(0, focusStageRect.y - 22),
                   }}
+                  // An element label is the PAGE's description of itself,
+                  // assembled by the artifact under review. A region label is
+                  // ours (its size, measured on the glass), so only the first
+                  // carries the attribution.
+                  title={focusIsPageReported ? PAGE_REPORTED_TITLE : undefined}
                 >
+                  {focusIsPageReported && <span className="text-overlay1">{PAGE_REPORTED_MARK} </span>}
                   {focus?.label} · ↑ parent · Esc
                 </div>
               </>
             )}
+            {/* Three kinds, and the difference is WHO measured the box.
+                'anchored' is ours (the note's stored box, or a note written
+                against the version on screen) and paints solid green;
+                'reported' is where the page claims an old note re-anchors to
+                and paints dashed blue — the app has no way to check it, so it
+                must not wear the colour that means resolved; 'ghost' is the
+                stale box of something that did not re-anchor. */}
             {highlightStageRect && (
               <div
-                className={`absolute rounded-sm ${panelHighlight?.kind === 'anchored' ? 'border-2 border-green' : 'border-2 border-overlay1'}`}
+                className={`absolute rounded-sm border-2 ${
+                  panelHighlight?.kind === 'anchored'
+                    ? 'border-green'
+                    : panelHighlight?.kind === 'reported'
+                      ? 'border-blue'
+                      : 'border-overlay1'
+                }`}
                 style={{
                   left: highlightStageRect.x,
                   top: highlightStageRect.y,
                   width: highlightStageRect.width,
                   height: highlightStageRect.height,
-                  borderStyle: panelHighlight?.kind === 'ghost' ? 'dashed' : 'solid',
+                  borderStyle: panelHighlight?.kind === 'anchored' ? 'solid' : 'dashed',
                   background:
                     panelHighlight?.kind === 'anchored'
                       ? 'color-mix(in srgb, var(--color-green) 10%, transparent)'
-                      : 'transparent',
+                      : panelHighlight?.kind === 'reported'
+                        ? 'color-mix(in srgb, var(--color-blue) 8%, transparent)'
+                        : 'transparent',
                 }}
               />
             )}
@@ -749,6 +786,23 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
                   className="shrink-0 px-2 py-0.5 text-[11px] font-medium rounded bg-[var(--surface-panel)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors focus-ring"
                 >
                   Retry
+                </button>
+              </div>
+            )}
+            {/* The channel was dropped for flooding. Said out loud: hover,
+                click-to-lock and the checklist's re-anchor pass have all
+                stopped, and a pane that silently stopped responding would read
+                as the app being broken rather than the page misbehaving. */}
+            {bridgeFlooded && (
+              <div className="pointer-events-auto flex items-center gap-2 max-w-full px-2.5 py-1.5 rounded-md bg-[var(--surface-overlay)] border border-[var(--border-strong)] shadow-lg">
+                <span className="text-[11px] text-[var(--text-primary)] truncate">
+                  This page flooded the canvas bridge, so live inspection was switched off. The page is still shown.
+                </span>
+                <button
+                  onClick={retryFrame}
+                  className="shrink-0 px-2 py-0.5 text-[11px] font-medium rounded bg-[var(--surface-panel)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] transition-colors focus-ring"
+                >
+                  Reload page
                 </button>
               </div>
             )}

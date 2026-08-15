@@ -4,7 +4,14 @@
 
 import { describe, it, expect, vi } from 'vitest'
 import { z } from 'zod'
-import { registerCanvasTools, runCanvasRender, runCanvasSnapshot, type CanvasToolDeps } from '../../../src/main/canvas-mcp-tool'
+import {
+  captureNotes,
+  registerCanvasTools,
+  runCanvasRender,
+  runCanvasSnapshot,
+  type CanvasToolDeps,
+} from '../../../src/main/canvas-mcp-tool'
+import { wrapUntrustedContent } from '../../../src/shared/untrusted-envelope'
 import type { CanvasSnapshotResult, CanvasState } from '../../../src/shared/canvas'
 
 const STATE: CanvasState = {
@@ -727,5 +734,57 @@ describe('canvas_render htmlPath (the terminal-friendly design ingress)', () => 
     )
     expect(out.isError).toBe(true)
     expect(out.text).toContain('too large')
+  })
+})
+
+// ── Operator notes must actually REACH the agent ────────────────────────────
+// The envelope drops a malformed note silently — that is the right call for a
+// backstop, and it is also why a note can go missing without anyone noticing.
+// One did: the off-screen-capture line was 205 characters with an em dash
+// against a 200-character allowlist, so on the DEFAULT path (a snapshot right
+// after a render, pane closed) the agent was never told the user had not seen
+// the page (adversarial review, 2026-08-14). Asserting captureNotes RETURNED it
+// is what missed this; these assert it comes out the other end.
+describe('capture notes survive the envelope', () => {
+  it('the off-screen note reaches the tool OUTPUT, outside and above the block', async () => {
+    const out = await runCanvasSnapshot(
+      {},
+      'sess-mine',
+      deps({ requestSnapshot: async () => result({ headless: true }) }),
+    )
+    const lines = out.text.split('\n')
+    const noteLine = lines.find((l) => l.startsWith('note: captured off-screen'))
+    expect(noteLine, 'the off-screen capture note').toBeTruthy()
+    // The part that matters to the agent: it is not looking at what the user is.
+    expect(noteLine).toContain('The user has not seen it')
+    expect(lines.indexOf(noteLine!)).toBeLessThan(lines.findIndex((l) => l.startsWith('<untrusted-content')))
+  })
+
+  it('a pane-captured snapshot carries no such note', async () => {
+    const out = await runCanvasSnapshot({}, 'sess-mine', deps())
+    expect(out.text).not.toContain('captured off-screen')
+  })
+
+  it('EVERY note this tool can emit survives the real envelope — none is silently dropped', () => {
+    const notes = captureNotes(
+      result({
+        headless: true,
+        truncated: true,
+        depthLimited: true,
+        hiddenContent: true,
+        overlapLimited: true,
+        unmatchedScope: ['pay'],
+        analysisError: 'run-failed',
+      }),
+      ['pay'],
+      true,
+    )
+    // Guard the guard: if this ever went empty the loop below would pass vacuously.
+    expect(notes.length).toBeGreaterThanOrEqual(8)
+
+    const envelope = wrapUntrustedContent('body', { source: 'agent-canvas/snapshot', notes })
+    const emitted = envelope.split('\n').filter((l) => l.startsWith('note: '))
+    expect(emitted).toHaveLength(notes.length)
+    for (const note of notes) expect(envelope).toContain(`note: ${note}`)
   })
 })

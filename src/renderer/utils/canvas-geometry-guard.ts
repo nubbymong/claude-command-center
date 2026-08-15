@@ -13,6 +13,7 @@
 import {
   MAX_INSPECT_CHAIN,
   MAX_RESOLVE_ANCHORS,
+  type AnchorRef,
   type CanvasAnchorResolution,
   type CanvasHitInfo,
   type CanvasInspectEntry,
@@ -106,27 +107,78 @@ export function safeInspectResult(raw: unknown): CanvasInspectResult {
   return { chain: chain.slice(0, MAX_INSPECT_CHAIN).map((e) => safeInspectEntry(e as Partial<CanvasInspectEntry>)) }
 }
 
-/** 1:1 with the anchors WE sent: the reply is trimmed/padded to `expected`, so
- *  a page can neither add resolutions nor shift them out of correspondence. */
-export function safeAnchorResolutions(raw: unknown, expected: number): CanvasAnchorResolution[] {
-  const bounded = Math.max(0, Math.min(expected, MAX_RESOLVE_ANCHORS))
-  const list = (raw as { results?: unknown } | null)?.results
-  const out: CanvasAnchorResolution[] = []
-  for (let i = 0; i < bounded; i++) {
-    const entry = Array.isArray(list) ? (list[i] as Partial<CanvasAnchorResolution> | undefined) : undefined
-    if (!entry || entry.found !== true) {
-      out.push({ found: false })
-      continue
-    }
-    const found = entry as Extract<CanvasAnchorResolution, { found: true }>
-    out.push({
+/**
+ * One resolution, checked against the anchor it claims to answer.
+ *
+ * Shape bounds are not enough here. This reply decides what the resolution
+ * checklist tells the reviewer about their OWN open issues, and it is written
+ * by the artifact under review: a page that answers `found: true` to everything
+ * marks every outstanding note as tracked and points the highlight wherever it
+ * likes (adversarial review, 2026-08-14). The host cannot measure the page, so
+ * it checks the only thing it independently holds — the anchor it sent — and
+ * refuses claims that are inconsistent with it:
+ *
+ *   · the `via` must be the mechanism that anchor could resolve by;
+ *   · a ux-id match must be the id we asked about, not another one;
+ *   · a fingerprint match must carry the role and name that fingerprint HAS
+ *     (the resolver matches on exact equality, so an honest reply always does);
+ *   · the box must be a real place on the page — a zero-area "found" is
+ *     nowhere to point a reviewer, so it is reported as needing re-pointing.
+ *
+ * Where the host holds the value itself it emits ITS copy rather than the
+ * page's echo, so a matched anchor cannot smuggle a different identity through
+ * the field that names it. What survives all of that is still the page's
+ * ASSERTION that the element is there — no host-side measurement of a
+ * cross-origin frame exists — which is why the checklist presents it as one.
+ */
+function checkedResolution(anchor: AnchorRef | undefined, entry: Partial<CanvasAnchorResolution> | undefined): CanvasAnchorResolution {
+  if (!entry || entry.found !== true) return { found: false }
+  if (!anchor || typeof anchor !== 'object') return { found: false }
+  const found = entry as Partial<Extract<CanvasAnchorResolution, { found: true }>>
+  const box = safeRect(found.box)
+  if (box.width <= 0 || box.height <= 0) return { found: false }
+
+  if (anchor.kind === 'ux-id') {
+    if (found.via !== 'ux-id') return { found: false }
+    if (typeof found.uxId === 'string' && found.uxId !== anchor.id) return { found: false }
+    return {
       found: true,
-      via: found.via === 'fingerprint' ? 'fingerprint' : 'ux-id',
-      box: safeRect(found.box),
+      via: 'ux-id',
+      box,
       role: storableString(found.role, HIT_STRING_MAX),
       name: storableString(found.name, HIT_STRING_MAX),
+      uxId: storableString(anchor.id, PATH_STRING_MAX),
+    }
+  }
+
+  if (anchor.kind === 'fingerprint') {
+    if (found.via !== 'fingerprint') return { found: false }
+    if (found.role !== anchor.role || found.name !== anchor.name) return { found: false }
+    return {
+      found: true,
+      via: 'fingerprint',
+      box,
+      role: storableString(anchor.role, HIT_STRING_MAX),
+      name: storableString(anchor.name, HIT_STRING_MAX),
       ...(found.uxId ? { uxId: storableString(found.uxId, PATH_STRING_MAX) } : {}),
-    })
+    }
+  }
+
+  // 'plan-step' (P5) and anything malformed: nothing in a web page resolves it,
+  // so a claim that something did is a false one by construction.
+  return { found: false }
+}
+
+/** 1:1 with the anchors WE sent: the reply is trimmed/padded to that list, so a
+ *  page can neither add resolutions nor shift them out of correspondence — and
+ *  each one is then checked against the anchor at its index. */
+export function safeAnchorResolutions(raw: unknown, anchors: AnchorRef[]): CanvasAnchorResolution[] {
+  const asked = Array.isArray(anchors) ? anchors.slice(0, MAX_RESOLVE_ANCHORS) : []
+  const list = (raw as { results?: unknown } | null)?.results
+  const out: CanvasAnchorResolution[] = []
+  for (let i = 0; i < asked.length; i++) {
+    const entry = Array.isArray(list) ? (list[i] as Partial<CanvasAnchorResolution> | undefined) : undefined
+    out.push(checkedResolution(asked[i], entry))
   }
   return out
 }

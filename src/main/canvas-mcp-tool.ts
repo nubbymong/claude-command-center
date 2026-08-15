@@ -118,8 +118,18 @@ function cleanScope(raw: unknown): string[] | undefined {
  * — two independent attackers found it. Now: the ids come from the scope WE
  * sent (intersected with what the page said it missed), the analysis code is a
  * closed vocabulary the sanitiser enforces, and counts stand in for text.
+ *
+ * EVERY line here must survive `NOTE_SHAPE` in untrusted-envelope (an allowlist:
+ * <=200 characters, and no punctuation outside `,.;:()'’/-`). A note that misses
+ * it is not flagged — it is silently dropped, and the agent is simply never told
+ * the thing this file thought it had told it. The off-screen-capture line shipped
+ * that way: 205 characters and an em dash, on the DEFAULT path (a snapshot right
+ * after a render, pane closed), so on essentially every self-check the agent was
+ * not told the user had not seen the page. Exported so the regression suite can
+ * put every note this function can produce through the real envelope and prove
+ * it comes out the other side.
  */
-function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined, outputCapped: boolean): string[] {
+export function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined, outputCapped: boolean): string[] {
   const notes: string[] = []
   // COUNTS outside the envelope, never the ids themselves. The agent supplied
   // them and knows what it asked for; joined into a line out here they were a
@@ -131,7 +141,10 @@ function captureNotes(result: CanvasSnapshotResult, scope: string[] | undefined,
   // Worth a note for two reasons — the viewport is the hidden frame's, not one
   // the user chose, and the user has NOT seen this version on screen.
   if (result.headless) {
-    notes.push('captured off-screen: the Canvas pane was not open on this version, so the page was laid out in a hidden frame at the reported viewport size. The user has not seen it — hand back so they can open the canvas')
+    // Kept inside NOTE_SHAPE deliberately: 200 characters, and semicolons where
+    // the sentence wants a dash. This is the note the agent most needs and the
+    // one that was silently dropped for being 205 characters long.
+    notes.push('captured off-screen: the Canvas pane was not open, so the page was laid out in a hidden frame at the reported viewport size. The user has not seen it; hand back so they can open the canvas')
   }
 
   if (result.unmatchedScope?.length && scope) {

@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { exportToBlob } from '@excalidraw/excalidraw'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
-import type { Annotation, CanvasSketchExport, CanvasVersion, Rect } from '../../shared/canvas'
+import type { Annotation, CanvasSketchExport, CanvasVersion, FocusObject, Rect } from '../../shared/canvas'
 import {
   draftAnnotationsOf,
   draftReviewOf,
   openSubmittedNotesOf,
   useCanvasReviewStore,
 } from '../stores/canvasReviewStore'
+import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
 
 interface Props {
   sessionId: string
@@ -48,6 +49,25 @@ const SCOPE_BADGE: Record<Annotation['scope'], string> = {
   element: 'text-blue',
   region: 'text-peach',
   general: 'text-overlay1',
+}
+
+/**
+ * The label of a locked target, attributed.
+ *
+ * An element lock's label ('button "Save"') is assembled from what the page
+ * answered when the host asked what sits at the clicked point — the artifact
+ * under review describing itself. A region's ('region 420×180') is the app's
+ * own measurement of the rectangle the user dragged. Only the first is marked,
+ * because marking both would teach the user to read the mark as decoration.
+ */
+function FocusLabel({ focus, className }: { focus: FocusObject; className?: string }) {
+  const pageReported = focus.targets.length > 0
+  return (
+    <span className={className} title={pageReported ? PAGE_REPORTED_TITLE : focus.label}>
+      {pageReported && <span className="text-overlay1">{PAGE_REPORTED_MARK} </span>}
+      {focus.label}
+    </span>
+  )
 }
 
 /**
@@ -197,8 +217,22 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     }
   }, [draftReview, draftNotes, submitting, getGlassApi, sessionId, submitReview, upsertNote])
 
+  /**
+   * What the checklist may say about one open note — and, as load-bearing as
+   * the words, WHO is saying it.
+   *
+   * `current` and `ghost` are the app's own knowledge: which version a note was
+   * written against, and where its box was when the user drew it. `reported` is
+   * not. A re-anchor result is assembled by the page under review, in answer to
+   * a question about that page, with no way for the host to check the answer —
+   * so it is rendered in the page's voice ("page says …") and never in the
+   * app's. It used to read "re-anchored" in resolved green, which let an
+   * artifact mark every open issue against it as tracked and point the
+   * highlight anywhere it liked (adversarial review, 2026-08-14): the reviewer
+   * saw their issues as followed up when nothing had been.
+   */
   const checklistStatus = useCallback(
-    (note: Annotation): { text: string; kind: 'anchored' | 'ghost' | 'current'; rect: Rect | null } => {
+    (note: Annotation): { text: string; kind: 'reported' | 'ghost' | 'current'; rect: Rect | null } => {
       // A note written against the version on screen needs no re-anchoring.
       if (note.versionId === version.id) {
         return { text: 'on this version', kind: 'current', rect: note.focus?.bboxPage ?? null }
@@ -209,7 +243,11 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
       }
       const entry = resolution?.versionId === version.id ? resolution.byAnnotation[note.id] : undefined
       if (entry && entry.found) {
-        return { text: entry.via === 'ux-id' ? 're-anchored' : 're-anchored (fingerprint)', kind: 'anchored', rect: entry.box }
+        return {
+          text: entry.via === 'ux-id' ? 'page says re-anchored (id)' : 'page says re-anchored (fingerprint)',
+          kind: 'reported',
+          rect: entry.box,
+        }
       }
       if (entry === null) return { text: 'needs re-pointing', kind: 'ghost', rect: note.focus.bboxPage }
       return { text: 'locating…', kind: 'ghost', rect: note.focus.bboxPage }
@@ -224,9 +262,14 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
         return
       }
       const status = checklistStatus(note)
+      // The stage highlight carries the same distinction: a box the page
+      // asserts is drawn dashed and in the page-reported colour, never in the
+      // solid green that means "the app knows where this is".
       setPanelHighlight(
         sessionId,
-        status.rect ? { rect: status.rect, kind: status.kind === 'anchored' || status.kind === 'current' ? 'anchored' : 'ghost' } : null,
+        status.rect
+          ? { rect: status.rect, kind: status.kind === 'current' ? 'anchored' : status.kind === 'reported' ? 'reported' : 'ghost' }
+          : null,
       )
     },
     [sessionId, checklistStatus, setPanelHighlight],
@@ -285,13 +328,16 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                       className={`ml-auto text-[10px] px-1 py-0.5 rounded border ${
                         status.kind === 'ghost'
                           ? 'text-yellow border-yellow/40 bg-yellow/10'
-                          : 'text-green border-green/40 bg-green/10'
+                          : status.kind === 'reported'
+                            ? 'text-blue border-blue/40 bg-blue/10'
+                            : 'text-green border-green/40 bg-green/10'
                       }`}
+                      title={status.kind === 'reported' ? PAGE_REPORTED_TITLE : undefined}
                     >
                       {status.text}
                     </span>
                   </div>
-                  {note.focus && <div className="text-subtext1 truncate mt-0.5">{note.focus.label}</div>}
+                  {note.focus && <FocusLabel focus={note.focus} className="text-subtext1 truncate mt-0.5 block" />}
                   <div className="text-text/90 mt-0.5 line-clamp-3 whitespace-pre-wrap">{note.note}</div>
                   <div className="flex gap-1.5 mt-1.5">
                     <button
@@ -329,9 +375,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
               {editingNote ? editingNote.scope : composerScope}
             </span>
             {(editingNote ? editingNote.focus : focus) ? (
-              <span className="text-subtext1 truncate flex-1" title={(editingNote ? editingNote.focus : focus)?.label}>
-                {(editingNote ? editingNote.focus : focus)?.label}
-              </span>
+              <FocusLabel focus={(editingNote ? editingNote.focus : focus)!} className="text-subtext1 truncate flex-1" />
             ) : (
               <span className="text-overlay1 flex-1">whole page{editingNote ? '' : ' — click an element or drag a region to target'}</span>
             )}
@@ -428,7 +472,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                     delete
                   </button>
                 </div>
-                {note.focus && <div className="text-subtext1 truncate mt-0.5">{note.focus.label}</div>}
+                {note.focus && <FocusLabel focus={note.focus} className="text-subtext1 truncate mt-0.5 block" />}
                 <div className="text-text/90 mt-0.5 line-clamp-3 whitespace-pre-wrap">{note.note}</div>
               </div>
             ))}

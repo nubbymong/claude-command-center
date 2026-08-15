@@ -48,8 +48,12 @@ export interface CanvasReviewSessionState {
   editingAnnotationId: string | null
   resolution: ResolutionPass | null
   /** Transient highlight driven from the panel (hovered checklist entry):
-   *  where the stage should point right now. */
-  panelHighlight: { rect: Rect; kind: 'anchored' | 'ghost' } | null
+   *  where the stage should point right now. `reported` is the third kind and
+   *  the reason there are three: a box the PAGE claims an old note re-anchors
+   *  to is not a box the app measured, and painting it the same as one we did
+   *  measure is how a page marked its reviewer's open issues as tracked
+   *  (adversarial review, 2026-08-14). */
+  panelHighlight: { rect: Rect; kind: 'anchored' | 'ghost' | 'reported' } | null
   /** The "how to review" primer in the notes panel — shown until the user
    *  dismisses it or has written a first note. Renderer-session state only. */
   helpDismissed: boolean
