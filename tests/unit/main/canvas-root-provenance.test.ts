@@ -46,6 +46,24 @@ vi.mock('node-pty', () => ({
   }),
 }))
 
+// The canvas store writes under `getResourcesDirectory()/canvas`. Unmocked that
+// resolves to the platform fallback (`/mock/...` here, since `app.getPath` is a
+// stub), which happens to be creatable at the drive root on Windows and is NOT
+// creatable at `/` on macOS or Linux — so the store's first mkdir threw there
+// and the whole file was Windows-only by accident. Give it a real temp root.
+vi.mock('../../../src/main/ipc/setup-handlers', () => {
+  const nodeFs = require('node:fs') as typeof import('node:fs')
+  const nodeOs = require('node:os') as typeof import('node:os')
+  const nodePath = require('node:path') as typeof import('node:path')
+  const dir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'ccc-root-prov-res-'))
+  return {
+    getResourcesDirectory: () => dir,
+    getDataDirectory: () => dir,
+    registerSetupHandlers: () => {},
+    writeCliSetupPty: () => {},
+  }
+})
+
 vi.mock('electron', () => ({
   app: { getPath: () => '/mock/userData', getAppPath: () => process.cwd(), on: () => {}, quit: () => {} },
   ipcMain: { handle: () => {}, on: () => {} },
