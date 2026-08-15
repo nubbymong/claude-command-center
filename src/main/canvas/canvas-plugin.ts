@@ -128,15 +128,83 @@ resolved yourself — resolution is theirs.
   render; they only ever review in the pane.
 `
 
-/** Exactly what this tree may contain, relative to the plugin root. Anything
- *  else present means someone other than us wrote here. */
-const OWNED_FILES = ['.claude-plugin/plugin.json', 'skills/agent-canvas/SKILL.md']
-const OWNED_DIRS = ['.claude-plugin', 'skills', 'skills/agent-canvas']
+/**
+ * Exactly what this tree may contain, relative to the plugin root — and, for
+ * the files, exactly what they must CONTAIN, as the bytes themselves.
+ *
+ * One table, read by both the writer and the verifier. That is the point: the
+ * expected content is not a second copy that can drift from what is written,
+ * it is the same `Buffer` object, so it is not possible to change what lands on
+ * disk without changing what the integrity check demands.
+ */
+const OWNED_FILES: ReadonlyArray<readonly [rel: string, bytes: Buffer]> = [
+  ['.claude-plugin/plugin.json', Buffer.from(JSON.stringify(PLUGIN_MANIFEST, null, 2), 'utf8')],
+  ['skills/agent-canvas/SKILL.md', Buffer.from(SKILL_MD, 'utf8')],
+]
+/** Every directory we create, parents first. `''` is the plugin root itself —
+ *  it is in the list so the ROOT is verified to be a real directory too; a
+ *  symlink swapped in at the root passes a `readdir`-only check happily. */
+const OWNED_DIRS = ['', '.claude-plugin', 'skills', 'skills/agent-canvas']
+
+/** `O_NOFOLLOW` where the platform has it (POSIX). Windows has no equivalent
+ *  open flag — there the `lstat` below is what refuses a link, and the DACL
+ *  applied at creation is what stops one being planted in the first place. */
+const O_NOFOLLOW = (fs.constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0
+
+/**
+ * True when `file` is a real, unlinked file whose bytes are EXACTLY `expected`.
+ *
+ * Content, not shape. The check this replaces compared directory entry names
+ * and `isFile()` and never opened anything, so overwriting SKILL.md IN PLACE
+ * left the tree "pristine" forever: the memo handed the same path back to every
+ * later spawn and the planted bytes were fed to every session for the life of
+ * the app process (proven — 25 consecutive `ensureCanvasPlugin()` calls, planted
+ * bytes still there, only a restart healing it). SKILL.md is not inert data:
+ * its frontmatter `description` enters the model's context with no user or model
+ * action, and `allowed-tools` is a frontmatter key the CLI parses — so "a file
+ * exists at this path" was never the property worth verifying.
+ *
+ * Link-safe in one pass. `lstat` rejects a symlink outright (`isFile()` is false
+ * for a link under lstat — unlike the `statSync` this replaces, which followed
+ * it and let content be edited from outside the tree indefinitely), and then the
+ * bytes are read from a SINGLE descriptor, opened `O_NOFOLLOW` where that
+ * exists and re-checked with `fstat` on that same descriptor. Whatever is
+ * compared is whatever that one descriptor points at, so a swap between the
+ * check and the read cannot get a different file compared than the one read.
+ *
+ * A hardlink needs no rule of its own: it shares the inode, so an edit through
+ * the attacker's name changes the bytes compared here and the tree is rebuilt.
+ */
+function fileHasExactly(file: string, expected: Buffer): boolean {
+  let fd: number | undefined
+  try {
+    if (!fs.lstatSync(file).isFile()) return false
+    fd = fs.openSync(file, fs.constants.O_RDONLY | O_NOFOLLOW)
+    const st = fs.fstatSync(fd)
+    // Size first: it makes the common mismatch cheap, and it stops a hostile
+    // multi-gigabyte replacement being read into memory only to be rejected.
+    if (!st.isFile() || st.size !== expected.length) return false
+    const buf = Buffer.alloc(expected.length)
+    let read = 0
+    while (read < expected.length) {
+      const n = fs.readSync(fd, buf, read, expected.length - read, null)
+      if (n <= 0) break
+      read += n
+    }
+    return read === expected.length && buf.equals(expected)
+  } catch {
+    return false
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd) } catch { /* best-effort */ } }
+  }
+}
 
 /** True when the tree on disk is EXACTLY what we wrote — no extra entry at any
- *  level. A plugin root auto-loads `hooks/`, `.mcp.json`, `commands/` and
- *  `agents/`, so one unexpected entry is unapproved code execution in every
- *  session spawned afterwards. */
+ *  level, and both owned files byte-for-byte ours. A plugin root auto-loads
+ *  `hooks/`, `.mcp.json`, `commands/` and `agents/`, so one unexpected entry is
+ *  unapproved code execution in every session spawned afterwards; and one
+ *  rewritten SKILL.md steers every one of them. Any mismatch is treated
+ *  identically — the tree is wiped and rebuilt from these constants. */
 function treeIsPristine(pluginDir: string): boolean {
   const expected: Array<[string, Set<string>]> = [
     ['', new Set(['.claude-plugin', 'skills'])],
@@ -154,12 +222,8 @@ function treeIsPristine(pluginDir: string): boolean {
     if (entries.length !== allowed.size) return false
     for (const entry of entries) if (!allowed.has(entry)) return false
   }
-  for (const rel of OWNED_FILES) {
-    try {
-      if (!fs.statSync(path.join(pluginDir, rel)).isFile()) return false
-    } catch {
-      return false
-    }
+  for (const [rel, bytes] of OWNED_FILES) {
+    if (!fileHasExactly(path.join(pluginDir, rel), bytes)) return false
   }
   for (const rel of OWNED_DIRS) {
     try {
@@ -194,32 +258,42 @@ let ensured: string | undefined
  * that was not ready at first spawn.
  */
 export function ensureCanvasPlugin(): string | null {
-  // VERIFIED on every call, not memoised into a one-time wipe. The memo made
-  // the wipe run once per app process, so a hooks entry planted after the
-  // first spawn was loaded by every session for the rest of the run — hours or
-  // days in a desktop app people leave open (adversarial review round 2). The
-  // check is two readdirs on the spawn path; a tree that is not exactly ours
-  // is rebuilt from nothing.
-  if (ensured !== undefined && treeIsPristine(ensured)) return ensured
-  ensured = undefined
   try {
+    // Recomputed every call and never read back off the memo. `ensured` used to
+    // cache an absolute path, so once `setResourcesDirectory` moved the
+    // resources dir the OLD tree kept satisfying the check and kept being
+    // handed to `--plugin-dir` — including in the one case where it matters
+    // most, a user moving their resources precisely to leave a compromised
+    // location behind. A changed path now invalidates the memo by construction.
     const pluginDir = path.join(getResourcesDirectory(), 'canvas-plugin')
+    // VERIFIED on every call, not memoised into a one-time wipe. The memo made
+    // the wipe run once per app process, so a hooks entry planted after the
+    // first spawn was loaded by every session for the rest of the run — hours or
+    // days in a desktop app people leave open (adversarial review round 2). The
+    // check is four readdirs and two small reads on the spawn path; a tree that
+    // is not exactly ours, down to the bytes, is rebuilt from nothing.
+    if (ensured === pluginDir && treeIsPristine(pluginDir)) return ensured
+    ensured = undefined
     // CCC-owned tree: anything already here is not ours (or is a stale copy
     // from an older version) and does not get to survive.
     fs.rmSync(pluginDir, { recursive: true, force: true })
-    const manifestDir = path.join(pluginDir, '.claude-plugin')
-    const skillDir = path.join(pluginDir, 'skills', 'agent-canvas')
-    mkdirSecure(manifestDir)
-    mkdirSecure(skillDir)
-    // Owner-only, explicitly: mkdirSecure/atomicWriteSecure refuse planted
-    // symlinks but do NOT harden the mode unless asked, so on POSIX this tree
-    // would land 0755/0644. SKILL.md is instruction content fed to the agent
-    // every session — its integrity is the whole point.
-    hardenCredentialDir(pluginDir)
-    hardenCredentialDir(manifestDir)
-    hardenCredentialDir(skillDir)
-    atomicWriteSecure(path.join(manifestDir, 'plugin.json'), JSON.stringify(PLUGIN_MANIFEST, null, 2), 0o600)
-    atomicWriteSecure(path.join(skillDir, 'SKILL.md'), SKILL_MD, 0o600)
+    for (const rel of OWNED_DIRS) {
+      const dir = path.join(pluginDir, rel)
+      mkdirSecure(dir)
+      // Owner-only, explicitly, and parents first so each child is created
+      // under an already-restricted parent rather than inheriting and being
+      // fixed up afterwards: mkdirSecure/atomicWriteSecure refuse planted
+      // symlinks but do NOT restrict permissions unless asked, so this tree
+      // would otherwise land 0755/0644 on POSIX and on whatever the resources
+      // dir happens to grant on Windows. SKILL.md is instruction content fed to
+      // the agent every session — its integrity is the whole point.
+      if (!hardenCredentialDir(dir)) {
+        logWarn(`[canvas-plugin] could not restrict permissions on ${dir}; it keeps whatever access its parent grants`)
+      }
+    }
+    for (const [rel, bytes] of OWNED_FILES) {
+      atomicWriteSecure(path.join(pluginDir, rel), bytes, 0o600)
+    }
     ensured = pluginDir
     return ensured
   } catch (err) {

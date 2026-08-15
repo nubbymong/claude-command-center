@@ -6,6 +6,7 @@
 // are injectable so tests never touch the live ~/.claude. Profile metadata is
 // persisted as an atomic profiles.json under the profiles root (NOT via
 // config-manager) so _setRootsForTest is a total seam.
+import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -93,10 +94,112 @@ export function hardenCredentialFile(file: string): void {
   if (!IS_POSIX) return
   try { fs.chmodSync(file, CRED_FILE_MODE) } catch { /* best-effort */ }
 }
-/** chmod a credential-containing dir (a `.claude/`) to 0o700 on POSIX. */
-export function hardenCredentialDir(dir: string): void {
-  if (!IS_POSIX) return
-  try { fs.chmodSync(dir, CRED_DIR_MODE) } catch { /* best-effort */ }
+// ── The Windows half of the same policy ─────────────────────────────────────
+// `chmod` is a no-op on Windows, so `hardenCredentialDir` used to be
+// `if (!IS_POSIX) return` -- meaning that on this app's PRIMARY platform every
+// directory it "hardened" simply kept whatever its parent's ACL granted. The
+// resources directory is user-chosen, and an inherited ACE there reaches every
+// tree below it, including ones whose integrity the app depends on rather than
+// merely their secrecy (`canvas-plugin/`, whose SKILL.md is handed to every
+// local agent session via `--plugin-dir`).
+//
+// Windows has no mode bits, so the same "owner only" policy the POSIX branch
+// has enforced for releases is expressed the only way Windows can express it:
+// drop inherited ACEs and grant Full Control to exactly the current user and
+// SYSTEM. Measured on Windows 11 (2026-08-15); each measurement is load-bearing:
+//
+//   * icacls resolves EVERY principal before it applies ANY of them. A name
+//     that will not resolve fails the whole invocation (exit 1332) and leaves
+//     the DACL untouched -- verified directly: the inherited ACEs were still
+//     present afterwards. That is why `/inheritance:r` ships in the SAME
+//     invocation as its grants. The strip can never land without them, so there
+//     is no window where the app locks itself out of its own data, and no need
+//     for a two-step grant-then-strip.
+//   * ~7ms per call (73ms for 10), which is what lets this stay unmemoised on
+//     the synchronous paths that reach it: a session spawn (~4 calls), and
+//     `ensureConfigDir`, which runs on every config write and so on every
+//     debounced UI save. Both are user-action scoped, never per-frame.
+//
+// Unmemoised is a DECISION, not an oversight. A path-keyed memo would be wrong
+// twice over: `ensureCanvasPlugin` deletes and recreates its tree, so a
+// recreated directory is back on its parent's ACL while the memo still calls it
+// done -- and re-asserting on every call is the whole reason the POSIX branch
+// repairs installs made by older builds. Caching this would trade a measured
+// 7ms for a cache-invalidation bug in the exact place a memo has already
+// produced one (the canvas plugin's integrity check, which this change fixes).
+//   * Children need no pass of their own. Windows resolves inheritance live, so
+//     existing and future subdirectories/files reflect the new DACL at once.
+const IS_WINDOWS = process.platform === 'win32'
+/** Absolute by intent. A step whose whole job is to REMOVE access must not be
+ *  resolvable through PATH, where anything earlier on it would run instead. */
+const ICACLS = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'icacls.exe')
+/** SYSTEM by SID: the account NAME is localized, the SID never is. */
+const SYSTEM_SID = '*S-1-5-18'
+/** Best-effort has to mean bounded -- the resources dir may be a network share. */
+const ICACLS_TIMEOUT_MS = 5000
+/** Characters that would change what icacls PARSES rather than merely fail to
+ *  resolve: `:` and `()` are grant syntax, `,`/`;` separate entries, `/` starts
+ *  an option, `*` marks a literal SID, `\` splits domain from account, and
+ *  quotes/control bytes have no business in an account name. `execFileSync`
+ *  passes argv with no shell, so this is not about command injection -- it is
+ *  about one argument being read as a DIFFERENT grant than the intended one. */
+const ACL_PRINCIPAL_BAD_RE = /[:()\\/*",;]|[\u0000-\u001F\u007F]/
+function isAclPrincipalPart(s: string): boolean {
+  return s.length > 0 && s.length <= 256 && !ACL_PRINCIPAL_BAD_RE.test(s)
+}
+
+function currentUserName(): string {
+  try { return os.userInfo().username } catch { return '' /* no identity available */ }
+}
+
+/**
+ * How to spell the current user for icacls, best spelling first: `DOMAIN\user`
+ * (unambiguous on a domain-joined machine), then the bare account name for when
+ * the domain half will not resolve (offline domain member, renamed machine).
+ *
+ * EMPTY when the identity cannot be established or will not survive icacls'
+ * own parsing -- and empty means NOTHING is applied, deliberately: an
+ * `/inheritance:r` whose companion grant we cannot name would lock the app out
+ * of its own data.
+ *
+ * `user`/`domain` are parameters rather than reads baked into the body so this
+ * guard is exercised on every leg of the CI matrix instead of only the Windows
+ * one -- the same reason `isTransientRenameError` takes `platform`.
+ */
+export function windowsAclPrincipals(user: string = currentUserName(), domain: string = process.env.USERDOMAIN ?? ''): string[] {
+  if (!isAclPrincipalPart(user)) return []
+  return isAclPrincipalPart(domain) ? [`${domain}\\${user}`, user] : [user]
+}
+
+/**
+ * Restrict `dir`'s Windows DACL to the current user + SYSTEM, dropping every
+ * inherited ACE. Returns whether it was applied.
+ *
+ * Never throws. Every caller sits on a session-spawn or config-write path where
+ * a permissions failure must not be fatal -- including the case where a mocked
+ * or absent `child_process` makes `execFileSync` unusable.
+ */
+export function hardenDirAclWindows(dir: string): boolean {
+  if (!IS_WINDOWS) return false
+  for (const principal of windowsAclPrincipals()) {
+    try {
+      execFileSync(ICACLS, [dir, '/inheritance:r', '/grant:r', `${principal}:(OI)(CI)F`, `${SYSTEM_SID}:(OI)(CI)F`], {
+        stdio: 'ignore', windowsHide: true, timeout: ICACLS_TIMEOUT_MS
+      })
+      return true
+    } catch { /* this spelling did not resolve (or icacls is unavailable) */ }
+  }
+  return false
+}
+
+/** Restrict a credential-containing dir (a `.claude/`) to its owner: 0700 on
+ *  POSIX, an explicit user+SYSTEM DACL on Windows. Returns whether it took, so
+ *  a caller that can report the failure may; the rest ignore it exactly as
+ *  before and stay best-effort. */
+export function hardenCredentialDir(dir: string): boolean {
+  if (!IS_POSIX) return hardenDirAclWindows(dir)
+  try { fs.chmodSync(dir, CRED_DIR_MODE) } catch { /* best-effort */ return false }
+  return true
 }
 
 /** The app-managed roots below which every credential/identity/backup directory
