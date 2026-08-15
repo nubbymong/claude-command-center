@@ -132,6 +132,19 @@ export function hardenCredentialFile(file: string): void {
 //     ACEs the remove list was read from). `/remove` without `:g`/`:d` takes
 //     deny ACEs too -- a planted deny would otherwise survive as a denial of
 //     service. Both measured.
+//   * A DACL can name a principal that icacls cannot resolve BACK, and that
+//     fails the whole invocation (1332) rather than the one option:
+//     `NT AUTHORITY\LogonSessionId_0_<n>` is in the creator token's default
+//     DACL under some logon types and is un-nameable -- measured here, not
+//     theorised. That is what the fallback below is for, and why it is a
+//     fallback to the strip-and-grant rather than a retry removing principals
+//     one at a time: a per-principal retry would leave the un-nameable one
+//     behind ANYWAY, so the directory could never reach the shape the skip
+//     recognises, and every later call would pay the whole sequence again. One
+//     failed batch and a strip-and-grant is the cheaper end of the same
+//     outcome. The grants that matter here all resolve -- `Everyone`,
+//     `Authenticated Users` and `Users` are well-known SIDs -- so what survives
+//     is the case that was never the exposure.
 //   * ~25ms per icacls call, read or write (10 calls: 247ms read, 258ms
 //     strip-and-grant, 512ms for the read+replace pair). The "~7ms" this
 //     comment used to claim was wrong by 3x and mattered, because these calls
@@ -263,7 +276,7 @@ const ACL_MAX_REMOVALS = 32
  * icacls prints unadorned) is handed back with the `*` prefix that makes icacls
  * read it as a SID instead of a name.
  */
-export function windowsAclRemovalArgs(entries: string[]): string[] {
+export function windowsAclRemovalArgs(entries: string[], ignorable?: ReadonlySet<string>): string[] {
   if (entries.length > ACL_MAX_REMOVALS) return []
   const args: string[] = []
   const seen = new Set<string>()
@@ -272,7 +285,7 @@ export function windowsAclRemovalArgs(entries: string[]): string[] {
     if (raw.length === 0 || raw.length > 256) continue
     if (/^[/*]/.test(raw) || raw.includes(String.fromCharCode(34)) || hasControlChar(raw)) continue
     const principal = /^S-1-[\d-]+$/.test(raw) ? `*${raw}` : raw
-    if (seen.has(principal)) continue
+    if (seen.has(principal) || ignorable?.has(principal)) continue
     seen.add(principal)
     args.push('/remove', principal)
   }
@@ -286,10 +299,16 @@ export function windowsAclRemovalArgs(entries: string[]): string[] {
  * localized and so is matched structurally rather than by name (it is granted
  * by SID for the same reason).
  *
+ * `ignorable` names principals a previous call PROVED cannot be removed on this
+ * machine; entries for those do not count against the answer, which is what
+ * lets a directory carrying one still settle into a state this recognises
+ * instead of paying the full sequence on every call forever.
+ *
  * `user` is a parameter rather than a read baked into the body so this runs on
  * every leg of the CI matrix.
  */
-export function windowsAclIsOwnerOnly(entries: string[], user: string): boolean {
+export function windowsAclIsOwnerOnly(entries: string[], user: string, ignorable?: ReadonlySet<string>): boolean {
+  if (ignorable?.size) entries = entries.filter((e) => !ignorable.has(aclEntryPrincipal(e)))
   if (entries.length !== 2 || user.length === 0) return false
   if (!entries.every((e) => !e.includes('(I)') && e.endsWith(':(OI)(CI)(F)'))) return false
   // The printed spelling may be `DOMAIN\user` whatever spelling was granted, so
@@ -314,23 +333,61 @@ function icacls(args: string[]): boolean {
  * a permissions failure must not be fatal -- including the case where a mocked
  * or absent `child_process` makes `execFileSync` unusable.
  */
+/**
+ * Principals this machine's DACLs NAME but icacls cannot resolve back, learned
+ * by trying. Per-process and never invalidated, which is safe because it is a
+ * property of the machine and the logon session rather than of any directory:
+ * a name that will not resolve now will not resolve later in the same session,
+ * and a wrong entry here can only cost one un-removed principal that a removal
+ * had already failed on.
+ *
+ * Only a SINGLE-principal removal failure adds to it. A failed BATCH proves
+ * nothing about which of its principals was at fault, and memoising on that
+ * would teach the app to stop removing a grant it could have removed.
+ */
+const unremovableAclPrincipals = new Set<string>()
+const UNREMOVABLE_MEMO_MAX = 64
+
 export function hardenDirAclWindows(dir: string): boolean {
   if (!IS_WINDOWS) return false
   const spellings = windowsAclPrincipals()
   if (spellings.length === 0) return false
 
   const entries = windowsAclEntries(dir)
-  if (windowsAclIsOwnerOnly(entries, currentUserName())) return true
+  if (windowsAclIsOwnerOnly(entries, currentUserName(), unremovableAclPrincipals)) return true
 
-  const removals = windowsAclRemovalArgs(entries)
+  const removals = windowsAclRemovalArgs(entries, unremovableAclPrincipals)
   for (const principal of spellings) {
-    const grants = ['/grant:r', `${principal}:(OI)(CI)F`, `${SYSTEM_SID}:(OI)(CI)F`]
-    // The replace. Its removals are spelling-independent, so a failure here is
-    // either this spelling (the next one is tried below) or one principal that
-    // could not be named back -- and in that case the strip-and-grant that
-    // shipped is still applied, so this is never WORSE than the old behaviour.
-    if (removals.length > 0 && icacls([dir, '/inheritance:r', ...removals, ...grants])) return true
-    if (icacls([dir, '/inheritance:r', ...grants])) return true
+    const grants = ['/inheritance:r', '/grant:r', `${principal}:(OI)(CI)F`, `${SYSTEM_SID}:(OI)(CI)F`]
+
+    // The replace, in one invocation: nothing is stripped unless every name in
+    // it resolved, so there is no window in which the app has no access.
+    if (removals.length > 0 && icacls([dir, ...removals, ...grants])) return true
+
+    // It did not. Either this spelling of the user does not resolve -- the next
+    // one is tried below -- or one of the removals does not, and the exit code
+    // does not say which. Establish the app's own access FIRST, with the
+    // strip-and-grant that shipped: if this fails it is the spelling, nothing
+    // has been removed, and the next spelling gets its turn.
+    if (!icacls([dir, ...grants])) continue
+    if (removals.length === 0) return true
+
+    // Access is granted and the grants are now PROVEN to resolve. Remove the
+    // rest one at a time -- each is independent, and a failure names the
+    // principal that caused it. Doing this rather than giving up on the
+    // removals is the difference between an explicit `Authenticated Users`
+    // being removed on such a machine and surviving.
+    for (let i = 1; i < removals.length; i += 2) {
+      const target = removals[i]
+      if (icacls([dir, '/remove', target])) continue
+      if (unremovableAclPrincipals.size < UNREMOVABLE_MEMO_MAX) unremovableAclPrincipals.add(target)
+    }
+    // The pass above removes the app's own entries too, so re-grant. The same
+    // argv succeeded moments ago, which is why it is safe to have removed them:
+    // the only window where this directory has no DACL of ours is between those
+    // two calls, and it closes with a command already known to work.
+    icacls([dir, ...grants])
+    return true
   }
   return false
 }

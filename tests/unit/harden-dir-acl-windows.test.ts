@@ -41,8 +41,8 @@ import {
 const IS_WINDOWS = process.platform === 'win32'
 const ICACLS = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'icacls.exe')
 const USER = (() => { try { return os.userInfo().username } catch { return '' } })()
-/** Authenticated Users: every account that logged in, i.e. the grant the
- *  advisory is about. By SID because the display name is localized. */
+/** Authenticated Users: every account that logged in, i.e. the broad grant this
+ *  hardening exists to remove. By SID because the display name is localized. */
 const AUTHENTICATED_USERS = '*S-1-5-11'
 
 function icacls(args: string[]): boolean {
@@ -64,6 +64,62 @@ function aces(target: string): string[] {
 }
 
 const principalOf = (entry: string): string => entry.slice(0, entry.indexOf(':('))
+const principalsOf = (target: string): string[] => aces(target).map(principalOf)
+
+/**
+ * Set `target`'s DACL to EXACTLY `grants` — inheritance off, every principal
+ * already there removed first.
+ *
+ * A fixture cannot build this with `/inheritance:r /grant:r`, which is the point
+ * of the change under test: that leaves every explicit entry in place, so a
+ * "parent that grants nothing inheritable" built with it silently keeps whatever
+ * inheritable entries the host put there. The first version of these fixtures
+ * did exactly that and passed here while failing on CI, whose temp tree has a
+ * different shape. The fixture assertions below check what this produced rather
+ * than trusting it.
+ */
+function setExactAcl(target: string, grants: string[]): boolean {
+  const removals = principalsOf(target).flatMap((p) => ['/remove', p])
+  if (icacls([target, '/inheritance:r', ...removals, '/grant:r', ...grants])) return true
+  // A principal the DACL NAMES but icacls cannot resolve BACK fails the whole
+  // batch (exit 1332). `NT AUTHORITY\LogonSessionId_0_<n>` is the one that turns
+  // up in practice — it lands in the creator token's default DACL under some
+  // logon types, and measured here it is un-nameable. Remove what can be
+  // removed, one at a time, and let the fixture assertions below decide whether
+  // what is left is the shape this case needs. Grants last, always.
+  for (const p of principalsOf(target)) icacls([target, '/remove', p])
+  return icacls([target, '/inheritance:r', '/grant:r', ...grants])
+}
+
+/**
+ * Which of `principals` this machine cannot resolve BACK from the name icacls
+ * printed for it — asked, not assumed, by trying to remove each from a scratch
+ * directory that has none of them. Removing an absent-but-nameable principal
+ * succeeds (measured), so a failure here is the name resolution and nothing
+ * else.
+ *
+ * These are the entries `hardenDirAclWindows` provably cannot take off a DACL,
+ * so they are the entries the assertions below have to allow for. Machines
+ * differ: this box's token default DACL carries an un-nameable
+ * `NT AUTHORITY\LogonSessionId_0_<n>` and CI's does not, and a test that
+ * assumed either one would be testing the machine.
+ */
+function unnameable(principals: string[]): string[] {
+  const scratch = fs.mkdtempSync(path.join(testRoot, 'probe-'))
+  made.push(scratch)
+  return principals.filter((p) => !icacls([scratch, '/remove', p]))
+}
+
+/** Grant Authenticated Users on `target` and return the name icacls prints for
+ *  it here — learned rather than hard-coded, so the assertions do not depend on
+ *  the runner's display language. */
+function grantBroad(target: string): string {
+  const before = new Set(principalsOf(target))
+  expect(icacls([target, '/grant', `${AUTHENTICATED_USERS}:(OI)(CI)F`]), 'fixture broad grant').toBe(true)
+  const added = principalsOf(target).filter((p) => !before.has(p))
+  expect(added, 'the broad grant should add exactly one principal').toHaveLength(1)
+  return added[0]
+}
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
@@ -114,30 +170,24 @@ function dirWithBroadGrant(broad: BroadGrant): { dir: string; broadPrincipal: st
   const parent = fs.mkdtempSync(path.join(testRoot, `${broad}-`))
   made.push(parent)
 
-  const parentAcl = broad === 'inherited'
-    ? [parent, '/inheritance:r', '/grant:r', `${USER}:(OI)(CI)F`, `${AUTHENTICATED_USERS}:(OI)(CI)F`]
-    : [parent, '/inheritance:r', '/grant:r', `${USER}:F`]
-  expect(icacls(parentAcl), 'fixture parent ACL').toBe(true)
+  // `inherited`: the parent hands the broad grant down. `explicit`: the parent
+  // hands NOTHING down, so the child gets the creator token's default DACL as
+  // explicit entries, and the broad grant is written onto the child itself.
+  expect(setExactAcl(parent, broad === 'inherited' ? [`${USER}:(OI)(CI)F`] : [`${USER}:F`]), 'fixture parent ACL').toBe(true)
+  const fromParent = broad === 'inherited' ? grantBroad(parent) : null
 
   const dir = path.join(parent, 'child')
   fs.mkdirSync(dir)
-  if (broad === 'explicit') {
-    expect(icacls([dir, '/grant', `${AUTHENTICATED_USERS}:(OI)(CI)F`]), 'fixture explicit grant').toBe(true)
-  }
+  const broadPrincipal = fromParent ?? grantBroad(dir)
 
-  // Learn the localized spelling from icacls rather than assuming it, and prove
-  // in the same step that the fixture really is what it claims to be.
-  const entries = aces(dir)
-  const inheritedHere = entries.filter((e) => e.includes('(I)')).length
+  // Prove the fixture is the shape it claims to be, rather than trusting the
+  // commands above to have produced it on this machine.
+  const inheritedHere = aces(dir).filter((e) => e.includes('(I)')).length
   if (broad === 'inherited') expect(inheritedHere, 'fixture should inherit').toBeGreaterThan(0)
   else expect(inheritedHere, 'fixture should inherit nothing').toBe(0)
+  expect(principalsOf(dir), 'fixture broad grant should be on the DACL').toContain(broadPrincipal)
 
-  const mine = new Set(windowsAclPrincipals().map((p) => p.slice(p.lastIndexOf('\\') + 1).toLowerCase()))
-  const broadPrincipal = entries
-    .map(principalOf)
-    .find((p) => !mine.has(p.slice(p.lastIndexOf('\\') + 1).toLowerCase()) && !/administrators|system/i.test(p))
-  expect(broadPrincipal, 'fixture broad grant should be on the DACL').toBeTruthy()
-  return { dir, broadPrincipal: broadPrincipal! }
+  return { dir, broadPrincipal }
 }
 
 // ── the pure halves, on every leg of the matrix ──────────────────────────────
@@ -272,7 +322,9 @@ describe.runIf(IS_WINDOWS)('hardenCredentialDir on Windows applies a real DACL',
       const after = aces(dir)
       expect(after.filter((a) => a.includes('(I)'))).toEqual([]) // inheritance disabled
       expect(after.map(principalOf)).not.toContain(broadPrincipal) // the grant is GONE
-      expect(after).toHaveLength(2) // the current user and SYSTEM, nobody else
+      // The current user and SYSTEM, nobody else — allowing only for entries
+      // this machine cannot name back, which icacls cannot remove at all.
+      expect(after.length - unnameable(after.map(principalOf)).length).toBe(2)
     },
   )
 
@@ -318,7 +370,12 @@ describe.runIf(IS_WINDOWS)('hardenCredentialDir on Windows applies a real DACL',
     const first = aces(dir)
     expect(hardenCredentialDir(dir)).toBe(true)
     expect(aces(dir)).toEqual(first)
-    expect(windowsAclIsOwnerOnly(windowsAclEntries(dir), USER)).toBe(true)
+    // …and the settled state is one the skip RECOGNISES, so the second call was
+    // a read and nothing more. Without this the sequence would run in full on
+    // every config write forever on a machine with an un-nameable principal.
+    const entries = windowsAclEntries(dir)
+    const ignorable = new Set(unnameable(entries.map(principalOf)))
+    expect(windowsAclIsOwnerOnly(entries, USER, ignorable)).toBe(true)
   })
 
   it('re-hardens a directory that was recreated under a permissive parent', () => {
