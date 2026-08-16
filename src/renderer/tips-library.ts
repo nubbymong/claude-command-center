@@ -479,7 +479,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'ℹ How the Conductor MCP server injects into Claude settings',
         title: 'Conductor MCP Registration',
-        body: 'The Conductor MCP server hosts three sub-tools (Vision, Codex review, Host transfer) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review` and `fetch_host_screenshot`)\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
+        body: 'The Conductor MCP server hosts four sub-tools (Vision, Codex review, Host transfer, Agent Canvas) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review`, `fetch_host_screenshot` and the `canvas_*` tools)\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
       },
     },
   },

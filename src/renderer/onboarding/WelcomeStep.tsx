@@ -66,7 +66,14 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
         </div>
         <div className="privacy">
           <span className="lock">{LOCK}</span>
-          <span>Everything stays on your machine. Any command the Conductor runs is shown to you first.</span>
+          {/* Not "everything stays on your machine": Codex review sends a diff to
+              OpenAI, and GitHub polling + update checks reach github.com. Same
+              honest framing as Settings → GitHub ("No telemetry", then what the
+              feature actually calls). */}
+          <span>
+            No telemetry. Your sessions, logs and settings stay on your machine — only the features you switch on
+            reach out (GitHub, Codex review, update checks). Any command the Conductor runs is shown to you first.
+          </span>
         </div>
       </div>
       <div className="foot">

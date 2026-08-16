@@ -9,6 +9,7 @@ import { loadCredential } from '../credential-store'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
+import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -255,6 +256,37 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     if (options?.shellOnly && options.configId && options.terminalOptions?.hasSecretArg) {
       const argSecret = loadCredential(options.configId + '_argsecret') ?? undefined
       if (argSecret) resolvedOptions = { ...resolvedOptions, terminalSecret: argSecret }
+    }
+
+    // Agent Canvas UAT roots are NOT registered here any more (adversarial
+    // review, 2026-08-15 — BLOCKER 1). This site registered the RAW
+    // `options.cwd` and `options.resume.cwd` strings, neither of which had been
+    // through `resolveCwd` or `isHomeOrAncestor`, so a config whose
+    // workingDirectory was '.', empty or stale allowlisted the home directory
+    // and `~/.ssh`, `~/.claude`, `~/.aws` became servable. Worse,
+    // `resume.cwd` is read verbatim out of a transcript JSONL
+    // (transcript-discovery.getCwdFromTranscript), a file the agent can WRITE —
+    // so the model named its own allowlist entry.
+    //
+    // Registration now happens in pty-manager, after the spawn, against
+    // `resolveCwd(options.cwd)` — the session's CONFIGURED project directory —
+    // with the same home-directory refusal codex_review has carried since #188.
+    // Explicitly NOT the post-resume-override launch cwd: that value is
+    // `target.cwd`, i.e. transcript content, so registering it would have
+    // laundered the same model-chosen path through a different file (second
+    // pass, 2026-08-15). Only the configured directory may become a served root.
+    if (!options?.ssh) {
+      // Canvas continuity: stamp this session's work identity and let it adopt
+      // an orphaned canvas from a previous session of the same conversation /
+      // project (the VM "repush" bug, 2026-08-14). LOCAL sessions only — an SSH
+      // session's cwd names a path on the REMOTE machine. These stamps LABEL a
+      // canvas (ordering, the reclaim list); they never authorize a read.
+      noteSessionSpawnForCanvas(sessionId, {
+        cwd: options?.resume?.cwd ?? options?.cwd,
+        resumeUuid: options?.resume?.uuid,
+        // Part of the adoption key: a canvas never crosses accounts.
+        profileId: options?.profileId,
+      })
     }
 
     spawnPty(win, sessionId, resolvedOptions)

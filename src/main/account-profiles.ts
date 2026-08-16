@@ -6,6 +6,7 @@
 // are injectable so tests never touch the live ~/.claude. Profile metadata is
 // persisted as an atomic profiles.json under the profiles root (NOT via
 // config-manager) so _setRootsForTest is a total seam.
+import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -93,10 +94,595 @@ export function hardenCredentialFile(file: string): void {
   if (!IS_POSIX) return
   try { fs.chmodSync(file, CRED_FILE_MODE) } catch { /* best-effort */ }
 }
-/** chmod a credential-containing dir (a `.claude/`) to 0o700 on POSIX. */
-export function hardenCredentialDir(dir: string): void {
-  if (!IS_POSIX) return
-  try { fs.chmodSync(dir, CRED_DIR_MODE) } catch { /* best-effort */ }
+// ── The Windows half of the same policy ─────────────────────────────────────
+// `chmod` is a no-op on Windows, so `hardenCredentialDir` used to be
+// `if (!IS_POSIX) return` -- meaning that on this app's PRIMARY platform every
+// directory it "hardened" simply kept whatever its parent's ACL granted. The
+// resources directory is user-chosen, and an inherited ACE there reaches every
+// tree below it, including ones whose integrity the app depends on rather than
+// merely their secrecy (`canvas-plugin/`, whose SKILL.md is handed to every
+// local agent session via `--plugin-dir`).
+//
+// Windows has no mode bits, so the same "owner only" policy the POSIX branch
+// has enforced for releases is expressed the only way Windows can express it:
+// drop inherited ACEs and grant Full Control to exactly the current user and
+// SYSTEM. Measured on Windows 11 (2026-08-15); each measurement is load-bearing:
+//
+//   * icacls resolves EVERY principal before it applies ANY of them. A name
+//     that will not resolve fails the whole invocation (exit 1332) and leaves
+//     the DACL untouched -- verified directly: the inherited ACEs were still
+//     present afterwards. That is why `/inheritance:r` ships in the SAME
+//     invocation as its grants. The strip can never land without them, so there
+//     is no window where the app locks itself out of its own data, and no need
+//     for a two-step grant-then-strip.
+//   * `/inheritance:r` removes INHERITED ACEs ONLY. Explicit ones survive it,
+//     and `/grant:r` only replaces the principals it names -- so on a directory
+//     whose broad grant is EXPLICIT rather than inherited, the strip-and-grant
+//     that shipped left the broad grant exactly where it was. Measured: a dir
+//     seeded with an explicit `Authenticated Users:(OI)(CI)F` still had it
+//     afterwards, alongside the two ACEs we had just added. That is the whole
+//     ACE this change exists to remove, so the DACL is now REPLACED, not added
+//     to: every principal currently on it is `/remove`d in the same invocation,
+//     ahead of the grants.
+//   * Option order inside one invocation is honoured, and it is load-bearing:
+//     remove-then-grant leaves exactly the two intended ACEs, while the same
+//     options as grant-then-remove leave an EMPTY DACL. Both measured.
+//   * A `/remove` naming a principal that is not on the DACL succeeds (it has
+//     to: `/inheritance:r` runs first and may already have taken the inherited
+//     ACEs the remove list was read from). `/remove` without `:g`/`:d` takes
+//     deny ACEs too -- a planted deny would otherwise survive as a denial of
+//     service. Both measured.
+//   * A DACL can name a principal that icacls cannot resolve BACK, and that
+//     fails the whole invocation (1332) rather than the one option:
+//     `NT AUTHORITY\LogonSessionId_0_<n>` is in the creator token's default
+//     DACL under some logon types and is un-nameable -- measured here, not
+//     theorised. That is what the fallback below is for, and why it is a
+//     fallback to the strip-and-grant rather than a retry removing principals
+//     one at a time: a per-principal retry would leave the un-nameable one
+//     behind ANYWAY, so the directory could never reach the shape the skip
+//     recognises, and every later call would pay the whole sequence again. One
+//     failed batch and a strip-and-grant is the cheaper end of the same
+//     outcome. The grants that matter here all resolve -- `Everyone`,
+//     `Authenticated Users` and `Users` are well-known SIDs -- so what survives
+//     is the case that was never the exposure.
+//   * 12-25ms per icacls call, read or write, across the two Windows 11 boxes
+//     this has been measured on (10 reads: 126ms on one, 247ms on the other;
+//     258ms for a strip-and-grant, 512ms for the read+replace pair). The "~7ms"
+//     this comment once claimed was wrong by 2-3x and mattered, because these
+//     calls sit on synchronous paths: a session spawn (~4 calls) and
+//     `ensureConfigDir`, which runs on every config write and so on every
+//     debounced UI save.
+//   * A correctly hardened directory does NOT necessarily read back as two
+//     entries, and assuming it does is what broke the saving above. Measured
+//     2026-08-16: this box's creator-token default DACL carries
+//     `NT AUTHORITY\LogonSessionId_0_411756:(RX)`, which no `/remove` can take
+//     off (exit 1332 every time), so a fully hardened directory reads back as
+//     THREE. At the other end, a process running as SYSTEM settles on ONE:
+//     granting `S-1-5-18` twice in a single `/grant:r` yields one ACE
+//     (measured). Recognition is therefore "the learned principals, discounting
+//     the ones proven un-removable" -- never a count.
+//
+// Which is why the DACL is READ first and the write is skipped when it already
+// says exactly what we would write. The steady state -- every call after the
+// first on a given directory -- is then ONE call, the same cost as the single
+// write that shipped, and the pair is paid only when something genuinely needs
+// repairing.
+//
+// That is only true while the gate that LEARNS the pair and the gate that
+// RECOGNISES it agree, and they did not: learning demanded exactly two entries
+// while recognition already tolerated the un-removable ones. On the box above
+// nothing was ever learned, so the skip never fired and every config write paid
+// read + write + a read-back that could not succeed -- three calls, for the life
+// of the process, on exactly the machine shape (no inheritable ACEs, the
+// documented network-share resources configuration) this exists for. The two
+// are now the same gate, and the read-back is not paid for at all when the
+// caller can already see that it cannot match.
+//
+// The skip cannot mask an attacker's grant that a write would have
+// removed: to hold a DACL in that shape they need WRITE_DAC, i.e. they own the
+// directory, and an owner can re-grant themselves the instant any write of ours
+// returns. Hardening is not a defence against the owner of the directory.
+//
+// Unmemoised is a DECISION, not an oversight. A path-keyed memo would be wrong
+// twice over: `ensureCanvasPlugin` deletes and recreates its tree, so a
+// recreated directory is back on its parent's ACL while the memo still calls it
+// done -- and re-asserting on every call is the whole reason the POSIX branch
+// repairs installs made by older builds. The read-first skip gets the same
+// saving that a memo was tempting for, without a cache to invalidate: it asks
+// the filesystem rather than remembering, so a recreated directory reads as
+// unhardened and is repaired.
+//   * Children need no pass of their own. Windows resolves inheritance live, so
+//     existing and future subdirectories/files reflect the new DACL at once.
+const IS_WINDOWS = process.platform === 'win32'
+/** Absolute by intent. A step whose whole job is to REMOVE access must not be
+ *  resolvable through PATH, where anything earlier on it would run instead. */
+const ICACLS = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'icacls.exe')
+/** SYSTEM by SID: the account NAME is localized, the SID never is. */
+const SYSTEM_SID = '*S-1-5-18'
+/** Best-effort has to mean bounded -- the resources dir may be a network share. */
+const ICACLS_TIMEOUT_MS = 5000
+/**
+ * Every icacls invocation this module makes, reads included.
+ *
+ * Test seam, and the only honest one there is for the cost claim above: a
+ * settled directory and a re-written one have IDENTICAL DACLs, so no assertion
+ * about the result can tell whether the second call skipped its writes. The
+ * "steady state is one call" claim survived being false on a real machine
+ * precisely because nothing could see it.
+ */
+let icaclsCallsMade = 0
+export function _icaclsCallsForTest(): number { return icaclsCallsMade }
+/** Characters that would change what icacls PARSES rather than merely fail to
+ *  resolve: `:` and `()` are grant syntax, `,`/`;` separate entries, `/` starts
+ *  an option, `*` marks a literal SID, `\` splits domain from account, and
+ *  quotes/control bytes have no business in an account name. `execFileSync`
+ *  passes argv with no shell, so this is not about command injection -- it is
+ *  about one argument being read as a DIFFERENT grant than the intended one. */
+const ACL_PRINCIPAL_BAD_RE = /[:()\\/*",;]|[\u0000-\u001F\u007F]/
+function isAclPrincipalPart(s: string): boolean {
+  return s.length > 0 && s.length <= 256 && !ACL_PRINCIPAL_BAD_RE.test(s)
+}
+
+/** As above, for a principal read back OUT of a DACL, where `\` and spaces are
+ *  ordinary (`NT AUTHORITY\SYSTEM`) and only the control bytes are not. Written
+ *  by char code so this file contains no control characters of its own. */
+function hasControlChar(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c < 0x20 || c === 0x7f) return true
+  }
+  return false
+}
+
+function currentUserName(): string {
+  try { return os.userInfo().username } catch { return '' /* no identity available */ }
+}
+
+/**
+ * How to spell the current user for icacls, best spelling first: `DOMAIN\user`
+ * (unambiguous on a domain-joined machine), then the bare account name for when
+ * the domain half will not resolve (offline domain member, renamed machine).
+ *
+ * EMPTY when the identity cannot be established or will not survive icacls'
+ * own parsing -- and empty means NOTHING is applied, deliberately: an
+ * `/inheritance:r` whose companion grant we cannot name would lock the app out
+ * of its own data.
+ *
+ * `user`/`domain` are parameters rather than reads baked into the body so this
+ * guard is exercised on every leg of the CI matrix instead of only the Windows
+ * one -- the same reason `isTransientRenameError` takes `platform`.
+ */
+export function windowsAclPrincipals(user: string = currentUserName(), domain: string = process.env.USERDOMAIN ?? ''): string[] {
+  if (!isAclPrincipalPart(user)) return []
+  return isAclPrincipalPart(domain) ? [`${domain}\\${user}`, user] : [user]
+}
+
+/** The DACL entries icacls reports for `target`, one `principal:(flags)` per
+ *  entry. Empty when the DACL cannot be read at all, which is a fallback
+ *  signal and not an "it is empty" claim -- see `hardenDirAclWindows`.
+ *
+ *  icacls echoes the path on the first line, immediately followed by that
+ *  line's ACE; later ACEs are indented. `:(` appears in every ACE and in
+ *  neither the echoed path nor the trailing "Successfully processed" summary. */
+export function windowsAclEntries(target: string): string[] {
+  let out: string
+  icaclsCallsMade++
+  try {
+    // stdout captured, stderr discarded: an unreadable directory is a normal
+    // outcome here (it falls back), not something to print on every config write.
+    out = execFileSync(ICACLS, [target], {
+      encoding: 'utf8', windowsHide: true, timeout: ICACLS_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch { return [] }
+  return out
+    .split(/\r?\n/)
+    .map((line) => (line.startsWith(target) ? line.slice(target.length) : line).trim())
+    .filter((line) => line.includes(':('))
+}
+
+/** An ACE's principal is everything ahead of its first `:(`. */
+function aclEntryPrincipal(entry: string): string {
+  return entry.slice(0, entry.indexOf(':('))
+}
+
+/** How many principals one invocation will name back. A DACL longer than this
+ *  is not a directory this app made; bound the argv rather than grow it, and
+ *  bound it by REFUSING the batch rather than truncating it -- a truncated
+ *  remove list would leave whichever principals fell off the end in place while
+ *  the grants below made the result look deliberate. */
+const ACL_MAX_REMOVALS = 32
+
+/**
+ * `/remove <principal>` arguments for every principal on `entries`, spelled the
+ * way icacls printed them -- which is the spelling it accepts back.
+ *
+ * Exported (with `windowsAclPrincipals`) so the parsing runs on every leg of the
+ * CI matrix, not only the Windows one.
+ *
+ * An entry that cannot be named back SAFELY is skipped rather than failing the
+ * batch: removing the other principals is still an improvement, and the caller
+ * treats a partial result as a partial result. The rejects are the ones that
+ * would be READ AS SOMETHING ELSE rather than merely fail to resolve -- a
+ * leading `/` is an icacls option, `*` marks a literal SID, and `"` and control
+ * bytes have no business in an account name. `\` and spaces are NOT rejected:
+ * `NT AUTHORITY\SYSTEM` and `BUILTIN\Administrators` are the two most common
+ * entries there are. A bare SID (an ACE whose account no longer resolves, which
+ * icacls prints unadorned) is handed back with the `*` prefix that makes icacls
+ * read it as a SID instead of a name.
+ */
+export function windowsAclRemovalArgs(entries: string[], ignorable?: ReadonlySet<string>): string[] {
+  if (entries.length > ACL_MAX_REMOVALS) return []
+  const args: string[] = []
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    const raw = aclEntryPrincipal(entry)
+    if (raw.length === 0 || raw.length > 256) continue
+    if (/^[/*]/.test(raw) || raw.includes(String.fromCharCode(34)) || hasControlChar(raw)) continue
+    // `ignorable` is keyed on the spelling icacls PRINTS (`raw`), not the one it
+    // is handed back (`principal`, which stars a bare SID) -- the two differ for
+    // exactly the orphaned-SID case the memo exists to remember.
+    const principal = /^S-1-[\d-]+$/.test(raw) ? `*${raw}` : raw
+    if (seen.has(principal) || ignorable?.has(raw)) continue
+    seen.add(principal)
+    args.push('/remove', principal)
+  }
+  return args
+}
+
+/**
+ * Whether `entries` is ALREADY the DACL this module writes: one ACE per learned
+ * principal, none inherited, all Full Control with the container/object inherit
+ * flags, and their principals EXACTLY `expected`.
+ *
+ * `expected` normally holds two principals, but ONE is a legitimate settled
+ * state and has to be accepted or the process that produces it can never settle:
+ * a process running as SYSTEM grants the same SID twice, and icacls collapses
+ * that to a single ACE (measured). It stays an EQUALITY either way -- a
+ * one-principal `expected` licenses exactly one entry, not "at least the ones we
+ * know", so nothing extra rides along.
+ *
+ * `expected` is observed, not reasoned about -- see `hardenedPrincipals`. An
+ * earlier version of this tried to recognise the pair by shape instead: two
+ * full-control entries, one of whose ACCOUNT name matched the current user. An
+ * adversarial pass showed on a real machine that a DACL of
+ * `[Everyone:(OI)(CI)(F), NICK_DESKTOP\nicho:(OI)(CI)(F)]` satisfies that and
+ * was reported hardened with the write skipped -- leaving Everyone in Full
+ * Control of a credential directory, which is the exposure this whole branch
+ * exists to remove. `[EVILPC\nicho:(OI)(CI)(F), EVILPC\bob:(OI)(CI)(F)]` passed
+ * it too: the account half is compared without its domain, so a same-named
+ * principal from another machine (the resources dir is allowed to be a network
+ * share) read as the current user. Nothing about the second entry was checked
+ * at all, though the doc claimed SYSTEM was "matched structurally".
+ *
+ * `ignorable` names principals a previous call PROVED cannot be removed on this
+ * machine; entries for those do not count against the answer, which is what
+ * lets a directory carrying one still settle into a state this recognises
+ * instead of paying the full sequence on every call forever.
+ *
+ * Both are parameters rather than reads baked into the body so this runs on
+ * every leg of the CI matrix.
+ */
+export function windowsAclIsOwnerOnly(
+  entries: string[],
+  expected: ReadonlySet<string> | null,
+  ignorable?: ReadonlySet<string>,
+): boolean {
+  if (!expected || expected.size < 1 || expected.size > 2) return false
+  if (ignorable?.size) entries = entries.filter((e) => !ignorable.has(aclEntryPrincipal(e)))
+  if (entries.length !== expected.size) return false
+  if (!entries.every((e) => !e.includes('(I)') && e.endsWith(':(OI)(CI)(F)'))) return false
+  const principals = entries.map(aclEntryPrincipal)
+  return new Set(principals).size === expected.size && principals.every((p) => expected.has(p))
+}
+
+/**
+ * icacls, reporting the exit code when it actually ran and exited.
+ *
+ * `null` means it never got that far -- killed on the timeout, failed to spawn,
+ * or `child_process` mocked away -- and callers must NOT read that as evidence
+ * about the arguments. Only a real exit code says anything about the DACL.
+ */
+function icaclsStatus(args: string[]): number | null {
+  icaclsCallsMade++
+  try {
+    execFileSync(ICACLS, args, { stdio: 'ignore', windowsHide: true, timeout: ICACLS_TIMEOUT_MS })
+    return 0
+  } catch (err) {
+    // `status` is a number only for a process that exited on its own; a timeout
+    // kill leaves it null with `signal` set. Read through `?.` because this must
+    // not throw for a caller that documents it never does -- a mocked
+    // `child_process` can reject with anything at all, including a primitive.
+    const status = (err as { status?: unknown } | null | undefined)?.status
+    return typeof status === 'number' ? status : null
+  }
+}
+
+function icacls(args: string[]): boolean {
+  return icaclsStatus(args) === 0 /* else a principal did not resolve, or icacls is unavailable */
+}
+
+/**
+ * `ERROR_NONE_MAPPED` -- "No mapping between account names and security IDs was
+ * done". The ONLY exit code that means what the un-removable memo below claims:
+ * this string does not name a principal on this machine. Measured on Windows 11
+ * (2026-08-16): an un-nameable `NT AUTHORITY\LogonSessionId_0_<n>` gives 1332
+ * on every attempt, a nameable principal that is simply not on the DACL gives 0
+ * (a success), and a directory that has gone away gives 2.
+ */
+const ERROR_NONE_MAPPED = 1332
+
+/**
+ * REPLACE `dir`'s Windows DACL with the current user + SYSTEM: drop every
+ * inherited ACE, remove every explicit one, grant those two. Returns whether it
+ * was applied.
+ *
+ * Never throws. Every caller sits on a session-spawn or config-write path where
+ * a permissions failure must not be fatal -- including the case where a mocked
+ * or absent `child_process` makes `execFileSync` unusable.
+ */
+/**
+ * Principals this machine's DACLs NAME but icacls cannot resolve back, learned
+ * by trying. Per-process and never invalidated, which is safe because it is a
+ * property of the machine and the logon session rather than of any directory:
+ * a name that will not resolve now will not resolve later in the same session,
+ * and a wrong entry here can only cost one un-removed principal that a removal
+ * had already failed on.
+ *
+ * Only a SINGLE-principal removal failure adds to it. A failed BATCH proves
+ * nothing about which of its principals was at fault, and memoising on that
+ * would teach the app to stop removing a grant it could have removed.
+ *
+ * And only a failure that PROVES the name has no SID (`ERROR_NONE_MAPPED`)
+ * adds to it, because an entry in here is never removed again for the life of
+ * the process AND is discounted by the skip check -- so a broad grant that
+ * landed in here by accident would be a permanently un-hardened directory
+ * reporting itself hardened. `/remove` also fails when the call times out (the
+ * resources dir may be a network share and the call is capped), when the
+ * directory has gone away mid-loop (exit 2, measured), and on access denied;
+ * none of those say anything about the principal, and all of them used to
+ * memoise it.
+ */
+const unremovableAclPrincipals = new Set<string>()
+const UNREMOVABLE_MEMO_MAX = 64
+
+/**
+ * Broad principals that must never reach the memo whatever icacls says about
+ * them -- the grants this hardening exists to REMOVE.
+ *
+ * A principal is only reliably identified by SID: the display names are
+ * localized (`Everyone` is `Jeder`, `Todos`, ...) and icacls prints names, not
+ * SIDs. But it prints a SID exactly when it could not resolve one, which is
+ * exactly the case where a removal fails with `ERROR_NONE_MAPPED` and the memo
+ * would otherwise swallow it -- so in the one case that is reachable, the SID
+ * is right there to be checked. The reachable one is a DOMAIN group on a
+ * machine that has lost contact with its DC: `S-1-5-21-<domain>-513`
+ * (Domain Users) and friends print bare and fail to resolve back.
+ *
+ * Local well-known SIDs (`S-1-1-0`, `S-1-5-11`, `S-1-5-32-545`) resolve in both
+ * directions without a DC -- measured, `/remove *S-1-5-11` exits 0 even on a
+ * DACL that does not carry it -- so they cannot reach the memo in the first
+ * place. They are listed anyway: the cost is a set lookup, and the failure mode
+ * of leaving them out is silent.
+ */
+const BROAD_WELL_KNOWN_SIDS = new Set([
+  'S-1-1-0',      // Everyone
+  'S-1-5-2',      // NETWORK
+  'S-1-5-4',      // INTERACTIVE
+  'S-1-5-7',      // Anonymous Logon
+  'S-1-5-11',     // Authenticated Users
+  'S-1-5-13',     // Terminal Server Users
+  'S-1-5-113',    // Local account
+  'S-1-5-114',    // Local account and member of Administrators group
+  'S-1-5-32-544', // BUILTIN\Administrators
+  'S-1-5-32-545', // BUILTIN\Users
+  'S-1-5-32-546', // BUILTIN\Guests
+  'S-1-5-32-547', // BUILTIN\Power Users
+])
+/** Domain-relative RIDs that name everybody, or every administrator, in a
+ *  domain: Domain Admins/Users/Guests/Computers/Controllers, Schema Admins,
+ *  Enterprise Admins, Group Policy Creator Owners. */
+const BROAD_DOMAIN_RID_RE = /^S-1-5-21-[\d-]+-(512|513|514|515|516|518|519|520)$/
+
+/**
+ * Whether a single `/remove` of `printed` that exited `status` PROVES the
+ * principal cannot be named back -- the only thing that may enter the memo.
+ *
+ * Exported (with the parsing above) so it runs on every leg of the CI matrix
+ * rather than only the Windows one; nothing else calls it.
+ */
+export function aclRemovalProvesUnnameable(printed: string, status: number | null): boolean {
+  // Anything else is a failure of the CALL, not a fact about the principal: a
+  // timeout (status null, the process was killed), a directory that went away
+  // (2), access denied. Those used to memoise, which turned one blip into a
+  // principal never removed again and discounted by the skip check for the life
+  // of the process.
+  if (status !== ERROR_NONE_MAPPED) return false
+  return !(BROAD_WELL_KNOWN_SIDS.has(printed) || BROAD_DOMAIN_RID_RE.test(printed))
+}
+
+/**
+ * Record that a single `/remove` of `printed` failed with `status`. Returns
+ * whether the principal is now memoised as un-removable -- which is also the
+ * answer to "will the skip check discount it", and so to "could a read-back of
+ * this directory recognise anything".
+ */
+function noteUnremovableAclPrincipal(printed: string, status: number | null): boolean {
+  if (unremovableAclPrincipals.has(printed)) return true
+  if (!aclRemovalProvesUnnameable(printed, status)) return false
+  if (unremovableAclPrincipals.size >= UNREMOVABLE_MEMO_MAX) return false
+  unremovableAclPrincipals.add(printed)
+  return true
+}
+
+/**
+ * The principals icacls PRINTS for the pair this module grants -- two of them,
+ * or one where both collapse to the same SID -- learned by reading a directory
+ * back after a write that succeeded, and reused for every directory after that:
+ * they are a property of the machine (this user, this machine's SYSTEM), not of
+ * any one directory.
+ *
+ * It has to be LEARNED, and specifically read back rather than taken from the
+ * grant arguments, because neither half is the string that was granted. SYSTEM
+ * is granted as `*S-1-5-18` exactly because its display name is localized, and
+ * comes back as that localized name; the user is granted `DOMAIN\user` or a
+ * bare account name and comes back in whichever spelling icacls RESOLVED, which
+ * is not necessarily either. Mapping a granted SID to its printed name needs the
+ * lookup only icacls itself can do here, i.e. another process spawn on a path
+ * that runs on every config write -- which is the read-back, with extra steps.
+ * Until a write has been read back, nothing is recognised and every call writes
+ * -- the same cost the single strip-and-grant always paid, so the unlearned
+ * state is never worse than what shipped.
+ *
+ * RESIDUAL: an attacker who can rewrite the DACL between our write and the read
+ * back could teach this the wrong pair, and it is never re-learned. That takes
+ * WRITE_DAC on a directory the app just hardened -- i.e. ownership of it -- plus
+ * winning a ~25ms race, and an attacker holding WRITE_DAC can re-grant
+ * themselves after any write of ours in any case. Hardening is not a defence
+ * against the owner of the directory.
+ */
+let hardenedPrincipals: ReadonlySet<string> | null = null
+
+/**
+ * How many read-backs may be spent trying to learn the pair before the module
+ * stops asking.
+ *
+ * The callers below decline the read-back whenever they can already see it
+ * cannot match, which covers the case that actually turned up. This bounds
+ * what is left -- an unreadable DACL, a directory something else keeps
+ * re-granting -- so no configuration can make the module pay a THIRD icacls
+ * call on every config write for the life of the process. Giving up costs the
+ * skip, i.e. exactly the cost that shipped before the skip existed.
+ */
+const LEARN_ATTEMPT_MAX = 4
+let learnAttemptsLeft = LEARN_ATTEMPT_MAX
+
+/**
+ * Observe what a just-succeeded write produced, and become the template for
+ * every directory after that.
+ *
+ * The gate here is the gate `windowsAclIsOwnerOnly` applies, and it has to be:
+ * a learning rule stricter than the recognition rule means the module can never
+ * recognise the state it just wrote. It demanded exactly two entries while
+ * recognition discounted the un-removable ones, and measured on Windows 11
+ * (2026-08-16) a correctly hardened directory on this box reads back as THREE
+ * -- so nothing was ever learned, the skip never fired, and every config write
+ * paid three icacls calls forever. One entry is a settled state too (a process
+ * running as SYSTEM); see `windowsAclIsOwnerOnly`.
+ *
+ * Only ever called after a write of OURS returned success, which is what makes
+ * observing safe: an unhardened DACL is never a template, so the shape-matching
+ * this replaced -- which read `[Everyone:(OI)(CI)(F), <user>:(OI)(CI)(F)]` as
+ * hardened -- cannot come back through here.
+ */
+function learnHardenedPrincipals(dir: string): void {
+  if (hardenedPrincipals || learnAttemptsLeft <= 0) return
+  learnAttemptsLeft--
+  const entries = windowsAclEntries(dir).filter((e) => !unremovableAclPrincipals.has(aclEntryPrincipal(e)))
+  if (entries.length < 1 || entries.length > 2) return
+  if (!entries.every((e) => !e.includes('(I)') && e.endsWith(':(OI)(CI)(F)'))) return
+  const principals = new Set(entries.map(aclEntryPrincipal))
+  if (principals.size === entries.length) hardenedPrincipals = principals
+}
+
+/** Test seam: the learned pair, the un-removable memo and the learn budget are
+ *  per-PROCESS machine state, so a test that wants to watch LEARNING happen has
+ *  to be able to put the module back to its unlearned state. */
+export function _resetAclStateForTest(): void {
+  hardenedPrincipals = null
+  unremovableAclPrincipals.clear()
+  learnAttemptsLeft = LEARN_ATTEMPT_MAX
+}
+
+export function hardenDirAclWindows(dir: string): boolean {
+  if (!IS_WINDOWS) return false
+  const spellings = windowsAclPrincipals()
+  if (spellings.length === 0) return false
+
+  const entries = windowsAclEntries(dir)
+  if (windowsAclIsOwnerOnly(entries, hardenedPrincipals, unremovableAclPrincipals)) return true
+
+  const removals = windowsAclRemovalArgs(entries, unremovableAclPrincipals)
+
+  // Principals this call will leave on the DACL that the skip check will NOT
+  // discount, and so proof that reading the result back cannot recognise
+  // anything. `windowsAclRemovalArgs` refuses to hand back a principal it cannot
+  // spell safely and drops the ones over its cap, and those stay exactly where
+  // they are. Counted BEFORE any write, so a read-back that is already known to
+  // be pointless is never paid for -- which is the other half of the cost bug:
+  // the un-nameable machine ran `learnHardenedPrincipals` on every single call
+  // and it could not have succeeded on any of them.
+  const namedBack = new Set<string>()
+  for (let i = 1; i < removals.length; i += 2) {
+    namedBack.add(removals[i].startsWith('*') ? removals[i].slice(1) : removals[i])
+  }
+  const strandedAtStart = entries
+    .map(aclEntryPrincipal)
+    .filter((p) => !namedBack.has(p) && !unremovableAclPrincipals.has(p)).length
+
+  for (const principal of spellings) {
+    const grants = ['/inheritance:r', '/grant:r', `${principal}:(OI)(CI)F`, `${SYSTEM_SID}:(OI)(CI)F`]
+
+    // The replace, in one invocation: nothing is stripped unless every name in
+    // it resolved, so there is no window in which the app has no access.
+    if (removals.length > 0 && icacls([dir, ...removals, ...grants])) {
+      if (strandedAtStart === 0) learnHardenedPrincipals(dir)
+      return true
+    }
+
+    // It did not. Either this spelling of the user does not resolve -- the next
+    // one is tried below -- or one of the removals does not, and the exit code
+    // does not say which. Establish the app's own access FIRST, with the
+    // strip-and-grant that shipped: if this fails it is the spelling, nothing
+    // has been removed, and the next spelling gets its turn.
+    if (!icacls([dir, ...grants])) continue
+    if (removals.length === 0) {
+      if (strandedAtStart === 0) learnHardenedPrincipals(dir)
+      return true
+    }
+
+    // Access is granted and the grants are now PROVEN to resolve. Remove the
+    // rest one at a time -- each is independent, and a failure names the
+    // principal that caused it. Doing this rather than giving up on the
+    // removals is the difference between an explicit `Authenticated Users`
+    // being removed on such a machine and surviving.
+    let stranded = strandedAtStart
+    for (let i = 1; i < removals.length; i += 2) {
+      const target = removals[i]
+      const status = icaclsStatus([dir, '/remove', target])
+      if (status === 0) continue
+      // Memoised in the spelling icacls PRINTS, which is what both the removal
+      // builder and the skip check compare against -- a bare SID is handed to
+      // `/remove` with a `*` prefix, and remembering that starred form instead
+      // matched neither, so the memo silently did nothing and the directory
+      // could never settle. `noteUnremovableAclPrincipal` refuses everything
+      // that is not a proven name-resolution failure, and everything too broad
+      // to give up on whatever the exit code says.
+      const printed = target.startsWith('*') ? target.slice(1) : target
+      if (!noteUnremovableAclPrincipal(printed, status)) stranded++
+    }
+    // The pass above removes the app's own entries too, so re-grant. The same
+    // argv succeeded moments ago, which is why it is safe to have removed them:
+    // the only window where this directory has no DACL of ours is between those
+    // two calls, and it closes with a command already known to work. Its result
+    // is the answer -- reporting success after a re-grant that did not land
+    // would report a directory the app has just locked itself out of as hardened.
+    const regranted = icacls([dir, ...grants])
+    // A principal still on the DACL that the memo does not discount makes the
+    // read-back unable to match, so it is not paid for.
+    if (regranted && stranded === 0) learnHardenedPrincipals(dir)
+    return regranted
+  }
+  return false
+}
+
+/** Restrict a credential-containing dir (a `.claude/`) to its owner: 0700 on
+ *  POSIX, an explicit user+SYSTEM DACL on Windows. Returns whether it took, so
+ *  a caller that can report the failure may; the rest ignore it exactly as
+ *  before and stay best-effort. */
+export function hardenCredentialDir(dir: string): boolean {
+  if (!IS_POSIX) return hardenDirAclWindows(dir)
+  try { fs.chmodSync(dir, CRED_DIR_MODE) } catch { /* best-effort */ return false }
+  return true
 }
 
 /** The app-managed roots below which every credential/identity/backup directory

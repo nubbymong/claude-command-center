@@ -35,6 +35,9 @@ import {
   removeLocalSessionMcpConfig,
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
+import { ensureCanvasPlugin } from './canvas/canvas-plugin'
+import { registerCanvasUatRoot, revokeCanvasUatRoots } from './canvas/canvas-store'
+import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
@@ -1257,6 +1260,48 @@ export function spawnPty(
         registerCodexReviewSession(sessionId, claudeCwd)
       }
 
+      // The Agent Canvas serving allowlist rides the same decision, for the same
+      // reason — but NOT against the same directory (adversarial review,
+      // 2026-08-15, second pass).
+      //
+      // `claudeCwd` is TRANSCRIPT-DERIVED whenever an exact-resume applies. It
+      // starts as `resolvedCwd` and is then overwritten with
+      // `resolveResumeLaunch(effectiveTarget).claudeCwd`, which is
+      // `target.cwd` — and `target` is either the persisted `options.resume` or
+      // the self-captured `resolveResumeTargetFromTranscript()`, whose cwd is
+      // THE FIRST `cwd` STRING IN THE TRANSCRIPT JSONL, verbatim. That file is
+      // one the agent can write. So an agent that rewrites its own transcript's
+      // first line to `"cwd":"C:\\Users\\<u>\\.claude"` and creates the matching
+      // mangled projects directory names its own served root the next time the
+      // user hits Restart or Switch-account. `isHomeOrAncestor` does not catch
+      // it: `~/.claude` is a CHILD of home, not an ancestor. From there
+      // `canvas_render { htmlPath: '…/.claude/.credentials.json' }` reads the
+      // OAuth token and the pre-allowed `canvas_snapshot` reads it back out of
+      // the DOM. The previous fix moved the registration to this file and
+      // claimed "no served root is derived from transcript content any more";
+      // moving the CALL did not change where the VALUE came from.
+      //
+      // So the canvas root is `resolvedCwd` — `resolveCwd(options.cwd)`, the
+      // session's CONFIGURED project directory, which no transcript can reach —
+      // and never the resume override. The cost is bounded and known: a session
+      // that exact-resumes a conversation from OUTSIDE its configured project
+      // directory can serve nothing (renders are refused, not misdirected).
+      //
+      // codex_review above deliberately keeps `claudeCwd`: changing what it
+      // reviews is a separate behavioural decision, and its exposure is
+      // different in kind (it reads for a review the user reads, with no
+      // pre-allowed tool reading the bytes back). It is flagged, not changed.
+      if (isHomeOrAncestor(resolvedCwd)) {
+        logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the configured project directory resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home).`)
+      } else if (!registerCanvasUatRoot(sessionId, resolvedCwd)) {
+        // Floor-checked again inside the store (absolute, real, a directory, not
+        // home, not a volume root, not a dot-dir under home) — two independent
+        // refusals rather than one, because this is the only thing standing
+        // between a prompt-injected agent and a file read with the app's
+        // privileges.
+        logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the configured project directory was refused by the canvas store.`)
+      }
+
       // Explicitly cd to the project directory, then launch Claude.
       // The cd is critical — it ensures Claude sees the correct project directory
       // regardless of PowerShell profile scripts or PTY cwd propagation issues.
@@ -1295,21 +1340,36 @@ export function spawnPty(
       // overrides. P7.7.3: also seed a per-session MCP config file
       // (--mcp-config), because claude.exe ignores mcpServers in --settings
       // and reads it ONLY from --mcp-config or ~/.claude.json.
+      //
+      // Read the app settings ONCE for this spawn: the settings block, the MCP
+      // block and the canvas-plugin block below all key off them, and reading
+      // fresh per spawn is what lets a Settings toggle apply to the next
+      // session without an app restart.
+      const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+      // Built-in tools master (onboarding p6 / Settings): also gates the
+      // canvas workflow plugin + pre-allowed canvas tools — without the
+      // conductor MCP entry there is nothing for either to talk to.
+      const conductorOn = appSettings?.conductorToolsEnabled !== false
       try {
         // v1.5.12: thread the CCC AppSettings.disableClaudeWorkflows flag
         // through so Claude Code's dynamic-workflow feature can be killed
         // at the per-session level without the user hand-editing
-        // ~/.claude/settings.json. Read fresh on every spawn so a Settings
-        // toggle takes effect on the next session without an app restart.
-        const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean }>('settings')
+        // ~/.claude/settings.json.
         const disableWorkflows = !!appSettings?.disableClaudeWorkflows
         // Master status-line switch (onboarding p4 / Settings -> Status line):
         // absent means ON (pre-upgrade configs). Off = no resourcesDir, so the
         // per-session clone gets no statusLine key and Claude runs without the
-        // bundled script. Read fresh per spawn; sessions already running keep
-        // theirs until restarted.
+        // bundled script. Sessions already running keep theirs until restarted.
         const statusLineOn = appSettings?.statusLineEnabled !== false
-        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows, resourcesDir: statusLineOn ? getResourcesDirectory() : undefined })
+        const sesPath = writeLocalSessionSettings(sessionId, {
+          disableWorkflows,
+          resourcesDir: statusLineOn ? getResourcesDirectory() : undefined,
+          // SEC-BATCH FLAG (2026-08-14): pre-allow CCC's own canvas tools so
+          // the render->review loop doesn't stall in approval prompts (the VM
+          // transcript lost 11 minutes to one). Additive allow only — a user
+          // deny still wins under Claude's permission semantics.
+          allowCanvasTools: conductorOn,
+        })
         // injectHooks rewrites the per-session settings file to point Claude's
         // hook events at our local gateway, which drives the session attention
         // pulse, statusline ingest, and conversation logging. Skipped only when
@@ -1338,9 +1398,6 @@ export function spawnPty(
         logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
       try {
-        // Built-in tools master (onboarding p6 / Settings): off = the session's
-        // mcp-config carries no conductor entry. Read fresh per spawn.
-        const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
         const mcpCfgPath = writeLocalSessionMcpConfig(sessionId, conductorOn)
         // Only pass --mcp-config if the file exists: the writer fails closed, and
         // claude exits 1 on a missing --mcp-config path. Omit it on a write
@@ -1352,6 +1409,25 @@ export function spawnPty(
         }
       } catch (err) {
         logError(`[pty] Failed to seed per-session MCP config for ${sessionId}: ${(err as Error)?.message ?? err}`)
+      }
+
+      // Agent Canvas workflow plugin (P6 seed): the skill that drives the
+      // render->review loop so the user never has to know a tool name.
+      // Session-scoped via --plugin-dir (nothing written to ~/.claude).
+      // Skipped for pinned legacy CLI versions — they may predate the flag,
+      // and an unknown flag fails the whole launch.
+      if (conductorOn && !options?.legacyVersion?.enabled) {
+        try {
+          // existsSync for the same reason --settings and --mcp-config check:
+          // a flag pointing at a missing path is at best ignored and at worst
+          // exits the CLI, and this one is appended to every session.
+          const pluginDir = ensureCanvasPlugin()
+          if (pluginDir && fs.existsSync(pluginDir)) {
+            extraFlags += ` --plugin-dir ${quoteArgForShell(pluginDir, os.platform() === 'win32')}`
+          }
+        } catch (err) {
+          logWarn(`[pty] canvas plugin unavailable for ${sessionId}: ${(err as Error)?.message ?? err}`)
+        }
       }
 
       // Build --agents flag if agent templates are configured
@@ -1551,6 +1627,20 @@ export function spawnPty(
       try { syncPrimaryCredentialsWithGlobal() } catch { /* best-effort */ }
       // Bug 4: release this session's pinned vision browser target/context.
       try { teardownVisionSession(sessionId) } catch { /* best-effort */ }
+      // Canvas link state (the cwd / resume uuid / profile used to LABEL and
+      // order the reclaim list). `forgetSessionForCanvas` had no caller at all
+      // until now, so spawnInfo grew for the life of the install and a dead
+      // session's project directory kept ordering other sessions' reclaim
+      // lists (adversarial review, 2026-08-15).
+      //
+      // It is HERE and not in cleanupSessionResources on purpose: the entry is
+      // written by the pty:spawn IPC handler BEFORE spawnPty runs, and spawnPty
+      // opens with killPty → cleanupSessionResources, so clearing it there
+      // would wipe every restart's stamps a moment after they were set. This
+      // block only runs when no newer PTY has taken the session over — i.e.
+      // when the PTY really is gone for good, which is the contract the
+      // function documents.
+      forgetSessionForCanvas(sessionId)
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }
@@ -1739,6 +1829,15 @@ function cleanupSessionResources(sessionId: string): void {
   // otherwise defeat the home-dir refusal and the "SSH never registers"
   // invariant. Idempotent: a no-op when the session was never registered.
   unregisterCodexReviewSession(sessionId)
+  // SECURITY (adversarial review, 2026-08-15 — BLOCKER 1): the canvas serving
+  // allowlist dies with the session, for the identical reason. The first cut
+  // had NO production revocation at all — a root registered by any local spawn
+  // stayed servable for the life of the app process, so a session that exited
+  // hours ago still contributed a readable project to whichever agent was
+  // running now. Re-established per spawn (spawnPty calls killPty → here before
+  // it re-registers), so a session that restarts into a home-rooted, SSH,
+  // shell-only or Codex state inherits nothing.
+  revokeCanvasUatRoots(sessionId)
 }
 
 // U8: grace before killing an SSH PTY so the in-band remote-cleanup command has

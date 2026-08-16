@@ -159,25 +159,24 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         {session.fastMode === true && <FastBolt />}
       </span>
 
-      {/* Line 2: model meta + context meter + right-aligned %. One grid child
-          spanning the full 2-column grid (1 / 3) so it aligns under the name in
-          column 1. */}
+      {/* Line 2: model meta + right-aligned context %. One grid child spanning
+          the full 2-column grid (1 / 3) so it aligns under the name in column 1.
+          The meter is NOT here: it used to sit between the meta and the % as a
+          flex-basis-0 item, so a long model name ("Opus 5 (1M context)") filled
+          the row's natural width, left no positive free space to grow into, and
+          the bar rendered 0px wide — it only ever showed for short model names.
+          It now lives on its own full-width bottom row (below). */}
       <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '1 / 3' }} data-testid="card-line2">
-        <span className="meta truncate">{metaLine}</span>
-        {/* Context meter is Claude-session telemetry. Terminal-only (shell)
+        <span className="meta truncate flex-1 min-w-0" title={metaLine}>{metaLine}</span>
+        {/* Context % is Claude-session telemetry. Terminal-only (shell)
             sessions don't have a reliable context signal — the statusline bridge
-            can leak a stale/foreign percentage onto them — so hide the meter and
-            the % for shell sessions until there's proper integration. The model ·
-            mode meta stays. */}
+            can leak a stale/foreign percentage onto them — so hide the % (and the
+            meter row below) for shell sessions until there's proper integration.
+            The model · mode meta stays. */}
         {!session.shellOnly && (
-          <>
-            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
-              <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
-            </div>
-            <span className="meta w-9 text-right tabular-nums shrink-0">
-              {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
-            </span>
-          </>
+          <span className="meta w-9 text-right tabular-nums shrink-0">
+            {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
+          </span>
         )}
       </div>
 
@@ -192,6 +191,23 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={session.accountEmail} data-testid="account-name">
             {accountName}
           </span>
+        </div>
+      )}
+
+      {/* Bottom rule: the context meter on its OWN full-span grid row, under the
+          account line when present (row 4; row 3 for accountless cards — set
+          explicitly so no empty 2px-gap row appears). Nothing shares the row, so
+          no model-name length can squeeze the bar out again. 3px tall + the 2px
+          row-gap ≈ 5px of extra card height. Same shell gate as the % above.
+          Unknown usage renders the empty track (0% fill), matching the old
+          empty-bar behaviour until the first statusline tick. */}
+      {!session.shellOnly && (
+        <div
+          className={`relative z-10 h-[3px] rounded-full overflow-hidden ${accountName ? 'row-start-4' : 'row-start-3'}`}
+          style={{ gridColumn: '1 / 3', background: 'var(--surface-sunken)' }}
+          data-testid="context-meter-row"
+        >
+          <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
         </div>
       )}
     </button>

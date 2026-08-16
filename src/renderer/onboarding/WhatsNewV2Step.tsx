@@ -31,7 +31,7 @@ const CARDS: { icon: string; title: string; desc: string; beta?: boolean }[] = [
   {
     icon: GEAR,
     title: 'Built-in tools, your call',
-    desc: 'Vision, code review and host screenshots each get a real switch, enforced for local, SSH and Codex sessions.',
+    desc: 'Vision, code review, host screenshots and the Agent Canvas each get a real switch, enforced for local, SSH and Codex sessions.',
   },
   {
     icon: ROCKET,

@@ -9,7 +9,7 @@
  * source-text guard test pins those; this spec proves what they yield).
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect, type Frame } from '@playwright/test'
 import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
 
 let ctx: IsolatedApp
@@ -35,6 +35,20 @@ test.afterAll(async () => {
 test.describe('Agent Canvas content frame', () => {
   let frameUrl = ''
 
+  /**
+   * `page.frame()` is a SNAPSHOT lookup, not a waiter: asking for the child
+   * frame in the same tick the <iframe> is appended always returns null, and
+   * every assertion below it then fails for the wrong reason. Poll until the
+   * frame has actually attached AND navigated to the canvas URL.
+   */
+  async function canvasFrame(): Promise<Frame> {
+    expect(frameUrl, 'the render step must have set frameUrl').not.toBe('')
+    await expect
+      .poll(() => page.frame({ url: frameUrl }) !== null, { timeout: 10_000 })
+      .toBe(true)
+    return page.frame({ url: frameUrl })!
+  }
+
   test('renders through the real ingress and loads over ccc-ux:// (no open port)', async () => {
     const result = await page.evaluate(async ({ sid, html }) => {
       const api = (window as never as { electronAPI: { canvas: { render: (a: unknown) => Promise<{ canvasId: string; versionId: string }> } } }).electronAPI
@@ -56,13 +70,12 @@ test.describe('Agent Canvas content frame', () => {
       document.body.appendChild(frame)
     }, frameUrl)
 
-    const frame = page.frame({ url: frameUrl })
-    expect(frame, 'iframe attached and navigated').toBeTruthy()
-    await frame!.waitForSelector('[data-ux-id="save"]', { timeout: 10_000 })
+    const frame = await canvasFrame()
+    await frame.waitForSelector('[data-ux-id="save"]', { timeout: 10_000 })
   })
 
   test('frame has no Node, no IPC, no preload globals', async () => {
-    const frame = page.frame({ url: frameUrl })!
+    const frame = await canvasFrame()
     const probes = await frame.evaluate(() => ({
       require: typeof (window as never as Record<string, unknown>).require,
       process: typeof (window as never as Record<string, unknown>).process,
@@ -80,7 +93,7 @@ test.describe('Agent Canvas content frame', () => {
   })
 
   test('bridge was injected at serve time and is running', async () => {
-    const frame = page.frame({ url: frameUrl })!
+    const frame = await canvasFrame()
     const bridge = await frame.evaluate(() => ({
       installed: (window as never as Record<string, unknown>).__cccCanvasBridge === true,
       tag: !!document.querySelector('script[src="/__ccc__/canvas-bridge.js"]'),
@@ -90,7 +103,7 @@ test.describe('Agent Canvas content frame', () => {
   })
 
   test('connect-src confines fetch to the canvas origin', async () => {
-    const frame = page.frame({ url: frameUrl })!
+    const frame = await canvasFrame()
     const results = await frame.evaluate(async () => {
       // Distinguish a CSP block from a mere network failure: a network-isolated
       // CI would see any foreign fetch "fail" even if connect-src allowed it, so
@@ -124,7 +137,7 @@ test.describe('Agent Canvas content frame', () => {
   })
 
   test('frame cannot reach the parent document (cross-origin isolation)', async () => {
-    const frame = page.frame({ url: frameUrl })!
+    const frame = await canvasFrame()
     const reach = await frame.evaluate(() => {
       try {
         const doc = (window.parent as Window).document

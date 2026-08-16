@@ -154,4 +154,47 @@ describe('SessionRow card', () => {
     expect(line2.textContent).toContain('sonnet')
     expect(line2.textContent).toContain('claude')
   })
+
+  it('context meter lives on its own full-width row, independent of model-name length', () => {
+    // Regression (owner report): the meter shared line 2 with the model meta as
+    // a flex-basis-0 item. A long model name ("Opus 5 (1M context)") consumed
+    // the row's natural width, so with no positive free space to grow into the
+    // bar rendered 0px wide — it only ever showed for short names. jsdom can't
+    // measure flex layout, so lock the structural fix instead: the meter sits in
+    // a dedicated full-span grid row containing NO text, so no model-name length
+    // can compete with it for width.
+    render(root, { modelName: 'Opus 5 (1M context)', contextPercent: 26 })
+    const meterRow = container.querySelector('[data-testid="context-meter-row"]') as HTMLElement
+    expect(meterRow).toBeTruthy()
+    expect(meterRow.style.gridColumn).toBe('1 / 3')
+    // Nothing textual shares the meter's row — the squeeze cannot recur.
+    expect((meterRow.textContent ?? '').trim()).toBe('')
+    const fill = meterRow.querySelector('.meter-fill') as HTMLElement
+    expect(fill).toBeTruthy()
+    expect(fill.style.width).toBe('26%')
+    // The long model name and the % still render on line 2; the meter is NOT
+    // inside that flex row any more.
+    const line2 = container.querySelector('[data-testid="card-line2"]') as HTMLElement
+    expect(line2.textContent).toContain('Opus 5 (1M context)')
+    expect(line2.textContent).toContain('26%')
+    expect(line2.contains(fill)).toBe(false)
+  })
+
+  it('meter row sits below the account line (row 4; row 3 accountless) and degrades gracefully with no usage data', () => {
+    render(root, { accountEmail: 'nicholas@example.com', accountColour: 'mauve', contextPercent: undefined })
+    const meterRow = container.querySelector('[data-testid="context-meter-row"]') as HTMLElement
+    expect(meterRow.className).toContain('row-start-4')
+    // Unknown usage: empty track (0% fill) + blank %, same as pre-change.
+    expect((meterRow.querySelector('.meter-fill') as HTMLElement).style.width).toBe('0%')
+    expect(container.querySelector('[data-testid="card-line2"]')!.textContent).not.toContain('%')
+    // Accountless card: the meter takes row 3 directly (no empty gap row).
+    render(root, { accountEmail: undefined, contextPercent: 40 })
+    expect((container.querySelector('[data-testid="context-meter-row"]') as HTMLElement).className).toContain('row-start-3')
+  })
+
+  it('shell-only sessions render no meter row at all', () => {
+    render(root, { shellOnly: true, contextPercent: 98 })
+    expect(container.querySelector('[data-testid="context-meter-row"]')).toBeNull()
+    expect(container.querySelector('.meter-fill')).toBeNull()
+  })
 })

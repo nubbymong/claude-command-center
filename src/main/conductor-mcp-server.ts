@@ -35,11 +35,17 @@ import { mimeForImage } from './clipboard-file'
 import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
-import { readConfig, saveConfig } from './config-manager'
+import { readConfig } from './config-manager'
+import { getInstallSecret } from './install-secret'
 import { isPackagedApp } from './update-watcher'
 import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
+import { registerCanvasTools } from './canvas-mcp-tool'
+import { getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
+import { getReviewPayload } from './canvas/canvas-review-store'
+import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
+import { readCheckedFile } from './utils/safe-file-read'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
  *  The Codex TOML writer appends `?source=codex` so the server can skip
@@ -85,59 +91,11 @@ export function parseCccSessionIdFromUrl(reqUrl: string): string | null {
 
 // === R-DEC-3: per-launch auth secret ===
 //
-// The MCP server listens on a loopback port and exposes vision_* tools --
-// including vision_eval (arbitrary JS in the embedded browser) -- plus
-// cross-session actions. Loopback is NOT an authorisation boundary: any
-// local process (or a malicious page in a browser the user opened) could
-// drive it, so we require a 32-byte secret on EVERY request, embedded into the
-// MCP registration URLs CCC writes for Claude/Codex (?token=<secret>) so
-// legitimate sessions authenticate transparently. The secret is PERSISTED once
-// (CONFIG/conductor-secret.json) and reused across launches: a live SSH session
-// bakes the token into its --mcp-config, so if a restart / crash-relaunch rotated
-// the secret, that still-running session's MCP would fail every request as "not
-// authenticated" (SSE closed) with no recovery but relaunching the session. It is
-// already effectively on disk (in each session's mcp-config), so central
-// persistence adds no new exposure; loopback remains not an auth boundary.
-/**
- * Bumped when a stored secret must be considered burned regardless of its value.
- *
- * v2: every secret written by an earlier build was persisted through writeConfig
- * with no file mode, so it landed 0644 -- world-readable -- and on Windows into a
- * config dir created without a reparse-point check. Re-permissioning it does not
- * help: anything that could read it already has. So a secret stored without this
- * marker is DISCARDED and a fresh one minted, once, on first launch of a fixed
- * build.
- *
- * The cost is understood and accepted: a session already running with the old
- * token baked into its --mcp-config (the reason this is persisted rather than
- * rotated per launch) will fail MCP auth until it is relaunched. That is a
- * one-time upgrade cost and the alternative is keeping a compromised token.
- *
- * v3 (GHSA-q83v-phcc-hgv4): through v2 the secret was written VERBATIM into
- * every session's own --mcp-config as the `?token=`, so it was a shared
- * credential held by every principal on the machine. It is now used only as an
- * HMAC KEY: each session's config carries `mcpSessionToken(sessionId)` =
- * HMAC(secret, sessionId), and the secret itself never leaves this process.
- * But a v2 secret is known to anything that read a config, so as an HMAC key it
- * would let such a reader forge a binding for any session — it must be
- * discarded and a fresh, never-distributed key minted. Same one-time cost: a
- * session still running with a v2 `?token=` fails auth until relaunched.
- */
-const CONDUCTOR_SECRET_VERSION = 3
-
-let _conductorMcpSecret: string | null = null
-function loadOrCreateConductorMcpSecret(): string {
-  try {
-    const saved = readConfig<{ secret?: string; v?: number }>('conductorSecret')
-    if (saved?.secret && /^[0-9a-f]{64}$/.test(saved.secret)) {
-      if (saved.v === CONDUCTOR_SECRET_VERSION) return saved.secret
-      logWarn('[conductor-mcp] rotating the auth secret: the stored one predates the file-mode fix and must be treated as compromised')
-    }
-  } catch { /* fall through and mint a fresh one */ }
-  const secret = crypto.randomBytes(32).toString('hex')
-  try { saveConfig('conductorSecret', { secret, v: CONDUCTOR_SECRET_VERSION }) } catch (err) { logWarn(`[conductor-mcp] could not persist auth secret: ${err}`) }
-  return secret
-}
+// The secret itself (and the rotation rules that go with it) now lives in
+// ./install-secret — it acquired a second consumer (the canvas store's record
+// MAC), and one file may not own a value two subsystems key off. Nothing about
+// its semantics changed in the move; see that module for the full R-DEC-3 /
+// GHSA-q83v-phcc-hgv4 history.
 
 /** The MCP auth secret, persisted across launches (lazy so it loads AFTER the
  *  resources dir is configured, not at module init).
@@ -148,8 +106,7 @@ function loadOrCreateConductorMcpSecret(): string {
  *  presented token against the HMAC of the REQUESTED session id, so a token
  *  authorises exactly its own session and nothing else. */
 export function getConductorMcpSecret(): string {
-  if (_conductorMcpSecret === null) _conductorMcpSecret = loadOrCreateConductorMcpSecret()
-  return _conductorMcpSecret
+  return getInstallSecret()
 }
 
 /**
@@ -559,11 +516,11 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // off; this filter is belt-and-braces for stale session configs.
     const toolCfg = readConfig<{
       conductorToolsEnabled?: boolean
-      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean }
+      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean; canvas?: boolean }
       codexEnabled?: boolean
     }>('settings')
     const toolsMaster = toolCfg?.conductorToolsEnabled !== false
-    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer') =>
+    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer' | 'canvas') =>
       toolsMaster && toolCfg?.conductorTools?.[k] !== false
 
     // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
@@ -769,6 +726,55 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       )
     }
 
+    // Agent Canvas: both tools are about the session's OWN canvas — the
+    // snapshot reads its rendered page and the render writes to it — so like
+    // codex_review they bind to the transport's session id and refuse a
+    // model-supplied one (#188). Not advertised to Codex, which connects without
+    // a bound session id — every call would refuse, so offering it is a lie.
+    if (source !== 'codex' && toolOn('canvas')) {
+      registerCanvasTools(server, z, () => boundSessionId, {
+        getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
+        requestSnapshot: (args) => requestCanvasSnapshot(args),
+        renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
+        getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
+        readAttachment: (absPath) => fs.readFileSync(absPath),
+        /**
+         * Read a design document the agent wrote to disk (`htmlPath`).
+         *
+         * CONFINED to the roots registered for THIS session — the project
+         * directory its own PTY was launched in, never the home directory, and
+         * gone when that PTY exits — with the same realpath containment
+         * `distRoot` uses. The session id is the TRANSPORT-bound one that
+         * `runCanvasRender` already refuses to take from the model (#188); it
+         * is threaded through as an argument rather than closed over so this
+         * boundary cannot be read as "some session's roots".
+         *
+         * Unconfined, this was an arbitrary-file read on a model-supplied
+         * absolute path executed with the app's privileges: adversarial review
+         * (2026-08-14) drove it to read a private key and land the bytes in the
+         * canvas dir, servable and readable back through canvas_snapshot. The
+         * approval prompt was the only thing standing in front of it, which is
+         * not a boundary — an approval prompt cannot be the containment for a
+         * path the model chose. A second pass (2026-08-15) showed the confinement
+         * was still install-wide (every local session's cwd, never revoked) and
+         * that the file check itself was a TOCTOU which failed OPEN on any
+         * volume that does not report link counts; both are fixed here and in
+         * readCheckedFile.
+         */
+        readDesignFile: (absPath, canvasSessionId) => {
+          const real = resolveInsideCanvasRoot(absPath, canvasSessionId)
+          // One open, every check on that fd, read from that fd: the object the
+          // checks describe is the object whose bytes come back. A HARD LINK
+          // defeats realpath (`mklink /H` needs no privilege and no Developer
+          // Mode, and the link inside the project resolves to itself, not to
+          // the file it shares an inode with — round 2 walked a private key out
+          // through one), so a file with more than one name, or a link count
+          // the volume will not report, is refused.
+          return readCheckedFile(real, 2 * 1024 * 1024)
+        },
+      })
+    }
+
     return server
   }
 
@@ -939,6 +945,18 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       res.writeHead(404)
       res.end()
     })
+
+    // An SSE stream is one HTTP response that never ends, and Node's default
+    // server.requestTimeout (300 000 ms) treats that as a stuck request: every
+    // conductor SSE connection was being destroyed at exactly 5:00 and
+    // silently re-established by the client — and a tool call in flight
+    // across (or racing) that churn was stranded forever, with no error on
+    // either side. Vision calls are short and rarely collided; the first long
+    // interactive canvas session hit it within minutes (VM functional test,
+    // 2026-08-13: a canvas_render whose reply never came). Zero disables the
+    // per-request clock; the DoS posture this timeout exists for does not
+    // apply to a loopback-only, token-gated server.
+    httpServer.requestTimeout = 0
 
     // Listen on localhost only — SSH reverse tunnels connect to localhost on the remote end
     httpServer.listen(port, '127.0.0.1', () => {

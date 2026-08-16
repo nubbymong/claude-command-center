@@ -342,6 +342,21 @@ body {
   .footer-update-pulse { animation: none; }
 }
 
+/* Footer multi-account "+N" overflow popover. Anchored above the runtime
+   footer (position: fixed off the chip's rect -- the footer is overflow-hidden),
+   so it enters upward. Appear-only, like the GitHub panel below. Respects
+   prefers-reduced-motion -- no animation when reduced. */
+@keyframes account-overflow-pop-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.account-overflow-pop {
+  animation: account-overflow-pop-in 160ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .account-overflow-pop { animation: none; }
+}
+
 /* Collapsed GitHub panel: floating logo FAB (both the not-configured and
    the user-collapsed states). It overlays the terminal's top-right corner
    instead of a thin vertical rail. Muted at rest, warming to the mauve
@@ -447,3 +462,64 @@ body {
 .logs-md-body h4 { font-weight: 600; margin: 0.5rem 0 0.25rem; line-height: 1.3; }
 .logs-md-body hr { border: 0; border-top: 1px solid var(--border-subtle); margin: 0.75rem 0; }
 
+
+/* ── Agent Canvas glass: Excalidraw as a pinned annotation layer ──────────
+   On the canvas the glass is NOT the Excalidraw app: its camera is pinned to
+   the content (zoom is re-pinned to 1, scenes are per-session), and every
+   floating island it draws sits ON TOP of the page under review. Hide the
+   app chrome — main menu (open/save/reset), library sidebar, help, and the
+   whole footer (zoom + undo buttons; Ctrl+Z still works) — leaving only the
+   top tool island, which draw mode needs. The classic sketchpad pane keeps
+   full chrome; this is scoped to the canvas glass layer only. */
+[data-canvas-layer='glass'] .main-menu-trigger,
+[data-canvas-layer='glass'] .default-sidebar-trigger,
+[data-canvas-layer='glass'] .sidebar-trigger,
+[data-canvas-layer='glass'] .help-icon,
+[data-canvas-layer='glass'] .layer-ui__wrapper__footer {
+  display: none !important;
+}
+
+/* ── Agent Canvas landing: the empty state IS the canvas, unfilled ─────────
+   The stage is a query CONTAINER, not a viewport breakpoint consumer: the
+   canvas pane is user-resizable and docks beside the terminal, so a viewport
+   media query would still paint five columns inside a 320px pane. Everything
+   that has to answer to the pane's width lives here (sheet padding, the loop
+   track, the return arc, the headline); the rest stays in Tailwind classes on
+   the component. Tailwind v4 emits utilities inside @layer, so these unlayered
+   rules win without !important — do not also set these properties as classes. */
+.canvas-stage {
+  container-type: inline-size;
+}
+.canvas-sheet {
+  padding: 52px 56px 44px;
+}
+.canvas-headline {
+  font-size: 27px;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+.canvas-loop-track {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+@container (max-width: 760px) {
+  .canvas-sheet { padding: 32px 22px 26px; }
+  .canvas-headline { font-size: 22px; }
+  .canvas-loop-track { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  /* The return arc is drawn for the five-across track. Once the track wraps it
+     points at the wrong steps, so it goes rather than lie. */
+  .canvas-loop-arc { display: none; }
+}
+@container (max-width: 420px) {
+  .canvas-loop-track { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+}
+/* Nothing on this surface animates to convey meaning — honour the OS setting
+   (same treatment as footer-update-pulse above). */
+@media (prefers-reduced-motion: reduce) {
+  .canvas-landing,
+  .canvas-landing * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

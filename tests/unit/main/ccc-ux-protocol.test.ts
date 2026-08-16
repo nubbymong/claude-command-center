@@ -141,6 +141,27 @@ describe('design serving', () => {
     expect(await res.text()).toContain('__cccCanvasBridge')
   })
 
+  it('serves the analysis chunk the bridge imports on demand, and keeps it OUT of the bridge', async () => {
+    const { canvasId } = store.renderVersion(SID, { mode: 'design', html: DESIGN_HTML })
+    const res = await get(`ccc-ux://${canvasId}/__ccc__/canvas-analysis.js`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('javascript')
+    const analysis = await res.text()
+    expect(analysis).toContain('axe')
+
+    // The whole point of the split: the always-injected script must not carry
+    // the rule engine. axe-core is ~10x the bridge.
+    const bridge = await (await get(`ccc-ux://${canvasId}/__ccc__/canvas-bridge.js`)).text()
+    expect(bridge.length * 4).toBeLessThan(analysis.length)
+  })
+
+  it('injects only the bridge tag — the analysis chunk is never planted in the document', async () => {
+    const { canvasId } = store.renderVersion(SID, { mode: 'design', html: DESIGN_HTML })
+    const body = await (await get(`ccc-ux://${canvasId}/v1/index.html`)).text()
+    expect(body).toContain('/__ccc__/canvas-bridge.js')
+    expect(body).not.toContain('/__ccc__/canvas-analysis.js')
+  })
+
   it('design mode has no SPA fallback — extensionless miss is 404', async () => {
     const { canvasId } = store.renderVersion(SID, { mode: 'design', html: DESIGN_HTML })
     expect((await get(`ccc-ux://${canvasId}/v1/some/route`)).status).toBe(404)
@@ -159,7 +180,7 @@ function makeDist(): string {
   fs.writeFileSync(path.join(dist, 'secret-sibling.txt'), 'inside-ok')
   // UAT roots are default-deny: the base the dist sits under must be registered
   // before renderVersion will accept it (serving still stays inside `dist`).
-  registerCanvasUatRoot(path.dirname(dist))
+  registerCanvasUatRoot(SID, path.dirname(dist))
   return dist
 }
 
@@ -236,7 +257,7 @@ describe('confinement', () => {
 
   it('does not follow a directory link inside the tree to outside it', async (ctx) => {
     const dist = makeDist()
-    registerCanvasUatRoot(path.dirname(dist))
+    registerCanvasUatRoot(SID, path.dirname(dist))
     outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-outside-'))
     fs.writeFileSync(path.join(outsideDir, 'leak.txt'), 'LEAKED')
     let linked = false
@@ -254,6 +275,67 @@ describe('confinement', () => {
     const res = await get(`ccc-ux://${canvasId}/v1/link/leak.txt`)
     expect(res.status).toBe(404)
     expect(await res.text()).not.toContain('LEAKED')
+  })
+
+  it('does not follow a linked ENTRY out of the tree on the SPA-fallback path', async (ctx) => {
+    // The symlink test above covers the direct path. The fallback resolves a
+    // SECOND file — the entry — and re-checks containment on it separately;
+    // that check was the one no test reached, so a mutation deleting it went
+    // unnoticed while its twin one branch over was pinned.
+    //
+    // The shape is a swap after registration: the entry passes validation as an
+    // ordinary file and becomes a link afterwards, which is what a containment
+    // check re-run at serve time exists to catch.
+    // The entry is a plain relative path and may name a subdirectory, so the
+    // link goes on the DIRECTORY — a junction, which needs no privilege on
+    // Windows, where a file symlink does.
+    const dist = makeDist()
+    registerCanvasUatRoot(SID, path.dirname(dist))
+    outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-outside-entry-'))
+    fs.writeFileSync(path.join(outsideDir, 'index.html'), 'LEAKED')
+
+    let linked = false
+    try {
+      fs.symlinkSync(outsideDir, path.join(dist, 'link'), 'junction')
+      linked = true
+    } catch {
+      /* environment forbids link creation */
+    }
+    // Never silently pass: a green here without a link certifies nothing.
+    if (!linked) return ctx.skip()
+
+    const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist, entry: 'link/index.html' })
+    // Extensionless, so the fallback runs rather than the direct path.
+    const res = await get(`ccc-ux://${canvasId}/v1/settings/profile`)
+    expect(res.status).toBe(404)
+    expect(await res.text()).not.toContain('LEAKED')
+  })
+
+  it('refuses a file past the served-size ceiling, and only past it', async () => {
+    const dist = makeDist()
+    // Sparse: the size is what the ceiling reads, and writing 64 MB of real
+    // bytes to assert a refusal would cost more than the rest of the suite.
+    const big = path.join(dist, 'big.bin')
+    const fd = fs.openSync(big, 'w')
+    fs.ftruncateSync(fd, 65 * 1024 * 1024)
+    fs.closeSync(fd)
+    const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
+
+    expect((await get(`ccc-ux://${canvasId}/v1/big.bin`)).status).toBe(404)
+    // A cap and not a blanket refusal: the ordinary file next to it still serves.
+    expect((await get(`ccc-ux://${canvasId}/v1/assets/app.js`)).status).toBe(200)
+  })
+
+  it('applies the size ceiling to the ENTRY the SPA fallback reaches for', async () => {
+    // Its own check on its own branch, and the one the direct-path test cannot
+    // reach: the fallback resolves a second file and re-measures it there.
+    const dist = makeDist()
+    const fd = fs.openSync(path.join(dist, 'index.html'), 'w')
+    fs.ftruncateSync(fd, 65 * 1024 * 1024)
+    fs.closeSync(fd)
+    const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
+
+    expect((await get(`ccc-ux://${canvasId}/v1/settings/profile`)).status).toBe(404)
   })
 
   it('unknown canvas / version / malformed ids are uniform 404s', async () => {

@@ -14,7 +14,12 @@ import { parseClaudeVersion } from './sentinel/sentinel-version'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerLogs2Handlers } from './ipc/logs2-handlers'
 import { registerCanvasHandlers } from './ipc/canvas-handlers'
-import { registerCccUxSchemePrivileges, registerCccUxProtocolHandler } from './canvas/ccc-ux-protocol'
+import {
+  registerCccUxSchemePrivileges,
+  registerCccUxProtocolHandler,
+  installCanvasFrameNavigationGuard,
+  installCanvasPermissionGuard,
+} from './canvas/ccc-ux-protocol'
 
 import { startStatuslineWatcher, setTranscriptPathSink, healGlobalStatusline } from './statusline-watcher'
 import { registerProvider, getProvider } from './providers'
@@ -405,6 +410,11 @@ function createWindow(): void {
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault()
   })
+
+  // ...and the SUBFRAME half, which `will-navigate` does not cover: an Agent
+  // Canvas frame may never leave the canvas+version it was mounted for. See
+  // installCanvasFrameNavigationGuard for the two primitives that closes.
+  installCanvasFrameNavigationGuard(mainWindow.webContents)
 
   mainWindow.webContents.setWindowOpenHandler(() => {
     return { action: 'deny' }
@@ -822,6 +832,10 @@ if (!gotTheLock) {
     // Agent Canvas content serving — must be registered before any renderer
     // exists so a restored session's canvas iframe can load immediately.
     registerCccUxProtocolHandler()
+    // ...and canvas content gets no powerful features. Same session, so this is
+    // origin-scoped rather than blanket (the app's own clipboard writes go
+    // through the same handler) — see installCanvasPermissionGuard.
+    installCanvasPermissionGuard(session.defaultSession)
 
     createSplashWindow()
     try {

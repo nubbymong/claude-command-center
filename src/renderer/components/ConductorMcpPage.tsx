@@ -3,6 +3,7 @@ import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import PageFrame from './PageFrame'
 import CompatBadge from './sentinel/CompatBadge'
 import VisionSubTool from './conductor-mcp/VisionSubTool'
+import AgentCanvasSubTool from './conductor-mcp/AgentCanvasSubTool'
 import CodexReviewSubTool from './conductor-mcp/CodexReviewSubTool'
 import HostTransferSubTool from './conductor-mcp/HostTransferSubTool'
 
@@ -75,6 +76,7 @@ export default function ConductorMcpPage() {
             </div>
 
             <VisionSubTool />
+            <AgentCanvasSubTool />
             <CodexReviewSubTool />
             <HostTransferSubTool />
           </>
@@ -97,8 +99,8 @@ export default function ConductorMcpPage() {
             </div>
             <div className="text-sm font-medium text-text mb-1">Conductor MCP server is not running</div>
             <div className="text-xs text-overlay1 mb-1 max-w-sm">
-              The local MCP listener never bound to a port, so Vision, Codex review, and host
-              transfer are unavailable to your sessions.
+              The local MCP listener never bound to a port, so Vision, Codex review, host
+              transfer and the Agent Canvas are unavailable to your sessions.
             </div>
             <div className="text-xs text-overlay0 max-w-sm">
               It normally starts automatically at launch. Restart AI Code Conductor to bring it
