@@ -26,7 +26,7 @@ import {
 // agent), which is what the fire-and-forget SubagentStart signal cannot do.
 // Names span CC versions/features: Task + Agent launch subagents; Workflow
 // launches a dynamic workflow.
-export const BACKGROUND_SPAWN_TOOLS: ReadonlySet<string> = new Set(['Task', 'Agent', 'Workflow'])
+const BACKGROUND_SPAWN_TOOLS: ReadonlySet<string> = new Set(['Task', 'Agent', 'Workflow'])
 
 // DELIBERATE behaviour change (spec 2026-06-11 §3/§4): unknown effort levels
 // now display verbatim instead of being silently dropped. A hardcoded VALID set
