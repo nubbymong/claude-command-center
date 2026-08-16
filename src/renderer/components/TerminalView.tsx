@@ -4,7 +4,13 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { installWebglWithRecovery } from './terminal/terminalWebgl'
+import { installWebglWithRecovery, type WebglHandle } from './terminal/terminalWebgl'
+import {
+  createStaleGlyphRepainter,
+  shouldRepaintOnOutput,
+  WHEEL_ACTIVE_MS,
+  type StaleGlyphRepainter,
+} from './terminal/staleGlyphRepaint'
 import { useSessionStore } from '../stores/sessionStore'
 import { persistLastUsedAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
@@ -283,6 +289,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let pendingParseData = ''
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
     let handleWheel: ((e: WheelEvent) => void) | null = null
+    // #273 stale-glyph repaint: force a full WebGL repaint (clearTextureAtlas +
+    // term.refresh) on the triggers that correlate with the ghosting — scroll and
+    // streaming output — throttled so a firehose costs at most a few repaints/sec.
+    let webglHandle: WebglHandle | null = null
+    let repainter: StaleGlyphRepainter | null = null
+    let lastWheelAt = Number.NEGATIVE_INFINITY
 
     // PTY-integrity instrumentation (scoped to this session's mount; resets on
     // sessionId change because the effect re-runs).
@@ -398,10 +410,22 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // then we try ONE recreate in the next frame (GPU-blip recovery).
       // If recreate fails, we force term.refresh so the DOM renderer
       // repaints the viewport the dead WebGL canvas left garbled.
-      installWebglWithRecovery(term, {
+      webglHandle = installWebglWithRecovery(term, {
         WebglAddonCtor: WebglAddon,
         raf: requestAnimationFrame,
         isDisposed: () => disposed,
+      })
+      // #273: bust stale WebGL glyphs by reproducing the window-resize repaint
+      // (clearTextureAtlas + refresh) against whichever addon is currently live.
+      repainter = createStaleGlyphRepainter({
+        // Return whether the atlas was actually cleared (WebGL active). When it
+        // wasn't (DOM-renderer fallback / unrecovered context loss) the repainter
+        // skips the refresh — a DOM-renderer session has no atlas ghost to bust.
+        clearAtlas: () => webglHandle?.clearTextureAtlas() ?? false,
+        refresh: () => { try { term?.refresh(0, term.rows - 1) } catch { /* disposed */ } },
+        now: Date.now,
+        setTimer: (cb, ms) => setTimeout(cb, ms),
+        clearTimer: (h) => clearTimeout(h),
       })
 
       // #119: cursor options passed to the Terminal constructor do NOT reliably
@@ -698,6 +722,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       handleWheel = () => {
         if (!term) return
+        // #273: record the scroll and bust any stale glyphs now. Normal buffer
+        // only — the alternate screen (TUI apps) owns its own repaints.
+        lastWheelAt = Date.now()
+        if (term.buffer.active.type !== 'alternate') repainter?.schedule()
         // After the wheel event settles, check viewport position
         if (refreshTimer) clearTimeout(refreshTimer)
         refreshTimer = setTimeout(() => {
@@ -759,6 +787,18 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
         if (follow.scrollToBottom) term?.scrollToBottom()
         if (follow.scrolledUp !== isScrolledUpRef.current) updateScrollState(follow.scrolledUp)
+
+        // #273: streaming output is when stale WebGL glyphs accumulate. Repaint
+        // when the reproducing conditions hold (normal buffer, and the user is
+        // scrolled up or has scrolled recently); the throttle bounds the cost.
+        if (term && repainter && shouldRepaintOnOutput({
+          alternateBuffer: term.buffer.active.type === 'alternate',
+          scrolledUp: isScrolledUpRef.current,
+          msSinceWheel: Date.now() - lastWheelAt,
+          wheelActiveMs: WHEEL_ACTIVE_MS,
+        })) {
+          repainter.schedule()
+        }
 
         // Post-resume settle nudge: every chunk re-arms the timer; it fires only
         // once a burst has gone quiet for 600ms, and only while shots remain.
@@ -962,6 +1002,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
+      repainter?.dispose()
       resizeObserver?.disconnect()
       unsubData?.()
       unsubExit?.()
