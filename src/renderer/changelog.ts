@@ -21,6 +21,17 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.12',
+    date: '2026-08-17',
+    highlights: 'A stability-and-hardening release: stale glyphs left on the terminal after scrolling are cleared, the attention pulse now covers blocked sub-agent and elicitation prompts, the model and effort pill stops flickering to a sub-agent\'s value, and the SSH connection\'s argument handling is hardened.',
+    changes: [
+      { type: 'fix', description: 'The terminal no longer leaves stale "ghost" characters painted over the screen. When output streamed while you were scrolled up, the GPU renderer could freeze a fragment of recent text over the live rows until the window was resized; the app now reproduces that full repaint itself on the conditions that trigger it, throttled so a firehose of output costs at most a few repaints a second, and only when the GPU renderer is actually in use.' },
+      { type: 'fix', description: 'The model and reasoning-effort pill in the status strip no longer briefly flickers to a sub-agent\'s or background workflow\'s value. It stays pinned to the main session for the whole time a Task, Agent, or Workflow tool is running, including the moment that tool finishes, and returns to the main value only on the next real main-session activity.' },
+      { type: 'improvement', description: 'The attention pulse that marks a session as needing you now also fires when a sub-agent is blocked waiting for input and when Claude opens an elicitation dialog, not only on the top-level permission prompt. A background session whose sub-agent was quietly waiting could previously look idle when it actually needed you.' },
+      { type: 'fix', description: 'Security hardening: the SSH connection\'s username, host, and session id are now validated and constrained before they build the ssh command line and the remote setup script, as defence in depth against a crafted value being read as an ssh option or breaking out of the setup script. It is not exploitable in shipped builds; this closes the gap so a future change cannot turn it into one.' }
+    ]
+  },
+  {
     version: '2.1.0-beta.11',
     date: '2026-08-16',
     highlights: 'A security-and-stability release. The Agent Canvas review surface arrives, per-account claude.ai web sign-in rides through Cloudflare\'s check, and three local-attacker security issues are closed, two of them with advisories published alongside.',
