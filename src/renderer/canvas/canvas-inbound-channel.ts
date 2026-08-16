@@ -28,6 +28,13 @@
 // already throttles itself that way, so anything faster is a page spending the
 // host's main thread — the renderer that wedges is the one drawing every
 // terminal in the app), and past a flood budget the channel is dropped whole.
+//
+// The third is size, because the frame also chooses how BIG each message is.
+// All five events are tiny by construction — a viewport, a hit, two coordinates,
+// one of two key names — so anything that is not is refused before it is looked
+// at, and charged heavily against the same budget: by the time its size is
+// knowable it has already been deserialised onto the host thread, which is the
+// cost, and the cost is the thing a budget is for.
 
 import {
   CANVAS_BRIDGE_NS,
@@ -39,16 +46,112 @@ import {
 import { finite, safeHit, safeViewport } from '../utils/canvas-geometry-guard'
 
 /**
- * Namespace-matching messages per window before the channel is dropped whole.
+ * Budget units per window before the channel is dropped whole.
  *
  * The bridge coalesces its own reports to one per animation frame per type, so
  * a real page sits near 180/s at 60fps with the pointer moving. Six hundred a
  * second is three times that and unreachable by anything doing real work; a
  * page that clears it is spending the host's main thread on purpose, and the
  * answer is to stop listening to it rather than to keep paying.
+ *
+ * EVERY message the frame posts at this window is charged, and charged BEFORE
+ * `event.data` is read. Both halves of that were wrong. The budget used to be
+ * spent only after the `type` filter, so 50,000 messages carrying the namespace
+ * and no `type` cost nothing at all and left the channel armed, while 700
+ * ordinary ones tripped the drop — the stated guarantee was defeated by
+ * DELETING a field. And reading `event.data` is what pays for the structured
+ * clone, so a budget spent after it bounds the wrong thing (adversarial review,
+ * 2026-08-15). What is charged now is "the frame spoke to us at our origin",
+ * which is the event that costs the host something.
+ *
+ * That includes the request/response traffic canvas-frame-rpc owns, which is
+ * namespaced and carries no `type`: one unit per reply, against a path that is
+ * itself capped at four requests in flight. It also includes the guessed-id
+ * replies a hostile page sprays at that path, which is the point.
  */
 export const INBOUND_FLOOD_BUDGET = 600
 export const INBOUND_FLOOD_WINDOW_MS = 1000
+
+/**
+ * What a message that fails the size bound costs, in the same units.
+ *
+ * Refusing one is cheap, but it has already been deserialised onto the host
+ * thread by the time its size is knowable — so charging it the same unit as a
+ * well-formed report would let a page send 599 megabyte payloads a second and
+ * keep the channel. Sixty units means ten of them empty the budget and the
+ * channel goes; nothing the protocol does ever sends one.
+ */
+export const INBOUND_OVERSIZE_COST = 60
+
+/**
+ * How big an inbound bridge EVENT may be, structurally.
+ *
+ * Nothing capped the SIZE of one before. A single `pointer` carrying a
+ * 20,971,520-byte `hit.name` was accepted and dispatched: the clamp to 120
+ * characters happens on the way into the STORE, long after the payload has been
+ * materialised on the host thread, hung off React state and re-rendered
+ * (adversarial review, 2026-08-15). Every other page-facing ingress in this
+ * codebase caps bytes — MAX_DESIGN_HTML_BYTES, MAX_SKETCH_PNG_BYTES,
+ * MAX_REQUEST_BODY_BYTES, the paste cap — and this one was the exception.
+ *
+ * The bound is STRUCTURAL rather than `JSON.stringify(msg).length`, because
+ * stringifying to learn the size spends exactly the bytes the cap exists to
+ * refuse. The longest string any real event carries is an element's accessible
+ * name, which is clamped to 120 characters the moment it is stored, so these
+ * caps sit orders of magnitude above anything legitimate and still refuse a
+ * megabyte.
+ */
+export const MAX_INBOUND_STRING_CHARS = 4096
+export const MAX_INBOUND_TOTAL_CHARS = 16_384
+/** Values (and keys) looked at before a message is refused for being a graph
+ *  rather than a report. The largest real event, a `pointer` with a hit, is 15. */
+export const MAX_INBOUND_VALUES = 64
+/** Nesting the protocol uses: message → hit → box is three levels. */
+export const MAX_INBOUND_DEPTH = 6
+
+/**
+ * Is this small enough to be one of the five bridge events?
+ *
+ * A bounded walk, bounded in every direction that costs something: values
+ * visited, nesting depth, the length of any single string, the total across all
+ * of them, and the byte length of anything that arrived as binary (structured
+ * clone carries ArrayBuffers and Blobs, and `for…in` over one finds nothing to
+ * measure, so it would otherwise pass for free). It answers false the moment
+ * any of those is exceeded — so a hostile graph costs 64 steps rather than a
+ * traversal, and a cycle, which postMessage carries happily, terminates for the
+ * same reason.
+ *
+ * Exported so the regression suite bounds the SAME function the channel runs.
+ */
+export function withinInboundSizeBounds(value: unknown): boolean {
+  let visited = 0
+  let chars = 0
+  const stack: Array<[unknown, number]> = [[value, 0]]
+  while (stack.length > 0) {
+    const [v, depth] = stack.pop() as [unknown, number]
+    if (++visited > MAX_INBOUND_VALUES) return false
+    if (typeof v === 'string') {
+      if (v.length > MAX_INBOUND_STRING_CHARS) return false
+      chars += v.length
+      if (chars > MAX_INBOUND_TOTAL_CHARS) return false
+      continue
+    }
+    if (v === null || typeof v !== 'object') continue
+    if (depth >= MAX_INBOUND_DEPTH) return false
+    const bytes = (v as { byteLength?: unknown }).byteLength ?? (v as { size?: unknown }).size
+    if (typeof bytes === 'number' && bytes > MAX_INBOUND_TOTAL_CHARS) return false
+    for (const key in v as Record<string, unknown>) {
+      if (key.length > MAX_INBOUND_STRING_CHARS) return false
+      chars += key.length
+      if (chars > MAX_INBOUND_TOTAL_CHARS) return false
+      // Checked before the push, so a million-key object is abandoned in 64
+      // steps instead of having its keys materialised.
+      if (stack.length >= MAX_INBOUND_VALUES) return false
+      stack.push([(v as Record<string, unknown>)[key], depth + 1])
+    }
+  }
+  return true
+}
 
 export interface CanvasInboundHandlers {
   onReady: () => void
@@ -117,20 +220,31 @@ export interface HostInputFacts {
  * implies the first: it is the host-side half of the bridge's own rule, and the
  * failure it exists to stop (a forged Escape wiping a locked selection while the
  * user types a note) is worth being unable to delete by accident.
+ *
+ * And a keystroke is a GESTURE, so the host requires the same live user
+ * activation the click gate does. Focus alone was never a gesture: once the user
+ * had clicked into the frame even once, the page could post `Escape` or
+ * `ArrowUp` at any later moment with no input at all — clearing the locked
+ * focus, disarming an armed marquee, or silently walking the pending selection
+ * up to a parent in the instant before the user wrote a note against it. Forged
+ * keys were honoured with activation forced false AND with the property deleted
+ * entirely (adversarial review, 2026-08-15). Fails CLOSED where the platform
+ * reports no activation, for the same reason the click gate does.
  */
 export function reportedKeyIsPlausible(facts: HostInputFacts): boolean {
   if (isEditableHostTarget(facts.activeElement)) return false
   if (!facts.frameElement || facts.activeElement !== facts.frameElement) return false
-  return true
+  return facts.userActivation === true
 }
 
 /**
  * Could this reported click have been a real one in the frame?
  *
- * Everything the key test wants, plus live user activation on the host. Fails
- * CLOSED where the platform reports no activation: a lock that the user did not
- * make is written into the review store and replayed to the agent as their
- * selection, so "cannot tell" must mean "do not lock".
+ * Everything the key test wants — which since 2026-08-15 includes the live user
+ * activation the two gates now share. Said again here rather than inherited: a
+ * lock the user did not make is written into the review store and replayed to
+ * the agent as their selection, so if the key gate is ever loosened this one
+ * must not quietly follow it.
  */
 export function reportedClickIsPlausible(facts: HostInputFacts): boolean {
   if (!reportedKeyIsPlausible(facts)) return false
@@ -189,14 +303,20 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
     })
   }
 
-  function withinBudget(): boolean {
+  /** Spend `cost` units of this window's budget. False once it is gone. */
+  function charge(cost: number): boolean {
     const now = Date.now()
     if (now - windowStartedAt >= INBOUND_FLOOD_WINDOW_MS) {
       windowStartedAt = now
       windowCount = 0
     }
-    windowCount++
+    windowCount += cost
     return windowCount <= INBOUND_FLOOD_BUDGET
+  }
+
+  const dropFlooded = () => {
+    dispose()
+    handlers.onFlood()
   }
 
   function onMessage(event: MessageEvent): void {
@@ -207,12 +327,33 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
     // Exact, not a prefix: another canvas's document would satisfy a prefix
     // test. Matches the snapshot path's check.
     if (event.origin !== origin) return
-    const msg = event.data as CanvasBridgeEvent | null
-    if (!msg || msg.ns !== CANVAS_BRIDGE_NS || !('type' in msg)) return
 
-    if (!withinBudget()) {
-      dispose()
-      handlers.onFlood()
+    // Charged HERE — before `event.data` is touched, and before anything about
+    // the message's shape has been believed. Reading `data` is what pays for the
+    // structured clone, and a namespaced message with no `type` is still the
+    // frame spending the host's thread; charging after either test is what let
+    // 50,000 of them cost nothing.
+    if (!charge(1)) {
+      dropFlooded()
+      return
+    }
+
+    const msg = event.data as CanvasBridgeEvent | null
+    if (!msg || msg.ns !== CANVAS_BRIDGE_NS) return
+    // Request/response traffic (canvas-frame-rpc) is namespaced and carries an
+    // `id` instead of a `type`. It has its own listener, its own cap on requests
+    // in flight and its own sanitisers, and a snapshot reply is legitimately
+    // large — so it leaves here having paid its unit and is not size-checked
+    // against an EVENT's bounds.
+    if (!('type' in msg)) return
+
+    // Refused before any of it is read into host state. The clamp in
+    // safeHit/safeViewport happens on the way to the STORE, which is far too
+    // late to be the only bound on what the page may hand us.
+    if (!withinInboundSizeBounds(msg)) {
+      // One unit is already spent; the rest is what having to deserialise it
+      // cost. Ten of these and the channel is gone.
+      if (!charge(INBOUND_OVERSIZE_COST - 1)) dropFlooded()
       return
     }
 

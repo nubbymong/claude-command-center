@@ -613,6 +613,14 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
             // never the app's own origin, so the content cannot reach the host
             // document; scripts+forms are what real pages need (spec §3.2, D14).
             sandbox="allow-scripts allow-same-origin allow-forms"
+            // Delegate NOTHING. The parent's half of the permissions ceiling the
+            // ccc-ux:// response header sets on the document itself, and the
+            // same empty list the off-screen capture frame has carried since
+            // 2026-08-15 — the two frames load the same untrusted documents, so
+            // the visible one must not be the permissive path (camera, mic,
+            // geolocation, display-capture) just because it has chrome to show a
+            // prompt in.
+            allow=""
             referrerPolicy="no-referrer"
             // The pre-paint frame is the APP's stage colour, not white: a white
             // flash in a dark pane read as a broken render every time a version
@@ -727,7 +735,18 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
                   left: Math.max(0, hoverStageRect.x),
                   top: Math.max(0, hoverStageRect.y - 22),
                 }}
+                // Every word of this chip — role, name, tag, ux-id — is the
+                // frame's `pointer` report about itself, so it is marked like
+                // every other page-authored identity in the pane. It was the one
+                // that was not: the locked label, the notes-panel labels and the
+                // checklist all carry the attribution, while the readout the
+                // reviewer actually reads while hunting an element printed the
+                // artifact's account of itself in the app's own voice
+                // (adversarial review, 2026-08-15). Unconditional, unlike the
+                // locked label's marker — a hover is never a region.
+                title={PAGE_REPORTED_TITLE}
               >
+                <span className="text-overlay1">{PAGE_REPORTED_MARK} </span>
                 {hoverLabel}
               </div>
             )}

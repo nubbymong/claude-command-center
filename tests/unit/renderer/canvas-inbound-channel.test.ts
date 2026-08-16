@@ -19,7 +19,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   createCanvasInboundChannel,
   reportedKeyIsPlausible,
+  withinInboundSizeBounds,
   INBOUND_FLOOD_BUDGET,
+  INBOUND_OVERSIZE_COST,
+  MAX_INBOUND_STRING_CHARS,
+  MAX_INBOUND_VALUES,
   type CanvasInboundHandlers,
 } from '../../../src/renderer/canvas/canvas-inbound-channel'
 import { CANVAS_BRIDGE_NS } from '../../../src/shared/canvas'
@@ -58,6 +62,12 @@ function fromFrame(body: Record<string, unknown>, origin = ORIGIN): void {
   window.dispatchEvent(
     new MessageEvent('message', { data: { ns: CANVAS_BRIDGE_NS, ...body }, source: iframe.contentWindow, origin }),
   )
+}
+
+/** Whatever the page likes, with no namespace stamped on it — the traffic that
+ *  used to reach the host for free. */
+function rawFromFrame(data: unknown, origin = ORIGIN): void {
+  window.dispatchEvent(new MessageEvent('message', { data, source: iframe.contentWindow, origin }))
 }
 
 /** Let the channel's per-frame flush run. */
@@ -137,6 +147,30 @@ describe('a forged contentKey cannot mutate host state', () => {
     expect(handlers.onContentKey).not.toHaveBeenCalled()
   })
 
+  // Focus is not a gesture. The frame having been clicked into ONCE left the
+  // page free to post either key at any later moment — the measured forgery
+  // landed both with activation forced false and with the property deleted
+  // outright, clearing a locked focus / disarming an armed marquee / walking the
+  // pending selection to a parent right before a note was written against it
+  // (adversarial review, 2026-08-15).
+  it('is dropped without live user activation, even with the frame focused', () => {
+    arm()
+    iframe.focus()
+    setUserActivation(false)
+    fromFrame({ type: 'contentKey', key: 'Escape' })
+    fromFrame({ type: 'contentKey', key: 'ArrowUp' })
+    expect(handlers.onContentKey).not.toHaveBeenCalled()
+  })
+
+  it('fails CLOSED where the platform reports no user activation at all', () => {
+    arm()
+    iframe.focus()
+    setUserActivation(undefined)
+    fromFrame({ type: 'contentKey', key: 'Escape' })
+    fromFrame({ type: 'contentKey', key: 'ArrowUp' })
+    expect(handlers.onContentKey).not.toHaveBeenCalled()
+  })
+
   it('is honoured when the frame genuinely holds host keyboard focus', () => {
     arm()
     iframe.focus()
@@ -165,6 +199,11 @@ describe('a forged contentKey cannot mutate host state', () => {
     }
     // …and a non-editable element that IS the frame is fine.
     expect(reportedKeyIsPlausible({ activeElement: iframe, frameElement: iframe, userActivation: true })).toBe(true)
+  })
+
+  it('refuses a reported key with no live activation, whatever the focus says', () => {
+    expect(reportedKeyIsPlausible({ activeElement: iframe, frameElement: iframe, userActivation: false })).toBe(false)
+    expect(reportedKeyIsPlausible({ activeElement: iframe, frameElement: iframe, userActivation: null })).toBe(false)
   })
 })
 
@@ -336,5 +375,158 @@ describe('the frame cannot spend the host main thread', () => {
     expect(messageListeners).toBe(0)
     await flushFrame()
     expect(handlers.onContentClick).not.toHaveBeenCalled()
+  })
+})
+
+// ── The budget cannot be dodged by DELETING a field ──────────────────────────
+// The budget used to be spent only after the `type` filter, so a message that
+// carried the namespace and no `type` was free: 50,000 of them produced
+// flooded=0 and left the channel armed, while 700 well-formed ones tripped the
+// drop exactly as documented. The stated guarantee — "past 600 namespace
+// messages in a second the channel is dropped whole" — was defeated by omitting
+// one field (adversarial review, 2026-08-15).
+describe('every message the frame sends is charged, whatever shape it is', () => {
+  it('drops the channel on namespaced traffic carrying NO type at all', () => {
+    arm()
+    iframe.focus()
+    for (let i = 0; i < INBOUND_FLOOD_BUDGET + 5; i++) fromFrame({ id: i, ok: true, result: {} })
+    expect(handlers.onFlood).toHaveBeenCalledTimes(1)
+    expect(messageListeners).toBe(0)
+
+    // …and the channel really is gone, not merely reported.
+    fromFrame({ type: 'ready' })
+    expect(handlers.onReady).not.toHaveBeenCalled()
+  })
+
+  it('drops the channel on a burst that is not even in the namespace', () => {
+    arm()
+    for (let i = 0; i < INBOUND_FLOOD_BUDGET + 5; i++) rawFromFrame({ hello: i })
+    expect(handlers.onFlood).toHaveBeenCalledTimes(1)
+    expect(messageListeners).toBe(0)
+  })
+
+  it('leaves the low-volume request/response traffic alone', () => {
+    // canvas-frame-rpc's replies are namespaced with an id and no type, and are
+    // capped at four in flight. They cost a unit each and nothing more.
+    arm()
+    for (let i = 0; i < 40; i++) fromFrame({ id: i, ok: true, result: { chain: [] } })
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    expect(messageListeners).toBe(1)
+  })
+})
+
+// ── Size (adversarial review, 2026-08-15) ────────────────────────────────────
+// Nothing capped how BIG an inbound message could be: a single `pointer`
+// carrying a 20,971,520-byte `hit.name` was accepted and dispatched, because the
+// clamp to 120 characters happens on the way into the STORE — long after the
+// payload has been materialised on the host thread and hung off React state.
+describe('an inbound message has a size bound', () => {
+  const oversizedName = (): string => 'a'.repeat(MAX_INBOUND_STRING_CHARS + 1)
+  const hitWith = (name: string): Record<string, unknown> => ({
+    role: 'button',
+    name,
+    tag: 'button',
+    box: { x: 1, y: 2, width: 3, height: 4 },
+  })
+
+  it('refuses a pointer whose reported name is a megabyte, instead of dispatching it', async () => {
+    arm()
+    fromFrame({ type: 'pointer', hit: hitWith('a'.repeat(2 * 1024 * 1024)) })
+    await flushFrame()
+    expect(handlers.onPointer).not.toHaveBeenCalled()
+  })
+
+  it('refuses an oversized viewport, click and key just the same', async () => {
+    arm()
+    iframe.focus()
+    fromFrame({ type: 'viewport', viewport: { scrollX: 0, scrollY: 0, width: 1, height: 1, dpr: 1, scale: 1, pad: oversizedName() } })
+    fromFrame({ type: 'contentClick', pageX: 1, pageY: 1, hit: hitWith(oversizedName()) })
+    fromFrame({ type: 'contentKey', key: 'Escape', pad: oversizedName() })
+    await flushFrame()
+    expect(handlers.onViewport).not.toHaveBeenCalled()
+    expect(handlers.onContentClick).not.toHaveBeenCalled()
+    expect(handlers.onContentKey).not.toHaveBeenCalled()
+  })
+
+  it('refuses a message that hides its bulk in a binary field', async () => {
+    arm()
+    fromFrame({ type: 'pointer', hit: hitWith('Save'), pad: new ArrayBuffer(4 * 1024 * 1024) })
+    await flushFrame()
+    expect(handlers.onPointer).not.toHaveBeenCalled()
+  })
+
+  it('refuses a message that is a graph rather than a report', async () => {
+    arm()
+    const wide: Record<string, unknown> = {}
+    for (let i = 0; i < 5000; i++) wide[`k${i}`] = i
+    fromFrame({ type: 'pointer', hit: hitWith('Save'), pad: wide })
+    // Deep, and cyclic — postMessage carries both, and the walk must terminate.
+    const deep: Record<string, unknown> = {}
+    let node = deep
+    for (let i = 0; i < 40; i++) {
+      node.next = {}
+      node = node.next as Record<string, unknown>
+    }
+    node.loop = deep
+    fromFrame({ type: 'pointer', hit: hitWith('Save'), pad: deep })
+    await flushFrame()
+    expect(handlers.onPointer).not.toHaveBeenCalled()
+  })
+
+  it('still takes a long-but-plausible accessible name, clamped as before', async () => {
+    arm()
+    fromFrame({ type: 'pointer', hit: hitWith('a'.repeat(MAX_INBOUND_STRING_CHARS)) })
+    await flushFrame()
+    expect(handlers.onPointer).toHaveBeenCalledTimes(1)
+    const hit = (handlers.onPointer as unknown as { mock: { calls: Array<[{ name: string }]> } }).mock.calls[0][0]
+    expect(hit.name).toHaveLength(120)
+  })
+
+  it('charges an oversized message enough that a handful of them drop the channel', () => {
+    arm()
+    const trips = Math.floor(INBOUND_FLOOD_BUDGET / INBOUND_OVERSIZE_COST) + 1
+    for (let i = 0; i < trips - 1; i++) fromFrame({ type: 'pointer', hit: hitWith(oversizedName()) })
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    fromFrame({ type: 'pointer', hit: hitWith(oversizedName()) })
+    expect(handlers.onFlood).toHaveBeenCalledTimes(1)
+    expect(messageListeners).toBe(0)
+  })
+
+  it('the same COUNT of well-formed reports is not dropped — it is the size that costs', async () => {
+    arm()
+    const trips = Math.floor(INBOUND_FLOOD_BUDGET / INBOUND_OVERSIZE_COST) + 1
+    for (let i = 0; i < trips; i++) fromFrame({ type: 'pointer', hit: hitWith('Save') })
+    await flushFrame()
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    expect(handlers.onPointer).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds the check itself: the real events pass, the shapes that cost do not', () => {
+    // The five legitimate messages, at their largest.
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready' })).toBe(true)
+    expect(
+      withinInboundSizeBounds({
+        ns: CANVAS_BRIDGE_NS,
+        type: 'viewport',
+        viewport: { scrollX: 0, scrollY: 0, width: 1920, height: 1080, dpr: 2, scale: 1 },
+      }),
+    ).toBe(true)
+    expect(
+      withinInboundSizeBounds({
+        ns: CANVAS_BRIDGE_NS,
+        type: 'pointer',
+        pageX: 10,
+        pageY: 20,
+        hit: { role: 'button', name: 'Save', tag: 'button', uxId: 'save-button', box: { x: 1, y: 2, width: 3, height: 4 } },
+      }),
+    ).toBe(true)
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'contentKey', key: 'ArrowUp' })).toBe(true)
+
+    // One string over the cap, one key over it, one value graph over it.
+    expect(withinInboundSizeBounds({ a: 'a'.repeat(MAX_INBOUND_STRING_CHARS + 1) })).toBe(false)
+    expect(withinInboundSizeBounds({ ['k'.repeat(MAX_INBOUND_STRING_CHARS + 1)]: 1 })).toBe(false)
+    const many: Record<string, unknown> = {}
+    for (let i = 0; i <= MAX_INBOUND_VALUES; i++) many[`k${i}`] = i
+    expect(withinInboundSizeBounds(many)).toBe(false)
   })
 })

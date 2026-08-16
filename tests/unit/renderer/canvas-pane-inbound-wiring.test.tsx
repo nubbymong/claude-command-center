@@ -147,3 +147,64 @@ describe('the pane listens to the frame through the gated channel', () => {
     await act(async () => root.unmount())
   })
 })
+
+// ── The frame's own ceiling (adversarial review, 2026-08-15) ─────────────────
+// The off-screen capture frame has delegated nothing since the headless path
+// landed; the VISIBLE frame — same untrusted documents, same origin scheme — had
+// no `allow` at all, so it inherited the default policy for every powerful
+// feature the host document is permitted.
+describe('the visible content frame delegates no permissions', () => {
+  it('carries an empty allow list, like the off-screen capture frame', async () => {
+    const iframe = container.querySelector('iframe')
+    expect(iframe).toBeTruthy()
+    expect(iframe!.getAttribute('allow')).toBe('')
+    // …and the sandbox it has always had is untouched.
+    expect(iframe!.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin allow-forms')
+    await act(async () => root.unmount())
+  })
+})
+
+// ── Whose voice the readout is in (adversarial review, 2026-08-15) ───────────
+// role/name/tag/uxId in the hover chip are the frame's `pointer` report about
+// ITSELF. Every other page-authored identity in the pane is marked — the locked
+// label, the notes-panel labels, the resolution checklist — and this one, the
+// readout a reviewer actually reads while hunting for an element, printed the
+// artifact's account of itself in the app's own voice.
+describe('the hover readout is marked as the page’s own account of itself', () => {
+  async function hoverOverSaveButton(): Promise<HTMLElement> {
+    const options = createChannel.mock.calls[0][0] as {
+      handlers: {
+        onViewport: (vp: { scrollX: number; scrollY: number; width: number; height: number; dpr: number; scale: number }) => void
+        onPointer: (hit: { role: string; name: string; tag: string; uxId?: string; box: { x: number; y: number; width: number; height: number } } | null) => void
+      }
+    }
+    await act(async () => {
+      // A viewport first: without one there is no stage rect and no chip.
+      options.handlers.onViewport({ scrollX: 0, scrollY: 0, width: 800, height: 600, dpr: 1, scale: 1 })
+      options.handlers.onPointer({ role: 'button', name: 'Save', tag: 'button', uxId: 'save-button', box: { x: 10, y: 40, width: 60, height: 20 } })
+    })
+    // The innermost div carrying the label — the chip itself, not the overlay
+    // layers around it (querySelectorAll is document order, so the last match in
+    // the chain is the deepest).
+    const carriers = Array.from(container.querySelectorAll('div')).filter((el) =>
+      el.textContent?.includes('button "Save"'),
+    )
+    const chip = carriers[carriers.length - 1]
+    expect(chip, 'the hover readout chip').toBeTruthy()
+    expect(chip.querySelector('div'), 'the chip has no nested div — it IS the chip').toBeNull()
+    return chip
+  }
+
+  it('prints the marker in front of the identity the page reported', async () => {
+    const chip = await hoverOverSaveButton()
+    expect(chip.textContent).toContain('page-reported')
+    expect(chip.textContent).toContain('button "Save"')
+    await act(async () => root.unmount())
+  })
+
+  it('carries the attribution as a tooltip, like every other page-authored label', async () => {
+    const chip = await hoverOverSaveButton()
+    expect(chip.getAttribute('title')).toMatch(/cannot verify/i)
+    await act(async () => root.unmount())
+  })
+})

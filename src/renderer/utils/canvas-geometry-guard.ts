@@ -27,19 +27,49 @@ const PATH_STRING_MAX = 512
 /** Bridge ordinals are small by construction; anything huge is a forgery. */
 const ORDINAL_MAX = 1_000_000
 
-/** Content-supplied strings that will be STORED (annotation focus/anchors) as
- *  well as rendered: control characters are stripped, not just length-capped —
- *  the main store rejects them outright, and a note the user wrote must not be
- *  refused because a hostile page put a control byte in a role string. */
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARS_G = /[\u0000-\u001F\u007F]/g
+/**
+ * Content-supplied strings that will be STORED (annotation focus/anchors) as
+ * well as rendered: these characters are stripped, not just length-capped — the
+ * main store rejects them outright, and a note the user wrote must not be
+ * refused because a hostile page put a control byte in a role string.
+ *
+ * The class is the whole FORMAT class, not just C0 and DEL. A guard that
+ * stripped only those left every bidi override and isolate standing, and those
+ * ride through into `focus.label`, the focus chip on the stage, the notes panel
+ * and the `canvas_review` payload handed to the agent — one right-to-left
+ * override reverses the rest of the line, so the reviewer reads a label that is
+ * not what was stored and the agent is sent one thing while a person is shown
+ * another (adversarial review, 2026-08-15).
+ *
+ * Cc is C0, C1 and DEL; Cf is the bidi family (overrides, embeddings and
+ * isolates), the zero-width space and joiners, the Arabic letter mark and the
+ * byte-order mark; Zl/Zp are the two line separators a single-line chip cannot
+ * survive. The same expression `canvas-snapshot-serialize.ts` uses on the
+ * strings it puts on the wire — one rule for "text the page wrote that a human
+ * will read", written the same way in both places, because two cleaners that
+ * must agree while only one is maintained is this pipeline's recurring bug.
+ * (The `u` flag is fine at this repo's ES2022 target; two shipped modules
+ * already depend on it.)
+ */
+const FORMAT_CONTROLS_G = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
 
 export function finite(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+/**
+ * A hit string on its way to the screen — the transient hover readout.
+ *
+ * Sheds the same class `storableString` does, even though nothing here is
+ * stored. What it feeds is the chip that names the element under the pointer,
+ * and that chip carries the `page-reported` marker: a bidi override inside a
+ * page-authored name reorders the line it is printed on, which is the one place
+ * the attribution is easiest to walk away from. The reviewer reads this readout
+ * while hunting for the element they are about to write a note against, so it
+ * has to say what it says.
+ */
 export function clampString(value: unknown): string {
-  return typeof value === 'string' ? value.slice(0, HIT_STRING_MAX) : ''
+  return typeof value === 'string' ? value.replace(FORMAT_CONTROLS_G, '').slice(0, HIT_STRING_MAX) : ''
 }
 
 export function safeRect(rect: Rect | undefined): Rect {
@@ -80,7 +110,7 @@ export function safeHit(hit: CanvasHitInfo | undefined): CanvasHitInfo {
 // legitimate note refuse to save by poisoning a role string.
 
 function storableString(value: unknown, max: number): string {
-  return typeof value === 'string' ? value.replace(CONTROL_CHARS_G, '').slice(0, max) : ''
+  return typeof value === 'string' ? value.replace(FORMAT_CONTROLS_G, '').slice(0, max) : ''
 }
 
 function safeInspectEntry(entry: Partial<CanvasInspectEntry> | undefined): CanvasInspectEntry {

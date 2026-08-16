@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { MAX_INSPECT_CHAIN } from '../../../src/shared/canvas'
-import { safeAnchorResolutions, safeInspectResult } from '../../../src/renderer/utils/canvas-geometry-guard'
+import { safeAnchorResolutions, safeHit, safeInspectResult } from '../../../src/renderer/utils/canvas-geometry-guard'
 
 describe('safeInspectResult', () => {
   it('caps the chain, strips control characters, and finite-guards every number', () => {
@@ -203,5 +203,120 @@ describe('a page cannot grade its own resolution checklist', () => {
       [uxA, uxB, fp],
     )
     expect(out.map((r) => r.found)).toEqual([true, false, true])
+  })
+})
+
+// ── The format class, not just C0 (adversarial review, 2026-08-15) ───────────
+// The guard stripped C0 and DEL and left the whole bidi family standing:
+// overrides, embeddings, isolates and marks rode through `storableString` into
+// `focus.label`, the focus chip on the stage, the notes panel and the
+// `canvas_review` payload the agent is handed. A single RIGHT-TO-LEFT OVERRIDE
+// reverses the rest of the line it sits in — so the label the reviewer reads is
+// not the label that was stored, and the text sent to the agent is not the text
+// a person was shown. Same expression the snapshot serialiser already used on
+// its wire strings; this was the one page-authored path still on the old class.
+describe('page-authored strings shed the whole format class', () => {
+  /** Written as code points so this file never carries an invisible character. */
+  const NUL = String.fromCodePoint(0x0000)
+  const NEL = String.fromCodePoint(0x0085) // C1
+  const SHY = String.fromCodePoint(0x00ad) // soft hyphen
+  const ALM = String.fromCodePoint(0x061c) // arabic letter mark
+  const ZWSP = String.fromCodePoint(0x200b)
+  const RLM = String.fromCodePoint(0x200f) // right-to-left mark
+  const LRE = String.fromCodePoint(0x202a) // left-to-right embedding
+  const PDF = String.fromCodePoint(0x202c) // pop directional formatting
+  const RLO = String.fromCodePoint(0x202e) // right-to-left override
+  const LRI = String.fromCodePoint(0x2066) // left-to-right isolate
+  const PDI = String.fromCodePoint(0x2069) // pop directional isolate
+  const LSEP = String.fromCodePoint(0x2028) // line separator
+  const PSEP = String.fromCodePoint(0x2029) // paragraph separator
+  const BOM = String.fromCodePoint(0xfeff)
+  const EVERY = NUL + NEL + SHY + ALM + ZWSP + RLM + LRE + PDF + RLO + LRI + PDI + LSEP + PSEP + BOM
+
+  const uxA = { kind: 'ux-id', id: 'save-button' } as const
+  const BOX = { x: 1, y: 2, width: 30, height: 40 }
+
+  it('strips them out of an inspect chain — every field the store will hold', () => {
+    const out = safeInspectResult({
+      chain: [
+        {
+          role: `but${RLO}ton`,
+          name: `Sa${LRI}ve${PDI}`,
+          tag: `but${ZWSP}ton`,
+          uxId: `save${RLM}-button`,
+          box: BOX,
+          fingerprint: {
+            role: `but${SHY}ton`,
+            name: `Sa${BOM}ve`,
+            ancestorPath: `main${LSEP}>form`,
+            ordinal: 1,
+          },
+        },
+      ],
+    })
+    const entry = out.chain[0]
+    expect(entry.role).toBe('button')
+    expect(entry.name).toBe('Save')
+    expect(entry.tag).toBe('button')
+    expect(entry.uxId).toBe('save-button')
+    expect(entry.fingerprint.role).toBe('button')
+    expect(entry.fingerprint.name).toBe('Save')
+    expect(entry.fingerprint.ancestorPath).toBe('main>form')
+  })
+
+  it('leaves not one of the class in a stored string', () => {
+    const out = safeInspectResult({
+      chain: [
+        {
+          role: `a${EVERY}b`,
+          name: '',
+          tag: '',
+          box: BOX,
+          fingerprint: { role: '', name: '', ancestorPath: '', ordinal: 0 },
+        },
+      ],
+    })
+    expect(out.chain[0].role).toBe('ab')
+  })
+
+  it('strips them from a resolution before the checklist renders it', () => {
+    const out = safeAnchorResolutions(
+      { results: [{ found: true, via: 'ux-id', uxId: uxA.id, box: BOX, role: `but${RLO}ton`, name: `Sa${RLO}ve` }] },
+      [uxA],
+    )
+    expect(out[0]).toMatchObject({ found: true, role: 'button', name: 'Save' })
+  })
+
+  it('strips them from the transient hover readout too — the chip that carries the marker', () => {
+    // Not stored, but it is where the `page-reported` attribution is printed,
+    // and an override inside the name reorders the line it sits on.
+    const hit = safeHit({
+      role: `but${RLO}ton`,
+      name: `Sa${LRE}ve${PDF}`,
+      tag: `but${ZWSP}ton`,
+      uxId: `save${ALM}-button`,
+      box: { x: 0, y: 0, width: 1, height: 1 },
+    })
+    expect(hit.role).toBe('button')
+    expect(hit.name).toBe('Save')
+    expect(hit.tag).toBe('button')
+    expect(hit.uxId).toBe('save-button')
+  })
+
+  it('does not eat ordinary text a page might legitimately label with', () => {
+    const name = 'Enregistrer — 保存 · ✓'
+    const out = safeInspectResult({
+      chain: [
+        {
+          role: 'button',
+          name,
+          tag: 'button',
+          box: BOX,
+          fingerprint: { role: 'button', name, ancestorPath: 'main>form', ordinal: 0 },
+        },
+      ],
+    })
+    expect(out.chain[0].name).toBe(name)
+    expect(out.chain[0].fingerprint.name).toBe(name)
   })
 })
