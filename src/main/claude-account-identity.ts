@@ -6,6 +6,7 @@
 import fs, { promises as fsp } from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
 import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles, isValidProfileId } from './account-profiles'
+import { hasTransientProfileConsumer } from './profile-consumers'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -164,12 +165,16 @@ export function getWatchedProfileId(sessionId: string): string | undefined {
   return watched.get(sessionId)
 }
 
-/** True when any LIVE session is running under `profileId` -- i.e. that profile's
- *  home is the active USERPROFILE/credential store of an open session. Used to
- *  refuse a profile delete that would half-destroy a live account's creds (R-006).
- *  Checks both the active-watcher map (added at spawn, removed at exit) and the
- *  spawn-captured map (cleared on exit) for defense in depth.
- *  KNOWN GAP: SSH sessions never enter either map (they spawn ssh.exe without
+/** True when `profileId` is in use by a live session OR a transient credential
+ *  consumer -- i.e. that profile's home is the active USERPROFILE/credential
+ *  store of something running now. Used to refuse a profile delete that would
+ *  half-destroy a live account's creds (R-006) and to gate the usage page's auto
+ *  token refresh (a rotation under a live consumer strands its token).
+ *  Checks the active-watcher map (added at spawn, removed at exit), the
+ *  spawn-captured map (cleared on exit), AND the transient-consumer registry
+ *  (the `claude auth status` probe, #258 -- which spawns the CLI under a profile
+ *  home and can rotate the token itself; it registers for its short duration).
+ *  KNOWN GAP: SSH sessions never enter any of these (they spawn ssh.exe without
  *  account capture). Safe today because SSH sessions don't use account-home
  *  isolation -- nothing of theirs lives in the profile dir -- but if SSH ever
  *  gains profile binding this check must learn about it. */
@@ -177,6 +182,7 @@ export function isProfileInUseByLiveSession(profileId: string): boolean {
   if (!profileId) return false
   for (const pid of watched.values()) if (pid === profileId) return true
   for (const pid of profileBySession.values()) if (pid === profileId) return true
+  if (hasTransientProfileConsumer(profileId)) return true
   return false
 }
 

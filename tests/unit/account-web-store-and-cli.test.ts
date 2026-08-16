@@ -12,7 +12,12 @@ vi.mock('../../src/main/channel-storage', () => ({
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 vi.mock('../../src/main/account-profiles', () => ({ getProfileConfigDir: () => '' }))
 
-vi.mock('node:child_process', () => ({ execFileSync: () => { throw new Error('no cli') } }))
+// claude-cli-auth promisifies execFile at module load, so the mock must expose
+// execFile as a function. This suite doesn't call readClaudeCliAuth, so the stub
+// is never invoked; it only needs to satisfy promisify() at import time.
+vi.mock('node:child_process', () => ({
+  execFile: (_cmd: string, _args: string[], _opts: unknown, cb: (e: Error) => void) => cb(new Error('no cli')),
+}))
 
 const { statusOf } = await import('../../src/main/account-web/session-store')
 const { parseCliAuth, parseAuthStatus, claudeAuthCommand } = await import('../../src/main/account-web/claude-cli-auth')
