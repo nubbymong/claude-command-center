@@ -14,9 +14,19 @@ import {
   noteSessionStart,
   noteSubagentStart,
   noteSubagentStop,
+  noteBackgroundToolStart,
+  noteBackgroundToolStop,
   noteTurnEnd,
   isBackgroundContext,
 } from './background-context'
+
+// Tool calls that launch a BACKGROUND agent whose model/effort must not repaint
+// the main strip. The tool's Pre/PostToolUse bracket the background window
+// RACE-FREE (they fire on the main transcript, in order, around the whole
+// agent), which is what the fire-and-forget SubagentStart signal cannot do.
+// Names span CC versions/features: Task + Agent launch subagents; Workflow
+// launches a dynamic workflow.
+export const BACKGROUND_SPAWN_TOOLS: ReadonlySet<string> = new Set(['Task', 'Agent', 'Workflow'])
 
 // DELIBERATE behaviour change (spec 2026-06-11 §3/§4): unknown effort levels
 // now display verbatim instead of being silently dropped. A hardcoded VALID set
@@ -64,15 +74,28 @@ function track(e: HookEvent): void {
   // unbounded, and clear any dangling subagent depth. Mirrors
   // channel-permissions.ts clearing per-session state on Stop.
   if (e.event === 'Stop') { lastBySession.delete(e.sessionId); noteTurnEnd(e.sessionId); return }
+
+  // A background-spawning tool call (Task/Agent/Workflow) brackets the whole
+  // background agent race-free. Its PostToolUse ENDS the window: exit background
+  // BEFORE this event's own effort, which is the main window's again. Its
+  // PreToolUse BEGINS the window: enter AFTER this event's own effort, which is
+  // still the main window's. This is the primary fix for the pills flickering to
+  // a subagent's / dynamic-workflow agent's effort.
+  const spawnTool = !!e.toolName && BACKGROUND_SPAWN_TOOLS.has(e.toolName)
+  if (spawnTool && e.event === 'PostToolUse') noteBackgroundToolStop(e.sessionId)
+
   const level = effortFromEvent(e)
-  if (!level || !e.sessionId) return
   // A subagent / workflow agent's effort must not repaint the main strip: its
   // PreToolUse/PostToolUse events reach the main session's hook endpoint, but
   // the effort is the agent's, not the main window's.
-  if (isBackgroundContext(e.sessionId, transcriptOf(e))) return
-  if (lastBySession.get(e.sessionId) === level) return
-  lastBySession.set(e.sessionId, level)
-  pushEffort(e.sessionId, level)
+  if (level && e.sessionId
+      && !isBackgroundContext(e.sessionId, transcriptOf(e))
+      && lastBySession.get(e.sessionId) !== level) {
+    lastBySession.set(e.sessionId, level)
+    pushEffort(e.sessionId, level)
+  }
+
+  if (spawnTool && e.event === 'PreToolUse') noteBackgroundToolStart(e.sessionId)
 }
 
 /** Test seam. */
