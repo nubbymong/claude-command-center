@@ -48,19 +48,76 @@ export function decideContextMenuAction(opts: {
   return opts.classicMode ? 'paste' : 'menu'
 }
 
+// Strip the control characters that let pasted clipboard text ESCAPE the paste
+// and run as typed input. This is the primary defence and must wrap EVERY paste
+// into a terminal (blind right-click, the context menu, and the Ctrl+V
+// keybinding all read through here).
+//
+// Two vectors, both closed by removing C0 controls:
+//   - Bracketed-paste breakout. term.paste() wraps the text in
+//     \x1b[200~ ... \x1b[201~ but does NOT strip an embedded end marker, so a
+//     clipboard containing a literal \x1b[201~ terminates the wrap early and the
+//     bytes after it run as commands — a right-click RCE from a crafted "copy
+//     this command" affordance, even at a bracketed-paste prompt. Removing ESC
+//     removes the sentinel.
+//   - readline accept-line bindings. \x0f (Ctrl-O, operate-and-get-next) and
+//     other C0 controls submit the current line with no newline in sight, so a
+//     newline check alone (blindPasteNeedsMenu) cannot see them.
+//
+// We keep \t and the newline pair \r/\n: newlines must survive so bracketed
+// inputs keep multi-line pastes and blindPasteNeedsMenu can still gate them, and
+// tab survives for indented pastes. This mirrors how hardened terminals (iTerm2,
+// Windows Terminal) sanitise paste input. DEL (\x7f) is stripped too.
+export function sanitizeClipboardForPaste(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+}
+
 // Should a BLIND paste (classic right-click with nothing selected — the only
 // paste the user did not explicitly pick from a menu) be routed through the
 // context menu for confirmation instead?
 //
-// The hazard is precise: term.paste() normalises \n to \r, so clipboard text
-// containing any newline submits line-by-line at a raw shell prompt — one
-// right-click executes the clipboard. When the foreground program has turned
-// bracketed paste on (CC's input, modern shells' line editors), the paste
-// arrives wrapped in \x1b[200~ ... \x1b[201~ and newlines are literal, so
-// multi-line pastes there are routine and safe — no confirmation.
+// The hazard: term.paste() normalises \n to \r, so clipboard text containing any
+// newline submits line-by-line at a raw shell prompt — one right-click executes
+// the clipboard. When the foreground program has turned bracketed paste on (CC's
+// input, modern shells' line editors), the paste arrives wrapped in
+// \x1b[200~ ... \x1b[201~ and newlines are literal, so multi-line pastes there
+// are routine — no confirmation. (The crafted-escape breakout that would defeat
+// that wrap is handled separately and unconditionally by
+// sanitizeClipboardForPaste, so `text` here is already free of ESC/C0.)
+//
+// Residual, accepted: xterm never auto-resets DEC mode 2004, so if a TUI enables
+// bracketed paste and dies without emitting \x1b[?2004l, bracketedPasteActive can
+// read stale-true at a genuinely non-bracketed prompt and an ordinary multi-line
+// paste would submit line-by-line. Post-sanitise it can only be benign clipboard
+// text (no injected commands), and the far commoner path — Ctrl+V — never gated
+// on this at all; tightening it further would gate the most common paste in the
+// app (a multi-line prompt into Claude Code's input).
 export function blindPasteNeedsMenu(text: string, bracketedPasteActive: boolean): boolean {
   if (bracketedPasteActive) return false
   return /[\r\n]/.test(text)
+}
+
+// Resolve what a right-click should do from the terminal's LIVE modes. Extracted
+// from TerminalView so the glue — reading term.modes and mapping it into
+// decideContextMenuAction's inputs — is unit-testable and mutation-catchable. The
+// #145 post-mortem is explicit that predicate tests cannot see wiring bugs; a
+// one-character flip of the mouseTracking compare silently resurrects the
+// blind-paste-at-a-TUI defect, so the compare lives here, behind a test.
+export function resolveContextMenuIntent(
+  term: {
+    getSelection: () => string
+    modes?: { mouseTrackingMode?: string; bracketedPasteMode?: boolean }
+  },
+  classicMode: boolean,
+): { action: 'copy' | 'paste' | 'menu'; mouseTracking: boolean; bracketedPaste: boolean } {
+  const mouseTracking = (term.modes?.mouseTrackingMode ?? 'none') !== 'none'
+  const hasSelection = !!term.getSelection()
+  return {
+    action: decideContextMenuAction({ hasSelection, classicMode, mouseTracking }),
+    mouseTracking,
+    bracketedPaste: !!term.modes?.bracketedPasteMode,
+  }
 }
 
 // Is this keystroke a terminal paste request? Ctrl+V (Win/Linux), Cmd+V (macOS),
