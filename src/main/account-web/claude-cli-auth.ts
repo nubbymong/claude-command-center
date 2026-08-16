@@ -24,12 +24,16 @@
  * No default export (project convention).
  */
 
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { logError, logInfo } from '../debug-logger'
 import { getProfileConfigDir, getProfilesRoot } from '../account-profiles'
+import { acquireProfileConsumer } from '../profile-consumers'
 import { DEFAULT_CLI_AUTH_METHOD, PROFILE_ID_RE, isCliAuthMethod, type CliAuthMethod } from '../../shared/account-web-session'
+
+const execFileAsync = promisify(execFile)
 
 export interface ClaudeCliAuthStatus {
   /** True when this account is signed in to the CLI. */
@@ -99,8 +103,14 @@ export function parseCliAuth(raw: string): ClaudeCliAuthStatus {
  *
  * Reads only the SHAPE — whether a token exists and when it expires. The token
  * value is never returned, logged, or copied.
+ *
+ * ASYNC (#258 follow-up): the CLI probe is a subprocess with a 10s timeout, run
+ * once per account and triggered from the Sidebar (every session right-click)
+ * and the accounts panel (every row on mount). Running it synchronously blocked
+ * the Electron main event loop for up to 10s each time — long enough to trip the
+ * usage fetch's own 8s socket timeout. execFileAsync keeps it off the loop.
  */
-export function readClaudeCliAuth(profileId: string): ClaudeCliAuthStatus {
+export async function readClaudeCliAuth(profileId: string): Promise<ClaudeCliAuthStatus> {
   // VALIDATE HERE, not only at the IPC boundary. `join` does not sandbox: with
   // `../../..` segments it walks straight out of the profiles root, and the id
   // below becomes both a filesystem path and the HOME of a spawned process. The
@@ -114,30 +124,45 @@ export function readClaudeCliAuth(profileId: string): ClaudeCliAuthStatus {
   // 1. Ask the CLI. Setting USERPROFILE to the profile home is how a session is
   //    already spawned under an account, and `claude auth status` honours it —
   //    verified against two profiles, which reported two different emails.
+  //
+  //    Register as a transient credential consumer for the probe's lifetime:
+  //    `claude auth status` reads this profile's credentials under its home and
+  //    can make the CLI rotate the (single-use) refresh token. Without this, the
+  //    usage page's auto token-refresh — which gates on isProfileInUseByLiveSession
+  //    and knows only about PTY sessions — could rotate the same token
+  //    concurrently and strand the account (log it out). See profile-consumers.ts.
+  const release = acquireProfileConsumer(profileId)
   try {
     const home = join(getProfilesRoot(), profileId)
     if (existsSync(home)) {
-      const out = execFileSync('claude', ['auth', 'status'], {
+      const { stdout } = await execFileAsync('claude', ['auth', 'status'], {
         encoding: 'utf-8',
         timeout: 10_000,
         windowsHide: true,
         shell: true,          // resolves claude.cmd on Windows, as elsewhere in the app
         env: { ...process.env, USERPROFILE: home, HOME: home },
       })
-      const parsed = parseAuthStatus(out)
+      const parsed = parseAuthStatus(stdout)
       if (parsed) return parsed
     }
   } catch {
     // CLI absent, slow, or erroring — fall through to the file.
+  } finally {
+    release()
   }
 
-  // 2. Fall back to the credential file. Less informative (no email/org) but it
-  //    needs no subprocess, so a missing or broken CLI still yields a usable
-  //    signed-in/out answer rather than an error.
+  // 2. Fall back to the credential file at <profileHome>/.claude/.credentials.json
+  //    — the location EVERY writer and reader in the app uses (account-usage.ts,
+  //    account-auth-info.ts, account-profiles.ts). The previous path omitted the
+  //    `.claude` segment, so the file could never be found: whenever the CLI probe
+  //    above failed (absent/slow/non-zero, all swallowed) a fully signed-in
+  //    account rendered "not signed in", telling the user to /login. Less
+  //    informative than the CLI (no email/org) but needs no subprocess, so a
+  //    missing or broken CLI still yields a usable signed-in/out answer.
   try {
     const configDir = getProfileConfigDir(profileId)
     if (!configDir) return { authenticated: false }
-    const path = join(configDir, '.credentials.json')
+    const path = join(configDir, '.claude', '.credentials.json')
     if (!existsSync(path)) return { authenticated: false }
     return { ...parseCliAuth(readFileSync(path, 'utf-8')), source: 'credential-file' }
   } catch (err) {

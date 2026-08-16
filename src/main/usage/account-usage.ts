@@ -356,11 +356,14 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
   //  - PRIMARY is excluded outright: its credentials are shared with the global
   //    ~/.claude (credsPath can literally BE the global file), which `claude` runs
   //    OUTSIDE CCC read — rotating under them strands every external terminal.
-  //    Non-primary profiles live in CCC-managed isolated homes, so CCC sessions
-  //    are their only consumers and the live-session guard below is sufficient.
-  //  - isProfileInUseByLiveSession covers BOTH interactive sessions and the
-  //    profile-pinned shell-only login shells (re-auth / add-account), whose
-  //    in-flight /login a refresh could otherwise clobber.
+  //    Non-primary profiles live in CCC-managed isolated homes, so their only
+  //    consumers are things CCC knows about, and the live-session guard below
+  //    covers them.
+  //  - isProfileInUseByLiveSession covers interactive sessions, the profile-pinned
+  //    shell-only login shells (re-auth / add-account) whose in-flight /login a
+  //    refresh could clobber, AND — since #258 — the `claude auth status` probe,
+  //    which registers as a transient consumer while it runs (profile-consumers.ts)
+  //    because it too reads and can rotate the profile's token.
   if (!tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
     const refreshed = await refreshProfileToken(profileId, creds.refreshToken, creds.credsPath)
     if (refreshed) {

@@ -46,7 +46,7 @@ export function registerAccountWebHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_WEB_STATUS, async (_e, profileId: unknown) => {
     try {
       const id = profileIdSchema.parse(profileId)
-      const cli = readClaudeCliAuth(id)
+      const cli = await readClaudeCliAuth(id)
       const authMethod = getAuthMethod(id)
       return {
         ok: true,
