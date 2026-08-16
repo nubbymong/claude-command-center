@@ -95,6 +95,63 @@ describe('effort gating — subagents + dynamic-workflow agents must not repaint
   })
 })
 
+describe('effort gating — spawn-tool bracket covers subagents AND dynamic workflows race-free', () => {
+  beforeEach(() => { sent.length = 0; _resetEffort(); _resetBackgroundContextForTest(); _setEffortObserverForTest(null) })
+
+  const levels = () => sent.map((s) => (s.payload as { effortLevel: string }).effortLevel)
+
+  it('suppresses a subagent effort bracketed by Task Pre/PostToolUse even with NO SubagentStart', () => {
+    _emitForTest(ev({ payload: { effort: { level: 'high' } } }))                // main
+    _emitForTest(ev({ event: 'PreToolUse', toolName: 'Task', payload: {} }))    // enter background
+    _emitForTest(ev({ payload: { effort: { level: 'xhigh' } } }))               // subagent — gated
+    _emitForTest(ev({ event: 'PostToolUse', toolName: 'Task', payload: {} }))   // exit background
+    _emitForTest(ev({ payload: { effort: { level: 'max' } } }))                 // main again
+    expect(levels()).toEqual(['high', 'max'])
+  })
+
+  it('brackets a dynamic-workflow agent via the Workflow tool', () => {
+    _emitForTest(ev({ payload: { effort: { level: 'high' } } }))                    // main
+    _emitForTest(ev({ event: 'PreToolUse', toolName: 'Workflow', payload: {} }))    // enter
+    _emitForTest(ev({ payload: { effort: { level: 'low' } } }))                     // workflow agent — gated
+    _emitForTest(ev({ event: 'PostToolUse', toolName: 'Workflow', payload: {} }))   // exit
+    _emitForTest(ev({ payload: { effort: { level: 'medium' } } }))                  // main
+    expect(levels()).toEqual(['high', 'medium'])
+  })
+
+  it('the Agent tool also brackets (subagent spawner name across CC versions)', () => {
+    _emitForTest(ev({ event: 'PreToolUse', toolName: 'Agent', payload: {} }))
+    _emitForTest(ev({ payload: { effort: { level: 'xhigh' } } }))   // gated
+    expect(sent).toHaveLength(0)
+  })
+
+  it('the spawning tool call still applies its OWN (main) effort before entering background', () => {
+    _emitForTest(ev({ event: 'PreToolUse', toolName: 'Task', payload: { effort: { level: 'high' } } }))
+    expect(levels()).toEqual(['high'])                             // main 'high' applied
+    _emitForTest(ev({ payload: { effort: { level: 'xhigh' } } }))  // now inside the bracket — gated
+    expect(levels()).toEqual(['high'])
+  })
+
+  it('a non-spawn tool call (e.g. Bash) does NOT enter background', () => {
+    _emitForTest(ev({ event: 'PreToolUse', toolName: 'Bash', payload: { effort: { level: 'high' } } }))
+    _emitForTest(ev({ payload: { effort: { level: 'xhigh' } } }))
+    expect(levels()).toEqual(['high', 'xhigh'])
+  })
+
+  // #285 adversarial review: the closing PostToolUse's OWN effort.level is the
+  // finishing agent's, not the main window's. The bracket must exit background
+  // only AFTER this event's effort is evaluated, or the strip flashes the
+  // subagent's effort for one tick. (Mirrors how SubagentStop never trusts its
+  // own event's effort.)
+  it('does NOT flicker when the closing PostToolUse carries the finishing agent\'s own effort', () => {
+    _emitForTest(ev({ payload: { effort: { level: 'high' } } }))                // main 'high'
+    _emitForTest(ev({ event: 'PreToolUse', toolName: 'Task', payload: {} }))    // enter background
+    _emitForTest(ev({ payload: { effort: { level: 'xhigh' } } }))               // subagent — gated
+    _emitForTest(ev({ event: 'PostToolUse', toolName: 'Task', payload: { effort: { level: 'xhigh' } } })) // close, carrying the agent's effort
+    _emitForTest(ev({ payload: { effort: { level: 'max' } } }))                 // next real main event
+    expect(levels()).toEqual(['high', 'max'])                                  // never a stray 'xhigh'
+  })
+})
+
 describe('effort observer seam (Sentinel Trigger A)', () => {
   beforeEach(() => { sent.length = 0; _resetEffort(); _setEffortObserverForTest(null) })
 
