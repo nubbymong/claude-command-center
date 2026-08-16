@@ -217,7 +217,7 @@ export function AccountCard({
         <p className="text-[0.8125rem] text-overlay0">No usage limits reported.</p>
       )}
 
-      {row.status === 'needs-login' && (
+      {!isInactive && row.status === 'needs-login' && (
         <div className="flex items-center justify-between gap-2">
           <span className="text-[0.8125rem] text-overlay0">{row.detail === 'session expired' ? 'Sign-in expired' : 'Not signed in'}</span>
           <button

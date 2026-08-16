@@ -55,6 +55,17 @@ describe('AccountCard — active/inactive awareness', () => {
     r.unmount()
   })
 
+  it('a parked account left at needs-login shows NO blue Sign in button (defence in depth)', () => {
+    // The one combo the greying gate is meant to cover but a status-only check
+    // missed: an inactive account whose token has lapsed. The blue "Sign in"
+    // block gates on status === 'needs-login'; without also excluding inactive it
+    // would offer a live Sign in for a deliberately parked account.
+    const r = render(<AccountCard row={row({ status: 'needs-login', active: false })} theme="dark" onSignIn={vi.fn()} />)
+    expect(buttonTexts(r.container)).toEqual([])
+    expect(r.container.textContent).toMatch(/Parked/i)
+    r.unmount()
+  })
+
   it('an active signed-out account still offers "Sign in"', () => {
     const r = render(<AccountCard row={row({ status: 'needs-login', active: true })} theme="dark" onSignIn={vi.fn()} />)
     expect(buttonTexts(r.container)).toContain('Sign in')
