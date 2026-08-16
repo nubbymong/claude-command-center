@@ -15,6 +15,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWriteSecure, hardenCredentialFile } from '../account-profiles'
+import { isAccountActive } from '../../shared/account-types'
 import { isProfileInUseByLiveSession } from '../claude-account-identity'
 import { parseUsage } from './usage-buckets'
 import type { AccountUsage, UsageBucket, CreditsInfo } from '../../shared/usage-types'
@@ -330,16 +331,25 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
   const profiles = listProfiles()
   const profile = profiles.find((p) => p.id === profileId)
   const isPrimary = !!profile?.isPrimary
+  const active = profile ? isAccountActive(profile) : true
   const base: AccountUsage = {
     profileId,
     email: profile?.accountEmail || readProfileAccountEmail(profileId),
     name: profile?.name || 'Account',
     isPrimary,
+    active,
     status: 'error',
     buckets: [],
     fetchedAt: Date.now(),
   }
   if (!profile) return { ...base, detail: 'unknown profile' }
+
+  // Parked account: list it, but do NO network poll and NO token refresh. A
+  // refresh rotates the single-use token — doing that to an account the user
+  // deliberately parked is the opposite of parked, and burns a request against
+  // the IP burst limit for a card that only needs to say "inactive". Return
+  // before readProfileToken/refresh/fetch so none of that runs.
+  if (!active) return { ...base, status: 'inactive' }
 
   const creds = await readProfileToken(profileId, isPrimary)
   let token = creds.token
@@ -395,9 +405,16 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
 export async function fetchAllAccountsUsage(): Promise<AccountUsage[]> {
   const profiles = listProfiles()
   const out: AccountUsage[] = []
-  for (let i = 0; i < profiles.length; i++) {
-    if (i > 0) await sleep(STAGGER_MS)
-    out.push(await fetchAccountUsage(profiles[i].id))
+  // Stagger only between accounts that actually hit the network. A parked
+  // account short-circuits in fetchAccountUsage (no request), so it must not
+  // consume a stagger slot — otherwise N parked accounts add N*STAGGER_MS of
+  // dead wait before the active ones load.
+  let networkedCount = 0
+  for (const p of profiles) {
+    const willNetwork = isAccountActive(p)
+    if (willNetwork && networkedCount > 0) await sleep(STAGGER_MS)
+    out.push(await fetchAccountUsage(p.id))
+    if (willNetwork) networkedCount++
   }
   return out
 }

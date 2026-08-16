@@ -136,7 +136,7 @@ function creditsText(c: NonNullable<AccountUsage['credits']>): string {
   return `${fmtMoney(c.used, c.currency)} used`
 }
 
-function AccountCard({
+export function AccountCard({
   row,
   auth,
   theme,
@@ -148,22 +148,29 @@ function AccountCard({
   onSignIn: () => void
 }) {
   const dot = resolveIdentityColor(resolveAccountColourKey(row.email ?? undefined, undefined, undefined), theme)
+  // Parked account: undefined active is treated as active (a main process that
+  // predates the field never greys a card). Inactive accounts are never network
+  // fetched, so they carry no live buckets — the card just states that and
+  // offers no sign-in (opening a login shell for an account the user parked
+  // bypasses the switcher's own active-guard).
+  const isInactive = row.status === 'inactive' || row.active === false
   // Computed at render against the wall clock; the calculation itself is pure and
   // lives in shared/ so main and renderer cannot disagree about what a credential
   // state means.
   const window_ = auth ? describeAuthWindow(auth, Date.now()) : null
   const duplicates = auth?.duplicateOfProfileIds ?? []
   return (
-    <div className="rounded-xl border border-surface0/70 bg-surface0/20 px-4 py-3.5">
+    <div className={`rounded-xl border border-surface0/70 px-4 py-3.5 ${isInactive ? 'bg-surface0/10 opacity-60' : 'bg-surface0/20'}`}>
       <div className="flex items-center gap-2 mb-2.5">
         <span className="w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ backgroundColor: dot }} />
         {/* Full email, never truncated (accounts are distinct even when emails look similar). */}
         <span className="text-[0.9375rem] text-text font-medium break-all">{row.email || row.name}</span>
         {row.isPrimary && <span className="text-[0.625rem] text-overlay0 border border-surface1 rounded-full px-1.5 py-px shrink-0">Primary</span>}
+        {isInactive && <span className="ml-auto text-[0.625rem] text-overlay0 border border-surface1 rounded-full px-1.5 py-px shrink-0">Inactive</span>}
         {/* A working sign-in gets a refresh too, not just a broken one: the whole
             point is to act BEFORE the forced login, and previously the only way to
-            learn it was coming was for it to arrive. */}
-        {row.status !== 'needs-login' && (
+            learn it was coming was for it to arrive. Never for a parked account. */}
+        {!isInactive && row.status !== 'needs-login' && (
           <button
             onClick={onSignIn}
             title="Sign in again now to reset this account's countdown"
@@ -174,7 +181,13 @@ function AccountCard({
         )}
       </div>
 
-      {duplicates.length > 0 && (
+      {isInactive && (
+        <p className="text-[0.8125rem] text-overlay0">
+          Parked — not polled. Reactivate this account in Settings › Accounts to use it again.
+        </p>
+      )}
+
+      {!isInactive && duplicates.length > 0 && (
         <div className="mb-2.5 px-2.5 py-1.5 rounded-lg bg-red/10 border border-red/25 text-[0.75rem] text-red">
           This profile and {duplicates.length === 1 ? 'another profile' : `${duplicates.length} other profiles`} are
           signed into the SAME account. Each time one refreshes, the others&apos; sign-ins are invalidated — which is
@@ -182,7 +195,7 @@ function AccountCard({
         </div>
       )}
 
-      {auth?.identityMismatch && duplicates.length === 0 && (
+      {!isInactive && auth?.identityMismatch && duplicates.length === 0 && (
         <div className="mb-2.5 px-2.5 py-1.5 rounded-lg bg-yellow/10 border border-yellow/25 text-[0.75rem] text-yellow">
           Labelled {auth.accountEmail} but signed in as {auth.oauthEmail}.
         </div>
@@ -224,18 +237,20 @@ function AccountCard({
         </p>
       )}
 
-      <div className="flex items-center justify-between gap-2 mt-2">
-        {row.status === 'ok' ? (
-          <p className="text-[0.6875rem] text-overlay0">
-            {row.stale ? `Last updated ${relAgo(row.fetchedAt)} · couldn't refresh` : `Updated ${relAgo(row.fetchedAt)}`}
-          </p>
-        ) : (
-          <span />
-        )}
-        {window_ && (
-          <p className={`text-[0.6875rem] tabular-nums shrink-0 ${TONE_TEXT[window_.tone]}`}>{window_.label}</p>
-        )}
-      </div>
+      {!isInactive && (
+        <div className="flex items-center justify-between gap-2 mt-2">
+          {row.status === 'ok' ? (
+            <p className="text-[0.6875rem] text-overlay0">
+              {row.stale ? `Last updated ${relAgo(row.fetchedAt)} · couldn't refresh` : `Updated ${relAgo(row.fetchedAt)}`}
+            </p>
+          ) : (
+            <span />
+          )}
+          {window_ && (
+            <p className={`text-[0.6875rem] tabular-nums shrink-0 ${TONE_TEXT[window_.tone]}`}>{window_.label}</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
