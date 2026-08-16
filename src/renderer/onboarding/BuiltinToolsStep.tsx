@@ -39,7 +39,7 @@ const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: stri
     k: 'canvas',
     icon: FRAME,
     title: 'Agent Canvas: read the rendered page',
-    desc: 'When a page is open in the Canvas pane, Claude can read what it actually looks like once laid out: element names, sizes, form state, and measured problems such as clipped text, targets too small to hit, and unreadable contrast. It can also render files from the project folders you open sessions in — nothing outside those folders, and nothing at all while the canvas is closed.',
+    desc: 'When a page is open in the Canvas pane, Claude can read what it actually looks like once laid out: element names, sizes, form state, and measured problems such as clipped text, targets too small to hit, and unreadable contrast. It can also render files from the project folders you open sessions in — nothing outside those folders. To check its own work it may lay a page out off-screen even when the Canvas pane is closed, but only ever from those same folders.',
   },
 ]
 

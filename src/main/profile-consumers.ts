@@ -21,27 +21,55 @@
  * can import it without a cycle, and it is unit-testable on its own.
  */
 
-const refCounts = new Map<string, number>()
+/**
+ * A ref older than this is a LEAK, and is swept. The one consumer here is the
+ * `claude auth status` probe, bounded by a 10s subprocess timeout whose `finally`
+ * releases the ref; a ref that outlives 3x that could only be one whose release
+ * never ran (a hung/orphaned CLI that never let the promise settle). Left forever
+ * it would block the usage-page auto token-refresh AND make the profile read as
+ * "in use by a live session" that does not exist — an account that cannot be
+ * deleted until the app restarts. Expiring it bounds that consequence.
+ */
+export const PROFILE_CONSUMER_MAX_AGE_MS = 30_000
+
+interface ConsumerEntry {
+  count: number
+  /** Epoch ms after which an unreleased ref is treated as leaked. */
+  expires: number
+}
+
+const entries = new Map<string, ConsumerEntry>()
 
 /**
  * Mark `profileId` as having a live transient consumer. Returns a release
  * function; call it exactly once (in a `finally`) when the consumer is done.
  * The release is idempotent so a double-call cannot drive the count negative.
+ * Each acquire refreshes the leak-expiry window, so overlapping live probes keep
+ * the profile marked; only a ref with no release and no fresh acquire expires.
  */
 export function acquireProfileConsumer(profileId: string): () => void {
   if (!profileId) return () => { /* nothing to track */ }
-  refCounts.set(profileId, (refCounts.get(profileId) ?? 0) + 1)
+  const cur = entries.get(profileId)
+  entries.set(profileId, { count: (cur?.count ?? 0) + 1, expires: Date.now() + PROFILE_CONSUMER_MAX_AGE_MS })
   let released = false
   return () => {
     if (released) return
     released = true
-    const next = (refCounts.get(profileId) ?? 1) - 1
-    if (next <= 0) refCounts.delete(profileId)
-    else refCounts.set(profileId, next)
+    const e = entries.get(profileId)
+    if (!e) return
+    if (e.count <= 1) entries.delete(profileId)
+    else entries.set(profileId, { count: e.count - 1, expires: e.expires })
   }
 }
 
-/** True while any transient consumer holds `profileId`. */
+/** True while any transient consumer holds `profileId` (and has not leaked). */
 export function hasTransientProfileConsumer(profileId: string): boolean {
-  return !!profileId && (refCounts.get(profileId) ?? 0) > 0
+  if (!profileId) return false
+  const e = entries.get(profileId)
+  if (!e) return false
+  // Self-heal a leaked ref rather than block refresh / stranding the account
+  // forever: a consumer past the max age can only be one whose release() never
+  // ran. Sweep it on read so no timer or background sweep is needed.
+  if (Date.now() >= e.expires) { entries.delete(profileId); return false }
+  return e.count > 0
 }

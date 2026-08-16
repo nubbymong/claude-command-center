@@ -14,7 +14,7 @@ import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice, formatSpawnError } from '../utils/sessionLaunch'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import { isControlReportOnly, resolveContextMenuIntent, blindPasteNeedsMenu, sanitizeClipboardForPaste, isOrdinaryEditable } from '../utils/terminalInput'
+import { isControlReportOnly, resolveContextMenuIntent, blindPasteNeedsMenu, sanitizeClipboardForPaste, sanitizePasteIntoTerminal, isMouseTracking, isOrdinaryEditable } from '../utils/terminalInput'
 import TerminalContextMenu from './TerminalContextMenu'
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
@@ -277,6 +277,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let unsubExit: (() => void) | null = null
     let disposeKeybindings: (() => void) | null = null
     let handleContextMenu: ((e: MouseEvent) => void) | null = null
+    let handlePaste: ((e: ClipboardEvent) => void) | null = null
     let disposed = false
     let parseTimer: ReturnType<typeof setTimeout> | null = null
     let pendingParseData = ''
@@ -904,7 +905,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // Re-sample tracking AFTER the (retried, possibly slow) clipboard read:
           // a program that started tracking the mouse during the await must open
           // the menu, not receive a decision taken while it was still a prompt.
-          const trackingNow = (term.modes?.mouseTrackingMode ?? 'none') !== 'none'
+          // Same tested seam as the first read (isMouseTracking) — never inline it.
+          const trackingNow = isMouseTracking(term)
           if (trackingNow || blindPasteNeedsMenu(text, bracketedPaste)) {
             // Ambiguous now, or multi-line into a non-bracketed prompt (which
             // submits line-by-line) — require the explicit menu click.
@@ -918,6 +920,25 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         setCtxMenu({ x: e.clientX, y: e.clientY, hasSelection: !!term.getSelection() })
       }
       container.addEventListener('contextmenu', handleContextMenu, true)
+
+      // SANITIZE EVERY NATIVE PASTE ROUTE — sanitizeClipboardForPaste is only a
+      // true chokepoint if nothing can paste around it. readClipboardText() covers
+      // the paths CCC owns (Ctrl+V, right-click), but xterm registers its OWN
+      // 'paste' listener on the helper textarea that reads the RAW clipboard and
+      // calls paste() with no strip, and that listener is still reachable two ways:
+      // the Edit menu's {role:'paste'} -> webContents.paste(), and Ctrl+V while a
+      // modal is open (installTerminalKeybindings bails before preventDefault when
+      // hasModalOpen, so the native paste fires). Either re-opens the bracketed-
+      // paste \x1b[201~ breakout the sanitiser exists to close. Intercept in the
+      // CAPTURE phase on the container — an ancestor of the textarea, so this runs
+      // BEFORE xterm's listener; stopPropagation keeps xterm from also pasting and
+      // preventDefault stops the browser's own insertion, so the ONLY paste that
+      // reaches this terminal is the sanitised one.
+      handlePaste = (e: ClipboardEvent) => {
+        if (!term) return
+        sanitizePasteIntoTerminal(e, term)
+      }
+      container.addEventListener('paste', handlePaste, true)
     }
 
     requestAnimationFrame(initTerminal)
@@ -939,6 +960,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       }
       disposeKeybindings?.()
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
+      if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
       resizeObserver?.disconnect()
       unsubData?.()

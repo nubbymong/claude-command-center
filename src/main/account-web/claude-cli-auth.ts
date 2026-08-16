@@ -110,7 +110,30 @@ export function parseCliAuth(raw: string): ClaudeCliAuthStatus {
  * the Electron main event loop for up to 10s each time — long enough to trip the
  * usage fetch's own 8s socket timeout. execFileAsync keeps it off the loop.
  */
-export async function readClaudeCliAuth(profileId: string): Promise<ClaudeCliAuthStatus> {
+// Overlapping probes for ONE profile share a single subprocess. The renderer
+// fires ACCOUNT_WEB_STATUS on every account-row mount, every auth-method toggle,
+// and every Sidebar session right-click, so N accounts on a panel open could boot
+// N concurrent `claude` CLI trees at once. The pre-#258 execFileSync path
+// serialised them by accident; making the probe async removed that backpressure.
+// Keyed by profileId, cleared when the probe settles — same shape as the usage
+// refreshInFlight map. Deduping also means one consumer ref per profile, not N.
+const authProbesInFlight = new Map<string, Promise<ClaudeCliAuthStatus>>()
+
+export function readClaudeCliAuth(profileId: string): Promise<ClaudeCliAuthStatus> {
+  const existing = authProbesInFlight.get(profileId)
+  if (existing) return existing
+  const probe = (async () => {
+    try {
+      return await readClaudeCliAuthUncached(profileId)
+    } finally {
+      authProbesInFlight.delete(profileId)
+    }
+  })()
+  authProbesInFlight.set(profileId, probe)
+  return probe
+}
+
+async function readClaudeCliAuthUncached(profileId: string): Promise<ClaudeCliAuthStatus> {
   // VALIDATE HERE, not only at the IPC boundary. `join` does not sandbox: with
   // `../../..` segments it walks straight out of the profiles root, and the id
   // below becomes both a filesystem path and the HOME of a spawned process. The

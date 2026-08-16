@@ -595,7 +595,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
         onRenameFinish={handleFinishSessionRename}
         onRenameCancel={() => { setRenamingSessionId(null); setSessionRenameValue('') }}
         onClick={(e) => handleSessionClick(session.id, e)}
-        onContextMenu={(e) => { e.preventDefault(); void refreshWebSessions(session.profileId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        onContextMenu={(e) => { e.preventDefault(); void refreshWebSessions(session.profileId ?? primaryProfileId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
       />
@@ -1063,14 +1063,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
             // session with a resolved account — an SSH session's browser and
             // credentials live on another machine, and a shell-only session has
             // no /login to run.
-            hasWebSession={!!(s.profileId ?? primaryProfileId) && webSessionAccounts.has((s.profileId ?? primaryProfileId)!)}
+            hasWebSession={!s.shellOnly && !!(s.profileId ?? primaryProfileId) && webSessionAccounts.has((s.profileId ?? primaryProfileId)!)}
             onOpenArtifacts={
-              (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
+              !s.shellOnly && (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
                 ? () => { void window.electronAPI.accountWeb.openArtifacts((s.profileId ?? primaryProfileId)!) }
                 : undefined
             }
             onAuthenticateWeb={
-              (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
+              !s.shellOnly && (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
                 ? () => { void authenticateWebForSession((s.profileId ?? primaryProfileId)!) }
                 : undefined
             }

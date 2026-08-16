@@ -4,6 +4,7 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useReauthAccount } from '../hooks/useReauthAccount'
 import { authFailureStillApplies, describeAuthWindow, type ProfileAuthInfo } from '../../shared/account-auth'
+import { isAccountActive } from '../../shared/account-types'
 import { resolveAccountNameByEmail, resolveAccountName } from '../../shared/account-chip-color'
 import KpiSidebar from './KpiSidebar'
 import type { CrossAccountInsights, InsightsData } from '../types/electron'
@@ -224,6 +225,12 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
     const out: Array<{ profileId: string; name: string; error?: string }> = []
     for (const info of authInfo) {
       const profile = profiles.find((p) => p.id === info.profileId)
+      // A parked (inactive) account is intentionally never token-refreshed (#280),
+      // so its credentials lapse BY DESIGN — never nag the user to re-authenticate
+      // an account they deliberately parked (clicking would spawn a login shell
+      // pinned to it, the exact behaviour #280 set out to stop on the sibling
+      // surface). Skip known-parked profiles before either push site.
+      if (profile && !isAccountActive(profile)) continue
       const email = info.oauthEmail || info.accountEmail || profile?.accountEmail
       const name = (email ? nameForAccount(email) : null) || profile?.name || email || 'Account'
 

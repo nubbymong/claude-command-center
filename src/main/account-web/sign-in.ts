@@ -687,7 +687,19 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
         // loop now touches the page without ever scripting it, and the human can
         // actually clear the check.
         if (!(await targetIsClaudeAi(client))) { await closeQuietly(client); continue }
-        const all: CdpCookie[] = (await withTimeout<any>(client.Network.getAllCookies(), IO_CALL_TIMEOUT_MS, 'getAllCookies'))?.cookies ?? []
+        // SOFT-FAIL, like every neighbouring await. getAllCookies runs against the
+        // volatile login target on every 1.5s poll, and this file's own comments
+        // (484-487, 658-663) call a mid-navigation "No target with given id found"
+        // a NORMAL event — Cloudflare reloads the challenge once or twice. A bare
+        // await here escaped the for-loop AND the while-loop into the outer catch,
+        // which force-kills the browser and fails the sign-in: a self-inflicted
+        // abort on exactly the churn #269 exists to survive. Retry next poll, and
+        // close the client this iteration opened so a transient failure cannot leak
+        // it either.
+        let all: CdpCookie[]
+        try {
+          all = (await withTimeout<any>(client.Network.getAllCookies(), IO_CALL_TIMEOUT_MS, 'getAllCookies'))?.cookies ?? []
+        } catch { await closeQuietly(client); continue }
         const harvest = harvestClaudeCookies(all)
 
         if (!harvest.hasSessionCookie) {
