@@ -22,7 +22,7 @@ import type { HookEvent } from '../shared/hook-types'
 // Informational notifications (auth_success, agent_completed, elicitation_complete,
 // elicitation_response) are NOT here: they don't block the user, so they neither
 // raise nor clear — an unknown type is ignored rather than spuriously pulsing.
-export const ATTENTION_NOTIFICATIONS: ReadonlySet<string> = new Set([
+const ATTENTION_NOTIFICATIONS: ReadonlySet<string> = new Set([
   'permission_prompt',
   'idle_prompt',
   'agent_needs_input',
