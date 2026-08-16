@@ -364,6 +364,70 @@ export function buildSessionNotFoundResponse(
   return { status: 404, body, logMessage }
 }
 
+/**
+ * GHSA-f3wv: authorize a POST /messages against the AUTHENTICATED session, not
+ * merely against a valid token.
+ *
+ * The caller has already cleared `authenticateMcpRequest` — it presented a token
+ * that proves it owns `authedSession`. But the TARGET transport is named by the
+ * query-string `sessionId`, and authenticate-only never checked that the named
+ * transport was opened UNDER `authedSession`. A caller that learned another
+ * session's transport id could therefore post MCP requests into that session's
+ * stream. Bind them here: a session may only post to a transport it owns.
+ *
+ * An owner mismatch returns the SAME 404 body as an unknown transport, so the
+ * response cannot be used as an oracle for which transport ids exist under other
+ * sessions; only the server-side log line differs, so a real cross-session
+ * attempt is still visible.
+ *
+ * Pure (maps + strings in, decision out) so the security-critical branch is
+ * unit-testable without an http.Server — see conductor-mcp-binding.test.ts.
+ */
+export type MessagePostDecision =
+  | { ok: true; transport: any }
+  | { ok: false; status: number; body: string; logMessage: string }
+
+export function authorizeMessagePost(
+  authedSession: string,
+  requestedSessionId: string | null,
+  transports: ReadonlyMap<string, any>,
+  transportOwners: ReadonlyMap<string, string>,
+  userAgent: string | undefined,
+): MessagePostDecision {
+  if (!requestedSessionId) {
+    return { ok: false, status: 400, body: 'Missing sessionId', logMessage: '[vision-mcp] POST /messages 400: missing sessionId' }
+  }
+  // Fail closed if there is somehow no authenticated session. Unreachable today —
+  // the sole caller is past the 401 gate, so authedSession is a non-empty string —
+  // but this keeps the ownership compare below from ever being empty===empty (fail
+  // OPEN) under a future refactor. Reported as 404 (no existence oracle).
+  if (!authedSession) {
+    const nf = buildSessionNotFoundResponse(requestedSessionId, transports, userAgent)
+    return { ok: false, status: nf.status, body: nf.body, logMessage: '[vision-mcp] POST /messages 404: refusing a request with no authenticated session (fail-closed)' }
+  }
+  const transport = transports.get(requestedSessionId)
+  const owner = transportOwners.get(requestedSessionId)
+  if (!transport) {
+    const nf = buildSessionNotFoundResponse(requestedSessionId, transports, userAgent)
+    return { ok: false, status: nf.status, body: nf.body, logMessage: nf.logMessage }
+  }
+  if (owner !== authedSession) {
+    // Identical body to the unknown-transport case (no existence oracle); a
+    // distinct server-side log keeps a genuine cross-session attempt visible.
+    const nf = buildSessionNotFoundResponse(requestedSessionId, transports, userAgent)
+    const ua = userAgent && userAgent.length > 0 ? userAgent.slice(0, UA_MAX_LEN) : 'unknown'
+    return {
+      ok: false,
+      status: nf.status,
+      body: nf.body,
+      logMessage:
+        `[vision-mcp] POST /messages 404: session ${authedSession.slice(0, SID_PREFIX_LEN)}… ` +
+        `may not post to a transport it does not own (sid=${requestedSessionId.slice(0, SID_PREFIX_LEN)}…) ua="${ua}"`,
+    }
+  }
+  return { ok: true, transport }
+}
+
 // Lazy-load MCP SDK to avoid import issues in test environments
 let McpServer: any = null
 let SSEServerTransport: any = null
@@ -397,6 +461,9 @@ type GetVisionManager = () => VisionManagerInterface | null
 let httpServer: http.Server | null = null
 let mcpPort: number = 0
 const transports = new Map<string, any>()
+// GHSA-f3wv: which AUTHENTICATED session opened each transport, so a POST can be
+// bound to its owner (see authorizeMessagePost). Kept in lockstep with `transports`.
+const transportOwners = new Map<string, string>()
 
 // R-DEC-3: latch so an unauthenticated request logs at most ONE warning per
 // process lifetime per bound port. Without this a probing/misconfigured client
@@ -834,9 +901,12 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
           res,
         )
         transports.set(transport.sessionId, transport)
+        // GHSA-f3wv: record who owns this transport so a POST can be bound to it.
+        transportOwners.set(transport.sessionId, boundSessionId)
 
         res.on('close', () => {
           transports.delete(transport.sessionId)
+          transportOwners.delete(transport.sessionId)
           logInfo(`[vision-mcp] SSE connection closed (${transports.size} remaining)`)
         })
 
@@ -851,30 +921,25 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       if (req.method === 'POST' && req.url?.startsWith('/messages')) {
         const url = new URL(req.url, `http://localhost:${port}`)
         const sessionId = url.searchParams.get('sessionId')
+        const ua = req.headers['user-agent']
 
-        if (!sessionId) {
-          res.writeHead(400)
-          res.end('Missing sessionId')
+        // GHSA-f3wv: bind the target transport to the AUTHENTICATED session, not
+        // just to any valid token. #435's actionable 404 body is preserved (and
+        // reused for an owner mismatch so it is not an existence oracle).
+        const decision = authorizeMessagePost(
+          authedSession,
+          sessionId,
+          transports,
+          transportOwners,
+          typeof ua === 'string' ? ua : undefined,
+        )
+        if (!decision.ok) {
+          logError(decision.logMessage)
+          res.writeHead(decision.status, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end(decision.body)
           return
         }
-
-        const transport = transports.get(sessionId)
-        if (!transport) {
-          // #435: log a diagnostic line and return an actionable body
-          // instead of the bare "Session not found" that the LLM used
-          // to surface verbatim. The HTTP status stays 404 so MCP
-          // clients can keep their existing reconnect heuristics.
-          const ua = req.headers['user-agent']
-          const diagnostic = buildSessionNotFoundResponse(
-            sessionId,
-            transports,
-            typeof ua === 'string' ? ua : undefined,
-          )
-          logError(diagnostic.logMessage)
-          res.writeHead(diagnostic.status, { 'Content-Type': 'text/plain; charset=utf-8' })
-          res.end(diagnostic.body)
-          return
-        }
+        const transport = decision.transport
 
         try {
           await transport.handlePostMessage(req, res)
@@ -980,6 +1045,7 @@ export function stopMcpServer(): void {
       try { transport.close?.() } catch { /* ignore */ }
     }
     transports.clear()
+    transportOwners.clear()
 
     httpServer.close()
     httpServer = null
