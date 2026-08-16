@@ -73,6 +73,32 @@ export function sanitizeClipboardForPaste(text: string): string {
   return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
 }
 
+// The SINGLE paste sink for a terminal. A capture-phase 'paste' listener on the
+// terminal container funnels every native paste route here — the Edit menu's
+// {role:'paste'} -> webContents.paste(), and Ctrl+V past a modal (where the
+// keybinding bails before preventDefault) — so xterm's own listener, which reads
+// the RAW clipboard and pastes it unstripped, never runs. Without this the
+// sanitiser was not actually a chokepoint and the bracketed-paste \x1b[201~
+// breakout stayed open on those routes.
+//
+// Extracted (not inlined in TerminalView) so the WIRING is unit-testable: a
+// dropped preventDefault/stopPropagation (xterm would then also paste the raw
+// text) or a dropped sanitise dies in a test, not in production — the #145 lesson
+// this whole file is built around. Returns the text it pasted, for assertions.
+export function sanitizePasteIntoTerminal(
+  e: { preventDefault: () => void; stopPropagation: () => void; clipboardData?: { getData: (type: string) => string } | null },
+  term: { paste: (text: string) => void },
+): string {
+  // Claim the event before anything else can act on it: preventDefault stops the
+  // browser's own insertion, stopPropagation stops xterm's descendant listener
+  // from reading the raw clipboard and pasting a second, unsanitised copy.
+  e.preventDefault()
+  e.stopPropagation()
+  const clean = sanitizeClipboardForPaste(e.clipboardData?.getData('text/plain') ?? '')
+  if (clean) term.paste(clean)
+  return clean
+}
+
 // Should a BLIND paste (classic right-click with nothing selected — the only
 // paste the user did not explicitly pick from a menu) be routed through the
 // context menu for confirmation instead?
@@ -98,6 +124,16 @@ export function blindPasteNeedsMenu(text: string, bracketedPasteActive: boolean)
   return /[\r\n]/.test(text)
 }
 
+// The live mouse-tracking read, as ONE tested expression. Both
+// resolveContextMenuIntent AND TerminalView's post-await re-sample call it, so a
+// one-character flip of the compare (!== 'none' -> === 'none') dies in a unit
+// test on either path instead of silently resurrecting the blind-paste-at-a-TUI
+// defect from an inlined duplicate — the #145 lesson the extraction exists to
+// honour. It was defeated once already: the re-sample was re-implemented inline.
+export function isMouseTracking(term: { modes?: { mouseTrackingMode?: string } }): boolean {
+  return (term.modes?.mouseTrackingMode ?? 'none') !== 'none'
+}
+
 // Resolve what a right-click should do from the terminal's LIVE modes. Extracted
 // from TerminalView so the glue — reading term.modes and mapping it into
 // decideContextMenuAction's inputs — is unit-testable and mutation-catchable. The
@@ -111,7 +147,7 @@ export function resolveContextMenuIntent(
   },
   classicMode: boolean,
 ): { action: 'copy' | 'paste' | 'menu'; mouseTracking: boolean; bracketedPaste: boolean } {
-  const mouseTracking = (term.modes?.mouseTrackingMode ?? 'none') !== 'none'
+  const mouseTracking = isMouseTracking(term)
   const hasSelection = !!term.getSelection()
   return {
     action: decideContextMenuAction({ hasSelection, classicMode, mouseTracking }),

