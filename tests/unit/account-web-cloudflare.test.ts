@@ -131,4 +131,31 @@ describe('runSignIn — no page script while the challenge is unsolved (#269)', 
 
     expect(mid.notice).toBeUndefined()
   })
+
+  it('survives a transient getAllCookies failure — retries next poll, does not kill the browser', async () => {
+    // getAllCookies runs against the volatile login target on every poll. A
+    // mid-navigation rejection (Cloudflare reloads the challenge; the target dies
+    // and returns "No target with given id found") must be soft: pre-fix the bare
+    // await escaped the for-loop AND the while-loop into the outer catch, which
+    // force-kills the browser and returns 'failed' — aborting the sign-in on
+    // exactly the churn #269 exists to survive. Here the first two polls' cookie
+    // reads throw; the third grants the session. The run must still COMPLETE.
+    let polls = 0
+    const evaluate = vi.fn(async () => ({ result: { value: 'me@example.com' } }))
+    _setCdpForTest(makeCdp({
+      targets: [LOGIN, CF_FRAME],
+      cookiesFor: () => {
+        polls++
+        if (polls <= 2) throw new Error('No target with given id found')
+        return [sessionCookie]
+      },
+      evaluate,
+    }))
+
+    const s = await runSignIn({ ...RUN, timeoutMs: 3000 })
+
+    expect(s.phase).toBe('done')
+    expect(s.session?.accountEmail).toBe('me@example.com')
+    expect(evaluate).toHaveBeenCalledTimes(1)
+  })
 })
