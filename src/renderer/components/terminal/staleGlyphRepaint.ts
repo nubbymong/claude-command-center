@@ -55,8 +55,10 @@ export function shouldRepaintOnOutput(s: OutputRepaintState): boolean {
 }
 
 export interface RepainterDeps {
-  /** Rebuild the WebGL glyph atlas (no-op whenever WebGL isn't active). */
-  clearAtlas: () => void
+  /** Rebuild the WebGL glyph atlas. Returns true when WebGL was active and the
+   *  atlas was actually cleared; false on the DOM-renderer fallback (or an
+   *  unrecovered context loss) — nothing to clear, so nothing to repaint. */
+  clearAtlas: () => boolean
   /** Mark the viewport dirty so it re-renders (term.refresh(0, rows-1)). */
   refresh: () => void
   now: () => number
@@ -91,10 +93,13 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
 
   const paint = () => {
     lastPaintAt = deps.now()
-    // clearAtlas() first so refresh() re-rasters against a rebuilt atlas — the
-    // programmatic equivalent of the window-move full repaint.
-    deps.clearAtlas()
-    deps.refresh()
+    // clearAtlas() rebuilds the WebGL glyph atlas; refresh() then re-rasters
+    // against it (the programmatic equivalent of the window-move full repaint).
+    // When WebGL isn't active clearAtlas() returns false — there is no atlas
+    // ghost — so skip the full-viewport refresh rather than tax a DOM-renderer
+    // session that never had the bug (#273 adversarial review). lastPaintAt is
+    // still advanced above so the throttle keeps pacing the (now cheap) checks.
+    if (deps.clearAtlas()) deps.refresh()
   }
 
   const schedule = () => {

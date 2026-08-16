@@ -34,8 +34,10 @@ describe('shouldRepaintOnOutput', () => {
   })
 })
 
-/** A manual clock + timer queue so throttle boundaries are exercised exactly. */
-function makeHarness() {
+/** A manual clock + timer queue so throttle boundaries are exercised exactly.
+ *  webglActive controls what clearAtlas() reports (true = WebGL active/atlas
+ *  cleared; false = DOM-renderer fallback with nothing to clear). */
+function makeHarness({ webglActive = true }: { webglActive?: boolean } = {}) {
   let time = 0
   let nextId = 1
   const timers: Array<{ id: number; cb: () => void; at: number }> = []
@@ -43,7 +45,7 @@ function makeHarness() {
   let refresh = 0
 
   const deps = {
-    clearAtlas: () => { clearAtlas++ },
+    clearAtlas: () => { clearAtlas++; return webglActive },
     refresh: () => { refresh++ },
     now: () => time,
     setTimer: (cb: () => void, ms: number) => {
@@ -87,6 +89,20 @@ describe('createStaleGlyphRepainter', () => {
     const r = createStaleGlyphRepainter(h.deps)
     r.schedule()
     expect(h.counts()).toEqual({ clearAtlas: 1, refresh: 1 })
+  })
+
+  // #273 adversarial review: a DOM-renderer session (no WebGL) has no atlas
+  // ghost, so clearAtlas() returns false and the expensive full-viewport
+  // refresh must be skipped — otherwise those sessions pay ~4/sec forced
+  // reflows for a bug they don't have.
+  it('skips the refresh when WebGL is inactive (clearAtlas returns false)', () => {
+    const h = makeHarness({ webglActive: false })
+    const r = createStaleGlyphRepainter(h.deps)
+    r.schedule()                 // leading edge: atlas is probed...
+    expect(h.counts()).toEqual({ clearAtlas: 1, refresh: 0 })  // ...but no refresh
+    // And under a firehose it stays refresh-free (still throttled to ~4 probes/sec).
+    for (let i = 0; i < 63; i++) { r.schedule(); h.advance(16) }
+    expect(h.counts().refresh).toBe(0)
   })
 
   it('coalesces a burst inside the window into a single trailing repaint', () => {

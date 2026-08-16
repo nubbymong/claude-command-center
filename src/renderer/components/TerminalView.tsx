@@ -418,7 +418,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // #273: bust stale WebGL glyphs by reproducing the window-resize repaint
       // (clearTextureAtlas + refresh) against whichever addon is currently live.
       repainter = createStaleGlyphRepainter({
-        clearAtlas: () => { webglHandle?.clearTextureAtlas() },
+        // Return whether the atlas was actually cleared (WebGL active). When it
+        // wasn't (DOM-renderer fallback / unrecovered context loss) the repainter
+        // skips the refresh — a DOM-renderer session has no atlas ghost to bust.
+        clearAtlas: () => webglHandle?.clearTextureAtlas() ?? false,
         refresh: () => { try { term?.refresh(0, term.rows - 1) } catch { /* disposed */ } },
         now: Date.now,
         setTimer: (cb, ms) => setTimeout(cb, ms),
