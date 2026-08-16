@@ -20,10 +20,17 @@ REM copying them leaves dev and prod sharing one refresh token -- whichever
 REM refreshes first invalidates the other. See scripts\seed-dev-accounts.mjs and
 REM issue #257.
 REM
-REM Dev is fully isolated from prod: its OWN data dir (CCC_DEV_DATA_DIR) and
-REM separate MCP/CDP/hooks/vite ports. The window auto-closes on exit and every
-REM dev process is killed (electron, vite, MCP/update servers, headless Chrome),
-REM so nothing leaks between runs or into your prod instance.
+REM Dev is STRONGLY isolated from prod: its OWN data dir (CCC_DEV_DATA_DIR)
+REM carries config, sessions, transcripts, logs, account profiles and the
+REM claude.ai partitions, and it uses separate MCP/CDP/hooks/vite ports. A few
+REM things are still shared -- the app's userData (source-hash.json), the HKCU
+REM registry keys, and the global ~/.claude home for any spawn not scoped to a
+REM profile -- none of which can destroy a prod login. See
+REM docs\dev-alongside-prod.md for the exact isolation table. The window
+REM auto-closes on exit and every dev process is killed (electron, vite,
+REM MCP/update servers, headless Chrome), so no dev process is left running after
+REM a run or bleeds into your prod instance. (Dev DATA persists between runs by
+REM design -- reused unless you pass --clean.)
 REM ============================================================================
 
 if /I "%~1"=="__run" goto :run
