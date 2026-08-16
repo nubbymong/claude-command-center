@@ -39,7 +39,10 @@ export interface ParsedUsage {
   credits?: CreditsInfo
 }
 
-export type AccountUsageStatus = 'ok' | 'needs-login' | 'error'
+// 'inactive' = the account is parked (isAccountActive false): the usage page
+// still lists it, greyed, but it is never network-polled or token-refreshed and
+// offers no sign-in. See fetchAccountUsage's early return.
+export type AccountUsageStatus = 'ok' | 'needs-login' | 'error' | 'inactive'
 
 export interface AccountUsage {
   profileId: string
@@ -56,4 +59,9 @@ export interface AccountUsage {
   /** True when `status: 'ok'` figures are served from cache — a live refresh
    *  couldn't complete but the account is still signed in. */
   stale?: boolean
+  /** Whether the account is active (selectable). False = parked: the page greys
+   *  it and offers no sign-in, and it is not polled/refreshed. Undefined is
+   *  treated as active by the renderer, so a main process that predates this
+   *  field never greys a card. Mirrors AccountProfile.active / isAccountActive. */
+  active?: boolean
 }
