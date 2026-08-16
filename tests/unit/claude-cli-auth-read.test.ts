@@ -117,4 +117,31 @@ describe('readClaudeCliAuth — CLI probe preferred, and registered as a consume
     await readClaudeCliAuth(ID)
     expect(hasTransientProfileConsumer(ID)).toBe(false)
   })
+
+  it('coalesces overlapping probes for one profile into a single subprocess', async () => {
+    // Making the probe async removed the execFileSync serialisation, so a panel
+    // opening N accounts could fan out N concurrent `claude` trees. Two overlapping
+    // probes for the same profile must share ONE subprocess (and one consumer ref).
+    fs.mkdirSync(join(root, ID), { recursive: true })
+    let calls = 0
+    let pending: ExecCb | null = null
+    execFileImpl = (_c, _a, _o, cb) => { calls++; pending = cb }
+
+    const p1 = readClaudeCliAuth(ID)
+    const p2 = readClaudeCliAuth(ID)
+    expect(calls).toBe(1)                       // one subprocess covers both callers
+    expect(hasTransientProfileConsumer(ID)).toBe(true) // and exactly one consumer ref
+
+    pending!(null, { stdout: JSON.stringify({ loggedIn: true, email: 'a@example.com' }), stderr: '' })
+    const [r1, r2] = await Promise.all([p1, p2])
+    expect(r1.email).toBe('a@example.com')
+    expect(r2.email).toBe('a@example.com')
+    expect(hasTransientProfileConsumer(ID)).toBe(false) // released once, not leaked
+
+    // The in-flight entry clears on settle, so a later probe is not blocked.
+    const p3 = readClaudeCliAuth(ID)
+    expect(calls).toBe(2)
+    pending!(null, { stdout: JSON.stringify({ loggedIn: true }), stderr: '' })
+    await p3
+  })
 })
