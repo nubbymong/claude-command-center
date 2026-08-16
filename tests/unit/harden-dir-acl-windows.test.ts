@@ -284,27 +284,75 @@ describe('windowsAclRemovalArgs (runs on every leg of the matrix)', () => {
 
 describe('windowsAclIsOwnerOnly (runs on every leg of the matrix)', () => {
   const OURS = ['NT AUTHORITY\\SYSTEM:(OI)(CI)(F)', 'NICK_DESKTOP\\nicho:(OI)(CI)(F)']
+  /** What a read-back of a successful write taught the module on this machine. */
+  const PAIR = new Set(['NT AUTHORITY\\SYSTEM', 'NICK_DESKTOP\\nicho'])
 
-  it('recognises the DACL this module writes, by either spelling of the user', () => {
-    expect(windowsAclIsOwnerOnly(OURS, 'nicho')).toBe(true)
-    expect(windowsAclIsOwnerOnly(OURS, 'NICHO')).toBe(true)
-    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(OI)(CI)(F)', 'nicho:(OI)(CI)(F)'], 'nicho')).toBe(true)
+  it('recognises exactly the DACL this module writes', () => {
+    expect(windowsAclIsOwnerOnly(OURS, PAIR)).toBe(true)
+    expect(windowsAclIsOwnerOnly([...OURS].reverse(), PAIR)).toBe(true)
+  })
+
+  it('recognises NOTHING until a write has been read back', () => {
+    // The unlearned state must not guess. Skipping on a guess is how the DACL
+    // below came to be accepted.
+    expect(windowsAclIsOwnerOnly(OURS, null)).toBe(false)
+    expect(windowsAclIsOwnerOnly(OURS, new Set(['NT AUTHORITY\\SYSTEM']))).toBe(false)
+  })
+
+  // The two an adversarial pass demonstrated end-to-end against the shape-based
+  // version: both were reported hardened, and the write was SKIPPED, leaving
+  // Full Control where the whole branch exists to remove it.
+  it('does NOT accept a broad grant sitting where SYSTEM should be', () => {
+    for (const broad of ['Everyone', 'NT AUTHORITY\\Authenticated Users', 'BUILTIN\\Users']) {
+      expect(windowsAclIsOwnerOnly([`${broad}:(OI)(CI)(F)`, 'NICK_DESKTOP\\nicho:(OI)(CI)(F)'], PAIR), broad).toBe(false)
+    }
+  })
+
+  it('does NOT accept a same-named principal from another machine', () => {
+    // The resources directory may be a network share, where `EVILPC\nicho` is a
+    // different person with the same account name.
+    expect(windowsAclIsOwnerOnly(['EVILPC\\nicho:(OI)(CI)(F)', 'EVILPC\\bob:(OI)(CI)(F)'], PAIR)).toBe(false)
+    expect(windowsAclIsOwnerOnly(['EVILPC\\nicho:(OI)(CI)(F)', 'NT AUTHORITY\\SYSTEM:(OI)(CI)(F)'], PAIR)).toBe(false)
+  })
+
+  it('does NOT accept one principal listed twice in place of two', () => {
+    expect(windowsAclIsOwnerOnly(['NICK_DESKTOP\\nicho:(OI)(CI)(F)', 'NICK_DESKTOP\\nicho:(OI)(CI)(F)'], PAIR)).toBe(false)
   })
 
   it('does NOT recognise a DACL that merely contains ours', () => {
-    expect(windowsAclIsOwnerOnly([...OURS, 'NT AUTHORITY\\Authenticated Users:(OI)(CI)(F)'], 'nicho')).toBe(false)
+    expect(windowsAclIsOwnerOnly([...OURS, 'NT AUTHORITY\\Authenticated Users:(OI)(CI)(F)'], PAIR)).toBe(false)
   })
 
   it('does NOT recognise an inherited or weaker entry', () => {
-    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)', 'NICK_DESKTOP\\nicho:(OI)(CI)(F)'], 'nicho')).toBe(false)
-    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(OI)(CI)(F)', 'NICK_DESKTOP\\nicho:(OI)(CI)(M)'], 'nicho')).toBe(false)
-    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(OI)(CI)(F)', 'NICK_DESKTOP\\nicho:(F)'], 'nicho')).toBe(false)
+    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)', 'NICK_DESKTOP\\nicho:(OI)(CI)(F)'], PAIR)).toBe(false)
+    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(OI)(CI)(F)', 'NICK_DESKTOP\\nicho:(OI)(CI)(M)'], PAIR)).toBe(false)
+    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(OI)(CI)(F)', 'NICK_DESKTOP\\nicho:(F)'], PAIR)).toBe(false)
   })
 
-  it('does NOT recognise two entries that are not ours, or an unknown user', () => {
-    expect(windowsAclIsOwnerOnly(['A\\x:(OI)(CI)(F)', 'B\\y:(OI)(CI)(F)'], 'nicho')).toBe(false)
-    expect(windowsAclIsOwnerOnly(OURS, '')).toBe(false)
-    expect(windowsAclIsOwnerOnly([], 'nicho')).toBe(false)
+  it('discounts a principal proven un-nameable, in the spelling icacls PRINTS', () => {
+    // The memo stores the printed form; a bare SID is only starred on the way
+    // back INTO icacls. Keying the two differently made the memo inert.
+    const withOrphan = [...OURS, 'S-1-5-21-1-2-3-1001:(OI)(CI)(F)']
+    expect(windowsAclIsOwnerOnly(withOrphan, PAIR)).toBe(false)
+    expect(windowsAclIsOwnerOnly(withOrphan, PAIR, new Set(['S-1-5-21-1-2-3-1001']))).toBe(true)
+    expect(windowsAclIsOwnerOnly(withOrphan, PAIR, new Set(['*S-1-5-21-1-2-3-1001']))).toBe(false)
+  })
+
+  it('does NOT recognise two entries that are not ours, or an empty DACL', () => {
+    expect(windowsAclIsOwnerOnly(['A\\x:(OI)(CI)(F)', 'B\\y:(OI)(CI)(F)'], PAIR)).toBe(false)
+    expect(windowsAclIsOwnerOnly([], PAIR)).toBe(false)
+  })
+})
+
+describe('windowsAclRemovalArgs honours the memo in the printed spelling', () => {
+  it('drops a bare SID the memo names WITHOUT the star', () => {
+    const entries = ['S-1-5-21-1-2-3-1001:(OI)(CI)(F)', 'BUILTIN\\Administrators:(F)']
+    expect(windowsAclRemovalArgs(entries)).toEqual([
+      '/remove', '*S-1-5-21-1-2-3-1001',
+      '/remove', 'BUILTIN\\Administrators',
+    ])
+    expect(windowsAclRemovalArgs(entries, new Set(['S-1-5-21-1-2-3-1001'])))
+      .toEqual(['/remove', 'BUILTIN\\Administrators'])
   })
 })
 
@@ -375,7 +423,12 @@ describe.runIf(IS_WINDOWS)('hardenCredentialDir on Windows applies a real DACL',
     // every config write forever on a machine with an un-nameable principal.
     const entries = windowsAclEntries(dir)
     const ignorable = new Set(unnameable(entries.map(principalOf)))
-    expect(windowsAclIsOwnerOnly(entries, USER, ignorable)).toBe(true)
+    const pair = new Set(entries.map(principalOf).filter((p) => !ignorable.has(p)))
+    expect(pair.size, 'a hardened directory should settle on exactly two nameable principals').toBe(2)
+    expect(windowsAclIsOwnerOnly(entries, pair, ignorable)).toBe(true)
+    // And the same DACL is NOT recognised against a different machine's pair —
+    // the check is an equality against what this machine observed, not a shape.
+    expect(windowsAclIsOwnerOnly(entries, new Set(['OTHER\\a', 'OTHER\\b']), ignorable)).toBe(false)
   })
 
   it('re-hardens a directory that was recreated under a permissive parent', () => {

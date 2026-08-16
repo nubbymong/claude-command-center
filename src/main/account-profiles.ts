@@ -284,8 +284,11 @@ export function windowsAclRemovalArgs(entries: string[], ignorable?: ReadonlySet
     const raw = aclEntryPrincipal(entry)
     if (raw.length === 0 || raw.length > 256) continue
     if (/^[/*]/.test(raw) || raw.includes(String.fromCharCode(34)) || hasControlChar(raw)) continue
+    // `ignorable` is keyed on the spelling icacls PRINTS (`raw`), not the one it
+    // is handed back (`principal`, which stars a bare SID) -- the two differ for
+    // exactly the orphaned-SID case the memo exists to remember.
     const principal = /^S-1-[\d-]+$/.test(raw) ? `*${raw}` : raw
-    if (seen.has(principal) || ignorable?.has(principal)) continue
+    if (seen.has(principal) || ignorable?.has(raw)) continue
     seen.add(principal)
     args.push('/remove', principal)
   }
@@ -295,26 +298,40 @@ export function windowsAclRemovalArgs(entries: string[], ignorable?: ReadonlySet
 /**
  * Whether `entries` is ALREADY the DACL this module writes: exactly two ACEs,
  * neither inherited, both Full Control with the container/object inherit flags,
- * one of them the current user. The other is SYSTEM, whose display name is
- * localized and so is matched structurally rather than by name (it is granted
- * by SID for the same reason).
+ * and their principals EXACTLY `expected`.
+ *
+ * `expected` is observed, not reasoned about -- see `hardenedPrincipals`. An
+ * earlier version of this tried to recognise the pair by shape instead: two
+ * full-control entries, one of whose ACCOUNT name matched the current user. An
+ * adversarial pass showed on a real machine that a DACL of
+ * `[Everyone:(OI)(CI)(F), NICK_DESKTOP\nicho:(OI)(CI)(F)]` satisfies that and
+ * was reported hardened with the write skipped -- leaving Everyone in Full
+ * Control of a credential directory, which is the exposure this whole branch
+ * exists to remove. `[EVILPC\nicho:(OI)(CI)(F), EVILPC\bob:(OI)(CI)(F)]` passed
+ * it too: the account half is compared without its domain, so a same-named
+ * principal from another machine (the resources dir is allowed to be a network
+ * share) read as the current user. Nothing about the second entry was checked
+ * at all, though the doc claimed SYSTEM was "matched structurally".
  *
  * `ignorable` names principals a previous call PROVED cannot be removed on this
  * machine; entries for those do not count against the answer, which is what
  * lets a directory carrying one still settle into a state this recognises
  * instead of paying the full sequence on every call forever.
  *
- * `user` is a parameter rather than a read baked into the body so this runs on
+ * Both are parameters rather than reads baked into the body so this runs on
  * every leg of the CI matrix.
  */
-export function windowsAclIsOwnerOnly(entries: string[], user: string, ignorable?: ReadonlySet<string>): boolean {
+export function windowsAclIsOwnerOnly(
+  entries: string[],
+  expected: ReadonlySet<string> | null,
+  ignorable?: ReadonlySet<string>,
+): boolean {
+  if (!expected || expected.size !== 2) return false
   if (ignorable?.size) entries = entries.filter((e) => !ignorable.has(aclEntryPrincipal(e)))
-  if (entries.length !== 2 || user.length === 0) return false
+  if (entries.length !== 2) return false
   if (!entries.every((e) => !e.includes('(I)') && e.endsWith(':(OI)(CI)(F)'))) return false
-  // The printed spelling may be `DOMAIN\user` whatever spelling was granted, so
-  // compare the account half.
-  const account = (p: string): string => p.slice(p.lastIndexOf('\\') + 1).toLowerCase()
-  return entries.map((e) => account(aclEntryPrincipal(e))).includes(user.toLowerCase())
+  const principals = entries.map(aclEntryPrincipal)
+  return new Set(principals).size === 2 && principals.every((p) => expected.has(p))
 }
 
 function icacls(args: string[]): boolean {
@@ -348,13 +365,52 @@ function icacls(args: string[]): boolean {
 const unremovableAclPrincipals = new Set<string>()
 const UNREMOVABLE_MEMO_MAX = 64
 
+/**
+ * The two principals icacls PRINTS for the pair this module grants, learned by
+ * reading a directory back after a write that succeeded, and reused for every
+ * directory after that: the pair is a property of the machine (this user, this
+ * machine's SYSTEM), not of any one directory.
+ *
+ * It has to be learned because neither half can be recognised from the string.
+ * SYSTEM is granted by SID exactly because its display name is localized, and
+ * the user's entry is printed in whichever spelling icacls resolved, which is
+ * not necessarily the spelling that was granted. Until a write has been read
+ * back, nothing is recognised and every call writes -- the same cost the single
+ * strip-and-grant always paid, so the unlearned state is never worse than what
+ * shipped.
+ *
+ * RESIDUAL: an attacker who can rewrite the DACL between our write and the read
+ * back could teach this the wrong pair, and it is never re-learned. That takes
+ * WRITE_DAC on a directory the app just hardened -- i.e. ownership of it -- plus
+ * winning a ~25ms race, and an attacker holding WRITE_DAC can re-grant
+ * themselves after any write of ours in any case. Hardening is not a defence
+ * against the owner of the directory.
+ */
+let hardenedPrincipals: ReadonlySet<string> | null = null
+
+/** Observe what a just-succeeded write produced. Only an exactly-right DACL
+ *  teaches anything, so a directory left carrying an un-nameable principal
+ *  never becomes the template. */
+function learnHardenedPrincipals(dir: string): void {
+  if (hardenedPrincipals) return
+  const entries = windowsAclEntries(dir)
+  if (entries.length !== 2) return
+  if (!entries.every((e) => !e.includes('(I)') && e.endsWith(':(OI)(CI)(F)'))) return
+  const principals = new Set(entries.map(aclEntryPrincipal))
+  if (principals.size === 2) hardenedPrincipals = principals
+}
+
+/** Test seam: the pair is machine state, so a test that seeds or clears it must
+ *  be able to put it back. */
+export function _setHardenedPrincipalsForTest(pair: ReadonlySet<string> | null): void { hardenedPrincipals = pair }
+
 export function hardenDirAclWindows(dir: string): boolean {
   if (!IS_WINDOWS) return false
   const spellings = windowsAclPrincipals()
   if (spellings.length === 0) return false
 
   const entries = windowsAclEntries(dir)
-  if (windowsAclIsOwnerOnly(entries, currentUserName(), unremovableAclPrincipals)) return true
+  if (windowsAclIsOwnerOnly(entries, hardenedPrincipals, unremovableAclPrincipals)) return true
 
   const removals = windowsAclRemovalArgs(entries, unremovableAclPrincipals)
   for (const principal of spellings) {
@@ -362,7 +418,10 @@ export function hardenDirAclWindows(dir: string): boolean {
 
     // The replace, in one invocation: nothing is stripped unless every name in
     // it resolved, so there is no window in which the app has no access.
-    if (removals.length > 0 && icacls([dir, ...removals, ...grants])) return true
+    if (removals.length > 0 && icacls([dir, ...removals, ...grants])) {
+      learnHardenedPrincipals(dir)
+      return true
+    }
 
     // It did not. Either this spelling of the user does not resolve -- the next
     // one is tried below -- or one of the removals does not, and the exit code
@@ -370,7 +429,10 @@ export function hardenDirAclWindows(dir: string): boolean {
     // strip-and-grant that shipped: if this fails it is the spelling, nothing
     // has been removed, and the next spelling gets its turn.
     if (!icacls([dir, ...grants])) continue
-    if (removals.length === 0) return true
+    if (removals.length === 0) {
+      learnHardenedPrincipals(dir)
+      return true
+    }
 
     // Access is granted and the grants are now PROVEN to resolve. Remove the
     // rest one at a time -- each is independent, and a failure names the
@@ -380,14 +442,23 @@ export function hardenDirAclWindows(dir: string): boolean {
     for (let i = 1; i < removals.length; i += 2) {
       const target = removals[i]
       if (icacls([dir, '/remove', target])) continue
-      if (unremovableAclPrincipals.size < UNREMOVABLE_MEMO_MAX) unremovableAclPrincipals.add(target)
+      // Memoised in the spelling icacls PRINTS, which is what both the removal
+      // builder and the skip check compare against -- a bare SID is handed to
+      // `/remove` with a `*` prefix, and remembering that starred form instead
+      // matched neither, so the memo silently did nothing and the directory
+      // could never settle.
+      const printed = target.startsWith('*') ? target.slice(1) : target
+      if (unremovableAclPrincipals.size < UNREMOVABLE_MEMO_MAX) unremovableAclPrincipals.add(printed)
     }
     // The pass above removes the app's own entries too, so re-grant. The same
     // argv succeeded moments ago, which is why it is safe to have removed them:
     // the only window where this directory has no DACL of ours is between those
-    // two calls, and it closes with a command already known to work.
-    icacls([dir, ...grants])
-    return true
+    // two calls, and it closes with a command already known to work. Its result
+    // is the answer -- reporting success after a re-grant that did not land
+    // would report a directory the app has just locked itself out of as hardened.
+    const regranted = icacls([dir, ...grants])
+    if (regranted) learnHardenedPrincipals(dir)
+    return regranted
   }
   return false
 }
