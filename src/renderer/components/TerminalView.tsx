@@ -14,7 +14,8 @@ import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice, formatSpawnError } from '../utils/sessionLaunch'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import { isControlReportOnly, decideContextMenuAction, isOrdinaryEditable } from '../utils/terminalInput'
+import { isControlReportOnly, resolveContextMenuIntent, blindPasteNeedsMenu, sanitizeClipboardForPaste, isOrdinaryEditable } from '../utils/terminalInput'
+import TerminalContextMenu from './TerminalContextMenu'
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
@@ -32,6 +33,27 @@ import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/typ
 
 // Re-export for consumers
 export { killSessionPty } from '../ptyTracker'
+
+// Main-process clipboard read first (focus-independent, retried for Windows
+// delayed-render), renderer API as a fallback if IPC is unavailable. Shared by
+// the keybinding paste, the classic right-click paste, and the context menu — so
+// sanitizeClipboardForPaste here is the single chokepoint that strips paste-mode
+// breakout sequences and readline-submitting controls out of EVERY paste route
+// before the text can reach term.paste() and the PTY.
+async function readClipboardText(): Promise<string> {
+  let raw = ''
+  try {
+    raw = (await window.electronAPI.clipboard.readText()) || ''
+  } catch { /* fall through */ }
+  if (!raw) {
+    try {
+      raw = await navigator.clipboard.readText()
+    } catch {
+      raw = ''
+    }
+  }
+  return sanitizeClipboardForPaste(raw)
+}
 
 interface Props {
   sessionId: string
@@ -94,6 +116,18 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // Whether #145 input diagnostics are on, readable from the init effect's
   // long-lived onData closure.
   const inputDiagRef = useRef(false)
+  // Explicit right-click menu (Copy/Paste). Opened by the contextmenu handler
+  // whenever a blind copy-or-paste decision would be unsafe; null = closed.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null)
+  // Close the menu the instant this tab is deactivated. Every TerminalView stays
+  // mounted (App renders inactive ones display:none), and the menu arms a
+  // document-level capture Escape listener — a menu left open in a hidden session
+  // would swallow the ACTIVE session's Escape (a missed Claude interrupt) and
+  // reappear as a ghost on tab-back. A keyboard tab-switch never fires the
+  // backdrop's mousedown-close, so it must be closed here.
+  useEffect(() => {
+    if (!isActive) setCtxMenu(null)
+  }, [isActive])
   const updateSession = useSessionStore((s) => s.updateSession)
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
 
@@ -821,17 +855,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         isActive: () => isActiveRef.current,
         // Main-process clipboard read: focus-independent and retried for Windows
         // delayed-render, with the renderer API as a fallback if IPC is unavailable.
-        readText: async () => {
-          try {
-            const viaMain = await window.electronAPI.clipboard.readText()
-            if (viaMain) return viaMain
-          } catch { /* fall through */ }
-          try {
-            return await navigator.clipboard.readText()
-          } catch {
-            return ''
-          }
-        },
+        readText: readClipboardText,
         writeText: (text) => navigator.clipboard.writeText(text),
         // Never fail silently — a silent no-op is what let #145 go unnoticed.
         onNothingToPaste: () => {
@@ -840,41 +864,58 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       })
 
 
-      // Right-click: context-aware copy or paste depending on mode.
+      // Right-click: copy the selection, paste, or open the explicit menu.
       //
-      // Classic mode (classicTerminalCopyPaste, the default): CC's mouse
-      // tracking is disabled so xterm owns selection. Right-click copies
-      // the current selection when text is selected, or pastes from the
-      // clipboard when nothing is selected. Route paste through xterm's
-      // paste() so bracketed-paste mode (\x1b[200~...\x1b[201~) is respected.
-      //
-      // Non-classic mode: CC's copy-on-select already copied text on
-      // mouse-up, so right-click always pastes (never re-copies).
+      // The decision lives in decideContextMenuAction. The load-bearing input
+      // is term.modes.mouseTrackingMode: while a program tracks the mouse,
+      // xterm disables its selection service, so "no selection" is guaranteed
+      // and MUST NOT be read as "paste, a copy already happened" — that
+      // reading fed the clipboard into the PTY (and, at a shell prompt,
+      // executed it). Blind paste survives only in its classic-mode home (no
+      // tracking, nothing selected, single-line or bracketed-paste target);
+      // everything ambiguous opens TerminalContextMenu, where Copy and Paste
+      // are explicit clicks. Paste routes through xterm's paste() so
+      // bracketed-paste mode (\x1b[200~...\x1b[201~) is respected.
       handleContextMenu = async (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
+        if (!term) return
         const classicMode = useSettingsStore.getState().settings.classicTerminalCopyPaste !== false
-        const action = decideContextMenuAction(!!term?.getSelection(), classicMode)
+        const { action, bracketedPaste } = resolveContextMenuIntent(term, classicMode)
         if (action === 'copy') {
-          const sel = term?.getSelection()
+          const sel = term.getSelection()
           if (sel) {
             try {
               await navigator.clipboard.writeText(sel)
-              term?.clearSelection()
+              term.clearSelection()
             } catch {
               // clipboard write denied (insecure context / not focused)
             }
           }
           return
         }
-        // action === 'paste'
-        try {
-          const text = await navigator.clipboard.readText()
-          if (!text) return
-          term?.paste(text)
-        } catch {
-          // clipboard access denied (insecure context / not focused)
+        if (action === 'paste') {
+          const text = await readClipboardText()
+          if (!text) {
+            // Never fail silently — a silent no-op is what let #145 go unnoticed.
+            usePasteHintStore.getState().show(sessionId, 'Nothing to paste — clipboard has no text')
+            return
+          }
+          // Re-sample tracking AFTER the (retried, possibly slow) clipboard read:
+          // a program that started tracking the mouse during the await must open
+          // the menu, not receive a decision taken while it was still a prompt.
+          const trackingNow = (term.modes?.mouseTrackingMode ?? 'none') !== 'none'
+          if (trackingNow || blindPasteNeedsMenu(text, bracketedPaste)) {
+            // Ambiguous now, or multi-line into a non-bracketed prompt (which
+            // submits line-by-line) — require the explicit menu click.
+            setCtxMenu({ x: e.clientX, y: e.clientY, hasSelection: !!term.getSelection() })
+            return
+          }
+          term.paste(text)
+          return
         }
+        // action === 'menu'
+        setCtxMenu({ x: e.clientX, y: e.clientY, hasSelection: !!term.getSelection() })
       }
       container.addEventListener('contextmenu', handleContextMenu, true)
     }
@@ -912,6 +953,40 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
   const needsAttention = session?.needsAttention ?? false
   const needsLogin = session?.needsLogin ?? false
+
+  // Context-menu actions. Close first so the menu is gone before any async
+  // clipboard work; refocus the terminal so the user can keep typing.
+  const closeCtxMenu = () => {
+    setCtxMenu(null)
+    terminalRef.current?.focus()
+  }
+  const ctxMenuCopy = async () => {
+    const sel = terminalRef.current?.getSelection()
+    setCtxMenu(null)
+    if (sel) {
+      try {
+        await navigator.clipboard.writeText(sel)
+      } catch {
+        // clipboard write denied (insecure context / not focused)
+      }
+    }
+    // Re-read the ref AFTER the await: the session can be disposed mid-await,
+    // which nulls terminalRef — pasting/clearing into a captured-but-disposed
+    // Terminal would throw.
+    terminalRef.current?.clearSelection()
+    terminalRef.current?.focus()
+  }
+  const ctxMenuPaste = async () => {
+    setCtxMenu(null)
+    const text = await readClipboardText()
+    const term = terminalRef.current // re-read post-await; may be null if disposed
+    if (!text) {
+      usePasteHintStore.getState().show(sessionId, 'Nothing to paste — clipboard has no text')
+    } else {
+      term?.paste(text)
+    }
+    term?.focus()
+  }
 
   return (
     <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
@@ -954,6 +1029,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             isScrolledUpRef.current = false
             setIsScrolledUp(false)
           }}
+        />
+      )}
+      {ctxMenu && (
+        <TerminalContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          hasSelection={ctxMenu.hasSelection}
+          onCopy={ctxMenuCopy}
+          onPaste={ctxMenuPaste}
+          onClose={closeCtxMenu}
         />
       )}
     </div>

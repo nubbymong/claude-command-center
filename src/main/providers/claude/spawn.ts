@@ -82,24 +82,18 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // than a secret sitting in ConsoleHost_history.txt forever.
   if (opts.shellOnly && opts.terminalSecret) env.CCC_ARG_SECRET = opts.terminalSecret
 
-  const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
-  // POSIX: spawn a LOGIN shell (-l) so PATH picks up Homebrew/nvm/npm-global
-  // entries from ~/.zprofile. A Finder/Dock-launched app inherits launchd's
-  // minimal PATH, and a non-login zsh never sources ~/.zprofile, so without
-  // this every session hits "command not found: claude" while the onboarding
-  // check (which already uses -l, see index.ts cli:check) passes.
-  const shellArgs = os.platform() === 'win32' ? [] : ['-l']
+  // Protective CLAUDE_* env, stamped for EVERY local session kind — including
+  // shell-only and elevated shells, which used to be exempt. The vars are inert
+  // for the shell itself; they only matter if a `claude` starts inside the
+  // session. And a shell-only session is exactly where users DO start one by
+  // hand — the account re-auth flow drops them at a prompt to run `claude
+  // /login`. The old exemption meant that hand-run claude kept mouse tracking:
+  // xterm's selection service was disabled, so right-click (which assumes "no
+  // selection ⇒ paste") pasted the clipboard into the PTY — at a PowerShell
+  // prompt that EXECUTES whatever was on the clipboard — and the forwarded
+  // right-button report hit CC's login screen as a click.
 
-  if (opts.shellOnly && opts.elevated) {
-    const cmd = os.platform() === 'win32' ? 'gsudo' : 'sudo'
-    return { cmd, args: [shell, ...shellArgs], env }
-  }
-
-  if (opts.shellOnly) {
-    return { cmd: shell, args: shellArgs, env }
-  }
-
-  // Claude session: disable CC's mouse mode + alternate screen when classic copy/paste is
+  // Disable CC's mouse mode + alternate screen when classic copy/paste is
   // on (default true). Disabling mouse lets xterm own the mouse → classic text selection
   // + right-click copy/paste work the standard terminal way. Disabling the alternate screen
   // forces CC to use the inline renderer so conversation output stays in the terminal's
@@ -127,6 +121,23 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // the feature so no keystroke can background a session. Set false to restore it.
   if (opts.disableBackgroundTasks !== false) {
     env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '1'
+  }
+
+  const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
+  // POSIX: spawn a LOGIN shell (-l) so PATH picks up Homebrew/nvm/npm-global
+  // entries from ~/.zprofile. A Finder/Dock-launched app inherits launchd's
+  // minimal PATH, and a non-login zsh never sources ~/.zprofile, so without
+  // this every session hits "command not found: claude" while the onboarding
+  // check (which already uses -l, see index.ts cli:check) passes.
+  const shellArgs = os.platform() === 'win32' ? [] : ['-l']
+
+  if (opts.shellOnly && opts.elevated) {
+    const cmd = os.platform() === 'win32' ? 'gsudo' : 'sudo'
+    return { cmd, args: [shell, ...shellArgs], env }
+  }
+
+  if (opts.shellOnly) {
+    return { cmd: shell, args: shellArgs, env }
   }
 
   // Claude session: spawn shell only; pty-manager writes the cd+claude command into the shell post-spawn.
