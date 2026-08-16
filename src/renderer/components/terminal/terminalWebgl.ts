@@ -15,6 +15,24 @@ export interface WebglRecoveryOptions {
 }
 
 /**
+ * A handle onto the LIVE WebGL addon, valid across context-loss recreations.
+ *
+ * The addon instance is replaced on every recovery, so callers must not cache
+ * their own reference — they go through this handle, which always targets the
+ * current addon (or is a no-op when WebGL isn't active).
+ */
+export interface WebglHandle {
+  /**
+   * Rebuild the WebGL glyph atlas and re-raster the viewport — the programmatic
+   * equivalent of the full repaint a window resize forces (see #273). Returns
+   * true if it ran, false when WebGL isn't active (initial load failed, or a
+   * context loss dropped us to the DOM renderer) — in which case the caller's
+   * `term.refresh()` is the repaint that matters.
+   */
+  clearTextureAtlas(): boolean
+}
+
+/**
  * Loads a WebGL addon onto `term` and wires a self-reloading context-loss handler.
  *
  * On context loss the addon fires its callback; we:
@@ -23,10 +41,17 @@ export interface WebglRecoveryOptions {
  *   3. If the recreate throws (GPU genuinely gone), call `term.refresh(0, rows-1)` so the
  *      DOM renderer repaints the viewport that the dead WebGL canvas left garbled.
  *
- * The happy path (WebGL works, no context loss) is identical to the original single-line version.
+ * Returns a WebglHandle so the caller can force a full repaint (#273) against
+ * whichever addon is currently live. The happy path (WebGL works, no context
+ * loss) is otherwise identical to the original single-line version.
  */
-export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOptions): void {
+export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOptions): WebglHandle {
   const { WebglAddonCtor, raf, isDisposed } = opts
+
+  // The addon currently loaded on the terminal, or null when WebGL isn't active
+  // (never loaded, or dropped to the DOM renderer after a context loss). Kept in
+  // sync so the returned handle always targets the live addon.
+  let currentAddon: WebglAddon | null = null
 
   /**
    * Attempt to create and load a WebGL addon.
@@ -36,6 +61,10 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
   const createAndLoad = () => {
     const addon = new WebglAddonCtor()          // may throw
     addon.onContextLoss(() => {
+      // The atlas is gone the moment the context is lost — drop the reference
+      // before disposing so a repaint racing the recovery no-ops instead of
+      // touching a dead addon.
+      currentAddon = null
       addon.dispose()
       raf(() => {
         if (isDisposed()) return
@@ -49,11 +78,27 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
       })
     })
     term.loadAddon(addon)                        // may throw
+    // Only after loadAddon succeeds — a throw above leaves currentAddon null.
+    currentAddon = addon
   }
 
   try {
     createAndLoad()
   } catch {
     // Initial WebGL load failed (unavailable env) — stay on DOM renderer.
+  }
+
+  return {
+    clearTextureAtlas() {
+      if (!currentAddon) return false
+      try {
+        currentAddon.clearTextureAtlas()
+        return true
+      } catch {
+        // Addon disposed mid-call, or an internal WebGL error — treat as "not
+        // active" so the caller falls back to a plain refresh.
+        return false
+      }
+    },
   }
 }
