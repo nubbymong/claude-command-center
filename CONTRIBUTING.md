@@ -116,6 +116,22 @@ range such as `v2.0.0..main`; `dry_run` defaults to **true**. Locally:
 node scripts/close-in-beta-issues.js --range origin/main..origin/beta --dry-run
 ```
 
+### Release-line labels (`release-2.1` / `release-2.2`)
+
+Orthogonal to the `in-beta` lifecycle above, these two labels say **which release
+line** an issue belongs to:
+
+- **`release-2.1`** — targets the current 2.1 line. Implied by a fix merged to
+  `beta`, or a PR based on `beta`; every open `in-beta` issue is on this line.
+- **`release-2.2`** — explicitly **deferred** past 2.1.
+
+**Invariant: `in-beta` and `release-2.2` must never sit on the same issue.**
+`in-beta` means the fix is already merged to `beta` (which ships as the next 2.1
+release), so also calling it `release-2.2` ("deferred") is self-contradictory. If
+a `release-2.2` issue later gets a fix merged to `beta`, drop `release-2.2` and
+add `in-beta`. This invariant is cheap to enforce in CI alongside the changelog
+gate.
+
 ## Commit Messages
 
 This project follows [Conventional Commits](https://www.conventionalcommits.org/).
