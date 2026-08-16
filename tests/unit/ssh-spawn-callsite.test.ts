@@ -89,4 +89,15 @@ describe('SSH spawn path uses buildSshArgs (call-site pin, #265 finding 4)', () 
     expect(captured!.args).toEqual(buildSshArgs(ssh, getConductorMcpPort(), 'linux'))
     expect(captured!.args).not.toContain('ControlMaster=no')
   })
+
+  // #265 sink-guard backstop on the REAL spawn path. Calling spawnPty directly
+  // bypasses the IPC sshSchema — exactly the "call site that skips Zod" the
+  // buildSshArgs guard defends against. It must throw before anything spawns, so
+  // an option-injecting host/username can never reach argv even off the IPC path.
+  it('the buildSshArgs sink guard fires on the real spawn path (schema-bypass backstop)', () => {
+    vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
+    const ssh = { username: '-oProxyCommand=touch /tmp/pwn', host: 'example.com', port: 22, remotePath: '~/proj' }
+    expect(() => spawnPty(fakeWin, 'sidmalicious', { ssh, cwd: osMod.homedir() })).toThrow(/Refusing to build SSH args/)
+    expect(captured).toBeNull() // nothing was ever handed to pty.spawn
+  })
 })
