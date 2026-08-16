@@ -28,8 +28,9 @@ REM registry keys, and the global ~/.claude home for any spawn not scoped to a
 REM profile -- none of which can destroy a prod login. See
 REM docs\dev-alongside-prod.md for the exact isolation table. The window
 REM auto-closes on exit and every dev process is killed (electron, vite,
-REM MCP/update servers, headless Chrome), so nothing leaks between runs or into
-REM your prod instance.
+REM MCP/update servers, headless Chrome), so no dev process is left running after
+REM a run or bleeds into your prod instance. (Dev DATA persists between runs by
+REM design -- reused unless you pass --clean.)
 REM ============================================================================
 
 if /I "%~1"=="__run" goto :run
