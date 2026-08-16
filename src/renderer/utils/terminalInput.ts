@@ -13,22 +13,54 @@ export function isControlReportOnly(data: string): boolean {
 
 // Decides what a right-click contextmenu event should do in a terminal.
 //
-// classicMode (classicTerminalCopyPaste === true, the default):
-//   CC's mouse tracking is disabled (CLAUDE_CODE_DISABLE_MOUSE=1), so xterm
-//   owns the mouse and copy-on-select is OFF. Right-click should therefore:
-//     - COPY  when text is selected (the user just selected something to copy)
-//     - PASTE when nothing is selected (the user wants to paste from clipboard)
+// The old two-way version of this ('copy' | 'paste') was built on a premise
+// that is FALSE inside CCC: "when there is no selection, a copy already
+// happened on mouse-up (CC's copy-on-select)". A TUI can only reach the system
+// clipboard through OSC 52, and CCC's xterm registers no OSC 52 handler and
+// loads no ClipboardAddon — so nothing a TUI does ever copies. Worse, while a
+// program has MOUSE TRACKING on (CC with classic off, vim, htop, a hand-run
+// claude), xterm disables its selection service entirely, so hasSelection is
+// always false and "no selection ⇒ paste" fired on every right-click — feeding
+// the clipboard straight into the PTY, where a newline at a shell prompt
+// EXECUTES it.
 //
-// non-classic mode (classicTerminalCopyPaste === false):
-//   CC's copy-on-select is active — text is already copied the moment the
-//   mouse button is released. Right-click must therefore ALWAYS paste;
-//   re-copying on right-click would overwrite whatever the user wanted to
-//   paste with text they already have.
-export function decideContextMenuAction(hasSelection: boolean, classicMode: boolean): 'copy' | 'paste' {
-  if (classicMode) {
-    return hasSelection ? 'copy' : 'paste'
-  }
-  return 'paste'
+// The rules, in order:
+//   - a visible selection is an unambiguous copy request → COPY. (While mouse
+//     tracking is on, a selection can only exist via Shift+drag — xterm's
+//     deliberate override — so it is still unambiguous.)
+//   - no selection + mouse tracking on → MENU. Never blind-paste at a TUI:
+//     the user cannot see what a paste would do, and the click was probably an
+//     attempted copy that xterm's disabled selection turned into "no selection".
+//   - no selection + no tracking + classicMode → PASTE, the PuTTY behaviour the
+//     setting promises (classicTerminalCopyPaste, default on).
+//   - no selection + no tracking + non-classic → MENU. The old "always paste"
+//     rested entirely on the false copy-on-select premise; an explicit menu
+//     pastes one click later and can never execute something unasked.
+//
+// 'menu' = show the terminal context menu with explicit Copy / Paste items.
+export function decideContextMenuAction(opts: {
+  hasSelection: boolean
+  classicMode: boolean
+  mouseTracking: boolean
+}): 'copy' | 'paste' | 'menu' {
+  if (opts.hasSelection) return 'copy'
+  if (opts.mouseTracking) return 'menu'
+  return opts.classicMode ? 'paste' : 'menu'
+}
+
+// Should a BLIND paste (classic right-click with nothing selected — the only
+// paste the user did not explicitly pick from a menu) be routed through the
+// context menu for confirmation instead?
+//
+// The hazard is precise: term.paste() normalises \n to \r, so clipboard text
+// containing any newline submits line-by-line at a raw shell prompt — one
+// right-click executes the clipboard. When the foreground program has turned
+// bracketed paste on (CC's input, modern shells' line editors), the paste
+// arrives wrapped in \x1b[200~ ... \x1b[201~ and newlines are literal, so
+// multi-line pastes there are routine and safe — no confirmation.
+export function blindPasteNeedsMenu(text: string, bracketedPasteActive: boolean): boolean {
+  if (bracketedPasteActive) return false
+  return /[\r\n]/.test(text)
 }
 
 // Is this keystroke a terminal paste request? Ctrl+V (Win/Linux), Cmd+V (macOS),

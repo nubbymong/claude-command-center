@@ -23,9 +23,12 @@ export interface SpawnOptions {
   disableAutoMemory?: boolean
   model?: string
   /** v1.5.32: when true (or undefined = default), sets CLAUDE_CODE_DISABLE_MOUSE=1
-   *  in the Claude spawn env so xterm owns the mouse (classic selection, right-click
-   *  copy/paste). When false, CC's mouse mode is preserved. Shell-only sessions
-   *  are never affected regardless of this flag. */
+   *  in the spawn env so xterm owns the mouse (classic selection, right-click
+   *  copy/paste). When false, CC's mouse mode is preserved. Applies to shell-only
+   *  sessions too: the var is inert for the shell itself but governs any `claude`
+   *  the user starts by hand (the re-auth flow does exactly that), so exempting
+   *  them left that claude in mouse mode where right-click pasted — and at a
+   *  shell prompt executed — the clipboard. */
   classicTerminalCopyPaste?: boolean
   /** v2.0: CC >= 2.1.195 renders question options as CLICKABLE targets, which
    *  misfire inside xterm.js. False (or undefined = CCC default) stamps
