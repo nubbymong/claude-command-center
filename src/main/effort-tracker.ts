@@ -76,13 +76,19 @@ function track(e: HookEvent): void {
   if (e.event === 'Stop') { lastBySession.delete(e.sessionId); noteTurnEnd(e.sessionId); return }
 
   // A background-spawning tool call (Task/Agent/Workflow) brackets the whole
-  // background agent race-free. Its PostToolUse ENDS the window: exit background
-  // BEFORE this event's own effort, which is the main window's again. Its
-  // PreToolUse BEGINS the window: enter AFTER this event's own effort, which is
-  // still the main window's. This is the primary fix for the pills flickering to
-  // a subagent's / dynamic-workflow agent's effort.
+  // background agent race-free. BOTH bracket ops run AFTER this event's own
+  // effort is evaluated, so the spawn tool's own Pre/PostToolUse events are
+  // themselves treated as still-background at the effort check:
+  //   - PreToolUse: the main window's effort is still active, so it is pushed,
+  //     THEN we enter background for the agent about to run.
+  //   - PostToolUse: the closing event's own effort.level is the finishing
+  //     agent's, not the main window's, so it stays SUPPRESSED (still in
+  //     background); we exit only after. This mirrors SubagentStop, which never
+  //     trusts its own event's effort, and closes a one-tick flicker to the
+  //     subagent's / workflow agent's effort on the closing event that trusting
+  //     it there would open (adversarial review, #285). The next genuine
+  //     main-window event repaints the strip.
   const spawnTool = !!e.toolName && BACKGROUND_SPAWN_TOOLS.has(e.toolName)
-  if (spawnTool && e.event === 'PostToolUse') noteBackgroundToolStop(e.sessionId)
 
   const level = effortFromEvent(e)
   // A subagent / workflow agent's effort must not repaint the main strip: its
@@ -96,6 +102,7 @@ function track(e: HookEvent): void {
   }
 
   if (spawnTool && e.event === 'PreToolUse') noteBackgroundToolStart(e.sessionId)
+  if (spawnTool && e.event === 'PostToolUse') noteBackgroundToolStop(e.sessionId)
 }
 
 /** Test seam. */

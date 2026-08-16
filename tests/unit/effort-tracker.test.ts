@@ -136,6 +136,20 @@ describe('effort gating — spawn-tool bracket covers subagents AND dynamic work
     _emitForTest(ev({ payload: { effort: { level: 'xhigh' } } }))
     expect(levels()).toEqual(['high', 'xhigh'])
   })
+
+  // #285 adversarial review: the closing PostToolUse's OWN effort.level is the
+  // finishing agent's, not the main window's. The bracket must exit background
+  // only AFTER this event's effort is evaluated, or the strip flashes the
+  // subagent's effort for one tick. (Mirrors how SubagentStop never trusts its
+  // own event's effort.)
+  it('does NOT flicker when the closing PostToolUse carries the finishing agent\'s own effort', () => {
+    _emitForTest(ev({ payload: { effort: { level: 'high' } } }))                // main 'high'
+    _emitForTest(ev({ event: 'PreToolUse', toolName: 'Task', payload: {} }))    // enter background
+    _emitForTest(ev({ payload: { effort: { level: 'xhigh' } } }))               // subagent — gated
+    _emitForTest(ev({ event: 'PostToolUse', toolName: 'Task', payload: { effort: { level: 'xhigh' } } })) // close, carrying the agent's effort
+    _emitForTest(ev({ payload: { effort: { level: 'max' } } }))                 // next real main event
+    expect(levels()).toEqual(['high', 'max'])                                  // never a stray 'xhigh'
+  })
 })
 
 describe('effort observer seam (Sentinel Trigger A)', () => {
