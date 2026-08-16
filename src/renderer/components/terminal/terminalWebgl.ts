@@ -56,7 +56,9 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
   /**
    * Attempt to create and load a WebGL addon.
    * Throws if construction or loadAddon fails (so callers can distinguish
-   * "initial failure — stay on canvas" from "recreate failed — need refresh").
+   * "initial failure — stay on the DOM renderer" from "recreate failed — need
+   * refresh"). xterm's default non-WebGL renderer is the DOM renderer; this app
+   * loads no canvas addon, so that is always the fallback.
    */
   const createAndLoad = () => {
     const addon = new WebglAddonCtor()          // may throw

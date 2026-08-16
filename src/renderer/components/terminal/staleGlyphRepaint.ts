@@ -55,7 +55,7 @@ export function shouldRepaintOnOutput(s: OutputRepaintState): boolean {
 }
 
 export interface RepainterDeps {
-  /** Rebuild the WebGL glyph atlas (no-op on the DOM renderer). */
+  /** Rebuild the WebGL glyph atlas (no-op whenever WebGL isn't active). */
   clearAtlas: () => void
   /** Mark the viewport dirty so it re-renders (term.refresh(0, rows-1)). */
   refresh: () => void
