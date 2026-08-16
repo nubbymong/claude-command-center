@@ -11,6 +11,7 @@
 // that always works beats a better resolver that works only sometimes.
 
 import { computeAccessibleName } from 'dom-accessibility-api'
+import { stripFormatControls } from '../../../shared/canvas-page-text'
 import { directText } from './measure'
 
 const NAME_MAX = 80
@@ -45,9 +46,40 @@ const INTERACTIVE_TAGS = new Set(['button', 'input', 'select', 'textarea', 'a', 
 
 const SKIP_TAGS = new Set(['script', 'style', 'template', 'meta', 'link', 'head', 'noscript', 'title', 'base'])
 
+/**
+ * An accessible name (or a title, or a text leaf) as BOTH sides of the canvas
+ * pipeline keep it.
+ *
+ * The whitespace collapse is the visible half; the format-control strip is the
+ * half that has to be here or anchoring breaks. The host cleans every
+ * page-authored string it STORES with `canvasPageText`
+ * (src/renderer/utils/canvas-geometry-guard.ts), and a stored fingerprint is
+ * re-found by comparing that stored name to a freshly computed one for exact
+ * equality. While only the host stripped, "<woman>ZWJ<computer> Developer"
+ * stored as "<woman><computer> Developer" and recomputed with the joiner
+ * intact, so it never matched again — the note showed "needs re-pointing" on
+ * every re-render although its element was right there (adversarial re-attack,
+ * 2026-08-15).
+ *
+ * Order matters and is not interchangeable:
+ *   1. collapse whitespace FIRST — tab/newline/CR/FF/VT are format controls
+ *      too, and stripping them ahead of the collapse welds two words together
+ *      ("Save\nNow" -> "SaveNow" rather than "Save Now");
+ *   2. strip what is left of the class — the joiners, the bidi controls, the
+ *      zero-width space, the BOM;
+ *   3. collapse once more, because a stripped character can leave a gap
+ *      between two spaces, and trim.
+ * Nothing of the class may survive step 3: the host re-applies exactly it to
+ * the value it stores, and the two strings are then compared for equality.
+ *
+ * The 80-character cap sits under the host's 120, so its slice is a no-op and
+ * cannot re-introduce a difference. (U+2026, the ellipsis this appends, is Po
+ * and is not part of the class.)
+ */
 export function squash(text: string | null | undefined): string {
   if (!text) return ''
-  const out = String(text).replace(/\s+/g, ' ').trim()
+  const collapsed = String(text).replace(/\s+/g, ' ')
+  const out = stripFormatControls(collapsed).replace(/\s+/g, ' ').trim()
   return out.length > NAME_MAX ? out.slice(0, NAME_MAX - 1) + '…' : out
 }
 

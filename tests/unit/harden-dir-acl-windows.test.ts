@@ -30,6 +30,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import {
+  _icaclsCallsForTest,
+  _resetAclStateForTest,
+  aclRemovalProvesUnnameable,
   hardenCredentialDir,
   hardenDirAclWindows,
   windowsAclEntries,
@@ -311,8 +314,36 @@ describe('windowsAclIsOwnerOnly (runs on every leg of the matrix)', () => {
   it('does NOT accept a same-named principal from another machine', () => {
     // The resources directory may be a network share, where `EVILPC\nicho` is a
     // different person with the same account name.
+    //
+    // Each line answers a different mutation, which the first two did not: a
+    // comparison that strips the domain and matches on the ACCOUNT half — the
+    // exact bug this block exists for — survives `EVILPC\nicho + EVILPC\bob`
+    // (bob matches nothing), so the case that catches it has to have BOTH
+    // account halves matching the pair's.
+    expect(windowsAclIsOwnerOnly(['EVILPC\\nicho:(OI)(CI)(F)', 'EVILPC\\SYSTEM:(OI)(CI)(F)'], PAIR)).toBe(false)
     expect(windowsAclIsOwnerOnly(['EVILPC\\nicho:(OI)(CI)(F)', 'EVILPC\\bob:(OI)(CI)(F)'], PAIR)).toBe(false)
+    // ...and this one catches `every` weakened to `some`: the second entry IS
+    // one of the pair, so a check that accepts any overlap accepts this DACL.
     expect(windowsAclIsOwnerOnly(['EVILPC\\nicho:(OI)(CI)(F)', 'NT AUTHORITY\\SYSTEM:(OI)(CI)(F)'], PAIR)).toBe(false)
+  })
+
+  it('recognises a settled DACL of ONE entry, which is what running as SYSTEM produces', () => {
+    // Measured: granting `S-1-5-18` twice in one `/grant:r` yields ONE ACE. A
+    // process running as SYSTEM therefore hardens a directory into a
+    // single-entry DACL, and a rigid "exactly two" here never recognises it —
+    // so that process pays the full read+write sequence on every config write
+    // for the life of the process.
+    const SELF = new Set(['NT AUTHORITY\\SYSTEM'])
+    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(OI)(CI)(F)'], SELF)).toBe(true)
+    // It stays an EQUALITY: one learned principal licenses exactly one entry.
+    expect(windowsAclIsOwnerOnly(
+      ['NT AUTHORITY\\SYSTEM:(OI)(CI)(F)', 'NT AUTHORITY\\Authenticated Users:(OI)(CI)(F)'], SELF,
+    )).toBe(false)
+    expect(windowsAclIsOwnerOnly(['NICK_DESKTOP\\nicho:(OI)(CI)(F)'], SELF)).toBe(false)
+    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(I)(OI)(CI)(F)'], SELF)).toBe(false)
+    expect(windowsAclIsOwnerOnly([], SELF)).toBe(false)
+    // ...and a single entry is not accepted against a pair that has two.
+    expect(windowsAclIsOwnerOnly(['NT AUTHORITY\\SYSTEM:(OI)(CI)(F)'], PAIR)).toBe(false)
   })
 
   it('does NOT accept one principal listed twice in place of two', () => {
@@ -341,6 +372,54 @@ describe('windowsAclIsOwnerOnly (runs on every leg of the matrix)', () => {
   it('does NOT recognise two entries that are not ours, or an empty DACL', () => {
     expect(windowsAclIsOwnerOnly(['A\\x:(OI)(CI)(F)', 'B\\y:(OI)(CI)(F)'], PAIR)).toBe(false)
     expect(windowsAclIsOwnerOnly([], PAIR)).toBe(false)
+  })
+})
+
+describe('aclRemovalProvesUnnameable (runs on every leg of the matrix)', () => {
+  // A principal in the un-removable memo is never removed again for the life of
+  // the process AND is discounted by the skip check. Getting into it on
+  // anything other than proof is how a broad grant becomes permanent while the
+  // directory reports itself hardened.
+  const ORPHAN = 'S-1-5-21-1-2-3-1001'
+  const UNNAMEABLE = 'NT AUTHORITY\\LogonSessionId_0_411756'
+  /** `ERROR_NONE_MAPPED` — "no mapping between account names and security IDs". */
+  const NONE_MAPPED = 1332
+
+  it('trusts ONLY a name-resolution failure', () => {
+    // Measured on Windows 11: an un-nameable principal exits 1332 every time, a
+    // directory that has gone away exits 2, and a nameable principal that is
+    // simply absent from the DACL exits 0 (a success, so it never gets here).
+    expect(aclRemovalProvesUnnameable(UNNAMEABLE, NONE_MAPPED)).toBe(true)
+    expect(aclRemovalProvesUnnameable(ORPHAN, NONE_MAPPED)).toBe(true)
+    // The transient failures, which used to memoise exactly like the above:
+    expect(aclRemovalProvesUnnameable(UNNAMEABLE, 2), 'directory vanished mid-loop').toBe(false)
+    expect(aclRemovalProvesUnnameable(UNNAMEABLE, 5), 'access denied').toBe(false)
+    expect(aclRemovalProvesUnnameable(UNNAMEABLE, 1), 'generic failure').toBe(false)
+    // …and a timeout kill, which leaves no exit status at all. The resources
+    // dir may be a network share and the call is capped at 5s.
+    expect(aclRemovalProvesUnnameable(UNNAMEABLE, null), 'killed on the timeout').toBe(false)
+  })
+
+  it('NEVER trusts it for a principal too broad to give up on', () => {
+    // These are the grants the whole branch exists to remove. A principal is
+    // only reliably identified by SID and icacls prints names — but it prints a
+    // SID exactly when it could not resolve one, which is the only way a broad
+    // principal can reach this at all.
+    for (const broad of [
+      'S-1-1-0',            // Everyone
+      'S-1-5-11',           // Authenticated Users
+      'S-1-5-7',            // Anonymous Logon
+      'S-1-5-32-544',       // BUILTIN\Administrators
+      'S-1-5-32-545',       // BUILTIN\Users
+      'S-1-5-21-1-2-3-512', // Domain Admins — a DC it cannot reach prints these bare
+      'S-1-5-21-1-2-3-513', // Domain Users
+      'S-1-5-21-1-2-3-515', // Domain Computers
+    ]) {
+      expect(aclRemovalProvesUnnameable(broad, NONE_MAPPED), broad).toBe(false)
+    }
+    // A domain SID that is NOT one of those RIDs is an ordinary orphaned
+    // account, which is the case the memo exists for.
+    expect(aclRemovalProvesUnnameable('S-1-5-21-1-2-3-1105', NONE_MAPPED)).toBe(true)
   })
 })
 
@@ -410,26 +489,59 @@ describe.runIf(IS_WINDOWS)('hardenCredentialDir on Windows applies a real DACL',
     expect(aces(b).map(principalOf)).not.toContain(broadPrincipal)
   })
 
-  it('is idempotent, and the second call does not need to write at all', () => {
-    // The read-first skip is what keeps this affordable on `ensureConfigDir`,
-    // which runs on every config write. It must not change the answer.
-    const { dir } = dirWithBroadGrant('explicit')
-    expect(hardenCredentialDir(dir)).toBe(true)
-    const first = aces(dir)
-    expect(hardenCredentialDir(dir)).toBe(true)
-    expect(aces(dir)).toEqual(first)
-    // …and the settled state is one the skip RECOGNISES, so the second call was
-    // a read and nothing more. Without this the sequence would run in full on
-    // every config write forever on a machine with an un-nameable principal.
-    const entries = windowsAclEntries(dir)
-    const ignorable = new Set(unnameable(entries.map(principalOf)))
-    const pair = new Set(entries.map(principalOf).filter((p) => !ignorable.has(p)))
-    expect(pair.size, 'a hardened directory should settle on exactly two nameable principals').toBe(2)
-    expect(windowsAclIsOwnerOnly(entries, pair, ignorable)).toBe(true)
-    // And the same DACL is NOT recognised against a different machine's pair —
-    // the check is an equality against what this machine observed, not a shape.
-    expect(windowsAclIsOwnerOnly(entries, new Set(['OTHER\\a', 'OTHER\\b']), ignorable)).toBe(false)
-  })
+  it.each<BroadGrant>(['inherited', 'explicit'])(
+    'is idempotent on a %s-parent directory, and settles into ONE icacls call',
+    (broad) => {
+      // The read-first skip is what keeps this affordable on `ensureConfigDir`,
+      // which runs on every config write. COUNTING the calls is the only honest
+      // way to see it: a directory that was skipped and a directory that was
+      // re-written have identical DACLs, so the previous version of this test —
+      // which computed the expected pair by hand and fed it straight into
+      // `windowsAclIsOwnerOnly` — stayed green while the module learned nothing
+      // and paid three icacls calls on every config write, forever.
+      //
+      // Both parent shapes are measured because they settle differently. With
+      // nothing inheritable from the parent (`explicit`) the child gets the
+      // creator token's default DACL, which on THIS box carries an un-nameable
+      // `NT AUTHORITY\LogonSessionId_0_<n>` (measured: `/remove` exits 1332
+      // every time) — so a fully hardened directory reads back as THREE entries
+      // and the learning gate has to discount it to recognise anything. On a
+      // machine whose default DACL has no such principal (GitHub's windows
+      // runner) the two shapes coincide and this still asserts the invariant.
+      // The message on the count assertion names which shape actually ran.
+      _resetAclStateForTest()
+      const { dir } = dirWithBroadGrant(broad)
+
+      expect(hardenCredentialDir(dir)).toBe(true)
+      const settled = aces(dir)
+      const stuck = unnameable(settled.map(principalOf))
+
+      // Bounded warm-up before the measurement. Hardening is a subprocess call
+      // and the full suite runs 500+ files in parallel, so ANY single icacls
+      // call can be lost to the 5s cap — and one lost call leaves the pair
+      // unlearned for that round. The property under test is what a SETTLED
+      // directory costs, so let it reach that state in a bounded number of
+      // attempts rather than requiring the first to win the race. A module that
+      // never learns — the bug this exists for — never settles, whatever the
+      // budget, so this does not soften the assertion.
+      let cost = 0
+      for (let attempt = 0; attempt < 3 && cost !== 1; attempt++) {
+        const before = _icaclsCallsForTest()
+        expect(hardenCredentialDir(dir)).toBe(true)
+        cost = _icaclsCallsForTest() - before
+      }
+      expect(
+        cost,
+        `a settled directory should cost ONE read and no writes; it carries ${stuck.length} un-nameable principal(s): ${stuck.join(', ') || 'none'}`,
+      ).toBe(1)
+      expect(aces(dir), 'and a settled call must not change the DACL').toEqual(settled)
+
+      // A negative control on the same real entries: the settled DACL is NOT
+      // recognised against another machine's pair, so the skip is an equality
+      // against what THIS machine observed and not a shape.
+      expect(windowsAclIsOwnerOnly(windowsAclEntries(dir), new Set(['OTHER\\a', 'OTHER\\b']), new Set(stuck))).toBe(false)
+    },
+  )
 
   it('re-hardens a directory that was recreated under a permissive parent', () => {
     // `ensureCanvasPlugin` deletes and recreates its tree, which puts the new

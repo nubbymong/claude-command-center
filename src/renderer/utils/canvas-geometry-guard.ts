@@ -21,37 +21,18 @@ import {
   type CanvasViewportInfo,
   type Rect,
 } from '../../shared/canvas'
+// THE rule for page-authored text, and the ONLY copy of it. The content side
+// (src/main/canvas/bridge/semantics.ts and anchors.ts) imports the same
+// functions from the same module and must go on doing so: an element is
+// re-found by comparing these strings for exact equality, so a clean applied
+// on one side only is a permanent re-anchoring failure, not a cosmetic
+// difference. See the header of canvas-page-text.ts.
+import { CANVAS_PATH_MAX, CANVAS_TEXT_MAX, canvasPageText } from '../../shared/canvas-page-text'
 
-const HIT_STRING_MAX = 120
-const PATH_STRING_MAX = 512
+const HIT_STRING_MAX = CANVAS_TEXT_MAX
+const PATH_STRING_MAX = CANVAS_PATH_MAX
 /** Bridge ordinals are small by construction; anything huge is a forgery. */
 const ORDINAL_MAX = 1_000_000
-
-/**
- * Content-supplied strings that will be STORED (annotation focus/anchors) as
- * well as rendered: these characters are stripped, not just length-capped — the
- * main store rejects them outright, and a note the user wrote must not be
- * refused because a hostile page put a control byte in a role string.
- *
- * The class is the whole FORMAT class, not just C0 and DEL. A guard that
- * stripped only those left every bidi override and isolate standing, and those
- * ride through into `focus.label`, the focus chip on the stage, the notes panel
- * and the `canvas_review` payload handed to the agent — one right-to-left
- * override reverses the rest of the line, so the reviewer reads a label that is
- * not what was stored and the agent is sent one thing while a person is shown
- * another (adversarial review, 2026-08-15).
- *
- * Cc is C0, C1 and DEL; Cf is the bidi family (overrides, embeddings and
- * isolates), the zero-width space and joiners, the Arabic letter mark and the
- * byte-order mark; Zl/Zp are the two line separators a single-line chip cannot
- * survive. The same expression `canvas-snapshot-serialize.ts` uses on the
- * strings it puts on the wire — one rule for "text the page wrote that a human
- * will read", written the same way in both places, because two cleaners that
- * must agree while only one is maintained is this pipeline's recurring bug.
- * (The `u` flag is fine at this repo's ES2022 target; two shipped modules
- * already depend on it.)
- */
-const FORMAT_CONTROLS_G = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
 
 export function finite(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -69,7 +50,7 @@ export function finite(value: unknown, fallback: number): number {
  * has to say what it says.
  */
 export function clampString(value: unknown): string {
-  return typeof value === 'string' ? value.replace(FORMAT_CONTROLS_G, '').slice(0, HIT_STRING_MAX) : ''
+  return canvasPageText(value, HIT_STRING_MAX)
 }
 
 export function safeRect(rect: Rect | undefined): Rect {
@@ -108,9 +89,14 @@ export function safeHit(hit: CanvasHitInfo | undefined): CanvasHitInfo {
 // so beyond the finite/length rules the strings also shed control characters —
 // main rejects those outright, and a hostile page must not be able to make a
 // legitimate note refuse to save by poisoning a role string.
+//
+// What comes back out of this function is what gets STORED as an anchor and
+// replayed to the content side for matching, so it is the half of the equality
+// the host owns. The other half is minted by src/main/canvas/bridge/anchors.ts
+// (roleIn / nameIn / ancestorPathOf) out of `canvasPageText`, the same call.
 
 function storableString(value: unknown, max: number): string {
-  return typeof value === 'string' ? value.replace(FORMAT_CONTROLS_G, '').slice(0, max) : ''
+  return canvasPageText(value, max)
 }
 
 function safeInspectEntry(entry: Partial<CanvasInspectEntry> | undefined): CanvasInspectEntry {
@@ -170,26 +156,48 @@ function checkedResolution(anchor: AnchorRef | undefined, entry: Partial<CanvasA
 
   if (anchor.kind === 'ux-id') {
     if (found.via !== 'ux-id') return { found: false }
-    if (typeof found.uxId === 'string' && found.uxId !== anchor.id) return { found: false }
+    // Both halves of every equality below run through `storableString`, which
+    // is `canvasPageText` — the SAME call the content side puts its live values
+    // through (bridge/anchors.ts). Comparing a cleaned stored value against an
+    // uncleaned live one is what made a present, unchanged element read as
+    // "needs re-pointing" on every re-render (adversarial re-attack,
+    // 2026-08-15), and cleaning the anchor here costs nothing: the host already
+    // emits its own cleaned copy rather than the page's echo, so nothing is
+    // smuggled through by the normalisation.
+    const wantId = storableString(anchor.id, PATH_STRING_MAX)
+    if (typeof found.uxId === 'string' && storableString(found.uxId, PATH_STRING_MAX) !== wantId) return { found: false }
     return {
       found: true,
       via: 'ux-id',
       box,
       role: storableString(found.role, HIT_STRING_MAX),
       name: storableString(found.name, HIT_STRING_MAX),
-      uxId: storableString(anchor.id, PATH_STRING_MAX),
+      uxId: wantId,
     }
   }
 
   if (anchor.kind === 'fingerprint') {
     if (found.via !== 'fingerprint') return { found: false }
-    if (found.role !== anchor.role || found.name !== anchor.name) return { found: false }
+    // EXACT equality, on values both sides produced with the same rule. It
+    // holds only because the content side mints `found.role`/`found.name`
+    // through `canvasPageText` too (bridge/anchors.ts `describeMatch`); while
+    // it did not, this line refused every honest reply whose name carried an
+    // emoji ZWJ sequence, a Persian ZWNJ or a bidi control — permanently.
+    // The reply must actually CARRY both fields — a missing one is not a match
+    // for an anchor whose role or name is legitimately empty, which is what a
+    // bare `storableString(undefined) === storableString('')` would have made
+    // it.
+    if (typeof found.role !== 'string' || typeof found.name !== 'string') return { found: false }
+    const wantRole = storableString(anchor.role, HIT_STRING_MAX)
+    const wantName = storableString(anchor.name, HIT_STRING_MAX)
+    if (storableString(found.role, HIT_STRING_MAX) !== wantRole) return { found: false }
+    if (storableString(found.name, HIT_STRING_MAX) !== wantName) return { found: false }
     return {
       found: true,
       via: 'fingerprint',
       box,
-      role: storableString(anchor.role, HIT_STRING_MAX),
-      name: storableString(anchor.name, HIT_STRING_MAX),
+      role: wantRole,
+      name: wantName,
       ...(found.uxId ? { uxId: storableString(found.uxId, PATH_STRING_MAX) } : {}),
     }
   }

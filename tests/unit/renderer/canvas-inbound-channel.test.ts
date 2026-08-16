@@ -413,6 +413,41 @@ describe('every message the frame sends is charged, whatever shape it is', () =>
     expect(handlers.onFlood).not.toHaveBeenCalled()
     expect(messageListeners).toBe(1)
   })
+
+  // ── "No type" was buying the reply path's size exemption ───────────────────
+  // A namespaced message with no `type` returns before the size bound and was
+  // charged ONE unit, so the cheapest way to send an unbounded payload 600
+  // times a second was to DELETE a field rather than to be a reply. A real
+  // canvas-frame-rpc reply carries a numeric correlation id; a message with
+  // neither is garbage no version of this protocol emits, and is charged what
+  // deserialising it cost (adversarial re-attack, 2026-08-15).
+  it('charges a namespaced message that is neither typed nor rpc-shaped as oversize', () => {
+    arm()
+    const trips = Math.floor(INBOUND_FLOOD_BUDGET / INBOUND_OVERSIZE_COST) + 1
+    // Well under the 601 a one-unit charge would have needed.
+    expect(trips).toBeLessThan(INBOUND_FLOOD_BUDGET)
+    for (let i = 0; i < trips - 1; i++) fromFrame({ ok: true, result: {}, pad: 'x'.repeat(1000) })
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    fromFrame({ ok: true, result: {}, pad: 'x'.repeat(1000) })
+    expect(handlers.onFlood).toHaveBeenCalledTimes(1)
+    expect(messageListeners).toBe(0)
+  })
+
+  it('a non-numeric id does not buy the reply path either', () => {
+    arm()
+    const trips = Math.floor(INBOUND_FLOOD_BUDGET / INBOUND_OVERSIZE_COST) + 1
+    for (let i = 0; i < trips; i++) fromFrame({ id: `${i}`, ok: true, result: {} })
+    expect(handlers.onFlood).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT break the genuine reply path: rpc-shaped replies still cost one unit', () => {
+    // Far more than the handful an oversize charge would allow, and legitimately
+    // larger than an event — this is the path a snapshot comes back on.
+    arm()
+    for (let i = 0; i < 200; i++) fromFrame({ id: i, ok: true, result: { chain: [], big: 'x'.repeat(2000) } })
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    expect(messageListeners).toBe(1)
+  })
 })
 
 // ── Size (adversarial review, 2026-08-15) ────────────────────────────────────
@@ -499,6 +534,113 @@ describe('an inbound message has a size bound', () => {
     await flushFrame()
     expect(handlers.onFlood).not.toHaveBeenCalled()
     expect(handlers.onPointer).toHaveBeenCalledTimes(1)
+  })
+
+  // ── The bound MEASURED instead of allowlisting (adversarial re-attack) ─────
+  // Every value kind the protocol does not use walked straight past a check
+  // that could only measure `byteLength`/`size`: a BigInt is a primitive with
+  // neither, an ImageBitmap reports neither, and raw ArrayBuffers were capped
+  // one at a time and simply packed. Each of these was MEASURED as accepted
+  // against the real function before the allowlist went in.
+  it('refuses a BigInt payload — twenty megabytes of magnitude that reported no size at all', () => {
+    // The measured attack was `2n ** (8n * 20000000n)`; a megabyte of it makes
+    // the same point in a fraction of the time.
+    const huge = 2n ** (8n * 1_000_000n)
+    expect(
+      withinInboundSizeBounds({
+        ns: CANVAS_BRIDGE_NS,
+        type: 'pointer',
+        hit: { role: 'x', name: 'y', tag: 'z', box: {} },
+        pad: huge,
+      }),
+    ).toBe(false)
+    // Refused by KIND, not by size: no bridge event carries a bigint at all, so
+    // a one-digit one is refused just the same and there is no size to argue
+    // about.
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready', pad: 1n })).toBe(false)
+  })
+
+  it('refuses the ImageBitmap/ImageData shape: no byteLength, no size, no enumerable keys', () => {
+    // 8192x8192 is 268 MB of backing store behind an object the old walk saw as
+    // an empty leaf.
+    class ImageBitmapLike {
+      readonly width = 8192
+      readonly height = 8192
+      close(): void {}
+    }
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready', pad: new ImageBitmapLike() })).toBe(false)
+    // Same shape, reached the other way: a null-prototype object has no
+    // enumerable own properties to walk either.
+    const bare = Object.create(null) as Record<string, unknown>
+    bare.width = 8192
+    bare.height = 8192
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready', pad: bare })).toBe(false)
+  })
+
+  it('refuses ArrayBuffers outright rather than capping them one at a time', () => {
+    // Exactly at the old per-buffer cap, so the old check measured it and said
+    // yes; the protocol carries no binary at all, so the answer is no.
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready', pad: new ArrayBuffer(16_384) })).toBe(false)
+    // …and the pack: individually legal, collectively a megabyte a message.
+    const packed: Record<string, unknown> = { ns: CANVAS_BRIDGE_NS, type: 'ready' }
+    for (let i = 0; i < 50; i++) packed[`b${i}`] = new ArrayBuffer(16_384)
+    expect(withinInboundSizeBounds(packed)).toBe(false)
+    // A typed array over one is refused for the same reason (it used to be
+    // caught only incidentally, by enumerating its indices into the value cap).
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready', pad: new Uint8Array(8) })).toBe(false)
+  })
+
+  it('refuses every other kind the five events never carry', () => {
+    for (const pad of [
+      () => 'a function',
+      Symbol('nope'),
+      new Map([['a', 1]]),
+      new Set([1]),
+      new Date(),
+      /re/g,
+      new Error('boom'),
+    ]) {
+      expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready', pad })).toBe(false)
+    }
+  })
+
+  it('still takes everything the five events DO carry, arrays included', () => {
+    expect(
+      withinInboundSizeBounds({
+        ns: CANVAS_BRIDGE_NS,
+        type: 'pointer',
+        pageX: 10.5,
+        pageY: -20,
+        hit: { role: 'button', name: 'Save', tag: 'button', uxId: 'save', box: { x: 1, y: 2, width: 3, height: 4 } },
+      }),
+    ).toBe(true)
+    // Non-finite numbers are NOT refused here: `finite()` is what cleans them
+    // on the way to the store, and refusing them would drop a message the
+    // geometry guard exists to handle (the finite-guard test above proves the
+    // channel still delivers one).
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'contentClick', pageX: Number.NaN, pageY: Infinity })).toBe(true)
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready', ok: true, extra: null, missing: undefined })).toBe(true)
+    // Arrays are in the vocabulary and bounded like everything else.
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready', pad: [1, 'two', { three: 3 }] })).toBe(true)
+    expect(withinInboundSizeBounds({ ns: CANVAS_BRIDGE_NS, type: 'ready', pad: new Array(MAX_INBOUND_VALUES + 1).fill(0) })).toBe(false)
+  })
+
+  it('does not DISPATCH a bigint-padded report, and charges it as oversize', async () => {
+    arm()
+    const hit = { role: 'button', name: 'Save', tag: 'button', box: { x: 1, y: 2, width: 3, height: 4 } }
+    fromFrame({ type: 'pointer', hit, pad: 2n ** (8n * 1_000_000n) })
+    // Awaited: delivery is coalesced to the next frame, so asserting before the
+    // flush would pass whether or not the message was refused.
+    await flushFrame()
+    expect(handlers.onPointer).not.toHaveBeenCalled()
+    // One unit plus the oversize remainder each, so a handful ends the channel
+    // instead of six hundred a second being allowed.
+    const trips = Math.floor(INBOUND_FLOOD_BUDGET / INBOUND_OVERSIZE_COST) + 1
+    for (let i = 1; i < trips - 1; i++) fromFrame({ type: 'pointer', hit, pad: 1n })
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    fromFrame({ type: 'pointer', hit, pad: 1n })
+    expect(handlers.onFlood).toHaveBeenCalledTimes(1)
+    expect(messageListeners).toBe(0)
   })
 
   it('bounds the check itself: the real events pass, the shapes that cost do not', () => {

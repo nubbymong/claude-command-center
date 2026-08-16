@@ -34,7 +34,11 @@
 // one of two key names — so anything that is not is refused before it is looked
 // at, and charged heavily against the same budget: by the time its size is
 // knowable it has already been deserialised onto the host thread, which is the
-// cost, and the cost is the thing a budget is for.
+// cost, and the cost is the thing a budget is for. Size is asked as a TYPE
+// question first: the protocol's whole vocabulary is objects, arrays, strings,
+// numbers and booleans, and a bound that MEASURES rather than allowlists lets
+// through everything it does not know how to measure — a BigInt, an
+// ImageBitmap, a packed row of ArrayBuffers.
 
 import {
   CANVAS_BRIDGE_NS,
@@ -65,9 +69,15 @@ import { finite, safeHit, safeViewport } from '../utils/canvas-geometry-guard'
  * which is the event that costs the host something.
  *
  * That includes the request/response traffic canvas-frame-rpc owns, which is
- * namespaced and carries no `type`: one unit per reply, against a path that is
- * itself capped at four requests in flight. It also includes the guessed-id
- * replies a hostile page sprays at that path, which is the point.
+ * namespaced and carries a correlation `id` instead of a `type`: one unit per
+ * reply, against a path that is itself capped at four requests in flight. It
+ * also includes the guessed-id replies a hostile page sprays at that path,
+ * which is the point.
+ *
+ * A namespaced message that is NEITHER typed NOR rpc-shaped gets no such
+ * exemption — it is charged the oversize cost, because "no type" was otherwise
+ * a way to buy the reply path's size exemption by deleting a field rather than
+ * by being a reply (adversarial re-attack, 2026-08-15).
  */
 export const INBOUND_FLOOD_BUDGET = 600
 export const INBOUND_FLOOD_WINDOW_MS = 1000
@@ -110,16 +120,39 @@ export const MAX_INBOUND_VALUES = 64
 export const MAX_INBOUND_DEPTH = 6
 
 /**
- * Is this small enough to be one of the five bridge events?
+ * Is this one of the five bridge events, structurally, and small enough to be?
  *
- * A bounded walk, bounded in every direction that costs something: values
- * visited, nesting depth, the length of any single string, the total across all
- * of them, and the byte length of anything that arrived as binary (structured
- * clone carries ArrayBuffers and Blobs, and `for…in` over one finds nothing to
- * measure, so it would otherwise pass for free). It answers false the moment
- * any of those is exceeded — so a hostile graph costs 64 steps rather than a
- * traversal, and a cycle, which postMessage carries happily, terminates for the
- * same reason.
+ * An ALLOWLIST of value KINDS first, then the bounded walk. That order is the
+ * whole point. The first version of this bound measured size and let anything
+ * it could not measure through as a zero-cost leaf, which is a denylist wearing
+ * a walk's clothes, and every value the protocol does not use walked straight
+ * past it (adversarial re-attack, 2026-08-15):
+ *
+ *   · a BigInt is a primitive, so it had no `byteLength` to read and no keys to
+ *     enumerate. `2n ** (8n * 20000000n)` — twenty megabytes of magnitude —
+ *     passed as ONE budget unit, and 600 of those a second were allowed;
+ *   · `byteLength` and `size` were read as numbers, so `{byteLength: 'huge'}`
+ *     and `{size: {}}` sailed through the check meant to catch binary;
+ *   · an `ImageBitmap` reports neither: only `width`/`height`, with no
+ *     enumerable own properties at all. 8192x8192 is 268 MB of backing store
+ *     the walk could not see. `ImageData` and `Object.create(null)` have the
+ *     same shape;
+ *   · raw `ArrayBuffer`s were capped one at a time and simply PACKED — 63 of
+ *     them, one under the value cap, is 1,032,192 accepted bytes per message.
+ *
+ * So: plain objects, arrays, strings, numbers, booleans, null and undefined —
+ * which is the complete vocabulary of `CanvasBridgeEvent` — and nothing else.
+ * A bigint, a symbol, a function, a typed array, a Blob, an ImageBitmap, a Map,
+ * a Date, an object with a null prototype: all refused, none of them measured.
+ * Numbers are admitted whatever their value: eight bytes is eight bytes, and
+ * NaN/Infinity are what `finite()` exists to clean on the way to the store —
+ * refusing them here would silently drop a message the geometry guard is built
+ * to handle.
+ *
+ * Then the bounds, unchanged: values visited, nesting depth, the length of any
+ * single string, the total across all of them. It answers false the moment any
+ * is exceeded — so a hostile graph costs 64 steps rather than a traversal, and
+ * a cycle, which postMessage carries happily, terminates for the same reason.
  *
  * Exported so the regression suite bounds the SAME function the channel runs.
  */
@@ -130,16 +163,39 @@ export function withinInboundSizeBounds(value: unknown): boolean {
   while (stack.length > 0) {
     const [v, depth] = stack.pop() as [unknown, number]
     if (++visited > MAX_INBOUND_VALUES) return false
-    if (typeof v === 'string') {
-      if (v.length > MAX_INBOUND_STRING_CHARS) return false
-      chars += v.length
+
+    // ── The outer gate: is this a KIND of value the protocol carries at all? ──
+    if (v === null || v === undefined) continue
+    const kind = typeof v
+    if (kind === 'boolean' || kind === 'number') continue
+    if (kind === 'string') {
+      const text = v as string
+      if (text.length > MAX_INBOUND_STRING_CHARS) return false
+      chars += text.length
       if (chars > MAX_INBOUND_TOTAL_CHARS) return false
       continue
     }
-    if (v === null || typeof v !== 'object') continue
+    // bigint, symbol, function — none of them appear in any bridge event, and
+    // the first of them is the twenty-megabyte primitive this gate exists for.
+    if (kind !== 'object') return false
     if (depth >= MAX_INBOUND_DEPTH) return false
-    const bytes = (v as { byteLength?: unknown }).byteLength ?? (v as { size?: unknown }).size
-    if (typeof bytes === 'number' && bytes > MAX_INBOUND_TOTAL_CHARS) return false
+
+    if (Array.isArray(v)) {
+      if (v.length > MAX_INBOUND_VALUES) return false
+      for (const item of v) {
+        if (stack.length >= MAX_INBOUND_VALUES) return false
+        stack.push([item, depth + 1])
+      }
+      continue
+    }
+
+    // An ordinary `{...}` and nothing else. Structured clone rebuilds plain
+    // objects in the RECEIVING realm, so a genuine event's prototype is this
+    // realm's `Object.prototype`; everything a page could hand us that is not
+    // one — a Blob, a typed array, an ImageBitmap, a MessagePort, a
+    // null-prototype object — lands here and is refused rather than treated as
+    // an empty leaf.
+    if (Object.getPrototypeOf(v) !== Object.prototype) return false
     for (const key in v as Record<string, unknown>) {
       if (key.length > MAX_INBOUND_STRING_CHARS) return false
       chars += key.length
@@ -340,12 +396,28 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
 
     const msg = event.data as CanvasBridgeEvent | null
     if (!msg || msg.ns !== CANVAS_BRIDGE_NS) return
-    // Request/response traffic (canvas-frame-rpc) is namespaced and carries an
-    // `id` instead of a `type`. It has its own listener, its own cap on requests
-    // in flight and its own sanitisers, and a snapshot reply is legitimately
-    // large — so it leaves here having paid its unit and is not size-checked
-    // against an EVENT's bounds.
-    if (!('type' in msg)) return
+    // Request/response traffic (canvas-frame-rpc) is namespaced and carries a
+    // correlation `id` instead of a `type`. It has its own listener, its own cap
+    // on requests in flight and its own sanitisers, and a snapshot reply is
+    // legitimately large — so it leaves here having paid its unit and is not
+    // size-checked against an EVENT's bounds.
+    //
+    // But only if it is SHAPED like one. Anything namespaced that is neither
+    // typed nor rpc-shaped is garbage no version of this protocol emits, and
+    // returning at one unit handed it the same "legitimately large" exemption
+    // the reply path has: dropping a single field bought a page 600 unbounded
+    // messages a second, which is the exemption and not the budget
+    // (adversarial re-attack, 2026-08-15). Charged as oversize instead — the
+    // deserialise has happened either way, and that cost is what the budget is
+    // for. The residual is honest and deliberate: a page that adds `id: 1` is
+    // back to a unit apiece, and what bounds THAT is canvas-frame-rpc's cap of
+    // four requests in flight plus its random correlation ids.
+    if (!('type' in msg)) {
+      const id = (msg as { id?: unknown }).id
+      if (typeof id === 'number' && Number.isFinite(id)) return
+      if (!charge(INBOUND_OVERSIZE_COST - 1)) dropFlooded()
+      return
+    }
 
     // Refused before any of it is read into host state. The clamp in
     // safeHit/safeViewport happens on the way to the STORE, which is far too

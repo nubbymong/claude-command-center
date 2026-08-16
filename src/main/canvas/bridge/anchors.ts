@@ -22,6 +22,13 @@
 // recomputes accname thousands of times.
 
 import type { AnchorRef, CanvasAnchorResolution, CanvasFingerprint } from '../../../shared/canvas'
+// The host cleans every page-authored string it STORES with these same calls
+// (src/renderer/utils/canvas-geometry-guard.ts: clampString / storableString).
+// Every identity this module mints, matches on, or echoes back has to go
+// through them too — the whole mechanism is string equality between a stored
+// value and a recomputed one, so a clean applied on one side only is a
+// permanent "needs re-pointing". See src/shared/canvas-page-text.ts.
+import { CANVAS_PATH_MAX, CANVAS_TEXT_MAX, canvasPageText } from '../../../shared/canvas-page-text'
 import { boxOf } from './measure'
 import { isMeaningful, isSkipped, nameOf, parentOf, roleOf } from './semantics'
 
@@ -66,26 +73,46 @@ export function createAnchorContext(): AnchorContext {
   return { scan: allElements(), roleCache: new Map(), nameCache: new Map(), pathCache: new Map() }
 }
 
+/**
+ * The live role, cleaned and bounded exactly as the host will store it.
+ *
+ * `roleOf` reads a page-authored `role="…"` attribute verbatim: it can carry
+ * the format class and it has no length of its own. The host's `storableString`
+ * sheds both, so an uncleaned role here compares unequal to its own stored copy
+ * forever. Cleaning at the cache means every consumer in this module — the
+ * fingerprint, the matcher, the ancestor path, the echoed resolution — is
+ * working from the one value.
+ */
 function roleIn(ctx: AnchorContext, el: Element): string {
   let role = ctx.roleCache.get(el)
   if (role === undefined) {
-    role = roleOf(el)
+    role = canvasPageText(roleOf(el), CANVAS_TEXT_MAX)
     ctx.roleCache.set(el, role)
   }
   return role
 }
 
+/** The live accessible name. `nameOf` -> `squash` already applies the shared
+ *  rule and caps at 80, so this is the same value the host will store; the
+ *  belt-and-braces pass costs nothing and keeps the guarantee local to the
+ *  place that depends on it. */
 function nameIn(ctx: AnchorContext, el: Element): string {
   let name = ctx.nameCache.get(el)
   if (name === undefined) {
-    name = nameOf(el)
+    name = canvasPageText(nameOf(el), CANVAS_TEXT_MAX)
     ctx.nameCache.set(el, name)
   }
   return name
 }
 
 /** role (or bare tag where no role resolves) of every meaningful ancestor,
- *  outermost first. The subject element itself is NOT in its own path. */
+ *  outermost first. The subject element itself is NOT in its own path.
+ *
+ *  Bounded to the host's path length as well as the host's character class: a
+ *  page whose ancestors carry 5,000-character roles would otherwise hand the
+ *  host a path it truncates on the way in and this module recomputes in full,
+ *  which is the same divergence the strip was. Segments are already cleaned by
+ *  roleIn; tag names cannot carry the class. */
 export function ancestorPathOf(el: Element, ctx: AnchorContext): string {
   const cached = ctx.pathCache.get(el)
   if (cached !== undefined) return cached
@@ -95,11 +122,26 @@ export function ancestorPathOf(el: Element, ctx: AnchorContext): string {
     if (isMeaningful(cur)) parts.push(roleIn(ctx, cur) || cur.tagName.toLowerCase())
     cur = parentOf(cur)
   }
-  const path = parts.reverse().join('>')
+  const path = canvasPageText(parts.reverse().join('>'), CANVAS_PATH_MAX)
   ctx.pathCache.set(el, path)
   return path
 }
 
+/** A `data-ux-id` as the host stores it. The primary anchor is compared by
+ *  equality too, so the attribute has to be read through the same rule its
+ *  stored copy went through — otherwise an id holding a zero-width space is
+ *  stored clean, looked up dirty, and never resolves again. */
+function uxIdOf(el: Element): string {
+  return canvasPageText(el.getAttribute('data-ux-id'), CANVAS_PATH_MAX)
+}
+
+/**
+ * Exact string equality, three times over. `role`/`name`/`ancestorPath` come
+ * from a STORED anchor that the host cleaned with `canvasPageText`; roleIn,
+ * nameIn and ancestorPathOf clean the live element with the same call. Both
+ * halves must go on doing that — this is the comparison the whole of §4 rests
+ * on, and it has already been broken once by cleaning only one of them.
+ */
 function matchesFingerprint(ctx: AnchorContext, el: Element, role: string, name: string, ancestorPath: string): boolean {
   // Role first: a cheap attribute/table lookup that eliminates almost
   // everything before the accessible-name computation (the expensive step)
@@ -123,14 +165,21 @@ export function fingerprintOf(el: Element, ctx: AnchorContext): CanvasFingerprin
 
 /** The first element carrying this exact data-ux-id, open shadow roots
  *  included. Attribute COMPARISON rather than a selector, so an id never has
- *  to be escaped into CSS syntax to be looked up. */
+ *  to be escaped into CSS syntax to be looked up — and through `uxIdOf`, so
+ *  both sides of the comparison have had the same rule applied. */
 function findByUxId(id: string, ctx: AnchorContext): Element | null {
+  const wanted = canvasPageText(id, CANVAS_PATH_MAX)
+  if (!wanted) return null
   for (const el of ctx.scan) {
-    if (el.getAttribute('data-ux-id') === id) return el
+    if (el.hasAttribute('data-ux-id') && uxIdOf(el) === wanted) return el
   }
   return null
 }
 
+/** The reply the host will check against the anchor it sent. Every field it
+ *  can compare is emitted through the shared rule, so an honest match reads as
+ *  one: `checkedResolution` refuses on `found.role !== anchor.role ||
+ *  found.name !== anchor.name` and on `found.uxId !== anchor.id`. */
 function describeMatch(ctx: AnchorContext, el: Element, via: 'ux-id' | 'fingerprint'): CanvasAnchorResolution {
   const resolution: CanvasAnchorResolution = {
     found: true,
@@ -139,7 +188,7 @@ function describeMatch(ctx: AnchorContext, el: Element, via: 'ux-id' | 'fingerpr
     role: roleIn(ctx, el),
     name: nameIn(ctx, el),
   }
-  const uxId = el.getAttribute('data-ux-id')
+  const uxId = uxIdOf(el)
   if (uxId) resolution.uxId = uxId
   return resolution
 }
@@ -168,9 +217,17 @@ export function resolveAnchors(anchors: AnchorRef[]): CanvasAnchorResolution[] {
       Number.isInteger(anchor.ordinal) &&
       anchor.ordinal >= 0
     ) {
+      // Run the incoming anchor through the rule as well. Anything the host
+      // stored today is already clean, so this is a no-op on it; what it
+      // rescues is a review written before the host cleaned at all, whose
+      // stored name still carries the joiner its element's live name no longer
+      // will. Both sides of every comparison, one rule.
+      const wantRole = canvasPageText(anchor.role, CANVAS_TEXT_MAX)
+      const wantName = canvasPageText(anchor.name, CANVAS_TEXT_MAX)
+      const wantPath = canvasPageText(anchor.ancestorPath, CANVAS_PATH_MAX)
       const candidates: Element[] = []
       for (const el of ctx.scan) {
-        if (matchesFingerprint(ctx, el, anchor.role, anchor.name, anchor.ancestorPath)) candidates.push(el)
+        if (matchesFingerprint(ctx, el, wantRole, wantName, wantPath)) candidates.push(el)
       }
       const el = candidates[anchor.ordinal] ?? (candidates.length === 1 ? candidates[0] : undefined)
       return el ? describeMatch(ctx, el, 'fingerprint') : { found: false }
