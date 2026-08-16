@@ -157,6 +157,23 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     expect(script).toContain(`statusLine:{type:'command'`)
   })
 
+  // #265 finding 3: the sessionId embedded in the statusLine `command` was the
+  // one raw-value path left in this file. That value lands inside a
+  // single-quoted JS string literal in the emitted setup script AND becomes the
+  // command claude runs via `sh -c`, so a raw id with a quote/space/
+  // metacharacter is remote code execution / command splitting. It must be the
+  // sanitised safeSid (a no-op for real hex ids).
+  it('embeds the sanitised safeSid — not the raw id — in the statusLine command', () => {
+    const script = generateRemoteSetupScript("a'b", null)
+    expect(script).toContain('CLAUDE_MULTI_SESSION_ID=a_b node')
+    expect(script).not.toContain("CLAUDE_MULTI_SESSION_ID=a'b")
+  })
+
+  it('leaves a real (hex) id untouched in the statusLine command', () => {
+    const script = generateRemoteSetupScript('9f1f147ea02f2cf7d1eec041', null)
+    expect(script).toContain('CLAUDE_MULTI_SESSION_ID=9f1f147ea02f2cf7d1eec041 node')
+  })
+
   it('includeStatusLine=false omits the statusLine stanza from the per-session settings', () => {
     const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false })
     const parts = script.split(`Object.assign({},sBase,{`)
