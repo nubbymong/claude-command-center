@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-beta.11] - 2026-08-16
+
+> A security-and-stability release. The Agent Canvas review surface arrives, per-account claude.ai web sign-in rides through Cloudflare's check, and three local-attacker security issues are closed, two of them with advisories published alongside.
+
+### Added
+- The Agent Canvas can now show a page Claude is working on and report what it actually looks like once laid out: element names, sizes, form state, and measured problems such as clipped text, targets too small to tap, and unreadable contrast, so Claude can review and improve a page it built. It reads only files inside the project folders you open sessions in.
+
+### Changed
+- Per-session account actions in the sidebar (Open artifacts, Authenticate claude.ai) are now offered only for sessions that can actually use them, and "Open artifacts" correctly enables for your primary account. Terminal-only sessions, which have no /login to run, no longer show them.
+- The account strip along the bottom now wraps to two rows with a "+N" overflow when you have several accounts, so none are pushed off the edge, and the sidebar session cards give the context meter its own row so a long model name can no longer squeeze it out.
+
+### Fixed
+- Security: the terminal paste protection added last release did not cover every way text can be pasted. Pasting through the Edit menu, or with Ctrl+V while a dialog was open, still fed the clipboard to the terminal without the safety filter, so a page that quietly put a command on your clipboard could run it when you pasted. Every paste route into a terminal now goes through the same filter, which strips the control characters that let pasted text execute. Fixed in this release; 2.1.0-beta.10 and earlier are affected. It requires being tricked into copying attacker-chosen text.
+- Security: on Windows the folder holding each account's Claude sign-in tokens was never actually locked down. The hardening step did nothing off macOS and Linux, so any other user signed in to the same PC could read or modify those tokens. The folder and the token files are now restricted to your Windows account, and repaired to that if found otherwise. Fixed in this release; 2.1.0-beta.10 and earlier are affected. Advisory GHSA-3ghm-39v2-53ph, severity high: it requires another user account on the same machine.
+- Security: the app's local Conductor service checked that a request carried a valid session token but did not confirm the request was aimed at that same session's connection, so one local session could post messages into another session's stream if it learned that connection's id. Each message is now bound to the connection opened by the authenticated session. Fixed in this release; 2.1.0-beta.10 and earlier are affected. Advisory GHSA-f3wv-ppx5-m3v4, severity medium: it requires another program or session running locally that can reach the app's local service.
+- Signing in to claude.ai for an account no longer fails when Cloudflare shows its "verify you are human" check. The sign-in used to run page script on every poll, which kept the check re-arming, and a routine mid-check page reload could close the sign-in window and abandon the flow. The sign-in now waits out the check without touching the page, and rides through a reload instead of aborting.
+- Accounts that were fully signed in could show as "not signed in" and tell you to run /login. The app was looking for the sign-in token in the wrong folder; it now reads the same location the CLI writes, so a signed-in account is recognised. The check also no longer briefly freezes the app while it runs.
+- The usage page now respects parked (inactive) accounts. A parked account is greyed and no longer offers a sign-in button, on the usage page and in the Insights re-authenticate banner, so it is never signed back in behind your back, matching what parking an account is meant to do.
+
 ## [2.1.0-beta.10] - 2026-08-14
 
 > Fixes an upgrade that could fail with "AI Code Conductor cannot be closed" even with nothing running, and settles the rename: downloads now carry one name, and the first-run tour finally matches the brand.
@@ -1051,6 +1070,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-beta.11]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.11
 [2.1.0-beta.10]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.10
 [2.1.0-beta.9]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.9
 [2.1.0-beta.8]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.8
