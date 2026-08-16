@@ -10,6 +10,34 @@ export interface SshArgsTarget {
 }
 
 /**
+ * Sink-side guard (#265). `username` and `host` are fused into
+ * `${username}@${host}` and handed to ssh/ssh.exe as argv[0]. ssh treats any
+ * argv entry that begins with `-` as an OPTION, so a value like
+ * `-oProxyCommand=...` is an argument-injection primitive (ProxyCommand runs an
+ * arbitrary local command). It does not complete on today's builder — consuming
+ * argv[0] as an option leaves ssh with no destination, so it usage-errors before
+ * connecting — but that safety is accidental: it holds only because argv[0] is
+ * the single bare token this builder emits, and any future change adding a
+ * second bare token converts it straight into code execution.
+ *
+ * The IPC boundary already charset-gates these fields, but every argv/shell sink
+ * in this codebase re-asserts its own inputs at the point of interpolation (cf.
+ * `assertSafeRemotePath` in ssh-shim.ts) so a call site that bypasses the Zod
+ * schema cannot rebuild the primitive. Reject a leading `-` and any whitespace;
+ * an internal `-` (real hostnames, usernames) is fine, so this is a targeted gate
+ * for the argv context, not the full shell-safe allowlist `remotePath` needs.
+ */
+const SAFE_SSH_FIELD_RE = /^[^-\s]\S*$/
+
+function assertSafeSshField(name: 'username' | 'host', value: string): void {
+  if (!SAFE_SSH_FIELD_RE.test(value)) {
+    throw new Error(
+      `Refusing to build SSH args: ${name} must not be empty, begin with "-", or contain whitespace.`,
+    )
+  }
+}
+
+/**
  * Build the argument list passed to `ssh`/`ssh.exe`.
  *
  * @param ssh      connection target (user, host, port)
@@ -27,6 +55,9 @@ export interface SshArgsTarget {
  *                 untouched.
  */
 export function buildSshArgs(ssh: SshArgsTarget, mcpPort: number, platform: NodeJS.Platform): string[] {
+  assertSafeSshField('username', ssh.username)
+  assertSafeSshField('host', ssh.host)
+
   const args = [
     `${ssh.username}@${ssh.host}`,
     '-p', String(ssh.port),

@@ -153,7 +153,15 @@ export function generateRemoteSetupScript(
   // no statusLine key (the shim file is still staged but inert without it).
   const sesCfgParts: string[] = []
   if (includeStatusLine) {
-    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}`)
+    // Use safeSid, not the raw sessionId (#265): this value is embedded in a
+    // single-quoted JS string literal inside the setup script AND becomes the
+    // `command` claude later runs via `sh -c`. A raw id bearing a quote/space/
+    // metacharacter would break out of the literal (remote code execution) or
+    // split the command. The IPC boundary already charset-gates the id; this is
+    // the sink-side backstop, and a no-op for real (hex) ids. Every OTHER
+    // embedding is already neutralised — the URL via encodeURIComponent, the
+    // filenames via safeSid — so this was the last raw path.
+    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${safeSid} node '+shimPath}`)
   }
   if (hooksLiteral) sesCfgParts.push(`hooks:${hooksLiteral}`)
 

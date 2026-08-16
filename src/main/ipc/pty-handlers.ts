@@ -20,10 +20,18 @@ interface RendererSSHOptions {
   postCommand?: string
 }
 
+// host/username are fused into `${username}@${host}` and handed to ssh as
+// argv[0]. ssh parses any argv entry beginning with `-` as an OPTION, so a
+// leading dash (e.g. `-oProxyCommand=...`) is an argument-injection primitive.
+// Charset-gate both here — reject a leading `-` and any whitespace — matching
+// the remotePath precedent from #188; the ssh-args builder re-asserts the same
+// as a sink-side backstop (#265). `[^-\s]` first char excludes a leading dash
+// and whitespace; `\S*` keeps IPv6 (`[::1]`), internal `-`, and `DOMAIN\user`.
+const sshFieldRe = /^[^-\s]\S*$/
 const sshSchema = z.object({
-  host: z.string().min(1),
+  host: z.string().min(1).regex(sshFieldRe, 'host has invalid characters'),
   port: z.number().int().min(1).max(65535),
-  username: z.string().min(1),
+  username: z.string().min(1).regex(sshFieldRe, 'username has invalid characters'),
   // Charset-gated at the IPC boundary (mirrors ssh-shim SAFE_REMOTE_PATH_RE):
   // the remote path is interpolated into the remote setup command, and the
   // shim's own assertSafeRemotePath throws from inside a setTimeout — which the
@@ -177,7 +185,13 @@ export const spawnOptionsSchema = z.object({
   }
 }).optional()
 
-const sessionIdSchema = z.string().min(1).max(200)
+// Charset-gate the session id (#265). It is interpolated into the remote setup
+// script (base64'd and piped to `node` on the remote) and into filenames on the
+// remote. Real ids are CSPRNG hex (src/shared/id.ts), so this only ever rejects
+// a caller that already controls the renderer or local config — a defence-in-depth
+// gate, not an embargoed bug. ssh-shim re-sanitises via safeSid as a backstop.
+// Exported so the boundary contract is unit-tested against the real schema.
+export const sessionIdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/, 'session id has invalid characters')
 
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: {

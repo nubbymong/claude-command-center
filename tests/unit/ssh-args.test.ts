@@ -44,3 +44,42 @@ describe('buildSshArgs', () => {
     expect(buildSshArgs(target, 5111, 'win32')).not.toContain('5111:localhost:5111')
   })
 })
+
+// #265 finding 2: the builder is the argv SINK for `${username}@${host}`. ssh
+// parses a leading `-` as an option (`-oProxyCommand=...` = local RCE), so the
+// builder re-asserts the charset the IPC schema also gates — defence-in-depth
+// against a call site that bypasses Zod and rebuilds the primitive directly.
+describe('buildSshArgs rejects an option-like or whitespace host/username (sink guard)', () => {
+  const rejects = /Refusing to build SSH args/
+  it.each([
+    ['username', '-oProxyCommand=touch /tmp/pwn'],
+    ['username', '-l'],
+    ['username', '- '],
+    ['host', '-oProxyCommand=id'],
+    ['host', '-p2222'],
+  ])('throws on a leading-dash %s (%s)', (field, bad) => {
+    const t = { ...target, [field]: bad }
+    expect(() => buildSshArgs(t, 0, 'win32')).toThrow(rejects)
+  })
+
+  it.each([
+    ['username', 'me evil'],
+    ['username', 'me\tx'],
+    ['host', 'example.com host2'],
+    ['host', 'example.com\nrm'],
+  ])('throws on whitespace in %s (%s)', (field, bad) => {
+    const t = { ...target, [field]: bad }
+    expect(() => buildSshArgs(t, 0, 'linux')).toThrow(rejects)
+  })
+
+  it('throws on an empty username or host', () => {
+    expect(() => buildSshArgs({ ...target, username: '' }, 0, 'linux')).toThrow(rejects)
+    expect(() => buildSshArgs({ ...target, host: '' }, 0, 'linux')).toThrow(rejects)
+  })
+
+  it('still accepts real hosts/usernames with internal dashes, IPv6, and DOMAIN\\user', () => {
+    expect(() => buildSshArgs({ username: 'my-user', host: 'my-host.example.com', port: 22 }, 0, 'linux')).not.toThrow()
+    expect(() => buildSshArgs({ username: 'root', host: '[2001:db8::1]', port: 22 }, 0, 'linux')).not.toThrow()
+    expect(() => buildSshArgs({ username: 'DOMAIN\\me', host: '10.0.0.5', port: 22 }, 0, 'win32')).not.toThrow()
+  })
+})
