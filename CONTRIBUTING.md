@@ -121,9 +121,10 @@ node scripts/close-in-beta-issues.js --range origin/main..origin/beta --dry-run
 Orthogonal to the `in-beta` lifecycle above, these two labels say **which release
 line** an issue belongs to:
 
-- **`release-2.1`** — targets the current 2.1 line. Implied by a fix merged to
-  `beta`, or a PR based on `beta`; every open `in-beta` issue is on this line.
-- **`release-2.2`** — explicitly **deferred** past 2.1.
+- **`release-2.1`** — targets the current 2.1 line. **Apply it** to any issue or
+  PR on this line; in particular, every `in-beta` issue should also carry
+  `release-2.1`, so a "what ships in 2.1?" query stays accurate.
+- **`release-2.2`** — **apply it** to work explicitly **deferred** past 2.1.
 
 **Invariant: `in-beta` and `release-2.2` must never sit on the same issue.**
 `in-beta` means the fix is already merged to `beta` (which ships as the next 2.1
