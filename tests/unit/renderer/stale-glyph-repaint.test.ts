@@ -185,6 +185,35 @@ describe('createStaleGlyphRepainter', () => {
     expect(h.pendingTimers()).toBe(0)
   })
 
+  // #292 review: a fast request INSIDE its own window while a slow timer is
+  // armed must bring the repaint forward to the fast edge, not wait ~1s.
+  it('a wheel inside the fast window brings an armed slow trailing timer forward to the fast edge', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    r.schedule(BOTTOM_STREAM_INTERVAL_MS)      // t=0 paint 1
+    h.advance(100)
+    r.schedule(BOTTOM_STREAM_INTERVAL_MS)      // slow trailing timer due at t=1000
+    h.advance(50)                              // t=150: inside the fast window too
+    r.schedule(REPAINT_MIN_INTERVAL_MS)        // fast request → timer re-armed for t=250
+    expect(h.counts().clearAtlas).toBe(1)
+    expect(h.pendingTimers()).toBe(1)
+    h.advance(100)                             // t=250
+    expect(h.counts().clearAtlas).toBe(2)      // NOT still waiting on t=1000
+    expect(h.pendingTimers()).toBe(0)
+  })
+
+  it('a slower request never pushes an armed faster timer later', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    r.schedule()                               // t=0 paint 1 (fast pace)
+    h.advance(100)
+    r.schedule()                               // fast trailing timer due at t=250
+    r.schedule(BOTTOM_STREAM_INTERVAL_MS)      // slow request: due t=1000 ≥ 250 → let the fast one stand
+    expect(h.pendingTimers()).toBe(1)
+    h.advance(150)                             // t=250
+    expect(h.counts().clearAtlas).toBe(2)
+  })
+
   it('settle(): one repaint after output goes quiet, re-armed by every chunk', () => {
     const h = makeHarness()
     const r = createStaleGlyphRepainter(h.deps)

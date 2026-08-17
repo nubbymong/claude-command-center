@@ -128,6 +128,9 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
   const minInterval = deps.minIntervalMs ?? REPAINT_MIN_INTERVAL_MS
   let lastPaintAt = Number.NEGATIVE_INFINITY
   let timer: ReturnType<typeof setTimeout> | null = null
+  /** When the armed trailing timer is due (deps.now() clock), so a faster-paced
+   *  request can tell whether it would fire sooner and bring it forward. */
+  let timerDueAt = Number.POSITIVE_INFINITY
   let settleTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
 
@@ -146,18 +149,26 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
     if (disposed) return
     const since = deps.now() - lastPaintAt
     if (since >= intervalMs) {
-      if (timer) { deps.clearTimer(timer); timer = null }
+      if (timer) { deps.clearTimer(timer); timer = null; timerDueAt = Number.POSITIVE_INFINITY }
       paint()
       return
     }
-    // Inside the window: one trailing repaint at the edge. Already-armed → let it
-    // stand rather than pushing it later (that would starve a steady stream). A
-    // faster-paced request arriving while a slower one's timer is armed either
-    // paints now (its own window has elapsed, above) or rides that timer, which
-    // is never further out than the slower interval.
-    if (timer) return
+    // Inside the window: one trailing repaint at the edge of THIS request's
+    // window (lastPaintAt + intervalMs). An armed timer that is due no later
+    // stands (never push a repaint out — that would starve a steady stream); a
+    // faster-paced request — a wheel landing mid at-bottom stream — brings an
+    // armed slow timer FORWARD to its own edge rather than waiting up to the
+    // slow interval on it (#292 review).
+    const dueAt = lastPaintAt + intervalMs
+    if (timer) {
+      if (dueAt >= timerDueAt) return
+      deps.clearTimer(timer)
+      timer = null
+    }
+    timerDueAt = dueAt
     timer = deps.setTimer(() => {
       timer = null
+      timerDueAt = Number.POSITIVE_INFINITY
       if (disposed) return
       paint()
     }, intervalMs - since)
@@ -179,7 +190,7 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
 
   const dispose = () => {
     disposed = true
-    if (timer) { deps.clearTimer(timer); timer = null }
+    if (timer) { deps.clearTimer(timer); timer = null; timerDueAt = Number.POSITIVE_INFINITY }
     if (settleTimer) { deps.clearTimer(settleTimer); settleTimer = null }
   }
 
