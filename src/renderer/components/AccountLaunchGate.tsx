@@ -20,6 +20,7 @@ export default function AccountLaunchGate() {
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  const lastUsedAccountId = useSettingsStore((s) => s.settings.lastUsedAccountId)
   const theme = useResolvedTheme()
   // Only active accounts are selectable at launch: an inactive account has been
   // parked and must not be chosen for a new session. The session's own pinned
@@ -48,6 +49,26 @@ export default function AccountLaunchGate() {
 
   const launch = () => resolveChoice(selected || undefined)
 
+  // "Last used" line: the account most recently launched, shown regardless of the
+  // dropdown value so a new session can adopt it in one click. Only shown when it
+  // resolves to a real profile (skipped on a first-ever launch, or if that
+  // account was since deleted).
+  const lastUsedProfile = lastUsedAccountId ? profiles.find((p) => p.id === lastUsedAccountId) : undefined
+  const lastUsedLabel = lastUsedProfile
+    ? (lastUsedProfile.accountEmail
+        ? (() => {
+            const r = resolveAccountName(lastUsedProfile.accountEmail, lastUsedProfile.name, accountAliases)
+            return r === lastUsedProfile.accountEmail ? middleTruncateEmail(lastUsedProfile.accountEmail) : r
+          })()
+        : (lastUsedProfile.name || 'New account'))
+    : ''
+  const lastUsedDot = lastUsedProfile
+    ? resolveIdentityColor(
+        resolveAccountColourKey(lastUsedProfile.accountEmail, accountColourOverrides, lastUsedProfile.colourKey),
+        theme,
+      )
+    : ''
+
   // Colour dot for the current selection: user override wins, else the profile's
   // stored colourKey, else neutral mauve.
   const selectedProfile = profiles.find((p) => p.id === selected)
@@ -69,6 +90,34 @@ export default function AccountLaunchGate() {
           Choose the account for{' '}
           <span className="text-text font-medium">{pending.sessionLabel || 'this session'}</span>
         </p>
+
+        {lastUsedProfile && (
+          <div
+            className="flex items-center gap-2 mb-4 rounded-md border border-surface1 bg-base/60 px-3 py-2"
+            data-testid="account-launch-lastused"
+          >
+            <span
+              className="w-2.5 h-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: lastUsedDot }}
+              aria-hidden
+            />
+            <span className="text-sm text-text font-medium truncate" title={lastUsedProfile.accountEmail || undefined}>
+              {lastUsedLabel}
+            </span>
+            <span className="text-[10px] uppercase tracking-wide text-overlay1 ml-1 shrink-0">Last used</span>
+            {selected === lastUsedProfile.id ? (
+              <span className="ml-auto text-xs text-overlay1 shrink-0">selected</span>
+            ) : (
+              <button
+                onClick={() => setSelected(lastUsedProfile.id)}
+                data-testid="account-launch-lastused-use"
+                className="ml-auto text-xs text-blue hover:underline shrink-0 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50 rounded"
+              >
+                Use →
+              </button>
+            )}
+          </div>
+        )}
 
         <label className="block text-xs text-subtext0 mb-1">Account</label>
         <div className="flex items-center gap-2 mb-5">

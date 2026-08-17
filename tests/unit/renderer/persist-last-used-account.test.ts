@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { persistLastUsedAccount } from '../../../src/renderer/session-persistence'
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
+import { useSettingsStore } from '../../../src/renderer/stores/settingsStore'
 
 let saved: any[] = []
 beforeEach(() => {
@@ -16,6 +17,7 @@ beforeEach(() => {
     sessions: [{ id: 's1', label: 'a', workingDirectory: '/', model: 'opus', color: '#fff', status: 'idle', createdAt: 0, sessionType: 'local', provider: 'claude' } as any],
     activeSessionId: 's1',
   })
+  useSettingsStore.setState((s) => ({ settings: { ...s.settings, lastUsedAccountId: undefined } }))
 })
 
 describe('persistLastUsedAccount', () => {
@@ -39,5 +41,19 @@ describe('persistLastUsedAccount', () => {
     ;(window.electronAPI.session.save as any).mockRejectedValueOnce(new Error('disk full'))
     await expect(persistLastUsedAccount('s1', 'profile-y')).resolves.toBeUndefined()
     expect(useSessionStore.getState().sessions[0].profileId).toBe('profile-y')
+  })
+
+  it('records the global "last used" account so the launch gate can offer it', async () => {
+    await persistLastUsedAccount('s1', 'profile-z')
+    expect(useSettingsStore.getState().settings.lastUsedAccountId).toBe('profile-z')
+  })
+
+  it('does NOT clear the global last-used when a session switches to the default (undefined) account', async () => {
+    await persistLastUsedAccount('s1', 'profile-keep')
+    await persistLastUsedAccount('s1', undefined)
+    // The per-session pin cleared, but the global "last used" survives as a
+    // useful default for the next new session.
+    expect(useSessionStore.getState().sessions[0].profileId).toBeUndefined()
+    expect(useSettingsStore.getState().settings.lastUsedAccountId).toBe('profile-keep')
   })
 })
