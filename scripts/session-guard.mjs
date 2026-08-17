@@ -23,6 +23,12 @@
 //   node scripts/session-guard.mjs hook            (PreToolUse; JSON on stdin)
 //
 // Escape hatch: CCC_SESSION_GUARD=off disables the hook's blocking.
+//
+// Under CCC (AI Code Conductor), CCC_SESSION_WORKTREE names the directory the
+// app has designated for THIS session's worktree -- the one path the Agent
+// Canvas will serve, so a mockup written there is renderable by htmlPath
+// (ADR-016). `claim` creates the worktree there, or adopts the one an earlier
+// conversation of the same CCC session left there. Unset outside CCC.
 
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -264,13 +270,45 @@ function cmdClaim(args) {
   const commonDir = gitSafe(['rev-parse', '--path-format=absolute', '--git-common-dir'])
   const primaryRoot = commonDir ? path.dirname(commonDir) : mainRoot
   const wtRoot = process.env.CCC_WT_ROOT || path.join(path.dirname(primaryRoot), 'ccc-wt')
-  const dir = path.join(wtRoot, slug ? `${short}-${slug}` : short)
+  let dir = path.join(wtRoot, slug ? `${short}-${slug}` : short)
+
+  // CCC designated a location for this session's worktree (the path the canvas
+  // serves). Use it: create there, or adopt what an earlier conversation of the
+  // same CCC session left there. When it is unusable, say so and fall back to
+  // the default location -- the worktree then simply is not canvas-served.
+  const designated = designatedWorktreeDir()
+  if (designated) {
+    const d = claimDesignated(designated, me, base)
+    if (d && d.adopt) {
+      const lease = {
+        sessionId: me,
+        multiSessionId: process.env.CLAUDE_MULTI_SESSION_ID || null,
+        pid: Number(process.env.CLAUDE_PID) || process.ppid,
+        worktree: d.adopt.root,
+        branch: d.adopt.branch,
+        base,
+        startPoint: null,
+        host: os.hostname(),
+        createdAt: new Date().toISOString(),
+        adopted: true,
+        designated: true,
+      }
+      fs.writeFileSync(path.join(leaseDir(process.cwd()), `${me}.json`), JSON.stringify(lease, null, 2), { flag: 'wx' })
+      print(renderClaim(lease, 'adopted (this CCC session\'s existing worktree)'))
+      if (d.adopt.dirty > 0) {
+        print(`  note: ${d.adopt.dirty} uncommitted change(s) from the previous conversation are still in it.`)
+      }
+      print(`  note: it is on branch ${d.adopt.branch}; branch off ${base} yourself if you want a fresh start.`)
+      return
+    }
+    if (d && d.dir) dir = d.dir
+  }
 
   // Prefer the remote base so a session never inherits another session's local drift.
   const startPoint = gitSafe(['rev-parse', '--verify', '--quiet', `origin/${base}`]) ? `origin/${base}` : base
   if (!gitSafe(['rev-parse', '--verify', '--quiet', startPoint])) fail(`base ref '${base}' does not exist.`)
 
-  fs.mkdirSync(wtRoot, { recursive: true })
+  fs.mkdirSync(path.dirname(dir), { recursive: true })
   // `git worktree add -b` is the atomic step: if two sessions race the same
   // branch, exactly one succeeds and the other lands here.
   try {
@@ -289,11 +327,65 @@ function cmdClaim(args) {
     startPoint,
     host: os.hostname(),
     createdAt: new Date().toISOString(),
+    designated: !!(designated && samePath(designated, dir)),
   }
   // 'wx' => fail if a lease for this session already exists (no silent clobber).
   fs.writeFileSync(path.join(leaseDir(process.cwd()), `${me}.json`), JSON.stringify(lease, null, 2), { flag: 'wx' })
 
   print(renderClaim(lease, 'claimed'))
+}
+
+/** The directory CCC designated for this session's worktree, or null. Must be
+ *  absolute; anything else is ignored (this is a hint from the app, not a
+ *  security boundary -- the canvas store enforces its own on the app side). */
+function designatedWorktreeDir() {
+  const raw = process.env.CCC_SESSION_WORKTREE
+  if (!raw || typeof raw !== 'string' || !path.isAbsolute(raw)) return null
+  return path.resolve(raw)
+}
+
+function isEmptyDir(p) {
+  try {
+    return fs.statSync(p).isDirectory() && fs.readdirSync(p).length === 0
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Decide what `claim` does with a CCC-designated directory:
+ *   { dir }              -- nothing (or an empty dir) is there: create the worktree at `dir`
+ *   { adopt: {...} }     -- a linked worktree of THIS repo is there and is free
+ *                           to take (unowned, its owner is dead, or its owner
+ *                           was an earlier conversation of this same CCC
+ *                           session): adopt it in place
+ *   null                 -- unusable: fall back to the default location
+ */
+function claimDesignated(designated, me, base) {
+  if (!fs.existsSync(designated) || isEmptyDir(designated)) return { dir: designated }
+  const root = worktreeRoot(designated)
+  if (!root || !samePath(root, designated) || isPrimaryWorktree(root)) {
+    print(`  note: CCC designated ${designated} for this session, but something else is there; using the default location (the canvas will not serve this worktree).`)
+    return null
+  }
+  const lease = readLeases(process.cwd()).find((l) => samePath(l.worktree, root))
+  const myCccSession = process.env.CLAUDE_MULTI_SESSION_ID || null
+  const sameCccSession = !!(lease && myCccSession && lease.multiSessionId === myCccSession)
+  if (lease && lease.sessionId !== me && lease._alive && !sameCccSession) {
+    print(`  note: CCC designated ${designated} for this session, but session ${shortId(lease.sessionId)} still holds it; using the default location (the canvas will not serve this worktree).`)
+    return null
+  }
+  const branch = gitSafe(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root }) || 'HEAD'
+  if (branch === 'HEAD') {
+    print(`  note: CCC designated ${designated} for this session, but the worktree there is on a detached HEAD; using the default location.`)
+    return null
+  }
+  if (lease && lease.sessionId !== me) {
+    print(`  clearing lease of session ${shortId(lease.sessionId)} (${sameCccSession ? 'an earlier conversation of this CCC session' : `pid ${lease.pid}, not running`})`)
+    fs.unlinkSync(lease._file)
+  }
+  const dirty = (gitSafe(['status', '--porcelain'], { cwd: root }) || '').split('\n').filter((l) => l.trim().length > 0).length
+  return { adopt: { root, branch, dirty }, base }
 }
 
 function renderClaim(lease, verb) {

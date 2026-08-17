@@ -72,6 +72,42 @@ const PROFILE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
  */
 const uatRootsBySession = new Map<string, Set<string>>()
 
+/**
+ * A session's DESIGNATED worktree root — a directory CCC named for it, that may
+ * or may not exist yet.
+ *
+ * Why this exists (2026-08-17): session isolation (ADR-012) has every agent
+ * claim its own git worktree beside the project (`<parent>/ccc-wt/<id>`) and
+ * the guard hook blocks writes to the primary checkout. The canvas served
+ * roots, meanwhile, are exactly the configured project directory. So an
+ * agent that dutifully isolates itself writes its mockup into a directory the
+ * canvas refuses to read: `canvas_render`'s `htmlPath` fails and it is forced
+ * to the inline fallback. Two mandated features in conflict.
+ *
+ * WHY NOT the obvious fixes. "Serve whatever the guard's lease says the
+ * session's worktree is" and "serve any git worktree of a served root" both
+ * derive a served root from data the AGENT writes (`.git/ccc-sessions/*.json`,
+ * `.git/worktrees/*`, a worktree's `.git` file). That is the exact class the
+ * three earlier canvas reviews closed (transcript cwd, resume cwd, plugin dir):
+ * a model that names its own allowlist entry. So instead CCC DESIGNATES the
+ * location — `<worktree base>/<ccc-session-short>`, computed in pty-manager
+ * from the CONFIGURED project directory and CCC's own session id, nothing the
+ * agent supplies — tells the guard where via CCC_SESSION_WORKTREE, and records
+ * it here. The guard creates the worktree there; if the agent claims anywhere
+ * else, its worktree is simply not served (fail closed, today's behaviour).
+ *
+ * A designated root is PENDING: it is stored lexically and consulted only at
+ * resolution time, when it must (a) exist, (b) be a real directory whose
+ * realpath IS the designated path — an agent that pre-creates the directory
+ * as a junction / symlink to somewhere else gets nothing, because serving is
+ * containment under the REALPATH and that would point elsewhere — and (c)
+ * pass the same floor as a live root. Only files physically under the
+ * designated directory can ever be served through it, and every candidate is
+ * still realpath'd itself, so a link planted inside cannot reach out.
+ * Revoked with the session, like a live root.
+ */
+const designatedRootsBySession = new Map<string, Set<string>>()
+
 /** `C:\`, `D:\`, `/`, `\\server\share\` — a whole volume is not a project. */
 function isVolumeRoot(p: string): boolean {
   // `C:\` → dirname is itself; `path.parse('/').root === '/'`. Both spellings
@@ -153,27 +189,102 @@ export function registerCanvasUatRoot(sessionId: string, baseDir: string): boole
   return true
 }
 
-/** Drop every root a session was allowed to serve. Called when its PTY is gone
- *  (pty-manager cleanupSessionResources) — a root outlives nothing. */
+/**
+ * Designate the directory the session's isolated worktree is expected at (see
+ * designatedRootsBySession). Nothing is checked on disk now — the directory
+ * usually does not exist yet — beyond the lexical floor: absolute, normalised,
+ * not home or an ancestor of it, not a volume root, not a dot-directory under
+ * home. Idempotent; returns true when recorded. Consulted by
+ * `resolveInsideCanvasRoot` / UAT `distRoot` only once it exists as a real,
+ * un-linked directory.
+ */
+export function designateCanvasWorktreeRoot(sessionId: string, dir: string): boolean {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return false
+  if (typeof dir !== 'string' || dir.length === 0 || !path.isAbsolute(dir)) return false
+  const lexical = path.resolve(dir)
+  if (isHomeOrAncestor(lexical)) return false
+  if (isVolumeRoot(lexical)) return false
+  if (isDotDirUnderHome(lexical)) return false
+  let set = designatedRootsBySession.get(sessionId)
+  if (!set) {
+    set = new Set<string>()
+    designatedRootsBySession.set(sessionId, set)
+  }
+  set.add(lexical)
+  return true
+}
+
+/** Same-path test for the anti-link check: the filesystem's own notion of
+ *  equality — case-insensitive on Windows and macOS, exact elsewhere. */
+function sameFsPath(a: string, b: string): boolean {
+  const norm = (p: string) => {
+    const r = p.replace(/[\\/]+$/, '')
+    return process.platform === 'win32' || process.platform === 'darwin' ? r.toLowerCase() : r
+  }
+  return norm(a) === norm(b)
+}
+
+/**
+ * The live real path of a designated root, or null while it is not servable:
+ * missing, not a directory, a junction/symlink (its realpath is somewhere else
+ * — the agent pre-created it pointing at a directory it wants read), or a
+ * realpath the floor refuses. Evaluated on EVERY resolution: a directory that
+ * was real yesterday and is a junction today stops serving today.
+ */
+function liveDesignatedRoot(lexical: string): string | null {
+  let real: string
+  try {
+    real = fs.realpathSync.native(lexical)
+  } catch {
+    return null // not there (yet)
+  }
+  if (!sameFsPath(real, lexical)) return null // a link, or a link on the way
+  try {
+    if (!fs.statSync(real).isDirectory()) return null
+  } catch {
+    return null
+  }
+  if (isHomeOrAncestor(real)) return null
+  if (isVolumeRoot(real)) return null
+  if (isDotDirUnderHome(real)) return null
+  return real
+}
+
+/** Drop every root a session was allowed to serve — live and designated.
+ *  Called when its PTY is gone (pty-manager cleanupSessionResources) — a root
+ *  outlives nothing. */
 export function revokeCanvasUatRoots(sessionId: string): void {
   uatRootsBySession.delete(sessionId)
+  designatedRootsBySession.delete(sessionId)
 }
 
 /** True iff `candidate` physically resolves at/under a base registered for
- *  THIS session. realpath both sides so a symlinked base or candidate cannot
- *  dodge the check. Unknown session ⇒ no roots ⇒ false (fail closed). */
+ *  THIS session — a live root, or a designated worktree root that is live
+ *  right now (liveDesignatedRoot). realpath both sides so a symlinked base or
+ *  candidate cannot dodge the check. Unknown session ⇒ no roots ⇒ false (fail
+ *  closed). */
 function resolvesUnderSessionRoot(candidate: string, sessionId: string): string | null {
   if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return null
   const roots = uatRootsBySession.get(sessionId)
-  if (!roots || roots.size === 0) return null
+  const designated = designatedRootsBySession.get(sessionId)
+  if ((!roots || roots.size === 0) && (!designated || designated.size === 0)) return null
   let real: string
   try {
     real = fs.realpathSync.native(candidate)
   } catch {
     return null
   }
-  for (const base of roots) {
-    if (real === base || real.startsWith(base + path.sep)) return real
+  if (roots) {
+    for (const base of roots) {
+      if (real === base || real.startsWith(base + path.sep)) return real
+    }
+  }
+  if (designated) {
+    for (const lexical of designated) {
+      const base = liveDesignatedRoot(lexical)
+      if (base === null) continue
+      if (real === base || real.startsWith(base + path.sep)) return real
+    }
   }
   return null
 }
@@ -990,6 +1101,7 @@ export function _resetCanvasStoreForTest(): void {
   canvases.clear()
   sessionIndex.clear()
   uatRootsBySession.clear()
+  designatedRootsBySession.clear()
   diskScanned = false
   sessionInfoResolver = null
   _canvasRecordKey = null
