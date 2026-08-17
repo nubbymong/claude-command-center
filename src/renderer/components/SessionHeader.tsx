@@ -111,9 +111,9 @@ function SessionAuthPills({ session }: { session: Session }) {
   const codeText = !known ? (pending ? '…' : 'unknown') : cliOk ? 'signed in' : 'signed out'
   const aiColor = !known ? 'var(--text-muted)' : web === 'active' ? 'var(--status-success)' : web === 'expired' ? 'var(--status-warning)' : 'var(--text-muted)'
   const aiText = !known ? (pending ? '…' : 'unknown') : web === 'active' ? 'connected' : web === 'expired' ? 'expired' : 'not connected'
-  const errorSuffix = !known && status?.error ? ` — could not read status: ${status.error}` : ''
+  const errorSuffix = status?.error ? ` — could not read status: ${status.error}` : ''
 
-  const doRefresh = () => { if (profileId) void refresh(profileId) }
+  const doRefresh = () => { if (profileId) void refresh(profileId, { force: true }) }
 
   // Complements the title-bar service pills (Code / Claude.ai = is the SERVICE
   // up); these say whether THIS session's account is signed in / connected.

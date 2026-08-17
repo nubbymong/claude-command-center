@@ -51,9 +51,14 @@ export default function AccountLaunchGate() {
 
   // "Last used" line: the account most recently launched, shown regardless of the
   // dropdown value so a new session can adopt it in one click. Only shown when it
-  // resolves to a real profile (skipped on a first-ever launch, or if that
-  // account was since deleted).
-  const lastUsedProfile = lastUsedAccountId ? profiles.find((p) => p.id === lastUsedAccountId) : undefined
+  // resolves to a real, SELECTABLE profile — skipped on a first-ever launch, if
+  // that account was since deleted, or if it has since been PARKED (inactive): a
+  // parked account must not be launchable, and this one-click shortcut bypasses
+  // the dropdown, so it has to apply the same isSelectable gate the dropdown does
+  // (adversarial review — otherwise Use -> launches a parked account).
+  const lastUsedProfile = lastUsedAccountId
+    ? profiles.find((p) => p.id === lastUsedAccountId && isSelectable(p))
+    : undefined
   const lastUsedLabel = lastUsedProfile
     ? (lastUsedProfile.accountEmail
         ? (() => {

@@ -108,15 +108,15 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   // refreshes both. Fetched when a session context menu opens — not polled, since
   // the Claude Code check is a heavy subprocess.
   const authByProfile = useAccountAuthStore((s) => s.byProfile)
-  const refreshWebSessions = React.useCallback(async (profileId?: string) => {
+  const refreshWebSessions = React.useCallback(async (profileId?: string, force = false) => {
     if (!profileId) return
-    await useAccountAuthStore.getState().refresh(profileId)
+    await useAccountAuthStore.getState().refresh(profileId, { force })
   }, [])
 
   /** Acquire this account's claude.ai web session, then refresh the menu state. */
   const authenticateWebForSession = React.useCallback(async (profileId: string) => {
     await window.electronAPI.accountWeb.signIn(profileId)
-    await refreshWebSessions(profileId)
+    await refreshWebSessions(profileId, true)
   }, [refreshWebSessions])
   const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null)
   const [sectionRenameValue, setSectionRenameValue] = useState('')

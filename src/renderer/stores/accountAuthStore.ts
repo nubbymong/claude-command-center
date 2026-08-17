@@ -25,19 +25,37 @@ export interface AccountAuthStatus {
 
 interface AccountAuthState {
   byProfile: Record<string, AccountAuthStatus>
-  /** Fetch (or re-fetch) both statuses for one account. Deduped per profile. */
-  refresh: (profileId: string) => Promise<void>
+  /** Fetch (or re-fetch) both statuses for one account. Deduped per profile.
+   *  An AUTO refresh (the default, e.g. on session activate) is skipped when a
+   *  successful read is younger than AUTO_REFRESH_TTL_MS — the Claude Code probe
+   *  shells out and rotates the single-use refresh token, so tabbing between
+   *  sessions must not re-probe every time. `force` (a manual pill refresh, or a
+   *  refresh right after a sign-in/out) always probes. */
+  refresh: (profileId: string, opts?: { force?: boolean }) => Promise<void>
   /** Drop a profile's cached status (e.g. account deleted). */
   clear: (profileId: string) => void
 }
 
 const inFlight = new Set<string>()
 
+/** How long a successful status read is reused for an AUTO refresh before the
+ *  next one re-probes. Long enough that tabbing between sessions of one account
+ *  does not shell out repeatedly; short enough that status is not badly stale.
+ *  A sign-in/out refreshes with force:true, so it is never gated by this. */
+export const AUTO_REFRESH_TTL_MS = 30_000
+
 export const useAccountAuthStore = create<AccountAuthState>((set, get) => ({
   byProfile: {},
 
-  refresh: async (profileId: string) => {
+  refresh: async (profileId: string, opts?: { force?: boolean }) => {
     if (!profileId) return
+    // Freshness window: an auto refresh reuses a recent SUCCESSFUL read (fetchedAt
+    // set, no error) rather than re-probing. A failed/never-read status is not
+    // fresh, so it still retries; force bypasses the window entirely.
+    if (!opts?.force) {
+      const cur = get().byProfile[profileId]
+      if (cur && cur.fetchedAt !== undefined && !cur.error && Date.now() - cur.fetchedAt < AUTO_REFRESH_TTL_MS) return
+    }
     // Dedupe: a second request while one is running is a no-op — the running one
     // will publish the fresh status to every subscriber.
     if (inFlight.has(profileId)) return
@@ -53,7 +71,7 @@ export const useAccountAuthStore = create<AccountAuthState>((set, get) => ({
           },
         }))
       } else {
-        set((s) => ({ byProfile: { ...s.byProfile, [profileId]: { ...(s.byProfile[profileId] ?? {}), loading: false, error: r.error } } }))
+        set((s) => ({ byProfile: { ...s.byProfile, [profileId]: { ...(s.byProfile[profileId] ?? {}), loading: false, error: r.error || 'status failed' } } }))
       }
     } catch (err) {
       set((s) => ({ byProfile: { ...s.byProfile, [profileId]: { ...(s.byProfile[profileId] ?? {}), loading: false, error: (err as Error)?.message ?? 'status failed' } } }))

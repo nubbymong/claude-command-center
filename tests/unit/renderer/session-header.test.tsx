@@ -116,6 +116,20 @@ describe('SessionHeader', () => {
     expect(container.querySelector('[data-testid="session-pill-claudecode"]')?.getAttribute('title')).toContain('probe crashed')
   })
 
+  it('surfaces a failed refresh in the tooltip even after a prior successful read (stale status is not silent)', async () => {
+    // A prior success is on record; the mount's refresh then FAILS. The pills
+    // keep the last-known text/colour, but the error must appear in the tooltip
+    // so the stale status is not invisible.
+    useAccountAuthStore.setState({ byProfile: { 'profile-e': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 5 } } })
+    ;(window.electronAPI.accountWeb.status as any).mockImplementation(async () => ({ ok: false, error: 'probe crashed' }))
+    await act(async () => { root.render(<SessionHeader session={makeSession({ profileId: 'profile-e', provider: 'claude', sessionType: 'local' })} />) })
+    // last-known status still shown...
+    expect(container.textContent).toContain('signed in')
+    expect(container.textContent).toContain('connected')
+    // ...and the error is in the tooltip.
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')?.getAttribute('title')).toContain('probe crashed')
+  })
+
   it('does NOT show the auth pills for an SSH session (remote creds)', () => {
     useAccountAuthStore.setState({ byProfile: { 'profile-z': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
     render(makeSession({ profileId: 'profile-z', provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))

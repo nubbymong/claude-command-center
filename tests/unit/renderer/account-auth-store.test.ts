@@ -43,11 +43,43 @@ describe('accountAuthStore.refresh', () => {
     expect(useAccountAuthStore.getState().byProfile['profile-c'].web).toBe('expired')
   })
 
-  it('a later refresh runs again once the first settles (dedupe is per-flight, not permanent)', async () => {
+  it('a forced refresh runs again once the first settles (dedupe is per-flight, not permanent)', async () => {
     statusMock.mockResolvedValue({ ok: true, cli: { authenticated: true }, web: { status: 'active' } })
     await useAccountAuthStore.getState().refresh('profile-d')
-    await useAccountAuthStore.getState().refresh('profile-d')
+    await useAccountAuthStore.getState().refresh('profile-d', { force: true })
     expect(statusMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('an AUTO refresh within the freshness window reuses the last SUCCESSFUL read (heavy CLI probe is not re-run)', async () => {
+    statusMock.mockResolvedValue({ ok: true, cli: { authenticated: true }, web: { status: 'active' } })
+    await useAccountAuthStore.getState().refresh('profile-ttl')   // probes once
+    await useAccountAuthStore.getState().refresh('profile-ttl')   // within TTL → skipped
+    await useAccountAuthStore.getState().refresh('profile-ttl')   // still within TTL → skipped
+    expect(statusMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('force re-probes even inside the freshness window (the manual pill refresh)', async () => {
+    statusMock.mockResolvedValue({ ok: true, cli: { authenticated: true }, web: { status: 'active' } })
+    await useAccountAuthStore.getState().refresh('profile-force')
+    await useAccountAuthStore.getState().refresh('profile-force', { force: true })
+    expect(statusMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('a FAILED read is not fresh — the next auto refresh retries it', async () => {
+    statusMock.mockResolvedValueOnce({ ok: false, error: 'boom' })
+    statusMock.mockResolvedValue({ ok: true, cli: { authenticated: true }, web: { status: 'active' } })
+    await useAccountAuthStore.getState().refresh('profile-retry')  // error
+    await useAccountAuthStore.getState().refresh('profile-retry')  // auto, but error ⇒ not fresh ⇒ retries
+    expect(statusMock).toHaveBeenCalledTimes(2)
+    expect(useAccountAuthStore.getState().byProfile['profile-retry'].web).toBe('active')
+  })
+
+  it('an empty error string still yields a definite failed status, never a stuck pending', async () => {
+    statusMock.mockResolvedValue({ ok: false, error: '' })
+    await useAccountAuthStore.getState().refresh('profile-empty')
+    const rec = useAccountAuthStore.getState().byProfile['profile-empty']
+    expect(rec.loading).toBe(false)
+    expect(rec.error).toBe('status failed')  // not '' — otherwise the pill sticks on '…'
   })
 
   it('records the error and clears loading when the status call is not ok', async () => {
