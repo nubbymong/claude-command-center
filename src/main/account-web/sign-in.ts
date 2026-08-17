@@ -592,16 +592,24 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
   // directly, so there is no harvest/injection and no on-disk profile to sweep.
   if ((opts.method ?? DEFAULT_CLI_AUTH_METHOD) !== 'sso') {
     current = { phase: 'awaiting-user', profileId }
-    const res = await runInAppSignIn({
-      profileId,
-      partition,
-      timeoutMs,
-      pollMs,
-      shouldCancel: () => cancelled,
-    })
-    current = res.session
-      ? { phase: 'done', profileId, session: res.session }
-      : { phase: 'failed', profileId, error: res.error ?? (res.cancelled ? 'Sign-in cancelled.' : 'Sign-in failed.') }
+    try {
+      const res = await runInAppSignIn({
+        profileId,
+        partition,
+        timeoutMs,
+        pollMs,
+        shouldCancel: () => cancelled,
+      })
+      current = res.session
+        ? { phase: 'done', profileId, session: res.session }
+        : { phase: 'failed', profileId, error: res.error ?? (res.cancelled ? 'Sign-in cancelled.' : 'Sign-in failed.') }
+    } catch (err) {
+      // runInAppSignIn is contracted never to throw; this is defence-in-depth so
+      // an unexpected throw still lands as a failed state and releases the
+      // single-flight latch, never propagating out of runSignIn (adversarial review).
+      closeInAppSignInWindow()
+      current = { phase: 'failed', profileId, error: (err as Error)?.message ?? String(err) }
+    }
     return current
   }
 

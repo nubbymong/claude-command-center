@@ -122,6 +122,14 @@ function bounded<T>(p: Promise<T>, what: string): Promise<T> {
  * session cookie exists. The origin check is evaluated in the same breath as the
  * fetch (both read the frame's CURRENT document), so "this is claude.ai" and "ask
  * claude.ai who I am" cannot disagree — a mid-flow IdP page answers null.
+ *
+ * The check is trustworthy even though `executeJavaScript` runs in the page's
+ * MAIN world (there is no preload, so nothing to isolate): `location` is
+ * [LegacyUnforgeable] in the HTML spec — a page cannot shadow or redefine it, and
+ * assigning `window.location` navigates rather than replacing the object — so
+ * `location.origin` is the frame's true origin. Completion itself does not rest
+ * on this at all: it is decided by the domain-scoped `sessionKey` cookie for
+ * claude.ai, which a page the window roamed to cannot write for that domain.
  */
 async function readAccountEmailInWindow(win: BrowserWindow): Promise<string | null> {
   if (win.isDestroyed()) return null
@@ -151,99 +159,125 @@ function isHttps(url: string): boolean {
 export async function runInAppSignIn(args: InAppSignInArgs): Promise<InAppSignInResult> {
   const { profileId, partition, timeoutMs } = args
   const pollMs = args.pollMs ?? 1200
-  const ses = electronSession.fromPartition(partition)
-  try { ses.setUserAgent(toChromeUserAgent(ses.getUserAgent())) } catch { /* non-fatal */ }
 
-  const win = new BrowserWindow({
-    width: 1200,
-    height: 860,
-    title: 'Sign in to claude.ai',
-    autoHideMenuBar: true,
-    webPreferences: {
-      partition,
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webviewTag: false,
-    },
-  })
-  signInWindow = win
-
-  // Block only NON-https top-level navigation (javascript:, file:, custom
-  // schemes). https is allowed so an identity-provider hop works; the window is
-  // destroyed on completion so it never lingers off-claude.ai with a session.
-  const blockNonHttps = (e: { preventDefault: () => void }, url: string): void => {
-    if (!isHttps(url)) e.preventDefault()
-  }
-  win.webContents.on('will-navigate', blockNonHttps)
-  win.webContents.on('will-redirect', blockNonHttps)
-  // No unhardened popups. A rare popup-based IdP is a system-browser/SSO case.
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  // A page has no business reaching a camera/mic/clipboard on its own say-so.
-  win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
-
-  let windowClosed = false
-  win.on('closed', () => { windowClosed = true; if (signInWindow === win) signInWindow = null })
-
-  // loadURL can reject when the login page immediately 3xx-redirects; that is
-  // normal here and not a failure — the poll below is the real state machine.
-  try { await win.loadURL('https://claude.ai/login') } catch { /* redirect on load */ }
-
-  logInfo(`[account-web] in-app sign-in window opened for ${profileId}`)
-
-  const deadline = Date.now() + timeoutMs
-  // Accept a valid session without the display email after this grace — the
-  // sessionKey cookie, not the bootstrap email, is the source of truth for
-  // "signed in"; the email is only a label.
-  const EMAIL_GRACE_MS = args.emailGraceMs ?? 4_000
-  let sessionSeenAt = 0
-
-  const closedResult = (): InAppSignInResult => ({
-    ok: false,
-    error: 'The sign-in window was closed before sign-in completed. Open it again and leave it up until the panel says you are signed in.',
-  })
-
-  while (Date.now() < deadline) {
-    if (args.shouldCancel()) { closeInAppSignInWindow(); return { ok: false, cancelled: true, error: 'Sign-in cancelled.' } }
-    if (windowClosed) return closedResult()
-    await sleep(pollMs)
-    if (args.shouldCancel()) { closeInAppSignInWindow(); return { ok: false, cancelled: true, error: 'Sign-in cancelled.' } }
-    if (windowClosed) return closedResult()
-
-    let cookies
-    try {
-      cookies = await bounded(Promise.resolve(ses.cookies.get({ url: 'https://claude.ai' })), 'cookies.get')
-    } catch { continue }
-    const { hasSessionCookie, expiresAt } = webSessionFromElectronCookies(cookies)
-    if (!hasSessionCookie) { sessionSeenAt = 0; continue }
-    if (!sessionSeenAt) sessionSeenAt = Date.now()
-
-    const email = await readAccountEmailInWindow(win)
-    if (email === null && Date.now() - sessionSeenAt < EMAIL_GRACE_MS) continue
-
-    // RE-CHECK the cookie is still present: a sign-out could have cleared the
-    // partition during the email read, and reporting done then would save a
-    // record over an empty partition (every request under it would 401).
-    if (args.shouldCancel()) { closeInAppSignInWindow(); return { ok: false, cancelled: true, error: 'Sign-in cancelled.' } }
-    let recheck: ElectronReadCookie[] = []
-    try {
-      recheck = await bounded(Promise.resolve(ses.cookies.get({ url: 'https://claude.ai', name: CLAUDE_SESSION_COOKIE })), 'cookies.recheck')
-    } catch { recheck = [] }
-    if (!webSessionFromElectronCookies(recheck).hasSessionCookie) { sessionSeenAt = 0; continue }
-
-    const session: AccountWebSession = {
-      profileId,
-      accountEmail: email,
-      acquiredAt: Date.now(),
-      expiresAt,
-      origin: 'in-app',
-    }
-    logInfo(`[account-web] ${profileId}: signed in as ${email ?? '(email pending)'} via in-app window`)
+  const cancelledResult = (): InAppSignInResult => {
     closeInAppSignInWindow()
-    return { ok: true, session }
+    return { ok: false, cancelled: true, error: 'Sign-in cancelled.' }
   }
 
-  closeInAppSignInWindow()
-  logError(`[account-web] in-app sign-in for ${profileId} timed out`)
-  return { ok: false, error: 'Timed out waiting for sign-in to complete.' }
+  // NEVER-THROW contract (runSignIn depends on it, and a throw here would
+  // otherwise wedge the single-flight latch for every account). Any unexpected
+  // Electron error — fromPartition, window creation, a handler registration —
+  // fails closed: tear down any window and report (adversarial review).
+  try {
+    const ses = electronSession.fromPartition(partition)
+    try { ses.setUserAgent(toChromeUserAgent(ses.getUserAgent())) } catch { /* non-fatal */ }
+
+    const win = new BrowserWindow({
+      width: 1200,
+      height: 860,
+      title: 'Sign in to claude.ai',
+      autoHideMenuBar: true,
+      webPreferences: {
+        partition,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webviewTag: false,
+      },
+    })
+    signInWindow = win
+
+    // Block only NON-https top-level navigation (javascript:, file:, custom
+    // schemes). https is allowed so an identity-provider hop works; the window is
+    // destroyed on completion so it never lingers off-claude.ai with a session.
+    const blockNonHttps = (e: { preventDefault: () => void }, url: string): void => {
+      if (!isHttps(url)) e.preventDefault()
+    }
+    win.webContents.on('will-navigate', blockNonHttps)
+    win.webContents.on('will-redirect', blockNonHttps)
+    // No unhardened popups. A rare popup-based IdP is a system-browser/SSO case.
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    // A page has no business reaching a camera/mic/clipboard on its own say-so.
+    win.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
+
+    let windowClosed = false
+    win.on('closed', () => { windowClosed = true; if (signInWindow === win) signInWindow = null })
+
+    // loadURL can reject when the login page immediately 3xx-redirects (normal),
+    // and it must not HANG: a captive portal that accepts the connection then
+    // says nothing would otherwise park the poll — and single-flight with it — so
+    // it is bounded like every other IO here (adversarial review).
+    try { await bounded(Promise.resolve(win.loadURL('https://claude.ai/login')), 'loadURL') } catch { /* redirect or slow load */ }
+
+    logInfo(`[account-web] in-app sign-in window opened for ${profileId}`)
+
+    const deadline = Date.now() + timeoutMs
+    // Accept a valid session without the display email after this grace — the
+    // sessionKey cookie, not the bootstrap email, is the source of truth for
+    // "signed in"; the email is only a label.
+    const EMAIL_GRACE_MS = args.emailGraceMs ?? 4_000
+    let sessionSeenAt = 0
+
+    const closedResult = (): InAppSignInResult => ({
+      ok: false,
+      error: 'The sign-in window was closed before sign-in completed. Open it again and leave it up until the panel says you are signed in.',
+    })
+
+    while (Date.now() < deadline) {
+      if (args.shouldCancel()) return cancelledResult()
+      if (windowClosed) return closedResult()
+      await sleep(pollMs)
+      if (args.shouldCancel()) return cancelledResult()
+      if (windowClosed) return closedResult()
+
+      let cookies
+      try {
+        cookies = await bounded(Promise.resolve(ses.cookies.get({ url: 'https://claude.ai' })), 'cookies.get')
+      } catch { continue }
+      const { hasSessionCookie, expiresAt } = webSessionFromElectronCookies(cookies)
+      if (!hasSessionCookie) { sessionSeenAt = 0; continue }
+      if (!sessionSeenAt) sessionSeenAt = Date.now()
+
+      const email = await readAccountEmailInWindow(win)
+      if (email === null && Date.now() - sessionSeenAt < EMAIL_GRACE_MS) continue
+
+      // RE-CHECK the cookie is still present: a sign-out could have cleared the
+      // partition during the email read, and reporting done then would save a
+      // record over an empty partition (every request under it would 401).
+      if (args.shouldCancel()) return cancelledResult()
+      let recheck: ElectronReadCookie[] = []
+      try {
+        recheck = await bounded(Promise.resolve(ses.cookies.get({ url: 'https://claude.ai', name: CLAUDE_SESSION_COOKIE })), 'cookies.recheck')
+      } catch { recheck = [] }
+      if (!webSessionFromElectronCookies(recheck).hasSessionCookie) { sessionSeenAt = 0; continue }
+
+      // AND re-check cancel AFTER the recheck read. clearWebSession sets the
+      // cancel flag SYNCHRONOUSLY and only THEN awaits the partition wipe, so a
+      // sign-out landing during the recheck read leaves the cookie momentarily
+      // present — without this, done would be recorded over a partition about to
+      // be emptied. The system-browser path guards the same window after its
+      // teardown (adversarial review).
+      if (args.shouldCancel()) return cancelledResult()
+
+      const session: AccountWebSession = {
+        profileId,
+        accountEmail: email,
+        acquiredAt: Date.now(),
+        expiresAt,
+        origin: 'in-app',
+      }
+      logInfo(`[account-web] ${profileId}: signed in as ${email ?? '(email pending)'} via in-app window`)
+      closeInAppSignInWindow()
+      return { ok: true, session }
+    }
+
+    closeInAppSignInWindow()
+    logError(`[account-web] in-app sign-in for ${profileId} timed out`)
+    return { ok: false, error: 'Timed out waiting for sign-in to complete.' }
+  } catch (err) {
+    closeInAppSignInWindow()
+    logError(`[account-web] in-app sign-in for ${profileId} failed: ${(err as Error)?.message ?? err}`)
+    return { ok: false, error: (err as Error)?.message ?? 'in-app sign-in failed' }
+  }
 }

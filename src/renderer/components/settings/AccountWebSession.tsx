@@ -183,28 +183,30 @@ export function AccountWebSession({ profileId, accountName }: Props) {
               : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens a window to sign in.'}
           </div>
 
-          {/* Browser is PER ACCOUNT and the user's call, because the two are not
-              interchangeable at the identity provider. The sign-in runs in a
-              fresh profile by design, and on a managed machine Chrome's
-              force-installed SSO extension is not there yet when claude.ai
-              loads — Edge does Entra SSO natively and has nothing to wait for.
-              Which one an account needs depends on its org, so CCC asks. */}
-          <div className="flex items-center gap-2 mt-1.5">
-            <span className="text-[10px] text-overlay0 shrink-0">Sign-in browser</span>
-            <select
-              value={authBrowser}
-              disabled={busy}
-              onChange={(e) => { void changeAuthBrowser(e.target.value as AuthBrowser) }}
-              className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue disabled:opacity-40"
-            >
-              {AUTH_BROWSERS.map((b) => (
-                <option key={b} value={b}>{AUTH_BROWSER_LABELS[b]}</option>
-              ))}
-            </select>
-            <span className="text-[10px] text-overlay0">
-              {authBrowser === 'edge' ? 'Handles SSO without an extension' : 'Needs your policy’s SSO extension'}
-            </span>
-          </div>
+          {/* SSO ONLY. Non-SSO accounts sign in inside an in-app window, which
+              launches no system browser, so this picker would be inert for them.
+              For SSO the browser IS the user's call: on a managed machine Chrome's
+              force-installed SSO extension is not there yet when claude.ai loads in
+              a fresh profile, while Edge does Entra SSO natively — which one an
+              account needs depends on its org, so CCC asks. */}
+          {authMethod === 'sso' && (
+            <div className="flex items-center gap-2 mt-1.5">
+              <span className="text-[10px] text-overlay0 shrink-0">Sign-in browser</span>
+              <select
+                value={authBrowser}
+                disabled={busy}
+                onChange={(e) => { void changeAuthBrowser(e.target.value as AuthBrowser) }}
+                className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue disabled:opacity-40"
+              >
+                {AUTH_BROWSERS.map((b) => (
+                  <option key={b} value={b}>{AUTH_BROWSER_LABELS[b]}</option>
+                ))}
+              </select>
+              <span className="text-[10px] text-overlay0">
+                {authBrowser === 'edge' ? 'Handles SSO without an extension' : 'Needs your policy’s SSO extension'}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 

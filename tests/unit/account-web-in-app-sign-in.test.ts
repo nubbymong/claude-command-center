@@ -9,12 +9,18 @@ const setUA = vi.fn((v: string) => { uaValue = v })
 let cookieResponse: Array<Record<string, unknown>> = []
 let evalResult: string | null = null
 let onEval: (() => void) | null = null
-const cookiesGet = vi.fn(async () => cookieResponse)
-const fromPartition = vi.fn(() => ({
-  getUserAgent: () => uaValue,
-  setUserAgent: setUA,
-  cookies: { get: cookiesGet },
-}))
+let cookiesGetCalls = 0
+let onCookiesGet: ((call: number) => void) | null = null
+let throwOnPartition = false
+const cookiesGet = vi.fn(async () => { cookiesGetCalls++; onCookiesGet?.(cookiesGetCalls); return cookieResponse })
+const fromPartition = vi.fn(() => {
+  if (throwOnPartition) throw new Error('simulated Electron failure')
+  return {
+    getUserAgent: () => uaValue,
+    setUserAgent: setUA,
+    cookies: { get: cookiesGet },
+  }
+})
 
 const created: FakeWin[] = []
 const permHandlers: Array<(wc: unknown, perm: string, cb: (v: boolean) => void) => void> = []
@@ -65,6 +71,9 @@ beforeEach(() => {
   cookieResponse = []
   evalResult = null
   onEval = null
+  cookiesGetCalls = 0
+  onCookiesGet = null
+  throwOnPartition = false
   uaValue = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) AI Code Conductor/2.1.0 Chrome/128.0.0.0 Electron/33.0.0 Safari/537.36'
   closeInAppSignInWindow()
 })
@@ -170,6 +179,32 @@ describe('runInAppSignIn — window flow', () => {
     const res = await runInAppSignIn({ ...RUN, timeoutMs: 120, pollMs: 5, shouldCancel: () => false })
     expect(res.ok).toBe(false)
     expect(res.error).toMatch(/Timed out/)
+  })
+
+  it('does NOT record done if cancel fires during the recheck read (sign-out race)', async () => {
+    // clearWebSession sets the cancel flag SYNCHRONOUSLY, then awaits the
+    // partition wipe — so a cancel can land after the pre-recheck gate while the
+    // recheck read still sees the cookie. The post-recheck cancel check must
+    // catch it rather than saving a record over a partition about to be emptied.
+    cookieResponse = [SK({ expirationDate: 1_800_000_000 })]
+    evalResult = 'me@example.com'
+    let cancel = false
+    // 1st get = main poll read; 2nd get = the recheck — signal cancel THEN, so the
+    // cookie is still present on that read but cancel is set right after it.
+    onCookiesGet = (n) => { if (n === 2) cancel = true }
+    const res = await runInAppSignIn({ ...RUN, shouldCancel: () => cancel })
+    expect(res.ok).toBe(false)
+    expect(res.cancelled).toBe(true)
+    expect(created[0].destroyed).toBe(true)
+  })
+
+  it('never throws, even when Electron fails to build the window (single-flight stays releasable)', async () => {
+    throwOnPartition = true
+    const res = await runInAppSignIn({ ...RUN, shouldCancel: () => false })
+    expect(res.ok).toBe(false)
+    expect(res.error).toMatch(/simulated Electron failure/)
+    // No window was created, and nothing was left dangling.
+    expect(created).toHaveLength(0)
   })
 
   it('fails when the user closes the window before signing in', async () => {

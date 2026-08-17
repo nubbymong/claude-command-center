@@ -165,4 +165,19 @@ describe('runSignIn — routing by auth method (#265 follow-up)', () => {
     expect(s.phase).toBe('done')
     expect(s.session?.origin).toBe('system-browser')
   })
+
+  it('a throw from the in-app path lands as failed, not a wedged single-flight latch', async () => {
+    // runInAppSignIn is contracted never to throw, but if it ever did, runSignIn
+    // must fail the state (releasing the latch) rather than propagate — otherwise
+    // getSignInState stays 'awaiting-user' and every account's sign-in is refused.
+    runInAppSignInMock.mockRejectedValueOnce(new Error('boom in window'))
+    const s1 = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5 })
+    expect(s1.phase).toBe('failed')
+    expect(getSignInState().phase).toBe('failed')   // latch released, not stuck awaiting-user
+
+    // A second sign-in for another account is accepted, not blocked by a wedge.
+    const s2 = await runSignIn({ profileId: 'profile-bbb222', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5 })
+    expect(s2.phase).toBe('done')
+    expect(s2.session?.origin).toBe('in-app')
+  })
 })
