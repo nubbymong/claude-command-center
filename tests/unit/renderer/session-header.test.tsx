@@ -21,6 +21,7 @@ vi.mock('../../../src/renderer/components/TipPill', () => ({ default: () => null
 const { default: SessionHeader } = await import('../../../src/renderer/components/SessionHeader')
 import type { Session } from '../../../src/renderer/stores/sessionStore'
 import { useAccountAuthStore, _resetAccountAuthForTest } from '../../../src/renderer/stores/accountAuthStore'
+import { useAccountProfilesStore } from '../../../src/renderer/stores/accountProfilesStore'
 
 function makeSession(over: Partial<Session> = {}): Session {
   return {
@@ -65,8 +66,12 @@ describe('SessionHeader', () => {
 
   it('renders repo slug + connected state when GitHub integration is enabled', () => {
     render(makeSession({ githubIntegration: { enabled: true, repoSlug: 'nubbymong/web', autoDetected: true } as any }))
-    expect(container.textContent).toContain('nubbymong/web')
-    expect(container.textContent).toContain('connected')
+    // The repo slug is on HOVER now (title), not inline; the pill reads "GitHub".
+    const gh = container.querySelector('[data-testid="session-pill-github"]')
+    expect(gh).not.toBeNull()
+    expect(gh?.getAttribute('title')).toContain('nubbymong/web')
+    expect(container.textContent).toContain('GitHub')
+    expect(container.textContent).not.toContain('nubbymong/web') // not inline
   })
 
   it('renders no repo slug when there is no GitHub integration', () => {
@@ -77,10 +82,15 @@ describe('SessionHeader', () => {
   it('shows the Claude Code + claude.ai pills with this account status for a local Claude session', () => {
     useAccountAuthStore.setState({ byProfile: { 'profile-x': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
     render(makeSession({ profileId: 'profile-x', provider: 'claude', sessionType: 'local' }))
+    // The good state is a green dot + label, NO word (matches the title-bar pills:
+    // a word only when action is needed).
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-account"]')).not.toBeNull()
     expect(container.textContent).toContain('Claude Code')
-    expect(container.textContent).toContain('signed in')
     expect(container.textContent).toContain('claude.ai')
-    expect(container.textContent).toContain('connected')
+    expect(container.textContent).not.toContain('signed out')
+    expect(container.textContent).not.toContain('not connected')
   })
 
   it('shows an expired claude.ai and signed-out Claude Code', () => {
@@ -100,11 +110,11 @@ describe('SessionHeader', () => {
     expect(container.textContent).not.toContain('signed out')
     expect(container.textContent).not.toContain('not connected')
     expect(container.textContent).toContain('…')
-    // Once the read lands, the real status replaces the placeholder.
+    // Once the read lands, the good state shows the dot + label, no word.
     await act(async () => { resolveStatus({ ok: true, cli: { authenticated: true }, web: { status: 'active' } }) })
-    expect(container.textContent).toContain('signed in')
-    expect(container.textContent).toContain('connected')
     expect(container.textContent).not.toContain('…')
+    expect(container.textContent).not.toContain('signed out')
+    expect(container.textContent).not.toContain('not connected')
   })
 
   it('shows "unknown" (not "signed out") when the first status read fails', async () => {
@@ -123,11 +133,29 @@ describe('SessionHeader', () => {
     useAccountAuthStore.setState({ byProfile: { 'profile-e': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 5 } } })
     ;(window.electronAPI.accountWeb.status as any).mockImplementation(async () => ({ ok: false, error: 'probe crashed' }))
     await act(async () => { root.render(<SessionHeader session={makeSession({ profileId: 'profile-e', provider: 'claude', sessionType: 'local' })} />) })
-    // last-known status still shown...
-    expect(container.textContent).toContain('signed in')
-    expect(container.textContent).toContain('connected')
+    // last-known GOOD status still shown (dot, no problem word)...
+    expect(container.textContent).not.toContain('signed out')
+    expect(container.textContent).not.toContain('not connected')
     // ...and the error is in the tooltip.
     expect(container.querySelector('[data-testid="session-pill-claudecode"]')?.getAttribute('title')).toContain('probe crashed')
+  })
+
+  it('the account pill shows the session account name (resolved from the profile)', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-x', name: 'Work', accountEmail: 'me@work.co' } as any] })
+    useAccountAuthStore.setState({ byProfile: { 'profile-x': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ profileId: 'profile-x', provider: 'claude', sessionType: 'local' }))
+    const acct = container.querySelector('[data-testid="session-pill-account"]')
+    expect(acct).not.toBeNull()
+    expect(acct?.textContent).toContain('Work')
+    expect(acct?.getAttribute('title')).toContain('me@work.co')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('an SSH session still shows the GitHub pill (on hover) but not the Claude pills', () => {
+    render(makeSession({ provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any, githubIntegration: { enabled: true, repoSlug: 'nubbymong/web', autoDetected: true } as any }))
+    expect(container.querySelector('[data-testid="session-pill-github"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-account"]')).toBeNull()
   })
 
   it('does NOT show the auth pills for an SSH session (remote creds)', () => {
