@@ -39,6 +39,19 @@ vi.mock('node:fs', () => ({
   rmSync: vi.fn(),
 }))
 
+// The in-app path (BrowserWindow) is tested on its own; here it is mocked so the
+// ROUTING decision can be checked without a window. A non-SSO account must take
+// this path (no browser spawn); an SSO account must NOT.
+const runInAppSignInMock = vi.fn(async () => ({
+  ok: true,
+  session: { profileId: 'profile-aaa111', accountEmail: 'inapp@example.com', acquiredAt: 1, expiresAt: null, origin: 'in-app' as const },
+}))
+const closeInAppMock = vi.fn()
+vi.mock('../../src/main/account-web/in-app-sign-in', () => ({
+  runInAppSignIn: (...a: any[]) => runInAppSignInMock(...a),
+  closeInAppSignInWindow: () => closeInAppMock(),
+}))
+
 const { runSignIn, _setCdpForTest, getSignInState } = await import('../../src/main/account-web/sign-in')
 const { CLAUDE_SESSION_COOKIE } = await import('../../src/shared/account-web-session')
 
@@ -67,12 +80,14 @@ beforeEach(() => {
   cookiesSet.mockReset()
   clearStorageData.mockReset()
   spawned.length = 0
+  runInAppSignInMock.mockClear()
+  closeInAppMock.mockClear()
 })
 
 describe('runSignIn', () => {
   it('injects the cookies and reports the account once signed in', async () => {
     _setCdpForTest(fakeCdp('me@example.com', [sessionCookie]))
-    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5 })
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, method: 'sso' })
 
     expect(s.phase).toBe('done')
     expect(s.session?.accountEmail).toBe('me@example.com')
@@ -85,7 +100,7 @@ describe('runSignIn', () => {
     // Authenticated bootstrap, but only an analytics cookie: injecting this
     // yields a partition that looks signed in and 401s on every request.
     _setCdpForTest(fakeCdp('me@example.com', [{ ...sessionCookie, name: 'ajs_anonymous_id' }]))
-    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5 })
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5, method: 'sso' })
 
     expect(s.phase).toBe('failed')
     expect(s.error).toMatch(/Timed out/)
@@ -94,7 +109,7 @@ describe('runSignIn', () => {
 
   it('times out rather than hanging when the user never signs in', async () => {
     _setCdpForTest(fakeCdp(null, []))
-    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5 })
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5, method: 'sso' })
 
     expect(s.phase).toBe('failed')
     expect(cookiesSet).not.toHaveBeenCalled()
@@ -106,7 +121,7 @@ describe('runSignIn', () => {
       { ...sessionCookie, name: 'SID', domain: 'mail.google.com' },
       { ...sessionCookie, name: 'user_session', domain: 'github.com' },
     ]))
-    await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5 })
+    await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, method: 'sso' })
 
     expect(cookiesSet).toHaveBeenCalledTimes(1)
     expect(cookiesSet.mock.calls[0][0].name).toBe(CLAUDE_SESSION_COOKIE)
@@ -114,10 +129,40 @@ describe('runSignIn', () => {
 
   it('refuses a profile id that is not the expected shape, before launching anything', async () => {
     _setCdpForTest(fakeCdp('me@example.com', [sessionCookie]))
-    const s = await runSignIn({ profileId: '../evil', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5 })
+    const s = await runSignIn({ profileId: '../evil', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5, method: 'sso' })
 
     expect(s.phase).toBe('failed')
     expect(s.error).toMatch(/unexpected profile id/)
     expect(spawned.length).toBe(0)
+  })
+})
+
+describe('runSignIn — routing by auth method (#265 follow-up)', () => {
+  it('a non-SSO account signs in IN-APP: no browser is spawned, no CDP is used', async () => {
+    _setCdpForTest(fakeCdp('me@example.com', [sessionCookie]))   // would succeed IF the CDP path ran
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5 })
+
+    expect(runInAppSignInMock).toHaveBeenCalledTimes(1)
+    expect(spawned.length).toBe(0)              // the system browser was never launched
+    expect(cookiesSet).not.toHaveBeenCalled()   // no CDP harvest/injection
+    expect(s.phase).toBe('done')
+    expect(s.session?.origin).toBe('in-app')
+  })
+
+  it('the console method also routes in-app', async () => {
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, method: 'console' })
+    expect(runInAppSignInMock).toHaveBeenCalledTimes(1)
+    expect(spawned.length).toBe(0)
+    expect(s.session?.origin).toBe('in-app')
+  })
+
+  it('an SSO account keeps the system-browser path: in-app is NOT used', async () => {
+    _setCdpForTest(fakeCdp('me@example.com', [sessionCookie]))
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, method: 'sso' })
+
+    expect(runInAppSignInMock).not.toHaveBeenCalled()
+    expect(spawned.length).toBe(1)              // the system browser WAS launched
+    expect(s.phase).toBe('done')
+    expect(s.session?.origin).toBe('system-browser')
   })
 })

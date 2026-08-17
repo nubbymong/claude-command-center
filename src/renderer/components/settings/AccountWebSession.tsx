@@ -8,8 +8,10 @@
  * alike, so a panel that showed only one would leave the other's symptoms
  * unexplained.
  *
- * Both sign-ins happen in the user's OWN browser, because a managed machine
- * requires an extension an in-app window cannot load. Doing the web sign-in
+ * The web sign-in opens a window: an in-app window for most accounts (no
+ * launched browser, no debug port — claude.ai's bot-detection flags that port),
+ * and the user's OWN browser for SSO accounts, whose identity provider may need a
+ * policy-installed extension an in-app window cannot load. Doing the web sign-in
  * first means the CLI's hop is a consent click rather than a second credential
  * entry.
  */
@@ -178,7 +180,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
           <div className="text-[10px] text-overlay0 leading-snug">
             {web.status === 'active'
               ? `Acquired ${fmt(web.acquiredAt)}${web.expiresAt ? `, expires ${fmt(web.expiresAt)}` : ''}.`
-              : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens your own browser to sign in.'}
+              : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens a window to sign in.'}
           </div>
 
           {/* Browser is PER ACCOUNT and the user's call, because the two are not
@@ -209,8 +211,8 @@ export function AccountWebSession({ profileId, accountName }: Props) {
       {busy && (
         <div className="text-[11px] text-blue">
           {phase === 'awaiting-user'
-            ? 'Waiting for you to finish signing in, in the browser window that just opened…'
-            : phase === 'harvesting' ? 'Signed in — collecting the session…' : 'Opening your browser…'}
+            ? 'Waiting for you to finish signing in, in the sign-in window that just opened…'
+            : phase === 'harvesting' ? 'Signed in — collecting the session…' : 'Opening the sign-in window…'}
         </div>
       )}
 

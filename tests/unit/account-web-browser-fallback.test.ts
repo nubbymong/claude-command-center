@@ -83,7 +83,7 @@ describe('resolveBrowserBinary — the account’s preference decides the order'
 
 describe('runSignIn — a substitution is reported, never silent', () => {
   it('signs in with Chrome when Edge was asked for, and says so', async () => {
-    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, browser: 'edge' })
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, browser: 'edge', method: 'sso' })
 
     expect(s.phase).toBe('done')
     // It still worked — the fallback is deliberate.
@@ -102,7 +102,7 @@ describe('runSignIn — a substitution is reported, never silent', () => {
     // sessionKey was left on disk -- the exact outcome the dedicated-profile
     // design exists to prevent.
     spawnSyncMock.mockClear()
-    await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, browser: 'chrome' })
+    await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, browser: 'chrome', method: 'sso' })
 
     if (process.platform === 'win32') {
       expect(spawnSyncMock).toHaveBeenCalled()
@@ -115,7 +115,7 @@ describe('runSignIn — a substitution is reported, never silent', () => {
   })
 
   it('says nothing when the browser that ran is the one that was asked for', async () => {
-    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, browser: 'chrome' })
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, browser: 'chrome', method: 'sso' })
 
     expect(s.phase).toBe('done')
     expect(s.browser).toBe('chrome')
@@ -132,7 +132,7 @@ describe('runSignIn — a substitution is reported, never silent', () => {
     })
     never.List = async () => TARGETS
     setCdp(never)
-    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5, browser: 'edge' })
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 120, pollMs: 5, browser: 'edge', method: 'sso' })
 
     expect(s.phase).toBe('failed')
     expect(s.browser).toBe('chrome')
