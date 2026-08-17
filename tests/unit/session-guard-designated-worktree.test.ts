@@ -46,6 +46,20 @@ function claim(env: Record<string, string | undefined>, args: string[] = ['claim
   }
 }
 
+function execRun(cmd: [string, string[], string], env: Record<string, string | undefined>): { out: string; code: number } {
+  const merged: Record<string, string> = {}
+  for (const [k, v] of Object.entries({ ...process.env, ...env })) if (typeof v === 'string') merged[k] = v
+  delete merged.CCC_SESSION_GUARD
+  delete merged.CCC_WT_ROOT
+  try {
+    const out = execFileSync(cmd[0], cmd[1], { cwd: cmd[2], encoding: 'utf8', env: merged, stdio: ['ignore', 'pipe', 'pipe'] })
+    return { out, code: 0 }
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; status?: number }
+    return { out: `${e.stdout ?? ''}${e.stderr ?? ''}`, code: e.status ?? 1 }
+  }
+}
+
 function leases(): Array<Record<string, unknown>> {
   const dir = path.join(repo, '.git', 'ccc-sessions')
   if (!fs.existsSync(dir)) return []
@@ -208,6 +222,49 @@ describe('session-guard claim with a CCC-designated worktree', () => {
     } finally {
       child.kill()
     }
+  }, 30_000)
+
+  it('re-claims a designated worktree after release --remove-worktree, reusing the leftover branch (no double-fail)', () => {
+    const tile = 'ac340000ac340000ac340000'
+    const designated = path.join(wtBase, 'reclaimbrch1')
+    const conv1 = 'ca000001-0000-4000-8000-000000000001'
+    const r1 = claim({ CLAUDE_CODE_SESSION_ID: conv1, CLAUDE_MULTI_SESSION_ID: tile, CLAUDE_PID: String(process.pid), CCC_SESSION_WORKTREE: designated })
+    expect(r1.code, r1.out).toBe(0)
+    // A commit lands on the worktree's branch, then it is released WITH the dir
+    // removed (the branch survives — that is what used to wedge the reclaim).
+    fs.writeFileSync(path.join(designated, 'work.txt'), 'in progress')
+    git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '-A'], designated)
+    git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'wip'], designated)
+    const rel = execRun([process.execPath, [GUARD, 'release', '--remove-worktree'], repo], { CLAUDE_CODE_SESSION_ID: conv1, CLAUDE_MULTI_SESSION_ID: tile, CLAUDE_PID: String(process.pid) })
+    expect(rel.code, rel.out).toBe(0)
+    expect(fs.existsSync(designated)).toBe(false)
+    // The SAME session re-claims (its branch survived the release). Pre-fix this
+    // double-failed on 'branch already exists' (both the designated add and the
+    // fallback used -b). Now the existing branch is REUSED at the same path.
+    const r2 = claim({ CLAUDE_CODE_SESSION_ID: conv1, CLAUDE_MULTI_SESSION_ID: tile, CLAUDE_PID: String(process.pid), CCC_SESSION_WORKTREE: designated })
+    expect(r2.code, r2.out).toBe(0)
+    expect(fs.existsSync(path.join(designated, '.git'))).toBe(true)
+    // The commit is still there (the branch was reused, not recreated).
+    expect(fs.existsSync(path.join(designated, 'work.txt'))).toBe(true)
+    const l = leases().find((x) => x.sessionId === conv1)!
+    expect(l.designated).toBe(true)
+  }, 30_000)
+
+  it('falls back to the default location when the designated path has a FILE parent (no raw mkdir throw)', () => {
+    const parentFile = path.join(wtBase, 'notadir')
+    fs.mkdirSync(wtBase, { recursive: true })
+    fs.writeFileSync(parentFile, 'i am a file')
+    const designated = path.join(parentFile, 'wt')   // parent is a file
+    const cc = 'da000001-0000-4000-8000-000000000001'
+    const r = claim({ CLAUDE_CODE_SESSION_ID: cc, CLAUDE_MULTI_SESSION_ID: 'ad560000ad560000ad560000', CLAUDE_PID: String(process.pid), CCC_SESSION_WORKTREE: designated })
+    // Pre-fix: an uncaught EEXIST stack trace and no worktree. Now: fall back.
+    expect(r.code, r.out).toBe(0)
+    expect(r.out).toContain('using the default location')
+    const l = leases().find((x) => x.sessionId === cc)!
+    expect(l, r.out).toBeTruthy()
+    expect(path.resolve(String(l.worktree)).toLowerCase()).toBe(path.join(wtBase, 'da000001').toLowerCase())
+    expect(l.designated).toBe(false)
+    expect(fs.readFileSync(parentFile, 'utf8')).toBe('i am a file')  // untouched
   }, 30_000)
 
   it('prunes a stale worktree registration so a hand-deleted designated dir does not wedge the tile', () => {

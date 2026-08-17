@@ -322,22 +322,30 @@ function cmdClaim(args) {
   const startPoint = gitSafe(['rev-parse', '--verify', '--quiet', `origin/${base}`]) ? `origin/${base}` : base
   if (!gitSafe(['rev-parse', '--verify', '--quiet', startPoint])) fail(`base ref '${base}' does not exist.`)
 
-  fs.mkdirSync(path.dirname(dir), { recursive: true })
-  // `git worktree add -b` is the atomic step: if two sessions race the same
-  // branch, exactly one succeeds and the other lands here.
+  // Create the worktree. `-b <branch>` from the base for a fresh claim; a branch
+  // that already exists (a re-claim after `release --remove-worktree` left it
+  // behind) is REUSED at the new path, never recreated -- recreating would either
+  // double-fail on '-b' or discard the commits still on it. The whole step,
+  // including the parent mkdir, is one try so a bad DESIGNATED location (a file
+  // parent, a race, leftover content) falls back to the default location rather
+  // than fail the claim or throw a raw stack trace.
+  const addWorktreeAt = (targetDir) => {
+    fs.mkdirSync(path.dirname(targetDir), { recursive: true })
+    const branchExists = !!gitSafe(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
+    if (branchExists) git(['worktree', 'add', targetDir, branch])
+    else git(['worktree', 'add', '-b', branch, targetDir, startPoint])
+  }
   try {
-    git(['worktree', 'add', '-b', branch, dir, startPoint])
+    addWorktreeAt(dir)
   } catch (e) {
-    // A CCC-designated location that could not be created (a race, leftover
-    // content) must not fail the whole claim -- fall back to the default
-    // location (unserved by the canvas) rather than leave the session with no
-    // worktree at all.
+    // A CCC-designated location that could not be created must not fail the whole
+    // claim -- fall back to the default location (unserved by the canvas) rather
+    // than leave the session with no worktree at all.
     if (designated && samePath(dir, designated) && !samePath(dir, defaultDir)) {
       print(`  note: could not create the worktree at the CCC-designated location (${(e.stderr || e.message || '').trim().split(/\r?\n/)[0]}); using the default location (the canvas will not serve this worktree).`)
       dir = defaultDir
-      fs.mkdirSync(path.dirname(dir), { recursive: true })
       try {
-        git(['worktree', 'add', '-b', branch, dir, startPoint])
+        addWorktreeAt(dir)
       } catch (e2) {
         fail(`could not create worktree/branch '${branch}':\n${e2.stderr || e2.message}`)
       }
