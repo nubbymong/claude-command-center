@@ -48,6 +48,23 @@ describe('persistLastUsedAccount', () => {
     expect(useSettingsStore.getState().settings.lastUsedAccountId).toBe('profile-z')
   })
 
+  it('survives a rejected settings save without an unhandled rejection', async () => {
+    // updateSettings returns a Promise; a bare try/catch would not see its
+    // rejection (vitest fails the run on an unhandled rejection). NOTE: a plain
+    // function, not vi.fn() -- vi.fn attaches its own handlers to a returned
+    // promise (to record settled results), which would mask the rejection.
+    const original = useSettingsStore.getState().updateSettings
+    useSettingsStore.setState({ updateSettings: (() => Promise.reject(new Error('settings save failed'))) as any })
+    try {
+      await expect(persistLastUsedAccount('s1', 'profile-r')).resolves.toBeUndefined()
+      // Give the rejected promise a tick to surface if it were unhandled.
+      await new Promise((r) => setTimeout(r, 0))
+      expect(useSessionStore.getState().sessions[0].profileId).toBe('profile-r')
+    } finally {
+      useSettingsStore.setState({ updateSettings: original })
+    }
+  })
+
   it('does NOT clear the global last-used when a session switches to the default (undefined) account', async () => {
     await persistLastUsedAccount('s1', 'profile-keep')
     await persistLastUsedAccount('s1', undefined)

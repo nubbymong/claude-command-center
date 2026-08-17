@@ -140,7 +140,11 @@ export async function persistLastUsedAccount(sessionId: string, profileId: strin
   // a one-click default for the next new session. Only a real choice updates it
   // (never clear it back to undefined). Best-effort persist.
   if (profileId) {
-    try { void useSettingsStore.getState().updateSettings({ lastUsedAccountId: profileId }) } catch { /* non-fatal */ }
+    // updateSettings returns a Promise: attach .catch (a bare try/catch would
+    // not see an async rejection and it would surface as unhandled).
+    try {
+      void useSettingsStore.getState().updateSettings({ lastUsedAccountId: profileId }).catch(() => { /* non-fatal */ })
+    } catch { /* non-fatal (synchronous set() failure) */ }
   }
   try {
     await window.electronAPI.session.save(buildSessionState())

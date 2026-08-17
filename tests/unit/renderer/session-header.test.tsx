@@ -90,6 +90,32 @@ describe('SessionHeader', () => {
     expect(container.textContent).toContain('expired')
   })
 
+  it('shows "…" (not "signed out") before the first status read completes', async () => {
+    // First render precedes the fetch effect; then the fetch is in flight. Neither
+    // state may be painted as a definite "signed out"/"not connected".
+    let resolveStatus: (v: unknown) => void = () => {}
+    ;(window.electronAPI.accountWeb.status as any).mockImplementation(() => new Promise((r) => { resolveStatus = r }))
+    render(makeSession({ profileId: 'profile-p', provider: 'claude', sessionType: 'local' }))
+    expect(container.textContent).toContain('Claude Code')
+    expect(container.textContent).not.toContain('signed out')
+    expect(container.textContent).not.toContain('not connected')
+    expect(container.textContent).toContain('…')
+    // Once the read lands, the real status replaces the placeholder.
+    await act(async () => { resolveStatus({ ok: true, cli: { authenticated: true }, web: { status: 'active' } }) })
+    expect(container.textContent).toContain('signed in')
+    expect(container.textContent).toContain('connected')
+    expect(container.textContent).not.toContain('…')
+  })
+
+  it('shows "unknown" (not "signed out") when the first status read fails', async () => {
+    ;(window.electronAPI.accountWeb.status as any).mockImplementation(async () => ({ ok: false, error: 'probe crashed' }))
+    await act(async () => { root.render(<SessionHeader session={makeSession({ profileId: 'profile-q', provider: 'claude', sessionType: 'local' })} />) })
+    expect(container.textContent).not.toContain('signed out')
+    expect(container.textContent).not.toContain('not connected')
+    expect(container.textContent).toContain('unknown')
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')?.getAttribute('title')).toContain('probe crashed')
+  })
+
   it('does NOT show the auth pills for an SSH session (remote creds)', () => {
     useAccountAuthStore.setState({ byProfile: { 'profile-z': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
     render(makeSession({ profileId: 'profile-z', provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))

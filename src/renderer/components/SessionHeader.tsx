@@ -97,27 +97,34 @@ function SessionAuthPills({ session }: { session: Session }) {
 
   if (!applies || !profileId) return null
 
-  // Only show "…" before the FIRST result; later refreshes keep the last-known
-  // status visible (no flicker to "…").
-  const firstLoad = !!status?.loading && status?.fetchedAt === undefined
+  // Until the FIRST successful read (fetchedAt set) the status is UNKNOWN — the
+  // very first render precedes the fetch effect, and a failed first fetch leaves
+  // no result either. Never paint "signed out"/"not connected" for unknown: show
+  // "…" while a fetch is pending and "unknown" (error in the tooltip) after a
+  // failure. Later refreshes keep the last-known status visible (no flicker).
+  const known = status?.fetchedAt !== undefined
+  const pending = !known && !status?.error
   const cliOk = status?.cliAuthed === true
   const web = status?.web
 
-  const codeColor = cliOk ? 'var(--status-success)' : 'var(--text-muted)'
-  const codeText = firstLoad ? '…' : cliOk ? 'signed in' : 'signed out'
-  const aiColor = web === 'active' ? 'var(--status-success)' : web === 'expired' ? 'var(--status-warning)' : 'var(--text-muted)'
-  const aiText = firstLoad ? '…' : web === 'active' ? 'connected' : web === 'expired' ? 'expired' : 'not connected'
+  const codeColor = known && cliOk ? 'var(--status-success)' : 'var(--text-muted)'
+  const codeText = !known ? (pending ? '…' : 'unknown') : cliOk ? 'signed in' : 'signed out'
+  const aiColor = !known ? 'var(--text-muted)' : web === 'active' ? 'var(--status-success)' : web === 'expired' ? 'var(--status-warning)' : 'var(--text-muted)'
+  const aiText = !known ? (pending ? '…' : 'unknown') : web === 'active' ? 'connected' : web === 'expired' ? 'expired' : 'not connected'
+  const errorSuffix = !known && status?.error ? ` — could not read status: ${status.error}` : ''
 
   const doRefresh = () => { if (profileId) void refresh(profileId) }
 
+  // Complements the title-bar service pills (Code / Claude.ai = is the SERVICE
+  // up); these say whether THIS session's account is signed in / connected.
   return (
     <>
-      <span className="flex items-center gap-1 shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }} title="Claude Code sign-in for this session's account" data-testid="session-pill-claudecode">
+      <span className="flex items-center gap-1 shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }} title={`Claude Code sign-in for this session's account${errorSuffix}`} data-testid="session-pill-claudecode">
         <span>Claude Code</span>
         <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: codeColor }} aria-hidden />
         <span style={{ color: codeColor }}>{codeText}</span>
       </span>
-      <span className="flex items-center gap-1 shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }} title="claude.ai web session for this session's account" data-testid="session-pill-claudeai">
+      <span className="flex items-center gap-1 shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }} title={`claude.ai web session for this session's account${errorSuffix}`} data-testid="session-pill-claudeai">
         <span>claude.ai</span>
         <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: aiColor }} aria-hidden />
         <span style={{ color: aiColor }}>{aiText}</span>
