@@ -93,11 +93,11 @@ export default function OAuthDeviceFlow({ flow, onDone, onCancel }: Props) {
 
   return (
     <div
-      className="fixed inset-0 bg-base/80 z-50 flex items-center justify-center"
+      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
       role="dialog"
       aria-modal="true"
     >
-      <div className="bg-mantle p-6 rounded max-w-md w-full">
+      <div className="bg-mantle p-6 rounded-lg border border-surface0 max-w-md w-full">
         <h3 className="text-lg mb-3 text-text">Sign in with GitHub</h3>
         <p className="text-sm text-subtext0 mb-4">
           Open <code className="bg-surface0 px-1 rounded">{flow.verificationUri}</code> and enter

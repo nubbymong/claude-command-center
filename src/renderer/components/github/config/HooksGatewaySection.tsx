@@ -75,7 +75,7 @@ export default function HooksGatewaySection() {
   }
 
   return (
-    <section className="space-y-3">
+    <section className="settings-card p-4 space-y-3">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h3 className="text-sm font-semibold text-text">HTTP Hooks Gateway</h3>
@@ -173,7 +173,7 @@ function PortEditor({ initial, onCancel, onSave }: PortEditorProps) {
       />
       <button
         onClick={submit}
-        className="px-2 py-0.5 rounded bg-blue text-crust hover:bg-sapphire transition-colors duration-150"
+        className="px-2 py-0.5 rounded bg-blue text-crust hover:bg-blue/80 transition-colors duration-150"
         type="button"
       >
         Save

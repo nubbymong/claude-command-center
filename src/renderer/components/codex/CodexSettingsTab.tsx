@@ -72,7 +72,7 @@ export function CodexSettingsTab() {
   return (
     <div className="space-y-4">
       {/* Master switch (Beta) */}
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 flex items-center gap-3">
+      <div className="settings-card px-4 py-3 flex items-center gap-3">
         <input
           type="checkbox"
           checked={codexEnabled !== false}
@@ -101,7 +101,7 @@ export function CodexSettingsTab() {
       >
 
       {/* Status section */}
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
+      <div className="settings-card overflow-hidden">
         <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
             <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" fill="none" />
@@ -132,7 +132,7 @@ export function CodexSettingsTab() {
 
       {/* Install hint -- shown only when not installed */}
       {!installed && (
-        <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
+        <div className="settings-card overflow-hidden">
           <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
               <path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
@@ -158,7 +158,7 @@ export function CodexSettingsTab() {
 
       {/* Auth actions -- shown when installed */}
       {installed && (
-        <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
+        <div className="settings-card overflow-hidden">
           <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
               <path d="M11 7H5a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zM7 7V5a1 1 0 0 1 2 0v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />

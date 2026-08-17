@@ -122,7 +122,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     ok ? 'bg-green' : warn ? 'bg-yellow' : 'bg-overlay0'
 
   return (
-    <div className="rounded border border-surface1 bg-mantle p-3 space-y-3">
+    <div className="settings-panel p-3 space-y-3">
       <div className="text-xs text-text font-medium">{accountName} — authentication</div>
 
       {/* Code session */}
@@ -157,7 +157,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
             <select
               value={authMethod}
               onChange={(e) => { void changeAuthMethod(e.target.value as CliAuthMethod) }}
-              className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue"
+              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors"
             >
               {CLI_AUTH_METHODS.map((m) => (
                 <option key={m} value={m}>{CLI_AUTH_METHOD_LABELS[m]}</option>
@@ -193,7 +193,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
               value={authBrowser}
               disabled={busy}
               onChange={(e) => { void changeAuthBrowser(e.target.value as AuthBrowser) }}
-              className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue disabled:opacity-40"
+              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors disabled:opacity-40"
             >
               {AUTH_BROWSERS.map((b) => (
                 <option key={b} value={b}>{AUTH_BROWSER_LABELS[b]}</option>

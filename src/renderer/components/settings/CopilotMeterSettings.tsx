@@ -124,7 +124,7 @@ export default function CopilotMeterSettings() {
   const isSample = aiUsage == null || (cycleStart != null && aiUsageCycle == null)
 
   return (
-    <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
+    <div className="settings-card overflow-hidden">
       <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
           <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" />
@@ -144,7 +144,7 @@ export default function CopilotMeterSettings() {
         <Row label="Plan" hint="Shown next to the meter, e.g. Max, Pro, or Plus.">
           <input
             type="text"
-            className="bg-surface0 p-1 rounded w-24 text-right"
+            className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 focus:outline-none focus:border-blue/50 transition-colors w-24 text-right"
             value={planName ?? ''}
             placeholder="Max"
             onChange={(e) => onPlanChange(e.target.value)}
@@ -160,7 +160,7 @@ export default function CopilotMeterSettings() {
             min={0}
             step="1"
             inputMode="numeric"
-            className="bg-surface0 p-1 rounded w-24 text-right"
+            className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 focus:outline-none focus:border-blue/50 transition-colors w-24 text-right"
             value={cap ?? ''}
             placeholder="20000"
             onChange={(e) => onCapChange(e.target.value)}
@@ -173,7 +173,7 @@ export default function CopilotMeterSettings() {
         >
           <input
             type="date"
-            className="bg-surface0 p-1 rounded text-right"
+            className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 focus:outline-none focus:border-blue/50 transition-colors text-right"
             value={cycleStart ?? ''}
             onChange={(e) => onCycleChange(e.target.value)}
           />

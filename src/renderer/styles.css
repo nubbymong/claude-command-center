@@ -264,6 +264,34 @@ body {
   background: color-mix(in srgb, var(--color-blue) 30%, transparent);
 }
 
+/* Settings surfaces — ONE card / nested-panel definition every Settings page
+   shares, so tabs stop diverging (the blue-tinted --surface-raised, never a
+   per-tab grey or the GitHub tab's warm-black `mantle`). Both theme-aware: the
+   vars flip under [data-theme="light"]. */
+.settings-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+}
+/* A nested box inside a card (feature rows, mock previews, inner groups). */
+.settings-panel {
+  background: var(--surface-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+/* Header/section dividers inside a settings card. */
+.settings-divider { border-color: var(--border-subtle) !important; }
+
+/* Native form controls carried Chromium's stock accent (a blue that ignored
+   both the palette and the light/dark theme). Theme them to the app accent in
+   one place — checkboxes, radios, and range sliders across every Settings page.
+   accent-color flips with the theme via the var. */
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: var(--color-blue);
+}
+
 /* Ensure xterm.js textarea can receive keyboard input */
 .xterm-helper-textarea {
   user-select: text !important;
