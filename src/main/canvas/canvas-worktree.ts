@@ -30,14 +30,18 @@ export function worktreeBaseDir(primaryCheckout: string, env: NodeJS.ProcessEnv)
   return path.join(path.dirname(primaryCheckout), 'ccc-wt')
 }
 
-/** The guard names worktrees by the first id segment; CCC ids are 24 hex chars
- *  with no dashes, so take the first 8 (path-safe by the IPC charset guard). */
+/** The segment CCC names the session's worktree by. CCC ids are 24 hex chars
+ *  with no dashes; 12 keeps the directory short while making a cross-tile
+ *  collision on the segment (which would let one tile's canvas serve another's
+ *  worktree) ~2^-48 rather than ~2^-32. Path-safe by the IPC charset guard. */
 export function shortSessionId(sessionId: string): string {
-  return sessionId.slice(0, 8)
+  return sessionId.slice(0, 12)
 }
 
 export interface DesignateDeps {
   env: NodeJS.ProcessEnv
+  /** Canonicalise a path (fs.realpathSync.native). Injected for tests. */
+  realpath: (p: string) => string
   /** True when `dir/.git` is a DIRECTORY — a primary checkout. The guard anchors
    *  worktrees to the primary checkout; from a linked worktree (`.git` is a
    *  file) or a non-repo we would only be guessing, and a guess is not a
@@ -47,6 +51,7 @@ export interface DesignateDeps {
 
 export const nodeDesignateDeps: DesignateDeps = {
   env: process.env,
+  realpath: (p) => fs.realpathSync.native(p),
   isPrimaryCheckout: (dir) => {
     try {
       return fs.statSync(path.join(dir, '.git')).isDirectory()
@@ -70,8 +75,21 @@ export function designatedWorktreeDir(
   deps: DesignateDeps = nodeDesignateDeps,
 ): string | null {
   if (typeof projectDir !== 'string' || !path.isAbsolute(projectDir)) return null
-  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(sessionId)) return null
-  const project = path.resolve(projectDir)
+  if (typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{12,128}$/.test(sessionId)) return null
+  // Canonicalise the project directory: the guard creates the worktree at a real
+  // path, and the canvas store only serves a designated root whose realpath IS
+  // its lexical path. If the CONFIGURED project reaches through a junction /
+  // symlink / subst (a Dev Drive junction, a symlinked ~/projects, macOS /tmp),
+  // a lexical designation would derive from the link spelling and could never go
+  // live even though the guard populated it. Deriving from the realpath lines
+  // the two up. Fall back to lexical if it does not resolve (it must exist —
+  // isPrimaryCheckout stat'd its .git — but never throw here).
+  let project: string
+  try {
+    project = deps.realpath(path.resolve(projectDir))
+  } catch {
+    project = path.resolve(projectDir)
+  }
   if (!deps.isPrimaryCheckout(project)) return null
   return path.join(worktreeBaseDir(project, deps.env), shortSessionId(sessionId))
 }

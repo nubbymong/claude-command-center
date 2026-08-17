@@ -99,7 +99,10 @@ vi.mock('../../../src/main/conductor-mcp-server', () => ({
 
 vi.mock('../../../src/main/providers', () => ({
   getProvider: () => ({
-    buildSpawnCommand: () => ({ cmd: 'pwsh', args: [], env: {} }),
+    // Stand in for the real providers, which spread process.env: hand back a
+    // STALE inherited CCC_SESSION_WORKTREE so every 'not designated' assertion
+    // below verifies it is SCRUBBED, not merely absent.
+    buildSpawnCommand: () => ({ cmd: 'pwsh', args: [], env: { CCC_SESSION_WORKTREE: STALE_WT } }),
     ingestSessionTelemetry: () => ({ stop: () => {} }),
   }),
 }))
@@ -203,7 +206,8 @@ function makePrimaryProject(prefix: string): { parent: string; project: string; 
   fs.writeFileSync(path.join(project, 'dist', 'index.html'), '<html><head></head><body>app</body></html>')
   return { parent, project, wtBase: path.join(parent, 'ccc-wt') }
 }
-const SHORT = SID.slice(0, 8)
+const SHORT = SID.slice(0, 12)
+const STALE_WT = path.join('F:', 'stale-outer', 'ccc-wt', 'deadbeefdead')
 
 afterAll(() => {
   try {
@@ -280,6 +284,21 @@ describe('CCC designates the session worktree and serves it once it exists', () 
     const { project } = makePrimaryProject('ccc-wt-spawn-shell-')
     const why2 = spawn({ cwd: project, shellOnly: true })
     expect(h.spawnEnvs[0]?.CCC_SESSION_WORKTREE, why2).toBeUndefined()
+    killPty(SID)
+  })
+
+  it('SCRUBS an inherited CCC_SESSION_WORKTREE from a non-designated session (never leaks CCC’s own env)', () => {
+    // A dev CCC launched from inside a guarded tile inherits the OUTER tile’s
+    // CCC_SESSION_WORKTREE; a shell-only / non-repo child must not carry it, or
+    // its guard would target the outer tile’s worktree.
+    const plain = makeDir('ccc-wt-spawn-scrub-')   // no .git
+    const why = spawn({ cwd: plain })
+    expect(h.spawnEnvs[0].CCC_SESSION_WORKTREE, why).toBeUndefined()   // scrubbed, not the stale value
+    killPty(SID)
+    h.spawnEnvs = []
+    const { project } = makePrimaryProject('ccc-wt-spawn-scrub2-')
+    const why2 = spawn({ cwd: project, shellOnly: true })
+    expect(h.spawnEnvs[0].CCC_SESSION_WORKTREE, why2).toBeUndefined()  // shell-only never designates
     killPty(SID)
   })
 

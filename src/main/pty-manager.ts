@@ -424,12 +424,17 @@ export function spawnPty(
 
     const sshBinary = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
 
+    // SSH sessions never designate a canvas worktree (their cwd is remote); pass
+    // a clone with any inherited CCC_SESSION_WORKTREE removed, never process.env
+    // by reference (which we must not mutate).
+    const sshEnv = { ...(process.env as Record<string, string>) }
+    delete sshEnv.CCC_SESSION_WORKTREE
     ptyProcess = pty.spawn(sshBinary, sshArgs, {
       name: 'xterm-256color',
       cols,
       rows,
       cwd: os.homedir(),
-      env: process.env as Record<string, string>,
+      env: sshEnv,
       useConpty: true
     })
 
@@ -959,6 +964,8 @@ export function spawnPty(
         codexOptions: options?.codexOptions,
       })
       logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
+      // Codex sessions never designate a canvas worktree; drop any inherited hint.
+      delete (spawnEnv as Record<string, string>).CCC_SESSION_WORKTREE
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
@@ -1091,7 +1098,12 @@ export function spawnPty(
     const designatedWorktree = !shellOnly && !isHomeOrAncestor(resolvedCwd)
       ? designatedWorktreeDir(resolvedCwd, sessionId)
       : null
+    // Set only when THIS session designates; otherwise DELETE any value inherited
+    // from CCC's own environment (a dev CCC launched from inside a guarded tile
+    // inherits the outer tile's CCC_SESSION_WORKTREE — it must not leak into a
+    // shell-only / home-project / non-designated session and misdirect its guard).
     if (designatedWorktree) finalSpawnEnv.CCC_SESSION_WORKTREE = designatedWorktree
+    else delete finalSpawnEnv.CCC_SESSION_WORKTREE
     logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} resolvedProfileId=${resolvedProfileId ?? '(none/bare-global)'} shellOnly=${shellOnly} USERPROFILE=${home ?? '(real home)'}`)
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.

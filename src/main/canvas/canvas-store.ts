@@ -205,6 +205,14 @@ export function designateCanvasWorktreeRoot(sessionId: string, dir: string): boo
   if (isHomeOrAncestor(lexical)) return false
   if (isVolumeRoot(lexical)) return false
   if (isDotDirUnderHome(lexical)) return false
+  // Refuse a path already designated for a DIFFERENT session. Distinct tiles
+  // derive distinct segments, so this only fires on a segment collision — and
+  // there the FIRST tile owns the directory it populated; serving it to a second
+  // tile would cross the per-session boundary (adversarial review). Fail closed:
+  // the second tile is simply not canvas-served.
+  for (const [otherSession, roots] of designatedRootsBySession) {
+    if (otherSession !== sessionId && roots.has(lexical)) return false
+  }
   let set = designatedRootsBySession.get(sessionId)
   if (!set) {
     set = new Set<string>()

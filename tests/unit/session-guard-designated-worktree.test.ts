@@ -11,7 +11,7 @@
 //   - unset → the default location, unchanged
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawn as spawnProc } from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -155,5 +155,80 @@ describe('session-guard claim with a CCC-designated worktree', () => {
     const l = leases().find((x) => x.sessionId === cc)!
     expect(path.resolve(String(l.worktree)).toLowerCase()).toBe(path.join(wtBase, '77777777').toLowerCase())
     expect(l.designated).toBe(false)
+  }, 30_000)
+
+  // --- Adversarial-review regressions -------------------------------------
+
+  it('does NOT adopt a worktree of a DIFFERENT repository at the designated path', () => {
+    // A second repo, and one of ITS worktrees parked at our designated path.
+    const otherRepo = path.join(root, 'other-repo')
+    fs.mkdirSync(otherRepo)
+    git(['init', '-q', '-b', 'main'], otherRepo)
+    git(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init'], otherRepo)
+    const designated = path.join(wtBase, 'foreignrepo01')
+    git(['worktree', 'add', '-q', designated], otherRepo)   // a worktree of otherRepo, not ours
+    fs.writeFileSync(path.join(designated, 'their-secret.txt'), 'do not touch')
+
+    const cc = '88888888-8888-4888-8888-888888888888'
+    const r = claim({ CLAUDE_CODE_SESSION_ID: cc, CLAUDE_MULTI_SESSION_ID: 'eeee5555eeee5555eeee5555', CLAUDE_PID: String(process.pid), CCC_SESSION_WORKTREE: designated })
+    expect(r.code, r.out).toBe(0)
+    expect(r.out).toContain('DIFFERENT repository')
+    // We got the DEFAULT location, not the foreign worktree.
+    const l = leases().find((x) => x.sessionId === cc)!
+    expect(path.resolve(String(l.worktree)).toLowerCase()).toBe(path.join(wtBase, '88888888').toLowerCase())
+    expect(l.designated).toBe(false)
+    // The foreign worktree is untouched (still otherRepo's, file intact).
+    expect(fs.readFileSync(path.join(designated, 'their-secret.txt'), 'utf8')).toBe('do not touch')
+  }, 30_000)
+
+  it('does NOT steal a worktree held by a CONCURRENT LIVE process of the same CCC session (nested claude)', async () => {
+    // A live child process to stand in for the parent conversation whose lease is
+    // alive with a DIFFERENT pid than the claimer. Same tile id, still running.
+    const child = spawnProc(process.execPath, ['-e', 'setTimeout(()=>{}, 60000)'], { stdio: 'ignore' })
+    try {
+      await new Promise((r) => setTimeout(r, 50))
+      const tile = 'ffff6666ffff6666ffff6666'
+      const designated = path.join(wtBase, 'nestedlive01')
+      const parent = 'aa000001-0000-4000-8000-000000000001'
+      // Parent conversation claims and OWNS the designated worktree, pid = child.
+      const rp = claim({ CLAUDE_CODE_SESSION_ID: parent, CLAUDE_MULTI_SESSION_ID: tile, CLAUDE_PID: String(child.pid), CCC_SESSION_WORKTREE: designated })
+      expect(rp.code, rp.out).toBe(0)
+      expect(fs.existsSync(path.join(designated, '.git'))).toBe(true)
+      // A nested claude: same tile, a DIFFERENT (this test's) live pid.
+      const nested = 'aa000002-0000-4000-8000-000000000002'
+      const rn = claim({ CLAUDE_CODE_SESSION_ID: nested, CLAUDE_MULTI_SESSION_ID: tile, CLAUDE_PID: String(process.pid), CCC_SESSION_WORKTREE: designated })
+      expect(rn.code, rn.out).toBe(0)
+      expect(rn.out).toContain('concurrent process of this CCC session')
+      // The nested session got the DEFAULT location; the parent's lease is intact.
+      const ln = leases().find((x) => x.sessionId === nested)!
+      expect(path.resolve(String(ln.worktree)).toLowerCase()).toBe(path.join(wtBase, 'aa000002').toLowerCase())
+      const lp = leases().find((x) => x.sessionId === parent)!
+      expect(lp, 'parent lease still present').toBeTruthy()
+      expect(path.resolve(String(lp.worktree)).toLowerCase()).toBe(designated.toLowerCase())
+    } finally {
+      child.kill()
+    }
+  }, 30_000)
+
+  it('prunes a stale worktree registration so a hand-deleted designated dir does not wedge the tile', () => {
+    const tile = 'ab120000ab120000ab120000'
+    const designated = path.join(wtBase, 'prunewedge01')
+    const conv1 = 'ba000001-0000-4000-8000-000000000001'
+    const r1 = claim({ CLAUDE_CODE_SESSION_ID: conv1, CLAUDE_MULTI_SESSION_ID: tile, CLAUDE_PID: String(process.pid), CCC_SESSION_WORKTREE: designated })
+    expect(r1.code, r1.out).toBe(0)
+    expect(fs.existsSync(path.join(designated, '.git'))).toBe(true)
+    // The directory is removed by hand; git still has it registered. Its lease
+    // (conv1) is also cleared, standing in for a later conversation.
+    fs.rmSync(designated, { recursive: true, force: true })
+    const leaseFile = path.join(repo, '.git', 'ccc-sessions', `${conv1}.json`)
+    if (fs.existsSync(leaseFile)) fs.rmSync(leaseFile)
+    const conv2 = 'ba000002-0000-4000-8000-000000000002'
+    const r2 = claim({ CLAUDE_CODE_SESSION_ID: conv2, CLAUDE_MULTI_SESSION_ID: tile, CLAUDE_PID: String(process.pid), CCC_SESSION_WORKTREE: designated })
+    // Pre-fix this failed hard ("missing but already registered worktree").
+    expect(r2.code, r2.out).toBe(0)
+    expect(fs.existsSync(path.join(designated, '.git'))).toBe(true)
+    const l = leases().find((x) => x.sessionId === conv2)!
+    expect(path.resolve(String(l.worktree)).toLowerCase()).toBe(designated.toLowerCase())
+    expect(l.designated).toBe(true)
   }, 30_000)
 })

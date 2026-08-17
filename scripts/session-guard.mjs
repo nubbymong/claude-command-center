@@ -189,6 +189,16 @@ function isPrimaryWorktree(dir) {
   return !!gitDir && !!common && samePath(gitDir, common)
 }
 
+/** True when dirA and dirB are worktrees of the SAME repository (shared object
+ *  store). A foreign repo's worktree at a designated path would have no lease in
+ *  this repo's registry, so every ownership check would pass and it would be
+ *  wrongly adopted -- this is the guard against that. */
+function sameRepo(dirA, dirB) {
+  const a = gitSafe(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: dirA })
+  const b = gitSafe(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd: dirB })
+  return !!a && !!b && samePath(a, b)
+}
+
 /**
  * Take ownership of a worktree that already exists -- one made by hand, or by
  * Claude Code's own --worktree / EnterWorktree. Without this those arrive
@@ -259,6 +269,9 @@ function cmdClaim(args) {
     print(renderClaim(existing, 'already claimed'))
     return
   }
+  // Our previous worktree is gone (deleted by hand / release --remove-worktree):
+  // drop the stale own-lease so the writes below don't hit EEXIST ('wx').
+  if (existing) { try { fs.unlinkSync(existing._file) } catch { /* already gone */ } }
 
   const mainRoot = gitSafe(['rev-parse', '--path-format=absolute', '--show-toplevel'])
   if (!mainRoot) fail('run this from inside the repository (or a worktree of it).')
@@ -270,7 +283,8 @@ function cmdClaim(args) {
   const commonDir = gitSafe(['rev-parse', '--path-format=absolute', '--git-common-dir'])
   const primaryRoot = commonDir ? path.dirname(commonDir) : mainRoot
   const wtRoot = process.env.CCC_WT_ROOT || path.join(path.dirname(primaryRoot), 'ccc-wt')
-  let dir = path.join(wtRoot, slug ? `${short}-${slug}` : short)
+  const defaultDir = path.join(wtRoot, slug ? `${short}-${slug}` : short)
+  let dir = defaultDir
 
   // CCC designated a location for this session's worktree (the path the canvas
   // serves). Use it: create there, or adopt what an earlier conversation of the
@@ -314,7 +328,22 @@ function cmdClaim(args) {
   try {
     git(['worktree', 'add', '-b', branch, dir, startPoint])
   } catch (e) {
-    fail(`could not create worktree/branch '${branch}':\n${e.stderr || e.message}`)
+    // A CCC-designated location that could not be created (a race, leftover
+    // content) must not fail the whole claim -- fall back to the default
+    // location (unserved by the canvas) rather than leave the session with no
+    // worktree at all.
+    if (designated && samePath(dir, designated) && !samePath(dir, defaultDir)) {
+      print(`  note: could not create the worktree at the CCC-designated location (${(e.stderr || e.message || '').trim().split(/\r?\n/)[0]}); using the default location (the canvas will not serve this worktree).`)
+      dir = defaultDir
+      fs.mkdirSync(path.dirname(dir), { recursive: true })
+      try {
+        git(['worktree', 'add', '-b', branch, dir, startPoint])
+      } catch (e2) {
+        fail(`could not create worktree/branch '${branch}':\n${e2.stderr || e2.message}`)
+      }
+    } else {
+      fail(`could not create worktree/branch '${branch}':\n${e.stderr || e.message}`)
+    }
   }
 
   const lease = {
@@ -362,29 +391,58 @@ function isEmptyDir(p) {
  *   null                 -- unusable: fall back to the default location
  */
 function claimDesignated(designated, me, base) {
-  if (!fs.existsSync(designated) || isEmptyDir(designated)) return { dir: designated }
+  if (!fs.existsSync(designated) || isEmptyDir(designated)) {
+    // A worktree used to live here and its directory was removed by hand: git
+    // still has it registered and would refuse `worktree add`. Prune the stale
+    // registration first (safe + idempotent: prune only drops admin files for
+    // worktrees whose directory is gone) so a fixed per-tile path never wedges.
+    const registered = (gitSafe(['worktree', 'list', '--porcelain']) || '')
+      .split(/\r?\n/)
+      .some((l) => l.startsWith('worktree ') && samePath(l.slice('worktree '.length).trim(), designated))
+    if (registered) gitSafe(['worktree', 'prune'])
+    return { dir: designated }
+  }
   const root = worktreeRoot(designated)
   if (!root || !samePath(root, designated) || isPrimaryWorktree(root)) {
     print(`  note: CCC designated ${designated} for this session, but something else is there; using the default location (the canvas will not serve this worktree).`)
     return null
   }
+  // Must be a worktree of THIS repository. A foreign repo's worktree here has no
+  // lease in this repo's registry, so every check below would pass and we would
+  // adopt -- and be told to git -C -- the wrong repository (adversarial review).
+  if (!sameRepo(root, process.cwd())) {
+    print(`  note: CCC designated ${designated} for this session, but a worktree of a DIFFERENT repository is there; using the default location (the canvas will not serve this worktree).`)
+    return null
+  }
   const lease = readLeases(process.cwd()).find((l) => samePath(l.worktree, root))
   const myCccSession = process.env.CLAUDE_MULTI_SESSION_ID || null
   const sameCccSession = !!(lease && myCccSession && lease.multiSessionId === myCccSession)
-  if (lease && lease.sessionId !== me && lease._alive && !sameCccSession) {
-    print(`  note: CCC designated ${designated} for this session, but session ${shortId(lease.sessionId)} still holds it; using the default location (the canvas will not serve this worktree).`)
+  const myPid = Number(process.env.CLAUDE_PID) || process.ppid
+  // Adopt an earlier conversation of the SAME tile ONLY when its process is gone
+  // (or is me). A DIFFERENT live process with the same tile id -- a nested claude
+  // launched from inside the session, which inherits CLAUDE_MULTI_SESSION_ID but
+  // gets its own CLAUDE_CODE_SESSION_ID/pid -- must NOT steal the parent's live
+  // worktree; that re-creates the two-live-processes-one-branch collision the
+  // guard exists to prevent (adversarial review). pid reuse can only make this
+  // MORE conservative (fall back rather than adopt), never less.
+  const priorProcessGone = !lease || lease.sessionId === me || lease.pid === myPid || !pidAlive(lease.pid)
+  if (lease && lease.sessionId !== me && lease._alive && !(sameCccSession && priorProcessGone)) {
+    const who = sameCccSession
+      ? `a concurrent process of this CCC session (pid ${lease.pid}) holds it -- a nested claude? use that worktree, or the default here`
+      : `session ${shortId(lease.sessionId)} still holds it`
+    print(`  note: CCC designated ${designated} for this session, but ${who}; using the default location (the canvas will not serve this worktree).`)
     return null
   }
   const branch = gitSafe(['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root }) || 'HEAD'
   if (branch === 'HEAD') {
-    print(`  note: CCC designated ${designated} for this session, but the worktree there is on a detached HEAD; using the default location.`)
+    print(`  note: CCC designated ${designated} for this session, but the worktree there is on a detached HEAD (finish/abort the rebase or check out a branch there, or set CCC_SESSION_GUARD=off to work in it); using the default location.`)
     return null
   }
   if (lease && lease.sessionId !== me) {
-    print(`  clearing lease of session ${shortId(lease.sessionId)} (${sameCccSession ? 'an earlier conversation of this CCC session' : `pid ${lease.pid}, not running`})`)
+    print(`  clearing lease of session ${shortId(lease.sessionId)} (${sameCccSession ? 'a previous conversation of this CCC session, exited' : `pid ${lease.pid}, not running`})`)
     fs.unlinkSync(lease._file)
   }
-  const dirty = (gitSafe(['status', '--porcelain'], { cwd: root }) || '').split('\n').filter((l) => l.trim().length > 0).length
+  const dirty = (gitSafe(['status', '--porcelain'], { cwd: root }) || '').split(/\r?\n/).filter((l) => l.trim().length > 0).length
   return { adopt: { root, branch, dirty }, base }
 }
 

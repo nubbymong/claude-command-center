@@ -144,6 +144,19 @@ describe('designateCanvasWorktreeRoot — a pending root that serves only once i
     expect(() => resolveInsideCanvasRoot(path.join(designated, 'a.html'), SID)).toThrow(/registered canvas root/i)
   })
 
+  it('refuses a designation already recorded for a DIFFERENT session (segment collision → second not served)', () => {
+    const base = tmp('ccc-wt-coll-')
+    const designated = path.join(base, 'ccc-wt', 'abcd1234')
+    fs.mkdirSync(designated, { recursive: true })
+    fs.writeFileSync(path.join(designated, 'mock.html'), 'm')
+    // Two sessions whose 12-char segments collided onto the same directory.
+    expect(designateCanvasWorktreeRoot(SID, designated)).toBe(true)
+    expect(designateCanvasWorktreeRoot(OTHER, designated)).toBe(false)   // refused
+    // The first session it belongs to serves it; the second never does.
+    expect(() => resolveInsideCanvasRoot(path.join(designated, 'mock.html'), SID)).not.toThrow()
+    expect(() => resolveInsideCanvasRoot(path.join(designated, 'mock.html'), OTHER)).toThrow(/registered canvas root/i)
+  })
+
   it('coexists with a live root: the project AND the designated worktree both resolve', () => {
     const project = tmp('ccc-wt-proj-')
     fs.writeFileSync(path.join(project, 'index.html'), 'p')
@@ -160,21 +173,23 @@ describe('designateCanvasWorktreeRoot — a pending root that serves only once i
 
 describe('designatedWorktreeDir — CCC names the location from its own inputs', () => {
   const primary = (dir: string) => path.basename(dir) === 'project'
+  // realpath identity: the synthetic paths here do not exist on disk.
+  const rp = (x: string) => x
   const noEnv = {} as NodeJS.ProcessEnv
 
   it('is <parent of the primary checkout>/ccc-wt/<first 8 of the CCC session id>', () => {
     const project = path.join(os.tmpdir(), 'somewhere', 'project')
-    expect(designatedWorktreeDir(project, SID, { env: noEnv, isPrimaryCheckout: primary })).toBe(
-      path.join(os.tmpdir(), 'somewhere', 'ccc-wt', 'wt1111wt'),
+    expect(designatedWorktreeDir(project, SID, { env: noEnv, realpath: rp, isPrimaryCheckout: primary })).toBe(
+      path.join(os.tmpdir(), 'somewhere', 'ccc-wt', 'wt1111wt1111'),
     )
-    expect(shortSessionId(SID)).toBe('wt1111wt')
+    expect(shortSessionId(SID)).toBe('wt1111wt1111')
   })
 
   it('honours CCC_WT_ROOT from CCC’s own environment (the guard inherits the same variable)', () => {
     const project = path.join(os.tmpdir(), 'somewhere', 'project')
     const wt = path.join(os.tmpdir(), 'my-wt')
-    expect(designatedWorktreeDir(project, SID, { env: { CCC_WT_ROOT: wt }, isPrimaryCheckout: primary })).toBe(
-      path.join(wt, 'wt1111wt'),
+    expect(designatedWorktreeDir(project, SID, { env: { CCC_WT_ROOT: wt }, realpath: rp, isPrimaryCheckout: primary })).toBe(
+      path.join(wt, 'wt1111wt1111'),
     )
     // A relative CCC_WT_ROOT is ignored (the guard would resolve it against ITS
     // cwd — a place CCC cannot predict).
@@ -183,11 +198,34 @@ describe('designatedWorktreeDir — CCC names the location from its own inputs',
 
   it('returns null when the project is not a primary git checkout, or inputs are malformed', () => {
     const notPrimary = path.join(os.tmpdir(), 'somewhere', 'worktree')
-    expect(designatedWorktreeDir(notPrimary, SID, { env: noEnv, isPrimaryCheckout: primary })).toBeNull()
+    expect(designatedWorktreeDir(notPrimary, SID, { env: noEnv, realpath: rp, isPrimaryCheckout: primary })).toBeNull()
     const project = path.join(os.tmpdir(), 'somewhere', 'project')
-    expect(designatedWorktreeDir('relative/project', SID, { env: noEnv, isPrimaryCheckout: () => true })).toBeNull()
-    expect(designatedWorktreeDir(project, 'short', { env: noEnv, isPrimaryCheckout: () => true })).toBeNull()
-    expect(designatedWorktreeDir(project, 'bad id with spaces!', { env: noEnv, isPrimaryCheckout: () => true })).toBeNull()
+    expect(designatedWorktreeDir('relative/project', SID, { env: noEnv, realpath: rp, isPrimaryCheckout: () => true })).toBeNull()
+    expect(designatedWorktreeDir(project, 'short', { env: noEnv, realpath: rp, isPrimaryCheckout: () => true })).toBeNull()
+    expect(designatedWorktreeDir(project, 'bad id with spaces!', { env: noEnv, realpath: rp, isPrimaryCheckout: () => true })).toBeNull()
+  })
+
+  it('derives from the REALPATH of the project, so a junction in the configured path still yields a servable designation', () => {
+    // Configured project reached through a junction: <base>/link -> <base>/real,
+    // project = <base>/link/project. A LEXICAL designation (<base>/link/ccc-wt/..)
+    // could never go live (its realpath differs); deriving from the realpath
+    // (<base>/real/ccc-wt/..) is what the guard actually creates.
+    const base = tmp('ccc-wt-jxproj-')
+    const real = path.join(base, 'real')
+    fs.mkdirSync(path.join(real, 'project'), { recursive: true })
+    linkDir(real, path.join(base, 'link'))
+    const configured = path.join(base, 'link', 'project')
+    const designated = designatedWorktreeDir(configured, SID, {
+      env: {} as NodeJS.ProcessEnv,
+      realpath: (x) => fs.realpathSync.native(x),
+      isPrimaryCheckout: () => true,
+    })
+    expect(designated).toBe(path.join(real, 'ccc-wt', shortSessionId(SID)))
+    // And that designated dir, once created, is servable (realpath === lexical).
+    fs.mkdirSync(designated!, { recursive: true })
+    fs.writeFileSync(path.join(designated!, 'mock.html'), 'm')
+    expect(designateCanvasWorktreeRoot(SID, designated!)).toBe(true)
+    expect(() => resolveInsideCanvasRoot(path.join(designated!, 'mock.html'), SID)).not.toThrow()
   })
 
   it('the real isPrimaryCheckout dep: `.git` directory → yes; `.git` file (linked worktree) or none → no', async () => {
