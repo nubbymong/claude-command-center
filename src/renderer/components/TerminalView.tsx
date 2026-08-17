@@ -803,8 +803,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             wheelActiveMs: WHEEL_ACTIVE_MS,
           }
           if (shouldRepaintOnOutput(repaintState)) {
-            repainter.schedule(outputRepaintIntervalMs(repaintState))
-            repainter.settle()
+            const paceMs = outputRepaintIntervalMs(repaintState)
+            repainter.schedule(paceMs)
+            // Settle at the SAME pace: a between-chunks settle on a steady
+            // at-bottom stream must not repaint faster than the stream (it would
+            // defeat the 1/sec bound); when output truly stops it still clears
+            // the final ghost within one interval.
+            repainter.settle(undefined, paceMs)
           }
         }
 

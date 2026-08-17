@@ -231,6 +231,42 @@ describe('createStaleGlyphRepainter', () => {
     expect(h.counts().clearAtlas).toBe(2)
   })
 
+  // #292 cross-check (MAJOR): SETTLE_QUIET_MS (300ms) is below typical log-line
+  // cadence, so a steady at-bottom stream leaves a >quiet gap between chunks and
+  // the settle fires between them every time. If the settle repaints at the FAST
+  // pace it drags the stream up to ~chunk rate, defeating BOTTOM_STREAM_INTERVAL.
+  // Routed at the stream's own pace it stays ~1/sec.
+  it('a steady at-bottom stream whose gaps exceed the quiet window still holds ~1/sec (settle at stream pace)', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    // 30 chunks, 350ms apart (>SETTLE_QUIET_MS): the TerminalView wiring for an
+    // at-bottom stream — schedule(1000) + settle(_, 1000) per chunk.
+    for (let i = 0; i < 30; i++) {
+      r.schedule(BOTTOM_STREAM_INTERVAL_MS)
+      r.settle(undefined, BOTTOM_STREAM_INTERVAL_MS)
+      h.advance(350)
+    }
+    // ~10.5s of output → about 1/sec, NOT ~3/sec. Generous upper bound catches
+    // the regression (which produced ~31) while tolerating boundary paints.
+    expect(h.counts().clearAtlas).toBeLessThanOrEqual(13)
+    expect(h.counts().clearAtlas).toBeGreaterThanOrEqual(10)
+  })
+
+  it('the settle still clears the final ghost within one interval once output stops', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    r.schedule(BOTTOM_STREAM_INTERVAL_MS)                 // t=0 paint 1
+    r.settle(undefined, BOTTOM_STREAM_INTERVAL_MS)
+    h.advance(350)                                        // one more chunk...
+    r.schedule(BOTTOM_STREAM_INTERVAL_MS)                 // t=350: trailing armed for t=1000
+    r.settle(undefined, BOTTOM_STREAM_INTERVAL_MS)        // settle armed for t=650
+    const before = h.counts().clearAtlas
+    // ...then output STOPS. Within one BOTTOM_STREAM_INTERVAL the ghost clears.
+    h.advance(BOTTOM_STREAM_INTERVAL_MS)                  // to t=1350
+    expect(h.counts().clearAtlas).toBeGreaterThan(before)
+    expect(h.pendingTimers()).toBe(0)
+  })
+
   it('settle() never doubles up on a repaint that just happened', () => {
     const h = makeHarness()
     const r = createStaleGlyphRepainter(h.deps)

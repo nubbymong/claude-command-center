@@ -107,10 +107,11 @@ export interface StaleGlyphRepainter {
    *  overrides the pace for this request (defaults to the repainter's). */
   schedule(intervalMs?: number): void
   /** Arm (or re-arm) ONE repaint for when requests go quiet: fires `quietMs`
-   *  after the last settle() call, through the normal throttle. A continuous
-   *  stream keeps pushing it out; the moment it stops, the last chunk's ghost is
-   *  cleared. */
-  settle(quietMs?: number): void
+   *  after the last settle() call, through the normal throttle at `intervalMs`
+   *  (default the repainter's). A continuous stream keeps pushing it out; the
+   *  moment it stops, the last chunk's ghost is cleared. Pass the stream's own
+   *  pace so a settle firing mid-stream cannot repaint faster than the stream. */
+  settle(quietMs?: number, intervalMs?: number): void
   /** Cancel any pending repaint and refuse further ones. */
   dispose(): void
 }
@@ -174,17 +175,21 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
     }, intervalMs - since)
   }
 
-  const settle = (quietMs: number = SETTLE_QUIET_MS) => {
+  const settle = (quietMs: number = SETTLE_QUIET_MS, intervalMs: number = minInterval) => {
     if (disposed) return
     // Debounce: every call pushes the settle repaint out to quietMs from NOW.
     if (settleTimer) deps.clearTimer(settleTimer)
     settleTimer = deps.setTimer(() => {
       settleTimer = null
       if (disposed) return
-      // Through the throttle (default pace) so a settle can never double up on a
-      // repaint that just happened; the ghost the final chunk left is cleared
-      // within one interval of the stream going quiet.
-      schedule(minInterval)
+      // Through the throttle AT THE STREAM'S PACE (not always the fast default):
+      // a log line every ~350ms leaves a >SETTLE_QUIET_MS gap between chunks, so
+      // the settle fires between them EVERY time. Routed through schedule(1000)
+      // that just re-arms the 1/sec trailing timer (it coalesces) so a steady
+      // at-bottom stream stays at its 1/sec pace instead of the settle dragging
+      // it up to the chunk rate; when the stream truly stops, the final ghost is
+      // still cleared within one interval. See BOTTOM_STREAM_INTERVAL_MS.
+      schedule(intervalMs)
     }, quietMs)
   }
 
