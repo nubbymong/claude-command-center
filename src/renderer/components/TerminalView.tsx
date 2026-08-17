@@ -8,6 +8,7 @@ import { installWebglWithRecovery, type WebglHandle } from './terminal/terminalW
 import {
   createStaleGlyphRepainter,
   shouldRepaintOnOutput,
+  outputRepaintIntervalMs,
   WHEEL_ACTIVE_MS,
   type StaleGlyphRepainter,
 } from './terminal/staleGlyphRepaint'
@@ -788,16 +789,23 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         if (follow.scrollToBottom) term?.scrollToBottom()
         if (follow.scrolledUp !== isScrolledUpRef.current) updateScrollState(follow.scrolledUp)
 
-        // #273: streaming output is when stale WebGL glyphs accumulate. Repaint
-        // when the reproducing conditions hold (normal buffer, and the user is
-        // scrolled up or has scrolled recently); the throttle bounds the cost.
-        if (term && repainter && shouldRepaintOnOutput({
-          alternateBuffer: term.buffer.active.type === 'alternate',
-          scrolledUp: isScrolledUpRef.current,
-          msSinceWheel: Date.now() - lastWheelAt,
-          wheelActiveMs: WHEEL_ACTIVE_MS,
-        })) {
-          repainter.schedule()
+        // #273: streaming output is when stale WebGL glyphs accumulate — at the
+        // bottom with no scroll too (follow-up: a slicer's stderr ghosted and
+        // stayed ghosted). Every normal-buffer chunk repaints, paced 4/sec while
+        // scrolled up / wheel-active and 1/sec for steady at-bottom streaming,
+        // and one settle repaint clears the last chunk's ghost once the stream
+        // goes quiet. The repainter skips the refresh when WebGL isn't active.
+        if (term && repainter) {
+          const repaintState = {
+            alternateBuffer: term.buffer.active.type === 'alternate',
+            scrolledUp: isScrolledUpRef.current,
+            msSinceWheel: Date.now() - lastWheelAt,
+            wheelActiveMs: WHEEL_ACTIVE_MS,
+          }
+          if (shouldRepaintOnOutput(repaintState)) {
+            repainter.schedule(outputRepaintIntervalMs(repaintState))
+            repainter.settle()
+          }
         }
 
         // Post-resume settle nudge: every chunk re-arms the timer; it fires only
