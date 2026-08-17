@@ -5,6 +5,8 @@ import TipPill from './TipPill'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useAccountAuthStore } from '../stores/accountAuthStore'
 
 interface Props {
   session: Session
@@ -70,6 +72,70 @@ function SessionNameField({ session }: { session: Session }) {
   )
 }
 
+/**
+ * Per-session Claude Code + claude.ai connection pills (right cluster, beside the
+ * GitHub pill). Shows this session's account's auth status at a glance so the
+ * user isn't guessing whether they need to sign in. Status comes from the shared
+ * accountAuthStore, fetched on activate + after any sign-in/out + manual refresh
+ * (not polled — the Claude Code check is a heavy subprocess).
+ */
+function SessionAuthPills({ session }: { session: Session }) {
+  const primaryId = useAccountProfilesStore((s) => s.profiles.find((p) => p.isPrimary)?.id)
+  const refresh = useAccountAuthStore((s) => s.refresh)
+  // Only LOCAL Claude sessions carry per-session Claude Code creds + a claude.ai
+  // web session. SSH (remote creds), Codex (not profile-scoped) and shell-only
+  // sessions show nothing — same gate the context-menu auth items use.
+  const applies = !session.shellOnly && session.sessionType === 'local' && (session.provider ?? 'claude') === 'claude'
+  const profileId = session.profileId ?? primaryId
+  const status = useAccountAuthStore((s) => (profileId ? s.byProfile[profileId] : undefined))
+
+  React.useEffect(() => {
+    // This header renders only the ACTIVE session, so mounting/param-change is
+    // "on activate". Re-fetch when the session or its account changes.
+    if (applies && profileId) void refresh(profileId)
+  }, [applies, profileId, refresh, session.id])
+
+  if (!applies || !profileId) return null
+
+  // Only show "…" before the FIRST result; later refreshes keep the last-known
+  // status visible (no flicker to "…").
+  const firstLoad = !!status?.loading && status?.fetchedAt === undefined
+  const cliOk = status?.cliAuthed === true
+  const web = status?.web
+
+  const codeColor = cliOk ? 'var(--status-success)' : 'var(--text-muted)'
+  const codeText = firstLoad ? '…' : cliOk ? 'signed in' : 'signed out'
+  const aiColor = web === 'active' ? 'var(--status-success)' : web === 'expired' ? 'var(--status-warning)' : 'var(--text-muted)'
+  const aiText = firstLoad ? '…' : web === 'active' ? 'connected' : web === 'expired' ? 'expired' : 'not connected'
+
+  const doRefresh = () => { if (profileId) void refresh(profileId) }
+
+  return (
+    <>
+      <span className="flex items-center gap-1 shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }} title="Claude Code sign-in for this session's account" data-testid="session-pill-claudecode">
+        <span>Claude Code</span>
+        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: codeColor }} aria-hidden />
+        <span style={{ color: codeColor }}>{codeText}</span>
+      </span>
+      <span className="flex items-center gap-1 shrink-0 text-[11px]" style={{ color: 'var(--text-muted)' }} title="claude.ai web session for this session's account" data-testid="session-pill-claudeai">
+        <span>claude.ai</span>
+        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: aiColor }} aria-hidden />
+        <span style={{ color: aiColor }}>{aiText}</span>
+        <button
+          onClick={doRefresh}
+          disabled={!!status?.loading}
+          title="Refresh auth status"
+          aria-label="Refresh auth status"
+          className="ml-0.5 opacity-50 hover:opacity-100 disabled:opacity-30 focus-ring rounded"
+          data-testid="session-pill-refresh"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+        </button>
+      </span>
+    </>
+  )
+}
+
 export default function SessionHeader({ session, onShowTip }: Props) {
   const theme = useResolvedTheme()
   const headerType = useRegionTypography('header')
@@ -123,6 +189,9 @@ export default function SessionHeader({ session, onShowTip }: Props) {
           </span>
         </span>
       )}
+
+      {/* Per-session Claude Code + claude.ai connection status. */}
+      <SessionAuthPills session={session} />
 
       {/* Separator before notes */}
       <div className="w-px h-4 bg-surface1 shrink-0" />

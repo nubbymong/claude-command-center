@@ -31,12 +31,15 @@ interface SessionContextMenuProps {
   /** True when this account already holds a claude.ai web session; drives the
    *  artifacts item's enabled state and the wording of the authenticate item. */
   hasWebSession?: boolean
+  /** True when this account's Claude Code CLI is already signed in; disables the
+   *  "Sign in to Claude Code" item so it isn't offered when it would be a no-op. */
+  codeSignedIn?: boolean
 }
 
 export default function SessionContextMenu({
   x, y, session, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss,
   canSwitchAccount, profiles, accountAliases, onSwitchAccount,
-  onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession,
+  onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
@@ -104,15 +107,16 @@ export default function SessionContextMenu({
           )}
           {onSignInCode && (
             <button
-              onClick={() => { onSignInCode(); onDismiss() }}
-              title="Runs /login in this session’s terminal"
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+              onClick={() => { if (codeSignedIn) return; onSignInCode(); onDismiss() }}
+              disabled={codeSignedIn}
+              title={codeSignedIn ? 'Already signed in to Claude Code for this account' : 'Runs /login in this session’s terminal'}
+              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
                 <path d="M7 1.5h2.5a1 1 0 011 1v7a1 1 0 01-1 1H7" strokeLinecap="round"/>
                 <path d="M5 8.5L7.5 6 5 3.5M7.5 6H1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-              Sign in to Claude Code
+              {codeSignedIn ? 'Signed in to Claude Code' : 'Sign in to Claude Code'}
             </button>
           )}
         </>

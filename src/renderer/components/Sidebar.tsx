@@ -5,6 +5,7 @@ import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useConductorMcpStore } from '../stores/conductorMcpStore'
+import { useAccountAuthStore } from '../stores/accountAuthStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
 import { ViewType } from '../types/views'
@@ -102,19 +103,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const [sessionRenameValue, setSessionRenameValue] = useState('')
   const [sessionContextMenu, setSessionContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null)
 
-  // #216: which accounts currently hold a claude.ai web session. Refreshed when a
-  // session context menu opens, so "Open artifacts" is enabled only when it can
-  // actually work — an item that opens a sign-in wall is worse than a disabled one.
-  const [webSessionAccounts, setWebSessionAccounts] = useState<Set<string>>(new Set())
+  // #216: per-account auth status (Claude Code CLI + claude.ai web) via the SHARED
+  // store, so the session-header pills and this menu read one source and a sign-in
+  // refreshes both. Fetched when a session context menu opens — not polled, since
+  // the Claude Code check is a heavy subprocess.
+  const authByProfile = useAccountAuthStore((s) => s.byProfile)
   const refreshWebSessions = React.useCallback(async (profileId?: string) => {
     if (!profileId) return
-    const r = await window.electronAPI.accountWeb.status(profileId)
-    setWebSessionAccounts((prev) => {
-      const next = new Set(prev)
-      if (r.ok && r.web?.status === 'active') next.add(profileId)
-      else next.delete(profileId)
-      return next
-    })
+    await useAccountAuthStore.getState().refresh(profileId)
   }, [])
 
   /** Acquire this account's claude.ai web session, then refresh the menu state. */
@@ -1063,7 +1059,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
             // session with a resolved account — an SSH session's browser and
             // credentials live on another machine, and a shell-only session has
             // no /login to run.
-            hasWebSession={!s.shellOnly && !!(s.profileId ?? primaryProfileId) && webSessionAccounts.has((s.profileId ?? primaryProfileId)!)}
+            hasWebSession={!s.shellOnly && !!(s.profileId ?? primaryProfileId) && authByProfile[(s.profileId ?? primaryProfileId)!]?.web === 'active'}
+            codeSignedIn={!s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude' && authByProfile[(s.profileId ?? primaryProfileId)!]?.cliAuthed === true}
             onOpenArtifacts={
               !s.shellOnly && (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
                 ? () => { void window.electronAPI.accountWeb.openArtifacts((s.profileId ?? primaryProfileId)!) }

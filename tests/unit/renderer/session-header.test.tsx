@@ -20,6 +20,7 @@ vi.mock('../../../src/renderer/components/TipPill', () => ({ default: () => null
 
 const { default: SessionHeader } = await import('../../../src/renderer/components/SessionHeader')
 import type { Session } from '../../../src/renderer/stores/sessionStore'
+import { useAccountAuthStore, _resetAccountAuthForTest } from '../../../src/renderer/stores/accountAuthStore'
 
 function makeSession(over: Partial<Session> = {}): Session {
   return {
@@ -34,6 +35,11 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
+  _resetAccountAuthForTest()
+  // The auth pills' effect calls this on mount; resolve it so it never errors.
+  ;(globalThis as any).window.electronAPI = {
+    accountWeb: { status: vi.fn(async () => ({ ok: true, cli: { authenticated: false }, web: { status: 'none' } })) },
+  }
 })
 afterEach(() => {
   act(() => { root.unmount() })
@@ -66,5 +72,28 @@ describe('SessionHeader', () => {
   it('renders no repo slug when there is no GitHub integration', () => {
     render(makeSession({ githubIntegration: undefined }))
     expect(container.textContent).not.toContain('nubbymong')
+  })
+
+  it('shows the Claude Code + claude.ai pills with this account status for a local Claude session', () => {
+    useAccountAuthStore.setState({ byProfile: { 'profile-x': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ profileId: 'profile-x', provider: 'claude', sessionType: 'local' }))
+    expect(container.textContent).toContain('Claude Code')
+    expect(container.textContent).toContain('signed in')
+    expect(container.textContent).toContain('claude.ai')
+    expect(container.textContent).toContain('connected')
+  })
+
+  it('shows an expired claude.ai and signed-out Claude Code', () => {
+    useAccountAuthStore.setState({ byProfile: { 'profile-y': { cliAuthed: false, web: 'expired', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ profileId: 'profile-y', provider: 'claude', sessionType: 'local' }))
+    expect(container.textContent).toContain('signed out')
+    expect(container.textContent).toContain('expired')
+  })
+
+  it('does NOT show the auth pills for an SSH session (remote creds)', () => {
+    useAccountAuthStore.setState({ byProfile: { 'profile-z': { cliAuthed: true, web: 'active', loading: false, fetchedAt: 1 } } })
+    render(makeSession({ profileId: 'profile-z', provider: 'claude', sessionType: 'ssh', sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~' } as any }))
+    expect(container.textContent).not.toContain('Claude Code')
+    expect(container.textContent).not.toContain('claude.ai')
   })
 })
