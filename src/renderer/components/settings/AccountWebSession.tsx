@@ -8,8 +8,10 @@
  * alike, so a panel that showed only one would leave the other's symptoms
  * unexplained.
  *
- * Both sign-ins happen in the user's OWN browser, because a managed machine
- * requires an extension an in-app window cannot load. Doing the web sign-in
+ * The web sign-in opens a window: an in-app window for most accounts (no
+ * launched browser, no debug port — claude.ai's bot-detection flags that port),
+ * and the user's OWN browser for SSO accounts, whose identity provider may need a
+ * policy-installed extension an in-app window cannot load. Doing the web sign-in
  * first means the CLI's hop is a consent click rather than a second credential
  * entry.
  */
@@ -178,39 +180,41 @@ export function AccountWebSession({ profileId, accountName }: Props) {
           <div className="text-[10px] text-overlay0 leading-snug">
             {web.status === 'active'
               ? `Acquired ${fmt(web.acquiredAt)}${web.expiresAt ? `, expires ${fmt(web.expiresAt)}` : ''}.`
-              : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens your own browser to sign in.'}
+              : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens a window to sign in.'}
           </div>
 
-          {/* Browser is PER ACCOUNT and the user's call, because the two are not
-              interchangeable at the identity provider. The sign-in runs in a
-              fresh profile by design, and on a managed machine Chrome's
-              force-installed SSO extension is not there yet when claude.ai
-              loads — Edge does Entra SSO natively and has nothing to wait for.
-              Which one an account needs depends on its org, so CCC asks. */}
-          <div className="flex items-center gap-2 mt-1.5">
-            <span className="text-[10px] text-overlay0 shrink-0">Sign-in browser</span>
-            <select
-              value={authBrowser}
-              disabled={busy}
-              onChange={(e) => { void changeAuthBrowser(e.target.value as AuthBrowser) }}
-              className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue disabled:opacity-40"
-            >
-              {AUTH_BROWSERS.map((b) => (
-                <option key={b} value={b}>{AUTH_BROWSER_LABELS[b]}</option>
-              ))}
-            </select>
-            <span className="text-[10px] text-overlay0">
-              {authBrowser === 'edge' ? 'Handles SSO without an extension' : 'Needs your policy’s SSO extension'}
-            </span>
-          </div>
+          {/* SSO ONLY. Non-SSO accounts sign in inside an in-app window, which
+              launches no system browser, so this picker would be inert for them.
+              For SSO the browser IS the user's call: on a managed machine Chrome's
+              force-installed SSO extension is not there yet when claude.ai loads in
+              a fresh profile, while Edge does Entra SSO natively — which one an
+              account needs depends on its org, so CCC asks. */}
+          {authMethod === 'sso' && (
+            <div className="flex items-center gap-2 mt-1.5">
+              <span className="text-[10px] text-overlay0 shrink-0">Sign-in browser</span>
+              <select
+                value={authBrowser}
+                disabled={busy}
+                onChange={(e) => { void changeAuthBrowser(e.target.value as AuthBrowser) }}
+                className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue disabled:opacity-40"
+              >
+                {AUTH_BROWSERS.map((b) => (
+                  <option key={b} value={b}>{AUTH_BROWSER_LABELS[b]}</option>
+                ))}
+              </select>
+              <span className="text-[10px] text-overlay0">
+                {authBrowser === 'edge' ? 'Handles SSO without an extension' : 'Needs your policy’s SSO extension'}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
       {busy && (
         <div className="text-[11px] text-blue">
           {phase === 'awaiting-user'
-            ? 'Waiting for you to finish signing in, in the browser window that just opened…'
-            : phase === 'harvesting' ? 'Signed in — collecting the session…' : 'Opening your browser…'}
+            ? 'Waiting for you to finish signing in, in the sign-in window that just opened…'
+            : phase === 'harvesting' ? 'Signed in — collecting the session…' : 'Opening the sign-in window…'}
         </div>
       )}
 

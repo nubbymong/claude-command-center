@@ -33,12 +33,15 @@ import { getBrowserPaths } from '../browser-paths'
 import {
   AUTH_BROWSER_LABELS,
   DEFAULT_AUTH_BROWSER,
+  DEFAULT_CLI_AUTH_METHOD,
   PROFILE_ID_RE,
   webPartitionForProfile,
   type AccountWebSession,
+  type CliAuthMethod,
 } from '../../shared/account-web-session'
 import { DEVTOOLS_PORT_FILE, authProfileDir, buildAuthBrowserArgs, type AuthBrowser } from './browser-launch'
 import { harvestClaudeCookies, type CdpCookie } from './cookie-harvest'
+import { closeInAppSignInWindow, runInAppSignIn } from './in-app-sign-in'
 
 /** Lazy require so a missing optional dep never crashes boot (mirrors vision-manager). */
 let CDP: any = null
@@ -519,6 +522,14 @@ async function readAccountEmail(client: any): Promise<string | null> {
 export interface RunSignInOpts {
   profileId: string
   dataDir: string
+  /**
+   * The account's CLI sign-in flow. Routes the web sign-in: 'sso' keeps the
+   * system-browser + CDP path (its identity provider may need a policy-installed
+   * browser extension an Electron window lacks); anything else signs in IN-APP
+   * (no launched browser, no debug port — claude.ai's bot-detection flags that
+   * port). Absent falls back to the default, which is non-SSO.
+   */
+  method?: CliAuthMethod
   /** How long to wait for the human, ms. SSO with MFA is not fast. */
   timeoutMs?: number
   pollMs?: number
@@ -570,6 +581,35 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
     profileDir = authProfileDir(dataDir, profileId)
   } catch (err) {
     current = { phase: 'failed', profileId, error: (err as Error)?.message ?? String(err) }
+    return current
+  }
+
+  // ROUTE (#265 follow-up). Non-SSO accounts sign in IN-APP — inside an Electron
+  // window on this partition, with no launched browser and no debug port, so
+  // claude.ai's bot-detection has nothing to flag. SSO keeps the system-browser
+  // flow below (its identity provider may need a policy-installed extension an
+  // Electron window does not carry). The session cookie lands in this partition
+  // directly, so there is no harvest/injection and no on-disk profile to sweep.
+  if ((opts.method ?? DEFAULT_CLI_AUTH_METHOD) !== 'sso') {
+    current = { phase: 'awaiting-user', profileId }
+    try {
+      const res = await runInAppSignIn({
+        profileId,
+        partition,
+        timeoutMs,
+        pollMs,
+        shouldCancel: () => cancelled,
+      })
+      current = res.session
+        ? { phase: 'done', profileId, session: res.session }
+        : { phase: 'failed', profileId, error: res.error ?? (res.cancelled ? 'Sign-in cancelled.' : 'Sign-in failed.') }
+    } catch (err) {
+      // runInAppSignIn is contracted never to throw; this is defence-in-depth so
+      // an unexpected throw still lands as a failed state and releases the
+      // single-flight latch, never propagating out of runSignIn (adversarial review).
+      closeInAppSignInWindow()
+      current = { phase: 'failed', profileId, error: (err as Error)?.message ?? String(err) }
+    }
     return current
   }
 
@@ -836,6 +876,10 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
 export function cancelSignIn(profileId?: string): void {
   if (profileId && current.profileId && current.profileId !== profileId) return
   cancelled = true
+  // Close the in-app sign-in window NOW, not just at the next poll: a cancel from
+  // the UI (or a sign-out landing mid-sign-in) should take the window down at
+  // once. No-op when the system-browser path is the one running.
+  closeInAppSignInWindow()
 }
 
 /**

@@ -52,7 +52,10 @@ function makeCdp(opts: { targets: any[]; cookiesFor: () => any[]; evaluate: Retu
   return f
 }
 
-const RUN = { profileId: 'profile-aaa111', dataDir: 'C:/data', pollMs: 5 } as const
+// method:'sso' keeps these on the system-browser + CDP path (the Cloudflare
+// notice under test belongs to that flow). The non-SSO default now signs in
+// in-app, with its own tests.
+const RUN = { profileId: 'profile-aaa111', dataDir: 'C:/data', pollMs: 5, method: 'sso' } as const
 
 beforeEach(() => { cookiesSet.mockReset() })
 
