@@ -38,6 +38,9 @@ const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** Defensive cap on a design document; the IPC schema caps tighter. */
 const MAX_DESIGN_HTML_BYTES = 8 * 1024 * 1024
 const MAX_VERSIONS_PER_CANVAS = 500
+/** Canvases one session may own. Generous for real work (each is a subject the
+ *  user chose to review) and a hard stop for title-cycling. */
+const MAX_CANVASES_PER_SESSION = 50
 
 /** A Claude conversation uuid as it appears in transcript basenames. Kept loose
  *  (hex + dashes) — it is a MATCHING key, never a path segment. */
@@ -672,9 +675,26 @@ function ensureDiskScanned(): void {
     const record = loadFromDisk(entry.name)
     if (!record) continue
     canvases.set(record.canvasId, record)
-    // First record wins for a session; later duplicates stay addressable by canvasId.
-    if (!sessionIndex.has(record.sessionId)) sessionIndex.set(record.sessionId, record.canvasId)
+    // The session's ACTIVE canvas is the one it rendered to most recently.
+    //
+    // This used to be "first record wins", written when a session had exactly
+    // one canvas. Now that a subject change files a canvas and starts another,
+    // several records share a session, and readdir order on NTFS is by id —
+    // random. Relaunching then reopened the pane on whichever filed subject
+    // sorted first, complete with that subject's old notes, and the next
+    // same-title render forked a duplicate: both of the things the subject
+    // rule exists to prevent.
+    const held = sessionIndex.get(record.sessionId)
+    const heldRecord = held ? canvases.get(held) : undefined
+    if (!heldRecord || lastRenderedAt(record) > lastRenderedAt(heldRecord)) {
+      sessionIndex.set(record.sessionId, record.canvasId)
+    }
   }
+}
+
+/** When a canvas last received a version; its own creation if it has none. */
+function lastRenderedAt(record: CanvasRecord): string {
+  return record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt
 }
 
 function getRecordForSession(sessionId: string): CanvasRecord | null {
@@ -695,6 +715,7 @@ function toState(record: CanvasRecord): CanvasState {
     sessionId: record.sessionId,
     activeVersionId: record.activeVersionId,
     versions: record.versions.map((v) => ({ ...v, source: { ...v.source } })),
+    ...(record.title ? { title: record.title } : {}),
   }
 }
 
@@ -732,9 +753,50 @@ function nextVersionId(versions: CanvasVersion[]): string {
  */
 function sanitizeCanvasTitle(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined
-  const cleaned = raw.replace(FORMAT_CONTROLS_RE, '').replace(/\s+/g, ' ').trim()
+  // Strip → cap → strip again. The cap is in UTF-16 code units and can cut a
+  // surrogate pair in half, and it can leave a trailing space that a re-clean
+  // on load would then remove — either way the stored title would not equal its
+  // own re-sanitisation, which is the shape of a MAC hazard. Cleaning after the
+  // cap makes the function idempotent, and Array.from splits by code point so
+  // an emoji at the boundary is dropped whole rather than halved.
+  const clean = (s: string) => s.replace(TITLE_STRIP_RE, '').replace(/\s+/g, ' ').trim()
+  const cleaned = clean(raw)
   if (cleaned.length === 0) return undefined
-  return cleaned.slice(0, MAX_CANVAS_TITLE_CHARS)
+  const capped = Array.from(cleaned).slice(0, MAX_CANVAS_TITLE_CHARS).join('')
+  const final = clean(capped)
+  return final.length === 0 ? undefined : final
+}
+
+/**
+ * Characters a title may not carry, over and above FORMAT_CONTROLS_RE.
+ *
+ * The title sits in the library beside a delete button, so the question is not
+ * "can this break anything" but "can this make one row read as another". Format
+ * controls (bidi overrides) are the classic; combining marks, variation
+ * selectors, private-use, unassigned and surrogate code points also render as
+ * nothing or as decoration and let `Chеckout` (Cyrillic е) or `Check͏out`
+ * pass for `Checkout`. All of those go. Letters and digits of every script stay,
+ * which is what `sameSubject` below is written against.
+ */
+const TITLE_STRIP_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Mn}\p{Me}\p{Co}\p{Cn}\p{Cs}ᅟᅠㅤﾠ]/gu
+
+/**
+ * The comparison key for a subject.
+ *
+ * NFKC-folded, lower-cased, reduced to letters and digits OF ANY SCRIPT. The
+ * first version of this used `[^a-z0-9]`, which turned every non-Latin title —
+ * Cyrillic, CJK, Arabic, emoji-only — into the empty string, so all of them
+ * were "the same subject" and the feature did nothing for anyone not writing
+ * English. Returns undefined when nothing survives, and callers must treat that
+ * as "no comparable subject" rather than compare two empties as equal.
+ */
+function subjectKey(title: string): string | undefined {
+  const key = title
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+  return key.length > 0 ? key : undefined
 }
 
 /**
@@ -744,11 +806,35 @@ function sanitizeCanvasTitle(raw: unknown): string | undefined {
  * canvas in two, because the cost of a false DIFFERENT (the user's version
  * history silently forks) is worse than the cost of a false SAME (one extra
  * version on the right canvas). An agent that means a new subject will not
- * express it as a change of capitalisation.
+ * express it as a change of capitalisation. Two titles that reduce to NOTHING
+ * are not the same subject — they are unrelated titles we cannot compare.
  */
 function sameSubject(a: string, b: string): boolean {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  return norm(a) === norm(b)
+  const ka = subjectKey(a)
+  const kb = subjectKey(b)
+  return ka !== undefined && ka === kb
+}
+
+/**
+ * A canvas this session filed earlier under the same subject, if any. Owned by
+ * THIS session only: another session's canvas is never adopted here — that is
+ * an authorization decision and stays with `adoptCanvasForSession`, which the
+ * user drives. Newest first, so returning to a subject the session has filed
+ * twice picks the one most recently worked on.
+ */
+function countCanvasesForSession(sessionId: string): number {
+  let n = 0
+  for (const record of canvases.values()) if (record.sessionId === sessionId) n++
+  return n
+}
+
+function findFiledCanvas(sessionId: string, title: string): CanvasRecord | undefined {
+  let best: CanvasRecord | undefined
+  for (const record of canvases.values()) {
+    if (record.sessionId !== sessionId || !record.title || !sameSubject(title, record.title)) continue
+    if (!best || lastRenderedAt(record) > lastRenderedAt(best)) best = record
+  }
+  return best
 }
 
 export function renderVersion(
@@ -774,11 +860,29 @@ export function renderVersion(
   // stays on disk and in the library, it simply stops being this session's
   // active one — and starts a fresh canvas. Same subject (or no title given at
   // all, which is the pre-existing behaviour) appends a version as before.
-  const subjectChanged = Boolean(held && title && held.title && !sameSubject(title, held.title))
-  const existing = subjectChanged ? undefined : held
+  // A title with no readable subject — emoji only, punctuation only — is
+  // treated as no title: it cannot start a canvas we could ever come back to,
+  // and it must not fork the one we are on. It still gets stored as the label.
+  const comparable = title !== undefined && subjectKey(title) !== undefined
+  const subjectChanged = Boolean(held && comparable && held.title && !sameSubject(title!, held.title))
+  // Coming BACK to a subject re-activates its canvas rather than minting a
+  // third: "Login page" → "Checkout" → "Login page" must land on the login
+  // canvas, with its versions and its notes, not open a second one beside it.
+  const returnedTo = subjectChanged && title ? findFiledCanvas(sessionId, title) : undefined
+  const existing = subjectChanged ? returnedTo : held
 
   if (existing && existing.versions.length >= MAX_VERSIONS_PER_CANVAS) {
     throw new Error(`canvas ${existing.canvasId} is at its version cap (${MAX_VERSIONS_PER_CANVAS})`)
+  }
+  // A subject change that starts a NEW canvas is the one thing that can grow
+  // the number of canvases a session owns; before it, a session had one. Cap
+  // it, so an agent cycling titles cannot mint directories without bound —
+  // each is a synchronous read and an HMAC at the next launch. Filing goes on
+  // working: the user clears room from the library.
+  if (subjectChanged && !existing && countCanvasesForSession(sessionId) >= MAX_CANVASES_PER_SESSION) {
+    throw new Error(
+      `this session already has ${MAX_CANVASES_PER_SESSION} canvases; delete some from the library before starting another subject`,
+    )
   }
 
   // Everything that can REJECT the render is validated up front, before any
@@ -872,7 +976,10 @@ export function renderVersion(
     // The subject. Only ever set to a title that names the SAME subject (a
     // different one took the new-canvas branch above), so this fills in a
     // missing title and refreshes the wording, never repurposes the canvas.
-    ...(title ? { title } : {}),
+    // An UNREADABLE title (emoji-only) may fill an empty label but never
+    // overwrite a readable one — that would relabel "Checkout flow" as "🔥🔥🔥"
+    // in the library while the notes underneath stayed about checkout.
+    ...(title && (comparable || !base.title) ? { title } : {}),
     versions: [...base.versions, version],
     activeVersionId: versionId,
   }
