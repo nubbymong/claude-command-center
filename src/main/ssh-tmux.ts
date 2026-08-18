@@ -200,7 +200,7 @@ export interface TmuxLaunchInput {
  * on an attach it does not double-launch.
  *
  * #242 round-3 correction (I3): an earlier version took a `tmuxBin` string
- * (I3): an earlier version took a `tmuxBin` string here for the `staged:
+ * here for the `staged:
  * false` case, validated it (`isPinnedTmuxPath`) against exactly the same
  * "absolute, no traversal" shape STAGED_TMUX_BIN_EXPR's own doc comment
  * already admitted was insufficient for the staged case -- a real PATH tmux
@@ -238,10 +238,19 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   // where the remote session was gone. Appended to innerCmd BEFORE quoting so
   // it rides inside tmux's single `<shell-cmd>` argument, next to `claude`.
   const freshInner = input.reconnect ? `${input.innerCmd} --continue` : input.innerCmd
+  const fresh = `${tmuxBinToken} new-session -s ${target} ${singleQuote(freshInner)}`
+  // has-session/attach is NOT atomic: the session can die (claude exits, remote
+  // reboots) in the gap between `has-session` returning 0 and `attach` running
+  // (measured ~10ms on a real host), and a bare `attach` then fails with
+  // "no sessions"/"can't find session", leaving NO claude while CCC's idle
+  // fallback still latches claude-running -- a blank remote shell reported as a
+  // live session (adversarial review, 2026-08-18). Fall the attach THROUGH to a
+  // fresh create (with --continue on a reconnect, exactly like the else branch)
+  // so a lost race self-heals instead of stranding the user.
   return (
     `if ${tmuxBinToken} has-session -t ${target} 2>/dev/null; ` +
-    `then ${tmuxBinToken} attach -t ${target}; ` +
-    `else ${tmuxBinToken} new-session -s ${target} ${singleQuote(freshInner)}; fi`
+    `then ${tmuxBinToken} attach -t ${target} || ${fresh}; ` +
+    `else ${fresh}; fi`
   )
 }
 
@@ -269,7 +278,7 @@ export interface SshContinueFlagInput {
   /** SSHOptions.reconnect (#242) — true when this spawn respawns a session
    *  that had previously reached claude-running, set by the renderer. */
   reconnect: boolean
-  /** True when THIS write wraps the launch in `tmux new-session -A`
+  /** True when THIS write wraps the launch in the tmux has-session wrapper
    *  (pty-manager's `tmuxWrapped`) — i.e. a usable binary was detected,
    *  staged, or pushed for this session. */
   tmuxInPlay: boolean

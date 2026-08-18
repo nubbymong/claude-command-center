@@ -703,13 +703,22 @@ export function generateWindowsRemoteSetupScript(
 }
 
 /**
- * Wrap generateWindowsRemoteSetupScript in a single cmd.exe-typed line that
- * runs it via PowerShell (cmd.exe has no base64/stty). The node program is
- * UTF-8 base64'd, then a small PowerShell command decodes it and pipes it to
- * `node`; that PowerShell command is itself UTF-16LE base64'd for
- * `-EncodedCommand` (so no quoting of the payload is needed on the cmd line at
- * all). `$ProgressPreference='SilentlyContinue'` suppresses PowerShell's CLIXML
- * "Preparing modules" progress noise so only the sentinel line comes back.
+ * Wrap generateWindowsRemoteSetupScript in a single line that runs it via
+ * PowerShell (cmd.exe has no base64/stty). The node program is UTF-8 base64'd
+ * and a small PowerShell command decodes it and pipes it to `node`.
+ *
+ * The `-Command` payload MUST contain NO `$`. The remote's sshd DefaultShell is
+ * commonly PowerShell (not cmd.exe), and a PowerShell parent expands any `$var`
+ * inside the double-quoted argument BEFORE the child powershell runs -- so the
+ * earlier `$ProgressPreference=…;$s=…;$s|node` form had `$s` expanded to empty
+ * by the parent, yielding `…;|node` -> "An empty pipe element is not allowed"
+ * and setup silently never ran (adversarial review, 2026-08-18, live-confirmed).
+ * The `$`-free `<decode-expr>|node` form parses identically under cmd.exe AND a
+ * PowerShell login shell. `-NonInteractive -NoProfile` already suppress the
+ * CLIXML "Preparing modules" noise the dropped `$ProgressPreference` guarded, and
+ * a plain decode|node pipeline imports no module, so nothing but the sentinel
+ * line comes back. NOT `-EncodedCommand`: that re-encodes as UTF-16LE base64,
+ * ~2.6x larger, blowing past cmd.exe's 8191-char limit.
  */
 export function getWindowsRemoteSetupCommand(
   sessionId: string,
@@ -718,13 +727,9 @@ export function getWindowsRemoteSetupCommand(
 ): string {
   const script = generateWindowsRemoteSetupScript(sessionId, opts, nonce)
   // Single base64 of the node program (its alphabet is [A-Za-z0-9+/=], so it
-  // carries no cmd.exe metacharacter and needs no quoting). Delivered via
-  // `powershell -Command`, NOT `-EncodedCommand`: EncodedCommand re-encodes the
-  // whole thing as UTF-16LE base64, ~2.6x larger, blowing past cmd.exe's
-  // 8191-char command-line limit. The minimal Windows shim keeps the payload
-  // comfortably under that limit.
+  // carries no cmd.exe / PowerShell metacharacter and needs no quoting).
   const nodeB64 = Buffer.from(script, 'utf-8').toString('base64')
-  return `powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue';$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${nodeB64}'));$s|node"`
+  return `powershell -NoProfile -NonInteractive -Command "[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${nodeB64}'))|node"`
 }
 
 /**

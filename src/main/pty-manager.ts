@@ -550,6 +550,14 @@ export function _getSshNonceForTest(sessionId: string): string | undefined {
   return sshNonceBySession.get(sessionId)
 }
 
+/** Test-only: whether this session still has a captured end-remote target. Pins
+ *  the lifecycle fix that the target must SURVIVE a natural PTY exit (a transient
+ *  drop, so a later End can still reach the host) and be dropped only on a
+ *  deliberate close (killPty) -- adversarial review 2026-08-18. */
+export function _hasSshTargetForTest(sessionId: string): boolean {
+  return sshTargetBySession.has(sessionId)
+}
+
 /**
  * #242 finding I1: per-session buffer for the not-yet-terminated tail of
  * the `setup ok` completion sentinel line, mirroring `sshOscBuffers`/
@@ -782,8 +790,26 @@ function clearLastResumeTarget(sessionId: string): void {
 // SSH tmux enhancement (item 4): the connection target for each live SSH
 // session, captured at spawn so endSshRemote can open a SEPARATE ssh exec to
 // kill the remote tmux session + sidecars without touching the live PTY (where
-// the keystrokes would land in Claude). Cleared in cleanupSessionResources.
+// the keystrokes would land in Claude). Cleared on DELIBERATE close (killPty),
+// NOT on a natural PTY exit: after a transient drop the tab stays (Retry), and
+// a later "End remote" must still be able to reach the host to kill the
+// now-detached remote -- clearing it on every exit made End a silent no-op
+// after any wifi blip (adversarial review, 2026-08-18).
 const sshTargetBySession = new Map<string, { username: string; host: string; port: number }>()
+
+// SSH tmux enhancement (items 1/4): sessions whose launch actually wrapped in a
+// tmux persistence session (`tmuxWrapped` at writeClaudeCmd). The remote for
+// these SURVIVES a local PTY teardown, so close/quit must DETACH, never destroy:
+//   - killPty must NOT type the U8 in-band `rm` cleanup down the live PTY -- for
+//     a tmux-wrapped launch the foreground is Claude, so the bytes land in its
+//     composer (LF doesn't submit) and are left PRE-TYPED in a session the user
+//     chose to leave running; the End-remote exec already removes the sidecars.
+//   - gracefulExitPty (app quit) must NOT send `/exit` -- inside tmux that quits
+//     Claude and tears the session down; killing the local PTY detaches instead.
+// Both are the exact regressions the persistence feature introduced against the
+// pre-existing close/quit paths (adversarial review, 2026-08-18). Cleared on
+// deliberate close alongside sshTargetBySession.
+const sshTmuxWrappedBySession = new Set<string>()
 
 /**
  * SSH tmux enhancement (item 4): deliberately END a persistent remote session.
@@ -1333,10 +1359,23 @@ export function spawnPty(
     const claudeEnvPrefix = claudeEnvVars.join(' ')
     // Flags common to POSIX + Windows (everything EXCEPT --settings/--mcp-config,
     // which differ by path shape: POSIX adds them inline below; the Windows
-    // builder re-adds them with %USERPROFILE% paths).
+    // builder re-adds them with %USERPROFILE% paths). The remote shell differs:
+    // POSIX single-quotes the model id (zsh globs `opus[1m]` otherwise, #144),
+    // but cmd.exe does NOT strip single quotes, so modelFlag()'s POSIX form gave
+    // a Windows launch a model id WITH literal quotes (adversarial review,
+    // 2026-08-18). cmd.exe uses DOUBLE quotes (claude.cmd strips them), so the
+    // Windows branch double-quotes via a local var -- the `${options.model}`
+    // shape the #144 source-scan forbids (correctly, for POSIX) never appears,
+    // and this is genuinely a different shell. effort/permissionMode/extraArgs
+    // are charset-safe in both shells (extraArgs is IPC-charset-guarded against
+    // every cmd + POSIX metachar).
+    const winModelId = options?.model ?? ''
+    const claudeModelCommonFlag = isWindowsRemote
+      ? (winModelId ? `--model "${winModelId}"` : '')
+      : modelFlag(options?.model, false)
     const claudeCommonFlags = [
       options?.effortLevel ? `--effort ${options.effortLevel}` : '',
-      modelFlag(options?.model, false),
+      claudeModelCommonFlag,
       options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
       options?.extraArgs && options.extraArgs.trim() ? options.extraArgs.trim() : '',
     ].filter(Boolean).join(' ')
@@ -1546,6 +1585,10 @@ export function spawnPty(
       // the launch actually wrapped in tmux. Re-send the account alongside so a
       // renderer that missed the latch push still gets both.
       emitSshSessionInfo(win, sessionId, { tmuxPersistent: tmuxWrapped, remoteAccount })
+      // Track locally so close/quit (killPty, gracefulExitPty) DETACH rather
+      // than destroy this session's surviving remote -- see the map's doc above.
+      if (tmuxWrapped) sshTmuxWrappedBySession.add(sessionId)
+      else sshTmuxWrappedBySession.delete(sessionId)
       logInfo(`[ssh] ${sessionId}: writing claudeCmd${tmuxWrapped ? ' (tmux-wrapped)' : ''}${continueFlag ? ' (+continue)' : ''}`)
       setTimeout(() => {
         // #242 finding F3 (adversarial review round 4, MAJOR): this write is
@@ -1920,7 +1963,13 @@ export function spawnPty(
       if (pushSent && !pushDone) return
       // item 1: skip tier-3/4 staging entirely when persistence is off -- this
       // is the "no silent tmux install" guarantee; go straight to bare claude.
-      if (persistenceEnabled && !detectedTmuxSource && !stagingAttempted) {
+      // item 3: also skip on a Windows remote -- the POSIX staging ladder
+      // (`stty`/`uname`/`base64 -d | sh`) is meaningless on cmd.exe and, since
+      // the Windows setup deliberately reports tmux=none, this gate would fire
+      // and type ~3 KB of POSIX shell into cmd.exe + stall 20s + show a false
+      // "Installing tmux…" overlay. Windows never persists via tmux; go straight
+      // to the bare cmd.exe launch (adversarial review, 2026-08-18).
+      if (persistenceEnabled && !isWindowsRemote && !detectedTmuxSource && !stagingAttempted) {
         writeTmuxStageCmd()
         return
       }
@@ -3053,15 +3102,6 @@ export function spawnPty(
 
   ptyProcess.onExit(({ exitCode }) => {
     logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
-    // item 5 (resume cascade): an SSH session whose ssh process exited before
-    // reaching claude-running failed to connect -- tell the overlay so it can
-    // offer Retry (never strand). Runs only while the flow still exists (a
-    // deliberate close destroys it first), so this fires for a genuine
-    // connection failure/drop, not for a user-initiated close.
-    if (sshFlows.has(sessionId)) {
-      try { getSshFlow(sessionId)?.handlePtyExit() } catch { /* best-effort */ }
-    }
-
     // Restart-race guard: the renderer's restart flow kills the old PTY
     // and re-spawns synchronously with the SAME sessionId. node-pty's
     // exit callback is async — by the time it fires, the new PTY has
@@ -3077,6 +3117,20 @@ export function spawnPty(
     const current = ptySessions.get(sessionId)
     const weAreCurrent = !current || current.ptyProcess === ptyProcess
     if (weAreCurrent) {
+      // item 5 (resume cascade): an SSH session whose ssh process exited before
+      // reaching claude-running failed to connect -- tell the overlay so it can
+      // offer Retry (never strand). Runs only while the flow still exists (a
+      // deliberate close destroys it first). CRITICAL: this MUST sit inside the
+      // weAreCurrent guard. sshFlows is keyed by sessionId only, so on a restart
+      // it holds the NEW flow while the OLD pty exits; poking it here (as the
+      // first cut did, above this guard) flipped a healthy just-respawned session
+      // to failed('connection'), and the overlay's only escape was Retry -> the
+      // same restart -> the same stale exit, wedged forever (adversarial review,
+      // 2026-08-18, BLOCKER). When we are NOT current a newer spawn owns the flow;
+      // its own onExit handles its own drops.
+      if (sshFlows.has(sessionId)) {
+        try { getSshFlow(sessionId)?.handlePtyExit() } catch { /* best-effort */ }
+      }
       ptySessions.delete(sessionId)
       clearSessionMeta(sessionId)
       // Close the run (the worker final-drains + retires its transcript tails).
@@ -3295,8 +3349,12 @@ function cleanupSessionResources(sessionId: string): void {
   // #242 finding F1 (b): drop this session's nonce so it can never leak into
   // a future, unrelated spawn reusing the same sessionId.
   sshNonceBySession.delete(sessionId)
-  // item 4: drop the SSH connection target alongside the nonce.
-  sshTargetBySession.delete(sessionId)
+  // item 4: the SSH connection target + tmux-persistence flag are DELIBERATELY
+  // NOT cleared here -- cleanupSessionResources runs on a natural PTY exit (a
+  // transient drop) too, where the tab stays and a later End must still reach
+  // the host. They are cleared only on deliberate close, in killPty (a respawn
+  // overwrites them, so a stale entry from an exited-but-open session is bounded
+  // and self-healing). See the maps' doc comment (adversarial review 2026-08-18).
   pasteQueues.get(sessionId)?.cancel() // stop draining + drop pending before dropping the ref (P1.5)
   pasteQueues.delete(sessionId)
   // Delete the per-session statusline status file so the watcher's poll
@@ -3352,18 +3410,30 @@ const REMOTE_CLEANUP_GRACE_MS = 400
 
 export function killPty(sessionId: string): void {
   const entry = ptySessions.get(sessionId)
+  // Read persistence BEFORE cleanupSessionResources runs (it no longer clears
+  // these, but killPty does, at the end).
+  const tmuxPersistent = sshTmuxWrappedBySession.has(sessionId)
   if (entry) {
-    logInfo(`[pty] Killing PTY for session ${sessionId}`)
-    if (sshFlows.has(sessionId)) {
+    logInfo(`[pty] Killing PTY for session ${sessionId}${tmuxPersistent ? ' (tmux-persistent: detach only)' : ''}`)
+    if (sshFlows.has(sessionId) && !tmuxPersistent) {
       // U8: sweep the per-session files we planted on the remote, in-band down the
       // still-live PTY, then kill after a short grace so the `rm` runs before the
       // tunnel dies. No SSH creds retained. A crash / natural exit can't do this
       // (the tunnel is already gone), which is acceptable -- the files are inert.
       // ptySessions.delete below means the delayed kill's onExit no-ops.
+      //
+      // Only for a NON-persistent SSH session. For a tmux-WRAPPED one the remote
+      // survives this teardown, so (a) the foreground is Claude and this line
+      // would land in its composer and stay pre-typed (LF doesn't submit), and
+      // (b) the sidecars must either survive (Leave running -- Claude still uses
+      // them) or be removed by the End-remote exec (which does its own rm). So we
+      // write nothing and just detach (adversarial review, 2026-08-18).
       const proc = entry.ptyProcess
       try { proc.write(buildRemoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
       setTimeout(() => { try { proc.kill() } catch { /* already gone */ } }, REMOTE_CLEANUP_GRACE_MS)
     } else {
+      // Non-SSH, or a tmux-persistent SSH session (killing the local PTY detaches
+      // the tmux client; the remote survives for reattach on relaunch).
       try { entry.ptyProcess.kill() } catch (err) {
         logError(`[pty] Error killing PTY ${sessionId}:`, err)
       }
@@ -3371,6 +3441,11 @@ export function killPty(sessionId: string): void {
     ptySessions.delete(sessionId)
   }
   cleanupSessionResources(sessionId)
+  // Deliberate close: NOW drop the end-target + persistence flag (see the maps'
+  // doc). A natural exit reaches cleanupSessionResources but not here, so the
+  // target survives a transient drop for a later End.
+  sshTargetBySession.delete(sessionId)
+  sshTmuxWrappedBySession.delete(sessionId)
 }
 
 export function killAllPty(): void {
@@ -3405,6 +3480,18 @@ export function gracefulExitPty(sessionId: string, timeoutMs = 5000): Promise<vo
       killPty(sessionId)
       resolve()
     }, timeoutMs)
+
+    // SSH tmux enhancement (item 4): a tmux-persistent remote must be DETACHED,
+    // not exited, on app quit. `/exit` inside the tmux-wrapped pane quits Claude
+    // and tears the remote session down -- defeating the persistence the header
+    // pill just promised, on the most common exit path. Killing the local PTY
+    // detaches the tmux client; the remote survives for reattach on relaunch
+    // (adversarial review, 2026-08-18). The onExit listener above resolves.
+    if (sshTmuxWrappedBySession.has(sessionId)) {
+      logInfo(`[pty-manager] ${sessionId} is tmux-persistent -- detaching (no /exit) so the remote survives app quit`)
+      try { entry.ptyProcess.kill() } catch { /* already gone */ }
+      return
+    }
 
     // Send Escape (cancel any pending input), then /exit
     entry.ptyProcess.write('\x1b')  // Escape

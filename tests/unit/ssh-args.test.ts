@@ -134,16 +134,22 @@ describe('buildSshExecArgs (item 4 — one-shot end-remote exec)', () => {
     // The remote command is the LAST arg (ssh joins trailing args with spaces).
     expect(args[args.length - 1]).toBe('tmux kill-session -t ccc-x; true')
   })
-  it('adds ControlMaster/ControlPath off only on win32', () => {
-    const win = buildSshExecArgs(target, 'true', 'win32')
-    expect(win).toContain('ControlMaster=no')
-    expect(win).toContain('ControlPath=none')
-    const lin = buildSshExecArgs(target, 'true', 'linux')
-    expect(lin).not.toContain('ControlMaster=no')
-    expect(lin).not.toContain('ControlPath=none')
-    // darwin is treated like linux (POSIX multiplexing is fine).
-    const mac = buildSshExecArgs(target, 'true', 'darwin')
-    expect(mac).not.toContain('ControlMaster=no')
+  it('forces ControlMaster/ControlPath OFF on EVERY platform (the exec must not multiplex over the live PTY that is about to be killed)', () => {
+    // Unlike buildSshArgs (win32-only #241), the end-remote exec disables
+    // multiplexing everywhere: it is dispatched right before the caller tears
+    // down the shared connection's master, so on a POSIX client with
+    // `ControlMaster auto` a multiplexed exec would be cut off mid-kill
+    // (adversarial review, 2026-08-18). Each `-o` must have its own flag so a
+    // single-`-o` mutant leaves an orphaned positional.
+    for (const platform of ['win32', 'linux', 'darwin'] as const) {
+      const args = buildSshExecArgs(target, 'true', platform)
+      const i = args.indexOf('ControlMaster=no')
+      const j = args.indexOf('ControlPath=none')
+      expect(i).toBeGreaterThan(0)
+      expect(args[i - 1]).toBe('-o')
+      expect(j).toBeGreaterThan(0)
+      expect(args[j - 1]).toBe('-o')
+    }
   })
   it('re-asserts the same argv field guard as buildSshArgs (leading dash / whitespace / empty)', () => {
     expect(() => buildSshExecArgs({ ...target, username: '-oProxyCommand=x' }, 'true', 'linux')).toThrow()

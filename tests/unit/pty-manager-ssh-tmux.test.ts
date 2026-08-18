@@ -90,15 +90,35 @@ function applyLineDiscipline(text: string): string {
 }
 
 const writeMock = vi.fn()
-const spawnMock = vi.fn(() => ({
-  onData: (cb: (data: string) => void) => {
-    onDataListeners.push(cb)
-  },
-  onExit: () => {},
-  write: writeMock,
-  kill: () => {},
-  pid: 123,
-}))
+// Every pty node-pty.spawn hands back, in spawn order, so a test can fire a
+// SPECIFIC pty's exit (needed for the restart-race regression: the OLD pty must
+// be able to exit AFTER a new one took over the same sessionId). The real mock
+// used to discard the onExit callback (`onExit: () => {}`), which is exactly why
+// handlePtyExit + the restart-race guard were untestable (adversarial review,
+// 2026-08-18). Each instance's __fireExit runs every onExit listener registered
+// on it (spawnPty's, and gracefulExitPty's own).
+interface FakePty {
+  onData: (cb: (data: string) => void) => void
+  onExit: (cb: (e: { exitCode: number }) => void) => void
+  write: typeof writeMock
+  kill: () => void
+  pid: number
+  __fireExit: (exitCode?: number) => void
+}
+const ptyInstances: FakePty[] = []
+const spawnMock = vi.fn(() => {
+  const exits: Array<(e: { exitCode: number }) => void> = []
+  const inst: FakePty = {
+    onData: (cb: (data: string) => void) => { onDataListeners.push(cb) },
+    onExit: (cb: (e: { exitCode: number }) => void) => { exits.push(cb) },
+    write: writeMock,
+    kill: () => {},
+    pid: 123,
+    __fireExit: (exitCode = 0) => { for (const cb of exits.slice()) cb({ exitCode }) },
+  }
+  ptyInstances.push(inst)
+  return inst
+})
 vi.mock('node-pty', () => ({ spawn: spawnMock }))
 vi.mock('electron', () => ({
   BrowserWindow: class {},
@@ -106,7 +126,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/tmp' },
 }))
 
-const { spawnPty, getSshFlow, killPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest } = await import('../../src/main/pty-manager')
+const { spawnPty, getSshFlow, killPty, gracefulExitPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest, _hasSshTargetForTest } = await import('../../src/main/pty-manager')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 // Pure module, no node-pty/electron deps -- safe to import directly (unlike
@@ -1737,11 +1757,15 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
     expect(written).toContain('new-session -s ccc-s-reconnect-tmux')
-    // Item 6: attach branch (reattach live claude) carries no --continue; fresh branch does.
-    const attachBranch = written.slice(written.indexOf('then'), written.indexOf('else'))
-    const freshBranch = written.slice(written.indexOf('else'))
-    expect(attachBranch).not.toContain('--continue')
-    expect(freshBranch).toContain('--continue')
+    // Item 6: a LIVE reattach (`attach -t X` before its `|| <fresh>` backstop)
+    // carries no --continue -- relaunching a running claude would be wrong.
+    // Every fresh-create (the attach fallback AND the else) resumes with it.
+    expect(written).toContain('attach -t ccc-s-reconnect-tmux || ')
+    expect(written).not.toMatch(/attach -t ccc-s-reconnect-tmux --continue/)
+    const creates = written.split('new-session -s ccc-s-reconnect-tmux ').slice(1)
+    expect(creates.length).toBe(2)
+    for (const c of creates) expect(c.startsWith(`'`)).toBe(true)
+    expect(written).toContain('--continue')
   })
 
   // Mutation to prove this can fail: drop the `reconnect` gate itself (add
@@ -1790,7 +1814,7 @@ describe('parseSetupAccountSentinel (item 10)', () => {
     // A hostile host trying to plant markup / a control sequence in the label.
     const evil = `setup ok ${NONCE} tmux=path acct=${b64('<img src=x onerror=alert(1)>')}\r\n`
     expect(parseSetupAccountSentinel(evil, NONCE)).toBeUndefined()
-    const ctrl = `setup ok ${NONCE} tmux=path acct=${b64('a@b.co;rm -rf')}\r\n`
+    const ctrl = `setup ok ${NONCE} tmux=path acct=${b64('a@b.co\x07;rm -rf')}\r\n`
     expect(parseSetupAccountSentinel(ctrl, NONCE)).toBeUndefined()
   })
   it('requires the correct nonce (spoof-resistant)', () => {
@@ -1804,5 +1828,146 @@ describe('parseSetupAccountSentinel (item 10)', () => {
   it('caps length -- an over-long decoded value is dropped', () => {
     const long = `setup ok ${NONCE} tmux=path acct=${b64('a'.repeat(300) + '@b.co')}\r\n`
     expect(parseSetupAccountSentinel(long, NONCE)).toBeUndefined()
+  })
+})
+
+// ===========================================================================
+// Adversarial-review regression tests (2026-08-18). Every block below pins a
+// fix for a finding the mutation lens proved had NO failing-capable test:
+// restart-race flow poisoning (BLOCKER), the in-band cleanup / gracefulExit
+// self-injection into the tmux-wrapped Claude pane, end-target lifecycle, and
+// the Windows staging gate.
+// ===========================================================================
+describe('spawnPty SSH branch — handlePtyExit + restart-race guard (adversarial review, BLOCKER)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('a STALE PTY exit from a restarted session does NOT poison the new flow', () => {
+    onDataListeners.length = 0
+    const i0 = ptyInstances.length
+    // spawn A, then the renderer restart: kill A + respawn B with the SAME id.
+    spawnPty(fakeWin, 's-restart', { ssh: SSH } as never)
+    const flowA = getSshFlow('s-restart')
+    killPty('s-restart')
+    spawnPty(fakeWin, 's-restart', { ssh: SSH } as never)
+    const flowB = getSshFlow('s-restart')
+    expect(flowB).toBeDefined()
+    expect(flowB).not.toBe(flowA)
+    expect(flowB!.getState().state).toBe('connecting')
+    // The OLD ssh finally dies (~400ms later in prod). Its exit must NOT reach
+    // the new flow: ptySessions[s-restart] now points at B, so weAreCurrent is
+    // false and handlePtyExit is skipped. Before the fix this flipped B to
+    // failed('connection') and the overlay's only escape (Retry) re-raced it.
+    ptyInstances[i0].__fireExit(0)
+    expect(flowB!.getState().state).toBe('connecting')
+    expect(flowB!.getState().info).not.toBe('connection')
+  })
+
+  it('a GENUINE PTY exit before claude-running emits failed(connection) so the overlay can Retry', () => {
+    onDataListeners.length = 0
+    const idx = ptyInstances.length
+    spawnPty(fakeWin, 's-drop', { ssh: SSH } as never)
+    const flow = getSshFlow('s-drop')!
+    expect(flow.getState().state).toBe('connecting')
+    ptyInstances[idx].__fireExit(255)
+    // Captured ref survives the cleanup that follows in the same onExit.
+    expect(flow.getState()).toEqual({ state: 'failed', info: 'connection' })
+  })
+
+  it('does NOT emit failed() when the flow already reached a terminal state (skipped)', () => {
+    onDataListeners.length = 0
+    const idx = ptyInstances.length
+    spawnPty(fakeWin, 's-skip', { ssh: SSH } as never)
+    const flow = getSshFlow('s-skip')!
+    flow.skip()
+    expect(flow.getState().state).toBe('skipped')
+    ptyInstances[idx].__fireExit(0)
+    expect(flow.getState().state).toBe('skipped')
+  })
+})
+
+describe('killPty / gracefulExitPty — a tmux-persistent remote is DETACHED, never destroyed (adversarial review)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('killPty on a tmux-PERSISTENT SSH session writes NO in-band `rm` into the live Claude pane (detach only)', () => {
+    driveToClaudeWrite('s-persist-close', 'setup ok {NONCE} tmux=path\r\n')
+    // Confirm the launch actually wrapped in tmux (so the session is persistent).
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t ccc-s-persist-close'))).toBe(true)
+    writeMock.mockClear()
+    killPty('s-persist-close')
+    // The destructive `rm -f ~/.claude/...` would land in Claude's composer and
+    // stay pre-typed in a session the user chose to leave running.
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(false)
+  })
+
+  it('killPty on a NON-persistent SSH session still sweeps its sidecars in-band (unchanged behaviour)', () => {
+    driveToClaudeWrite('s-nonpersist-close', 'setup ok {NONCE} tmux=none\r\n')
+    // tmux=none -> staging fails (helper) -> bare launch, so NOT persistent.
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session'))).toBe(false)
+    writeMock.mockClear()
+    killPty('s-nonpersist-close')
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(true)
+  })
+
+  it('gracefulExitPty DETACHES a tmux-persistent SSH session (no ESC/Ctrl-C/`/exit`) so the remote survives app quit', () => {
+    driveToClaudeWrite('s-persist-quit', 'setup ok {NONCE} tmux=path\r\n')
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session'))).toBe(true)
+    writeMock.mockClear()
+    const idx = ptyInstances.length - 1
+    void gracefulExitPty('s-persist-quit', 5000)
+    // No exit-key sequence at all -- the fix kills the local PTY instead.
+    vi.advanceTimersByTime(500)
+    const wroteExitSeq = writeMock.mock.calls.some((c) => typeof c[0] === 'string' && (c[0].includes('/exit') || c[0] === '\x1b' || c[0] === '\x03'))
+    expect(wroteExitSeq).toBe(false)
+    // Resolve the pending promise (the fix's kill() is a no-op in the mock).
+    ptyInstances[idx].__fireExit(0)
+  })
+})
+
+describe('endSshRemote target lifecycle — survives a drop, cleared on deliberate close (adversarial review)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('captures the end-target at spawn, KEEPS it across a natural PTY exit (so End works after a drop), and drops it only on killPty', () => {
+    onDataListeners.length = 0
+    const idx = ptyInstances.length
+    spawnPty(fakeWin, 's-endtarget', { ssh: SSH } as never)
+    expect(_hasSshTargetForTest('s-endtarget')).toBe(true)
+    // A transient drop (natural exit): cleanupSessionResources runs, but the
+    // target must SURVIVE -- otherwise a later "End remote" is a silent no-op.
+    ptyInstances[idx].__fireExit(255)
+    expect(_hasSshTargetForTest('s-endtarget')).toBe(true)
+    // Deliberate close drops it.
+    killPty('s-endtarget')
+    expect(_hasSshTargetForTest('s-endtarget')).toBe(false)
+  })
+})
+
+describe('spawnPty SSH branch — Windows remote skips the POSIX tmux staging ladder (item 3, adversarial review)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('remoteOs:windows delivers the PowerShell setup and never runs the POSIX `base64 -d | sh` staging on tmux=none', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-win-remote', { ssh: { ...SSH, remoteOs: 'windows' }, model: 'opus[1m]' } as never)
+    writeMock.mockClear()
+    getSshFlow('s-win-remote')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    // Windows setup is PowerShell-delivered, not the POSIX base64|node form.
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('powershell'))).toBe(true)
+    feedPtyData(nonceSentinel('s-win-remote', 'setup ok {NONCE} tmux=none acct=\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    // No POSIX staging ladder typed into cmd.exe, and no 20s stall path.
+    expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
+    // The launch is the cmd.exe form (set "X=Y"&& claude), never tmux-wrapped.
+    const claudeWrite = writeMock.mock.calls.map((c) => c[0]).find((a) => typeof a === 'string' && a.includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite as string).not.toContain('has-session')
+    // m1: the model id reaches cmd.exe DOUBLE-quoted (claude.cmd strips them),
+    // never POSIX single-quoted (cmd.exe leaves those literal -> a broken flag).
+    expect(claudeWrite as string).toContain('--model "opus[1m]"')
+    expect(claudeWrite as string).not.toContain(`--model 'opus[1m]'`)
   })
 })

@@ -78,3 +78,39 @@ describe('useLaunchConfig loggingEnabled mapping (#188)', () => {
     expect(session.enableCodexReview).toBeUndefined()
   })
 })
+
+// SSH tmux enhancement (items 1/3, adversarial review 2026-08-18): the SAME
+// field-by-field-rebuild drop that made loggingEnabled inert (#188 above) also
+// dropped the SSH persistence controls -- `detachable` (the owner's "never
+// silently install tmux" opt-out) and `remoteOs` (the Windows path selector) --
+// so unticking Detachable did nothing and remoteOs could never reach main. These
+// pin that every SshConfig control survives config -> launched session.
+describe('useLaunchConfig SSH persistence fields (items 1/3)', () => {
+  beforeEach(() => { addSession.mockClear() })
+
+  const sshBase = {
+    id: 'cfg-ssh',
+    label: 'remote',
+    workingDirectory: '',
+    color: '#fff',
+    sessionType: 'ssh' as const,
+    provider: 'claude' as const,
+    sshConfig: { host: 'h', port: 22, username: 'u', remotePath: '~', hasPassword: false },
+  }
+
+  it('carries detachable:false (the opt-out) onto the launched session', () => {
+    const session = launchWith({ ...sshBase, sshConfig: { ...sshBase.sshConfig, detachable: false } })
+    expect(session.sshConfig.detachable).toBe(false)
+  })
+
+  it('carries remoteOs:windows onto the launched session', () => {
+    const session = launchWith({ ...sshBase, sshConfig: { ...sshBase.sshConfig, remoteOs: 'windows' } })
+    expect(session.sshConfig.remoteOs).toBe('windows')
+  })
+
+  it('leaves detachable/remoteOs undefined (defaults) when unset -- persistence ON, POSIX', () => {
+    const session = launchWith({ ...sshBase })
+    expect(session.sshConfig.detachable).toBeUndefined()
+    expect(session.sshConfig.remoteOs).toBeUndefined()
+  })
+})

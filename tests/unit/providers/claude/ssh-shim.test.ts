@@ -465,7 +465,14 @@ describe('getWindowsRemoteSetupCommand (item 3 — cmd.exe delivery)', () => {
     // NOT -EncodedCommand (double-base64 would blow past the cmd line limit).
     expect(cmd).not.toContain('-EncodedCommand')
     expect(cmd).toContain('FromBase64String')
-    expect(cmd).toContain('$ProgressPreference=')
+    expect(cmd).toContain('|node')
+    // The -Command payload MUST contain NO `$`: a PowerShell login shell expands
+    // any $var inside the double-quoted argument before the child runs, and the
+    // earlier `$ProgressPreference=…;$s=…;$s|node` form had $s expanded to empty
+    // -> `;|node` ParserError, so setup silently never ran (adversarial review,
+    // 2026-08-18). Mutation to prove this can fail: reintroduce a `$` anywhere in
+    // the -Command string.
+    expect(cmd).not.toContain('$')
     // Well under cmd.exe's 8191-char command-line limit (measured ~4.8k on Hyper-V).
     expect(cmd.length).toBeLessThan(8191)
   })

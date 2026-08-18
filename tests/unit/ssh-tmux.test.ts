@@ -25,19 +25,21 @@ const base = {
 }
 
 describe('buildTmuxLaunchCommand', () => {
-  it('builds the has-session wrapper (attach live, else fresh) using ON_PATH_TMUX_BIN_EXPR for staged: false', () => {
+  it('builds the has-session wrapper (attach live, else fresh; attach falls through to fresh on a lost race) using ON_PATH_TMUX_BIN_EXPR for staged: false', () => {
     const cmd = buildTmuxLaunchCommand(base)
     const t = ON_PATH_TMUX_BIN_EXPR
+    const fresh = `${t} new-session -s ccc-sid-1 '${base.innerCmd}'`
     expect(cmd).toBe(
-      `if ${t} has-session -t ccc-sid-1 2>/dev/null; then ${t} attach -t ccc-sid-1; else ${t} new-session -s ccc-sid-1 '${base.innerCmd}'; fi`,
+      `if ${t} has-session -t ccc-sid-1 2>/dev/null; then ${t} attach -t ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
     )
   })
 
   it('uses STAGED_TMUX_BIN_EXPR for staged: true', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
     const t = STAGED_TMUX_BIN_EXPR
+    const fresh = `${t} new-session -s ccc-sid-1 '${base.innerCmd}'`
     expect(cmd).toBe(
-      `if ${t} has-session -t ccc-sid-1 2>/dev/null; then ${t} attach -t ccc-sid-1; else ${t} new-session -s ccc-sid-1 '${base.innerCmd}'; fi`,
+      `if ${t} has-session -t ccc-sid-1 2>/dev/null; then ${t} attach -t ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
     )
   })
 
@@ -49,16 +51,31 @@ describe('buildTmuxLaunchCommand', () => {
     expect(cmd).toMatch(/else\s+.*new-session\s+-s\s+ccc-sid-1/)
   })
 
-  // Item 6 (silent-blank-chat fix): --continue rides the FRESH-create branch
-  // only, and only on a reconnect. Mutation to prove this can fail: append
-  // --continue to innerCmd unconditionally, or to the attach branch -- the
-  // attach-branch assertion (no --continue) then fails.
-  it('adds --continue to the fresh-create branch only, on a reconnect', () => {
+  // The attach is NOT atomic with has-session; a lost race (session dies in the
+  // ~10ms gap) must self-heal, not strand the user (adversarial review,
+  // 2026-08-18). Mutation to prove this can fail: drop the `|| <fresh>` from the
+  // attach branch.
+  it('falls the attach THROUGH to a fresh create when the reattach fails', () => {
+    const cmd = buildTmuxLaunchCommand(base)
+    // The live-reattach `attach -t X` is immediately backstopped by `|| <fresh>`.
+    expect(cmd).toContain('attach -t ccc-sid-1 || ')
+    // Two identical create paths: the attach fallback and the else branch.
+    const creates = cmd.split('new-session -s ccc-sid-1 ').length - 1
+    expect(creates).toBe(2)
+  })
+
+  // Item 6 (silent-blank-chat fix): --continue rides every FRESH-create (the
+  // attach fallback AND the else), and only on a reconnect; a LIVE reattach
+  // (`attach -t X` before the `||`) never gets it -- relaunching a running
+  // claude would be wrong. Mutation to prove this can fail: append --continue to
+  // innerCmd unconditionally, or to the attach op -- the assertions below fail.
+  it('adds --continue to every fresh-create branch, never to a live attach, on a reconnect', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, reconnect: true })
-    const attachBranch = cmd.slice(cmd.indexOf('then'), cmd.indexOf('else'))
-    const freshBranch = cmd.slice(cmd.indexOf('else'))
-    expect(attachBranch).not.toContain('--continue')
-    expect(freshBranch).toContain(`${base.innerCmd} --continue`)
+    expect(cmd).toContain('attach -t ccc-sid-1 || ')
+    expect(cmd).not.toMatch(/attach -t ccc-sid-1 --continue/)
+    const creates = cmd.split('new-session -s ccc-sid-1 ').slice(1)
+    expect(creates.length).toBe(2)
+    for (const c of creates) expect(c.startsWith(`'${base.innerCmd} --continue'`)).toBe(true)
   })
 
   it('never adds --continue on a first connect (reconnect: false)', () => {
@@ -93,11 +110,12 @@ describe('buildTmuxLaunchCommand', () => {
   it('single-quotes an innerCmd containing a single quote without breaking out of the argument', () => {
     const innerCmd = `echo 'hi' && say "done"`
     const cmd = buildTmuxLaunchCommand({ ...base, innerCmd })
-    // The fresh-create branch's quoted command argument (after the LAST
-    // '-s ccc-sid-1 ' -- has-session's -t uses a different flag, so this
-    // uniquely lands on new-session's operand).
+    // The else-branch fresh-create quoted argument (after the LAST
+    // '-s ccc-sid-1 ' -- the attach fallback also creates fresh, so use
+    // lastIndexOf to land uniquely on the else branch's operand, terminated
+    // only by '; fi').
     const marker = 'new-session -s ccc-sid-1 '
-    const quotedArg = cmd.slice(cmd.indexOf(marker) + marker.length).replace(/; fi$/, '')
+    const quotedArg = cmd.slice(cmd.lastIndexOf(marker) + marker.length).replace(/; fi$/, '')
     expect(quotedArg.startsWith("'")).toBe(true)
     expect(quotedArg.endsWith("'")).toBe(true)
     // Reverse the POSIX single-quote escaping (strip outer quotes, undo
