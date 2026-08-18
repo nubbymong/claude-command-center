@@ -25,22 +25,67 @@ import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 // doesn't expose `extra_usage`, so SSH statuslines no longer show the extra
 // top-up bar (local sessions still do). Re-add via API later if needed.
 // Fallback order for the OSC sentinel (first that succeeds wins):
-//   1. /dev/tty — the controlling terminal. Correct when it exists, but Claude
-//      runs the statusLine command as a DETACHED child (via `sh -c`), so that
-//      child has NO controlling terminal and this fails with ENXIO over SSH.
-//   2. Ancestor pts — walk the process tree for the /dev/pts/N slave that an
+//   1. tmux client tty (#242) — checked FIRST, ahead of /dev/tty below.
+//      Under tmux, EVERY device this shim's own process tree can reach --
+//      /dev/tty (case 2) and the ancestor-pts walk (case 3) alike -- is the
+//      pane's pty, because that pane pty IS this process's (detached)
+//      controlling context; tmux swallows an unrecognised OSC written there
+//      instead of forwarding it to the attached client. Neither fallback
+//      below can ever reach the outer ssh PTY once $TMUX is set, so tmux
+//      must be tried first, not because /dev/tty would falsely "succeed"
+//      but because it and the pts walk both land on the wrong pty entirely.
+//      Ask the tmux SERVER for `#{client_tty}` — the device path of the tty
+//      the ATTACHED CLIENT (the outer ssh session) is on — and write the
+//      sentinel straight there, bypassing the pane pty and any tmux
+//      forwarding entirely. tmuxBin comes from $CCC_TMUX_BIN, baked into the
+//      statusLine command by generateRemoteSetupScript from the tier-1/2
+//      probe result — tmux is NOT assumed to be on PATH (tiers 2+ stage it
+//      under ~/.claude/bin). CCC_TMUX_BIN is allowlist-guarded at the point
+//      generateRemoteSetupScript bakes it in (see the `tmuxPath` guard
+//      there, mirroring SAFE_TMUX_BIN_RE in ssh-tmux.ts) — this shim can
+//      trust the value it's handed. Empty `#{client_tty}` output means the
+//      tmux session is detached (no attached client) — nothing to display,
+//      so skip the write rather than fail. `ok` is set true on this branch
+//      too (adversarial review round 5, #242 M7 fix): the prior version left
+//      `ok` false here, so a detached session fell through to /dev/tty then
+//      the ancestor-pts walk below — the latter usually lands on the PANE
+//      pty (which still exists even with no attached client) and succeeds,
+//      logging a `pts-ok` "success" for a sentinel nobody is attached to
+//      ever see. Marking this handled prevents that false-positive trace.
+//      The `display-message` call carries a 2s timeout: a hung or half-dead
+//      tmux server must not stall the statusLine child indefinitely on
+//      every refresh -- a timeout kill throws, which the catch below turns
+//      into a `tmux-fail` trace line same as any other failure. See the
+//      decision note on buildTmuxLaunchCommand in ssh-tmux.ts.
+//      `tty` itself is validated before the write (adversarial review round
+//      5, #242 M1): must be an absolute path under `/dev/` AND an actual
+//      character device (fs.statSync().isCharacterDevice()) — `tmux
+//      display-message` is trusted output from a binary this app itself
+//      staged/resolved, not remote-attacker input, but fs.writeFileSync on
+//      an arbitrary returned path would otherwise CREATE or TRUNCATE a
+//      regular file if that trust were ever misplaced (a future tmux
+//      version, a wrapper script, a malformed `#{client_tty}` expansion).
+//   2. /dev/tty — the controlling terminal. Correct outside tmux, but Claude
+//      runs the statusLine command as a DETACHED child (via `sh -c`), so
+//      that child usually has NO controlling terminal and this fails with
+//      ENXIO over a plain (non-tmux) SSH session.
+//   3. Ancestor pts — walk the process tree for the /dev/pts/N slave that an
 //      ancestor (claude itself) holds on one of its fds, and write the sentinel
 //      to that device. Writing the pts slave sends bytes toward the master →
 //      sshd → local, i.e. it reaches the ssh PTY and the local OSC parser. This
-//      is the path that actually works over SSH. Linux-only (needs /proc).
-//   3. stderr — last resort. NOTE: over SSH, Claude captures the child's stderr
+//      is the path that actually works over SSH (outside tmux). Linux-only
+//      (needs /proc). Also serves as a fallback if tier 1 has no
+//      $CCC_TMUX_BIN or the tmux server call fails (under tmux this still
+//      lands on the pane pty, which tmux swallows, but it costs nothing to try).
+//   4. stderr — last resort. NOTE: over SSH, Claude captures the child's stderr
 //      on a pipe, so this typically does NOT reach the local PTY (that is why
 //      the pre-fix shim, which relied on it, never showed a statusline). Kept
 //      only for environments where the child's stderr is inherited.
-//   4. Append a trace line to ~/.claude/conductor-shim.log on every path
-//      (tty-fail / pts-ok / pts-fail / pts-none / stderr-fallback) so "no
-//      statusline ever appeared" stays diagnosable without guesswork. The log
-//      is capped via append-and-forget; grows slowly.
+//   5. Append a trace line to ~/.claude/conductor-shim.log on every path
+//      (tmux-clienttty-ok / tmux-detached / tmux-fail / tty-fail / pts-ok /
+//      pts-fail / pts-none / stderr-fallback) so "no statusline ever
+//      appeared" stays diagnosable without guesswork. The log is capped via
+//      append-and-forget; grows slowly.
 const SSH_STATUSLINE_SHIM = `#!/usr/bin/env node
 const fs=require('fs'),os=require('os'),path=require('path');
 const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');
@@ -68,7 +113,8 @@ if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percenta
 if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}
 const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
 let ok=false;
-try{fs.writeFileSync('/dev/tty',sentinel);ok=true;}catch(e){trace('tty-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));}
+if(process.env.TMUX){const tb=process.env.CCC_TMUX_BIN||'';if(tb){try{const out=require('child_process').execFileSync(tb,['display-message','-p','#{client_tty}'],{encoding:'utf8',timeout:2000});const tty=out.split('\\n')[0].trim();if(tty){try{if(tty.indexOf('/dev/')!==0)throw new Error('not-under-dev');if(!fs.statSync(tty).isCharacterDevice())throw new Error('not-a-chardev');fs.writeFileSync(tty,sentinel);ok=true;trace('tmux-clienttty-ok sid='+sid+' dev='+tty);}catch(e4){trace('tmux-fail sid='+sid+' dev='+tty+' err='+(e4&&e4.code||e4.message||'unknown'));}}else{ok=true;trace('tmux-detached sid='+sid);}}catch(e5){trace('tmux-fail sid='+sid+' err='+(e5&&e5.code||e5.message||'unknown'));}}else{trace('tmux-fail sid='+sid+' err=no-ccc-tmux-bin');}}
+if(!ok){try{fs.writeFileSync('/dev/tty',sentinel);ok=true;}catch(e){trace('tty-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));}}
 if(!ok){const pts=findPty();if(pts){try{fs.writeFileSync(pts,sentinel);ok=true;trace('pts-ok sid='+sid+' dev='+pts);}catch(e2){trace('pts-fail sid='+sid+' dev='+pts+' err='+(e2&&e2.code||e2.message||'unknown'));}}else{trace('pts-none sid='+sid);}}
 if(!ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e3){trace('stderr-fail sid='+sid+' err='+(e3&&e3.message||'unknown'));}}
 process.stdout.write(' ');
@@ -88,8 +134,22 @@ process.stdout.write(' ');
 export function generateRemoteSetupScript(
   sessionId: string,
   hooksConfig: { port: number; secret: string } | null,
-  opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
+  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+  nonce: string,
 ): string {
+  // #242 finding F1 (b): the `setup ok` sentinel this script emits (bottom
+  // of `lines`, below) MUST carry `nonce` -- required, not optional, so a
+  // future call site cannot silently regress to the pre-nonce sentinel shape
+  // by omitting the argument. Charset-guarded before interpolation into the
+  // remote-facing script text, same reasoning as assertSafeNonce
+  // (ssh-tmux-stage.ts) — this whole script runs under `2>/dev/null`
+  // (getRemoteSetupCommand), so a thrown error here silently aborts setup
+  // rather than crashing anything; that is an acceptable fail-closed
+  // degrade for a nonce this app itself generated and should never be
+  // malformed in production.
+  if (!/^[A-Za-z0-9]+$/.test(nonce)) {
+    throw new Error(`generateRemoteSetupScript: nonce "${nonce}" fails the charset guard (expected [A-Za-z0-9]+).`)
+  }
   const { includeStatusLine = true, includeConductorMcp = true } = opts ?? {}
   // Conductor MCP server is always running (independent of browser/vision config),
   // so SSH sessions always get the conductor MCP entry pointing at the
@@ -151,17 +211,34 @@ export function generateRemoteSetupScript(
     : JSON.stringify({ mcpServers: {} })
   // Master status-line switch: with it off, the per-session clone simply gets
   // no statusLine key (the shim file is still staged but inert without it).
+  //
+  // CCC_TMUX_BIN is baked in alongside CLAUDE_MULTI_SESSION_ID so the shim's
+  // $TMUX branch (SSH_STATUSLINE_SHIM above) can reach the tmux server
+  // without assuming `tmux` is on PATH (tiers 2+ stage it under
+  // ~/.claude/bin, which a pane's shell may not have on PATH). `tmuxPath` is
+  // a REMOTE-side variable, not a TS value -- the tier-1/2 probe only runs
+  // once the generated script executes on the target host, so this is
+  // string concatenation (`+tmuxPath+`) baked into the emitted source, the
+  // same trick already used for `+shimPath` below. That means the probe
+  // (declared further down in `lines`) must run BEFORE this statement, so
+  // it is placed immediately after the shim is written, ahead of the
+  // sesCfg build.
   const sesCfgParts: string[] = []
   if (includeStatusLine) {
-    // Use safeSid, not the raw sessionId (#265): this value is embedded in a
-    // single-quoted JS string literal inside the setup script AND becomes the
-    // `command` claude later runs via `sh -c`. A raw id bearing a quote/space/
-    // metacharacter would break out of the literal (remote code execution) or
-    // split the command. The IPC boundary already charset-gates the id; this is
-    // the sink-side backstop, and a no-op for real (hex) ids. Every OTHER
-    // embedding is already neutralised — the URL via encodeURIComponent, the
-    // filenames via safeSid — so this was the last raw path.
-    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${safeSid} node '+shimPath}`)
+    // Use safeSid, not the raw sessionId (#265; independently reached by #242
+    // F2): this value is embedded in a single-quoted JS string literal inside
+    // the setup script AND becomes the `command` claude later runs via `sh -c`.
+    // A raw id bearing a quote/space/metacharacter would break out of the literal
+    // (remote code execution) or split the command. The IPC boundary already
+    // charset-gates the id; this is the sink-side backstop, and a no-op for real
+    // (hex) ids. Every OTHER embedding is already neutralised — the URL via
+    // encodeURIComponent, the filenames via safeSid — so this was the last raw path.
+    //
+    // #242 F3: CCC_TMUX_BIN='+tmuxPath+' is baked in so the statusline shim can
+    // find the tmux binary under a persistent session. tmuxPath is the tier-1/2
+    // probe result (empty when none); after a tier-3/4 stage succeeds it is
+    // rewritten by buildTmuxBinPatchCommand. tmuxPath is charset-guarded upstream.
+    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${safeSid} CCC_TMUX_BIN='+tmuxPath+' node '+shimPath}`)
   }
   if (hooksLiteral) sesCfgParts.push(`hooks:${hooksLiteral}`)
 
@@ -194,6 +271,49 @@ export function generateRemoteSetupScript(
     // WRITE rather than a leaked secret -- weaker than the token files, but the
     // same primitive, and it is the last write here without the guard.
     `try{fs.rmSync(shimPath,{force:true})}catch{}try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755,flag:'wx'})}catch{}`,
+    // #242 tmux detection, tier 1-2. Tier 1: PATH, via the `command -v`
+    // shell builtin (not `which` -- not guaranteed present on minimal
+    // images). Tier 2: ~/.claude/bin/tmux, the staging path a later tier
+    // (base64 push / pinned static build) writes a self-fetched binary to.
+    // fs.accessSync(X_OK) rather than existsSync -- a staged-but-not-yet-
+    // chmod'd file must not be reported as usable. Tiers 3+ (remote
+    // curl/wget fetch, host-side base64 push, --continue degradation) are
+    // NOT implemented here; a miss at both tiers reports 'none' and
+    // pty-manager falls back to the bare (non-tmux) claude launch. Run
+    // BEFORE the sesCfg build below -- CCC_TMUX_BIN in the statusLine
+    // command needs `tmuxPath` to already exist.
+    //
+    // #242 round-3 correction (I3): `tmuxClass` -- not `tmuxPath` -- is what
+    // crosses back over the wire in the `setup ok` sentinel below.
+    // `tmuxPath` itself stays purely local to THIS remote script, feeding
+    // only the CCC_TMUX_BIN bake-in a few lines down (read back by the
+    // statusline shim's own child process on the SAME host, never sent to
+    // the local Conductor) -- pty-manager's launch-command sink
+    // (buildTmuxLaunchCommand, ssh-tmux.ts) no longer accepts a
+    // remote-reported path for either tier at all, so there is nothing left
+    // for a wire-carried path to influence.
+    `let tmuxPath='';let tmuxClass='none';try{tmuxPath=require('child_process').execSync('command -v tmux',{encoding:'utf8'}).trim();if(tmuxPath)tmuxClass='path'}catch{}`,
+    `if(!tmuxPath){const cb=path.join(claudeDir,'bin','tmux');try{fs.accessSync(cb,fs.constants.X_OK);tmuxPath=cb;tmuxClass='home'}catch{}}`,
+    // #242 MAJOR (round 2, adversarial review): allowlist guard on tmuxPath,
+    // BEFORE its one remaining consumer below (CCC_TMUX_BIN). `command -v
+    // tmux` and the ~/.claude/bin access check both hand back a value this
+    // script does not control -- a shell function, alias, or wrapper named
+    // `tmux` on the remote PATH, or (via the base64-push/pinned-binary tiers
+    // this ladders toward) a staged file whose path this run doesn't fully
+    // own -- and that value reaches the CCC_TMUX_BIN bake-in (sesCfgParts,
+    // read back into a `sh -c` command on every statusline refresh).
+    // Character class is IDENTICAL to SAFE_TMUX_BIN_RE in src/main/ssh-tmux.ts
+    // -- that is the paired definition for this same shape of value at ITS
+    // sink (parseTmuxStageSentinel's tier-3/4 path capture), and the two
+    // must never drift apart. CLEAR rather than throw (both tmuxPath AND
+    // tmuxClass): this whole script runs under `2>/dev/null`
+    // (getRemoteSetupCommand) so a thrown error here is silently swallowed
+    // and setup aborts outright (shim never staged, settings never
+    // written); clearing instead degrades to the pre-#242 bare (non-tmux)
+    // launch and an empty CCC_TMUX_BIN -- the same fail-closed choice this
+    // codebase already makes for every other shape of bad value on this
+    // ladder.
+    `if(tmuxPath&&!/^[A-Za-z0-9_./-]+$/.test(tmuxPath)){tmuxPath='';tmuxClass='none'}`,
     // Read the user's shared settings FIRST so the per-session settings file
     // can inherit every top-level key (outputStyle, permissions, future
     // additions). The two CCC-owned keys (statusLine, hooks) then override
@@ -244,7 +364,25 @@ export function generateRemoteSetupScript(
     `try{fs.writeFileSync(sp,JSON.stringify(s,null,2))}catch{}`,
     `try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));let mut=false;if(c.mcpServers){if(c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];mut=true}if(c.mcpServers['conductor']){delete c.mcpServers['conductor'];mut=true}}if(mut)fs.writeFileSync(cj,JSON.stringify(c,null,2))}}catch{}`,
     `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();fs.writeFileSync(md,c?c+'\\n':'')}}catch{}`,
-    `process.stdout.write('setup ok\\n')`,
+    // Sentinel now carries the tmux result alongside the original
+    // completion marker: pty-manager's parseTmuxSentinel requires an EXACT
+    // match on THIS session's nonce, immediately after 'setup ok', before
+    // ever latching completion OR reading the tmux= field -- #242 finding
+    // F1 (b)/I2 correction: latching used to be gated on a bare substring
+    // check ('setup ok' with no nonce requirement), so a spoofed sentinel
+    // lacking the nonce (a co-tenant's wall/write, a MOTD script, any other
+    // PTY writer) could still latch completion early and starve the real
+    // sentinel of ever being parsed -- see parseTmuxSentinel's doc comment
+    // (pty-manager.ts).
+    //
+    // #242 round-3 correction (I3): the field itself is now a fixed CLASS
+    // (`path`/`home`/`none`), never a path -- `tmuxClass` above, NOT
+    // `tmuxPath`. pty-manager's launch-command sink picks the actual
+    // command token (`"$(command -v tmux)"` for `path`, the fixed
+    // `$HOME/.claude/bin/tmux` literal for `home`) from a host-authored
+    // literal table keyed on this class, so there is no wire-reported path
+    // for a spoofed sentinel to influence even with a stolen/copied nonce.
+    `process.stdout.write('setup ok ${nonce} tmux='+tmuxClass+'\\n')`,
   ]
   return lines.join(';')
 }
@@ -291,12 +429,26 @@ export function buildRemoteSessionCleanupCommand(sessionId: string): string {
  * Why base64? The setup script is a multi-line Node.js program that configures
  * the statusline shim and MCP vision in ~/.claude/settings.json. Sending it
  * directly through the PTY would be unreliable (quoting, line breaks, echo).
- * Instead we base64-encode it and pipe through `base64 -d | node`:
+ * Instead we base64-encode it and pipe through `base64 -d | node`, all as ONE
+ * typed line (joined with `;`, not real newlines -- shown broken out below
+ * only for readability):
  *
- *   stty -echo          ← suppress terminal echo so the blob isn't visible
+ *   stty -echo
  *   echo '<base64>' | base64 -d | node   ← decode and execute
- *   stty echo           ← restore echo
+ *   stty echo
  *   cd <path> && clear  ← navigate to project and clean the screen
+ *
+ * #242 finding F7 correction: `stty -echo` does NOT make this line's OWN
+ * echo invisible, and never did -- it's the first statement of the SAME
+ * line, so the tty has already echoed the whole thing (base64 blob
+ * included) back to the user before any of it executes (identical false
+ * claim corrected on buildTmuxStageCommand's doc comment, ssh-tmux-stage.ts
+ * -- the two builders share this exact shape). What actually keeps the
+ * plaintext, sentinel-carrying setup SCRIPT invisible is that this line only
+ * ever contains its opaque base64 encoding, never the script text itself.
+ * `stty -echo` genuinely earns its keep for a keypress typed WHILE `node` is
+ * running the decoded script; `stty echo` restores normal echo once it's
+ * done.
  *
  * The script itself is generated by generateRemoteSetupScript() above.
  * All errors are suppressed (2>/dev/null) so a failed setup doesn't break
@@ -325,11 +477,78 @@ export function getRemoteSetupCommand(
   sessionId: string,
   remotePath: string,
   hooksConfig: { port: number; secret: string } | null,
-  opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
+  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+  nonce: string,
 ): string {
   assertSafeRemotePath(remotePath)
-  const script = generateRemoteSetupScript(sessionId, hooksConfig, opts)
+  const script = generateRemoteSetupScript(sessionId, hooksConfig, opts, nonce)
   const b64 = Buffer.from(script).toString('base64')
   // `cd --` so a path beginning with "-" is treated as an operand, not an option.
   return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd -- ${remotePath} && clear`
+}
+
+/**
+ * #242 finding F3 (MAJOR, adversarial review round 5). `generateRemoteSetupScript`
+ * bakes CCC_TMUX_BIN into the per-session settings file from the TIER-1/2
+ * probe result alone -- on a host where both tiers miss, that bake-in is the
+ * empty string. Tiers 3/4 run STRICTLY AFTER that file is written (see
+ * writeHostSetupCmd/writeContainerSetupCmd vs. writeTmuxStageCmd in
+ * pty-manager.ts) and, on success, install a real binary and wrap the
+ * claude launch in `tmux new-session -A` -- but nothing rewrote the settings
+ * file the statusline shim's $TMUX branch reads $CCC_TMUX_BIN from. Net
+ * effect pre-fix: the shim traces `no-ccc-tmux-bin`, falls through to
+ * /dev/tty / the ancestor-pts walk, both of which land on the pane pty tmux
+ * swallows -- the statusline silently stops updating for exactly the host
+ * population tiers 3/4 exist to serve.
+ *
+ * Fix: after a stage/push `ok` sentinel resolves, pty-manager writes this
+ * tiny follow-up remote command (base64-wrapped like every other setup
+ * fragment on this ladder, so its own echo carries no meaningful plaintext)
+ * BEFORE the claude launch write, patching the ALREADY-WRITTEN
+ * settings-<safeSid>.json's `statusLine.command` in place.
+ *
+ * #242 finding F1(a), round-2 correction: this function no longer takes a
+ * `tmuxBin` parameter at all. An earlier version received the stage/push
+ * sentinel's reported path and interpolated it directly -- the same
+ * remote-reported-path trust the F1(a) fix removed from
+ * `buildTmuxLaunchCommand` (ssh-tmux.ts). Consistency mattered here too: a
+ * spoofed `ok path=/tmp/.claude/bin/tmux` would otherwise have landed in
+ * $CCC_TMUX_BIN even after the launch-command sink stopped trusting it,
+ * silently reopening the same shape of hole one level down. The emitted
+ * script instead computes `path.join(os.homedir(),'.claude','bin','tmux')`
+ * itself, evaluated by the REMOTE `node` process at the same trust boundary
+ * `buildTmuxStageScript`/`buildTmuxPushControlScript` install to -- so this
+ * patch and the launch command it supports are pointed at the exact same
+ * fixed location, with no wire-reported operand in between.
+ *
+ * #242 finding I4: `tmuxBin` is real remote output (`os.homedir()`), not
+ * wire-controlled -- but generateRemoteSetupScript's OWN CCC_TMUX_BIN
+ * bake-in (the `tmuxPath` guard a few lines up in that function) re-checks
+ * the identical class of value against the SAME allowlist right before the
+ * SAME sink (`statusLine.command`, `sh -c`'d by Claude Code on every
+ * statusline refresh) -- this patch script skipped that guard, so a `$HOME`
+ * containing a space (or any other shell-meaningful byte the unquoted
+ * `CCC_TMUX_BIN=<value>` splice can't survive) would silently corrupt the
+ * statusline command instead of degrading. Applying the SAME
+ * `/^[A-Za-z0-9_./-]+$/` allowlist here, and skipping the whole patch
+ * (leaving whatever CCC_TMUX_BIN generateRemoteSetupScript already baked
+ * in -- empty on a tier-1/2 miss, which is exactly when this patch runs)
+ * rather than writing a broken command, closes that gap the same way the
+ * sibling already does.
+ */
+export function buildTmuxBinPatchCommand(sessionId: string): string {
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const script = [
+    `const fs=require('fs'),path=require('path'),os=require('os')`,
+    `const p=path.join(os.homedir(),'.claude','settings-${safeSid}.json')`,
+    `let tmuxBin=path.join(os.homedir(),'.claude','bin','tmux')`,
+    `if(!/^[A-Za-z0-9_./-]+$/.test(tmuxBin))tmuxBin=''`,
+    `let s={};try{s=JSON.parse(fs.readFileSync(p,'utf-8'))}catch{}`,
+    `if(tmuxBin&&s.statusLine&&typeof s.statusLine.command==='string'){` +
+      `s.statusLine.command=s.statusLine.command.replace(/CCC_TMUX_BIN=\\S*/,'CCC_TMUX_BIN='+tmuxBin);` +
+      `try{fs.writeFileSync(p,JSON.stringify(s,null,2))}catch{}` +
+    `}`,
+  ].join(';')
+  const b64 = Buffer.from(script).toString('base64')
+  return `echo '${b64}' | base64 -d | node 2>/dev/null`
 }

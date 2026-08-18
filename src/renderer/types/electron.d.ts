@@ -162,6 +162,10 @@ export interface ElectronAPI {
         remotePath: string
         postCommand?: string
         dockerContainer?: string
+        /** #242 tier 5: respawning a session that previously reached
+         *  claude-running -- drives `--continue` when no tmux persistence
+         *  is available. See SSHOptions.reconnect in pty-manager.ts. */
+        reconnect?: boolean
       }
       shellOnly?: boolean
       elevated?: boolean

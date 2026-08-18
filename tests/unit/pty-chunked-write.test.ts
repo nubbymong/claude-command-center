@@ -112,4 +112,74 @@ describe('runChunkedWrite (R-010)', () => {
     })
     expect(dones).toBe(1)
   })
+
+  // #242 tier 4: onProgress is how pty-manager surfaces the ~1.27 MB
+  // tmux-push transfer's progress via emitSshFlowState('running-setup',
+  // 'staging tmux NN%') with zero new IPC channels. Mutation to prove this
+  // can fail: comment out the `hooks.onProgress?.(offset, total)` call in
+  // runChunkedWrite — progressCalls.length stays 0 and this test fails,
+  // without touching any of the liveness/crash-safety cases above.
+  it('calls onProgress with monotonically non-decreasing byte counts ending at data.length', () => {
+    const data = 'p'.repeat(1000)
+    const progressCalls: Array<[number, number]> = []
+    runChunkedWrite(data, {
+      write: () => {},
+      isAlive: () => true,
+      schedule: syncSchedule,
+      chunkSize: 256,
+      onProgress: (sent, total) => progressCalls.push([sent, total]),
+    })
+    // 1000 / 256 = ceil → 4 chunks → 4 progress calls, one per chunk.
+    expect(progressCalls).toHaveLength(4)
+    expect(progressCalls.every(([, total]) => total === data.length)).toBe(true)
+    const sentCounts = progressCalls.map(([sent]) => sent)
+    for (let i = 1; i < sentCounts.length; i++) {
+      expect(sentCounts[i]).toBeGreaterThanOrEqual(sentCounts[i - 1])
+    }
+    expect(sentCounts[sentCounts.length - 1]).toBe(data.length)
+  })
+
+  // onProgress must reflect only bytes that ACTUALLY landed — a caller
+  // computing a percentage from it must never see a total that outruns
+  // reality when the session dies mid-transfer.
+  it('stops calling onProgress once the session dies mid-write (never reports past the last real chunk)', () => {
+    const data = 'q'.repeat(1000)
+    const progressCalls: number[] = []
+    let alive = true
+    runChunkedWrite(data, {
+      write: () => {},
+      isAlive: () => alive,
+      schedule: syncSchedule,
+      chunkSize: 256,
+      // Kill the session right after chunk 1's progress is reported —
+      // chunk 2's liveness check (which runs BEFORE its write/onProgress)
+      // then bails, so exactly one progress call total.
+      onProgress: (sent) => { progressCalls.push(sent); alive = false },
+    })
+    expect(progressCalls).toEqual([256])
+  })
+
+  // #242 round-3 MINOR fix: onProgress is a NEW un-absorbed call on this
+  // setTimeout-driven path (module doc comment: nothing may throw out of the
+  // timer callback, because the global uncaughtException handler re-throws
+  // and kills main). Mutation to prove this can fail: remove the try/catch
+  // around `hooks.onProgress?.(offset, total)` in runChunkedWrite -- the
+  // throw then propagates out of writeNext() and this test's `.not.toThrow()`
+  // fails, without touching any of the liveness/crash-safety cases above.
+  it('a throwing onProgress hook is swallowed and does not abort the write', () => {
+    const written: string[] = []
+    expect(() =>
+      runChunkedWrite('r'.repeat(600), {
+        write: (s) => written.push(s),
+        isAlive: () => true,
+        schedule: syncSchedule,
+        chunkSize: 256,
+        onProgress: () => { throw new Error('progress hook boom') },
+      }),
+    ).not.toThrow()
+    // All 3 chunks (600 / 256 → ceil = 3) still landed -- the throwing hook
+    // degraded progress reporting only, not the write itself.
+    expect(written.join('')).toBe('r'.repeat(600))
+    expect(written).toHaveLength(3)
+  })
 })

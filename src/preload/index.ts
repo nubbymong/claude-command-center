@@ -83,6 +83,10 @@ export interface ElectronAPI {
         username: string
         remotePath: string
         postCommand?: string
+        /** #242 tier 5: respawning a session that previously reached
+         *  claude-running -- drives `--continue` when no tmux persistence
+         *  is available. See SSHOptions.reconnect in pty-manager.ts. */
+        reconnect?: boolean
       }
       configId?: string
       configLabel?: string

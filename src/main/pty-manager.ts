@@ -1,8 +1,15 @@
-import { BrowserWindow, nativeTheme } from 'electron'
+import { BrowserWindow, nativeTheme, app } from 'electron'
 import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
+import { buildTmuxLaunchCommand, isSafeTmuxBin, buildSshClaudeFlags } from './ssh-tmux'
+import { randomId } from '../shared/id'
+import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
+import { buildTmuxStageCommand, TMUX_STAGE_SENTINEL_PREFIX, TMUX_STAGE_SHA256, tmuxStageAssetUrl, type TmuxStageTarget } from './ssh-tmux-stage'
+import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSentinel, PUSH_ACCUMULATOR_VAR } from './ssh-tmux-push'
 import * as os from 'os'
+import * as https from 'https'
+import * as crypto from 'crypto'
 import { execSync } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
@@ -12,7 +19,7 @@ import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPat
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { buildRemoteSessionCleanupCommand } from './providers/claude/ssh-shim'
+import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { buildSshArgs } from './ssh-args'
@@ -115,6 +122,501 @@ function escapeShellArg(str: string): string {
   return str.replace(/[\\"$`]/g, '\\$&')
 }
 
+/**
+ * Escape a string for literal (non-special) use inside `new RegExp(...)`.
+ * #242 finding F1 (b): the per-session nonce is interpolated into
+ * parseTmuxSentinel/parseTmuxStageSentinel's dynamically-built regexes below
+ * -- randomId() (src/shared/id.ts) only ever produces lowercase hex, which
+ * has no regex meaning, but this call site takes a plain `string` (the test
+ * seam `_getSshNonceForTest` and any future caller aren't bound to that
+ * guarantee), so escaping defends against a future nonce source that isn't
+ * charset-limited the same way.
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** The two usable tmux CLASSES `parseTmuxSentinel` can return -- see its doc
+ *  comment and generateRemoteSetupScript (ssh-shim.ts) for what each means. */
+export type TmuxDetectionClass = 'path' | 'home'
+
+/**
+ * Parse the `tmux=<path|home|none>` CLASS field off the `setup ok`
+ * completion sentinel (#242 — the tmux detection result rides the SAME
+ * sentinel the setup script already emits, rather than a second
+ * round-trip), AND gate the sentinel's own nonce match in one place so
+ * every caller (the outer completion latch AND the tmux-class read) shares
+ * the identical match (#242 finding I1/I2 correction, below).
+ *
+ * #242 round-3 correction (finding I3): the field is a fixed three-way
+ * CLASS, never a path. `generateRemoteSetupScript` (ssh-shim.ts) reports
+ * `path` (tier 1 — tmux found via `command -v tmux` on the remote's PATH),
+ * `home` (tier 2 — a pre-existing, executable `~/.claude/bin/tmux`, the
+ * SAME fixed location tier 3/4 stage/push a binary to), or `none`. There is
+ * no free-text capture left for `isSafeTmuxBin`/`isPinnedTmuxPath` to
+ * validate — the fixed alternation IS the allowlist — so both of those
+ * checks (and the wire-reported path they used to gate) are gone; see
+ * ssh-tmux.ts's `ON_PATH_TMUX_BIN_EXPR`/`STAGED_TMUX_BIN_EXPR` for the two
+ * host-authored literal tokens a caller picks between using ONLY the class
+ * this function returns, never a value read off the wire.
+ *
+ * Returns THREE distinct outcomes, because "the field wasn't there" and
+ * "the field explicitly said none" are not the same thing (adversarial
+ * review, #242 MINOR — call sites used to do `parseTmuxSentinel(data) ??
+ * detectedTmuxSource`, which cannot tell them apart and so lets a
+ * `tmux=none` from a LATER stage, e.g. container setup, inherit an EARLIER
+ * stage's detected class instead of clearing it):
+ *   - `undefined` — the sentinel is not present in THIS data (regex miss),
+ *     the nonce is missing/wrong, or the chunk ends before the class token's
+ *     trailing line terminator. Callers must leave any detected-tmux state
+ *     untouched.
+ *     - #242 finding I1 fix: callers pass the ACCUMULATED per-session
+ *       buffer (`bufferSetupLine`, below), not just the current chunk — a
+ *       real SSH link routinely segments this single logical line across
+ *       multiple PTY chunks (`setup ok <nonce> tmux=pa` | `th\r\n`), and the
+ *       chunk-boundary discipline above (require the trailing terminator)
+ *       correctly refuses a truncated read from the FIRST chunk alone; the
+ *       bug was that nothing ever re-parsed the SECOND chunk once an
+ *       earlier, unrelated latch had already fired off a bare substring
+ *       check, so the tmux probe was lost silently on every segmented line
+ *       (adversarial review / live-test repro, #242 finding I1).
+ *     - #242 finding I2 fix: this is ALSO what a spoofed bare `setup ok`
+ *       (no nonce, or the wrong one) now produces for BOTH purposes — the
+ *       outer completion latch is gated on this SAME nonce-bearing match,
+ *       not a separate bare-substring check, so a write-only attacker can
+ *       no longer latch completion early (starving the genuine, later
+ *       sentinel of ever being parsed and forcing an unwanted tier-3/4
+ *       staging attempt on a host that already had tmux).
+ *   - `null` — the field parsed and explicitly reported `none`. Callers
+ *     must CLEAR any detected-tmux state.
+ *   - `'path'` or `'home'` — a validated CLASS (see `TmuxDetectionClass`).
+ *
+ * `nonce` (#242 finding F1 (b)): this session's host-generated random token.
+ * The sentinel must carry it, immediately after "setup ok", or the WHOLE
+ * match fails (returns `undefined`, i.e. "not present in this chunk") —
+ * this is what makes a spoofed sentinel (a co-tenant's `wall`/`write`, a
+ * MOTD script, any other PTY writer that doesn't know this session's nonce)
+ * indistinguishable from "no sentinel here" rather than a rejected-but-seen
+ * value. SECOND layer only: an attacker who can also read the tty can copy
+ * the nonce verbatim (this line's own echo is not suppressed) — but even
+ * then there is no path left to substitute; the worst a copied nonce buys
+ * is forcing CCC to pick between the two fixed literal tokens, never an
+ * arbitrary one.
+ */
+export function parseTmuxSentinel(data: string, nonce: string): TmuxDetectionClass | null | undefined {
+  const m = data.match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(path|home|none)(?=[\\r\\n])`))
+  if (!m) return undefined
+  if (m[1] === 'none') return null
+  return m[1] as TmuxDetectionClass
+}
+
+/**
+ * Parse the tier-3 staging sentinel (#242) that `buildTmuxStageCommand`
+ * (ssh-tmux-stage.ts) writes to the remote PTY: either
+ * `ccc-tmux-stage ok path=<abs-path>` or `ccc-tmux-stage fail=<reason>`.
+ *
+ * Same chunk-boundary discipline as parseTmuxSentinel above: the captured
+ * token must be immediately followed by a line terminator, so a chunk that
+ * ends mid-path/mid-reason (before the trailing `\n` the shell's own `echo`
+ * always appends) returns `undefined` rather than a truncated value — the
+ * caller leaves staging pending and waits for the next chunk instead of
+ * treating a half-arrived line as the real result.
+ *
+ * The `ok` path is raw remote output — re-applies the SAME charset
+ * allowlist (`isSafeTmuxBin`) here, before the value is returned in the
+ * parse result. #242 finding F1(a), ROUND-2 CORRECTION: this function used
+ * to ALSO apply a path-pin (`isPinnedTmuxPath`, requiring the path end in
+ * "/.claude/bin/tmux") as a security gate on this field -- removed, because
+ * "ends with the right suffix" is satisfiable from an attacker-writable
+ * directory (`/tmp/.claude/bin/tmux`, or the double-slash
+ * `/tmp/x//.claude/bin/tmux`) and is NOT equivalent to "really is under
+ * $HOME" (verified end to end, adversarial review round 5, WITH a valid
+ * nonce). The fix is not a stronger check on this field -- it is to stop
+ * needing this field for anything security-relevant at all:
+ * `buildTmuxLaunchCommand` (ssh-tmux.ts) never reads the result's `path` for
+ * a staged tier, embedding `STAGED_TMUX_BIN_EXPR` (a fixed, host-authored
+ * `"$HOME"/.claude/bin/tmux` literal) instead. #242 round-3 MINOR correction:
+ * the result's `path` is never assigned to any state at all — the only
+ * consumer is the adjacent `logInfo` call at each call site, inline. The
+ * charset check that remains here exists purely so a malformed/garbage
+ * capture can't pollute logs with control characters, not as a security
+ * boundary.
+ *
+ * `nonce` (#242 finding F1 (b)): required immediately after
+ * TMUX_STAGE_SENTINEL_PREFIX, same contract as parseTmuxSentinel's own
+ * `nonce` param above -- a sentinel missing it, or carrying the wrong one,
+ * is indistinguishable from "not present in this chunk" (`undefined`), not
+ * a rejected-but-seen value.
+ *
+ * `reason` (#242 M2, MINOR): capped to a bounded, charset-guarded value
+ * before it flows into flow-state IPC and logs -- the failure sentinel's
+ * fail=<reason> field is raw remote output like the path is, and previously
+ * `\S+` let an unbounded/garbage value straight through. The script itself
+ * only ever emits arch/download/digest/extract/terminfo (ssh-tmux-stage.ts,
+ * ssh-tmux-push.ts), all short lowercase words, so a real reply always
+ * passes; anything else degrades to 'invalid-reason' rather than being
+ * echoed verbatim.
+ *
+ * #242 finding I5: both capture groups are now BOUNDED (`\S{1,4096}`), not
+ * unbounded `\S+`. This value is informational-only (never reaches a launch
+ * command), but it still gets written into the remote shell's own recovery
+ * path (nothing here does that today, but nothing prevents a future editor
+ * from assuming a capped value) and unconditionally into logs/flow-state
+ * IPC -- a multi-kilobyte capture is resource/log noise regardless. 4096 is
+ * ample headroom for any real path or reason word this script emits.
+ */
+const MAX_FAIL_REASON_LEN = 32
+const SAFE_FAIL_REASON_RE = /^[A-Za-z0-9_-]+$/
+const MAX_TMUX_STAGE_CAPTURE_LEN = 4096
+
+function sanitizeFailReason(raw: string): string {
+  if (raw.length > MAX_FAIL_REASON_LEN) return 'invalid-reason'
+  return SAFE_FAIL_REASON_RE.test(raw) ? raw : 'invalid-reason'
+}
+
+export function parseTmuxStageSentinel(
+  data: string,
+  nonce: string,
+): { ok: true; path: string } | { ok: false; reason: string } | undefined {
+  const m = data.match(new RegExp(`${TMUX_STAGE_SENTINEL_PREFIX} ${escapeRegExp(nonce)} (ok path=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}})|fail=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}}))(?=[\\r\\n])`))
+  if (!m) return undefined
+  if (m[2]) return isSafeTmuxBin(m[2]) ? { ok: true, path: m[2] } : { ok: false, reason: 'unsafe-path' }
+  return { ok: false, reason: sanitizeFailReason(m[3] ?? 'unknown') }
+}
+
+// === #242 tier 4: host-side tmux archive cache ===
+//
+// Tier 4 pushes the SAME v3.7b release asset tier 3 would have curled, over
+// the SSH tunnel itself, for remotes with no outbound egress at all. The
+// host downloads each arch's archive AT MOST ONCE (per app install) into
+// `app.getPath('userData')/tmux-cache/`, sha256-verifying it against the
+// SAME `TMUX_STAGE_SHA256` constants ssh-tmux-stage.ts uses, and reuses the
+// cached file for every later session that needs that arch. `userData`
+// (not `getDataDirectory()`, the pattern github-update.ts uses for the
+// ~100-200MB installer) is fine here — this archive is a few hundred KB and
+// is not itself an executable staged for direct execution on THIS machine.
+
+function tmuxCacheDir(): string {
+  return path.join(app.getPath('userData'), 'tmux-cache')
+}
+
+function tmuxCachePath(arch: TmuxStageTarget): string {
+  return path.join(tmuxCacheDir(), `tmux-${arch}.tar.gz`)
+}
+
+function sha256Hex(buf: Buffer): string {
+  return crypto.createHash('sha256').update(buf).digest('hex')
+}
+
+/**
+ * Read a previously-cached archive for `arch`, re-verifying its sha256
+ * before trusting it. A cache file that fails verification (disk
+ * corruption, a manual edit, a leftover from a since-changed pinned tag) is
+ * deleted rather than returned, so the caller re-downloads instead of
+ * repeatedly pushing a bad archive down every future session to this arch.
+ */
+function readCachedTmuxArchive(arch: TmuxStageTarget): Buffer | null {
+  try {
+    const p = tmuxCachePath(arch)
+    if (!fs.existsSync(p)) return null
+    const buf = fs.readFileSync(p)
+    if (sha256Hex(buf) !== TMUX_STAGE_SHA256[arch]) {
+      try { fs.unlinkSync(p) } catch { /* best-effort */ }
+      return null
+    }
+    return buf
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Download the v3.7b release asset for `arch` from the SAME pinned URL
+ * ssh-tmux-stage.ts's remote script would have curled, sha256-verify it
+ * against the SAME embedded digest, and cache it on success. Resolves
+ * `null` (never rejects) on ANY failure -- network error, non-2xx status,
+ * or a digest mismatch -- so the caller's fallback path (fall through to the
+ * unwrapped launch) is a single, uniform check regardless of WHY the bytes
+ * couldn't be obtained.
+ */
+/**
+ * Per-request timeout for the tier-4 archive fetch -- applied to BOTH the
+ * initial request and the redirect hop. Matches httpsDownload's shape
+ * (github-update.ts:515, its 'timeout' handler ~:640) rather than inventing
+ * a second one: a bare `https.get(url, cb)` with no `timeout` option and no
+ * `req.on('timeout')` handler never gives up on a stalled connection on its
+ * own (#242 finding F1). A few-hundred-KB release asset over a healthy link
+ * completes in low single-digit seconds; 20s is generous without eating
+ * meaningfully into DOWNLOAD_TIMEOUT_MS's 45s flow-level backstop
+ * (pty-manager.ts's SSH branch, attemptTmuxPush).
+ */
+const TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS = 20000
+
+/**
+ * Hard ceiling on the accumulated response body -- mirrors httpsDownload's
+ * `maxBytes` parameter (github-update.ts:515). The real v3.7b release asset
+ * is a few hundred KB; capping at a few MB catches a hostile/misbehaving
+ * host serving an unbounded body long before it becomes a meaningful memory
+ * concern (#242 finding F5). Checked ON THE WIRE in the `data` handler, not
+ * after landing -- same reasoning as httpsDownload's own comment on this.
+ */
+const TMUX_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
+
+function downloadAndCacheTmuxArchive(arch: TmuxStageTarget): Promise<Buffer | null> {
+  // #242 finding F6: same URL parts buildTmuxStageScript's remote curl/wget
+  // fragment builds its `_url` from (ssh-tmux-stage.ts) -- see
+  // ssh-tmux-push.test.ts's regression test tying the two together.
+  const url = tmuxStageAssetUrl(arch)
+  const collect = (res: import('http').IncomingMessage, resolve: (v: Buffer | null) => void, redirectsLeft: number, currentUrl: string): void => {
+    // GitHub release assets 302 to a signed S3 URL -- one redirect hop is
+    // the real-world shape; refuse to follow more than a couple to avoid an
+    // unbounded chain against a misbehaving/hostile host.
+    const loc = res.headers.location
+    if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && loc && redirectsLeft > 0) {
+      res.resume()
+      // #242 round-2 MAJOR fix: `https.get` THROWS SYNCHRONOUSLY (not via
+      // 'error') when its URL argument is not https or is relative/malformed
+      // -- verified in this worktree (`https.get('http://x')` ->
+      // ERR_INVALID_PROTOCOL; `https.get('/relative')` -> ERR_INVALID_URL).
+      // `loc` here is a `Location` header taken straight from the response,
+      // i.e. attacker/proxy-controlled -- a captive portal or misbehaving
+      // proxy answering with a 302 to an `http://` login page or a relative
+      // path would throw OUT of this response callback, past the try/catch
+      // that wraps only the FIRST request below, into
+      // process.on('uncaughtException') (debug-logger.ts) which re-throws
+      // anything that isn't EPIPE/EIO -> Electron main process death.
+      // Resolve `loc` against the CURRENT request's URL first (so a
+      // relative Location is handled the way browsers/curl handle it, not
+      // rejected outright) and refuse anything that resolves to a
+      // non-https scheme, THEN wrap the redirect `https.get` call itself in
+      // a try/catch -- the initial call already has one; this hop must not
+      // be the exception.
+      let nextUrl: URL
+      try {
+        nextUrl = new URL(loc, currentUrl)
+      } catch {
+        resolve(null)
+        return
+      }
+      if (nextUrl.protocol !== 'https:') {
+        resolve(null)
+        return
+      }
+      try {
+        // #242 finding F1: the redirect hop needs the SAME timeout handling
+        // as the initial request below -- httpsDownload's shape
+        // (github-update.ts:640) covers both hops, not just the first.
+        const redirectReq = https.get(nextUrl, { timeout: TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS }, (res2) => collect(res2, resolve, redirectsLeft - 1, nextUrl.toString()))
+        redirectReq.on('error', () => resolve(null))
+        redirectReq.on('timeout', () => { try { redirectReq.destroy(new Error('tmux tier-4 download timeout')) } catch {} })
+      } catch {
+        resolve(null)
+      }
+      return
+    }
+    if (!res.statusCode || res.statusCode >= 400) {
+      res.resume()
+      resolve(null)
+      return
+    }
+    const chunks: Buffer[] = []
+    // #242 finding F5: track accumulated length on the wire and bail past
+    // TMUX_ARCHIVE_MAX_BYTES -- destroy(), not resume(), so the socket
+    // actually stops instead of draining an unbounded body to /dev/null.
+    let received = 0
+    let overLimit = false
+    res.on('data', (c: Buffer) => {
+      if (overLimit) return
+      received += c.length
+      if (received > TMUX_ARCHIVE_MAX_BYTES) {
+        overLimit = true
+        logError(`[ssh] tmux tier-4 download for arch=${arch} exceeded the ${TMUX_ARCHIVE_MAX_BYTES}-byte cap -- discarding`)
+        res.destroy()
+        resolve(null)
+        return
+      }
+      chunks.push(c)
+    })
+    res.on('end', () => {
+      if (overLimit) return
+
+      const buf = Buffer.concat(chunks)
+      if (sha256Hex(buf) !== TMUX_STAGE_SHA256[arch]) {
+        logError(`[ssh] tmux tier-4 download for arch=${arch} failed sha256 verification -- discarding`)
+        resolve(null)
+        return
+      }
+      try {
+        fs.mkdirSync(tmuxCacheDir(), { recursive: true })
+        fs.writeFileSync(tmuxCachePath(arch), buf)
+      } catch (err) {
+        // Cache write failing doesn't invalidate the verified bytes already
+        // in hand -- this session's push still proceeds, just re-downloads
+        // next time.
+        logError(`[ssh] tmux tier-4 cache write failed for arch=${arch}: ${(err as Error)?.message ?? err}`)
+      }
+      resolve(buf)
+    })
+    res.on('error', () => resolve(null))
+  }
+  return new Promise((resolve) => {
+    try {
+      // #242 finding F1: httpsDownload's shape (github-update.ts:515/:640) --
+      // the `timeout` option alone does not abort anything; only this
+      // `req.on('timeout')` handler, destroying the request, actually does.
+      const req = https.get(url, { timeout: TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS }, (res) => collect(res, resolve, 2, url))
+      req.on('error', () => resolve(null))
+      req.on('timeout', () => { try { req.destroy(new Error('tmux tier-4 download timeout')) } catch {} })
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
+/** Cache hit first; only reaches the network on a miss/failed verification. */
+async function getOrDownloadTmuxArchive(arch: TmuxStageTarget): Promise<Buffer | null> {
+  const cached = readCachedTmuxArchive(arch)
+  if (cached) return cached
+  return downloadAndCacheTmuxArchive(arch)
+}
+
+// #242 round-3 MAJOR fix (test coverage): attemptTmuxPush calls this
+// indirection rather than getOrDownloadTmuxArchive directly, so tests can
+// stub the tier-4 archive source (cache hit or fresh download) without
+// touching the real filesystem/network -- mirrors the `_set*ForTest` seam
+// pattern already used elsewhere in this codebase (see
+// claude-account-identity.ts's `_setRootsForTest`). Reassigned ONLY by
+// `_setTmuxArchiveResolverForTest`; every production code path always goes
+// through the real `getOrDownloadTmuxArchive`.
+let tmuxArchiveResolver: (arch: TmuxStageTarget) => Promise<Buffer | null> = getOrDownloadTmuxArchive
+
+/** Test-only: override (or, passing `null`, restore) the tier-4 archive
+ *  source `attemptTmuxPush` calls, so a test can drive a full push without
+ *  hitting disk or the network. */
+export function _setTmuxArchiveResolverForTest(fn: ((arch: TmuxStageTarget) => Promise<Buffer | null>) | null): void {
+  tmuxArchiveResolver = fn ?? getOrDownloadTmuxArchive
+}
+
+/**
+ * #242 finding F1 (b): per-session nonce, keyed by sessionId, set once at
+ * spawn time (see spawnPty's SSH branch) and read by both the setup/stage/
+ * push writers (to bake it into the scripts they build) and the onData
+ * parsers (to require it in the sentinels they accept). Cleared in
+ * cleanupSessionResources so a stale nonce can never leak into a future,
+ * unrelated spawn of the same sessionId.
+ */
+const sshNonceBySession = new Map<string, string>()
+
+/** Test-only: read the REAL per-session nonce spawnPty generated, so a test
+ *  can construct a genuinely nonce-carrying sentinel to drive the real flow
+ *  end to end, rather than guessing/hardcoding a value that would never
+ *  match production randomId() output. */
+export function _getSshNonceForTest(sessionId: string): string | undefined {
+  return sshNonceBySession.get(sessionId)
+}
+
+/**
+ * #242 finding I1: per-session buffer for the not-yet-terminated tail of
+ * the `setup ok` completion sentinel line, mirroring `sshOscBuffers`/
+ * `extractSshOscSentinels` above -- same per-session map shape, same
+ * accumulate-then-clear discipline, same size cap. A real SSH link
+ * routinely segments a single logical line across multiple PTY chunks
+ * (`setup ok <nonce> tmux=pa` | `th\r\n`); `parseTmuxSentinel`'s
+ * chunk-boundary discipline (require the captured token be immediately
+ * followed by a line terminator) correctly refuses to match a truncated
+ * read off the FIRST chunk alone, but nothing re-parsed the SECOND chunk
+ * once the (pre-fix) bare-substring completion latch had already fired off
+ * the first one -- the tmux probe was then lost silently for the rest of
+ * the session on every segmented line, which is exactly the shape a real
+ * SSH connection produces (live-test repro, #242 finding I1). Buffering the
+ * accumulated text (not just the latest chunk) and re-testing the SAME
+ * nonce-bearing regex against it on every chunk, until it actually
+ * resolves, closes that gap.
+ */
+const MAX_SETUP_LINE_BUFFER = 4096
+
+/**
+ * ROUND-3 CORRECTION. The first cut of this buffer covered only the two
+ * setup-ok latches, leaving the tier-3/4 stage sentinel and the tier-4 arch
+ * probe parsing the raw chunk -- so I1 stayed live on exactly the tiers a
+ * tmux-less remote depends on. Proven in review by driving the real flow: a
+ * stage `ok path=` split across two chunks never resolves, the flow stalls to
+ * the 20s STAGE_TIMEOUT and silently loses tmux; an arch probe split across
+ * two chunks leaves detectedArch null, so tier 4 is unreachable on any
+ * segmenting link.
+ *
+ * Each sentinel gets its OWN buffer rather than sharing one, because they can
+ * interleave: the arch probe and the stage result are emitted by the same
+ * remote fragment and may arrive in one chunk, in either order, or split.
+ * Sharing a buffer would let one sentinel's resolve-and-clear discard the
+ * other's partial line.
+ */
+type SshLineBufferKind = 'setup' | 'stage' | 'arch'
+const sshLineBuffers = new Map<string, string>()
+const sshLineBufferKey = (sessionId: string, kind: SshLineBufferKind): string => `${sessionId}:${kind}`
+
+/**
+ * Accumulate `chunk` onto session `sessionId`'s setup-line buffer and return
+ * the FULL combined text callers should parse against instead of `chunk`
+ * alone -- mirroring `extractSshOscSentinels` above, which parses the
+ * complete combined text first and caps only what it RETAINS for next time.
+ * ROUND-2 CORRECTION: an earlier version capped the RETURNED value at
+ * `MAX_SETUP_LINE_BUFFER` too, not just what got stored -- so a genuine,
+ * correctly-nonced sentinel followed by more than the cap's worth of trailing
+ * bytes in the SAME chunk was silently dropped from the text actually
+ * parsed, and the session never latched setupDone at all (regression proven
+ * in review). The sentinel is not guaranteed to be near the end of the
+ * combined text -- trailing output in the same chunk is exactly the failure
+ * mode this correction closes -- so only the STORED copy (what the next
+ * chunk will be appended to) is capped, keeping its tail. A remote that
+ * never emits the line's terminating `\r`/`\n` (hostile, or simply chatty
+ * pre-setup output) must not grow the stored buffer without bound for the
+ * rest of the session.
+ */
+function bufferSshLine(sessionId: string, kind: SshLineBufferKind, chunk: string): string {
+  const key = sshLineBufferKey(sessionId, kind)
+  const combined = (sshLineBuffers.get(key) ?? '') + chunk
+  sshLineBuffers.set(
+    key,
+    combined.length > MAX_SETUP_LINE_BUFFER ? combined.slice(combined.length - MAX_SETUP_LINE_BUFFER) : combined
+  )
+  return combined
+}
+
+/** Back-compat alias for the setup-ok latches, which read more clearly named. */
+function bufferSetupLine(sessionId: string, chunk: string): string {
+  return bufferSshLine(sessionId, 'setup', chunk)
+}
+
+/** Drop one of `sessionId`'s sentinel buffers once that sentinel has resolved --
+ *  nothing left to accumulate for it for the rest of the session. */
+function clearSshLineBuffer(sessionId: string, kind: SshLineBufferKind): void {
+  sshLineBuffers.delete(sshLineBufferKey(sessionId, kind))
+}
+
+function clearSetupLineBuffer(sessionId: string): void {
+  clearSshLineBuffer(sessionId, 'setup')
+}
+
+/** Teardown: drop EVERY sentinel buffer for the session. Called from
+ *  cleanupSessionResources -- a per-kind clear on resolve is not enough,
+ *  because a session can die with a sentinel still unresolved. */
+function clearAllSshLineBuffers(sessionId: string): void {
+  for (const kind of ['setup', 'stage', 'arch'] as const) clearSshLineBuffer(sessionId, kind)
+}
+
+/** Test-only: read the current length of `sessionId`'s setup-line buffer
+ *  (mirrors `_getSshNonceForTest`'s role) -- `undefined` once cleared/never
+ *  populated. Lets tests assert the buffer is actually bounded and actually
+ *  torn down, rather than just asserting on end-to-end launch behaviour that
+ *  a leak/unbounded-growth mutation would leave unchanged. */
+export function _getSetupLineBufferLenForTest(
+  sessionId: string,
+  kind: SshLineBufferKind = 'setup',
+): number | undefined {
+  return sshLineBuffers.get(sshLineBufferKey(sessionId, kind))?.length
+}
+
 interface PtySession {
   ptyProcess: pty.IPty
   sessionId: string
@@ -131,6 +633,18 @@ export interface SSHOptions {
   password?: string
   postCommand?: string
   sudoPassword?: string
+  /**
+   * #242 tier 5: true when this spawn respawns a session that had
+   * previously reached `claude-running` over THIS SSH config — set by the
+   * renderer session store (never persisted to disk; see Session.
+   * sshReachedClaudeRunning in sessionStore.ts) when it re-spawns, e.g. via
+   * the Restart control after a dropped connection. Consumed by
+   * writeClaudeCmd via buildSshClaudeFlags (ssh-tmux.ts) to decide whether
+   * the bare (non-tmux) launch should carry `--continue`. Undefined/false
+   * on a session's first-ever spawn, where there is no prior conversation
+   * to continue.
+   */
+  reconnect?: boolean
 }
 
 /**
@@ -458,6 +972,87 @@ export function spawnPty(
     let containerSetupShellReady = false
     let claudeSent = false
     let claudeRunning = false
+    // #242 finding F1 (b), BLOCKER (adversarial review round 5): per-session
+    // nonce, generated ONCE here via randomId() (src/shared/id.ts -- the
+    // repo's CSPRNG helper, NOT Math.random) and baked into every setup/
+    // stage/push script this flow writes. Every sentinel the parsers below
+    // accept must carry it -- SECOND layer only, defeated by an attacker who
+    // can also read the tty (and so can copy the nonce verbatim). #242
+    // round-3 correction (I3): what survives that stronger attacker is now
+    // the SAME for every tier -- ON_PATH_TMUX_BIN_EXPR (tier 1) and
+    // STAGED_TMUX_BIN_EXPR (tier 2/3/4), both fixed host-authored literals
+    // (ssh-tmux.ts) that never read a wire-reported path at all. A copied
+    // nonce buys the attacker nothing beyond forcing CCC to pick between
+    // those two fixed tokens -- there is no longer a wire-reported operand
+    // for tier 1/2 to substitute (see parseTmuxSentinel's own doc comment).
+    // Registered in sshNonceBySession so the (test-only) _getSshNonceForTest
+    // accessor and cleanupSessionResources' teardown can both reach it.
+    const sshNonce = randomId()
+    sshNonceBySession.set(sessionId, sshNonce)
+    // #242 round-3 correction (I3): which entry of buildTmuxLaunchCommand's
+    // fixed literal table to use, once a 'setup ok'/stage/push sentinel
+    // reports a usable tmux -- never a wire-reported path. `null` means "not
+    // found" or "not yet known" -- writeClaudeCmd treats both the same way,
+    // writing the bare claudeCmd. `'onpath'` (tier 1, parseTmuxSentinel's
+    // `path` class) selects `ON_PATH_TMUX_BIN_EXPR`; `'staged'` (tier 2's
+    // `home` class, OR tier 3/4's stage/push `ok`) selects
+    // `STAGED_TMUX_BIN_EXPR` -- both are the SAME fixed remote location, so
+    // tier 2 and tier 3/4 share one outcome here.
+    let detectedTmuxSource: 'onpath' | 'staged' | null = null
+    // #242 tier 3: staging flags. `stagingAttempted` gates a SINGLE staging
+    // attempt per session regardless of which setup path (host vs
+    // container) reaches it -- host and container setup never both run in
+    // the same session (see writeContainerSetupCmd/runPostCommand), so one
+    // flag is enough. `stagingSent`/`stagingDone` mirror the setupSent/
+    // setupDone idempotency shape used for the other writers.
+    let stagingAttempted = false
+    let stagingSent = false
+    let stagingDone = false
+    let stagingTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // #242 tier 4: arch learned from the probe writeTmuxStageCmd fires
+    // alongside the tier-3 staging command (see buildArchProbeCommandBracketed)
+    // -- known well before a possible `fail=download` sentinel arrives, since
+    // `uname` resolves near-instantly while curl/wget's failure (no egress)
+    // typically takes longer. Stays null if the probe's reply never arrives
+    // (chunk loss, non-standard remote shell) or reports an arch tier 4
+    // doesn't recognise -- either way, attemptTmuxPush never runs and the
+    // flow degrades to exactly its pre-tier-4 behaviour (bare launch).
+    let detectedArch: TmuxStageTarget | null = null
+    // #242 round-3 MINOR fix: `detectedArch === null` cannot distinguish
+    // "not yet resolved" from "resolved to an unrecognised arch" -- both
+    // leave detectedArch null, so gating re-parses on THAT condition kept
+    // re-running the arch-probe regex against every later PTY chunk for the
+    // rest of the session, and unrelated later output shaped like the
+    // sentinel could set detectedArch long after the probe. This latch
+    // flips true the first time `parseArchProbeSentinel` returns anything
+    // other than `undefined` (a real match OR an unrecognised-combo `null`),
+    // so the onData gate below considers the probe resolved either way.
+    let archProbeResolved = false
+    // Tier 4 push flags, mirroring stagingSent/stagingDone's idempotency
+    // shape. Only ever set when detectedArch is known AND tier 3 reported
+    // fail=download specifically -- see the stage-sentinel handler below.
+    let pushSent = false
+    let pushDone = false
+    let pushTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // #242 finding F1 (adversarial review round 4, BLOCKER): separate timer
+    // for the DOWNLOAD phase specifically -- armPushSentinelTimeout (below)
+    // is reached only from runChunkedWrite's onDone, i.e. only once every
+    // chunk has actually been WRITTEN. Between `pushSent = true` and the
+    // archive-resolver's promise settling (a network fetch that can stall
+    // indefinitely -- a dead/slow HTTPS response, a hung proxy) there was no
+    // timer of any kind: attemptTmuxPush's own doc comment promises tier 4
+    // is "never a NEW way for the flow to get stuck with claude never
+    // launched", and an unbounded download phase broke exactly that.
+    let downloadTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // #242 finding F3 (adversarial review round 4, MAJOR): flips true at the
+    // TOP of flowController.destroy() so any write callback still reachable
+    // from a timer destroy() couldn't clear in time (an anonymous setTimeout
+    // with no stored handle, or one whose handle a future edit forgets to
+    // clear) bails instead of driving ptyProcess.write() into a PTY destroy()
+    // just tore down -- the exact invariant destroy() exists to enforce
+    // (mirrors setupTimeoutHandle/idleFallbackHandle already being cleared
+    // there).
+    let destroyed = false
     // Tracks whether we're now in the inner shell (after postCommand
     // completed — e.g. inside the docker container). Drives whether
     // launchClaude() runs the container-setup re-run path or the
@@ -467,6 +1062,29 @@ export function spawnPty(
     let currentFlowInfo: string | undefined = undefined
     const SETUP_TIMEOUT_MS = 10000
     let setupTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+    // #242 tier 3: generous vs. SETUP_TIMEOUT_MS -- staging downloads a
+    // ~1MB archive over the SSH connection itself before it can even start
+    // verifying/installing, so a slow link needs materially more room than
+    // the node setup blob (which touches no network). On timeout we treat
+    // it exactly like an explicit fail=* sentinel: fall through to the bare
+    // launch rather than leaving the flow stuck with claude never written.
+    const STAGE_TIMEOUT_MS = 20000
+    // #242 tier 4: a full push is a ~1.27 MB base64 transfer driven through
+    // runChunkedWrite at WRITE_CHUNK_SIZE(256B)/WRITE_CHUNK_DELAY(12ms) --
+    // roughly a minute of byte-chunking ALONE, before accounting for the
+    // remote shell actually executing ~650+ individual `echo … >> file`
+    // lines (each a fork+exec) as they arrive. Generous on purpose; a
+    // push that's still genuinely in flight must never be mistaken for a
+    // hung one.
+    const PUSH_TIMEOUT_MS = 120000
+    // #242 finding F1 (adversarial review round 4, BLOCKER): the DOWNLOAD
+    // phase (host-side fetch/cache-lookup of the archive, BEFORE a single
+    // chunk is written) had no timeout of its own -- see
+    // downloadTimeoutHandle's doc comment above. Sized well under
+    // PUSH_TIMEOUT_MS: this only bounds a network fetch/disk read of a
+    // few-hundred-KB file (or a cache hit, which is synchronous), nowhere
+    // near the ~60s+ the chunked transfer itself is budgeted for.
+    const DOWNLOAD_TIMEOUT_MS = 45000
 
     const setFlowState = (s: SshFlowState, info?: string) => {
       currentFlowState = s
@@ -511,9 +1129,10 @@ export function spawnPty(
           setupShellReady = true
           logInfo(`[ssh] ${sessionId}: idle after host setup ok → writing claudeCmd`)
           // Host setup runs only because user clicked Launch Claude (on
-          // host). Write claudeCmd — don't chain to postCommand even if
-          // configured. shellOnly is ignored: the click is consent.
-          if (!claudeSent) writeClaudeCmd()
+          // host). Proceed to claude (via tier-3 staging first if tmux
+          // wasn't found) — don't chain to postCommand even if configured.
+          // shellOnly is ignored: the click is consent.
+          if (!claudeSent) proceedAfterSetup()
           return
         }
 
@@ -550,7 +1169,7 @@ export function spawnPty(
         ) {
           containerSetupShellReady = true
           logInfo(`[ssh] ${sessionId}: idle after container setup ok → writing claudeCmd`)
-          writeClaudeCmd()
+          proceedAfterSetup()
           return
         }
 
@@ -654,7 +1273,7 @@ export function spawnPty(
           const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
             includeStatusLine: s?.statusLineEnabled !== false,
             includeConductorMcp: s?.conductorToolsEnabled !== false,
-          })
+          }, sshNonce)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
           logError(`[ssh] ${sessionId}: host setup failed: ${(err as Error)?.message ?? err}`)
@@ -691,7 +1310,7 @@ export function spawnPty(
           const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
             includeStatusLine: s?.statusLineEnabled !== false,
             includeConductorMcp: s?.conductorToolsEnabled !== false,
-          })
+          }, sshNonce)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
           logError(`[ssh] ${sessionId}: container setup failed: ${(err as Error)?.message ?? err}`)
@@ -700,16 +1319,445 @@ export function spawnPty(
       }, 300)
     }
 
-    const writeClaudeCmd = () => {
+    // #242 round-2 MINOR fix: `runningClaudeInfo` lets a caller that just
+    // resolved a tier-3 staging failure (or timeout) carry that reason
+    // forward onto the 'running-claude' state this function emits, instead
+    // of it being silently overwritten. Before this fix, the staging
+    // sentinel handler called setFlowState('running-setup',
+    // `tmux-stage-fail:<reason>`) and then IMMEDIATELY called
+    // writeClaudeCmd(), whose own setFlowState('running-claude') fired in
+    // the same tick -- both IPC messages went out, but any renderer that
+    // paints only the CURRENT state (not a log of every emit) never showed
+    // the reason. Passing it through here means the state a listener
+    // actually observes carries the info.
+    const writeClaudeCmd = (runningClaudeInfo?: string) => {
       // Idempotent. shellOnly is intentionally NOT gated: this writer
       // only runs after the user clicked Launch Claude (or after a
       // user-consented chain reached this stage), so the click is
       // their explicit consent regardless of any saved shellOnly flag.
       if (claudeSent) return
       claudeSent = true
-      setFlowState('running-claude')
-      logInfo(`[ssh] ${sessionId}: writing claudeCmd`)
-      setTimeout(() => ptyProcess.write(claudeCmd + '\r'), 200)
+      // #242: wrap in `tmux new-session -A` when detection found a binary
+      // on the remote, so a dropped SSH connection survives -- reconnecting
+      // and running this exact flow again lands on the SAME command, and
+      // `-A` attaches to the still-running claude instead of launching a
+      // second one. No wrap when detection found nothing (host has no tmux
+      // and no staged fallback) -- the bare claudeCmd is unchanged from
+      // pre-#242 behaviour.
+      let cmdToWrite = claudeCmd
+      let tmuxWrapped = false
+      if (detectedTmuxSource) {
+        // #242 round-3 correction (I3): buildTmuxLaunchCommand no longer
+        // takes a tmuxBin at all -- it picks ON_PATH_TMUX_BIN_EXPR /
+        // STAGED_TMUX_BIN_EXPR from `staged` alone, so there is no
+        // wire-reported operand left for this sink to trust. The try/catch
+        // stays as defence-in-depth: writeClaudeCmd is reached from
+        // setTimeout callbacks (armIdleFallback, ~line 546/583) AND directly
+        // from the onData listener -- an uncaught throw from either is
+        // re-thrown by the global uncaughtException handler and crashes main
+        // (adversarial review, #188, same shape documented on
+        // assertNotOptionLike in ssh-args.ts).
+        try {
+          cmdToWrite = buildTmuxLaunchCommand({ sessionId, innerCmd: claudeCmd, staged: detectedTmuxSource === 'staged' })
+          tmuxWrapped = true
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: tmux launch command build failed, writing bare claudeCmd instead: ${(err as Error)?.message ?? err}`)
+        }
+      }
+      // #242 tier 5: `--continue` on a reconnect, but ONLY for the bare
+      // (non-tmux-wrapped) launch -- see buildSshClaudeFlags's doc comment
+      // (ssh-tmux.ts) for why `tmuxWrapped` (the ACTUAL outcome of the wrap
+      // attempt above, not merely `detectedTmuxSource`) is the right gate: a
+      // build-error in the try/catch above also means no tmux is in play
+      // for this write, even though a binary WAS detected.
+      const continueFlag = buildSshClaudeFlags({ reconnect: !!ssh.reconnect, tmuxInPlay: tmuxWrapped })
+      if (continueFlag) cmdToWrite = `${cmdToWrite} ${continueFlag}`
+      // #242 tier 5: resolveRunningClaudeInfo defaults the reason to
+      // 'probe=none' when this call carries no explicit one AND the launch
+      // ended up unwrapped -- every live tier-3/4 failure path already
+      // passes its own reason (stage-fail/push-fail) straight into
+      // runningClaudeInfo, but a defence-in-depth default means ANY future
+      // call site that reaches here unwrapped with no reason still tells
+      // the renderer SOMETHING rather than emitting 'running-claude' with
+      // no info at all -- the "failing silently" gap this tier closes.
+      setFlowState('running-claude', resolveRunningClaudeInfo(runningClaudeInfo, tmuxWrapped))
+      logInfo(`[ssh] ${sessionId}: writing claudeCmd${tmuxWrapped ? ' (tmux-wrapped)' : ''}${continueFlag ? ' (+continue)' : ''}`)
+      setTimeout(() => {
+        // #242 finding F3 (adversarial review round 4, MAJOR): this write is
+        // reachable from a leaked timer (stagingTimeoutHandle/
+        // pushTimeoutHandle/downloadTimeoutHandle -- all now cleared in
+        // destroy(), but a future timer added to this ladder could just as
+        // easily forget to be) firing AFTER the session was torn down.
+        // `destroyed` bails before ever attempting the write; the try/catch
+        // is defence-in-depth against any OTHER reason ptyProcess.write()
+        // might throw post-teardown (killPty's own write wraps in the same
+        // /* best-effort */ shape for exactly this reason).
+        if (destroyed) return
+        try {
+          ptyProcess.write(cmdToWrite + '\r')
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: writeClaudeCmd's write failed post-schedule: ${(err as Error)?.message ?? err}`)
+        }
+      }, 200)
+    }
+
+    /**
+     * #242 tier 3: write the curl/wget staging fragment. Reached only when
+     * tier 1/2 (PATH, ~/.claude/bin) both missed -- see proceedAfterSetup.
+     * Idempotent like the other writers; the timeout is the fallback path
+     * for a sentinel that never arrives (dead download, a `sh` that
+     * doesn't support a construct we assumed, etc.) -- either way we must
+     * still reach writeClaudeCmd so the session isn't left stuck forever.
+     */
+    const writeTmuxStageCmd = () => {
+      if (stagingSent) return
+      stagingSent = true
+      stagingAttempted = true
+      setFlowState('running-setup', 'tmux-stage')
+      logInfo(`[ssh] ${sessionId}: tmux not found on remote -- staging via curl/wget (#242 tier 3)`)
+      stagingTimeoutHandle = setTimeout(() => {
+        stagingTimeoutHandle = null
+        if (!stagingDone) {
+          stagingDone = true
+          logError(`[ssh] ${sessionId}: tmux stage sentinel not received within ${STAGE_TIMEOUT_MS}ms -- falling through to bare launch`)
+          writeClaudeCmd('tmux-stage-fail:timeout')
+        }
+      }, STAGE_TIMEOUT_MS)
+      setTimeout(() => {
+        // #242 finding F3 (adversarial review round 4, MAJOR): bail before
+        // ever touching ptyProcess if the session was torn down while this
+        // was scheduled -- same reasoning as writeClaudeCmd's write-callback
+        // above.
+        if (destroyed) return
+        // #242 M5 correction (adversarial review round 5): buildTmuxStageCommand
+        // is pure, but it is NOT argument-free and it CAN throw -- it takes
+        // `sshNonce` and calls assertSafeTmuxStageConstants (ssh-tmux-stage.ts),
+        // which validates the nonce's charset among other module constants.
+        // In production that nonce is always a valid randomId() (guaranteed
+        // by construction, so this throw is not expected to fire), but the
+        // guard against a future call site passing something else is exactly
+        // why the try/catch below exists -- same shape every other PTY writer
+        // in this function uses (adversarial review, #188 shape).
+        try {
+          // #242 tier 4: fire the arch probe ALONGSIDE staging, not only
+          // after a fail=download sentinel arrives. `uname` resolves near-
+          // instantly; curl/wget's failure on an egress-less host typically
+          // takes longer (DNS timeout, connect timeout) -- sending the probe
+          // now means detectedArch is very likely already known by the time
+          // (if ever) tier 3 reports fail=download, with zero added latency
+          // on the critical path (a separate write, not a blocking round
+          // trip). A probe write failing to build/send is swallowed exactly
+          // like a stage write failure would be -- it only ever degrades
+          // tier 4 to "arch unknown, don't attempt the push", never blocks
+          // tier 3 itself.
+          try {
+            // #242 round-3 MINOR fix: bracketed in stty -echo/stty echo, the
+            // same treatment buildTmuxStageCommand's payload gets, so the
+            // probe command and its plaintext reply are not the one thing on
+            // this ladder still visible in the user's pane. See
+            // buildArchProbeCommandBracketed's doc comment for why it's
+            // bracketed rather than base64-wrapped like the stage command.
+            ptyProcess.write(buildArchProbeCommandBracketed() + '\r')
+          } catch (err) {
+            logError(`[ssh] ${sessionId}: tmux arch probe failed to send (tier 4 disabled for this session): ${(err as Error)?.message ?? err}`)
+          }
+          ptyProcess.write(buildTmuxStageCommand(sshNonce) + '\r')
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: tmux stage command build failed, falling through to bare launch: ${(err as Error)?.message ?? err}`)
+          stagingDone = true
+          if (stagingTimeoutHandle) {
+            clearTimeout(stagingTimeoutHandle)
+            stagingTimeoutHandle = null
+          }
+          writeClaudeCmd('tmux-stage-fail:build-error')
+        }
+      }, 200)
+    }
+
+    /**
+     * #242 tier 4: push a pre-downloaded/cached, sha256-verified tmux
+     * archive down the live PTY as base64, for a remote tier 3 could not
+     * reach because it has NO outbound egress at all. Reached ONLY from the
+     * tier-3 stage-sentinel handler below, and only when `arch` is known
+     * (see the arch probe fired alongside writeTmuxStageCmd above) -- never
+     * from a code path that could fire without it. Idempotent (`pushSent`)
+     * like every other writer in this flow.
+     *
+     * On ANY failure to obtain bytes (no cache, download failed, digest
+     * mismatch) or to build/drive the push command, falls through to
+     * writeClaudeCmd exactly like a tier-3 failure would -- tier 4 is a
+     * best-effort extra rung on the ladder, never a NEW way for the flow to
+     * get stuck with claude never launched.
+     */
+    const attemptTmuxPush = (arch: TmuxStageTarget) => {
+      if (pushSent) return
+      pushSent = true
+      // #242 finding F1 (adversarial review round 4, BLOCKER): arm the
+      // download-phase timeout IMMEDIATELY -- before the host-side resolver
+      // (cache lookup or network fetch) has even started -- so a resolver
+      // that never settles (a stalled HTTPS response) cannot leave this
+      // session wedged forever with claude never launched. Cleared in the
+      // resolver's `.then()`/`.catch()` below BEFORE the `pushDone` guard
+      // runs, so a buffer that arrives after the timeout already fired is
+      // still correctly discarded rather than acted on twice.
+      downloadTimeoutHandle = setTimeout(() => {
+        downloadTimeoutHandle = null
+        if (pushDone) return
+        pushDone = true
+        logError(`[ssh] ${sessionId}: tmux archive download/cache lookup did not settle within ${DOWNLOAD_TIMEOUT_MS}ms -- falling through to bare launch`)
+        writeClaudeCmd('tmux-push-fail:download-timeout')
+      }, DOWNLOAD_TIMEOUT_MS)
+      setFlowState('running-setup', 'tmux-push')
+      logInfo(`[ssh] ${sessionId}: tmux download failed on remote (no egress) -- pushing cached/downloaded archive down the PTY (#242 tier 4, arch=${arch})`)
+      // #242 round-2 MAJOR fix: PUSH_TIMEOUT_MS used to be armed HERE, before
+      // even the host-side download/cache lookup ran -- so a slow (first-run,
+      // possibly-proxied) download ate the SAME 120s budget as the ~60s+
+      // chunked transfer that follows it, and nothing stopped a still-running
+      // runChunkedWrite when the timer fired anyway: writeClaudeCmd wrote
+      // `claude ...\r` into the PTY while base64 chunk lines were still being
+      // written, interleaving the launch command into the middle of the
+      // payload. Fixed two ways, belt-and-braces:
+      //   1. The timer is armed ONLY once every chunk has actually been
+      //      written (see the `onDone` hook below) -- from then on the only
+      //      thing left to wait for is the remote decoding/verifying/
+      //      installing and echoing its sentinel, which is what
+      //      PUSH_TIMEOUT_MS is actually sized for.
+      //   2. `isAlive` folds in `!pushDone`, so ANY path that sets pushDone
+      //      (this timer, a download failure, a build error) makes the NEXT
+      //      liveness check inside runChunkedWrite bail before its next
+      //      write.
+      // #242 round-3 MAJOR fix: (2) above only ever protected THIS function's
+      // OWN write loop -- it said nothing about a Launch-Claude click landing
+      // on `proceedAfterSetup`/`flowController.launchClaude` from OUTSIDE
+      // this function while pushSent is true and pushDone is still false
+      // (the entire multi-second-to-multi-minute window this transfer is
+      // open). That path bypassed runChunkedWrite's isAlive check entirely --
+      // it called writeClaudeCmd() directly, mid-transfer. Both call sites
+      // now carry their own `if (pushSent && !pushDone) return` guard (same
+      // shape as their pre-existing stagingSent/stagingDone guard), which is
+      // what actually makes "there is no longer a window where writeClaudeCmd
+      // can fire while a chunk write is still in flight" true.
+      const armPushSentinelTimeout = () => {
+        if (pushDone) return
+        pushTimeoutHandle = setTimeout(() => {
+          pushTimeoutHandle = null
+          if (!pushDone) {
+            pushDone = true
+            logError(`[ssh] ${sessionId}: tmux push sentinel not received within ${PUSH_TIMEOUT_MS}ms -- falling through to bare launch`)
+            writeClaudeCmd('tmux-push-fail:timeout')
+          }
+        }, PUSH_TIMEOUT_MS)
+      }
+      // #242 round-3 MAJOR fix (test coverage): calls the injectable
+      // `tmuxArchiveResolver` seam rather than `getOrDownloadTmuxArchive`
+      // directly, so tests can drive a full push without touching disk or
+      // the network (see `_setTmuxArchiveResolverForTest`). Identical in
+      // production -- the seam defaults to the real function.
+      tmuxArchiveResolver(arch).then((buf) => {
+        // #242 finding F1: clear the download-phase timeout BEFORE the
+        // pushDone guard below runs -- a resolver that settles just as (or
+        // just after) the timeout fires must not leave a stray timer
+        // running; the guard immediately after still discards a buffer
+        // that arrives too late to matter.
+        if (downloadTimeoutHandle) {
+          clearTimeout(downloadTimeoutHandle)
+          downloadTimeoutHandle = null
+        }
+        // Timeout (or some other path) may have already resolved this
+        // attempt by the time the download/cache lookup settles -- never
+        // act twice.
+        if (pushDone) return
+        if (!buf) {
+          pushDone = true
+          logError(`[ssh] ${sessionId}: no cached/downloadable tmux archive for arch=${arch} -- falling through to bare launch`)
+          writeClaudeCmd('tmux-stage-fail:download')
+          return
+        }
+        try {
+          const pushCmd = buildTmuxPushCommand({ arch, tarGzBase64: buf.toString('base64'), nonce: sshNonce })
+          const totalLen = pushCmd.length
+          // #242 round-3 MINOR fix: runChunkedWrite's onDone alone can't
+          // tell "all bytes landed" apart from "bailed mid-transfer" (a
+          // respawn replaced the PTY, or a write threw) -- tracking the last
+          // onProgress byte count here is how attemptTmuxPush tells them
+          // apart below, so an ABORTED transfer can be recovered from
+          // (restore echo, drop the partial payload file) instead of being
+          // treated identically to a clean finish.
+          let bytesLanded = 0
+          // #242 round-2 MAJOR fix: onProgress fires once per chunk (~4961
+          // times for a ~1.27 MB payload at WRITE_CHUNK_SIZE=256B) -- forwarding
+          // every call straight to setFlowState/emitSshFlowState would be
+          // ~5000 log lines + ~5000 IPC sends for one push, and that work runs
+          // inside the SAME 12ms per-chunk timer loop the fixed-budget
+          // timeout above is racing. Throttle to one emit per INTEGER percent
+          // change (~100 emits total) -- runChunkedWrite's own per-chunk
+          // contract (pty-chunked-write.test.ts) is untouched; only this
+          // call site's use of it is throttled.
+          let lastPct = -1
+          runChunkedWrite(pushCmd, {
+            write: (slice) => ptyProcess.write(slice),
+            // Same identity-guarded liveness check writeChunked/writeEnvelopeChunked
+            // use -- a respawn replaces ptyProcess under the same sessionId --
+            // PLUS `!pushDone`, so the sentinel timer (armed below, once
+            // every byte has landed) or any other path that resolves this
+            // attempt can stop an in-flight write; see this function's own
+            // doc comment above for the interleaving hazard this closes.
+            // #242 M3 (adversarial review round 5): also gate on `!destroyed`
+            // -- the ptySessions identity check alone is keyed on caller
+            // discipline (killPty deletes the map entry in the SAME
+            // synchronous frame it kills the pty), not on an invariant. A
+            // direct `getSshFlow(id).destroy()` (bypassing killPty) flips
+            // `destroyed` without ever touching the ptySessions map entry,
+            // so the identity check alone would still report "alive" and let
+            // this write land on a flow that has explicitly torn itself down.
+            isAlive: () => ptySessions.get(sessionId)?.ptyProcess === ptyProcess && !pushDone && !destroyed,
+            onProgress: (sent, total) => {
+              bytesLanded = sent
+              const pct = total > 0 ? Math.min(100, Math.floor((sent / total) * 100)) : 100
+              if (pct === lastPct) return
+              lastPct = pct
+              setFlowState('running-setup', `staging tmux ${pct}%`)
+            },
+            onDone: () => {
+              if (pushDone) return
+              // #242 round-3 MINOR fix: runChunkedWrite's contract guarantees
+              // the LAST onProgress call reports `sent === data.length`
+              // exactly on a full, successful write -- anything less means
+              // this attempt bailed before finishing (isAlive went false, or
+              // a write threw). An aborted transfer must not be treated like
+              // a clean finish-then-wait-for-sentinel: the remote is still
+              // sitting at `stty -echo` with up to ~1.27 MB of partial
+              // base64 in $PUSH_ACCUMULATOR_PATH, and arming
+              // PUSH_TIMEOUT_MS on top of that would, 120s later, write the
+              // claude launch command into a no-echo shell with a dangling
+              // temp file still on disk.
+              const completed = bytesLanded === totalLen
+              // #242 M3: same `!destroyed` addition as isAlive above -- a
+              // flow torn down via a direct destroy() call (not killPty)
+              // must not have its recovery/sentinel-arming writes land here
+              // either.
+              const stillLive = ptySessions.get(sessionId)?.ptyProcess === ptyProcess && !destroyed
+              if (!completed) {
+                if (stillLive) {
+                  try {
+                    // #242 finding F2 (adversarial review round 4, MAJOR):
+                    // the last bytes actually delivered are an arbitrary
+                    // mid-line slice of an `echo '<base64...` chunk write --
+                    // the OPENING single quote landed, its CLOSING quote did
+                    // not, so the remote's line discipline is sitting inside
+                    // a still-open string. Writing the recovery text straight
+                    // after that (the pre-fix shape) becomes literal content
+                    // inside that open quote, and so does writeClaudeCmd's
+                    // `claude ...\r` a moment later -- the session hangs at a
+                    // '>' continuation prompt with echo still off instead of
+                    // falling through to the bare launch. Send an interrupt
+                    // as its OWN write FIRST: a Ctrl-C makes the remote
+                    // shell's line discipline discard the dangling partial
+                    // line (the same mechanism as pressing Ctrl-C to abandon
+                    // a half-typed command at an interactive prompt) before
+                    // the recovery command is ever typed, so it lands as
+                    // real, executable shell text.
+                    ptyProcess.write('\x03')
+                    // Restore echo and drop the partial accumulator file --
+                    // best-effort; this recovery write failing is no worse
+                    // than the abort itself, so it falls through to the bare
+                    // launch regardless.
+                    ptyProcess.write(`stty echo 2>/dev/null; rm -f "$${PUSH_ACCUMULATOR_VAR}"\r`)
+                  } catch { /* best-effort recovery; falling through regardless */ }
+                }
+                pushDone = true
+                logError(`[ssh] ${sessionId}: tmux push aborted mid-transfer (${bytesLanded}/${totalLen} bytes) -- falling through to bare launch`)
+                writeClaudeCmd('tmux-push-fail:aborted')
+                return
+              }
+              // Full, clean finish. Only start waiting for the remote's
+              // completion sentinel if this attempt is still open AND the
+              // PTY we just finished writing to is still the live one -- a
+              // session that died mid-transfer already has nothing further
+              // to wait for, and arming a timer that can only ever write
+              // into a stale/replaced PTY would be a new hazard of exactly
+              // the kind this fix closes.
+              if (stillLive) {
+                armPushSentinelTimeout()
+              }
+            },
+          })
+        } catch (err) {
+          pushDone = true
+          logError(`[ssh] ${sessionId}: tmux push command build failed, falling through to bare launch: ${(err as Error)?.message ?? err}`)
+          writeClaudeCmd('tmux-push-fail:build-error')
+        }
+      }).catch((err) => {
+        // #242 finding F4 (adversarial review round 4, MINOR; correction in
+        // round 5, M4): the production resolver (getOrDownloadTmuxArchive) is
+        // fully try/catch'd and can never reject, but `tmuxArchiveResolver`
+        // is an injectable test seam (_setTmuxArchiveResolverForTest) -- a
+        // rejecting resolver here would otherwise be an UNHANDLED REJECTION.
+        // debug-logger.ts's `process.on('unhandledRejection')` handler only
+        // LOGS it and returns -- it does NOT re-throw and cannot kill main;
+        // that re-throw behaviour belongs to the SEPARATE
+        // `process.on('uncaughtException')` handler, which only fires on a
+        // synchronous throw, never on a rejected promise (an earlier version
+        // of this comment conflated the two). This `.catch()` is still worth
+        // having even though nothing here would crash main: without it, a
+        // rejecting resolver leaves this session silently wedged until
+        // DOWNLOAD_TIMEOUT_MS (45s) fires instead of falling through in the
+        // same tick.
+        if (downloadTimeoutHandle) {
+          clearTimeout(downloadTimeoutHandle)
+          downloadTimeoutHandle = null
+        }
+        if (pushDone) return
+        pushDone = true
+        logError(`[ssh] ${sessionId}: tmux archive resolver rejected, falling through to bare launch: ${(err as Error)?.message ?? err}`)
+        writeClaudeCmd('tmux-push-fail:download-error')
+      })
+    }
+
+    /**
+     * Single choke point every setup-completion path (host AND container,
+     * idle-fallback AND prompt-detection, AND a Launch-Claude re-click that
+     * lands on already-completed setup -- see launchClaude's `setupDone`
+     * branch, wired through here in the #242 round-2 fix) now calls instead
+     * of writeClaudeCmd directly. If tier 1/2 already found a tmux binary
+     * (detectedTmuxSource set), or staging already ran once this session,
+     * proceed straight to the claude launch exactly as before #242 tier 3
+     * existed. Otherwise this is the FIRST time we've learned tmux is
+     * missing -- try staging it before giving up and launching bare.
+     */
+    const proceedAfterSetup = () => {
+      if (claudeSent) return
+      // #242 round-3 MINOR fix: the choke point itself had no
+      // staging-in-flight guard -- launchClaude() got one (`if (stagingSent
+      // && !stagingDone) return`) because a second click is an obvious
+      // re-entry path, but proceedAfterSetup is ALSO reached from four other
+      // call sites (idle-fallback after host/container setup, and the
+      // prompt-detection branches further down in onData), each latched only
+      // by its own `setupShellReady`/`containerSetupShellReady` flag -- not
+      // by staging state. Those flags prevent that SPECIFIC site from firing
+      // twice, but nothing stopped a DIFFERENT site (e.g. the container path)
+      // from reaching this function while the host path's staging attempt is
+      // still mid-curl, and falling straight through to writeClaudeCmd()
+      // below. Mirroring launchClaude's guard here means the invariant does
+      // not depend on "host and container setup never both run in one
+      // session" holding forever -- it holds even if that assumption breaks.
+      if (stagingSent && !stagingDone) return
+      // #242 round-3 MAJOR fix: same shape, for the tier-4 push. A tier-4
+      // push can be in flight for up to ~PUSH_TIMEOUT_MS (120s, plus however
+      // long the ~1.27 MB chunked transfer itself takes) while claudeSent is
+      // still false -- reaching proceedAfterSetup during that window (e.g.
+      // via the idle-fallback branches, which are NOT latched by push
+      // state) fell straight through to writeClaudeCmd() below, writing
+      // `claude ...\r` into the PTY while base64 chunk lines were still
+      // arriving and corrupting the in-flight transfer. Only the push's own
+      // sentinel/timeout/build-error handler (not this choke point) may
+      // call writeClaudeCmd from here on while a push is open.
+      if (pushSent && !pushDone) return
+      if (!detectedTmuxSource && !stagingAttempted) {
+        writeTmuxStageCmd()
+        return
+      }
+      writeClaudeCmd()
     }
 
     /**
@@ -735,6 +1783,24 @@ export function spawnPty(
         writePostCommand()
       },
       launchClaude: () => {
+        // #242 round-2 MAJOR fix: tier-3 staging can be in flight for up to
+        // STAGE_TIMEOUT_MS (20s) while claudeSent is still false, a window
+        // that didn't exist pre-#242 (claudeSent used to flip true in the
+        // same tick setup completed). A second Launch-Claude click in that
+        // window used to write a fresh claude command into a PTY that's
+        // mid-curl. No-op until the in-flight attempt's own sentinel/timeout
+        // handler resolves it -- that handler (not a re-click) is the only
+        // thing allowed to call writeClaudeCmd from here on.
+        if (stagingSent && !stagingDone) return
+        // #242 round-3 MAJOR fix: same shape, for the tier-4 push. Without
+        // this, a Launch-Claude click during the ~60-120s tier-4 base64
+        // transfer falls through (inInnerShell false, setupSent true,
+        // setupDone true) straight into the setupDone branch below ->
+        // proceedAfterSetup() -- which the fix just above this one also now
+        // guards, but a defence-in-depth guard at BOTH call sites means the
+        // invariant doesn't depend on proceedAfterSetup being the only path
+        // that can reach writeClaudeCmd while a push is open.
+        if (pushSent && !pushDone) return
         // Two paths depending on whether we already entered the inner
         // shell. Inner shell → container setup + claudeCmd. Host shell
         // (no postCommand or user skipped it) → host setup + claudeCmd.
@@ -747,13 +1813,25 @@ export function spawnPty(
           writeHostSetupCmd()
         } else if (setupDone) {
           // Setup already done from a prior runPostCommand → claude now.
-          writeClaudeCmd()
+          // #242 round-2 MAJOR fix: routed through proceedAfterSetup, not
+          // writeClaudeCmd directly -- pre-#242 this branch was effectively
+          // inert (claudeSent flipped true in the same tick setup
+          // completed), so it never got exercised by tier-3 staging. Left
+          // as a direct writeClaudeCmd() call, this path skipped staging
+          // entirely even when tier 1/2 had reported tmux=none.
+          proceedAfterSetup()
         }
       },
       skip: () => {
         setFlowState('skipped')
       },
       destroy: () => {
+        // #242 finding F3 (adversarial review round 4, MAJOR): flip this
+        // FIRST -- writeClaudeCmd's/writeTmuxStageCmd's write-callbacks
+        // check this flag before ever touching ptyProcess, so they bail
+        // even in the window between this call starting and the
+        // clearTimeout calls below actually running.
+        destroyed = true
         if (setupTimeoutHandle) {
           clearTimeout(setupTimeoutHandle)
           setupTimeoutHandle = null
@@ -761,6 +1839,26 @@ export function spawnPty(
         if (idleFallbackHandle) {
           clearTimeout(idleFallbackHandle)
           idleFallbackHandle = null
+        }
+        // #242 finding F3 (adversarial review round 4, MAJOR): stagingTimeoutHandle
+        // was the one timer on this ladder NOT cleared here -- it outlives
+        // session teardown and, unguarded, drives a full claude-launch write
+        // into the PTY destroy() just tore down (proved: "WRITES AFTER
+        // DESTROY" logged from exactly this timer in the reviewer's probe).
+        // pushTimeoutHandle and downloadTimeoutHandle have the identical
+        // shape (armed, never cleared on teardown), so all three are
+        // cleared together here, next to the two timers that already were.
+        if (stagingTimeoutHandle) {
+          clearTimeout(stagingTimeoutHandle)
+          stagingTimeoutHandle = null
+        }
+        if (pushTimeoutHandle) {
+          clearTimeout(pushTimeoutHandle)
+          pushTimeoutHandle = null
+        }
+        if (downloadTimeoutHandle) {
+          clearTimeout(downloadTimeoutHandle)
+          downloadTimeoutHandle = null
         }
         sshFlows.delete(sessionId)
       },
@@ -813,28 +1911,200 @@ export function spawnPty(
       }
 
       // Step 1 completion sentinel: the remote node script writes
-      // `setup ok\n` to stdout right before exiting. We only treat
-      // sentinels seen AFTER setupSent as completion — otherwise an
-      // earlier sentinel echoed by a previous session in the same
-      // long-running shell could spuriously latch this on connect.
-      if (setupSent && !setupDone && data.includes('setup ok')) {
-        setupDone = true
-        if (setupTimeoutHandle) {
-          clearTimeout(setupTimeoutHandle)
-          setupTimeoutHandle = null
+      // `setup ok <nonce> tmux=<class>\n` to stdout right before exiting.
+      //
+      // #242 findings I1+I2 correction: the completion latch used to be a
+      // bare `data.includes('setup ok')` substring check against the
+      // CURRENT chunk only -- two independent bugs shared that one line.
+      // I2: a write-only attacker (no read access to the tty, so no way to
+      // learn this session's nonce) could feed the literal text "setup ok"
+      // and latch completion early with no usable tmux ever recorded,
+      // silently losing persistence AND forcing an unwanted tier-3 staging
+      // attempt (network fetch + a write into ~/.claude/bin) on a host that
+      // already had tmux. I1: even for a GENUINE sentinel, a real SSH link
+      // routinely splits this line across multiple PTY chunks -- the bare
+      // substring check fired on chunk 1 alone, latching `setupDone` before
+      // the (correctly chunk-boundary-safe) tmux-class parse could ever see
+      // the completed line in chunk 2, so the class was silently lost for
+      // the rest of the session.
+      //
+      // The fix for both: the completion latch is now gated on the SAME
+      // nonce-bearing, chunk-boundary-safe match `parseTmuxSentinel` uses
+      // for the tmux class itself, run against the ACCUMULATED per-session
+      // buffer (`bufferSetupLine`, not just this chunk) -- so a bare/wrong
+      // sentinel can never latch completion at all, and a genuine one
+      // latches exactly once the full line (nonce + resolved class) has
+      // actually arrived, however many chunks that took. We only consider
+      // sentinels seen AFTER setupSent as completion — otherwise an earlier
+      // sentinel echoed by a previous session in the same long-running
+      // shell could spuriously latch this on connect.
+      if (setupSent && !setupDone) {
+        const combined = bufferSetupLine(sessionId, data)
+        const tmuxResult = parseTmuxSentinel(combined, sshNonce)
+        if (tmuxResult !== undefined) {
+          setupDone = true
+          clearSetupLineBuffer(sessionId)
+          // `null` (explicit 'none') CLEARS detected state; a class STAGES
+          // it -- see parseTmuxSentinel's doc comment for why `??` cannot
+          // be used here (adversarial review, #242 MINOR).
+          detectedTmuxSource = tmuxResult === null ? null : (tmuxResult === 'path' ? 'onpath' : 'staged')
+          if (setupTimeoutHandle) {
+            clearTimeout(setupTimeoutHandle)
+            setupTimeoutHandle = null
+          }
+          logInfo(`[ssh] ${sessionId}: host setup ok received (tmux=${tmuxResult ?? 'none'})`)
         }
-        logInfo(`[ssh] ${sessionId}: host setup ok received`)
       }
 
-      // Container setup completion: same sentinel, but we only consider
-      // it after the second setupCmd was written (inside the container).
-      if (containerSetupSent && !containerSetupDone && data.includes('setup ok')) {
-        containerSetupDone = true
-        if (setupTimeoutHandle) {
-          clearTimeout(setupTimeoutHandle)
-          setupTimeoutHandle = null
+      // Container setup completion: same sentinel, same nonce-gated/buffered
+      // latch as the host branch above, but we only consider it after the
+      // second setupCmd was written (inside the container).
+      if (containerSetupSent && !containerSetupDone) {
+        const combined = bufferSetupLine(sessionId, data)
+        const tmuxResult = parseTmuxSentinel(combined, sshNonce)
+        if (tmuxResult !== undefined) {
+          containerSetupDone = true
+          clearSetupLineBuffer(sessionId)
+          detectedTmuxSource = tmuxResult === null ? null : (tmuxResult === 'path' ? 'onpath' : 'staged')
+          if (setupTimeoutHandle) {
+            clearTimeout(setupTimeoutHandle)
+            setupTimeoutHandle = null
+          }
+          logInfo(`[ssh] ${sessionId}: container setup ok received (tmux=${tmuxResult ?? 'none'})`)
         }
-        logInfo(`[ssh] ${sessionId}: container setup ok received`)
+      }
+
+      // #242 tier 4: the arch probe fired alongside writeTmuxStageCmd. Not
+      // gated on stagingDone (arch is useful the instant it's known, and
+      // must be known BEFORE the stage sentinel resolves for
+      // attemptTmuxPush below to ever fire) -- only on stagingSent (the
+      // probe is never sent otherwise) and on !archProbeResolved.
+      //
+      // #242 round-3 MINOR fix: this used to gate on `detectedArch ===
+      // null`, which cannot tell "not yet resolved" apart from "resolved to
+      // an unrecognised combo" -- both leave detectedArch null, so the
+      // regex kept re-running against every later PTY chunk for the rest of
+      // the session, and unrelated later output shaped like the sentinel
+      // could set detectedArch long after the real probe. `archProbeResolved`
+      // latches the FIRST time parseArchProbeSentinel returns anything other
+      // than `undefined` (a real match OR an unrecognised-combo `null`), so
+      // a stray later repeat can never re-parse or overwrite the result.
+      if (stagingSent && !archProbeResolved) {
+        // Parse the accumulated text, not this chunk (#242 I1 round-3): a probe
+        // split across two chunks otherwise leaves detectedArch null and makes
+        // tier 4 unreachable on any link that segments the line.
+        const archResult = parseArchProbeSentinel(bufferSshLine(sessionId, 'arch', data))
+        if (archResult !== undefined) {
+          archProbeResolved = true
+          clearSshLineBuffer(sessionId, 'arch')
+          detectedArch = archResult
+          logInfo(`[ssh] ${sessionId}: tmux tier-4 arch probe resolved -> ${detectedArch ?? 'unrecognised'}`)
+        }
+      }
+
+      // #242 tier 3: the staging fragment's own completion sentinel. Only
+      // considered once writeTmuxStageCmd has actually run (stagingSent)
+      // and only the FIRST match counts (stagingDone) -- same shape as the
+      // setup-ok latches above. `ok path=` sets detectedTmuxSource ='staged'
+      // (so the upcoming writeClaudeCmd wraps in tmux); `fail=<reason>`
+      // surfaces the reason via emitSshFlowState info and leaves
+      // detectedTmuxSource null, so writeClaudeCmd falls through to the unwrapped launch
+      // exactly as it already does for tier 1/2's tmux=none -- UNLESS tier 4
+      // can take over: reason is specifically 'download' (no egress, the
+      // one failure mode tier 4 exists for) AND the arch probe above already
+      // resolved a recognised arch. Any other reason (arch/digest/extract/
+      // terminfo/timeout/build-error/unsafe-path), or an unknown arch,
+      // behaves exactly as it did before tier 4 existed.
+      if (stagingSent && !stagingDone) {
+        // Accumulated text, not this chunk (#242 I1 round-3) -- a split
+        // `ok path=` otherwise never resolves and the flow stalls to the 20s
+        // STAGE_TIMEOUT, silently losing tmux on exactly the tiers a
+        // tmux-less remote depends on.
+        const stageResult = parseTmuxStageSentinel(bufferSshLine(sessionId, 'stage', data), sshNonce)
+        if (stageResult !== undefined) {
+          stagingDone = true
+          clearSshLineBuffer(sessionId, 'stage')
+          if (stagingTimeoutHandle) {
+            clearTimeout(stagingTimeoutHandle)
+            stagingTimeoutHandle = null
+          }
+          if (stageResult.ok) {
+            detectedTmuxSource = 'staged' // tier 3 staged this path
+            logInfo(`[ssh] ${sessionId}: tmux staged ok -> ${stageResult.path}`)
+            // #242 finding F3 (MAJOR, adversarial review round 5): patch the
+            // ALREADY-WRITTEN settings-<safeSid>.json's CCC_TMUX_BIN before
+            // the claude launch write below -- see buildTmuxBinPatchCommand's
+            // doc comment (ssh-shim.ts) for why this is required (tiers 3/4
+            // run strictly after configureRemoteSettings baked in the
+            // tier-1/2 probe result, which is empty on exactly the hosts
+            // tier 3 exists to serve). Deliberately NOT passed
+            // `stageResult.path` (#242 finding F1(a), round-2 correction) --
+            // buildTmuxBinPatchCommand computes the fixed
+            // `$HOME/.claude/bin/tmux` location on the REMOTE, at the same
+            // trust boundary buildTmuxLaunchCommand's STAGED_TMUX_BIN_EXPR
+            // uses, rather than trusting this wire-reported value. Best-
+            // effort: a failed/throwing write here must not block the claude
+            // launch that follows -- the statusline degrading is strictly
+            // better than the session never launching at all.
+            try {
+              ptyProcess.write(buildTmuxBinPatchCommand(sessionId) + '\r')
+            } catch (err) {
+              logError(`[ssh] ${sessionId}: tmux CCC_TMUX_BIN settings patch failed to send (statusline may not reflect tmux): ${(err as Error)?.message ?? err}`)
+            }
+            writeClaudeCmd()
+          } else if (stageResult.reason === 'download' && detectedArch) {
+            logInfo(`[ssh] ${sessionId}: tmux staging failed (download, no egress) -- attempting tier-4 push instead`)
+            attemptTmuxPush(detectedArch)
+          } else {
+            logInfo(`[ssh] ${sessionId}: tmux staging failed (${stageResult.reason}) -- falling back to bare launch`)
+            // #242 round-2 MINOR fix: pass the reason straight to
+            // writeClaudeCmd rather than calling
+            // setFlowState('running-setup', `tmux-stage-fail:...`) here --
+            // that call was immediately overwritten in the same tick by
+            // writeClaudeCmd's own setFlowState('running-claude'), so a
+            // renderer watching current state only ever saw the LATER
+            // state with no reason attached.
+            writeClaudeCmd(`tmux-stage-fail:${stageResult.reason}`)
+          }
+          return
+        }
+      }
+
+      // #242 tier 4: the push's own completion sentinel -- reuses the EXACT
+      // same parser and sentinel shape as tier 3 (buildTmuxPushControlScript
+      // emits the identical `ccc-tmux-stage ok/fail` text), so pty-manager
+      // needs no second parser. Gated on pushSent/pushDone the same way the
+      // tier-3 block above is gated on stagingSent/stagingDone.
+      if (pushSent && !pushDone) {
+        // Accumulated text, not this chunk (#242 I1 round-3). Reuses the
+        // 'stage' buffer deliberately: tier 4 only runs after tier 3 has
+        // resolved and cleared it, and both emit the identical sentinel shape,
+        // so there is no interleaving to keep apart between these two.
+        const pushResult = parseTmuxStageSentinel(bufferSshLine(sessionId, 'stage', data), sshNonce)
+        if (pushResult !== undefined) {
+          pushDone = true
+          clearSshLineBuffer(sessionId, 'stage')
+          if (pushTimeoutHandle) {
+            clearTimeout(pushTimeoutHandle)
+            pushTimeoutHandle = null
+          }
+          if (pushResult.ok) {
+            detectedTmuxSource = 'staged' // tier 4 staged this path
+            logInfo(`[ssh] ${sessionId}: tmux pushed ok -> ${pushResult.path}`)
+            // #242 finding F3: same CCC_TMUX_BIN patch as the tier-3 ok
+            // branch above -- see that branch's comment.
+            try {
+              ptyProcess.write(buildTmuxBinPatchCommand(sessionId) + '\r')
+            } catch (err) {
+              logError(`[ssh] ${sessionId}: tmux CCC_TMUX_BIN settings patch failed to send (statusline may not reflect tmux): ${(err as Error)?.message ?? err}`)
+            }
+            writeClaudeCmd()
+          } else {
+            logInfo(`[ssh] ${sessionId}: tmux push failed (${pushResult.reason}) -- falling back to bare launch`)
+            writeClaudeCmd(`tmux-push-fail:${pushResult.reason}`)
+          }
+          return
+        }
       }
 
       // Auto-type SSH password only on a real password prompt, not any MOTD
@@ -901,7 +2171,7 @@ export function spawnPty(
       // claude is the only sensible next stage.
       if (setupSent && setupDone && !setupShellReady && sawShellPrompt) {
         setupShellReady = true
-        if (!claudeSent) writeClaudeCmd()
+        if (!claudeSent) proceedAfterSetup()
         return
       }
 
@@ -931,7 +2201,7 @@ export function spawnPty(
         && sawShellPrompt
       ) {
         containerSetupShellReady = true
-        writeClaudeCmd()
+        proceedAfterSetup()
       }
     })
   } else if ((options?.provider ?? 'claude') === 'codex' && !options?.shellOnly) {
@@ -1791,6 +3061,14 @@ function cleanupSessionResources(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  // #242 finding I1: drop ALL of this session's sentinel buffers alongside its
+  // OSC sibling above -- same per-session-map shape, same leak risk if omitted.
+  // All three kinds, not just 'setup': a session can die with its stage or arch
+  // sentinel still unresolved, and a per-kind clear only runs on resolve.
+  clearAllSshLineBuffers(sessionId)
+  // #242 finding F1 (b): drop this session's nonce so it can never leak into
+  // a future, unrelated spawn reusing the same sessionId.
+  sshNonceBySession.delete(sessionId)
   pasteQueues.get(sessionId)?.cancel() // stop draining + drop pending before dropping the ref (P1.5)
   pasteQueues.delete(sessionId)
   // Delete the per-session statusline status file so the watcher's poll

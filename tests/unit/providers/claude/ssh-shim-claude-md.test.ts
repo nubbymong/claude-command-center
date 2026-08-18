@@ -4,9 +4,12 @@
 import { describe, it, expect } from 'vitest'
 import { generateRemoteSetupScript, buildRemoteSessionCleanupCommand } from '../../../../src/main/providers/claude/ssh-shim'
 
+// #242 finding F1 (b): generateRemoteSetupScript now requires a nonce.
+const NONCE = 'testnonce123abc'
+
 describe('generateRemoteSetupScript -- remote CLAUDE.md handling', () => {
   it('never unlinks the remote CLAUDE.md; writes empty when the strip empties it', () => {
-    const script = generateRemoteSetupScript('sess-abc', null)
+    const script = generateRemoteSetupScript('sess-abc', null, undefined, NONCE)
     // The CLAUDE.md cleanup is still present...
     expect(script).toContain("path.join(claudeDir,'CLAUDE.md')")
     // ...but it must not delete the user's file...

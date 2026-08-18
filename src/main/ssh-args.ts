@@ -63,6 +63,17 @@ export function buildSshArgs(ssh: SshArgsTarget, mcpPort: number, platform: Node
     '-p', String(ssh.port),
     '-t', // force TTY allocation
     '-o', 'StrictHostKeyChecking=accept-new',
+    // #242: tmux persistence only helps if the underlying connection
+    // eventually notices it's dead. Laptop sleep, wifi roaming and NAT
+    // idle-timeouts can kill a TCP connection while the local socket still
+    // looks open, and ssh has no way to detect that without probing.
+    // ServerAliveInterval=30 sends an encrypted keepalive every 30s;
+    // ServerAliveCountMax=3 gives up after 3 unanswered probes (~90s) so a
+    // truly dead connection surfaces (and CCC's reconnect can take over)
+    // instead of hanging indefinitely. All platforms — unlike ControlMaster
+    // below, keepalive has no Windows-vs-Unix incompatibility.
+    '-o', 'ServerAliveInterval=30',
+    '-o', 'ServerAliveCountMax=3',
   ]
 
   if (platform === 'win32') {
