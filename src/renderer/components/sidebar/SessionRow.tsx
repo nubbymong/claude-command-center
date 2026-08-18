@@ -1,6 +1,6 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { CodexBadge, ShellBadge, SshBadge } from './Badges'
+import { CodexBadge, ShellBadge, SshBadge, SshPersistentBadge } from './Badges'
 import { type SessionState } from '../ui/StatusDot'
 import { EffortPill } from '../ui/EffortPill'
 import { FastBolt } from '../ui/FastBolt'
@@ -139,7 +139,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           deliberately or add min-w-0 + flex-shrink rules at that point. */}
       <span className="nm relative z-10 row-start-1 flex items-center gap-1.5">
         <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600 }} title={session.customName?.trim() ? `${session.customName.trim()} · ${session.label}` : session.label}>{session.customName?.trim() || session.label}</span>
-        {session.sessionType === 'ssh' && <SshBadge />}
+        {session.sessionType === 'ssh' && (session.sshTmuxPersistent === true ? <SshPersistentBadge /> : <SshBadge />)}
         {session.shellOnly ? <ShellBadge /> : (session.provider ?? 'claude') === 'codex' ? <CodexBadge needsAttention={needsAttention} /> : null}
       </span>
 

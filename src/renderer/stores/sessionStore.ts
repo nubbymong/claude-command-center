@@ -15,6 +15,8 @@ export interface SSHConfig {
   postCommand?: string
   hasSudoPassword?: boolean
   dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
+  detachable?: boolean      // item 1: "Detachable" persistent tmux session (default ON; only false disables)
+  remoteOs?: 'auto' | 'unix' | 'windows'  // item 3: remote OS (windows = prototype Windows setup path)
 }
 
 export interface Session {
@@ -128,6 +130,19 @@ export interface Session {
    *  without clearing it), which is the actual respawn path this exists
    *  for. */
   sshReachedClaudeRunning?: boolean
+  /** SSH tmux enhancement (item 8/9): true once main confirms this SSH
+   *  session is running inside a tmux persistence wrapper (survives a dropped
+   *  connection). Drives the persistence indicator + the distinct
+   *  persistent-SSH icon. Renderer-only, never persisted -- re-established by
+   *  main's ssh:sessionInfo push on each spawn. undefined = not yet known;
+   *  false = SSH but non-persistent (bare launch). */
+  sshTmuxPersistent?: boolean
+  /** SSH tmux enhancement (item 10): the Claude account the REMOTE session is
+   *  signed in as (oauthAccount.emailAddress from the remote ~/.claude.json),
+   *  read off the nonce'd setup sentinel. DESCRIPTOR ONLY -- never a
+   *  credential; already charset/length-capped host-side before it reaches
+   *  here. Renderer-only, not persisted. */
+  sshRemoteAccount?: string
   codexOptions?: CodexOptions
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead

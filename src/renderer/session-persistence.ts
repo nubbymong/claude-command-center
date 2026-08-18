@@ -34,6 +34,8 @@ export function buildSessionState(): SessionState {
           hasPassword: s.sshConfig.hasPassword,
           postCommand: s.sshConfig.postCommand,
           hasSudoPassword: s.sshConfig.hasSudoPassword,
+          detachable: s.sshConfig.detachable,
+          remoteOs: s.sshConfig.remoteOs,
         }
       : undefined,
     machineName: s.machineName,

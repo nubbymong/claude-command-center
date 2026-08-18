@@ -51,6 +51,15 @@ export function useLaunchConfig(): (config: TerminalConfig) => string {
         hasPassword: config.sshConfig.hasPassword,
         postCommand: config.sshConfig.postCommand,
         hasSudoPassword: config.sshConfig.hasSudoPassword,
+        dockerContainer: config.sshConfig.dockerContainer,
+        // SSH tmux enhancement (items 1/3): these MUST ride through to the
+        // launched session or the spawn never sees them. Dropping `detachable`
+        // here left the owner's "never silently install tmux" opt-out inert
+        // (main defaulted persistence ON) and made remoteOs:'windows'
+        // unreachable -- same field-by-field-rebuild drop the comment below
+        // records for the indexing opt-out (adversarial review, 2026-08-18).
+        detachable: config.sshConfig.detachable,
+        remoteOs: config.sshConfig.remoteOs,
       } : undefined,
       legacyVersion: config.claudeOptions?.legacyVersion,
       agentIds: config.claudeOptions?.agentIds,

@@ -109,6 +109,13 @@ function runShim(shimSource: string, opts: HarnessOptions): HarnessResult {
   const fakeProcess = {
     env: opts.env,
     pid: 4242,
+    // A real node process ALWAYS has argv (>= ['node', script]) and platform.
+    // The shim reads process.argv[2] (the Windows argv session id) and
+    // process.platform (the win32 CONOUT$ branch); model both so the harness
+    // exercises the Linux path (argv[2] undefined -> env sid; platform linux ->
+    // CONOUT$ branch skipped) exactly as a POSIX remote would.
+    argv: ['node', '/fake-home/.claude/conductor-ssh-statusline.js'],
+    platform: 'linux',
     stdin: fakeStdin,
     stdout: { write: (s: string) => { result.stdout.push(s); return true } },
     stderr: { write: (s: string) => { result.stderr.push(s); return true } },

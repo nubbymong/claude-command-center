@@ -283,7 +283,46 @@ export default function SessionHeader({ session, onShowTip }: Props) {
       </span>
 
       {session.sessionType === 'ssh' && session.sshConfig && (
-        <span className="text-xs text-mauve shrink-0">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
+        <span className="flex items-center gap-1.5 shrink-0">
+          <span className="text-xs text-mauve">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
+          {/* item 8: persistence indicator. Only shown once main has reported a
+              definite status for this session (undefined = not yet known). */}
+          {/* Rendered through the shared HeaderPill (#291's title-bar-style pill
+              system) so the SSH pills sit at the same weight as the account /
+              GitHub pills instead of carrying their own copy of the chrome. */}
+          {session.sshTmuxPersistent === true && (
+            <HeaderPill
+              label={
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
+              }
+              tone="var(--status-success)"
+              word="persistent"
+              dotOnly
+              title="This remote session runs inside tmux — a dropped connection stays alive and reconnecting resumes it in place."
+              testId="ssh-persistent-pill"
+            />
+          )}
+          {session.sshTmuxPersistent === false && (
+            <HeaderPill
+              label="not persistent"
+              tone="var(--text-muted)"
+              dotOnly
+              title="This remote session is not persistent — a dropped connection ends it; reconnecting resumes the conversation via --continue."
+              testId="ssh-nonpersistent-pill"
+            />
+          )}
+          {/* item 10: the account the REMOTE session is signed in as (descriptor
+              only). Distinct from the local SessionAuthPills, which never apply
+              to SSH. */}
+          {session.sshRemoteAccount && (
+            <HeaderPill
+              label={<span className="truncate max-w-[140px]">{session.sshRemoteAccount}</span>}
+              tone="var(--color-mauve)"
+              title={`Remote Claude account: ${session.sshRemoteAccount}`}
+              testId="ssh-remote-account-pill"
+            />
+          )}
+        </span>
       )}
 
       {/* Right cluster: account · claude.ai · Claude Code | GitHub — styled to

@@ -43,6 +43,25 @@ export interface SshConfig {
   postCommand?: string
   hasSudoPassword?: boolean
   dockerContainer?: string
+  /**
+   * SSH tmux enhancement (item 3) — the remote OS. 'auto' (default) and 'unix'
+   * both use the POSIX setup path unchanged (no regression). 'windows' uses a
+   * PowerShell-delivered setup + a CONOUT$ statusline shim + a cmd.exe claude
+   * launch, with NO tmux (Windows has none) so the session falls back to a bare
+   * `claude` that resumes via --continue. PROTOTYPE, isolated behind this flag.
+   */
+  remoteOs?: 'auto' | 'unix' | 'windows'
+  /**
+   * SSH tmux enhancement (item 1) — "Detachable" (persistent remote session).
+   * DEFAULT ON: undefined/true means the tmux-persistence ladder (#242) is
+   * attempted so a dropped connection survives and reconnects reattach. Set
+   * to false to opt OUT entirely — no tmux detection, no provisioning, no
+   * silent install; the session is a bare `claude` that resumes via
+   * `--continue` on reconnect. Owner explicitly dislikes tmux being installed
+   * silently, so this makes persistence user-controlled. Only `false`
+   * disables (mirrors loggingEnabled's default-true shape).
+   */
+  detachable?: boolean
 }
 
 // ── Legacy Version ──

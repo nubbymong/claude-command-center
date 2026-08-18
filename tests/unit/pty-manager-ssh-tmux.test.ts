@@ -90,15 +90,35 @@ function applyLineDiscipline(text: string): string {
 }
 
 const writeMock = vi.fn()
-const spawnMock = vi.fn(() => ({
-  onData: (cb: (data: string) => void) => {
-    onDataListeners.push(cb)
-  },
-  onExit: () => {},
-  write: writeMock,
-  kill: () => {},
-  pid: 123,
-}))
+// Every pty node-pty.spawn hands back, in spawn order, so a test can fire a
+// SPECIFIC pty's exit (needed for the restart-race regression: the OLD pty must
+// be able to exit AFTER a new one took over the same sessionId). The real mock
+// used to discard the onExit callback (`onExit: () => {}`), which is exactly why
+// handlePtyExit + the restart-race guard were untestable (adversarial review,
+// 2026-08-18). Each instance's __fireExit runs every onExit listener registered
+// on it (spawnPty's, and gracefulExitPty's own).
+interface FakePty {
+  onData: (cb: (data: string) => void) => void
+  onExit: (cb: (e: { exitCode: number }) => void) => void
+  write: typeof writeMock
+  kill: () => void
+  pid: number
+  __fireExit: (exitCode?: number) => void
+}
+const ptyInstances: FakePty[] = []
+const spawnMock = vi.fn(() => {
+  const exits: Array<(e: { exitCode: number }) => void> = []
+  const inst: FakePty = {
+    onData: (cb: (data: string) => void) => { onDataListeners.push(cb) },
+    onExit: (cb: (e: { exitCode: number }) => void) => { exits.push(cb) },
+    write: writeMock,
+    kill: () => {},
+    pid: 123,
+    __fireExit: (exitCode = 0) => { for (const cb of exits.slice()) cb({ exitCode }) },
+  }
+  ptyInstances.push(inst)
+  return inst
+})
 vi.mock('node-pty', () => ({ spawn: spawnMock }))
 vi.mock('electron', () => ({
   BrowserWindow: class {},
@@ -106,7 +126,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/tmp' },
 }))
 
-const { spawnPty, getSshFlow, killPty, parseTmuxSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest } = await import('../../src/main/pty-manager')
+const { spawnPty, getSshFlow, killPty, gracefulExitPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest, _hasSshTargetForTest } = await import('../../src/main/pty-manager')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 // Pure module, no node-pty/electron deps -- safe to import directly (unlike
@@ -180,24 +200,66 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     vi.useRealTimers()
   })
 
-  it('wraps claudeCmd in tmux new-session -A when the setup sentinel reports tmux=path (tier 1, found on PATH)', () => {
+  // SSH tmux enhancement (item 1): the "Detachable" toggle (SSHOptions.detachable).
+  // Off => the tmux ladder is fully bypassed: no wrap even when the host HAS
+  // tmux, and no tier-3/4 staging write on a tmux-less host (the "no silent
+  // install" guarantee). Both are separate gates, hence two tests.
+  it('detachable:false writes a BARE claude even when the sentinel reports tmux=path', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-detach-off-hit', { ssh: { ...SSH, detachable: false } } as never)
+    writeMock.mockClear()
+    getSshFlow('s-detach-off-hit')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel('s-detach-off-hit', 'setup ok {NONCE} tmux=path\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    const written = claudeWrite![0] as string
+    expect(written).not.toContain('has-session')
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
+    expect(written).toContain('claude ')
+  })
+
+  it('detachable:false does NOT attempt tier-3/4 staging on a tmux=none host (no silent install)', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-detach-off-miss', { ssh: { ...SSH, detachable: false } } as never)
+    writeMock.mockClear()
+    getSshFlow('s-detach-off-miss')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel('s-detach-off-miss', 'setup ok {NONCE} tmux=none\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite![0] as string).not.toContain('has-session')
+  })
+
+  it('detachable default (undefined) still wraps in tmux on tmux=path', () => {
+    driveToClaudeWrite('s-detach-default', 'setup ok {NONCE} tmux=path\r\n')
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect((claudeWrite![0] as string)).toContain('has-session -t ccc-s-detach-default')
+  })
+
+  it('wraps claudeCmd in the tmux has-session wrapper when the setup sentinel reports tmux=path (tier 1, found on PATH)', () => {
     driveToClaudeWrite('s-tmux-hit', 'setup ok {NONCE} tmux=path\r\n')
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-s-tmux-hit`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-s-tmux-hit`)
     expect(written).toContain('claude ')
   })
 
   // #242 round-3 correction (I3): tier 2 (a pre-existing ~/.claude/bin/tmux)
   // shares the SAME fixed launch token as tier 3/4 -- STAGED_TMUX_BIN_EXPR --
   // since all three install/detect at the identical remote location.
-  it('wraps claudeCmd in tmux new-session -A when the setup sentinel reports tmux=home (tier 2, pre-existing ~/.claude/bin/tmux)', () => {
+  it('wraps claudeCmd in the tmux has-session wrapper when the setup sentinel reports tmux=home (tier 2, pre-existing ~/.claude/bin/tmux)', () => {
     driveToClaudeWrite('s-tmux-home', 'setup ok {NONCE} tmux=home\r\n')
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -A -s ccc-s-tmux-home`)
+    expect(written).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -s ccc-s-tmux-home`)
     expect(written).toContain('claude ')
   })
 
@@ -211,7 +273,7 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     // paths regardless of wrapping. Assert the WRAPPER shape is absent and
     // the claude invocation is not embedded inside a single-quoted argument
     // (which is how the tmux wrap would present it).
-    expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
     expect(written).not.toContain(`'`)
     expect(written).toContain('claude ')
   })
@@ -297,7 +359,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     feedPtyData(`setup ok ${nonce} tmux=pa`)
     feedPtyData(`th\r\n`)
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   it('still wraps in tmux when the chunk boundary lands mid-nonce', () => {
@@ -308,7 +370,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     feedPtyData(`setup ok ${nonce.slice(0, mid)}`)
     feedPtyData(`${nonce.slice(mid)} tmux=home\r\n`)
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   it('still wraps in tmux across a three-way split of the sentinel line', () => {
@@ -319,7 +381,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     feedPtyData(`${nonce} tmux=pa`)
     feedPtyData(`th\r\n`)
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   // A chunk that never arrives with the terminating newline must still
@@ -353,7 +415,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     // 4096 mirrors MAX_SETUP_LINE_BUFFER in pty-manager.ts (not exported).
     feedPtyData(`setup ok ${nonce} tmux=path\r\n` + 'y'.repeat(4096 + 1))
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   // Isolating control for the test above: comfortably UNDER the cap, this
@@ -365,7 +427,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     const nonce = _getSshNonceForTest(sessionId)!
     feedPtyData(`setup ok ${nonce} tmux=path\r\n` + 'y'.repeat(1000))
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   // ROUND-2 MAJOR: two of the three properties this buffer is required to
@@ -401,7 +463,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
 
 // #242 finding F1, BLOCKER (adversarial review round 5). Demonstrated attack:
 // "feeding a line shaped like a wall broadcast made CCC write
-// /tmp/.x/tmux new-session -A -s ccc-victim1 '...claude...' into the
+// /tmp/.x/tmux new-session -s ccc-victim1 '...claude...' into the
 // victim's shell" and "a bare relative name ('setup ok tmux=tmux') also
 // works". These drive the REAL flow (spawnPty -> launchClaude -> feed
 // bytes), not the pure builders, because the vulnerability is in what the
@@ -501,9 +563,9 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
       // Staging still genuinely succeeded (a real binary really was
       // installed) -- the launch IS tmux-wrapped, just never with the
       // attacker-reported operand.
-      expect(written).toMatch(/new-session\s+-A\s+-s/)
+      expect(written).toMatch(/new-session\s+-s\s+ccc-/)
       expect(written).not.toContain(hostilePath)
-      expect(written).toContain('"$HOME"/.claude/bin/tmux new-session -A')
+      expect(written).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-')
     }
   })
 
@@ -513,7 +575,7 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     driveToClaudeWrite('s-f1-genuine-tier12', 'setup ok {NONCE} tmux=path\r\n')
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-s-f1-genuine-tier12`)
+    expect((claudeWrite![0] as string)).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-s-f1-genuine-tier12`)
   })
 
   it('the genuine nonce-carrying tier-3 staged-ok sentinel still wraps claude in tmux end to end', () => {
@@ -526,7 +588,7 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     // #242 finding F1(a), round-2 correction: the launch always embeds the
     // fixed $HOME expression for a staged tier, never the reported path --
     // see STAGED_TMUX_BIN_EXPR (ssh-tmux.ts).
-    expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -A -s ccc-s-f1-genuine-tier3')
+    expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-s-f1-genuine-tier3')
   })
 })
 
@@ -568,7 +630,7 @@ describe('#242 I1: tier-3/4 sentinels split across PTY chunks', () => {
     expect(claudeWrite).toBeDefined()
     // Staged tier never trusts the reported path -- it launches the host-side
     // literal expression. The point here is that it WRAPS at all.
-    expect(claudeWrite).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(claudeWrite).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   it('reaches the bare launch promptly when a stage fail= sentinel is split across two chunks', () => {
@@ -585,7 +647,7 @@ describe('#242 I1: tier-3/4 sentinels split across PTY chunks', () => {
     // Without buffering this only arrives via the 20s STAGE_TIMEOUT, so the
     // 300ms advance above is the assertion: it resolved from the sentinel.
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite).not.toContain('new-session -A')
+    expect(claudeWrite).not.toContain('has-session')
   })
 
   it('still reaches tier 4 when the arch probe is split across two chunks', async () => {
@@ -672,7 +734,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).toContain('new-session -A -s ccc-s-stage-skip')
+    expect((claudeWrite![0] as string)).toContain('new-session -s ccc-s-stage-skip')
   })
 
   // Acceptance: "fails when a `ccc-tmux-stage fail=terminfo` chunk no
@@ -688,7 +750,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
     expect(written).toContain('claude ')
   })
 
@@ -702,7 +764,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     const written = claudeWrite![0] as string
     // #242 finding F1(a), round-2 correction: the reported path is never
     // used to build the launch -- see STAGED_TMUX_BIN_EXPR (ssh-tmux.ts).
-    expect(written).toContain('"$HOME"/.claude/bin/tmux new-session -A -s ccc-s-stage-ok')
+    expect(written).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-s-stage-ok')
     expect(written).not.toContain('/home/dev/.claude/bin/tmux new-session')
   })
 
@@ -718,7 +780,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
     expect(written).not.toContain('-oProxyCommand')
   })
 
@@ -729,7 +791,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // #242 finding F3 (adversarial review round 4, MAJOR): stagingTimeoutHandle
@@ -869,7 +931,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
       const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
       expect(claudeWrite).toBeDefined()
       const written = claudeWrite![0] as string
-      expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+      expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
       expect(getSshFlow('s-m5-build-error')!.getState()).toEqual({
         state: 'running-claude',
         info: 'tmux-stage-fail:build-error',
@@ -1215,7 +1277,7 @@ describe('spawnPty SSH branch — container-flow sentinel split across PTY chunk
     vi.advanceTimersByTime(300) // writeClaudeCmd's own 200ms write delay
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite![0] as string).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(claudeWrite![0] as string).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 })
 
@@ -1279,7 +1341,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     expect(pushActivityDetected()).toBe(false)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite![0]).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(claudeWrite![0]).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // Acceptance (d), second half: a stage failure for any reason OTHER than
@@ -1302,7 +1364,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     expect(pushActivityDetected()).toBe(false)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite![0]).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(claudeWrite![0]).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // Acceptance (a): push chunk writes are issued, and no 'claude ' write
@@ -1342,7 +1404,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     expect(claudeWrite).toBeDefined()
     // #242 finding F1(a), round-2 correction: same fixed-$HOME rule as tier
     // 3 -- see STAGED_TMUX_BIN_EXPR (ssh-tmux.ts).
-    expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -A -s ccc-s-push-ok')
+    expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-s-push-ok')
   })
 
   // Acceptance (c), second half: `fail=...` after a completed push produces
@@ -1356,7 +1418,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     await vi.advanceTimersByTimeAsync(300)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-A\s+-s/)
+    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // #242 round-3 MAJOR fix. Modeled on the tier-3 "second Launch-Claude
@@ -1450,7 +1512,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     await vi.advanceTimersByTimeAsync(300) // writeClaudeCmd's own 200ms write delay
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-A\s+-s/)
+    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // #242 finding F1 (adversarial review round 4, BLOCKER): the tier-4
@@ -1482,7 +1544,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     await vi.advanceTimersByTimeAsync(10000) // crosses DOWNLOAD_TIMEOUT_MS (+ writeClaudeCmd's own 200ms write delay)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-A\s+-s/)
+    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-s\s+ccc-/)
     expect(getSshFlow('s-push-download-hang')!.getState().state).toBe('running-claude')
   })
 
@@ -1674,7 +1736,7 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     expect(claudeWrite![0]).toContain('--continue')
-    expect(claudeWrite![0]).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(claudeWrite![0]).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // Mutation to prove this can fail: drop the `tmuxInPlay` gate inside
@@ -1682,7 +1744,7 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
   // this) -- here it additionally proves pty-manager actually WIRES
   // `tmuxWrapped` (the real outcome of the wrap attempt) through, not just
   // that the pure helper itself is correct.
-  it('does NOT write --continue when reconnect is true but tmux IS in play', () => {
+  it('routes --continue into the tmux wrapper fresh-create branch only when reconnect is true and tmux IS in play', () => {
     onDataListeners.length = 0
     spawnPty(fakeWin, 's-reconnect-tmux', { ssh: { ...SSH, reconnect: true } } as never)
     writeMock.mockClear()
@@ -1693,8 +1755,17 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     vi.advanceTimersByTime(300)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite![0]).toContain('new-session -A -s ccc-s-reconnect-tmux')
-    expect(claudeWrite![0]).not.toContain('--continue')
+    const written = claudeWrite![0] as string
+    expect(written).toContain('new-session -s ccc-s-reconnect-tmux')
+    // Item 6: a LIVE reattach (`attach -t X` before its `|| <fresh>` backstop)
+    // carries no --continue -- relaunching a running claude would be wrong.
+    // Every fresh-create (the attach fallback AND the else) resumes with it.
+    expect(written).toContain('attach -t ccc-s-reconnect-tmux || ')
+    expect(written).not.toMatch(/attach -t ccc-s-reconnect-tmux --continue/)
+    const creates = written.split('new-session -s ccc-s-reconnect-tmux ').slice(1)
+    expect(creates.length).toBe(2)
+    for (const c of creates) expect(c.startsWith(`'`)).toBe(true)
+    expect(written).toContain('--continue')
   })
 
   // Mutation to prove this can fail: drop the `reconnect` gate itself (add
@@ -1715,5 +1786,539 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     expect(claudeWrite![0]).not.toContain('--continue')
+  })
+})
+
+
+// SSH tmux enhancement (item 10): parseSetupAccountSentinel -- decode the
+// nonce'd `acct=<base64email>` field, gate it to a display-valid email, and
+// treat anything else as untrusted-for-display (dropped, not passed through).
+describe('parseSetupAccountSentinel (item 10)', () => {
+  const NONCE = 'abc123'
+  const b64 = (v: string) => Buffer.from(v, 'utf-8').toString('base64')
+  it('decodes a valid email from a full nonce-bearing sentinel', () => {
+    const line = `setup ok ${NONCE} tmux=path acct=${b64('dev@example.com')}\r\n`
+    expect(parseSetupAccountSentinel(line, NONCE)).toBe('dev@example.com')
+  })
+  it('works with tmux=none and tmux=home too', () => {
+    expect(parseSetupAccountSentinel(`setup ok ${NONCE} tmux=none acct=${b64('a@b.co')}\r\n`, NONCE)).toBe('a@b.co')
+    expect(parseSetupAccountSentinel(`setup ok ${NONCE} tmux=home acct=${b64('a@b.co')}\r\n`, NONCE)).toBe('a@b.co')
+  })
+  it('returns undefined when the account field is absent (back-compat sentinel)', () => {
+    expect(parseSetupAccountSentinel(`setup ok ${NONCE} tmux=path\r\n`, NONCE)).toBeUndefined()
+  })
+  it('returns undefined for an empty acct field', () => {
+    expect(parseSetupAccountSentinel(`setup ok ${NONCE} tmux=path acct=\r\n`, NONCE)).toBeUndefined()
+  })
+  it('drops a decoded value that is not a display-valid email (untrusted-for-display)', () => {
+    // A hostile host trying to plant markup / a control sequence in the label.
+    const evil = `setup ok ${NONCE} tmux=path acct=${b64('<img src=x onerror=alert(1)>')}\r\n`
+    expect(parseSetupAccountSentinel(evil, NONCE)).toBeUndefined()
+    const ctrl = `setup ok ${NONCE} tmux=path acct=${b64('a@b.co\x07;rm -rf')}\r\n`
+    expect(parseSetupAccountSentinel(ctrl, NONCE)).toBeUndefined()
+  })
+  it('requires the correct nonce (spoof-resistant)', () => {
+    const line = `setup ok WRONGNONCE tmux=path acct=${b64('dev@example.com')}\r\n`
+    expect(parseSetupAccountSentinel(line, NONCE)).toBeUndefined()
+  })
+  it('requires the full line terminator (no partial-chunk match)', () => {
+    const partial = `setup ok ${NONCE} tmux=path acct=${b64('dev@example.com')}`
+    expect(parseSetupAccountSentinel(partial, NONCE)).toBeUndefined()
+  })
+  it('caps length -- an over-long decoded value is dropped', () => {
+    const long = `setup ok ${NONCE} tmux=path acct=${b64('a'.repeat(300) + '@b.co')}\r\n`
+    expect(parseSetupAccountSentinel(long, NONCE)).toBeUndefined()
+  })
+})
+
+// ===========================================================================
+// Adversarial-review regression tests (2026-08-18). Every block below pins a
+// fix for a finding the mutation lens proved had NO failing-capable test:
+// restart-race flow poisoning (BLOCKER), the in-band cleanup / gracefulExit
+// self-injection into the tmux-wrapped Claude pane, end-target lifecycle, and
+// the Windows staging gate.
+// ===========================================================================
+describe('spawnPty SSH branch — handlePtyExit + restart-race guard (adversarial review, BLOCKER)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('a STALE PTY exit from a restarted session does NOT poison the new flow', () => {
+    onDataListeners.length = 0
+    const i0 = ptyInstances.length
+    // spawn A, then the renderer restart: kill A + respawn B with the SAME id.
+    spawnPty(fakeWin, 's-restart', { ssh: SSH } as never)
+    const flowA = getSshFlow('s-restart')
+    killPty('s-restart')
+    spawnPty(fakeWin, 's-restart', { ssh: SSH } as never)
+    const flowB = getSshFlow('s-restart')
+    expect(flowB).toBeDefined()
+    expect(flowB).not.toBe(flowA)
+    expect(flowB!.getState().state).toBe('connecting')
+    // The OLD ssh finally dies (~400ms later in prod). Its exit must NOT reach
+    // the new flow: ptySessions[s-restart] now points at B, so weAreCurrent is
+    // false and handlePtyExit is skipped. Before the fix this flipped B to
+    // failed('connection') and the overlay's only escape (Retry) re-raced it.
+    ptyInstances[i0].__fireExit(0)
+    expect(flowB!.getState().state).toBe('connecting')
+    expect(flowB!.getState().info).not.toBe('connection')
+  })
+
+  it('a GENUINE PTY exit before claude-running emits failed(connection) so the overlay can Retry', () => {
+    onDataListeners.length = 0
+    const idx = ptyInstances.length
+    spawnPty(fakeWin, 's-drop', { ssh: SSH } as never)
+    const flow = getSshFlow('s-drop')!
+    expect(flow.getState().state).toBe('connecting')
+    ptyInstances[idx].__fireExit(255)
+    // Captured ref survives the cleanup that follows in the same onExit.
+    expect(flow.getState()).toEqual({ state: 'failed', info: 'connection' })
+  })
+
+  it('does NOT emit failed() when the flow already reached a terminal state (skipped)', () => {
+    onDataListeners.length = 0
+    const idx = ptyInstances.length
+    spawnPty(fakeWin, 's-skip', { ssh: SSH } as never)
+    const flow = getSshFlow('s-skip')!
+    flow.skip()
+    expect(flow.getState().state).toBe('skipped')
+    ptyInstances[idx].__fireExit(0)
+    expect(flow.getState().state).toBe('skipped')
+  })
+})
+
+describe('killPty / gracefulExitPty — a tmux-persistent remote is DETACHED, never destroyed (adversarial review)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('killPty on a tmux-PERSISTENT SSH session writes NO in-band `rm` into the live Claude pane (detach only)', () => {
+    driveToClaudeWrite('s-persist-close', 'setup ok {NONCE} tmux=path\r\n')
+    // Confirm the launch actually wrapped in tmux (so the session is persistent).
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t ccc-s-persist-close'))).toBe(true)
+    writeMock.mockClear()
+    killPty('s-persist-close')
+    // The destructive `rm -f ~/.claude/...` would land in Claude's composer and
+    // stay pre-typed in a session the user chose to leave running.
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(false)
+  })
+
+  it('killPty on a NON-persistent SSH session still sweeps its sidecars in-band (unchanged behaviour)', () => {
+    driveToClaudeWrite('s-nonpersist-close', 'setup ok {NONCE} tmux=none\r\n')
+    // tmux=none -> staging fails (helper) -> bare launch, so NOT persistent.
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session'))).toBe(false)
+    writeMock.mockClear()
+    killPty('s-nonpersist-close')
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('rm -f'))).toBe(true)
+  })
+
+  it('gracefulExitPty DETACHES a tmux-persistent SSH session (no ESC/Ctrl-C/`/exit`) so the remote survives app quit', () => {
+    driveToClaudeWrite('s-persist-quit', 'setup ok {NONCE} tmux=path\r\n')
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session'))).toBe(true)
+    writeMock.mockClear()
+    const idx = ptyInstances.length - 1
+    void gracefulExitPty('s-persist-quit', 5000)
+    // No exit-key sequence at all -- the fix kills the local PTY instead.
+    vi.advanceTimersByTime(500)
+    const wroteExitSeq = writeMock.mock.calls.some((c) => typeof c[0] === 'string' && (c[0].includes('/exit') || c[0] === '\x1b' || c[0] === '\x03'))
+    expect(wroteExitSeq).toBe(false)
+    // Resolve the pending promise (the fix's kill() is a no-op in the mock).
+    ptyInstances[idx].__fireExit(0)
+  })
+})
+
+describe('endSshRemote target lifecycle — survives a drop, cleared on deliberate close (adversarial review)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('captures the end-target at spawn, KEEPS it across a natural PTY exit (so End works after a drop), and drops it only on killPty', () => {
+    onDataListeners.length = 0
+    const idx = ptyInstances.length
+    spawnPty(fakeWin, 's-endtarget', { ssh: SSH } as never)
+    expect(_hasSshTargetForTest('s-endtarget')).toBe(true)
+    // A transient drop (natural exit): cleanupSessionResources runs, but the
+    // target must SURVIVE -- otherwise a later "End remote" is a silent no-op.
+    ptyInstances[idx].__fireExit(255)
+    expect(_hasSshTargetForTest('s-endtarget')).toBe(true)
+    // Deliberate close drops it.
+    killPty('s-endtarget')
+    expect(_hasSshTargetForTest('s-endtarget')).toBe(false)
+  })
+})
+
+// ===========================================================================
+// Follow-up adversarial pass (2026-08-18) — regression tests for two fixes:
+//
+//  1. The wrapped-launch WATCHDOG (handleWrappedLaunchFailure): the stage/push
+//     smoke test runs `tmux new-session -d`, which never opens a client tty
+//     and therefore never exercises terminfo — so a remote with no terminfo
+//     db reports `ok`, the ATTACHED launch dies (`open terminal failed`), and
+//     tier 2 re-selects the same binary forever with no recovery. The fix
+//     watches the PTY for a bounded window after a tmux-WRAPPED launch and
+//     falls back to the BARE claude launch on any refusal the remote reports.
+//
+//  2. The `destroyed` INVARIANT: destroying the flow mid-tier and then feeding
+//     the stage sentinel used to drive a buildTmuxBinPatchCommand write into
+//     the torn-down PTY and re-arm the idle fallback; and a destroy during the
+//     tier-4 download/push made the resolving promise emit 'running-claude' on
+//     `ssh:flowState:<sessionId>` — the channel a RESPAWNED session with the
+//     same id is already subscribed to. Guards now sit in the onData handler
+//     (right after the renderer data forward) and, as defence in depth, at the
+//     top of setFlowState / armIdleFallback / writeClaudeCmd.
+// ===========================================================================
+
+/** Like makeSpyWin above, but records the RAW payload for every channel —
+ *  needed to observe ssh:sessionInfo:<id> messages ({tmuxPersistent, ...}) and
+ *  pty:data:<id> chunks, which makeSpyWin's {state, info} projection drops. */
+function makeRecordingWin(): { win: unknown; sends: Array<{ channel: string; payload: unknown }> } {
+  const sends: Array<{ channel: string; payload: unknown }> = []
+  const win = {
+    webContents: {
+      send: (channel: string, payload: unknown) => {
+        sends.push({ channel, payload })
+      },
+    },
+    isDestroyed: () => false,
+  }
+  return { win, sends }
+}
+
+/**
+ * Drive the manual SSH flow to a tmux-WRAPPED claude launch write (tier 1,
+ * tmux=path). The wrapped-launch watchdog arms only when the wrapped command
+ * is actually WRITTEN (inside writeClaudeCmd's 200ms-deferred write), so after
+ * this helper returns the watch window is open and claude has NOT latched.
+ */
+function driveToWrappedLaunch(sessionId: string, win: unknown, sshExtra: Record<string, unknown> = {}): void {
+  onDataListeners.length = 0
+  spawnPty(win as never, sessionId, { ssh: { ...SSH, ...sshExtra } } as never)
+  writeMock.mockClear()
+  getSshFlow(sessionId)!.launchClaude()
+  vi.advanceTimersByTime(300) // past writeHostSetupCmd's 200ms setup write
+  feedPtyData(nonceSentinel(sessionId, 'setup ok {NONCE} tmux=path\r\n'))
+  vi.advanceTimersByTime(1500) // idle fallback: setupDone -> proceedAfterSetup -> writeClaudeCmd scheduled
+  vi.advanceTimersByTime(300) // writeClaudeCmd's 200ms write delay: wrapped write lands + watchdog arms
+}
+
+/** The exact refusal shape the fix was filed against (terminfo-less remote). */
+const TMUX_REFUSAL = 'open terminal failed: missing or unsuitable terminal: xterm-256color\r\n'
+
+/** Every write so far that is a claude launch NOT wrapped in tmux. */
+function bareClaudeWrites(): string[] {
+  return writeMock.mock.calls
+    .map((c) => (typeof c[0] === 'string' ? c[0] : ''))
+    .filter((s) => s.includes('claude ') && !s.includes('has-session'))
+}
+
+describe('spawnPty SSH branch — wrapped-launch watchdog falls back to the bare launch (fail-posture follow-up)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  // Mutation to prove this can fail: make handleWrappedLaunchFailure return
+  // immediately — no bare write ever lands, tmuxPersistent stays true, and
+  // the flow info never carries 'tmux-launch-refused'.
+  it('(a)+(c) a remote refusal within the window writes a BARE claude launch, corrects tmuxPersistent to false, and carries tmux-launch-refused', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-refused', win)
+    // Precondition: the launch really was tmux-wrapped (and announced as
+    // persistent) before the refusal arrives.
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t ccc-s-wd-refused'))).toBe(true)
+    expect(sends.some((s) => s.channel === 'ssh:sessionInfo:s-wd-refused' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === true)).toBe(true)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData(TMUX_REFUSAL)
+    // The bare fallback write lands synchronously off the refusal chunk.
+    const bare = bareClaudeWrites()
+    expect(bare).toHaveLength(1)
+    expect(bare[0]).not.toMatch(/new-session\s+-s\s+ccc-/)
+    expect(bare[0]).toContain('claude ')
+    // The persistence signal the wrapped write already emitted is corrected.
+    const corrected = sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-refused' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === false)
+    expect(corrected).toHaveLength(1)
+    // And the observable flow state carries the reason.
+    expect(getSshFlow('s-wd-refused')!.getState()).toEqual({ state: 'running-claude', info: 'tmux-launch-refused' })
+  })
+
+  // Tier 5's whole point: reconnecting with no tmux in play is exactly the
+  // case --continue exists for, so the bare RETRY carries it on a respawn.
+  it('(b) the bare fallback carries --continue when the spawn was a reconnect', () => {
+    const { win } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-recon', win, { reconnect: true })
+    writeMock.mockClear()
+    feedPtyData(TMUX_REFUSAL)
+    const bare = bareClaudeWrites()
+    expect(bare).toHaveLength(1)
+    expect(bare[0]).toContain('--continue')
+    expect(bare[0]).not.toContain('has-session')
+  })
+
+  it('(b) the bare fallback does NOT carry --continue on a first connect', () => {
+    const { win } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-first', win) // no reconnect flag
+    writeMock.mockClear()
+    feedPtyData(TMUX_REFUSAL)
+    const bare = bareClaudeWrites()
+    expect(bare).toHaveLength(1)
+    expect(bare[0]).not.toContain('--continue')
+  })
+
+  it('(d) fires AT MOST ONCE — a second refusal chunk produces no second bare write and no second sessionInfo emit', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-once', win)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData(TMUX_REFUSAL)
+    feedPtyData(TMUX_REFUSAL)
+    expect(bareClaudeWrites()).toHaveLength(1)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-once' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === false)).toHaveLength(1)
+  })
+
+  it('(e) does NOT fire for an UNwrapped launch — refusal-shaped output after a bare launch writes nothing', () => {
+    // tmux=none: the helper routes through staging (fails it) and lands on
+    // the bare launch, so the watchdog was never armed.
+    driveToClaudeWrite('s-wd-unwrapped', 'setup ok {NONCE} tmux=none\r\n')
+    expect(bareClaudeWrites()).toHaveLength(1)
+    writeMock.mockClear()
+    feedPtyData('sh: tmux: command not found\r\n')
+    expect(writeMock.mock.calls).toHaveLength(0)
+  })
+
+  it('(f) does NOT fire once claude has latched as running — a refusal-shaped chunk after the UI latch writes nothing and leaves state alone', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-latched', win)
+    // Claude's UI renders: the strict box-drawing latch flips claudeRunning.
+    feedPtyData('╭──────────╮\r\n')
+    expect(getSshFlow('s-wd-latched')!.getState().state).toBe('claude-running')
+    writeMock.mockClear()
+    sends.length = 0
+    // e.g. claude's own output happens to quote a matching phrase.
+    feedPtyData(TMUX_REFUSAL)
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-latched')).toHaveLength(0)
+    expect(getSshFlow('s-wd-latched')!.getState().state).toBe('claude-running')
+  })
+
+  it('(g) does NOT fire once the 6s window has elapsed', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-elapsed', win)
+    // No refusal inside the window; the fake clock (Date is faked by
+    // vi.useFakeTimers) crosses TMUX_LAUNCH_WATCH_MS = 6000.
+    vi.advanceTimersByTime(6001)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData(TMUX_REFUSAL)
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-elapsed')).toHaveLength(0)
+  })
+
+  // ---- Round-2 adversarial pass: the FALSE-POSITIVE half of the watchdog. ----
+  // The first cut matched bare `permission denied` / `command not found` /
+  // `is a directory` anywhere in the chunk. Two proven false positives followed,
+  // and the cost is not cosmetic: the bare claude line is typed into a pane that
+  // already has claude running (landing in its composer as a chat message), and
+  // dropping the session from sshTmuxWrappedBySession turns a later close into a
+  // KILL of the remote instead of a detach.
+
+  it('(h) does NOT fire when the chunk carries claude UI — a successful REATTACH redraw whose transcript contains "Permission denied"', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-attach', win, { reconnect: true })
+    writeMock.mockClear()
+    sends.length = 0
+    // The redraw of an attached, live session: transcript text that happens to
+    // quote a shell error, arriving in the SAME chunk as claude's UI. The UI
+    // check must be consulted BEFORE the failure match (the claudeRunning latch
+    // runs later in the same handler, so it cannot protect this chunk).
+    feedPtyData("╭──────────╮\r\n│ ❯ ls: cannot open '/root': Permission denied\r\n")
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-attach' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === false)).toHaveLength(0)
+  })
+
+  it('(i) does NOT fire on a generic error that never names tmux — claude\'s own EACCES startup stderr inside a working tmux', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-eacces', win)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData("Error: EACCES: permission denied, open '/home/u/.claude/settings.json'\r\n")
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-eacces')).toHaveLength(0)
+  })
+
+  it('(j) does NOT fire on "no server running on" — buildTmuxLaunchCommand\'s own || fresh-create leg already self-heals that race', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-norace', win)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData('no server running on /tmp/tmux-1000/default\r\n')
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-norace')).toHaveLength(0)
+  })
+
+  it('(k) STILL fires on a generic exec error that DOES name tmux on the line', () => {
+    const { win } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-generic', win)
+    writeMock.mockClear()
+    feedPtyData('bash: /home/u/.claude/bin/tmux: cannot execute binary file: Exec format error\r\n')
+    expect(bareClaudeWrites()).toHaveLength(1)
+  })
+})
+
+describe('spawnPty SSH branch — the destroyed invariant (lifecycle follow-up)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => {
+    vi.useRealTimers()
+    _setTmuxArchiveResolverForTest(null)
+  })
+
+  // The attacker probe this pins: destroy mid-tier-3, then feed a VALID
+  // (correct-nonce) stage-ok sentinel — pre-fix this drove a
+  // buildTmuxBinPatchCommand write into the torn-down PTY and re-armed the
+  // idle fallback. Mutation to prove this can fail: remove the
+  // `if (destroyed) return` from the SSH onData handler — the stage-sentinel
+  // block then runs and its synchronous settings-patch write lands
+  // (writeMock gains a call), failing the zero-writes assertion.
+  it('(a) destroy mid-tier-3: a later VALID stage-ok sentinel drives ZERO PTY writes and ZERO ssh:flowState/ssh:sessionInfo emits', () => {
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-stage', { ssh: SSH } as never)
+    writeMock.mockClear()
+    getSshFlow('s-destroyed-stage')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel('s-destroyed-stage', 'setup ok {NONCE} tmux=none\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300) // staging fragment written; the stage sentinel is now awaited
+    // Build the genuine sentinel BEFORE destroy so the test cannot depend on
+    // the nonce registry's post-destroy lifetime.
+    const sentinel = nonceSentinel('s-destroyed-stage', 'ccc-tmux-stage {NONCE} ok path=/home/dev/.claude/bin/tmux\r\n')
+    getSshFlow('s-destroyed-stage')!.destroy()
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData(sentinel)
+    vi.advanceTimersByTime(1000) // past writeClaudeCmd's 200ms delay, had one been scheduled
+    expect(writeMock.mock.calls).toHaveLength(0) // no CCC_TMUX_BIN patch write, no claude write
+    expect(sends.filter((s) => s.channel.startsWith('ssh:flowState:'))).toHaveLength(0)
+    expect(sends.filter((s) => s.channel.startsWith('ssh:sessionInfo:'))).toHaveLength(0)
+  })
+
+  // The second attacker probe: a destroy during the tier-4 download let the
+  // resolving promise emit 'running-claude' on ssh:flowState:<id> — a channel
+  // a RESPAWNED session with the same id is already subscribed to. Mutation to
+  // prove this can fail: remove writeClaudeCmd's top `if (destroyed) return` —
+  // the aborted-push recovery path (writeClaudeCmd('tmux-push-fail:aborted'))
+  // then runs its body and emitSshSessionInfo lands on ssh:sessionInfo:<id>,
+  // failing the zero-sessionInfo assertion. (Its setFlowState call is caught
+  // by setFlowState's own guard — that layer is pinned by (b2) below.)
+  it('(b) destroy during the tier-4 download: the resolver settling afterwards writes nothing and emits nothing on ssh:flowState/ssh:sessionInfo', async () => {
+    let resolveArchive!: (b: Buffer | null) => void
+    _setTmuxArchiveResolverForTest(() => new Promise<Buffer | null>((res) => { resolveArchive = res }))
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-push', { ssh: SSH } as never)
+    writeMock.mockClear()
+    getSshFlow('s-destroyed-push')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel('s-destroyed-push', 'setup ok {NONCE} tmux=none\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    feedPtyData('ccc-tmux-push-arch Linux-x86_64\r\n')
+    feedPtyData(nonceSentinel('s-destroyed-push', 'ccc-tmux-stage {NONCE} fail=download\r\n')) // attemptTmuxPush: download now pending
+    getSshFlow('s-destroyed-push')!.destroy()
+    writeMock.mockClear()
+    sends.length = 0
+    resolveArchive(FAKE_TMUX_ARCHIVE)
+    await flushMicrotasks()
+    await vi.advanceTimersByTimeAsync(6000) // would drain the transfer + writeClaudeCmd's delay if unguarded
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel.startsWith('ssh:flowState:'))).toHaveLength(0)
+    expect(sends.filter((s) => s.channel.startsWith('ssh:sessionInfo:'))).toHaveLength(0)
+  })
+
+  // Defence-in-depth layer for the promise/captured-reference call sites that
+  // never pass through onData: the flowController object outlives its sshFlows
+  // entry (teardown races reach these methods through captured references —
+  // the same seam M3's direct-destroy test uses). Mutation to prove this can
+  // fail: remove the `if (destroyed) return` at the top of setFlowState — both
+  // calls below then emit on ssh:flowState:<id> AND mutate the state a
+  // still-held getState() reports.
+  it('(b2) setFlowState itself is destroyed-guarded: a captured controller driven after destroy neither emits nor mutates state', () => {
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-direct', { ssh: SSH } as never)
+    const flow = getSshFlow('s-destroyed-direct')!
+    expect(flow.getState().state).toBe('connecting')
+    flow.destroy()
+    sends.length = 0
+    flow.handlePtyExit() // would setFlowState('failed', 'connection')
+    flow.skip() //          would setFlowState('skipped')
+    expect(sends.filter((s) => s.channel.startsWith('ssh:flowState:'))).toHaveLength(0)
+    expect(flow.getState().state).toBe('connecting') // not even locally mutated
+  })
+
+  // The guard must sit AFTER the renderer data forward: a destroyed flow's
+  // terminal is still a terminal. Mutation to prove this can fail: move the
+  // onData `if (destroyed) return` ABOVE the win.webContents.send data
+  // forward — the pty:data send below disappears.
+  it('(c) terminal bytes STILL reach pty:data:<sessionId> after destroy', () => {
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-data', { ssh: SSH } as never)
+    getSshFlow('s-destroyed-data')!.destroy()
+    sends.length = 0
+    feedPtyData('post-destroy shell output\r\n')
+    const dataSends = sends.filter((s) => s.channel === 'pty:data:s-destroyed-data')
+    expect(dataSends).toHaveLength(1)
+    expect(dataSends[0].payload).toContain('post-destroy shell output')
+  })
+
+  // Belt-and-braces by design, like the staging-timer destroy test above: the
+  // re-arm is blocked TWICE (the onData guard bails before armIdleFallback is
+  // ever called, and armIdleFallback's own guard bails if reached some other
+  // way), so no SINGLE mutation fails this test — verified: removing only the
+  // onData guard leaves it green (armIdleFallback's guard catches it), and
+  // removing only armIdleFallback's guard leaves it green (onData bails
+  // first). Removing BOTH (the full pre-fix shape) is what makes the
+  // timer-count assertion fail. Recorded precisely so nobody later trusts a
+  // single-mutation sensitivity this test does not have.
+  it('(d) post-destroy data does not re-arm the idle fallback: no new timer, no state advance past 1.5s', () => {
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-idle', { ssh: SSH } as never)
+    const flow = getSshFlow('s-destroyed-idle')!
+    // 'connecting' is the state whose idle handler WOULD advance (to
+    // awaiting-claude) if the fallback re-armed and fired.
+    expect(flow.getState().state).toBe('connecting')
+    flow.destroy()
+    sends.length = 0
+    const timersBefore = vi.getTimerCount()
+    feedPtyData('late teardown chatter\r\n')
+    expect(vi.getTimerCount()).toBe(timersBefore) // nothing re-armed
+    vi.advanceTimersByTime(5000) // way past IDLE_FALLBACK_MS (1.5s)
+    expect(flow.getState().state).toBe('connecting')
+    expect(sends.filter((s) => s.channel.startsWith('ssh:flowState:'))).toHaveLength(0)
+  })
+})
+
+describe('spawnPty SSH branch — Windows remote skips the POSIX tmux staging ladder (item 3, adversarial review)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('remoteOs:windows delivers the PowerShell setup and never runs the POSIX `base64 -d | sh` staging on tmux=none', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-win-remote', { ssh: { ...SSH, remoteOs: 'windows' }, model: 'opus[1m]' } as never)
+    writeMock.mockClear()
+    getSshFlow('s-win-remote')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    // Windows setup is PowerShell-delivered, not the POSIX base64|node form.
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('powershell'))).toBe(true)
+    feedPtyData(nonceSentinel('s-win-remote', 'setup ok {NONCE} tmux=none acct=\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    // No POSIX staging ladder typed into cmd.exe, and no 20s stall path.
+    expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
+    // The launch is the cmd.exe form (set "X=Y"&& claude), never tmux-wrapped.
+    const claudeWrite = writeMock.mock.calls.map((c) => c[0]).find((a) => typeof a === 'string' && a.includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite as string).not.toContain('has-session')
+    // m1: the model id reaches cmd.exe DOUBLE-quoted (claude.cmd strips them),
+    // never POSIX single-quoted (cmd.exe leaves those literal -> a broken flag).
+    expect(claudeWrite as string).toContain('--model "opus[1m]"')
+    expect(claudeWrite as string).not.toContain(`--model 'opus[1m]'`)
   })
 })

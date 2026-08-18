@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { killSessionPty } from '../ptyTracker'
+import { requestCloseSession } from '../stores/sshCloseStore'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { sendImageToSession } from '../utils/imageTransfer'
 import { usePasteHintStore } from '../stores/pasteHintStore'
@@ -29,11 +29,8 @@ export function useKeyboardShortcuts(
       // Close current session
       if (matchesShortcut(e, shortcuts.closeSession)) {
         e.preventDefault()
-        if (activeSessionId) {
-          killSessionPty(activeSessionId)
-          killSessionPty(activeSessionId + '-partner')
-          useSessionStore.getState().removeSession(activeSessionId)
-        }
+        // item 4: persistent SSH sessions route through the End-vs-Leave choice.
+        if (activeSessionId) requestCloseSession(activeSessionId)
       }
       // Next/Previous session
       if (matchesShortcut(e, shortcuts.nextSession) || matchesShortcut(e, shortcuts.prevSession)) {

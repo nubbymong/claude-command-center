@@ -86,3 +86,55 @@ export function buildSshArgs(ssh: SshArgsTarget, mcpPort: number, platform: Node
 
   return args
 }
+
+/**
+ * SSH tmux enhancement (item 4): argv for a ONE-SHOT, non-interactive ssh exec
+ * that runs `remoteCommand` on the host and exits -- used by endSshRemote
+ * (pty-manager.ts) to `tmux kill-session` + remove sidecars over a SEPARATE
+ * connection, so the kill never lands in the live Claude pane.
+ *
+ * Deliberately minimal vs. buildSshArgs: no `-t` (no TTY -- a batch command,
+ * not an interactive session), no `-R` MCP tunnel, and BatchMode=yes + a short
+ * ConnectTimeout so it FAILS FAST rather than blocking on a password prompt (it
+ * relies on key/agent auth; a password-only host simply detaches as before --
+ * the remote survives, exactly today's behaviour). `username`/`host` go through
+ * the SAME assertSafeSshField argv guard as buildSshArgs, and `remoteCommand`
+ * is a host-authored literal with a single sanitized safeSid operand
+ * (buildRemoteTmuxKillCommand, ssh-shim.ts) passed to ssh as ONE positional
+ * argument, so there is no local shell parse of it.
+ *
+ * NOTE (see SAFE_SSH_FIELD_RE above): this builder DOES emit a second bare token
+ * (`remoteCommand`) after the destination -- the very shape that comment flags
+ * as an argument-injection primitive if the destination were option-like. It is
+ * safe ONLY because assertSafeSshField rejects a leading-`-` username/host, so
+ * the destination can never be consumed as an option and `remoteCommand` can
+ * never slide into argv[0]. That guard is now load-bearing here, not merely
+ * defence-in-depth -- do not remove it.
+ *
+ * ControlMaster/ControlPath are forced OFF on ALL platforms (not just win32):
+ * this exec is dispatched right before the caller tears down the live PTY (the
+ * shared connection's master), so on a POSIX client with `ControlMaster auto`
+ * in ~/.ssh/config the exec would otherwise multiplex over that master and be
+ * cut off mid-kill when the PTY dies ~400ms later (adversarial review,
+ * 2026-08-18). A standalone connection is immune. win32 additionally needs this
+ * because Windows OpenSSH has no multiplexing and errors out if config enables
+ * it (#241), which is why the flags began win32-only.
+ */
+export function buildSshExecArgs(ssh: SshArgsTarget, remoteCommand: string, platform: NodeJS.Platform): string[] {
+  assertSafeSshField('username', ssh.username)
+  assertSafeSshField('host', ssh.host)
+  // `platform` retained for signature parity with buildSshArgs / call sites even
+  // though the mux flags are now unconditional.
+  void platform
+  const args = [
+    `${ssh.username}@${ssh.host}`,
+    '-p', String(ssh.port),
+    '-o', 'StrictHostKeyChecking=accept-new',
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=8',
+    '-o', 'ControlMaster=no',
+    '-o', 'ControlPath=none',
+  ]
+  args.push(remoteCommand)
+  return args
+}

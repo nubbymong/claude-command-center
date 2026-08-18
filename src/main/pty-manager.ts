@@ -10,7 +10,7 @@ import { buildTmuxPushCommand, buildArchProbeCommandBracketed, parseArchProbeSen
 import * as os from 'os'
 import * as https from 'https'
 import * as crypto from 'crypto'
-import { execSync } from 'child_process'
+import { execSync, execFile } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
@@ -19,10 +19,10 @@ import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPat
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand } from './providers/claude/ssh-shim'
+import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
-import { buildSshArgs } from './ssh-args'
+import { buildSshArgs, buildSshExecArgs } from './ssh-args'
 import { resolveClaudeBinary, resolveHostColorScheme } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
@@ -205,10 +205,44 @@ export type TmuxDetectionClass = 'path' | 'home'
  * arbitrary one.
  */
 export function parseTmuxSentinel(data: string, nonce: string): TmuxDetectionClass | null | undefined {
-  const m = data.match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(path|home|none)(?=[\\r\\n])`))
+  const m = data.match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(path|home|none)(?: acct=[A-Za-z0-9+/=]*)?(?=[\\r\\n])`))
   if (!m) return undefined
   if (m[1] === 'none') return null
   return m[1] as TmuxDetectionClass
+}
+
+/**
+ * SSH tmux enhancement (item 10): parse the `acct=<base64email>` field the
+ * setup-ok sentinel now carries AFTER the tmux class (generateRemoteSetupScript,
+ * ssh-shim.ts). Same chunk-boundary + nonce discipline as parseTmuxSentinel:
+ * requires the FULL nonce-bearing line (anchored on the line terminator via
+ * the tmux-class lookahead), so a truncated or spoofed sentinel yields nothing.
+ *
+ * The wire token is base64 of the remote's oauthAccount.emailAddress. This is
+ * a DESCRIPTOR the remote host controls, surfaced only as a label -- treated as
+ * UNTRUSTED-FOR-DISPLAY: after base64-decode it is charset-filtered to the
+ * characters a real email uses and length-capped, and anything else yields
+ * `undefined` (no account shown) rather than passing an arbitrary string to the
+ * renderer. It is never interpreted, never a credential, never an auth key.
+ *
+ * Returns the sanitized descriptor, or `undefined` when the field is absent,
+ * empty, undecodable, or fails the display charset (never throws).
+ */
+const SSH_REMOTE_ACCOUNT_MAX = 254
+const SSH_REMOTE_ACCOUNT_DISPLAY_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/
+export function parseSetupAccountSentinel(data: string, nonce: string): string | undefined {
+  const m = data.match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(?:path|home|none) acct=([A-Za-z0-9+/=]*)(?=[\\r\\n])`))
+  if (!m || !m[1]) return undefined
+  let decoded: string
+  try {
+    decoded = Buffer.from(m[1], 'base64').toString('utf-8')
+  } catch {
+    return undefined
+  }
+  if (!decoded || decoded.length > SSH_REMOTE_ACCOUNT_MAX) return undefined
+  // Display-charset gate: an email address only. Anything else (a hostile
+  // host trying to plant markup / control chars in the label) is dropped.
+  return SSH_REMOTE_ACCOUNT_DISPLAY_RE.test(decoded) ? decoded : undefined
 }
 
 /**
@@ -363,6 +397,22 @@ const TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS = 20000
  */
 const TMUX_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
 
+/**
+ * Follow-up adversarial pass (coverage MAJOR): exported for tests.
+ *
+ * Every guard in this function was previously unreachable from the suite --
+ * `attemptTmuxPush` goes through the `tmuxArchiveResolver` seam, which tests
+ * stub ABOVE this level, so raising TMUX_ARCHIVE_MAX_BYTES to
+ * Number.MAX_SAFE_INTEGER, or deleting the https-only redirect refusal
+ * outright, left the entire targeted suite green. This is the function whose
+ * unbounded body was a round-4 BLOCKER; its guards must be able to fail a test.
+ * Exported (rather than reached through a new seam) so the tests drive the real
+ * https path with a mocked `https.get`.
+ */
+export function _downloadAndCacheTmuxArchiveForTest(arch: TmuxStageTarget): Promise<Buffer | null> {
+  return downloadAndCacheTmuxArchive(arch)
+}
+
 function downloadAndCacheTmuxArchive(arch: TmuxStageTarget): Promise<Buffer | null> {
   // #242 finding F6: same URL parts buildTmuxStageScript's remote curl/wget
   // fragment builds its `_url` from (ssh-tmux-stage.ts) -- see
@@ -516,6 +566,14 @@ export function _getSshNonceForTest(sessionId: string): string | undefined {
   return sshNonceBySession.get(sessionId)
 }
 
+/** Test-only: whether this session still has a captured end-remote target. Pins
+ *  the lifecycle fix that the target must SURVIVE a natural PTY exit (a transient
+ *  drop, so a later End can still reach the host) and be dropped only on a
+ *  deliberate close (killPty) -- adversarial review 2026-08-18. */
+export function _hasSshTargetForTest(sessionId: string): boolean {
+  return sshTargetBySession.has(sessionId)
+}
+
 /**
  * #242 finding I1: per-session buffer for the not-yet-terminated tail of
  * the `setup ok` completion sentinel line, mirroring `sshOscBuffers`/
@@ -646,6 +704,21 @@ export interface SSHOptions {
    * to continue.
    */
   reconnect?: boolean
+  /**
+   * SSH tmux enhancement (item 1): "Detachable" (persistent remote session)
+   * toggle, from SshConfig.detachable. DEFAULT ON — only an explicit `false`
+   * disables the #242 tmux-persistence ladder (no detection, no staging, no
+   * silent install), leaving a bare `claude` that resumes via `--continue`
+   * on reconnect. Owner requirement: tmux must never be installed silently,
+   * so persistence is user-controlled by this flag.
+   */
+  detachable?: boolean
+  /**
+   * SSH tmux enhancement (item 3): remote OS. 'windows' selects the Windows
+   * setup path (PowerShell delivery + CONOUT$ shim + cmd.exe launch, no tmux);
+   * 'auto'/'unix'/undefined keep the POSIX path unchanged. PROTOTYPE.
+   */
+  remoteOs?: 'auto' | 'unix' | 'windows'
 }
 
 /**
@@ -657,6 +730,12 @@ export interface SshFlowController {
   launchClaude: () => void
   skip: () => void
   destroy: () => void
+  /** item 5 (resume cascade, "no host"): called from the shared PTY onExit when
+   *  the ssh process dies. If the flow never reached a good terminal state
+   *  (i.e. the connection failed at/around connect), emit `failed` with a
+   *  'connection' reason so the overlay can offer Retry rather than sitting on
+   *  a dead "connecting…". A no-op once claude-running/shell-only/skipped. */
+  handlePtyExit: () => void
   /** Returns the latest emitted state, used by the renderer overlay
    * on mount to catch up if it missed earlier emits. */
   getState: () => { state: SshFlowState; info?: string }
@@ -688,6 +767,20 @@ function emitSshFlowState(win: BrowserWindow, sessionId: string, state: SshFlowS
   } catch { /* renderer gone */ }
 }
 
+/**
+ * SSH tmux enhancement (items 8/9/10): push per-session persistence status +
+ * the remote account descriptor to the renderer. Separate from the flow-state
+ * channel because these outlive the connect flow (they label the session in
+ * the sidebar/header for its whole life) and update the session store, not the
+ * transient overlay. Fire-and-forget; a destroyed window is a no-op.
+ */
+function emitSshSessionInfo(win: BrowserWindow, sessionId: string, info: { tmuxPersistent?: boolean; remoteAccount?: string }): void {
+  if (win.isDestroyed()) return
+  try {
+    win.webContents.send(`ssh:sessionInfo:${sessionId}`, info)
+  } catch { /* renderer gone */ }
+}
+
 const ptySessions = new Map<string, PtySession>()
 
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
@@ -708,6 +801,62 @@ function getLastResumeTarget(sessionId: string): { uuid: string; cwd: string } |
 
 function clearLastResumeTarget(sessionId: string): void {
   lastResumeTarget.delete(sessionId)
+}
+
+// SSH tmux enhancement (item 4): the connection target for each live SSH
+// session, captured at spawn so endSshRemote can open a SEPARATE ssh exec to
+// kill the remote tmux session + sidecars without touching the live PTY (where
+// the keystrokes would land in Claude). Cleared on DELIBERATE close (killPty),
+// NOT on a natural PTY exit: after a transient drop the tab stays (Retry), and
+// a later "End remote" must still be able to reach the host to kill the
+// now-detached remote -- clearing it on every exit made End a silent no-op
+// after any wifi blip (adversarial review, 2026-08-18).
+const sshTargetBySession = new Map<string, { username: string; host: string; port: number }>()
+
+// SSH tmux enhancement (items 1/4): sessions whose launch actually wrapped in a
+// tmux persistence session (`tmuxWrapped` at writeClaudeCmd). The remote for
+// these SURVIVES a local PTY teardown, so close/quit must DETACH, never destroy:
+//   - killPty must NOT type the U8 in-band `rm` cleanup down the live PTY -- for
+//     a tmux-wrapped launch the foreground is Claude, so the bytes land in its
+//     composer (LF doesn't submit) and are left PRE-TYPED in a session the user
+//     chose to leave running; the End-remote exec already removes the sidecars.
+//   - gracefulExitPty (app quit) must NOT send `/exit` -- inside tmux that quits
+//     Claude and tears the session down; killing the local PTY detaches instead.
+// Both are the exact regressions the persistence feature introduced against the
+// pre-existing close/quit paths (adversarial review, 2026-08-18). Cleared on
+// deliberate close alongside sshTargetBySession.
+const sshTmuxWrappedBySession = new Set<string>()
+
+/**
+ * SSH tmux enhancement (item 4): deliberately END a persistent remote session.
+ * Opens a fresh, non-interactive ssh exec (buildSshExecArgs) that runs
+ * buildRemoteTmuxKillCommand -- `tmux kill-session -t ccc-<sid>` (both
+ * host-authored tmux-bin forms) plus sidecar cleanup -- then exits. Fire-and-
+ * forget with a bounded lifetime; the caller kills the local PTY separately.
+ *
+ * A no-op when we have no target for the session (never an SSH session, or
+ * already cleaned up). Best-effort by design: BatchMode means a password-only
+ * host's exec fails fast rather than hanging, in which case the remote simply
+ * detaches and survives -- exactly the pre-enhancement behaviour, never worse.
+ */
+const END_REMOTE_TIMEOUT_MS = 12000
+export function endSshRemote(sessionId: string): void {
+  const target = sshTargetBySession.get(sessionId)
+  if (!target) return
+  try {
+    const bin = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
+    const args = buildSshExecArgs(target, buildRemoteTmuxKillCommand(sessionId), os.platform())
+    logInfo(`[ssh] ${sessionId}: ending remote session (tmux kill-session + sidecar cleanup over a separate exec)`)
+    const child = execFile(bin, args, { timeout: END_REMOTE_TIMEOUT_MS, windowsHide: true }, (err) => {
+      if (err) logInfo(`[ssh] ${sessionId}: end-remote exec exited non-zero (host may use password auth, or was already gone): ${err.message}`)
+      else logInfo(`[ssh] ${sessionId}: end-remote exec completed`)
+    })
+    // Never let a stuck child keep a handle alive; execFile's own timeout also
+    // covers this, but unref so it can't hold the process open.
+    try { child.unref() } catch { /* noop */ }
+  } catch (err) {
+    logError(`[ssh] ${sessionId}: endSshRemote failed to dispatch: ${(err as Error)?.message ?? err}`)
+  }
 }
 
 // === SSH OSC sentinel parser ===
@@ -903,6 +1052,13 @@ export function spawnPty(
 
     // SSH session: spawn ssh command, then chain claude after cd
     const ssh = options.ssh
+    // SSH tmux enhancement (item 1): the "Detachable" toggle. DEFAULT ON --
+    // only an explicit `false` opts out of the #242 tmux-persistence ladder.
+    // When off: no tier-3/4 staging (proceedAfterSetup skips it, so nothing is
+    // ever installed on the remote) AND no wrap even if the host already has
+    // tmux (writeClaudeCmd's gate), leaving a bare `claude` that resumes via
+    // `--continue` on reconnect.
+    const persistenceEnabled = ssh.detachable !== false
     // Lift: SSH setup script + per-session settings path live on the
     // ClaudeProvider's SSH-capable surface (see providers/claude/ssh-shim.ts).
     const claudeProvider = getProvider('claude')
@@ -995,6 +1151,9 @@ export function spawnPty(
     // accessor and cleanupSessionResources' teardown can both reach it.
     const sshNonce = randomId()
     sshNonceBySession.set(sessionId, sshNonce)
+    // item 4: remember this session's connection target so a deliberate End can
+    // reach the host over a separate exec. Cleared in cleanupSessionResources.
+    sshTargetBySession.set(sessionId, { username: ssh.username, host: ssh.host, port: ssh.port })
     // #242 round-3 correction (I3): which entry of buildTmuxLaunchCommand's
     // fixed literal table to use, once a 'setup ok'/stage/push sentinel
     // reports a usable tmux -- never a wire-reported path. `null` means "not
@@ -1005,6 +1164,10 @@ export function spawnPty(
     // `STAGED_TMUX_BIN_EXPR` -- both are the SAME fixed remote location, so
     // tier 2 and tier 3/4 share one outcome here.
     let detectedTmuxSource: 'onpath' | 'staged' | null = null
+    // item 10: the remote account descriptor parsed off the setup-ok sentinel
+    // (charset/length-capped, display-only). Emitted to the renderer on latch
+    // and re-sent alongside the persistence flag at launch.
+    let remoteAccount: string | undefined = undefined
     // #242 tier 3: staging flags. `stagingAttempted` gates a SINGLE staging
     // attempt per session regardless of which setup path (host vs
     // container) reaches it -- host and container setup never both run in
@@ -1093,6 +1256,16 @@ export function spawnPty(
     const DOWNLOAD_TIMEOUT_MS = 45000
 
     const setFlowState = (s: SshFlowState, info?: string) => {
+      // Follow-up adversarial pass (lifecycle MAJOR): `destroyed` used to gate
+      // only the PTY WRITES, not this emit. A flow torn down mid-tier (the
+      // download promise, a push abort) still resolved afterwards and emitted
+      // onto `ssh:flowState:<sessionId>` -- a channel a RESPAWNED session with
+      // the same id is already subscribed to, so the dead flow's
+      // 'running-claude'/failure state painted the new session's overlay and
+      // could falsely latch "reached claude-running" on it (which then adds
+      // --continue with no conversation to continue). A destroyed flow emits
+      // nothing: it no longer exists as far as the renderer is concerned.
+      if (destroyed) return
       currentFlowState = s
       currentFlowInfo = info
       logInfo(`[ssh] ${sessionId}: flow → ${s}${info ? ` (${info})` : ''}`)
@@ -1110,6 +1283,11 @@ export function spawnPty(
     let idleFallbackHandle: ReturnType<typeof setTimeout> | null = null
     let receivedAnyData = false
     const armIdleFallback = () => {
+      // Follow-up adversarial pass (lifecycle MAJOR): destroy() clears this
+      // timer, but any data arriving during the PTY's teardown grace window
+      // re-armed it immediately afterwards -- resurrecting the whole ladder
+      // (up to a 'claude-running' emit) on a session that no longer exists.
+      if (destroyed) return
       if (idleFallbackHandle) clearTimeout(idleFallbackHandle)
       idleFallbackHandle = setTimeout(() => {
         idleFallbackHandle = null
@@ -1201,10 +1379,36 @@ export function spawnPty(
     // Settings toggle applies to the next session without a restart.
     const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean }>('settings')
     const clickableQuestions = spawnCfg?.clickableQuestions === true
-    const claudeEnvPrefix = [
+    // item 3: PROTOTYPE Windows remote. Isolated behind this flag; every branch
+    // below falls back to the unchanged POSIX path for auto/unix/undefined.
+    const isWindowsRemote = ssh.remoteOs === 'windows'
+    const claudeEnvVars = [
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
       clickableQuestions ? '' : 'CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1',
       spawnCfg?.disableBackgroundTasks !== false ? 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1' : '',
+    ].filter(Boolean)
+    const claudeEnvPrefix = claudeEnvVars.join(' ')
+    // Flags common to POSIX + Windows (everything EXCEPT --settings/--mcp-config,
+    // which differ by path shape: POSIX adds them inline below; the Windows
+    // builder re-adds them with %USERPROFILE% paths). The remote shell differs:
+    // POSIX single-quotes the model id (zsh globs `opus[1m]` otherwise, #144),
+    // but cmd.exe does NOT strip single quotes, so modelFlag()'s POSIX form gave
+    // a Windows launch a model id WITH literal quotes (adversarial review,
+    // 2026-08-18). cmd.exe uses DOUBLE quotes (claude.cmd strips them), so the
+    // Windows branch double-quotes via a local var -- the `${options.model}`
+    // shape the #144 source-scan forbids (correctly, for POSIX) never appears,
+    // and this is genuinely a different shell. effort/permissionMode/extraArgs
+    // are charset-safe in both shells (extraArgs is IPC-charset-guarded against
+    // every cmd + POSIX metachar).
+    const winModelId = options?.model ?? ''
+    const claudeModelCommonFlag = isWindowsRemote
+      ? (winModelId ? `--model "${winModelId}"` : '')
+      : modelFlag(options?.model, false)
+    const claudeCommonFlags = [
+      options?.effortLevel ? `--effort ${options.effortLevel}` : '',
+      claudeModelCommonFlag,
+      options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
+      options?.extraArgs && options.extraArgs.trim() ? options.extraArgs.trim() : '',
     ].filter(Boolean).join(' ')
     const claudeFlags = [
       // --settings loads per-session config so concurrent sessions to the same
@@ -1230,7 +1434,11 @@ export function spawnPty(
       // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded).
       options?.extraArgs && options.extraArgs.trim() ? options.extraArgs.trim() : '',
     ].filter(Boolean).join(' ')
-    const claudeCmd = [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
+    const claudeCmd = isWindowsRemote
+      // item 3: cmd.exe launch (set X=Y&& claude --settings "%USERPROFILE%\.claude\..."). No
+      // tmux wrap ever (Windows has none); writeClaudeCmd appends --continue on reconnect.
+      ? buildWindowsClaudeCommand({ sessionId, envPrefixVars: claudeEnvVars, extraFlags: claudeCommonFlags, continueFlag: '' })
+      : [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
     const postCommand = ssh.postCommand
     const sudoPassword = ssh.sudoPassword
@@ -1276,10 +1484,15 @@ export function spawnPty(
         // is defence-in-depth for any path that reaches here.
         try {
           const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
-          const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+          const setupOpts = {
             includeStatusLine: s?.statusLineEnabled !== false,
             includeConductorMcp: s?.conductorToolsEnabled !== false,
-          }, sshNonce)
+          }
+          // item 3: Windows uses the PowerShell-delivered setup (no POSIX
+          // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
+          const setupCmd = isWindowsRemote
+            ? getWindowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
+            : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
           logError(`[ssh] ${sessionId}: host setup failed: ${(err as Error)?.message ?? err}`)
@@ -1313,10 +1526,15 @@ export function spawnPty(
         // handler; fail the flow instead (adversarial review, #188).
         try {
           const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
-          const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+          const setupOpts = {
             includeStatusLine: s?.statusLineEnabled !== false,
             includeConductorMcp: s?.conductorToolsEnabled !== false,
-          }, sshNonce)
+          }
+          // item 3: Windows uses the PowerShell-delivered setup (no POSIX
+          // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
+          const setupCmd = isWindowsRemote
+            ? getWindowsRemoteSetupCommand(sessionId, setupOpts, sshNonce)
+            : claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, setupOpts, sshNonce)
           ptyProcess.write(setupCmd + '\r')
         } catch (err) {
           logError(`[ssh] ${sessionId}: container setup failed: ${(err as Error)?.message ?? err}`)
@@ -1337,6 +1555,14 @@ export function spawnPty(
     // the reason. Passing it through here means the state a listener
     // actually observes carries the info.
     const writeClaudeCmd = (runningClaudeInfo?: string) => {
+      // Follow-up adversarial pass (lifecycle MAJOR): bail at the TOP, not just
+      // in the deferred write callback below. Reached from a resolving download
+      // / push promise after teardown, the old code still ran the whole body --
+      // emitting flow state and session-info onto the id's channels and
+      // mutating sshTmuxWrappedBySession -- and only the final write was
+      // suppressed. Everything this function does is meaningless for a
+      // destroyed flow, and harmful once the id has been respawned.
+      if (destroyed) return
       // Idempotent. shellOnly is intentionally NOT gated: this writer
       // only runs after the user clicked Launch Claude (or after a
       // user-consented chain reached this stage), so the click is
@@ -1352,7 +1578,8 @@ export function spawnPty(
       // pre-#242 behaviour.
       let cmdToWrite = claudeCmd
       let tmuxWrapped = false
-      if (detectedTmuxSource) {
+      // item 1: even a detected tmux is NOT used when persistence is off.
+      if (persistenceEnabled && detectedTmuxSource) {
         // #242 round-3 correction (I3): buildTmuxLaunchCommand no longer
         // takes a tmuxBin at all -- it picks ON_PATH_TMUX_BIN_EXPR /
         // STAGED_TMUX_BIN_EXPR from `staged` alone, so there is no
@@ -1364,7 +1591,7 @@ export function spawnPty(
         // (adversarial review, #188, same shape documented on
         // assertNotOptionLike in ssh-args.ts).
         try {
-          cmdToWrite = buildTmuxLaunchCommand({ sessionId, innerCmd: claudeCmd, staged: detectedTmuxSource === 'staged' })
+          cmdToWrite = buildTmuxLaunchCommand({ sessionId, innerCmd: claudeCmd, staged: detectedTmuxSource === 'staged', reconnect: !!ssh.reconnect })
           tmuxWrapped = true
         } catch (err) {
           logError(`[ssh] ${sessionId}: tmux launch command build failed, writing bare claudeCmd instead: ${(err as Error)?.message ?? err}`)
@@ -1386,7 +1613,21 @@ export function spawnPty(
       // call site that reaches here unwrapped with no reason still tells
       // the renderer SOMETHING rather than emitting 'running-claude' with
       // no info at all -- the "failing silently" gap this tier closes.
-      setFlowState('running-claude', resolveRunningClaudeInfo(runningClaudeInfo, tmuxWrapped))
+      // item 7 (resume-outcome messaging): on a reconnect that actually
+      // reattached (tmux in play), surface a friendly 'reattach' marker instead
+      // of the silent success (undefined) so the overlay can say "reconnecting
+      // to your session" rather than "launching Claude". Only when there is no
+      // failure reason to show (tmuxWrapped ⇒ runningClaudeInfo is undefined).
+      const runInfo = resolveRunningClaudeInfo(runningClaudeInfo, tmuxWrapped)
+      setFlowState('running-claude', (ssh.reconnect && tmuxWrapped) ? 'reattach' : runInfo)
+      // items 8/9: authoritative persistence signal for THIS session -- whether
+      // the launch actually wrapped in tmux. Re-send the account alongside so a
+      // renderer that missed the latch push still gets both.
+      emitSshSessionInfo(win, sessionId, { tmuxPersistent: tmuxWrapped, remoteAccount })
+      // Track locally so close/quit (killPty, gracefulExitPty) DETACH rather
+      // than destroy this session's surviving remote -- see the map's doc above.
+      if (tmuxWrapped) sshTmuxWrappedBySession.add(sessionId)
+      else sshTmuxWrappedBySession.delete(sessionId)
       logInfo(`[ssh] ${sessionId}: writing claudeCmd${tmuxWrapped ? ' (tmux-wrapped)' : ''}${continueFlag ? ' (+continue)' : ''}`)
       setTimeout(() => {
         // #242 finding F3 (adversarial review round 4, MAJOR): this write is
@@ -1401,10 +1642,102 @@ export function spawnPty(
         if (destroyed) return
         try {
           ptyProcess.write(cmdToWrite + '\r')
+          // Follow-up adversarial pass (fail-posture MAJOR): arm the
+          // wrapped-launch watchdog only once the wrapped command has actually
+          // been written -- see tmuxLaunchWatchUntil's doc comment.
+          if (tmuxWrapped) tmuxLaunchWatchUntil = Date.now() + TMUX_LAUNCH_WATCH_MS
         } catch (err) {
           logError(`[ssh] ${sessionId}: writeClaudeCmd's write failed post-schedule: ${(err as Error)?.message ?? err}`)
         }
       }, 200)
+    }
+
+    /**
+     * Follow-up adversarial pass (fail-posture MAJOR): the umbrella fallback for
+     * a tmux-wrapped launch that the remote refuses.
+     *
+     * The stage/push scripts smoke-test the binary they install with `tmux -V`
+     * and `tmux new-session -d`, and their doc comments claim that surfaces the
+     * "missing or unsuitable terminal" (terminfo) failure. It does not: a
+     * DETACHED new-session never opens a client tty, so terminfo is never
+     * consulted, and the pinned static build ships without compiled-in fallback
+     * entries. On a remote with no terminfo database for $TERM -- the minimal
+     * container that is exactly this tier's target -- staging reports `ok`, the
+     * ATTACHED launch then dies with `open terminal failed`, and tier 2 selects
+     * the same binary on every later connect. Nothing recovered: claude never
+     * started, and Launch Claude is inert once `claudeSent` latched.
+     *
+     * Rather than teach the smoke test to predict every way a remote can refuse
+     * to run tmux (terminfo, an already-nested session, a wrong-arch or
+     * truncated binary, a tmux too old for `new-session -A`), watch the PTY for
+     * a short window after the wrapped launch and fall back to the BARE launch
+     * the moment the remote says it failed. That is safe precisely because a
+     * failed wrap means nothing is running: the pane is back at a shell prompt.
+     *
+     * The window is deliberately short and closes the instant claude latches, so
+     * this can never fire against claude's own output; every pattern below is a
+     * message a shell or tmux emits about the command we just typed.
+     */
+    const TMUX_LAUNCH_WATCH_MS = 6000
+    /** Deadline (epoch ms) until which the wrapped launch is being watched; 0 = not watching. */
+    let tmuxLaunchWatchUntil = 0
+    let tmuxLaunchFellBack = false
+    /**
+     * Round-2 adversarial pass (MAJOR): the first cut of this regex matched
+     * bare `command not found` / `permission denied` / `is a directory`
+     * anywhere in the chunk, which fires on output that has nothing to do with
+     * the wrap -- claude's own `EACCES: permission denied` startup stderr, and
+     * (worse) the transcript redraw when a RECONNECT successfully attaches to a
+     * live session, since a coding transcript routinely contains those exact
+     * words. The cost of a false positive is not cosmetic: the bare claude line
+     * is typed into a pane where claude is already running (so it lands in the
+     * composer as a chat message) and the session is dropped from
+     * sshTmuxWrappedBySession, which turns a later close into a KILL of the
+     * remote rather than a detach.
+     *
+     * Split in two, so a generic error only counts when it is demonstrably
+     * about tmux:
+     *  - UNAMBIGUOUS: phrases only tmux itself emits; match anywhere.
+     *  - GENERIC: shell/exec failures that must share a LINE with the word
+     *    `tmux` (every wrapped launch names the binary, so a real failure to
+     *    run it always does).
+     * `no server running on` was dropped entirely: buildTmuxLaunchCommand's own
+     * `|| <fresh create>` leg already self-heals that race, and reacting to it
+     * here fought the wrapper for the same case.
+     */
+    const TMUX_LAUNCH_FAILED_UNAMBIGUOUS_RE = /open terminal failed|sessions should be nested|missing or unsuitable terminal/i
+    const TMUX_LAUNCH_FAILED_GENERIC_RE = /^[^\r\n]*\btmux\b[^\r\n]*(command not found|not found|permission denied|exec format error|cannot execute binary file|is a directory)/im
+    const handleWrappedLaunchFailure = (data: string): void => {
+      if (destroyed || tmuxLaunchFellBack || !tmuxLaunchWatchUntil) return
+      if (Date.now() > tmuxLaunchWatchUntil) { tmuxLaunchWatchUntil = 0; return }
+      if (claudeRunning) { tmuxLaunchWatchUntil = 0; return }
+      // Round-2 adversarial pass (MAJOR): claude's UI appearing in THIS chunk is
+      // proof the wrap worked, and it is checked BEFORE the failure match --
+      // the claudeRunning latch below runs later in the same handler, so on a
+      // reattach the transcript's own text used to be judged before the UI that
+      // accompanied it. Any chunk carrying claude's UI closes the window for
+      // good.
+      if (detectClaudeUi(data, claudeSent)) { tmuxLaunchWatchUntil = 0; return }
+      const m = data.match(TMUX_LAUNCH_FAILED_UNAMBIGUOUS_RE) ?? data.match(TMUX_LAUNCH_FAILED_GENERIC_RE)
+      if (!m) return
+      tmuxLaunchFellBack = true
+      tmuxLaunchWatchUntil = 0
+      logError(`[ssh] ${sessionId}: tmux-wrapped launch was refused by the remote (${m[0]}) -- falling back to a bare claude launch`)
+      // The wrap is off for this session: correct the persistence signal the
+      // wrapped write already emitted, and stop close/quit from trying to
+      // DETACH from a tmux session that was never created.
+      sshTmuxWrappedBySession.delete(sessionId)
+      emitSshSessionInfo(win, sessionId, { tmuxPersistent: false, remoteAccount })
+      // Reconnecting with no tmux in play is exactly the case tier 5 exists
+      // for, so the bare retry carries --continue when this spawn is a respawn.
+      const bareFlags = buildSshClaudeFlags({ reconnect: !!ssh.reconnect, tmuxInPlay: false })
+      const bareCmd = bareFlags ? `${claudeCmd} ${bareFlags}` : claudeCmd
+      setFlowState('running-claude', 'tmux-launch-refused')
+      try {
+        ptyProcess.write(bareCmd + '\r')
+      } catch (err) {
+        logError(`[ssh] ${sessionId}: bare-launch fallback write failed: ${(err as Error)?.message ?? err}`)
+      }
     }
 
     /**
@@ -1759,7 +2092,15 @@ export function spawnPty(
       // sentinel/timeout/build-error handler (not this choke point) may
       // call writeClaudeCmd from here on while a push is open.
       if (pushSent && !pushDone) return
-      if (!detectedTmuxSource && !stagingAttempted) {
+      // item 1: skip tier-3/4 staging entirely when persistence is off -- this
+      // is the "no silent tmux install" guarantee; go straight to bare claude.
+      // item 3: also skip on a Windows remote -- the POSIX staging ladder
+      // (`stty`/`uname`/`base64 -d | sh`) is meaningless on cmd.exe and, since
+      // the Windows setup deliberately reports tmux=none, this gate would fire
+      // and type ~3 KB of POSIX shell into cmd.exe + stall 20s + show a false
+      // "Installing tmux…" overlay. Windows never persists via tmux; go straight
+      // to the bare cmd.exe launch (adversarial review, 2026-08-18).
+      if (persistenceEnabled && !isWindowsRemote && !detectedTmuxSource && !stagingAttempted) {
         writeTmuxStageCmd()
         return
       }
@@ -1831,6 +2172,19 @@ export function spawnPty(
       skip: () => {
         setFlowState('skipped')
       },
+      handlePtyExit: () => {
+        // Only a connection failure BEFORE a good terminal state matters here.
+        // A mid-session drop (already claude-running) is left to the user's
+        // Restart; a deliberate close destroys the flow first, so this never
+        // runs for it (sshFlows no longer has the session by onExit time).
+        if (
+          currentFlowState === 'claude-running'
+          || currentFlowState === 'shell-only'
+          || currentFlowState === 'skipped'
+          || currentFlowState === 'failed'
+        ) return
+        setFlowState('failed', 'connection')
+      },
       destroy: () => {
         // #242 finding F3 (adversarial review round 4, MAJOR): flip this
         // FIRST -- writeClaudeCmd's/writeTmuxStageCmd's write-callbacks
@@ -1878,6 +2232,23 @@ export function spawnPty(
       const data = extractSshOscSentinels(sessionId, rawData)
       getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       win.webContents.send(`pty:data:${sessionId}`, data)
+
+      // Follow-up adversarial pass (lifecycle MAJOR): once the flow is
+      // destroyed, terminal bytes still belong on the renderer's data channel
+      // (above) but NOTHING below this line does -- every latch, sentinel
+      // parse, settings-patch write and claude launch beneath is flow logic for
+      // a session that has been torn down. Proven reachable: destroying
+      // mid-tier-3 and then feeding the stage sentinel drove a
+      // buildTmuxBinPatchCommand write into the dead PTY and re-armed the idle
+      // fallback. The individual `destroyed` guards on setFlowState /
+      // writeClaudeCmd / armIdleFallback stay as defence in depth for the
+      // promise-driven call sites that never pass through here.
+      if (destroyed) return
+
+      // Follow-up adversarial pass (fail-posture MAJOR): watch a tmux-wrapped
+      // launch for a remote refusal and fall back to the bare launch. No-op
+      // unless a wrapped command was just written -- see its doc comment.
+      handleWrappedLaunchFailure(data)
 
       // Arm the idle-data fallback. Re-arms on every chunk so the timer
       // tracks the most recent activity. The handler itself decides
@@ -1959,6 +2330,10 @@ export function spawnPty(
             setupTimeoutHandle = null
           }
           logInfo(`[ssh] ${sessionId}: host setup ok received (tmux=${tmuxResult ?? 'none'})`)
+          // item 10: stamp + push the remote account descriptor (if the sentinel
+          // carried a decodable, display-valid one).
+          const hostAcct = parseSetupAccountSentinel(combined, sshNonce)
+          if (hostAcct) { remoteAccount = hostAcct; emitSshSessionInfo(win, sessionId, { remoteAccount }) }
         }
       }
 
@@ -1977,6 +2352,8 @@ export function spawnPty(
             setupTimeoutHandle = null
           }
           logInfo(`[ssh] ${sessionId}: container setup ok received (tmux=${tmuxResult ?? 'none'})`)
+          const contAcct = parseSetupAccountSentinel(combined, sshNonce)
+          if (contAcct) { remoteAccount = contAcct; emitSshSessionInfo(win, sessionId, { remoteAccount }) }
         }
       }
 
@@ -2873,7 +3250,6 @@ export function spawnPty(
 
   ptyProcess.onExit(({ exitCode }) => {
     logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
-
     // Restart-race guard: the renderer's restart flow kills the old PTY
     // and re-spawns synchronously with the SAME sessionId. node-pty's
     // exit callback is async — by the time it fires, the new PTY has
@@ -2889,6 +3265,20 @@ export function spawnPty(
     const current = ptySessions.get(sessionId)
     const weAreCurrent = !current || current.ptyProcess === ptyProcess
     if (weAreCurrent) {
+      // item 5 (resume cascade): an SSH session whose ssh process exited before
+      // reaching claude-running failed to connect -- tell the overlay so it can
+      // offer Retry (never strand). Runs only while the flow still exists (a
+      // deliberate close destroys it first). CRITICAL: this MUST sit inside the
+      // weAreCurrent guard. sshFlows is keyed by sessionId only, so on a restart
+      // it holds the NEW flow while the OLD pty exits; poking it here (as the
+      // first cut did, above this guard) flipped a healthy just-respawned session
+      // to failed('connection'), and the overlay's only escape was Retry -> the
+      // same restart -> the same stale exit, wedged forever (adversarial review,
+      // 2026-08-18, BLOCKER). When we are NOT current a newer spawn owns the flow;
+      // its own onExit handles its own drops.
+      if (sshFlows.has(sessionId)) {
+        try { getSshFlow(sessionId)?.handlePtyExit() } catch { /* best-effort */ }
+      }
       ptySessions.delete(sessionId)
       clearSessionMeta(sessionId)
       // Close the run (the worker final-drains + retires its transcript tails).
@@ -3107,6 +3497,12 @@ function cleanupSessionResources(sessionId: string): void {
   // #242 finding F1 (b): drop this session's nonce so it can never leak into
   // a future, unrelated spawn reusing the same sessionId.
   sshNonceBySession.delete(sessionId)
+  // item 4: the SSH connection target + tmux-persistence flag are DELIBERATELY
+  // NOT cleared here -- cleanupSessionResources runs on a natural PTY exit (a
+  // transient drop) too, where the tab stays and a later End must still reach
+  // the host. They are cleared only on deliberate close, in killPty (a respawn
+  // overwrites them, so a stale entry from an exited-but-open session is bounded
+  // and self-healing). See the maps' doc comment (adversarial review 2026-08-18).
   pasteQueues.get(sessionId)?.cancel() // stop draining + drop pending before dropping the ref (P1.5)
   pasteQueues.delete(sessionId)
   // Delete the per-session statusline status file so the watcher's poll
@@ -3162,18 +3558,30 @@ const REMOTE_CLEANUP_GRACE_MS = 400
 
 export function killPty(sessionId: string): void {
   const entry = ptySessions.get(sessionId)
+  // Read persistence BEFORE cleanupSessionResources runs (it no longer clears
+  // these, but killPty does, at the end).
+  const tmuxPersistent = sshTmuxWrappedBySession.has(sessionId)
   if (entry) {
-    logInfo(`[pty] Killing PTY for session ${sessionId}`)
-    if (sshFlows.has(sessionId)) {
+    logInfo(`[pty] Killing PTY for session ${sessionId}${tmuxPersistent ? ' (tmux-persistent: detach only)' : ''}`)
+    if (sshFlows.has(sessionId) && !tmuxPersistent) {
       // U8: sweep the per-session files we planted on the remote, in-band down the
       // still-live PTY, then kill after a short grace so the `rm` runs before the
       // tunnel dies. No SSH creds retained. A crash / natural exit can't do this
       // (the tunnel is already gone), which is acceptable -- the files are inert.
       // ptySessions.delete below means the delayed kill's onExit no-ops.
+      //
+      // Only for a NON-persistent SSH session. For a tmux-WRAPPED one the remote
+      // survives this teardown, so (a) the foreground is Claude and this line
+      // would land in its composer and stay pre-typed (LF doesn't submit), and
+      // (b) the sidecars must either survive (Leave running -- Claude still uses
+      // them) or be removed by the End-remote exec (which does its own rm). So we
+      // write nothing and just detach (adversarial review, 2026-08-18).
       const proc = entry.ptyProcess
       try { proc.write(buildRemoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
       setTimeout(() => { try { proc.kill() } catch { /* already gone */ } }, REMOTE_CLEANUP_GRACE_MS)
     } else {
+      // Non-SSH, or a tmux-persistent SSH session (killing the local PTY detaches
+      // the tmux client; the remote survives for reattach on relaunch).
       try { entry.ptyProcess.kill() } catch (err) {
         logError(`[pty] Error killing PTY ${sessionId}:`, err)
       }
@@ -3181,6 +3589,11 @@ export function killPty(sessionId: string): void {
     ptySessions.delete(sessionId)
   }
   cleanupSessionResources(sessionId)
+  // Deliberate close: NOW drop the end-target + persistence flag (see the maps'
+  // doc). A natural exit reaches cleanupSessionResources but not here, so the
+  // target survives a transient drop for a later End.
+  sshTargetBySession.delete(sessionId)
+  sshTmuxWrappedBySession.delete(sessionId)
 }
 
 export function killAllPty(): void {
@@ -3215,6 +3628,18 @@ export function gracefulExitPty(sessionId: string, timeoutMs = 5000): Promise<vo
       killPty(sessionId)
       resolve()
     }, timeoutMs)
+
+    // SSH tmux enhancement (item 4): a tmux-persistent remote must be DETACHED,
+    // not exited, on app quit. `/exit` inside the tmux-wrapped pane quits Claude
+    // and tears the remote session down -- defeating the persistence the header
+    // pill just promised, on the most common exit path. Killing the local PTY
+    // detaches the tmux client; the remote survives for reattach on relaunch
+    // (adversarial review, 2026-08-18). The onExit listener above resolves.
+    if (sshTmuxWrappedBySession.has(sessionId)) {
+      logInfo(`[pty-manager] ${sessionId} is tmux-persistent -- detaching (no /exit) so the remote survives app quit`)
+      try { entry.ptyProcess.kill() } catch { /* already gone */ }
+      return
+    }
 
     // Send Escape (cancel any pending input), then /exit
     entry.ptyProcess.write('\x1b')  // Escape

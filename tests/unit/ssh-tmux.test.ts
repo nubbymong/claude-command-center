@@ -1,9 +1,11 @@
 // tests/unit/ssh-tmux.test.ts
 //
-// #242: tmux persistence wrapper. `-A` makes reconnect the IDENTICAL code
-// path (attach if the session exists, else create it) — dropping it would
-// make every reconnect spawn a SECOND claude inside a brand-new session
-// instead of resuming the live one.
+// #242 + SSH tmux enhancement (item 6): tmux persistence wrapper. The
+// wrapper is a has-session conditional (attach if the session is alive,
+// else create a fresh one) so a reconnect after the remote rebooted can
+// resume the conversation (`--continue` on the fresh branch) instead of
+// launching a blank chat -- the silent-blank-chat bug the old `new-session
+// -A` one-liner could not fix, because -A cannot tell attach from create.
 //
 // #242 round-3 correction (I3): buildTmuxLaunchCommand no longer takes a
 // wire-reported `tmuxBin` at all -- it picks ONE of two fixed, host-authored
@@ -19,22 +21,66 @@ const base = {
   sessionId: 'sid-1',
   innerCmd: 'CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 claude --settings ~/.claude/settings-sid-1.json',
   staged: false,
+  reconnect: false,
 }
 
 describe('buildTmuxLaunchCommand', () => {
-  it('builds new-session -A -s ccc-<sid> <cmd>, using ON_PATH_TMUX_BIN_EXPR for staged: false', () => {
+  it('builds the has-session wrapper (attach live, else fresh; attach falls through to fresh on a lost race) using ON_PATH_TMUX_BIN_EXPR for staged: false', () => {
     const cmd = buildTmuxLaunchCommand(base)
-    expect(cmd).toBe(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-sid-1 '${base.innerCmd}'`)
+    const t = ON_PATH_TMUX_BIN_EXPR
+    const fresh = `${t} new-session -s ccc-sid-1 '${base.innerCmd}'`
+    expect(cmd).toBe(
+      `if ${t} has-session -t ccc-sid-1 2>/dev/null; then ${t} attach -t ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
+    )
   })
 
   it('uses STAGED_TMUX_BIN_EXPR for staged: true', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
-    expect(cmd).toBe(`${STAGED_TMUX_BIN_EXPR} new-session -A -s ccc-sid-1 '${base.innerCmd}'`)
+    const t = STAGED_TMUX_BIN_EXPR
+    const fresh = `${t} new-session -s ccc-sid-1 '${base.innerCmd}'`
+    expect(cmd).toBe(
+      `if ${t} has-session -t ccc-sid-1 2>/dev/null; then ${t} attach -t ccc-sid-1 || ${fresh}; else ${fresh}; fi`,
+    )
   })
 
-  it('carries -A so reconnect attaches instead of creating a second session', () => {
+  it('attaches an existing session and only creates fresh when it is gone', () => {
     const cmd = buildTmuxLaunchCommand(base)
-    expect(cmd).toMatch(/new-session\s+-A\s+-s\s+ccc-/)
+    // Attach branch first (reattach a still-running claude), create second.
+    expect(cmd).toMatch(/has-session\s+-t\s+ccc-sid-1/)
+    expect(cmd).toMatch(/then\s+.*attach\s+-t\s+ccc-sid-1/)
+    expect(cmd).toMatch(/else\s+.*new-session\s+-s\s+ccc-sid-1/)
+  })
+
+  // The attach is NOT atomic with has-session; a lost race (session dies in the
+  // ~10ms gap) must self-heal, not strand the user (adversarial review,
+  // 2026-08-18). Mutation to prove this can fail: drop the `|| <fresh>` from the
+  // attach branch.
+  it('falls the attach THROUGH to a fresh create when the reattach fails', () => {
+    const cmd = buildTmuxLaunchCommand(base)
+    // The live-reattach `attach -t X` is immediately backstopped by `|| <fresh>`.
+    expect(cmd).toContain('attach -t ccc-sid-1 || ')
+    // Two identical create paths: the attach fallback and the else branch.
+    const creates = cmd.split('new-session -s ccc-sid-1 ').length - 1
+    expect(creates).toBe(2)
+  })
+
+  // Item 6 (silent-blank-chat fix): --continue rides every FRESH-create (the
+  // attach fallback AND the else), and only on a reconnect; a LIVE reattach
+  // (`attach -t X` before the `||`) never gets it -- relaunching a running
+  // claude would be wrong. Mutation to prove this can fail: append --continue to
+  // innerCmd unconditionally, or to the attach op -- the assertions below fail.
+  it('adds --continue to every fresh-create branch, never to a live attach, on a reconnect', () => {
+    const cmd = buildTmuxLaunchCommand({ ...base, reconnect: true })
+    expect(cmd).toContain('attach -t ccc-sid-1 || ')
+    expect(cmd).not.toMatch(/attach -t ccc-sid-1 --continue/)
+    const creates = cmd.split('new-session -s ccc-sid-1 ').slice(1)
+    expect(creates.length).toBe(2)
+    for (const c of creates) expect(c.startsWith(`'${base.innerCmd} --continue'`)).toBe(true)
+  })
+
+  it('never adds --continue on a first connect (reconnect: false)', () => {
+    const cmd = buildTmuxLaunchCommand({ ...base, reconnect: false })
+    expect(cmd).not.toContain('--continue')
   })
 
   it('sanitizes a session id containing spaces/quotes into the tmux session name', () => {
@@ -58,14 +104,18 @@ describe('buildTmuxLaunchCommand', () => {
     // Nothing before the tmux binary token, and the env var itself only
     // appears inside the quoted argument (never as a bare leading token).
     expect(cmd.indexOf('CLAUDE_CODE_DISABLE_MOUSE_CLICKS')).toBe(idx + 1)
-    expect(cmd.startsWith(ON_PATH_TMUX_BIN_EXPR)).toBe(true)
+    expect(cmd.startsWith(`if ${ON_PATH_TMUX_BIN_EXPR} has-session`)).toBe(true)
   })
 
   it('single-quotes an innerCmd containing a single quote without breaking out of the argument', () => {
     const innerCmd = `echo 'hi' && say "done"`
     const cmd = buildTmuxLaunchCommand({ ...base, innerCmd })
-    const marker = '-s ccc-sid-1 '
-    const quotedArg = cmd.slice(cmd.indexOf(marker) + marker.length)
+    // The else-branch fresh-create quoted argument (after the LAST
+    // '-s ccc-sid-1 ' -- the attach fallback also creates fresh, so use
+    // lastIndexOf to land uniquely on the else branch's operand, terminated
+    // only by '; fi').
+    const marker = 'new-session -s ccc-sid-1 '
+    const quotedArg = cmd.slice(cmd.lastIndexOf(marker) + marker.length).replace(/; fi$/, '')
     expect(quotedArg.startsWith("'")).toBe(true)
     expect(quotedArg.endsWith("'")).toBe(true)
     // Reverse the POSIX single-quote escaping (strip outer quotes, undo
@@ -92,20 +142,69 @@ describe('buildTmuxLaunchCommand never reads a caller-supplied tmux path (#242 f
   it('ignores anything extra on the input object -- staged: false always emits ON_PATH_TMUX_BIN_EXPR', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, staged: false, tmuxBin: '/tmp/.x/tmux' } as never)
     expect(cmd).not.toContain('/tmp/.x/tmux')
-    expect(cmd.startsWith(ON_PATH_TMUX_BIN_EXPR)).toBe(true)
+    expect(cmd.startsWith(`if ${ON_PATH_TMUX_BIN_EXPR} has-session`)).toBe(true)
   })
 
   it('ignores anything extra on the input object -- staged: true always emits STAGED_TMUX_BIN_EXPR', () => {
     const cmd = buildTmuxLaunchCommand({ ...base, staged: true, tmuxBin: '/tmp/.claude/bin/tmux' } as never)
     expect(cmd).not.toContain('/tmp/.claude/bin/tmux')
-    expect(cmd.startsWith(STAGED_TMUX_BIN_EXPR)).toBe(true)
+    expect(cmd.startsWith(`if ${STAGED_TMUX_BIN_EXPR} has-session`)).toBe(true)
   })
 })
 
-// #242 tier 5: `--continue` on a reconnect, gated OFF whenever tmux is in
-// play (the `-A` reattach already IS the reconnect path in that case; see
-// buildSshClaudeFlags's doc comment for why a second claude inside the same
-// attached pane would be wrong). Both directions are separate mutations a
+// Follow-up adversarial pass (fail-posture MAJOR): the tier-1 launch token
+// must be the alias- AND function-proof form `command tmux`, never the old
+// `"$(command -v tmux)"`. The detection probe runs `command -v tmux` through
+// execSync (non-interactive `sh -c`, alias-blind), but the launch token is
+// expanded by the remote's INTERACTIVE login shell -- where `command -v tmux`
+// prints an alias DEFINITION (`alias tmux='tmux -2'`) for anyone who aliases
+// tmux in their rc file, quoted into one word that exits 127: no claude, on
+// every connect. `command` is a POSIX special builtin that bypasses shell
+// functions, and `tmux` sits in argument position where alias expansion never
+// applies.
+//
+// WHY THE LITERAL TEXT IS ASSERTED, NOT THE IMPORTED CONSTANT: every other
+// test in this file compares buildTmuxLaunchCommand's output against
+// ON_PATH_TMUX_BIN_EXPR / STAGED_TMUX_BIN_EXPR themselves, so a regression
+// INSIDE the constant (e.g. back to `"$(command -v tmux)"`) changes both
+// sides of the comparison at once and every such test stays green -- proven:
+// NO existing test failed when the constant's value changed for this very
+// fix. A self-referential expectation cannot catch a change to the value it
+// re-derives; only the literal can.
+describe('launch-token literals are alias/function-proof (fail-posture follow-up)', () => {
+  it('ON_PATH_TMUX_BIN_EXPR is literally `command tmux` (not a $(command -v) substitution)', () => {
+    expect(ON_PATH_TMUX_BIN_EXPR).toBe('command tmux')
+  })
+
+  it('STAGED_TMUX_BIN_EXPR is literally `"$HOME"/.claude/bin/tmux`', () => {
+    expect(STAGED_TMUX_BIN_EXPR).toBe('"$HOME"/.claude/bin/tmux')
+  })
+
+  it('a tier-1 (staged: false) launch command uses exactly `command tmux` as every tmux token and contains no `$(command -v` anywhere', () => {
+    const cmd = buildTmuxLaunchCommand({ ...base, staged: false })
+    // All three invocation sites carry the literal token (has-session guard,
+    // live attach, and the fresh create used by both the attach fallback and
+    // the else branch).
+    expect(cmd.startsWith('if command tmux has-session -t ccc-sid-1 ')).toBe(true)
+    expect(cmd).toContain('then command tmux attach -t ccc-sid-1 || command tmux new-session -s ccc-sid-1 ')
+    expect(cmd).toContain('else command tmux new-session -s ccc-sid-1 ')
+    // The alias-expandable substitution form must never come back, anywhere
+    // in the command.
+    expect(cmd).not.toContain('$(command -v')
+    expect(cmd).not.toContain('command -v tmux')
+  })
+
+  it('the staged (tier-2/3/4) launch command carries the literal `"$HOME"/.claude/bin/tmux` token and no `$(command -v` either', () => {
+    const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
+    expect(cmd.startsWith('if "$HOME"/.claude/bin/tmux has-session -t ccc-sid-1 ')).toBe(true)
+    expect(cmd).not.toContain('$(command -v')
+  })
+})
+
+// #242 tier 5: `--continue` on the BARE (non-tmux) launch on a reconnect,
+// gated OFF whenever tmux is in play -- there the has-session wrapper owns
+// the --continue decision itself (fresh branch only), so this flag going ON
+// too would double it. Both directions are separate mutations a
 // single test cannot catch: dropping the `!tmuxInPlay` gate only shows up
 // with tmux present, and dropping the `reconnect` gate only shows up with
 // tmux absent -- hence two dedicated tests rather than one table-driven one.
@@ -116,9 +215,9 @@ describe('buildSshClaudeFlags / shouldAddContinueFlag (#242 tier 5)', () => {
   })
 
   // Mutation this catches: dropping `!input.tmuxInPlay` from the gate (e.g.
-  // `return input.reconnect`) would make this fail -- tmux's own `-A` already
-  // reattaches to the live claude process, so a SECOND `--continue` would
-  // start a second claude inside that same attached pane.
+  // `return input.reconnect`) would make this fail -- the tmux wrapper's
+  // fresh-create branch already carries --continue on a reconnect, so this
+  // bare-launch flag going ON too would append a second one.
   it('does NOT add --continue on a reconnect when tmux IS in play', () => {
     expect(shouldAddContinueFlag({ reconnect: true, tmuxInPlay: true })).toBe(false)
     expect(buildSshClaudeFlags({ reconnect: true, tmuxInPlay: true })).toBe('')

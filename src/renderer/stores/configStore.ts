@@ -33,6 +33,8 @@ export interface TerminalConfig {
     postCommand?: string      // Command to run after SSH connects (e.g., docker exec)
     hasSudoPassword?: boolean // Whether sudo password is needed for postCommand
     dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
+    detachable?: boolean      // item 1: "Detachable" persistent tmux session (default ON; only false disables)
+    remoteOs?: 'auto' | 'unix' | 'windows'  // item 3: remote OS (windows = prototype Windows setup path)
   }
   pinned?: boolean
   machineName?: string // Identifies which machine this session runs on

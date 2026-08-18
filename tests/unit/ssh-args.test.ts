@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildSshArgs } from '../../src/main/ssh-args'
+import { buildSshArgs, buildSshExecArgs } from '../../src/main/ssh-args'
 
 // pty-manager builds the ssh argv from this helper; these pin the EXACT argv
 // (order, pairing, and length) reaching ssh/ssh.exe per platform. Whole-array
@@ -110,5 +110,50 @@ describe('buildSshArgs rejects an option-like or whitespace host/username (sink 
     expect(() => buildSshArgs({ username: 'my-user', host: 'my-host.example.com', port: 22 }, 0, 'linux')).not.toThrow()
     expect(() => buildSshArgs({ username: 'root', host: '[2001:db8::1]', port: 22 }, 0, 'linux')).not.toThrow()
     expect(() => buildSshArgs({ username: 'DOMAIN\\me', host: '10.0.0.5', port: 22 }, 0, 'win32')).not.toThrow()
+  })
+})
+
+
+// SSH tmux enhancement (item 4): buildSshExecArgs — the argv for the SEPARATE
+// non-interactive ssh exec that ends a remote session (tmux kill-session +
+// sidecar cleanup). Validated against real ssh.exe on Windows and ssh on Linux
+// in headless testing; these pin the exact shape + guards.
+describe('buildSshExecArgs (item 4 — one-shot end-remote exec)', () => {
+  const target = { username: 'dev', host: 'box.example.com', port: 2222 }
+  it('builds a batch, non-TTY argv with the remote command as the final positional arg', () => {
+    const args = buildSshExecArgs(target, 'tmux kill-session -t ccc-x; true', 'linux')
+    expect(args[0]).toBe('dev@box.example.com')
+    expect(args).toContain('-p'); expect(args).toContain('2222')
+    // Batch: no interactive password prompt, fail-fast connect.
+    expect(args).toContain('BatchMode=yes')
+    expect(args).toContain('ConnectTimeout=8')
+    expect(args).toContain('StrictHostKeyChecking=accept-new')
+    // No TTY and no MCP tunnel (unlike buildSshArgs).
+    expect(args).not.toContain('-t')
+    expect(args).not.toContain('-R')
+    // The remote command is the LAST arg (ssh joins trailing args with spaces).
+    expect(args[args.length - 1]).toBe('tmux kill-session -t ccc-x; true')
+  })
+  it('forces ControlMaster/ControlPath OFF on EVERY platform (the exec must not multiplex over the live PTY that is about to be killed)', () => {
+    // Unlike buildSshArgs (win32-only #241), the end-remote exec disables
+    // multiplexing everywhere: it is dispatched right before the caller tears
+    // down the shared connection's master, so on a POSIX client with
+    // `ControlMaster auto` a multiplexed exec would be cut off mid-kill
+    // (adversarial review, 2026-08-18). Each `-o` must have its own flag so a
+    // single-`-o` mutant leaves an orphaned positional.
+    for (const platform of ['win32', 'linux', 'darwin'] as const) {
+      const args = buildSshExecArgs(target, 'true', platform)
+      const i = args.indexOf('ControlMaster=no')
+      const j = args.indexOf('ControlPath=none')
+      expect(i).toBeGreaterThan(0)
+      expect(args[i - 1]).toBe('-o')
+      expect(j).toBeGreaterThan(0)
+      expect(args[j - 1]).toBe('-o')
+    }
+  })
+  it('re-asserts the same argv field guard as buildSshArgs (leading dash / whitespace / empty)', () => {
+    expect(() => buildSshExecArgs({ ...target, username: '-oProxyCommand=x' }, 'true', 'linux')).toThrow()
+    expect(() => buildSshExecArgs({ ...target, host: 'a b' }, 'true', 'linux')).toThrow()
+    expect(() => buildSshExecArgs({ ...target, host: '' }, 'true', 'linux')).toThrow()
   })
 })
