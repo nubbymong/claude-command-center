@@ -49,7 +49,7 @@ import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
-import { deriveOnboarding, shouldReonboardForBeta } from './onboarding/gate'
+import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
@@ -375,13 +375,14 @@ export default function App() {
     async function postConfigInit() {
       const appMeta = useAppMetaStore.getState().meta
 
-      // Beta line: re-fire the first-run tour on every app version so testers see
-      // the latest flow. Clearing completedSteps + onboardingCompletedVersion
-      // flips deriveOnboarding back to due (the harness re-runs); its finish step
-      // re-stamps onboardingAppVersion so it won't re-fire until the next version.
-      // First install runs via deriveOnboarding already; stable retriggers only on
-      // an ONBOARDING_VERSION bump (a major feature).
-      if (shouldReonboardForBeta(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)) {
+      // Re-fire the first-run tour when the VERSION warrants it: every build on
+      // the beta line so testers see the current flow, and on any channel when
+      // the user has crossed a release line (2.0.x → 2.1.x). Clearing
+      // completedSteps + onboardingCompletedVersion flips deriveOnboarding back
+      // to due (the harness re-runs); its finish step re-stamps
+      // onboardingAppVersion so it will not re-fire until the next one that
+      // qualifies. A first install runs through deriveOnboarding already.
+      if (shouldReonboardForVersion(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)) {
         useAppMetaStore.getState().update({ completedSteps: {}, onboardingCompletedVersion: undefined })
       }
 

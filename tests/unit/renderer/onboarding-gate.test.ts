@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveOnboarding, shouldReonboardForBeta, type OnboardingMetaView } from '../../../src/renderer/onboarding/gate'
+import { deriveOnboarding, shouldReonboardForBeta, shouldReonboardForVersion, type OnboardingMetaView } from '../../../src/renderer/onboarding/gate'
 import { STEPS, ONBOARDING_VERSION } from '../../../src/renderer/onboarding/steps'
 import type { OnboardingStep } from '../../../src/renderer/onboarding/steps'
 
@@ -116,5 +116,41 @@ describe('shouldReonboardForBeta', () => {
   })
   it('undefined channel -> false', () => {
     expect(shouldReonboardForBeta(done('2.0.0-beta.2'), '2.0.0-beta.3', undefined)).toBe(false)
+  })
+})
+
+describe('shouldReonboardForVersion', () => {
+  const done = (appVersion?: string): OnboardingMetaView => ({
+    onboardingCompletedVersion: 'v1',
+    ...(appVersion ? { onboardingAppVersion: appVersion } : {}),
+  })
+
+  it('re-fires on the beta channel for any version change', () => {
+    expect(shouldReonboardForVersion(done('2.1.0-beta.13'), '2.1.0-beta.14', 'beta')).toBe(true)
+  })
+
+  it('re-fires on a crossed release line even on stable', () => {
+    // The owner's ask: a 2.0 user walks the tour again when they land on 2.1.
+    expect(shouldReonboardForVersion(done('2.0.4'), '2.1.0', 'stable')).toBe(true)
+  })
+
+  it('does NOT re-fire within a stable line', () => {
+    expect(shouldReonboardForVersion(done('2.1.0'), '2.1.1', 'stable')).toBe(false)
+    expect(shouldReonboardForVersion(done('2.1.0'), '2.1.9', undefined)).toBe(false)
+  })
+
+  it('does not re-fire for the version it was already finished at', () => {
+    expect(shouldReonboardForVersion(done('2.1.0'), '2.1.0', 'beta')).toBe(false)
+  })
+
+  it('leaves someone who never finished the tour to deriveOnboarding', () => {
+    expect(shouldReonboardForVersion({}, '2.1.0', 'beta')).toBe(false)
+    expect(shouldReonboardForVersion({ completedSteps: { welcome: '2.0.0' } }, '2.1.0', 'stable')).toBe(false)
+  })
+
+  it('re-fires once for someone onboarded before the field existed', () => {
+    // onboardingAppVersion undefined reads as an unknown origin, which counts
+    // as a crossing; the finish step then stamps it and it settles.
+    expect(shouldReonboardForVersion(done(undefined), '2.1.0', 'stable')).toBe(true)
   })
 })

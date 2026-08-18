@@ -1,5 +1,6 @@
 import { STEPS, ONBOARDING_VERSION } from './steps'
 import type { OnboardingStep, OnboardingSettingsView } from './steps'
+import { crossedReleaseLine } from '../../shared/version-order'
 
 export interface OnboardingMetaView {
   completedSteps?: Record<string, string>
@@ -50,4 +51,39 @@ export function shouldReonboardForBeta(
   return channel === 'beta'
     && meta.onboardingCompletedVersion != null
     && meta.onboardingAppVersion !== appVersion
+}
+
+/**
+ * Should the full-screen tour run again because of the version the user has
+ * moved TO? The whole rule, of which the beta case above is one branch.
+ *
+ * Two things trigger it, and both are a different question from
+ * `deriveOnboarding` (which asks "are there steps left to do"):
+ *
+ *   - **beta channel, any version change** — testers should see the current
+ *     flow on every build. Pre-existing behaviour, unchanged.
+ *   - **a crossed release line, on any channel** — 2.0.x → 2.1.x is a big
+ *     enough change to walk someone through again, and this is what makes the
+ *     tour re-run for 2.0 users arriving at 2.1. Moving within a line
+ *     (2.1.0 → 2.1.1) does not.
+ *
+ * Keyed on `onboardingAppVersion` — the version at which the tour was last
+ * FINISHED — rather than `lastSeenVersion`, which the What's New modal stamps
+ * at a different moment for a different reason. Anyone who has never finished
+ * the tour is left to `deriveOnboarding`, which already has them.
+ *
+ * `onboardingAppVersion` is undefined for anyone who onboarded before that
+ * field existed; `crossedReleaseLine` treats an unreadable origin as a
+ * crossing, so they get the tour once and then settle, which is the safe
+ * direction to be wrong in.
+ */
+export function shouldReonboardForVersion(
+  meta: OnboardingMetaView,
+  appVersion: string,
+  channel: string | undefined,
+): boolean {
+  if (meta.onboardingCompletedVersion == null) return false
+  if (meta.onboardingAppVersion === appVersion) return false
+  if (channel === 'beta') return true
+  return crossedReleaseLine(meta.onboardingAppVersion ?? '', appVersion)
 }

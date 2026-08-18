@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { changelog, ChangelogEntry } from '../changelog'
+import { useAppMetaStore } from '../stores/appMetaStore'
+import { decideUpgradeFlow, entriesSince } from '../onboarding/upgrade-flow'
+import { useSettingsStore } from '../stores/settingsStore'
 
 declare const __BUILD_TIME__: string
 
@@ -65,7 +68,21 @@ const CLOSE_ANIMATION_MS = 200
 
 export default function WhatsNewModal({ onClose, showAllVersions = false }: Props) {
   const latestVersion = changelog[0]
-  const versionsToShow = showAllVersions ? changelog : [latestVersion]
+  // Everything released since the user last looked — not just the newest entry.
+  // Someone coming from 2.0.0 to 2.1.0 skipped fourteen releases, and showing
+  // them one of those and calling it "what's new" is how the modal came to be
+  // ignored.
+  //
+  // Captured ONCE, in a lazy initial state, because closing the modal stamps
+  // lastSeenVersion to the current build: read it on any later render and the
+  // list collapses to nothing underneath the user mid-read.
+  const [versionsToShow] = useState<ChangelogEntry[]>(() => {
+    if (showAllVersions) return changelog
+    const since = entriesSince(changelog, useAppMetaStore.getState().meta.lastSeenVersion, latestVersion.version)
+    // A first install, or a stored version newer than this build, leaves the
+    // range empty — fall back to the newest entry so the modal is never blank.
+    return since.length > 0 ? since : [latestVersion]
+  })
   // Animation state: `entering` false on mount → true after one frame
   // fades the dialog in. `closing` flips true when the user dismisses,
   // giving the fade-out CLOSE_ANIMATION_MS before we call the parent's
@@ -153,14 +170,46 @@ export default function WhatsNewModal({ onClose, showAllVersions = false }: Prop
   )
 }
 
-import { useAppMetaStore } from '../stores/appMetaStore'
-
+/**
+ * Should this launch show What's New?
+ *
+ * Now one branch of a single decision (see `decideUpgradeFlow`) rather than its
+ * own rule. The old one was `lastSeen !== changelog[0].version`, which treated
+ * a FIRST INSTALL as "everything is new to you" and opened a wall of release
+ * notes in front of someone who had not seen the app yet — they get the tour
+ * instead. It also compared strings, so a stored `v2.1.0` re-fired the modal on
+ * every single launch.
+ */
 export function shouldShowWhatsNew(): boolean {
   try {
-    const lastSeen = useAppMetaStore.getState().meta.lastSeenVersion
-    if (!lastSeen) return true // First launch
     const currentVersion = changelog[0]?.version
-    return lastSeen !== currentVersion
+    if (!currentVersion) return false
+    return decideUpgradeFlow({
+      lastSeenVersion: useAppMetaStore.getState().meta.lastSeenVersion,
+      currentVersion,
+      channel: useSettingsStore.getState().settings.updateChannel,
+    }).showWhatsNew
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Should this launch re-run the full-screen tour?
+ *
+ * Fresh install, a crossed release line (2.0.x → 2.1.x — the owner's ask: 2.0
+ * users walk it again on 2.1), or any version change on the beta channel.
+ * Moving within a stable line does not.
+ */
+export function shouldRerunTourForVersion(): boolean {
+  try {
+    const currentVersion = changelog[0]?.version
+    if (!currentVersion) return false
+    return decideUpgradeFlow({
+      lastSeenVersion: useAppMetaStore.getState().meta.lastSeenVersion,
+      currentVersion,
+      channel: useSettingsStore.getState().settings.updateChannel,
+    }).showTour
   } catch {
     return false
   }
