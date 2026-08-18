@@ -16,7 +16,7 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
 }))
 
 import { ClaudeProvider } from '../../../../src/main/providers/claude'
-import { generateRemoteSetupScript, assertSafeRemotePath, getRemoteSetupCommand, buildTmuxBinPatchCommand } from '../../../../src/main/providers/claude/ssh-shim'
+import { generateRemoteSetupScript, assertSafeRemotePath, getRemoteSetupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, generateWindowsRemoteSetupScript, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from '../../../../src/main/providers/claude/ssh-shim'
 
 // #242 finding F1 (b): generateRemoteSetupScript/getRemoteSetupCommand/
 // configureRemoteSettings now require a nonce.
@@ -405,5 +405,93 @@ describe('SSH statusline shim -- tmux client-tty bypass (#242)', () => {
     expect(script).toContain('process.env.TMUX')
     expect(script).toContain('#{client_tty}')
     expect(script).toContain('display-message')
+  })
+})
+
+// SSH tmux enhancement (item 4): buildRemoteTmuxKillCommand — the remote
+// command run over the SEPARATE end-remote exec. Verified end-to-end on 185.
+describe('buildRemoteTmuxKillCommand (item 4)', () => {
+  it('kills the ccc-<safeSid> session across every known tmux location and removes both sidecars', () => {
+    const cmd = buildRemoteTmuxKillCommand('sess-1')
+    // Targets the tmux session name, mirroring buildTmuxLaunchCommand.
+    expect(cmd).toContain('kill-session -t ccc-sess-1')
+    // Tries PATH + both Homebrew prefixes (macOS non-login exec has a minimal
+    // PATH, so `command -v tmux` alone would miss /opt/homebrew/bin) + system +
+    // the CCC-staged tier-2 binary.
+    expect(cmd).toContain('tmux kill-session -t ccc-sess-1')
+    expect(cmd).toContain('/opt/homebrew/bin/tmux kill-session -t ccc-sess-1')
+    expect(cmd).toContain('/usr/local/bin/tmux kill-session -t ccc-sess-1')
+    expect(cmd).toContain('/usr/bin/tmux kill-session -t ccc-sess-1')
+    expect(cmd).toContain('"$HOME/.claude/bin/tmux" kill-session -t ccc-sess-1')
+    // Removes the two per-session sidecars.
+    expect(cmd).toContain('rm -f ~/.claude/settings-sess-1.json ~/.claude/mcp-sess-1.json')
+    // Every step best-effort; the whole exec still exits 0.
+    expect(cmd.trim().endsWith('true')).toBe(true)
+  })
+  it('sanitizes a session id with shell metacharacters into the -t argument', () => {
+    const cmd = buildRemoteTmuxKillCommand('a;b c$(x)')
+    expect(cmd).toContain('kill-session -t ccc-a_b_c__x_')
+    // No raw metacharacter reaches the target token.
+    expect(cmd).not.toContain('ccc-a;b')
+  })
+})
+
+// SSH tmux enhancement (item 3): Windows remote setup — PROTOTYPE. Verified on
+// Hyper-V (setup sentinel + statusline shim reaching the client).
+describe('generateWindowsRemoteSetupScript (item 3)', () => {
+  const NONCE = 'winnonce123'
+  it('emits a tmux=none sentinel with the account descriptor (no tmux on Windows)', () => {
+    const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true, includeConductorMcp: true }, NONCE)
+    expect(script).toContain(`process.stdout.write('setup ok ${NONCE} tmux=none acct='+acctB64+'`)
+    // No tmux detection at all (no `command -v tmux`, no accessSync bin probe).
+    expect(script).not.toContain('command -v tmux')
+    // Reads the account the SAME way the POSIX path does.
+    expect(script).toContain("Buffer.from(c.oauthAccount.emailAddress,'utf-8').toString('base64')")
+  })
+  it('bakes a Windows statusLine command that passes the session id via argv (cmd.exe cannot env-prefix)', () => {
+    const script = generateWindowsRemoteSetupScript('winsid', { includeStatusLine: true }, NONCE)
+    // `node "<shimPath>" <safeSid>` — shimPath JSON.stringify'd at runtime.
+    expect(script).toContain(`command:'node '+JSON.stringify(shimPath)+' winsid'`)
+  })
+  it('rejects a bad nonce (charset guard, fail-closed like the POSIX generator)', () => {
+    expect(() => generateWindowsRemoteSetupScript('winsid', undefined, 'bad nonce!')).toThrow(/charset guard/)
+  })
+})
+
+describe('getWindowsRemoteSetupCommand (item 3 — cmd.exe delivery)', () => {
+  it('delivers via powershell -Command with a single base64 payload that fits cmd.exe 8191 limit', () => {
+    const cmd = getWindowsRemoteSetupCommand('winsid', { includeStatusLine: true, includeConductorMcp: true }, 'winnonce123')
+    expect(cmd.startsWith('powershell -NoProfile -NonInteractive -Command "')).toBe(true)
+    // NOT -EncodedCommand (double-base64 would blow past the cmd line limit).
+    expect(cmd).not.toContain('-EncodedCommand')
+    expect(cmd).toContain('FromBase64String')
+    expect(cmd).toContain('$ProgressPreference=')
+    // Well under cmd.exe's 8191-char command-line limit (measured ~4.8k on Hyper-V).
+    expect(cmd.length).toBeLessThan(8191)
+  })
+})
+
+describe('buildWindowsClaudeCommand (item 3 — cmd.exe launch)', () => {
+  it('uses cmd set-syntax env vars and %USERPROFILE% settings/mcp paths', () => {
+    const cmd = buildWindowsClaudeCommand({
+      sessionId: 'winsid',
+      envPrefixVars: ['CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1', 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1'],
+      extraFlags: '--effort high',
+      continueFlag: '--continue',
+    })
+    expect(cmd).toContain('set "CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1"&& ')
+    expect(cmd).toContain('set "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1"&& ')
+    expect(cmd).toContain('claude --settings "%USERPROFILE%\\.claude\\settings-winsid.json"')
+    expect(cmd).toContain('--mcp-config "%USERPROFILE%\\.claude\\mcp-winsid.json"')
+    expect(cmd).toContain('--effort high')
+    expect(cmd).toContain('--continue')
+    // POSIX `~` never appears (does not expand in cmd.exe).
+    expect(cmd).not.toContain('~/.claude')
+  })
+  it('omits empty flags (no double spaces, no stray --continue on a first connect)', () => {
+    const cmd = buildWindowsClaudeCommand({ sessionId: 'winsid', envPrefixVars: [], extraFlags: '', continueFlag: '' })
+    expect(cmd).toContain('claude --settings')
+    expect(cmd).not.toContain('--continue')
+    expect(cmd).not.toContain('  ')
   })
 })

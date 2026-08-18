@@ -1,4 +1,5 @@
 import React from 'react'
+import { requestCloseSession } from '../stores/sshCloseStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { killSessionPty } from './TerminalView'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
@@ -124,8 +125,8 @@ export default function TabBar() {
   if (sessions.length === 0) return null
 
   const closeSession = (id: string) => {
-    killSessionPty(id)
-    removeSession(id)
+    // item 4: a persistent SSH session gets the End-vs-Leave-running choice.
+    requestCloseSession(id)
   }
 
   return (

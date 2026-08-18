@@ -94,6 +94,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [sshRemotePath, setSshRemotePath] = useState(initial?.sshConfig?.remotePath ?? '~')
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
   const [postCommand, setPostCommand] = useState(initial?.sshConfig?.postCommand ?? '')
+  // SSH tmux enhancement (item 1): "Detachable" (persistent remote session).
+  // DEFAULT ON -- only an explicit false disables it, so a config saved before
+  // this field existed (undefined) opens ticked.
+  const [detachable, setDetachable] = useState(initial?.sshConfig?.detachable !== false)
   // Secrets: `stored*` tracks whether the keychain currently holds one (the
   // "Remove stored password" link clears it); `save*` is the honest opt-in —
   // a typed password is only handed to the caller for storage when it's on.
@@ -371,6 +375,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         hasPassword: passwordSaved,
         postCommand: postCommand.trim() || undefined,
         hasSudoPassword: sudoSaved,
+        // item 1: persist only the opt-OUT (false); ON is the default/undefined.
+        detachable: detachable ? undefined : false,
       } : undefined,
       claudeOptions,
       codexOptions,
@@ -720,6 +726,32 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       )}
                     </div>
                   )}
+                  {/* SSH tmux enhancement (item 1): Detachable (persistent
+                      remote session). Default ON. When on, CCC keeps the remote
+                      Claude alive in a tmux session so a dropped connection can
+                      reattach; if the host lacks tmux it installs a small static
+                      build (surfaced in the connect overlay, never silent). Off
+                      = a bare claude that resumes via --continue on reconnect. */}
+                  <div className="rounded-md border border-surface1 bg-surface0/40 px-3 py-2">
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={detachable}
+                        onChange={(e) => setDetachable(e.target.checked)}
+                        className="mt-0.5 rounded border-surface1"
+                        data-testid="ssh-detachable"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-xs text-text font-medium">Detachable (persistent remote session)</span>
+                        <span className="block text-[11px] text-subtext0 leading-snug">
+                          Keeps the remote session alive if the connection drops, so reconnecting
+                          resumes it in place. Needs tmux on the host — CCC installs a lightweight
+                          copy if it's missing (you'll see it happen). Turn off to run a plain
+                          session that resumes with --continue instead.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
                 </div>
               )}
 

@@ -87,6 +87,12 @@ export interface ElectronAPI {
          *  claude-running -- drives `--continue` when no tmux persistence
          *  is available. See SSHOptions.reconnect in pty-manager.ts. */
         reconnect?: boolean
+        /** SSH tmux enhancement (item 1): "Detachable" toggle (default ON;
+         *  only false disables tmux persistence). */
+        detachable?: boolean
+        /** SSH tmux enhancement (item 3): remote OS ('windows' uses the Windows
+         *  setup path; auto/unix use POSIX). */
+        remoteOs?: 'auto' | 'unix' | 'windows'
       }
       configId?: string
       configLabel?: string
@@ -133,6 +139,12 @@ export interface ElectronAPI {
     getState: (sessionId: string) => Promise<{ state: string; info?: string }>
     /** Subscribe to flow-state changes for a session. */
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
+    /** SSH tmux enhancement (items 8/9/10): subscribe to per-session
+     *  persistence + remote-account descriptors pushed by main. */
+    onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => () => void
+    /** item 4: END the remote session (tmux kill-session + sidecar cleanup via
+     *  a separate ssh exec) then kill the local PTY. */
+    endRemote: (sessionId: string) => Promise<void>
   }
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void
@@ -642,6 +654,13 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(channel, handler)
       return () => ipcRenderer.removeListener(channel, handler)
     },
+    onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => {
+      const channel = `${IPC.SSH_SESSION_INFO}:${sessionId}`
+      const handler = (_: unknown, msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => callback(msg)
+      ipcRenderer.on(channel, handler)
+      return () => ipcRenderer.removeListener(channel, handler)
+    },
+    endRemote: (sessionId: string) => ipcRenderer.invoke(IPC.SSH_END_REMOTE, sessionId),
   },
   statusline: {
     onUpdate: (callback) => {

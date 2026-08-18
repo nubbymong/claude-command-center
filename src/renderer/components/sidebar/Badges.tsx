@@ -43,6 +43,28 @@ export function SshBadge() {
   )
 }
 
+// SSH tmux enhancement (item 9): a distinct badge for a PERSISTENT SSH session
+// (running inside a tmux wrapper that survives a dropped connection), so
+// persistent vs. plain SSH is legible at a glance in the list. The chain-link
+// glyph reads as "stays connected"; the green tint matches the header
+// persistence indicator.
+export function SshPersistentBadge() {
+  return (
+    <div
+      className="flex items-center justify-center h-4 px-1 gap-0.5 rounded shrink-0 bg-green/15 text-green"
+      title="Persistent SSH session — kept alive in tmux; a dropped connection reattaches"
+      style={{ fontSize: '8px', fontWeight: 700, letterSpacing: '0.5px' }}
+      data-testid="ssh-persistent-badge"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+      </svg>
+      SSH
+    </div>
+  )
+}
+
 export function CodexBadge({ needsAttention }: { needsAttention: boolean }) {
   const isWorking = !needsAttention
   return (

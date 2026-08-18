@@ -106,7 +106,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => '/tmp' },
 }))
 
-const { spawnPty, getSshFlow, killPty, parseTmuxSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest } = await import('../../src/main/pty-manager')
+const { spawnPty, getSshFlow, killPty, parseTmuxSentinel, parseSetupAccountSentinel, parseTmuxStageSentinel, _setTmuxArchiveResolverForTest, _getSshNonceForTest, _getSetupLineBufferLenForTest } = await import('../../src/main/pty-manager')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 // Pure module, no node-pty/electron deps -- safe to import directly (unlike
@@ -180,24 +180,66 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     vi.useRealTimers()
   })
 
-  it('wraps claudeCmd in tmux new-session -A when the setup sentinel reports tmux=path (tier 1, found on PATH)', () => {
+  // SSH tmux enhancement (item 1): the "Detachable" toggle (SSHOptions.detachable).
+  // Off => the tmux ladder is fully bypassed: no wrap even when the host HAS
+  // tmux, and no tier-3/4 staging write on a tmux-less host (the "no silent
+  // install" guarantee). Both are separate gates, hence two tests.
+  it('detachable:false writes a BARE claude even when the sentinel reports tmux=path', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-detach-off-hit', { ssh: { ...SSH, detachable: false } } as never)
+    writeMock.mockClear()
+    getSshFlow('s-detach-off-hit')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel('s-detach-off-hit', 'setup ok {NONCE} tmux=path\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    const written = claudeWrite![0] as string
+    expect(written).not.toContain('has-session')
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
+    expect(written).toContain('claude ')
+  })
+
+  it('detachable:false does NOT attempt tier-3/4 staging on a tmux=none host (no silent install)', () => {
+    onDataListeners.length = 0
+    spawnPty(fakeWin, 's-detach-off-miss', { ssh: { ...SSH, detachable: false } } as never)
+    writeMock.mockClear()
+    getSshFlow('s-detach-off-miss')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel('s-detach-off-miss', 'setup ok {NONCE} tmux=none\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect(claudeWrite![0] as string).not.toContain('has-session')
+  })
+
+  it('detachable default (undefined) still wraps in tmux on tmux=path', () => {
+    driveToClaudeWrite('s-detach-default', 'setup ok {NONCE} tmux=path\r\n')
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect((claudeWrite![0] as string)).toContain('has-session -t ccc-s-detach-default')
+  })
+
+  it('wraps claudeCmd in the tmux has-session wrapper when the setup sentinel reports tmux=path (tier 1, found on PATH)', () => {
     driveToClaudeWrite('s-tmux-hit', 'setup ok {NONCE} tmux=path\r\n')
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-s-tmux-hit`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-s-tmux-hit`)
     expect(written).toContain('claude ')
   })
 
   // #242 round-3 correction (I3): tier 2 (a pre-existing ~/.claude/bin/tmux)
   // shares the SAME fixed launch token as tier 3/4 -- STAGED_TMUX_BIN_EXPR --
   // since all three install/detect at the identical remote location.
-  it('wraps claudeCmd in tmux new-session -A when the setup sentinel reports tmux=home (tier 2, pre-existing ~/.claude/bin/tmux)', () => {
+  it('wraps claudeCmd in the tmux has-session wrapper when the setup sentinel reports tmux=home (tier 2, pre-existing ~/.claude/bin/tmux)', () => {
     driveToClaudeWrite('s-tmux-home', 'setup ok {NONCE} tmux=home\r\n')
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -A -s ccc-s-tmux-home`)
+    expect(written).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -s ccc-s-tmux-home`)
     expect(written).toContain('claude ')
   })
 
@@ -211,7 +253,7 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     // paths regardless of wrapping. Assert the WRAPPER shape is absent and
     // the claude invocation is not embedded inside a single-quoted argument
     // (which is how the tmux wrap would present it).
-    expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
     expect(written).not.toContain(`'`)
     expect(written).toContain('claude ')
   })
@@ -297,7 +339,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     feedPtyData(`setup ok ${nonce} tmux=pa`)
     feedPtyData(`th\r\n`)
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   it('still wraps in tmux when the chunk boundary lands mid-nonce', () => {
@@ -308,7 +350,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     feedPtyData(`setup ok ${nonce.slice(0, mid)}`)
     feedPtyData(`${nonce.slice(mid)} tmux=home\r\n`)
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   it('still wraps in tmux across a three-way split of the sentinel line', () => {
@@ -319,7 +361,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     feedPtyData(`${nonce} tmux=pa`)
     feedPtyData(`th\r\n`)
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   // A chunk that never arrives with the terminating newline must still
@@ -353,7 +395,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     // 4096 mirrors MAX_SETUP_LINE_BUFFER in pty-manager.ts (not exported).
     feedPtyData(`setup ok ${nonce} tmux=path\r\n` + 'y'.repeat(4096 + 1))
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   // Isolating control for the test above: comfortably UNDER the cap, this
@@ -365,7 +407,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
     const nonce = _getSshNonceForTest(sessionId)!
     feedPtyData(`setup ok ${nonce} tmux=path\r\n` + 'y'.repeat(1000))
     const written = finishAndGetClaudeWrite()
-    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   // ROUND-2 MAJOR: two of the three properties this buffer is required to
@@ -401,7 +443,7 @@ describe('spawnPty SSH branch — sentinel split across PTY chunks (#242 finding
 
 // #242 finding F1, BLOCKER (adversarial review round 5). Demonstrated attack:
 // "feeding a line shaped like a wall broadcast made CCC write
-// /tmp/.x/tmux new-session -A -s ccc-victim1 '...claude...' into the
+// /tmp/.x/tmux new-session -s ccc-victim1 '...claude...' into the
 // victim's shell" and "a bare relative name ('setup ok tmux=tmux') also
 // works". These drive the REAL flow (spawnPty -> launchClaude -> feed
 // bytes), not the pure builders, because the vulnerability is in what the
@@ -501,9 +543,9 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
       // Staging still genuinely succeeded (a real binary really was
       // installed) -- the launch IS tmux-wrapped, just never with the
       // attacker-reported operand.
-      expect(written).toMatch(/new-session\s+-A\s+-s/)
+      expect(written).toMatch(/new-session\s+-s\s+ccc-/)
       expect(written).not.toContain(hostilePath)
-      expect(written).toContain('"$HOME"/.claude/bin/tmux new-session -A')
+      expect(written).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-')
     }
   })
 
@@ -513,7 +555,7 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     driveToClaudeWrite('s-f1-genuine-tier12', 'setup ok {NONCE} tmux=path\r\n')
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-s-f1-genuine-tier12`)
+    expect((claudeWrite![0] as string)).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-s-f1-genuine-tier12`)
   })
 
   it('the genuine nonce-carrying tier-3 staged-ok sentinel still wraps claude in tmux end to end', () => {
@@ -526,7 +568,7 @@ describe('spawnPty SSH branch — F1 spoofed-sentinel regressions (#242 BLOCKER)
     // #242 finding F1(a), round-2 correction: the launch always embeds the
     // fixed $HOME expression for a staged tier, never the reported path --
     // see STAGED_TMUX_BIN_EXPR (ssh-tmux.ts).
-    expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -A -s ccc-s-f1-genuine-tier3')
+    expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-s-f1-genuine-tier3')
   })
 })
 
@@ -568,7 +610,7 @@ describe('#242 I1: tier-3/4 sentinels split across PTY chunks', () => {
     expect(claudeWrite).toBeDefined()
     // Staged tier never trusts the reported path -- it launches the host-side
     // literal expression. The point here is that it WRAPS at all.
-    expect(claudeWrite).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(claudeWrite).toContain(`${STAGED_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 
   it('reaches the bare launch promptly when a stage fail= sentinel is split across two chunks', () => {
@@ -585,7 +627,7 @@ describe('#242 I1: tier-3/4 sentinels split across PTY chunks', () => {
     // Without buffering this only arrives via the 20s STAGE_TIMEOUT, so the
     // 300ms advance above is the assertion: it resolved from the sentinel.
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite).not.toContain('new-session -A')
+    expect(claudeWrite).not.toContain('has-session')
   })
 
   it('still reaches tier 4 when the arch probe is split across two chunks', async () => {
@@ -672,7 +714,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     expect(writeMock.mock.calls.some((c) => isStagingWrite(c[0]))).toBe(false)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).toContain('new-session -A -s ccc-s-stage-skip')
+    expect((claudeWrite![0] as string)).toContain('new-session -s ccc-s-stage-skip')
   })
 
   // Acceptance: "fails when a `ccc-tmux-stage fail=terminfo` chunk no
@@ -688,7 +730,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
     expect(written).toContain('claude ')
   })
 
@@ -702,7 +744,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     const written = claudeWrite![0] as string
     // #242 finding F1(a), round-2 correction: the reported path is never
     // used to build the launch -- see STAGED_TMUX_BIN_EXPR (ssh-tmux.ts).
-    expect(written).toContain('"$HOME"/.claude/bin/tmux new-session -A -s ccc-s-stage-ok')
+    expect(written).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-s-stage-ok')
     expect(written).not.toContain('/home/dev/.claude/bin/tmux new-session')
   })
 
@@ -718,7 +760,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
     expect(written).not.toContain('-oProxyCommand')
   })
 
@@ -729,7 +771,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     const written = claudeWrite![0] as string
-    expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // #242 finding F3 (adversarial review round 4, MAJOR): stagingTimeoutHandle
@@ -869,7 +911,7 @@ describe('spawnPty SSH branch — tmux tier-3 staging call site (#242)', () => {
       const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
       expect(claudeWrite).toBeDefined()
       const written = claudeWrite![0] as string
-      expect(written).not.toMatch(/new-session\s+-A\s+-s/)
+      expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
       expect(getSshFlow('s-m5-build-error')!.getState()).toEqual({
         state: 'running-claude',
         info: 'tmux-stage-fail:build-error',
@@ -1215,7 +1257,7 @@ describe('spawnPty SSH branch — container-flow sentinel split across PTY chunk
     vi.advanceTimersByTime(300) // writeClaudeCmd's own 200ms write delay
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite![0] as string).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -A -s ccc-${sessionId}`)
+    expect(claudeWrite![0] as string).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-${sessionId}`)
   })
 })
 
@@ -1279,7 +1321,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     expect(pushActivityDetected()).toBe(false)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite![0]).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(claudeWrite![0]).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // Acceptance (d), second half: a stage failure for any reason OTHER than
@@ -1302,7 +1344,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     expect(pushActivityDetected()).toBe(false)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite![0]).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(claudeWrite![0]).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // Acceptance (a): push chunk writes are issued, and no 'claude ' write
@@ -1342,7 +1384,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     expect(claudeWrite).toBeDefined()
     // #242 finding F1(a), round-2 correction: same fixed-$HOME rule as tier
     // 3 -- see STAGED_TMUX_BIN_EXPR (ssh-tmux.ts).
-    expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -A -s ccc-s-push-ok')
+    expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-s-push-ok')
   })
 
   // Acceptance (c), second half: `fail=...` after a completed push produces
@@ -1356,7 +1398,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     await vi.advanceTimersByTimeAsync(300)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-A\s+-s/)
+    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // #242 round-3 MAJOR fix. Modeled on the tier-3 "second Launch-Claude
@@ -1450,7 +1492,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     await vi.advanceTimersByTimeAsync(300) // writeClaudeCmd's own 200ms write delay
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-A\s+-s/)
+    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // #242 finding F1 (adversarial review round 4, BLOCKER): the tier-4
@@ -1482,7 +1524,7 @@ describe('spawnPty SSH branch — tmux tier-4 push (#242 round-3)', () => {
     await vi.advanceTimersByTimeAsync(10000) // crosses DOWNLOAD_TIMEOUT_MS (+ writeClaudeCmd's own 200ms write delay)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-A\s+-s/)
+    expect((claudeWrite![0] as string)).not.toMatch(/new-session\s+-s\s+ccc-/)
     expect(getSshFlow('s-push-download-hang')!.getState().state).toBe('running-claude')
   })
 
@@ -1674,7 +1716,7 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     expect(claudeWrite![0]).toContain('--continue')
-    expect(claudeWrite![0]).not.toMatch(/new-session\s+-A\s+-s/)
+    expect(claudeWrite![0]).not.toMatch(/new-session\s+-s\s+ccc-/)
   })
 
   // Mutation to prove this can fail: drop the `tmuxInPlay` gate inside
@@ -1682,7 +1724,7 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
   // this) -- here it additionally proves pty-manager actually WIRES
   // `tmuxWrapped` (the real outcome of the wrap attempt) through, not just
   // that the pure helper itself is correct.
-  it('does NOT write --continue when reconnect is true but tmux IS in play', () => {
+  it('routes --continue into the tmux wrapper fresh-create branch only when reconnect is true and tmux IS in play', () => {
     onDataListeners.length = 0
     spawnPty(fakeWin, 's-reconnect-tmux', { ssh: { ...SSH, reconnect: true } } as never)
     writeMock.mockClear()
@@ -1693,8 +1735,13 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     vi.advanceTimersByTime(300)
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
-    expect(claudeWrite![0]).toContain('new-session -A -s ccc-s-reconnect-tmux')
-    expect(claudeWrite![0]).not.toContain('--continue')
+    const written = claudeWrite![0] as string
+    expect(written).toContain('new-session -s ccc-s-reconnect-tmux')
+    // Item 6: attach branch (reattach live claude) carries no --continue; fresh branch does.
+    const attachBranch = written.slice(written.indexOf('then'), written.indexOf('else'))
+    const freshBranch = written.slice(written.indexOf('else'))
+    expect(attachBranch).not.toContain('--continue')
+    expect(freshBranch).toContain('--continue')
   })
 
   // Mutation to prove this can fail: drop the `reconnect` gate itself (add
@@ -1715,5 +1762,47 @@ describe('spawnPty SSH branch — SSHOptions.reconnect drives --continue on the 
     const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
     expect(claudeWrite).toBeDefined()
     expect(claudeWrite![0]).not.toContain('--continue')
+  })
+})
+
+
+// SSH tmux enhancement (item 10): parseSetupAccountSentinel -- decode the
+// nonce'd `acct=<base64email>` field, gate it to a display-valid email, and
+// treat anything else as untrusted-for-display (dropped, not passed through).
+describe('parseSetupAccountSentinel (item 10)', () => {
+  const NONCE = 'abc123'
+  const b64 = (v: string) => Buffer.from(v, 'utf-8').toString('base64')
+  it('decodes a valid email from a full nonce-bearing sentinel', () => {
+    const line = `setup ok ${NONCE} tmux=path acct=${b64('dev@example.com')}\r\n`
+    expect(parseSetupAccountSentinel(line, NONCE)).toBe('dev@example.com')
+  })
+  it('works with tmux=none and tmux=home too', () => {
+    expect(parseSetupAccountSentinel(`setup ok ${NONCE} tmux=none acct=${b64('a@b.co')}\r\n`, NONCE)).toBe('a@b.co')
+    expect(parseSetupAccountSentinel(`setup ok ${NONCE} tmux=home acct=${b64('a@b.co')}\r\n`, NONCE)).toBe('a@b.co')
+  })
+  it('returns undefined when the account field is absent (back-compat sentinel)', () => {
+    expect(parseSetupAccountSentinel(`setup ok ${NONCE} tmux=path\r\n`, NONCE)).toBeUndefined()
+  })
+  it('returns undefined for an empty acct field', () => {
+    expect(parseSetupAccountSentinel(`setup ok ${NONCE} tmux=path acct=\r\n`, NONCE)).toBeUndefined()
+  })
+  it('drops a decoded value that is not a display-valid email (untrusted-for-display)', () => {
+    // A hostile host trying to plant markup / a control sequence in the label.
+    const evil = `setup ok ${NONCE} tmux=path acct=${b64('<img src=x onerror=alert(1)>')}\r\n`
+    expect(parseSetupAccountSentinel(evil, NONCE)).toBeUndefined()
+    const ctrl = `setup ok ${NONCE} tmux=path acct=${b64('a@b.co;rm -rf')}\r\n`
+    expect(parseSetupAccountSentinel(ctrl, NONCE)).toBeUndefined()
+  })
+  it('requires the correct nonce (spoof-resistant)', () => {
+    const line = `setup ok WRONGNONCE tmux=path acct=${b64('dev@example.com')}\r\n`
+    expect(parseSetupAccountSentinel(line, NONCE)).toBeUndefined()
+  })
+  it('requires the full line terminator (no partial-chunk match)', () => {
+    const partial = `setup ok ${NONCE} tmux=path acct=${b64('dev@example.com')}`
+    expect(parseSetupAccountSentinel(partial, NONCE)).toBeUndefined()
+  })
+  it('caps length -- an over-long decoded value is dropped', () => {
+    const long = `setup ok ${NONCE} tmux=path acct=${b64('a'.repeat(300) + '@b.co')}\r\n`
+    expect(parseSetupAccountSentinel(long, NONCE)).toBeUndefined()
   })
 })

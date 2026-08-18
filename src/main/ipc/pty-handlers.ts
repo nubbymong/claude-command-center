@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, getSshFlow, SSHOptions } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, endSshRemote, SSHOptions } from '../pty-manager'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
@@ -24,6 +24,12 @@ interface RendererSSHOptions {
    *  verbatim into SSHOptions.reconnect; see its doc comment in
    *  pty-manager.ts for how it's consumed. */
   reconnect?: boolean
+  /** SSH tmux enhancement (item 1): "Detachable" toggle. Only `false`
+   *  disables the tmux-persistence ladder; undefined/true = ON. */
+  detachable?: boolean
+  /** SSH tmux enhancement (item 3): remote OS. 'windows' selects the Windows
+   *  setup path; 'auto'/'unix'/undefined use POSIX unchanged. */
+  remoteOs?: 'auto' | 'unix' | 'windows'
 }
 
 // host/username are fused into `${username}@${host}` and handed to ssh as
@@ -47,6 +53,8 @@ const sshSchema = z.object({
   remotePath: z.string().min(1).regex(/^[~A-Za-z0-9_./-]+$/, 'remote path has invalid characters'),
   postCommand: z.string().optional(),
   reconnect: z.boolean().optional(),
+  detachable: z.boolean().optional(),
+  remoteOs: z.enum(['auto', 'unix', 'windows']).optional(),
 }).optional()
 
 export const spawnOptionsSchema = z.object({
@@ -353,5 +361,13 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle(IPC.SSH_FLOW_GET_STATE, async (_event, sessionId: string) => {
     sessionIdSchema.parse(sessionId)
     return getSshFlow(sessionId)?.getState() ?? { state: 'connecting' }
+  })
+
+  // SSH tmux enhancement (item 4): deliberately END a persistent remote session
+  // (tmux kill-session + sidecar cleanup over a SEPARATE ssh exec). The renderer
+  // still tears down the local PTY itself (killSessionPty) after this resolves.
+  ipcMain.handle(IPC.SSH_END_REMOTE, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    endSshRemote(sessionId)
   })
 }

@@ -8,6 +8,10 @@ interface Props {
   /** When true, skip the overlay entirely and let pty-manager run the
    * legacy auto state machine. Local sessions also skip via not-mounting. */
   enabled: boolean
+  /** item 5 (resume cascade): respawn the whole session. Used by the "no host"
+   *  connection-failure branch's Retry, which cannot recover by re-writing the
+   *  claude command (the PTY is dead) -- only a full re-spawn reconnects. */
+  onRetry?: () => void
 }
 
 type FlowState =
@@ -33,7 +37,7 @@ type FlowState =
  * remains fully interactive at all times — the overlay sits in a
  * top-right corner of the pane, not over the whole pane.
  */
-export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, enabled }: Props) {
+export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, enabled, onRetry }: Props) {
   const [state, setState] = useState<FlowState>('connecting')
   const [info, setInfo] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
@@ -118,14 +122,19 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
     try { await window.electronAPI.ssh.skip(sessionId) } catch { /* noop */ }
   }
 
+  // item 1/2 honesty: a tmux stage/push IS an install on the host -- say so
+  // plainly rather than the cryptic "Injecting statusline (tmux-stage)".
+  const isTmuxInstall = state === 'running-setup' && (info === 'tmux-stage' || info === 'tmux-push' || (typeof info === 'string' && info.startsWith('staging tmux')))
   const headline =
     state === 'connecting' ? 'Connecting…' :
     isAwaitingPostCommand ? (hasPostCommand ? 'Run post-connect command?' : 'Launch Claude?') :
     isAwaitingClaude ? (info === 'inner' ? 'Inner shell ready — launch Claude?' : 'Launch Claude?') :
     state === 'running-postcommand' ? 'Running post-connect command…' :
+    isTmuxInstall ? 'Installing a lightweight tmux…' :
     state === 'running-setup' ? `Injecting statusline (${info || 'host'})…` :
-    state === 'running-claude' ? 'Launching Claude…' :
-    state === 'failed' ? 'Setup failed' :
+    // item 7: distinguish a reconnect-reattach from a first launch.
+    state === 'running-claude' ? (info === 'reattach' ? 'Reconnecting to your session…' : 'Launching Claude…') :
+    state === 'failed' ? (info === 'connection' ? 'Couldn’t reach the host' : 'Setup failed') :
     ''
 
   return (
@@ -213,6 +222,19 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
           </div>
         </div>
       )}
+      {state === 'running-claude' && info === 'reattach' && (
+        <div className="text-overlay1 text-[11px] leading-snug mb-1">
+          Your remote session was still alive — reattaching. If it had ended, we resume your
+          conversation automatically.
+        </div>
+      )}
+      {isTmuxInstall && (
+        <div className="text-overlay1 text-[11px] leading-snug mb-1">
+          The host doesn’t have tmux, so we’re installing a small static copy under
+          <span className="font-mono"> ~/.claude/bin</span> to keep this session alive if the
+          connection drops. Nothing is installed system-wide.
+        </div>
+      )}
       {/* #242 tier 5: every tmux-ladder tier that gave up already forwards its
           reason onto this SAME 'running-claude' info field (tmux-stage-fail:*,
           tmux-push-fail:*, or the probe=none default) -- this was previously
@@ -231,7 +253,25 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
           Watching for completion sentinel. App.log has step-by-step trace.
         </div>
       )}
-      {state === 'failed' && (
+      {state === 'failed' && info === 'connection' && (
+        <div className="space-y-1.5">
+          <p className="text-red text-[11px] leading-snug">
+            Couldn’t reach the host — it may be offline or asleep. Nothing was lost; a remote
+            session (if any) is still running and reconnecting will pick it back up.
+          </p>
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => onRetry?.()}
+              disabled={!onRetry}
+              className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 font-medium disabled:opacity-50"
+              data-testid="ssh-retry-connection"
+            >
+              Retry connection
+            </button>
+          </div>
+        </div>
+      )}
+      {state === 'failed' && info !== 'connection' && (
         <div className="space-y-1.5">
           <p className="text-red text-[11px]">{errorText || 'Step did not complete.'}</p>
           <div className="flex gap-1.5">

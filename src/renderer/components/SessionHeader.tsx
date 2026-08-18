@@ -283,7 +283,46 @@ export default function SessionHeader({ session, onShowTip }: Props) {
       </span>
 
       {session.sessionType === 'ssh' && session.sshConfig && (
-        <span className="text-xs text-mauve shrink-0">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
+        <span className="flex items-center gap-1.5 shrink-0">
+          <span className="text-xs text-mauve">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
+          {/* item 8: persistence indicator. Only shown once main has reported a
+              definite status for this session (undefined = not yet known). */}
+          {session.sshTmuxPersistent === true && (
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface0/60 bg-surface0/40 text-[10px] font-medium"
+              style={{ color: 'var(--text-muted)' }}
+              title="This remote session runs inside tmux — a dropped connection stays alive and reconnecting resumes it in place."
+              data-testid="ssh-persistent-pill"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
+              <span style={{ color: 'var(--status-success)' }}>persistent</span>
+            </span>
+          )}
+          {session.sshTmuxPersistent === false && (
+            <span
+              className="px-1.5 py-0.5 rounded border border-surface0/60 bg-surface0/40 text-[10px] font-medium"
+              style={{ color: 'var(--text-muted)' }}
+              title="This remote session is not persistent — a dropped connection ends it; reconnecting resumes the conversation via --continue."
+              data-testid="ssh-nonpersistent-pill"
+            >
+              not persistent
+            </span>
+          )}
+          {/* item 10: the account the REMOTE session is signed in as (descriptor
+              only). Distinct from the local SessionAuthPills, which never apply
+              to SSH. */}
+          {session.sshRemoteAccount && (
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface0/60 bg-surface0/40 text-[10px] font-medium max-w-[160px]"
+              style={{ color: 'var(--text-muted)' }}
+              title={`Remote Claude account: ${session.sshRemoteAccount}`}
+              data-testid="ssh-remote-account-pill"
+            >
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: 'var(--color-mauve, #cba6f7)' }} aria-hidden />
+              <span className="truncate">{session.sshRemoteAccount}</span>
+            </span>
+          )}
+        </span>
       )}
 
       {/* Right cluster: account · claude.ai · Claude Code | GitHub — styled to

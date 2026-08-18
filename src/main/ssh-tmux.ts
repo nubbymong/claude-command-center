@@ -4,10 +4,14 @@
  * pty-manager (mirroring the #241 ssh-args.ts pattern) so the argv/command
  * shape is unit-testable without the full pty-manager dependency graph.
  *
- * `tmux new-session -A -s ccc-<safeSid> <cmd>` — `-A` means "attach if a
- * session by this name already exists, else create it", so a fresh SSH
- * connection and a reconnect run through the EXACT SAME command. There is
- * no separate "reconnect" code path to keep in sync with the first launch.
+ * The wrapper is a has-session conditional: `if tmux has-session -t
+ * ccc-<safeSid>; then tmux attach; else tmux new-session -s ccc-<safeSid>
+ * <cmd>; fi`. The attach branch reattaches a still-running claude; the
+ * fresh branch (reached when the session is gone, e.g. after a remote
+ * reboot) creates a new one, resuming the conversation via `--continue`
+ * on a reconnect. See buildTmuxLaunchCommand for why the earlier
+ * `new-session -A` one-liner could not tell those two cases apart and so
+ * launched a blank chat on reconnect-after-reboot (item 6).
  *
  * No default export (project convention).
  */
@@ -141,19 +145,61 @@ export interface TmuxLaunchInput {
    * tmux's `sh -c` carries the env vars through to claude — they must NOT
    * be exported as separate tokens before the tmux binary token, because
    * tmux's own launch environment does not come from this command line.
+   *
+   * IMPORTANT: pass the BARE claude command WITHOUT `--continue`. This
+   * builder appends `--continue` itself, and ONLY on the fresh-create
+   * branch of the has-session wrapper (see `reconnect` below and
+   * buildTmuxLaunchCommand's doc comment) -- never on the attach branch,
+   * where a second claude in an already-live pane would be wrong.
    */
   innerCmd: string
+  /**
+   * SSH tmux enhancement (item 6 — silent-blank-chat fix): true when this
+   * spawn respawns a session that had previously reached claude-running
+   * (SSHOptions.reconnect). Gates whether the wrapper's FRESH-create branch
+   * appends `--continue` to `innerCmd`.
+   *
+   * The bug this closes: the pre-enhancement wrapper was `new-session -A`,
+   * which cannot tell "attach to the still-running claude" from "the tmux
+   * server/session is gone (remote reboot), create a fresh one" -- and
+   * `--continue` was statically suppressed whenever tmux was in play. So a
+   * reconnect after the remote rebooted created a fresh session and launched
+   * claude with NO `--continue`, i.e. a blank chat even though the remote
+   * transcript still existed. The has-session wrapper splits those two cases
+   * apart: the attach branch reattaches the live claude (no flag, correct),
+   * and the fresh branch — reached only when the session is genuinely gone —
+   * launches with `--continue` on a reconnect so the conversation resumes.
+   */
+  reconnect: boolean
 }
 
 /**
  * Build the tmux wrapper around a Claude launch command for an SSH session.
  *
- * Produces, for a tier-1 (`staged: false`) binary:
- *   `"$(command -v tmux)" new-session -A -s ccc-<safeSid> '<innerCmd>'`
- * and for a tier-2/3/4 (`staged: true`) binary:
- *   `"$HOME"/.claude/bin/tmux new-session -A -s ccc-<safeSid> '<innerCmd>'`
- * -- literally `ON_PATH_TMUX_BIN_EXPR` / `STAGED_TMUX_BIN_EXPR`, NEVER a
- * value this function receives from the caller. #242 round-3 correction
+ * SSH tmux enhancement (item 6): the wrapper is now an explicit has-session
+ * conditional rather than `new-session -A`, so a reconnect can tell "the
+ * session is still alive, attach to it" apart from "the session is gone
+ * (remote reboot), create a fresh one and resume the conversation". Produces,
+ * for a tier-1 (`staged: false`) binary:
+ *   `if "$(command -v tmux)" has-session -t ccc-<sid> 2>/dev/null; then`
+ *   ` "$(command -v tmux)" attach -t ccc-<sid>;`
+ *   ` else "$(command -v tmux)" new-session -s ccc-<sid> '<innerCmd[ --continue]>'; fi`
+ * and for a tier-2/3/4 (`staged: true`) binary the identical shape with
+ * `"$HOME"/.claude/bin/tmux` as the token. The leading token is literally
+ * `ON_PATH_TMUX_BIN_EXPR` / `STAGED_TMUX_BIN_EXPR`, NEVER a value this
+ * function receives from the caller (the #242 RCE sink is unchanged: no
+ * wire-reported path reaches the command). `has-session`/`attach`/
+ * `new-session`/`then`/`else`/`fi`/`2>/dev/null` are all compile-time
+ * literals with no operand an attacker controls; `ccc-<sid>` is safeSid-
+ * sanitized; `<innerCmd>` is single-quoted exactly as before.
+ *
+ * `--continue` is appended to the FRESH-create branch's inner command only
+ * (never the attach branch, never on a first connect) — see TmuxLaunchInput.
+ * reconnect. That is the whole silent-blank-chat fix: on a reconnect where
+ * the remote session vanished, the fresh claude resumes the conversation;
+ * on an attach it does not double-launch.
+ *
+ * #242 round-3 correction (I3): an earlier version took a `tmuxBin` string
  * (I3): an earlier version took a `tmuxBin` string here for the `staged:
  * false` case, validated it (`isPinnedTmuxPath`) against exactly the same
  * "absolute, no traversal" shape STAGED_TMUX_BIN_EXPR's own doc comment
@@ -187,7 +233,16 @@ export interface TmuxLaunchInput {
 export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   const sid = safeSid(input.sessionId)
   const tmuxBinToken = input.staged ? STAGED_TMUX_BIN_EXPR : ON_PATH_TMUX_BIN_EXPR
-  return `${tmuxBinToken} new-session -A -s ccc-${sid} ${singleQuote(input.innerCmd)}`
+  const target = `ccc-${sid}`
+  // Fresh-create branch only: resume the prior conversation on a reconnect
+  // where the remote session was gone. Appended to innerCmd BEFORE quoting so
+  // it rides inside tmux's single `<shell-cmd>` argument, next to `claude`.
+  const freshInner = input.reconnect ? `${input.innerCmd} --continue` : input.innerCmd
+  return (
+    `if ${tmuxBinToken} has-session -t ${target} 2>/dev/null; ` +
+    `then ${tmuxBinToken} attach -t ${target}; ` +
+    `else ${tmuxBinToken} new-session -s ${target} ${singleQuote(freshInner)}; fi`
+  )
 }
 
 /**
@@ -201,16 +256,14 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
  * exiting) is gone and a fresh one starts with no history.
  *
  * `tmuxInPlay` gates this OFF, not just `reconnect` gating it ON: when a
- * tmux binary is available, `buildTmuxLaunchCommand`'s `-A` already
- * reattaches to whatever `claude` is still running inside the named
- * session — that IS the reconnect path, and it needs no `--continue` at
- * all. Adding it anyway would run a SECOND `claude` inside the SAME
- * attached tmux pane (the first one, if still alive, never exited), which
- * is wrong regardless of `reconnect`. See buildTmuxLaunchCommand's own doc
- * comment for why `-A` makes reconnect and first-connect the identical
- * command — this function is the deliberate exception to that story: the
- * bare (non-tmux) launch has NO such single code path, so reconnect has to
- * be signalled explicitly via a flag instead.
+ * tmux binary is available, `buildTmuxLaunchCommand`'s has-session wrapper
+ * OWNS the `--continue` decision itself — its attach branch reattaches the
+ * still-running `claude` (no flag) and its fresh-create branch appends
+ * `--continue` on a reconnect. So the bare-launch flag this function
+ * computes must stay OFF whenever tmux is in play, or a reconnect would get
+ * `--continue` twice (once here, once inside the wrapper's fresh branch).
+ * The bare (non-tmux) launch has no such internal branch, so reconnect has
+ * to be signalled explicitly via this flag instead.
  */
 export interface SshContinueFlagInput {
   /** SSHOptions.reconnect (#242) — true when this spawn respawns a session

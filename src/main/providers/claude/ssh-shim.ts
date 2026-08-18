@@ -100,7 +100,7 @@ process.stdin.on('data',c=>input+=c);
 process.stdin.on('end',()=>{
 try{
 const data=JSON.parse(input);
-const sid=process.env.CLAUDE_MULTI_SESSION_ID||'unknown';
+const sid=process.argv[2]||process.env.CLAUDE_MULTI_SESSION_ID||(data&&data.session_id)||'unknown';
 const cw=data.context_window||{};
 const u=cw.current_usage||{};
 const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);
@@ -112,7 +112,7 @@ const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');
 if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}
 if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}
 const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
-let ok=false;
+let ok=false;if(process.platform==='win32'){try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);ok=true;trace('conout-ok sid='+sid);}catch(e0){trace('conout-fail sid='+sid+' err='+(e0&&e0.code||e0.message||'unknown'));}}
 if(process.env.TMUX){const tb=process.env.CCC_TMUX_BIN||'';if(tb){try{const out=require('child_process').execFileSync(tb,['display-message','-p','#{client_tty}'],{encoding:'utf8',timeout:2000});const tty=out.split('\\n')[0].trim();if(tty){try{if(tty.indexOf('/dev/')!==0)throw new Error('not-under-dev');if(!fs.statSync(tty).isCharacterDevice())throw new Error('not-a-chardev');fs.writeFileSync(tty,sentinel);ok=true;trace('tmux-clienttty-ok sid='+sid+' dev='+tty);}catch(e4){trace('tmux-fail sid='+sid+' dev='+tty+' err='+(e4&&e4.code||e4.message||'unknown'));}}else{ok=true;trace('tmux-detached sid='+sid);}}catch(e5){trace('tmux-fail sid='+sid+' err='+(e5&&e5.code||e5.message||'unknown'));}}else{trace('tmux-fail sid='+sid+' err=no-ccc-tmux-bin');}}
 if(!ok){try{fs.writeFileSync('/dev/tty',sentinel);ok=true;}catch(e){trace('tty-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));}}
 if(!ok){const pts=findPty();if(pts){try{fs.writeFileSync(pts,sentinel);ok=true;trace('pts-ok sid='+sid+' dev='+pts);}catch(e2){trace('pts-fail sid='+sid+' dev='+pts+' err='+(e2&&e2.code||e2.message||'unknown'));}}else{trace('pts-none sid='+sid);}}
@@ -362,7 +362,15 @@ export function generateRemoteSetupScript(
     // back to either file -- --mcp-config supersedes both.
     `if(s.mcpServers){if(s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision'];if(s.mcpServers['conductor'])delete s.mcpServers['conductor']}`,
     `try{fs.writeFileSync(sp,JSON.stringify(s,null,2))}catch{}`,
-    `try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));let mut=false;if(c.mcpServers){if(c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];mut=true}if(c.mcpServers['conductor']){delete c.mcpServers['conductor'];mut=true}}if(mut)fs.writeFileSync(cj,JSON.stringify(c,null,2))}}catch{}`,
+    // SSH tmux enhancement (item 10): while ~/.claude.json is already open for
+    // the mcpServers heal, also grab oauthAccount.emailAddress -- the SAME
+    // field the LOCAL identity reader uses (claude-account-identity.ts) -- so a
+    // remote session can show which account it runs as. base64 the value here
+    // so the wire token carries no space/shell/regex metacharacter; the host
+    // decodes + charset/length-caps it for DISPLAY only (parseSetupAccountSentinel,
+    // pty-manager.ts), never interpreting it. `acctB64` stays '' when there is
+    // no account or the file is unreadable.
+    `let acctB64='';try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));if(c&&c.oauthAccount&&typeof c.oauthAccount.emailAddress==='string')acctB64=Buffer.from(c.oauthAccount.emailAddress,'utf-8').toString('base64');let mut=false;if(c.mcpServers){if(c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];mut=true}if(c.mcpServers['conductor']){delete c.mcpServers['conductor'];mut=true}}if(mut)fs.writeFileSync(cj,JSON.stringify(c,null,2))}}catch{}`,
     `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();fs.writeFileSync(md,c?c+'\\n':'')}}catch{}`,
     // Sentinel now carries the tmux result alongside the original
     // completion marker: pty-manager's parseTmuxSentinel requires an EXACT
@@ -382,7 +390,12 @@ export function generateRemoteSetupScript(
     // `$HOME/.claude/bin/tmux` literal for `home`) from a host-authored
     // literal table keyed on this class, so there is no wire-reported path
     // for a spoofed sentinel to influence even with a stolen/copied nonce.
-    `process.stdout.write('setup ok ${nonce} tmux='+tmuxClass+'\\n')`,
+    // item 10: the account descriptor rides the SAME nonce'd sentinel, AFTER
+    // the tmux class, as `acct=<base64email>` (empty when unknown). Kept a
+    // fixed b64 charset so parseTmuxSentinel's completion latch (which now
+    // tolerates an optional ` acct=<b64>` suffix before the line terminator)
+    // still resolves, and so the value can't smuggle a space/metacharacter.
+    `process.stdout.write('setup ok ${nonce} tmux='+tmuxClass+' acct='+acctB64+'\\n')`,
   ]
   return lines.join(';')
 }
@@ -417,6 +430,44 @@ export function remoteSessionMcpConfigPath(sessionId: string): string {
  */
 export function buildRemoteSessionCleanupCommand(sessionId: string): string {
   return `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)}\n`
+}
+
+/**
+ * SSH tmux enhancement (item 4): the remote command run over a SEPARATE ssh
+ * exec (NOT down the live PTY -- see endSshRemote in pty-manager.ts) when the
+ * user deliberately ENDS a persistent session. It kills the named tmux session
+ * AND removes the per-session sidecars.
+ *
+ * The tmux session name is `ccc-<safeSid>` (mirrors buildTmuxLaunchCommand).
+ * We do not know at end-time which tier staged tmux, so BOTH host-authored
+ * locations are tried -- `command -v tmux` (tier 1) and the fixed
+ * `"$HOME"/.claude/bin/tmux` (tiers 2/3/4) -- exactly the same two fixed
+ * literals buildTmuxLaunchCommand embeds, with NO wire-reported path anywhere
+ * (the #242 RCE-sink discipline). safeSid is the ONLY interpolated value and is
+ * sanitized to `[A-Za-z0-9_-]`, so it cannot carry a shell metacharacter into
+ * the `-t` argument. Each step is best-effort (`2>/dev/null`, trailing `true`)
+ * so a missing binary / already-dead session still cleans the sidecars.
+ */
+export function buildRemoteTmuxKillCommand(sessionId: string): string {
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const target = `ccc-${safeSid}`
+  // The kill runs over a SEPARATE, NON-LOGIN ssh exec (endSshRemote), whose PATH
+  // is minimal — `command -v tmux` alone MISSES a Homebrew tmux on macOS
+  // (/opt/homebrew/bin is added only by a login shell), which would orphan the
+  // session (found on real Macs in testing). So try each known tmux location in
+  // turn: PATH (`tmux`, for Linux where /usr/bin is in the minimal PATH), the
+  // two Homebrew prefixes (arm64 + intel), the system path, and the CCC-staged
+  // tier-2 binary. All are host-authored literals; `target` is the only
+  // interpolated value and is safeSid-sanitized, so nothing an attacker controls
+  // reaches the `-t` argument. Each attempt is silenced; a missing binary or
+  // already-dead session is a no-op, and the trailing `true` keeps the exec 0.
+  const tmuxBins = ['tmux', '/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux', '"$HOME/.claude/bin/tmux"']
+  const kills = tmuxBins.map((b) => `${b} kill-session -t ${target} 2>/dev/null`).join('; ')
+  return [
+    kills,
+    `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)} 2>/dev/null`,
+    `true`,
+  ].join('; ')
 }
 
 /**
@@ -551,4 +602,152 @@ export function buildTmuxBinPatchCommand(sessionId: string): string {
   ].join(';')
   const b64 = Buffer.from(script).toString('base64')
   return `echo '${b64}' | base64 -d | node 2>/dev/null`
+}
+
+// ===========================================================================
+// SSH tmux enhancement (item 3): Windows remote support — PROTOTYPE.
+//
+// A Windows SSH remote has no tmux (so no persistence tier: the session is a
+// bare `claude` that resumes via --continue on reconnect), and its login shell
+// is cmd.exe, so the POSIX delivery (`stty; echo b64 | base64 -d | node`) and
+// the POSIX statusline shim (/dev/tty, /proc pts-walk) do not apply. This
+// block is the Windows equivalent, kept entirely separate from the POSIX path
+// so it cannot regress Unix. It is selected only when SshConfig.remoteOs ===
+// 'windows'. Validated on Hyper-V: the PowerShell-delivered node setup runs and
+// emits `setup ok <nonce> tmux=none acct=<b64>`, and the shim's CONOUT$ branch
+// (SSH_STATUSLINE_SHIM above) reaches the SSH client.
+// ===========================================================================
+
+/**
+ * The Windows remote setup node program. Cross-platform node handles fs/path/
+ * os fine on Windows; the differences from the POSIX generator are: NO tmux
+ * detection (Windows has none — tmuxClass is fixed 'none'), the per-session
+ * statusLine command is `node "<shim>" <sid>` (cmd.exe cannot env-prefix, so
+ * the session id rides argv — the shim reads process.argv[2]), and directory
+ * modes/chmod are dropped (NTFS ACLs, not POSIX 0700). The account descriptor
+ * (item 10) is read the same way. Emits the SAME nonce'd sentinel shape the
+ * POSIX path does, so pty-manager's existing parseTmuxSentinel latch handles
+ * Windows completion with no special-casing.
+ */
+/**
+ * item 3: a MINIMAL Windows statusline shim (CONOUT$ only). The full POSIX
+ * shim (SSH_STATUSLINE_SHIM) is ~3KB of tmux/dev-tty/proc fallback logic that
+ * is dead weight on Windows AND blows past cmd.exe's 8191-char command-line
+ * limit once base64'd for delivery. This keeps only what Windows needs: read
+ * the statusline JSON on stdin, build the SAME status object + CMSTATUS OSC
+ * sentinel the parser (pty-manager.ts) expects, and write it to the console
+ * device (built via String.fromCharCode to avoid backslash escaping), which
+ * reaches the SSH client (verified on Hyper-V). Session id rides argv (cmd.exe
+ * cannot env-prefix a statusLine command).
+ */
+const SSH_STATUSLINE_SHIM_WINDOWS = "const fs=require('fs');let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{try{const data=JSON.parse(input);const sid=process.argv[2]||process.env.CLAUDE_MULTI_SESSION_ID||(data&&data.session_id)||'unknown';const cw=data.context_window||{},u=cw.current_usage||{},cost=data.cost||{},m=data.model||{},rl=data.rate_limits||{};const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}const sentinel=String.fromCharCode(27)+']9999;CMSTATUS='+JSON.stringify(s)+String.fromCharCode(7);try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);}catch(e){try{process.stderr.write(sentinel);}catch(e2){}}process.stdout.write(' ');}catch(e){process.stdout.write(' ');}});"
+
+export function generateWindowsRemoteSetupScript(
+  sessionId: string,
+  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+  nonce: string,
+): string {
+  if (!/^[A-Za-z0-9]+$/.test(nonce)) {
+    throw new Error(`generateWindowsRemoteSetupScript: nonce "${nonce}" fails the charset guard (expected [A-Za-z0-9]+).`)
+  }
+  const { includeStatusLine = true, includeConductorMcp = true } = opts ?? {}
+  const mcpPort = getConductorMcpPort()
+  const hasVision = mcpPort > 0 && includeConductorMcp
+  const shimLiteral = JSON.stringify(SSH_STATUSLINE_SHIM_WINDOWS)
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const mcpConfigLiteral = hasVision
+    ? JSON.stringify({
+        mcpServers: {
+          conductor: {
+            type: 'sse',
+            url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`,
+          },
+        },
+      })
+    : JSON.stringify({ mcpServers: {} })
+
+  // statusLine.command: `node "<shimPath>" <safeSid>` — argv carries the sid,
+  // which the shim (SSH_STATUSLINE_SHIM) reads via process.argv[2]. shimPath is
+  // JSON.stringify'd at RUNTIME on the remote so its backslashes are escaped
+  // correctly for the JSON settings file, exactly as the POSIX generator embeds
+  // `+shimPath+`.
+  const sesCfgParts: string[] = []
+  if (includeStatusLine) {
+    sesCfgParts.push(`statusLine:{type:'command',command:'node '+JSON.stringify(shimPath)+' ${safeSid}'}`)
+  }
+
+  const lines = [
+    `const fs=require('fs'),path=require('path'),os=require('os')`,
+    `const home=os.homedir(),claudeDir=path.join(home,'.claude')`,
+    `try{fs.mkdirSync(claudeDir,{recursive:true})}catch{}`,
+    `const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js')`,
+    `try{fs.rmSync(shimPath,{force:true})}catch{}try{fs.writeFileSync(shimPath,${shimLiteral},{flag:'wx'})}catch{}`,
+    `const sp=path.join(claudeDir,'settings.json')`,
+    `let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}`,
+    `const sBase=Object.assign({},s);delete sBase.mcpServers`,
+    `if(sBase.statusLine&&typeof sBase.statusLine.command==='string'&&sBase.statusLine.command.includes('conductor-ssh-statusline'))delete sBase.statusLine`,
+    `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
+    `const sesCfg=Object.assign({},sBase,{${sesCfgParts.join(',')}})`,
+    `try{fs.rmSync(sesPath,{force:true})}catch{}try{fs.writeFileSync(sesPath,JSON.stringify(sesCfg,null,2),{flag:'wx'})}catch{}`,
+    `const mcpPath=path.join(claudeDir,'mcp-${safeSid}.json')`,
+    `try{fs.rmSync(mcpPath,{force:true})}catch{}try{fs.writeFileSync(mcpPath,${JSON.stringify(mcpConfigLiteral)},{flag:'wx'})}catch{}`,
+    `if(s.statusLine&&typeof s.statusLine.command==='string'&&s.statusLine.command.includes('conductor-ssh-statusline'))delete s.statusLine`,
+    `if(s.mcpServers){if(s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision'];if(s.mcpServers['conductor'])delete s.mcpServers['conductor']}`,
+    `try{fs.writeFileSync(sp,JSON.stringify(s,null,2))}catch{}`,
+    // item 10: read the remote account descriptor (base64) — same field as POSIX.
+    `let acctB64='';try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){const c=JSON.parse(fs.readFileSync(cj,'utf-8'));if(c&&c.oauthAccount&&typeof c.oauthAccount.emailAddress==='string')acctB64=Buffer.from(c.oauthAccount.emailAddress,'utf-8').toString('base64')}}catch{}`,
+    // tmux is fixed 'none' on Windows — the ladder never runs, launch is bare.
+    `process.stdout.write('setup ok ${nonce} tmux=none acct='+acctB64+'\\n')`,
+  ]
+  return lines.join(';')
+}
+
+/**
+ * Wrap generateWindowsRemoteSetupScript in a single cmd.exe-typed line that
+ * runs it via PowerShell (cmd.exe has no base64/stty). The node program is
+ * UTF-8 base64'd, then a small PowerShell command decodes it and pipes it to
+ * `node`; that PowerShell command is itself UTF-16LE base64'd for
+ * `-EncodedCommand` (so no quoting of the payload is needed on the cmd line at
+ * all). `$ProgressPreference='SilentlyContinue'` suppresses PowerShell's CLIXML
+ * "Preparing modules" progress noise so only the sentinel line comes back.
+ */
+export function getWindowsRemoteSetupCommand(
+  sessionId: string,
+  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+  nonce: string,
+): string {
+  const script = generateWindowsRemoteSetupScript(sessionId, opts, nonce)
+  // Single base64 of the node program (its alphabet is [A-Za-z0-9+/=], so it
+  // carries no cmd.exe metacharacter and needs no quoting). Delivered via
+  // `powershell -Command`, NOT `-EncodedCommand`: EncodedCommand re-encodes the
+  // whole thing as UTF-16LE base64, ~2.6x larger, blowing past cmd.exe's
+  // 8191-char command-line limit. The minimal Windows shim keeps the payload
+  // comfortably under that limit.
+  const nodeB64 = Buffer.from(script, 'utf-8').toString('base64')
+  return `powershell -NoProfile -NonInteractive -Command "$ProgressPreference='SilentlyContinue';$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${nodeB64}'));$s|node"`
+}
+
+/**
+ * The Windows claude launch line (cmd.exe). Env vars use `set "X=Y"&&` (cmd
+ * syntax, not the POSIX `X=Y claude` prefix), settings/mcp paths use
+ * `%USERPROFILE%\.claude\...` (cmd expands %USERPROFILE%; `~` does not expand
+ * in cmd), and `claude` resolves to claude.cmd on PATH. No tmux wrap (Windows
+ * has none). `extraFlags` is the SAME claude flag string the POSIX path builds
+ * MINUS --settings/--mcp-config (re-added here with Windows paths);
+ * `continueFlag` is '--continue' on a reconnect or ''.
+ */
+export function buildWindowsClaudeCommand(input: {
+  sessionId: string
+  envPrefixVars: string[]
+  extraFlags: string
+  continueFlag: string
+}): string {
+  const safeSid = input.sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  const settings = `"%USERPROFILE%\\.claude\\settings-${safeSid}.json"`
+  const mcp = `"%USERPROFILE%\\.claude\\mcp-${safeSid}.json"`
+  const sets = input.envPrefixVars.map((kv) => `set "${kv}"&& `).join('')
+  const flags = [`--settings ${settings}`, `--mcp-config ${mcp}`, input.extraFlags, input.continueFlag]
+    .filter((f) => f && f.trim())
+    .join(' ')
+  return `${sets}claude ${flags}`
 }

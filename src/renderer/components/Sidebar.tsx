@@ -8,6 +8,7 @@ import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import { useAccountAuthStore } from '../stores/accountAuthStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
+import { requestCloseSession } from '../stores/sshCloseStore'
 import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
@@ -937,8 +938,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
           } else if (e.key === 'Delete' && focusedSessionIndex >= 0 && focusedSessionIndex < sessions.length) {
             e.preventDefault()
             const s = sessions[focusedSessionIndex]
-            killSessionPty(s.id)
-            removeSession(s.id)
+            requestCloseSession(s.id)
             setFocusedSessionIndex(prev => Math.min(prev, sessions.length - 2))
           } else if (e.key === 'Escape') {
             setSelectedSessionIds(new Set())
@@ -1046,8 +1046,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
               setSessionContextMenu(null)
             }}
             onClose={() => {
-              killSessionPty(sessionContextMenu.sessionId)
-              removeSession(sessionContextMenu.sessionId)
+              // item 4: persistent SSH sessions get the End-vs-Leave choice.
+              requestCloseSession(sessionContextMenu.sessionId)
               setSessionContextMenu(null)
             }}
             onDismiss={() => setSessionContextMenu(null)}

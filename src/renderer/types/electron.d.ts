@@ -166,6 +166,10 @@ export interface ElectronAPI {
          *  claude-running -- drives `--continue` when no tmux persistence
          *  is available. See SSHOptions.reconnect in pty-manager.ts. */
         reconnect?: boolean
+        /** SSH tmux enhancement (item 1): "Detachable" toggle (default ON). */
+        detachable?: boolean
+        /** SSH tmux enhancement (item 3): remote OS ('windows' uses the Windows setup path). */
+        remoteOs?: 'auto' | 'unix' | 'windows'
       }
       shellOnly?: boolean
       elevated?: boolean
@@ -212,6 +216,8 @@ export interface ElectronAPI {
     skip: (sessionId: string) => Promise<void>
     getState: (sessionId: string) => Promise<{ state: string; info?: string }>
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
+    onSessionInfo: (sessionId: string, callback: (msg: { tmuxPersistent?: boolean; remoteAccount?: string }) => void) => () => void
+    endRemote: (sessionId: string) => Promise<void>
   }
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void

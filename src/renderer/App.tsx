@@ -40,6 +40,7 @@ import TipModal from './components/TipModal'
 import { useTipsStore, trackUsage } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
+import SshCloseDialog from './components/SshCloseDialog'
 import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
@@ -1159,6 +1160,7 @@ export default function App() {
           </div>
         )}
 
+        <SshCloseDialog />
         {closeDialog && (
           <CloseDialog
             mode={closeDialog}

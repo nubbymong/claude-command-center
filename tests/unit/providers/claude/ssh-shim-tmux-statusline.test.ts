@@ -162,8 +162,11 @@ describe('SSH statusline shim -- $TMUX client_tty branch (#242 item 2)', () => {
   describe('setup ok sentinel carries a tmux CLASS, not a path (#242 finding I3)', () => {
     it('emits tmux=+tmuxClass in the sentinel, not tmuxPath', () => {
       const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
-      expect(script).toContain(`process.stdout.write('setup ok ${NONCE} tmux='+tmuxClass+'\\n')`)
+      expect(script).toContain(`process.stdout.write('setup ok ${NONCE} tmux='+tmuxClass+' acct='+acctB64+'\\n')`)
       expect(script).not.toContain(`process.stdout.write('setup ok ${NONCE} tmux='+tmuxPath`)
+      // item 10: the account descriptor is captured (base64) from the remote
+      // ~/.claude.json oauthAccount.emailAddress and appended as acct=<b64>.
+      expect(script).toContain("acctB64=Buffer.from(c.oauthAccount.emailAddress,'utf-8').toString('base64')")
     })
 
     it('sets tmuxClass to "path" when tier 1 (command -v tmux) succeeds', () => {

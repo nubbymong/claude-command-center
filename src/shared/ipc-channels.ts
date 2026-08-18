@@ -58,6 +58,12 @@ export const IPC = {
   SSH_FLOW_RUN_POSTCOMMAND: 'ssh:flow:runPostCommand',
   SSH_FLOW_LAUNCH_CLAUDE: 'ssh:flow:launchClaude',
   SSH_FLOW_SKIP: 'ssh:flow:skip',
+  // SSH tmux enhancement (items 8/9/10): push per-session persistence +
+  // remote-account descriptors to the renderer. Suffix :<sessionId>.
+  SSH_SESSION_INFO: 'ssh:sessionInfo',
+  // item 4: renderer asks main to END the remote (tmux kill-session + sidecar
+  // cleanup over a separate ssh exec) before/instead of a plain close.
+  SSH_END_REMOTE: 'ssh:endRemote',
 
   // Statusline
   STATUSLINE_UPDATE: 'statusline:update',

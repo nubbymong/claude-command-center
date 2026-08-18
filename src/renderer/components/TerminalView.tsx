@@ -13,6 +13,7 @@ import {
   type StaleGlyphRepainter,
 } from './terminal/staleGlyphRepaint'
 import { useSessionStore } from '../stores/sessionStore'
+import { useRestartSession } from '../hooks/useRestartSession'
 import { persistLastUsedAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountGateStore, GATE_CANCELLED } from '../stores/accountGateStore'
@@ -137,6 +138,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   }, [isActive])
   const updateSession = useSessionStore((s) => s.updateSession)
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
+  // item 5 (resume cascade): the overlay's "no host" Retry re-spawns the whole
+  // session (a dead PTY can't be recovered by re-writing the claude command).
+  const { restart: sshRestart } = useRestartSession(session)
 
   // Extracted hooks
   useStatuslineSubscription(sessionId)
@@ -151,6 +155,21 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // folder prompt's Enter goes to nothing. Subscribe to the flow state
   // here and pull focus into xterm the moment Claude is up. Skipped
   // when a modal is open so the walkthrough's focus trap wins.
+  // SSH tmux enhancement (items 8/9/10): persistence status + remote account,
+  // pushed by main. Merged into the session store so the sidebar icon + header
+  // pills reflect them for the session's whole life (this TerminalView stays
+  // mounted per session, hidden when inactive). Renderer-only fields, never
+  // persisted -- re-established by main's push on each spawn.
+  useEffect(() => {
+    if (!ssh) return
+    return window.electronAPI.ssh.onSessionInfo(sessionId, (msg) => {
+      const patch: { sshTmuxPersistent?: boolean; sshRemoteAccount?: string } = {}
+      if (typeof msg.tmuxPersistent === 'boolean') patch.sshTmuxPersistent = msg.tmuxPersistent
+      if (typeof msg.remoteAccount === 'string' && msg.remoteAccount) patch.sshRemoteAccount = msg.remoteAccount
+      if (Object.keys(patch).length > 0) updateSession(sessionId, patch)
+    })
+  }, [sessionId, ssh, updateSession])
+
   useEffect(() => {
     if (!ssh) return
     return window.electronAPI.ssh.onFlowState(sessionId, (msg) => {
@@ -1110,6 +1129,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           hasPostCommand={!!ssh.postCommand}
           shellOnly={!!shellOnly}
           enabled
+          onRetry={sshRestart}
         />
       )}
       {isScrolledUp && (

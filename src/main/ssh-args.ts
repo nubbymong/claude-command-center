@@ -86,3 +86,36 @@ export function buildSshArgs(ssh: SshArgsTarget, mcpPort: number, platform: Node
 
   return args
 }
+
+/**
+ * SSH tmux enhancement (item 4): argv for a ONE-SHOT, non-interactive ssh exec
+ * that runs `remoteCommand` on the host and exits -- used by endSshRemote
+ * (pty-manager.ts) to `tmux kill-session` + remove sidecars over a SEPARATE
+ * connection, so the kill never lands in the live Claude pane.
+ *
+ * Deliberately minimal vs. buildSshArgs: no `-t` (no TTY -- a batch command,
+ * not an interactive session), no `-R` MCP tunnel, and BatchMode=yes + a short
+ * ConnectTimeout so it FAILS FAST rather than blocking on a password prompt (it
+ * relies on key/agent auth; a password-only host simply detaches as before --
+ * the remote survives, exactly today's behaviour). `username`/`host` go through
+ * the SAME assertSafeSshField argv guard as buildSshArgs, and `remoteCommand`
+ * is a host-authored literal with a single sanitized safeSid operand
+ * (buildRemoteTmuxKillCommand, ssh-shim.ts) passed to ssh as ONE positional
+ * argument, so there is no local shell parse of it.
+ */
+export function buildSshExecArgs(ssh: SshArgsTarget, remoteCommand: string, platform: NodeJS.Platform): string[] {
+  assertSafeSshField('username', ssh.username)
+  assertSafeSshField('host', ssh.host)
+  const args = [
+    `${ssh.username}@${ssh.host}`,
+    '-p', String(ssh.port),
+    '-o', 'StrictHostKeyChecking=accept-new',
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=8',
+  ]
+  if (platform === 'win32') {
+    args.push('-o', 'ControlMaster=no', '-o', 'ControlPath=none')
+  }
+  args.push(remoteCommand)
+  return args
+}
