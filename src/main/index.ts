@@ -910,10 +910,13 @@ if (!gotTheLock) {
     // profiles isolated only CLAUDE_CONFIG_DIR, which never isolated the account
     // identity). Idempotent + best-effort; never touches the real home.
     try { migrateProfilesToHomeLayout() } catch (e) { logInfo(`[profiles] home-layout migration skipped: ${e}`) }
-    // Recover sessions orphaned in a profile's REAL projects dir (a junction that
-    // never established) into the shared store so they're resumable cross-account
-    // (#131). Idempotent + best-effort; only touches per-profile projects + shared.
-    try { repairSharedProjectJunctions() } catch (e) { logInfo(`[profiles] project-junction repair skipped: ${e}`) }
+    // Self-heal the per-profile shared junctions (projects/memory/agents/skills/
+    // commands/plugins): recover an orphaned REAL projects dir into the shared
+    // store (#131), AND rebuild any BROKEN junction -- most importantly a
+    // self-referential one (target === link), an ELOOP that wedges memory/projects
+    // recall and resume. Idempotent + best-effort; only touches per-profile shared
+    // links + the shared store.
+    try { repairSharedProjectJunctions() } catch (e) { logInfo(`[profiles] shared-junction repair skipped: ${e}`) }
     // Capture the current global login into a protected "primary" profile so no
     // session runs on the bare global ~/.claude (idempotent; best-effort).
     try { runFirstRunCapture() } catch (e) { logInfo(`[profiles] first-run capture skipped: ${e}`) }

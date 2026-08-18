@@ -117,6 +117,30 @@ describe('shared-junction self-reference guard + heal (adversarial review 2026-0
     expect(fs.readlinkSync(link)).toBe(before)
   })
 
+  it('catches INDIRECT self-reference: a symlinked shared root that resolves back into the profile home', () => {
+    // sharedRoot is a SYMLINK whose real target is the profile's own `.claude`.
+    // The plain strings differ (so a string-only guard would be fooled), but the
+    // realpath'd identities collapse -> the guard must still refuse.
+    const claudeDir = path.join(resources, 'account-profiles', 'p1', '.claude')
+    fs.mkdirSync(claudeDir, { recursive: true })
+    const sharedLink = path.join(tmp, 'shared-link')
+    fs.symlinkSync(claudeDir, sharedLink, linkType) // shared-link -> <p1>/.claude
+    _setRootsForTest({ resourcesDir: resources, sharedRoot: sharedLink })
+
+    expect(() => setupProfileLinks('p1')).not.toThrow()
+
+    // The guard must REFUSE outright: an indirect loop reads as a normal symlink
+    // (readlink != link) and `existsSync` on a loop is silently false, so the only
+    // sound assertion is that NO junction was created at these links at all. A
+    // string-only guard would build them (each an indirect ELOOP) -> this fails.
+    for (const name of SHARED_DIR_NAMES) {
+      const link = path.join(claudeDir, name)
+      let isLink = false
+      try { isLink = fs.lstatSync(link).isSymbolicLink() } catch { /* absent -> refused, good */ }
+      expect(isLink, `${name} must not have been created as a junction (indirect self-reference)`).toBe(false)
+    }
+  })
+
   it('repair FAILS CLOSED under a poisoned shared root: never re-plants a self-reference, never throws', () => {
     // Shared root == the profile home again -> the correct target would equal the
     // link, so repair must SKIP (not rebuild a self-reference).

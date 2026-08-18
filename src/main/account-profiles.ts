@@ -879,6 +879,30 @@ function samePath(a: string, b: string): boolean {
   return norm(a) === norm(b)
 }
 
+/**
+ * Would junctioning `link` -> `target` create a SELF-REFERENCE (link resolving to
+ * itself)? Checks the plain resolved strings first -- catches the reachable field
+ * case, where CCC sets USERPROFILE to `getProfileConfigDir(id)` verbatim so
+ * `sharedRoot()` yields a byte-identical `<profileDir>/.claude`. Then, best-effort,
+ * canonicalises both so an ALTERNATE SPELLING cannot fool it: an 8.3 short name, a
+ * `\\?\` extended prefix, or INDIRECTION (a symlinked shared root that resolves
+ * back into the profile). Each side is realpath'd via its PARENT + basename -- the
+ * leaf (`target`/`link`) usually does NOT exist yet (a junction about to be
+ * created) or may loop, but its parent dir does. If a parent can't be resolved the
+ * string check stands. realpath can only add TRUE positives here -- two paths that
+ * canonicalise to one location genuinely are a loop -- so this never wrongly
+ * refuses a valid, distinct junction.
+ */
+function isSelfReferentialLink(target: string, link: string): boolean {
+  if (samePath(target, link)) return true
+  try {
+    const canon = (p: string): string => path.join(fs.realpathSync.native(path.dirname(p)), path.basename(p))
+    return samePath(canon(target), canon(link))
+  } catch {
+    return false // a parent isn't resolvable -> rely on the string check above
+  }
+}
+
 /** The real user home (parent of the shared ~/.claude). Test-overridable seam. */
 function realHomeDir(): string {
   return rootsOverride ? path.dirname(rootsOverride.sharedRoot) : os.homedir()
@@ -971,8 +995,8 @@ function ensureLink(target: string, link: string, mergeOrphans = false): void {
   // leave any existing (correct) link untouched -- deleting a good junction to
   // plant a self-referential one is strictly worse (adversarial review,
   // 2026-08-18; the field incident that wedged one profile's memory recall).
-  if (samePath(target, link)) {
-    logWarn(`[profiles] refusing to create a self-referential junction at ${link} (target === link) -- the shared root resolved to a profile home; leaving the existing entry intact`)
+  if (isSelfReferentialLink(target, link)) {
+    logWarn(`[profiles] refusing to create a self-referential junction at ${link} (target resolves to the link itself) -- the shared root resolved to a profile home; leaving the existing entry intact`)
     return
   }
   // Replace any existing entry at `link` (safely: never recurse a junction).
@@ -1126,9 +1150,9 @@ export function repairSharedProjectJunctions(): void {
       const link = path.join(claudeDir, name)
       const target = path.join(sharedRoot(), name)
       // Fail closed: NEVER heal into a self-reference. If the correct target
-      // equals the link, the shared root itself resolved to this profile's home
-      // (redirected USERPROFILE) -- skip rather than re-plant the ELOOP.
-      if (samePath(target, link)) continue
+      // resolves to the link, the shared root itself resolved to this profile's
+      // home (redirected USERPROFILE) -- skip rather than re-plant the ELOOP.
+      if (isSelfReferentialLink(target, link)) continue
       let st: fs.Stats
       try { st = fs.lstatSync(link) } catch { continue }  // absent -> nothing to repair
       if (st.isSymbolicLink()) {
