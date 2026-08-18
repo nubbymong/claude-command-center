@@ -69,9 +69,14 @@ describe('buildTmuxStageScript', () => {
     // Second wget leg (busybox-safe): -T but NO -t -- busybox wget (Alpine,
     // OpenWrt) has no -t flag at all and usage-errors out of the GNU form.
     expect(cmd).toMatch(/wget -q -T \d+ -O "\$_tmp" "\$_url"/)
+    // Round-2 adversarial pass (MAJOR): that busybox-safe leg MUST be gated on
+    // the wget actually being busybox. Ungated it also runs after a GENUINE
+    // failure of the GNU leg, re-running GNU wget without -t -- 20 retries,
+    // ~100s, right back outside the budget on a curl-less DROP-egress host.
+    expect(cmd).toMatch(/wget --help 2>&1 \| head -n 1 \| grep -qi busybox\s*&&\s*wget -q -T \d+ -O "\$_tmp"/)
     // The three are chained with || in exactly that order: curl, GNU wget,
-    // busybox-safe wget -- each only runs if the previous fetcher failed.
-    expect(cmd).toMatch(/curl [^|]*\|\|\s*wget -q -T \d+ -t 1 [^|]*\|\|\s*wget -q -T \d+ -O /)
+    // busybox-gated wget -- each only runs if the previous fetcher failed.
+    expect(cmd).toMatch(/curl [^|]*\|\|\s*wget -q -T \d+ -t 1 [^|]*\|\|\s*\{ wget --help/)
     // Every timeout number any leg carries stays inside the 20s stage budget.
     const timeouts = [...cmd.matchAll(/--connect-timeout (\d+)|--max-time (\d+)|-T (\d+)/g)]
       .map((m) => Number(m[1] ?? m[2] ?? m[3]))
@@ -94,7 +99,10 @@ describe('buildTmuxStageScript', () => {
     // Command separators in this fragment: ||, |, ;, and subshell parens.
     const fragments = cmd.split(/\|\||[|;()]/)
     const curlFragments = fragments.filter((f) => /\bcurl\b/.test(f))
-    const wgetFragments = fragments.filter((f) => /\bwget\b/.test(f))
+    // `wget --help` is an implementation PROBE, not a fetch: it touches no
+    // network, cannot hang on a dead route, and carrying a -T on it would be
+    // meaningless. Everything else calling wget is a fetch and must be bounded.
+    const wgetFragments = fragments.filter((f) => /\bwget\b/.test(f) && !/wget --help/.test(f))
     // Guard the guard: the script must actually contain both fetchers, so an
     // accidental tokenizer change cannot turn this test into a vacuous pass.
     expect(curlFragments.length).toBeGreaterThanOrEqual(1)

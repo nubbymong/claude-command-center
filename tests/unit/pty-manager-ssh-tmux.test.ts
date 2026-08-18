@@ -2108,6 +2108,56 @@ describe('spawnPty SSH branch — wrapped-launch watchdog falls back to the bare
     expect(writeMock.mock.calls).toHaveLength(0)
     expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-elapsed')).toHaveLength(0)
   })
+
+  // ---- Round-2 adversarial pass: the FALSE-POSITIVE half of the watchdog. ----
+  // The first cut matched bare `permission denied` / `command not found` /
+  // `is a directory` anywhere in the chunk. Two proven false positives followed,
+  // and the cost is not cosmetic: the bare claude line is typed into a pane that
+  // already has claude running (landing in its composer as a chat message), and
+  // dropping the session from sshTmuxWrappedBySession turns a later close into a
+  // KILL of the remote instead of a detach.
+
+  it('(h) does NOT fire when the chunk carries claude UI — a successful REATTACH redraw whose transcript contains "Permission denied"', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-attach', win, { reconnect: true })
+    writeMock.mockClear()
+    sends.length = 0
+    // The redraw of an attached, live session: transcript text that happens to
+    // quote a shell error, arriving in the SAME chunk as claude's UI. The UI
+    // check must be consulted BEFORE the failure match (the claudeRunning latch
+    // runs later in the same handler, so it cannot protect this chunk).
+    feedPtyData("╭──────────╮\r\n│ ❯ ls: cannot open '/root': Permission denied\r\n")
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-attach' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === false)).toHaveLength(0)
+  })
+
+  it('(i) does NOT fire on a generic error that never names tmux — claude\'s own EACCES startup stderr inside a working tmux', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-eacces', win)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData("Error: EACCES: permission denied, open '/home/u/.claude/settings.json'\r\n")
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-eacces')).toHaveLength(0)
+  })
+
+  it('(j) does NOT fire on "no server running on" — buildTmuxLaunchCommand\'s own || fresh-create leg already self-heals that race', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-norace', win)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData('no server running on /tmp/tmux-1000/default\r\n')
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-norace')).toHaveLength(0)
+  })
+
+  it('(k) STILL fires on a generic exec error that DOES name tmux on the line', () => {
+    const { win } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-generic', win)
+    writeMock.mockClear()
+    feedPtyData('bash: /home/u/.claude/bin/tmux: cannot execute binary file: Exec format error\r\n')
+    expect(bareClaudeWrites()).toHaveLength(1)
+  })
 })
 
 describe('spawnPty SSH branch — the destroyed invariant (lifecycle follow-up)', () => {

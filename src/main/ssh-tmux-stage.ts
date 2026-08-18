@@ -292,13 +292,23 @@ export function buildTmuxStageScript(nonce: string): string {
       // The wget leg is written twice on purpose: GNU wget defaults to
       // --tries=20, so `-t 1` is required to keep it inside the budget, but
       // busybox wget (Alpine, OpenWrt -- exactly the minimal hosts this tier
-      // targets) has no `-t` at all and would exit on a usage error. The second
-      // form drops `-t` and keeps `-T`, which BOTH implementations accept, and
-      // busybox makes a single attempt anyway. The usage-error path costs no
-      // wall-clock, so the worst case stays ~5s + ~5s.
+      // targets) has no `-t` at all and exits on a usage error before trying.
+      // The second form drops `-t` and keeps `-T`, which both implementations
+      // accept.
+      //
+      // Round-2 adversarial pass (MAJOR): that second form MUST be gated on the
+      // wget actually being busybox. Ungated it also runs after a GENUINE
+      // (non-usage) failure of leg 2 -- so on a GNU-wget-only host with DROPped
+      // egress (no curl, common on minimal Debian/RHEL images) leg 3 re-ran GNU
+      // wget WITHOUT `-t`, restoring the default 20 retries: ~100s, far past the
+      // 20s STAGE_TIMEOUT_MS this whole fix exists to stay inside. busybox
+      // prints its name on the first line of `--help`, so probing for it costs
+      // no network time and cannot itself hang. Worst case is now ~5s (curl) +
+      // ~5s (one bounded wget), whichever implementation is present.
       `(curl -fsSL --connect-timeout 5 --max-time 15 "$_url" -o "$_tmp" 2>/dev/null ` +
         `|| wget -q -T 5 -t 1 -O "$_tmp" "$_url" 2>/dev/null ` +
-        `|| wget -q -T 5 -O "$_tmp" "$_url" 2>/dev/null); ` +
+        `|| { wget --help 2>&1 | head -n 1 | grep -qi busybox ` +
+          `&& wget -q -T 5 -O "$_tmp" "$_url" 2>/dev/null; }); ` +
       `if [ ! -s "$_tmp" ]; then rm -f "$_tmp"; echo "${TMUX_STAGE_SENTINEL_PREFIX} ${nonce} fail=download"; else ` +
         `if command -v sha256sum >/dev/null 2>&1; then ` +
           `echo "$_sha256  $_tmp" | sha256sum -c - >/dev/null 2>&1; _dgok=$?; ` +

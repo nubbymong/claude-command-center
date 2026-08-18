@@ -1682,12 +1682,43 @@ export function spawnPty(
     /** Deadline (epoch ms) until which the wrapped launch is being watched; 0 = not watching. */
     let tmuxLaunchWatchUntil = 0
     let tmuxLaunchFellBack = false
-    const TMUX_LAUNCH_FAILURE_RE = /open terminal failed|sessions should be nested|missing or unsuitable terminal|no server running on|not a terminal|exec format error|cannot execute binary file|command not found|permission denied|is a directory/i
+    /**
+     * Round-2 adversarial pass (MAJOR): the first cut of this regex matched
+     * bare `command not found` / `permission denied` / `is a directory`
+     * anywhere in the chunk, which fires on output that has nothing to do with
+     * the wrap -- claude's own `EACCES: permission denied` startup stderr, and
+     * (worse) the transcript redraw when a RECONNECT successfully attaches to a
+     * live session, since a coding transcript routinely contains those exact
+     * words. The cost of a false positive is not cosmetic: the bare claude line
+     * is typed into a pane where claude is already running (so it lands in the
+     * composer as a chat message) and the session is dropped from
+     * sshTmuxWrappedBySession, which turns a later close into a KILL of the
+     * remote rather than a detach.
+     *
+     * Split in two, so a generic error only counts when it is demonstrably
+     * about tmux:
+     *  - UNAMBIGUOUS: phrases only tmux itself emits; match anywhere.
+     *  - GENERIC: shell/exec failures that must share a LINE with the word
+     *    `tmux` (every wrapped launch names the binary, so a real failure to
+     *    run it always does).
+     * `no server running on` was dropped entirely: buildTmuxLaunchCommand's own
+     * `|| <fresh create>` leg already self-heals that race, and reacting to it
+     * here fought the wrapper for the same case.
+     */
+    const TMUX_LAUNCH_FAILED_UNAMBIGUOUS_RE = /open terminal failed|sessions should be nested|missing or unsuitable terminal/i
+    const TMUX_LAUNCH_FAILED_GENERIC_RE = /^[^\r\n]*\btmux\b[^\r\n]*(command not found|not found|permission denied|exec format error|cannot execute binary file|is a directory)/im
     const handleWrappedLaunchFailure = (data: string): void => {
       if (destroyed || tmuxLaunchFellBack || !tmuxLaunchWatchUntil) return
       if (Date.now() > tmuxLaunchWatchUntil) { tmuxLaunchWatchUntil = 0; return }
       if (claudeRunning) { tmuxLaunchWatchUntil = 0; return }
-      const m = data.match(TMUX_LAUNCH_FAILURE_RE)
+      // Round-2 adversarial pass (MAJOR): claude's UI appearing in THIS chunk is
+      // proof the wrap worked, and it is checked BEFORE the failure match --
+      // the claudeRunning latch below runs later in the same handler, so on a
+      // reattach the transcript's own text used to be judged before the UI that
+      // accompanied it. Any chunk carrying claude's UI closes the window for
+      // good.
+      if (detectClaudeUi(data, claudeSent)) { tmuxLaunchWatchUntil = 0; return }
+      const m = data.match(TMUX_LAUNCH_FAILED_UNAMBIGUOUS_RE) ?? data.match(TMUX_LAUNCH_FAILED_GENERIC_RE)
       if (!m) return
       tmuxLaunchFellBack = true
       tmuxLaunchWatchUntil = 0
