@@ -117,13 +117,19 @@ export function CanvasLibrary({
           >
             <ModeBadge mode={e.latestMode} />
             <div className="min-w-0 flex-1">
-              <div className="text-[12px] text-[var(--text-primary)] truncate" title={e.cwd}>
-                {projectName(e.cwd)}
-                {e.conversationShortId && (
+              {/* The subject leads when there is one: a project name and a
+                  timestamp do not tell anyone WHICH canvas they are about to
+                  delete, and several canvases from one project look identical
+                  without it. The project drops to the second line in that case
+                  rather than disappearing. */}
+              <div className="text-[12px] text-[var(--text-primary)] truncate" title={e.title || e.cwd}>
+                {e.title || projectName(e.cwd)}
+                {!e.title && e.conversationShortId && (
                   <span className="ml-1.5 text-[10.5px] text-[var(--text-secondary)]">· {e.conversationShortId}</span>
                 )}
               </div>
-              <div className="text-[10.5px] text-[var(--text-secondary)]">
+              <div className="text-[10.5px] text-[var(--text-secondary)] truncate">
+                {e.title && <span title={e.cwd}>{projectName(e.cwd)} · </span>}
                 {e.versionCount} version{e.versionCount === 1 ? '' : 's'} · {relTime(e.lastRenderedAt)}
                 {e.ownedByOpenSession && <span className="ml-1.5 text-mauve">open in another session</span>}
               </div>

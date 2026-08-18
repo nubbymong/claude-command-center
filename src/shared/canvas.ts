@@ -48,7 +48,14 @@ export interface CanvasState {
   sessionId: string
   activeVersionId: string | null
   versions: CanvasVersion[]
+  /** What this canvas is OF, in the agent's own words — "Title bar logo
+   *  placement", "Checkout flow". Label only: sanitized in main, shown to the
+   *  user, and never a key for serving or authorizing anything. */
+  title?: string
 }
+
+/** Longest canvas title kept. A title names a subject; it is not a description. */
+export const MAX_CANVAS_TITLE_CHARS = 80
 
 /** Payload of the `canvas:changed` main → renderer push. */
 export interface CanvasChangedEvent {
@@ -58,10 +65,15 @@ export interface CanvasChangedEvent {
 }
 
 /** Renderer → main render request (dev/test ingress; the `canvas_render` MCP
- *  tool is the agent-facing ingress — both land in the store's renderVersion). */
+ *  tool is the agent-facing ingress — both land in the store's renderVersion).
+ *
+ *  `title` names the SUBJECT. A canvas holds one subject and accumulates
+ *  versions of it; naming a different subject files the old canvas and starts a
+ *  new one, so a fresh topic never inherits the previous topic's versions or
+ *  its unresolved review notes. See renderVersion. */
 export type CanvasRenderSource =
-  | { mode: 'design'; html: string }
-  | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string }
+  | { mode: 'design'; html: string; title?: string }
+  | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string; title?: string }
 
 // ── Anchoring (P3, spec §4) ─────────────────────────────────────────────────
 
@@ -611,6 +623,9 @@ export interface CanvasLibraryEntry {
   versionCount: number
   createdAt: string
   lastRenderedAt: string
+  /** What the canvas is OF. The row's headline when present — an id and a
+   *  timestamp do not tell anyone which canvas they are about to delete. */
+  title?: string
   /** Project it was last rendered in. Label only; control characters stripped. */
   cwd?: string
   /** First 8 chars of the conversation it was last rendered under. Label only. */

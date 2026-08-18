@@ -26,6 +26,7 @@ import {
   CanvasRenderSource,
   CanvasState,
   CanvasVersion,
+  MAX_CANVAS_TITLE_CHARS,
   ReclaimableCanvas,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
@@ -600,6 +601,15 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
   if (r.cwd !== undefined && (typeof r.cwd !== 'string' || r.cwd.length === 0 || r.cwd.length > MAX_CWD_CHARS)) return null
   if (r.conversationUuid !== undefined && (typeof r.conversationUuid !== 'string' || !CONVERSATION_UUID_RE.test(r.conversationUuid))) return null
   if (r.profileId !== undefined && (typeof r.profileId !== 'string' || !PROFILE_ID_RE.test(r.profileId))) return null
+  // The title is re-cleaned rather than validated: it is free text from the
+  // agent, so a record written by an older build (or hand-edited) is normalised
+  // to the same shape a fresh render produces, and an unusable one simply drops
+  // out rather than condemning the whole record.
+  if (r.title !== undefined) {
+    const cleanTitle = sanitizeCanvasTitle(r.title)
+    if (cleanTitle) r.title = cleanTitle
+    else delete r.title
+  }
   if (r.activeVersionId !== null && (typeof r.activeVersionId !== 'string' || !CANVAS_VERSION_ID_RE.test(r.activeVersionId))) return null
   if (!Array.isArray(r.versions)) return null
 
@@ -712,13 +722,61 @@ function nextVersionId(versions: CanvasVersion[]): string {
  * on first render) and make it active. This is THE ingress for content — the
  * IPC dev path and the future canvas_render MCP tool both land here.
  */
+/**
+ * A canvas title as it will be STORED: a label, and treated like every other
+ * label that crosses this boundary. Control and format characters go (they can
+ * reorder or hide what the user reads), whitespace collapses, and the result is
+ * capped. Empty after cleaning means "no title given", not an error — a render
+ * without one keeps the old behaviour of appending to whatever canvas the
+ * session holds.
+ */
+function sanitizeCanvasTitle(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const cleaned = raw.replace(FORMAT_CONTROLS_RE, '').replace(/\s+/g, ' ').trim()
+  if (cleaned.length === 0) return undefined
+  return cleaned.slice(0, MAX_CANVAS_TITLE_CHARS)
+}
+
+/**
+ * Do two titles name the same subject?
+ *
+ * Deliberately forgiving: case and surrounding punctuation should not split a
+ * canvas in two, because the cost of a false DIFFERENT (the user's version
+ * history silently forks) is worse than the cost of a false SAME (one extra
+ * version on the right canvas). An agent that means a new subject will not
+ * express it as a change of capitalisation.
+ */
+function sameSubject(a: string, b: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  return norm(a) === norm(b)
+}
+
 export function renderVersion(
   sessionId: string,
   source: CanvasRenderSource,
 ): { canvasId: string; versionId: string } {
   if (!SESSION_ID_RE.test(sessionId)) throw new Error('invalid session id')
 
-  const existing = getRecordForSession(sessionId)
+  const held = getRecordForSession(sessionId)
+  const title = sanitizeCanvasTitle(source.title)
+
+  // A canvas holds ONE subject, and this is where that is decided.
+  //
+  // Without it a session has exactly one canvas forever: every render appends,
+  // whatever it is of. Show a login screen, then a title bar, then a chart, and
+  // all three are "the same canvas" — the version list mixes unrelated work and,
+  // worse, unresolved notes from the earlier subject are carried forward and
+  // presented as open notes against the new page, anchored to elements that do
+  // not exist in it. That is confusing on its own and it makes the user wary of
+  // annotating at all, which costs the whole review loop.
+  //
+  // So a render that names a DIFFERENT subject files the current canvas — it
+  // stays on disk and in the library, it simply stops being this session's
+  // active one — and starts a fresh canvas. Same subject (or no title given at
+  // all, which is the pre-existing behaviour) appends a version as before.
+  const subjectChanged = Boolean(held && title && held.title && !sameSubject(title, held.title))
+  const existing = subjectChanged ? undefined : held
+
   if (existing && existing.versions.length >= MAX_VERSIONS_PER_CANVAS) {
     throw new Error(`canvas ${existing.canvasId} is at its version cap (${MAX_VERSIONS_PER_CANVAS})`)
   }
@@ -811,6 +869,10 @@ export function renderVersion(
     ...(conversationStamp ? { conversationUuid: conversationStamp } : {}),
     // Stamped once, like cwd: the account a canvas was born under is fixed.
     ...(profileStamp && !base.profileId ? { profileId: profileStamp } : {}),
+    // The subject. Only ever set to a title that names the SAME subject (a
+    // different one took the new-canvas branch above), so this fills in a
+    // missing title and refreshes the wording, never repurposes the canvas.
+    ...(title ? { title } : {}),
     versions: [...base.versions, version],
     activeVersionId: versionId,
   }
@@ -1055,6 +1117,7 @@ export function listAllCanvases(openTileSessionIds: readonly string[] = []): Can
       ...(latest?.source.mode ? { latestMode: latest.source.mode } : {}),
       ...(record.conversationUuid ? { conversationShortId: record.conversationUuid.slice(0, 8) } : {}),
       ...(cwd ? { cwd } : {}),
+      ...(record.title ? { title: record.title } : {}),
       ...(open.has(record.sessionId) ? { ownedByOpenSession: true } : {}),
     })
   }

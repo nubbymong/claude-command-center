@@ -334,7 +334,13 @@ describe('registration', () => {
     // The description has to say the render is not the same thing as the user
     // seeing it, or the agent renders and then reports a screen nobody opened.
     expect(String(description)).toMatch(/hand back/i)
-    expect(Object.keys(shape as object).sort()).toEqual(['buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'mode'])
+    expect(Object.keys(shape as object).sort()).toEqual([
+      'buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'mode', 'title',
+    ])
+    // `title` names the subject, and the description has to ask for it on every
+    // render: without one, unrelated work piles into a single canvas and the
+    // user is shown open notes from a page that no longer exists.
+    expect(String(description)).toMatch(/title/i)
     expect(typeof handler).toBe('function')
   })
 

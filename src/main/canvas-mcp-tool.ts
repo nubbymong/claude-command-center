@@ -250,7 +250,21 @@ interface RawRenderArgs {
   distRoot?: unknown
   entry?: unknown
   buildLabel?: unknown
+  title?: unknown
   cccSessionId?: unknown
+}
+
+/**
+ * The subject title, passed through only when it is a usable string.
+ *
+ * Not validated against a shape and not refused, unlike `buildLabel`: this is
+ * prose naming what the canvas is of, so there is nothing to be wrong about.
+ * The store does the cleaning (control characters, whitespace, length) because
+ * the store is what persists it, and a title that cleans away to nothing simply
+ * means none was given.
+ */
+function titleOf(rawArgs: RawRenderArgs): { title?: string } {
+  return typeof rawArgs.title === 'string' && rawArgs.title.trim().length > 0 ? { title: rawArgs.title } : {}
 }
 
 /** An absolute path on either OS: `X:\`/`X:/` or a POSIX root. Checked here so
@@ -350,7 +364,7 @@ export async function runCanvasRender(
       }
       html = rawArgs.html
     }
-    source = { mode: 'design', html }
+    source = { mode: 'design', html, ...titleOf(rawArgs) }
   } else {
     if (typeof rawArgs.distRoot !== 'string' || rawArgs.distRoot.length === 0) {
       return { text: 'A uat render needs the built directory in `distRoot`.', isError: true }
@@ -369,6 +383,7 @@ export async function runCanvasRender(
       distRoot: rawArgs.distRoot,
       ...(typeof rawArgs.entry === 'string' && rawArgs.entry.length > 0 ? { entry: rawArgs.entry } : {}),
       ...(typeof rawArgs.buildLabel === 'string' ? { buildLabel: rawArgs.buildLabel } : {}),
+      ...titleOf(rawArgs),
     }
   }
 
@@ -679,7 +694,7 @@ export function registerCanvasTools(
 
   server.tool(
     'canvas_render',
-    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': write a complete HTML document to a file INSIDE this session\'s project folder, then pass its absolute path as htmlPath — use this to show a proposed screen. \'uat\': you supply the path of a built directory, also inside the project folder, and the app in it is served — use this to review the real product. Both modes read only from this session\'s own project folder; a path outside it is refused. Every call creates a new version; nothing is overwritten. The canvas is per-session and this tool always renders to THIS session\'s canvas. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
+    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': write a complete HTML document to a file INSIDE this session\'s project folder, then pass its absolute path as htmlPath — use this to show a proposed screen. \'uat\': you supply the path of a built directory, also inside the project folder, and the app in it is served — use this to review the real product. Both modes read only from this session\'s own project folder; a path outside it is refused. Name what you are showing with `title` on every call: a canvas holds ONE subject, so the same title adds a version to it and a different title files the current canvas and starts a fresh one. Nothing is ever overwritten. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
     {
       mode: zMod.enum(['design', 'uat']).describe("'design' renders the html document you wrote; 'uat' serves a built directory."),
       htmlPath: zMod
@@ -696,6 +711,12 @@ export function registerCanvasTools(
         .describe('uat mode only. Absolute path of the built directory. It must sit inside this session’s project folder; anything else is refused.'),
       entry: zMod.string().optional().describe("uat mode only. Entry .html file relative to distRoot. Defaults to 'index.html'."),
       buildLabel: zMod.string().optional().describe('uat mode only. Optional short label recorded with this build (letters, numbers, spaces and . _ : @ / + - only).'),
+      title: zMod
+        .string()
+        .optional()
+        .describe(
+          'What this canvas is OF, in a few words — "Title bar logo placement", "Checkout flow". Pass it on EVERY render. A canvas holds one subject and collects versions of it, so re-rendering the same subject adds a version, and naming a different subject files the current canvas and starts a fresh one. Without a title everything piles into one canvas and the user sees unresolved notes from unrelated work.',
+        ),
       cccSessionId: zMod
         .string()
         .optional()
