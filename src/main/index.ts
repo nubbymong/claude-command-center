@@ -28,6 +28,7 @@ import { CodexProvider } from './providers/codex'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
+import { adoptRenamedRepoIfLive } from './github-update'
 import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
 // Direct from data-paths, not the handlers barrel: this runs at module scope
 // before app-ready, so it must not pull the IPC registration side of that module
@@ -879,6 +880,10 @@ if (!gotTheLock) {
     })
     registerDebugHandlers()
     registerUpdateHandlers()
+    // Pre-emptive repo-rename handling: if the app has been renamed on GitHub
+    // (claude-command-center -> ai-code-conductor) adopt + persist the new repo
+    // for updates; else stay on the current one. Non-blocking, fail-safe.
+    void adoptRenamedRepoIfLive()
     registerSetupHandlers()
     registerRegistryHandlers(getResourcesDirectory())
     // Sentinel (spec 2026-06-11): optional service; OFF = no init, dot hidden, zero impact.

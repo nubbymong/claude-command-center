@@ -24,7 +24,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { logInfo, logError } from './debug-logger'
 import { readConfig } from './config-manager'
-import { readRegistry } from './registry'
+import { readRegistry, writeRegistry } from './registry'
 import { getDataDirectory } from './data-paths'
 
 const execFileAsync = promisify(execFile)
@@ -65,7 +65,90 @@ function getRepo(): string {
   return DEFAULT_REPO
 }
 
-const REPO = getRepo()
+/**
+ * The repo the app will be RENAMED to after 2.1 ships
+ * (claude-command-center -> ai-code-conductor). A build released BEFORE the
+ * rename follows it automatically via adoptRenamedRepoIfLive() below. Same owner
+ * (a GitHub rename keeps it); change here if that ever differs.
+ */
+export const RENAMED_REPO = 'nubbymong/ai-code-conductor'
+
+// The repo the updater currently talks to. Resolved lazily from the registry
+// override (else DEFAULT_REPO) and cached; the startup probe may switch it to
+// the renamed repo and persist that. Every fetch/download reads this, so a
+// switch takes effect the same session, not only after a restart.
+let activeRepoCache: string | null = null
+
+/** The GitHub `owner/repo` the updater currently uses. */
+export function activeRepo(): string {
+  if (activeRepoCache === null) activeRepoCache = getRepo()
+  return activeRepoCache
+}
+
+/** Test seam: forget the cached resolution. */
+export function _resetActiveRepoForTest(): void {
+  activeRepoCache = null
+}
+
+/** True iff the GitHub repo `slug` is reachable right now — a definite 2xx. A
+ *  404 (not renamed yet) or ANY error/timeout returns false: never adopt on
+ *  uncertainty. */
+async function repoIsLive(slug: string): Promise<boolean> {
+  if (!REPO_PATTERN.test(slug)) return false
+  try {
+    const { status, body } = await httpGetJson<unknown[]>(`https://api.github.com/repos/${slug}/releases?per_page=1`)
+    return status >= 200 && status < 300 && Array.isArray(body)
+  } catch {
+    return false
+  }
+}
+
+export interface AdoptRenamedDeps {
+  /** Current persisted GitHubRepo override, if any. */
+  readOverride: () => string | null
+  /** Persist a GitHubRepo override; returns whether it stuck. */
+  writeOverride: (slug: string) => boolean
+  /** Is this repo slug reachable right now? */
+  probe: (slug: string) => Promise<boolean>
+}
+
+const nodeAdoptRenamedDeps: AdoptRenamedDeps = {
+  readOverride: () => readRegistry('GitHubRepo'),
+  writeOverride: (slug) => writeRegistry('GitHubRepo', slug),
+  probe: repoIsLive,
+}
+
+/**
+ * Pre-emptive repo-rename handling (built before the rename so a shipped build
+ * follows it with no user action). Run once at startup:
+ *   - a valid GitHubRepo override already set (a manual choice, or a prior
+ *     adopt) WINS — we never second-guess an explicit selection;
+ *   - otherwise probe RENAMED_REPO. GitHub 404s it until the rename happens; the
+ *     moment it is live, persist the override and use it from now on;
+ *   - any probe error/timeout leaves the app on DEFAULT_REPO (fail-safe).
+ * This changes only WHICH same-owner repo releases come from — never how they
+ * are verified (checksums/signature are enforced regardless), and the target is
+ * a hardcoded slug, not anything a caller supplies (ADR-009: updater path).
+ */
+export async function adoptRenamedRepoIfLive(deps: AdoptRenamedDeps = nodeAdoptRenamedDeps): Promise<string> {
+  const override = deps.readOverride()
+  if (override && REPO_PATTERN.test(override)) {
+    activeRepoCache = override
+    return override
+  }
+  try {
+    if (await deps.probe(RENAMED_REPO)) {
+      const persisted = deps.writeOverride(RENAMED_REPO)
+      activeRepoCache = RENAMED_REPO
+      logInfo(`[github-update] renamed repo ${RENAMED_REPO} is live -> adopting it for updates${persisted ? ' (persisted)' : ' (persist failed; this session only)'}`)
+      return RENAMED_REPO
+    }
+  } catch (e) {
+    logInfo(`[github-update] renamed-repo probe failed, staying on ${DEFAULT_REPO}: ${(e as Error)?.message ?? e}`)
+  }
+  activeRepoCache = getRepo()
+  return activeRepoCache
+}
 
 export type UpdateChannel = 'stable' | 'beta'
 
@@ -294,7 +377,7 @@ const RELEASE_FETCH_LIMIT = 100
 
 async function fetchReleasesPublic(limit = RELEASE_FETCH_LIMIT): Promise<PublicFetchResult> {
   try {
-    const url = `https://api.github.com/repos/${REPO}/releases?per_page=${limit}`
+    const url = `https://api.github.com/repos/${activeRepo()}/releases?per_page=${limit}`
     const { status, headers, body } = await httpGetJson<GitHubRelease[]>(url)
 
     if (status >= 200 && status < 300 && Array.isArray(body)) {
@@ -357,7 +440,7 @@ async function fetchReleasesAuthenticated(limit = RELEASE_FETCH_LIMIT): Promise<
   }
 
   try {
-    const url = `https://api.github.com/repos/${REPO}/releases?per_page=${limit}`
+    const url = `https://api.github.com/repos/${activeRepo()}/releases?per_page=${limit}`
     const { status, body } = await httpGetJson<GitHubRelease[]>(url, 10000, token)
 
     if (status >= 200 && status < 300 && Array.isArray(body)) {
@@ -379,7 +462,7 @@ async function fetchReleasesGhCli(limit = RELEASE_FETCH_LIMIT): Promise<GitHubRe
   try {
     const { stdout } = await execFileAsync(
       'gh',
-      ['release', 'list', '--repo', REPO, '--limit', String(limit), '--json', 'tagName,isPrerelease,isDraft,assets'],
+      ['release', 'list', '--repo', activeRepo(), '--limit', String(limit), '--json', 'tagName,isPrerelease,isDraft,assets'],
       { encoding: 'utf-8', timeout: 15000, windowsHide: true }
     )
     const releases = JSON.parse(stdout) as Array<{
@@ -818,7 +901,7 @@ function readManifest(filePath: string): string | null {
  * becomes `...App.exe#/x/CHECKSUMS.txt`, and since `https.get` drops the
  * fragment, that FETCHES THE INSTALLER as the manifest. GitHub always supplies
  * a clean path today, so this is not reachable in production -- but the
- * function is exported, REPO is registry-overridable, and the guarantee is
+ * function is exported, the active repo is registry-overridable, and the guarantee is
  * stated unconditionally, so parse properly instead of pattern-matching.
  */
 function deriveManifestUrl(directUrl?: string | null): string | null {
@@ -874,7 +957,7 @@ async function fetchChecksumManifest(tagName: string, stageDir: string, directUr
     //    threat model already concedes.
     await execFileAsync(
       'gh',
-      ['release', 'download', tagName, '--repo', REPO, '--pattern', 'CHECKSUMS.txt', '--dir', stageDir, '--clobber'],
+      ['release', 'download', tagName, '--repo', activeRepo(), '--pattern', 'CHECKSUMS.txt', '--dir', stageDir, '--clobber'],
       { encoding: 'utf-8', timeout: 60000, windowsHide: true }
     )
     if (fs.existsSync(tmpPath)) return readManifest(tmpPath)
@@ -1250,7 +1333,7 @@ export async function downloadInstallerFile(tagName: string, assetName: string, 
   try {
     await execFileAsync(
       'gh',
-      ['release', 'download', tagName, '--repo', REPO, '--pattern', safeName, '--dir', stageDir, '--clobber'],
+      ['release', 'download', tagName, '--repo', activeRepo(), '--pattern', safeName, '--dir', stageDir, '--clobber'],
       { encoding: 'utf-8', timeout: 300000, windowsHide: true }
     )
     if (fs.existsSync(destPath)) {
