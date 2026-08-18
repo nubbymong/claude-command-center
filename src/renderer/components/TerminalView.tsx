@@ -867,6 +867,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // has to: nothing is moving, so it is not competing with a stream of
             // new frames, and the text they are about to read is corrected.
             repainter.settleStrong()
+            // ...and a backstop, because settleStrong is DEBOUNCED: a stream
+            // that never leaves an 800ms gap pushes it out indefinitely, so the
+            // atlas stays stale for the whole length of a long build log or
+            // Claude Code response and the mouse wheel is the only way out.
+            // This only fires once the atlas has been stale that long anyway.
+            repainter.strongIfStale()
           }
         }
 

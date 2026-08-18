@@ -65,6 +65,25 @@ export const STRONG_SETTLE_QUIET_MS = 800
  *  cannot drag the atlas rebuild back up to the beta.13 rate. */
 export const STRONG_SETTLE_INTERVAL_MS = 3000
 
+/**
+ * Hard ceiling on atlas staleness: rebuild after this long even if output never
+ * goes quiet.
+ *
+ * `settleStrong` puts the rebuild in the GAP, which is the right place — but it
+ * is DEBOUNCED, so a stream whose chunks are consistently closer together than
+ * STRONG_SETTLE_QUIET_MS pushes it out indefinitely and the rebuild never
+ * happens at all. A build log, a long Claude Code response, a test runner —
+ * anything that streams steadily for minutes is exactly that stream, and the
+ * user watches the viewport degrade with no way out but the mouse wheel. That
+ * is the reported symptom, and it is why the gap has to be the PREFERRED moment
+ * rather than the only one.
+ *
+ * At 5s this is ~20x gentler than the per-chunk rebuild that made beta.13
+ * flash, and it only ever fires on a stream that has denied the scheduler a gap
+ * for that long.
+ */
+export const STRONG_MAX_STALE_MS = 5000
+
 /** Output quiet for this long → one settle repaint. Long enough that a
  *  continuous stream keeps re-arming it (the periodic pace covers that), short
  *  enough that a ghost never sits on a finished stream for long. */
@@ -172,6 +191,10 @@ export interface StaleGlyphRepainter {
    *  STRONG_SETTLE_QUIET_MS for why the rebuild belongs in the gap rather than
    *  in the stream. */
   settleStrong(quietMs?: number, intervalMs?: number): void
+  /** Rebuild the atlas NOW if it has not been rebuilt for `maxStaleMs`, whether
+   *  or not output ever went quiet. The backstop for a stream that never leaves
+   *  a gap for `settleStrong` to land in; see STRONG_MAX_STALE_MS. */
+  strongIfStale(maxStaleMs?: number): void
   /** Cancel any pending repaint and refuse further ones. */
   dispose(): void
 }
@@ -197,6 +220,11 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
    *  stream of cheap refreshes defer the rebuild indefinitely (it never ran),
    *  and let a stream that paused constantly run one on every pause. */
   let lastStrongPaintAt = Number.NEGATIVE_INFINITY
+  /** When the atlas was last known-good: a rebuild, or the moment this repainter
+   *  was created (a fresh terminal starts with a fresh atlas). Separate from
+   *  lastStrongPaintAt, which stays at -Infinity so the FIRST settleStrong is
+   *  never held off by its own floor. */
+  let atlasFreshAt = deps.now()
   let timer: ReturnType<typeof setTimeout> | null = null
   /** When the armed trailing timer is due (deps.now() clock), so a faster-paced
    *  request can tell whether it would fire sooner and bring it forward. */
@@ -207,7 +235,10 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
 
   const paint = (strong: boolean) => {
     lastPaintAt = deps.now()
-    if (strong) lastStrongPaintAt = lastPaintAt
+    if (strong) {
+      lastStrongPaintAt = lastPaintAt
+      atlasFreshAt = lastPaintAt
+    }
     if (!strong) {
       // Cheap path (#292 at-bottom coverage): re-render the viewport from the
       // atlas ALREADY in memory. Fixes a stale painted cell without the rebuild
@@ -301,6 +332,16 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
     }, quietMs)
   }
 
+  const strongIfStale = (maxStaleMs: number = STRONG_MAX_STALE_MS) => {
+    if (disposed) return
+    if (deps.now() - atlasFreshAt < maxStaleMs) return
+    // Take over any pending trailing repaint rather than letting it fire a
+    // second time straight after this one.
+    if (timer) { deps.clearTimer(timer); timer = null; timerDueAt = Number.POSITIVE_INFINITY }
+    pendingStrong = false
+    paint(true)
+  }
+
   const dispose = () => {
     disposed = true
     if (timer) { deps.clearTimer(timer); timer = null; timerDueAt = Number.POSITIVE_INFINITY }
@@ -308,5 +349,5 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
     if (strongSettleTimer) { deps.clearTimer(strongSettleTimer); strongSettleTimer = null }
   }
 
-  return { schedule, settle, settleStrong, dispose }
+  return { schedule, settle, settleStrong, strongIfStale, dispose }
 }
