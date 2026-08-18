@@ -114,7 +114,11 @@ const CARDS_21: Card[] = [
  */
 export function cardsFor(lastSeenVersion: string | undefined, currentVersion: string): Card[] {
   const line = releaseLine(currentVersion)
-  if (line !== '2.1') return CARDS_20
+  // A line with no card set of its own — 2.2 before anyone writes one — falls
+  // back to the NEWEST set, not the oldest: greeting a 2.2 user with 2.0
+  // content under a "What's new in 2.2" heading is the exact bug this page
+  // already had once. When a 2.2 set is written, add it here.
+  if (line === '2.0') return CARDS_20
   const from = releaseLine(lastSeenVersion ?? '')
   return from === '2.0' || from === '2.1' ? CARDS_21 : [...CARDS_20, ...CARDS_21]
 }

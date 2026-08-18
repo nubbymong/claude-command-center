@@ -50,6 +50,7 @@ import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
+import { bootWhatsNewSurface } from './onboarding/upgrade-flow'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
@@ -118,6 +119,9 @@ export default function App() {
   const [isUpdating, setIsUpdating] = useState(false)
   const [closeDialog, setCloseDialog] = useState<'close' | 'update' | null>(null)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
+  /** lastSeenVersion as it was at boot, captured when the What's New modal is
+   *  armed so its "since" range cannot be moved by a later stamp. */
+  const whatsNewSinceRef = useRef<string | undefined>(undefined)
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
@@ -382,8 +386,34 @@ export default function App() {
       // to due (the harness re-runs); its finish step re-stamps
       // onboardingAppVersion so it will not re-fire until the next one that
       // qualifies. A first install runs through deriveOnboarding already.
-      if (shouldReonboardForVersion(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)) {
+      const reonboard = shouldReonboardForVersion(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)
+      if (reonboard) {
         useAppMetaStore.getState().update({ completedSteps: {}, onboardingCompletedVersion: undefined })
+      }
+
+      // What's New, for the launch where NO tour runs. The tour is the what's-new
+      // surface for its own cohort (its finish step stamps lastSeenVersion for
+      // exactly that reason), so a version change that does not re-run the tour
+      // — a stable user moving within a line — must show the notes itself. This
+      // arm was removed at 2.0 on the reasoning that the harness replaced it,
+      // which is true only when the harness runs; without it a within-line
+      // stable upgrade showed nothing, ever, and lastSeenVersion stayed stale —
+      // which also kept the GitHub onboarding modal from arming (its gate
+      // waits on shouldShowWhatsNew() clearing).
+      //
+      // The whole decision comes from one place; see decideUpgradeFlow and
+      // bootWhatsNewSurface. Read BEFORE the harness can stamp anything.
+      const surface = bootWhatsNewSurface({
+        tourWillRun: reonboard || deriveOnboarding(useAppMetaStore.getState().meta, {}).due,
+        whatsNewDue: shouldShowWhatsNew(),
+      })
+      if (surface === 'modal') {
+        // Snapshot the origin now. The modal must compute "since when" from the
+        // version at BOOT, not from whatever lastSeenVersion holds when it
+        // mounts — anything that stamps in between would collapse the range to
+        // the newest entry, which is the bug this replaces.
+        whatsNewSinceRef.current = useAppMetaStore.getState().meta.lastSeenVersion
+        setShowWhatsNew(true)
       }
 
       if (appMeta.setupVersion !== __APP_VERSION__) {
@@ -1044,7 +1074,7 @@ export default function App() {
             }}
           />
         )}
-        {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} />}
+        {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} sinceVersion={whatsNewSinceRef.current} />}
         {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {showHelpPanel && (
           <HelpPanel

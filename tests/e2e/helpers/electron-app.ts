@@ -66,7 +66,7 @@ function seedCleanConfig(dataDir: string): void {
         // seeded above, so without these three keys it blocked EVERY e2e run and
         // the suite became vacuous. Mark the flow finished: all steps completed,
         // at the current ONBOARDING_VERSION, stamped with this app version so
-        // shouldReonboardForBeta() doesn't re-fire it on the beta channel.
+        // shouldReonboardForVersion() doesn't re-fire it on the beta channel.
         // Derived from STEPS so a new step can't silently re-break the suite.
         completedSteps: Object.fromEntries(STEPS.map((s) => [s.id, '2026-01-01T00:00:00.000Z'])),
         onboardingCompletedVersion: ONBOARDING_VERSION,

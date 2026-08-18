@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveOnboarding, shouldReonboardForBeta, shouldReonboardForVersion, type OnboardingMetaView } from '../../../src/renderer/onboarding/gate'
+import { deriveOnboarding, shouldReonboardForVersion, type OnboardingMetaView } from '../../../src/renderer/onboarding/gate'
 import { STEPS, ONBOARDING_VERSION } from '../../../src/renderer/onboarding/steps'
 import type { OnboardingStep } from '../../../src/renderer/onboarding/steps'
 
@@ -92,36 +92,10 @@ describe('deriveOnboarding', () => {
   })
 })
 
-describe('shouldReonboardForBeta', () => {
-  // Someone who FINISHED onboarding at app version v (undefined = onboarded
-  // before the onboardingAppVersion field existed, e.g. a beta.2 install).
-  const done = (v?: string): OnboardingMetaView => ({ onboardingCompletedVersion: '2', onboardingAppVersion: v })
-  it('beta + finished on a different version -> re-fire', () => {
-    expect(shouldReonboardForBeta(done('2.0.0-beta.2'), '2.0.0-beta.3', 'beta')).toBe(true)
-  })
-  it('beta + finished before the field existed (undefined) -> re-fire on the first post-upgrade beta', () => {
-    expect(shouldReonboardForBeta(done(undefined), '2.0.0-beta.3', 'beta')).toBe(true)
-  })
-  it('beta + finished on the same version -> no re-fire', () => {
-    expect(shouldReonboardForBeta(done('2.0.0-beta.3'), '2.0.0-beta.3', 'beta')).toBe(false)
-  })
-  it('fresh install (never finished) -> false; deriveOnboarding runs the first flow', () => {
-    expect(shouldReonboardForBeta({}, '2.0.0-beta.3', 'beta')).toBe(false)
-  })
-  it('mid-flow crash-resume (partial steps, not finished) -> false', () => {
-    expect(shouldReonboardForBeta({ completedSteps: { welcome: '2.0.0-beta.2' } }, '2.0.0-beta.3', 'beta')).toBe(false)
-  })
-  it('stable never re-fires on version change (ONBOARDING_VERSION handles major features)', () => {
-    expect(shouldReonboardForBeta(done('2.0.0'), '2.0.1', 'stable')).toBe(false)
-  })
-  it('undefined channel -> false', () => {
-    expect(shouldReonboardForBeta(done('2.0.0-beta.2'), '2.0.0-beta.3', undefined)).toBe(false)
-  })
-})
 
 describe('shouldReonboardForVersion', () => {
   const done = (appVersion?: string): OnboardingMetaView => ({
-    onboardingCompletedVersion: 'v1',
+    onboardingCompletedVersion: ONBOARDING_VERSION,
     ...(appVersion ? { onboardingAppVersion: appVersion } : {}),
   })
 
@@ -146,6 +120,22 @@ describe('shouldReonboardForVersion', () => {
   it('leaves someone who never finished the tour to deriveOnboarding', () => {
     expect(shouldReonboardForVersion({}, '2.1.0', 'beta')).toBe(false)
     expect(shouldReonboardForVersion({ completedSteps: { welcome: '2.0.0' } }, '2.1.0', 'stable')).toBe(false)
+  })
+
+  it('re-fires when ONBOARDING_VERSION has been bumped, for anyone who ever finished', () => {
+    // The constant's contract - "bump ONLY to force every user through the full
+    // flow again" - and it was never implemented: deriveOnboarding cannot see a
+    // bump when every step is already in completedSteps. Discovered on the
+    // first bump ever ('2' -> '3').
+    const finishedAtOldConstant: OnboardingMetaView = {
+      onboardingCompletedVersion: String(Number(ONBOARDING_VERSION) - 1),
+      onboardingAppVersion: '2.1.0',
+      completedSteps: Object.fromEntries(STEPS.map((s) => [s.id, '2.1.0'])),
+    }
+    // Same app version, stable channel, same line: nothing else would fire.
+    expect(shouldReonboardForVersion(finishedAtOldConstant, '2.1.0', 'stable')).toBe(true)
+    // And deriveOnboarding alone confirms the gap it closes.
+    expect(deriveOnboarding(finishedAtOldConstant, {}).due).toBe(false)
   })
 
   it('re-fires once for someone onboarded before the field existed', () => {

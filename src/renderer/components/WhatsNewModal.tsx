@@ -9,6 +9,10 @@ declare const __BUILD_TIME__: string
 interface Props {
   onClose: () => void
   showAllVersions?: boolean
+  /** The version the user was on before this launch, captured by the caller at
+   *  boot. Everything newer than it is shown. When omitted, read from app meta
+   *  at mount — correct only when nothing has stamped lastSeenVersion first. */
+  sinceVersion?: string
 }
 
 const TYPE_COLORS = {
@@ -66,7 +70,7 @@ function VersionSection({ entry }: { entry: ChangelogEntry }) {
 // Single source of truth so a future tweak to one keeps the other in sync.
 const CLOSE_ANIMATION_MS = 200
 
-export default function WhatsNewModal({ onClose, showAllVersions = false }: Props) {
+export default function WhatsNewModal({ onClose, showAllVersions = false, sinceVersion }: Props) {
   const latestVersion = changelog[0]
   // Everything released since the user last looked — not just the newest entry.
   // Someone coming from 2.0.0 to 2.1.0 skipped fourteen releases, and showing
@@ -75,10 +79,12 @@ export default function WhatsNewModal({ onClose, showAllVersions = false }: Prop
   //
   // Captured ONCE, in a lazy initial state, because closing the modal stamps
   // lastSeenVersion to the current build: read it on any later render and the
-  // list collapses to nothing underneath the user mid-read.
+  // list collapses to nothing underneath the user mid-read. The caller passes
+  // the boot-time value where it can, for the same reason one step earlier.
   const [versionsToShow] = useState<ChangelogEntry[]>(() => {
     if (showAllVersions) return changelog
-    const since = entriesSince(changelog, useAppMetaStore.getState().meta.lastSeenVersion, latestVersion.version)
+    const from = sinceVersion ?? useAppMetaStore.getState().meta.lastSeenVersion
+    const since = entriesSince(changelog, from, latestVersion.version)
     // A first install, or a stored version newer than this build, leaves the
     // range empty — fall back to the newest entry so the modal is never blank.
     return since.length > 0 ? since : [latestVersion]
@@ -189,27 +195,6 @@ export function shouldShowWhatsNew(): boolean {
       currentVersion,
       channel: useSettingsStore.getState().settings.updateChannel,
     }).showWhatsNew
-  } catch {
-    return false
-  }
-}
-
-/**
- * Should this launch re-run the full-screen tour?
- *
- * Fresh install, a crossed release line (2.0.x → 2.1.x — the owner's ask: 2.0
- * users walk it again on 2.1), or any version change on the beta channel.
- * Moving within a stable line does not.
- */
-export function shouldRerunTourForVersion(): boolean {
-  try {
-    const currentVersion = changelog[0]?.version
-    if (!currentVersion) return false
-    return decideUpgradeFlow({
-      lastSeenVersion: useAppMetaStore.getState().meta.lastSeenVersion,
-      currentVersion,
-      channel: useSettingsStore.getState().settings.updateChannel,
-    }).showTour
   } catch {
     return false
   }

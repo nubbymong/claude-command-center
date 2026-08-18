@@ -78,6 +78,29 @@ export function decideUpgradeFlow(input: UpgradeFlowInput): UpgradeFlowDecision 
 }
 
 /**
+ * Which boot surface shows the release notes on THIS launch.
+ *
+ * The tour is the what's-new surface for its own cohort: its finish step
+ * stamps lastSeenVersion for exactly that reason (settle.ts). So the modal is
+ * for the launch where NO tour runs — a stable user moving within a line. Both
+ * at once would show the notes twice; neither would show them never, which is
+ * what happened between 2.0 and now: the modal's boot arm was removed on the
+ * reasoning that the harness replaced it, true only when the harness runs.
+ *
+ * Pure so the composition is pinned, not just the pieces. The caller supplies
+ * the two facts it already has: is the tour about to run (either because it is
+ * being re-fired for this version, or because deriveOnboarding says steps are
+ * due), and would What's New show at all.
+ */
+export function bootWhatsNewSurface(input: {
+  tourWillRun: boolean
+  whatsNewDue: boolean
+}): 'tour' | 'modal' | 'none' {
+  if (input.tourWillRun) return 'tour'
+  return input.whatsNewDue ? 'modal' : 'none'
+}
+
+/**
  * The changelog entries a user has not seen: everything newer than
  * `lastSeenVersion`, up to and including `currentVersion`, newest first.
  *

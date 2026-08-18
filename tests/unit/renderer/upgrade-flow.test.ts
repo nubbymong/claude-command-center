@@ -6,7 +6,7 @@
 // the fourteen in between.
 
 import { describe, it, expect } from 'vitest'
-import { decideUpgradeFlow, entriesSince } from '../../../src/renderer/onboarding/upgrade-flow'
+import { decideUpgradeFlow, entriesSince, bootWhatsNewSurface } from '../../../src/renderer/onboarding/upgrade-flow'
 import { compareVersions, crossedReleaseLine, releaseLine } from '../../../src/shared/version-order'
 import { cardsFor } from '../../../src/renderer/onboarding/WhatsNewV2Step'
 
@@ -206,8 +206,31 @@ describe('cardsFor — which highlights the upgrade page shows', () => {
     expect(titles).not.toContain('This guided setup')
   })
 
-  it('falls back to the 2.0 set on a future line rather than showing nothing', () => {
-    // 2.2 has no card set yet; an empty page would be worse than a stale one.
-    expect(cardsFor('2.1.0', '2.2.0').length).toBeGreaterThan(0)
+  it('falls back to the NEWEST set on a future line, never the oldest', () => {
+    // 2.2 has no card set yet. Showing 2.0 content under a "What's new in 2.2"
+    // heading is the bug this page already had once; the newest known set is
+    // the least wrong thing to show.
+    const titles = cardsFor('2.1.0', '2.2.0').map((c) => c.title)
+    expect(titles).toContain('A new name')
+    expect(titles).not.toContain('This guided setup')
+  })
+})
+
+describe('bootWhatsNewSurface — which surface carries the notes this launch', () => {
+  it('the tour is the surface whenever it is going to run', () => {
+    // Its finish step stamps lastSeenVersion; a modal on top would show the
+    // same notes twice.
+    expect(bootWhatsNewSurface({ tourWillRun: true, whatsNewDue: true })).toBe('tour')
+    expect(bootWhatsNewSurface({ tourWillRun: true, whatsNewDue: false })).toBe('tour')
+  })
+
+  it('the modal is the surface for a version change with NO tour', () => {
+    // A stable user moving within a line. Between 2.0 and now this case showed
+    // nothing at all, and lastSeenVersion stayed stale forever.
+    expect(bootWhatsNewSurface({ tourWillRun: false, whatsNewDue: true })).toBe('modal')
+  })
+
+  it('nothing shows when nothing changed', () => {
+    expect(bootWhatsNewSurface({ tourWillRun: false, whatsNewDue: false })).toBe('none')
   })
 })

@@ -30,32 +30,10 @@ export function deriveOnboarding(
   return { due, steps: applicable }
 }
 
-/**
- * The 2.0 beta line re-fires the first-run tour on EVERY version so testers (and
- * early adopters) always see the latest flow. True only for someone who has
- * FINISHED the flow before (onboardingCompletedVersion set) on a DIFFERENT app
- * version -- so fresh installs and crash-resumes go through deriveOnboarding
- * untouched, and stable releases retrigger only through an ONBOARDING_VERSION
- * bump (a major feature). onboardingAppVersion is undefined for users who
- * onboarded before this field existed, which correctly counts as "a different
- * version" so the first post-upgrade beta re-fires too. The caller clears
- * completedSteps + onboardingCompletedVersion (flipping deriveOnboarding back to
- * due); settleOnboardingFinish then re-stamps onboardingAppVersion so it won't
- * re-fire again until the next version.
- */
-export function shouldReonboardForBeta(
-  meta: OnboardingMetaView,
-  appVersion: string,
-  channel: string | undefined,
-): boolean {
-  return channel === 'beta'
-    && meta.onboardingCompletedVersion != null
-    && meta.onboardingAppVersion !== appVersion
-}
 
 /**
  * Should the full-screen tour run again because of the version the user has
- * moved TO? The whole rule, of which the beta case above is one branch.
+ * moved TO? The whole rule.
  *
  * Two things trigger it, and both are a different question from
  * `deriveOnboarding` (which asks "are there steps left to do"):
@@ -83,6 +61,12 @@ export function shouldReonboardForVersion(
   channel: string | undefined,
 ): boolean {
   if (meta.onboardingCompletedVersion == null) return false
+  // An ONBOARDING_VERSION bump means "everyone walks it again", full stop —
+  // and this is the only place that makes the constant's contract true.
+  // deriveOnboarding alone cannot: with every step already in completedSteps
+  // its applicable set is empty, so a bumped constant with no new pages was a
+  // no-op for anyone who had ever finished. First discovered on the first bump.
+  if (meta.onboardingCompletedVersion !== ONBOARDING_VERSION) return true
   if (meta.onboardingAppVersion === appVersion) return false
   if (channel === 'beta') return true
   return crossedReleaseLine(meta.onboardingAppVersion ?? '', appVersion)
