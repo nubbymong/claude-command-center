@@ -31,6 +31,21 @@ Creates `../ccc-wt/<session>` on `session/beta/<session>` branched from
 the branch and directory self-describing. Re-running is a no-op that reprints
 your existing worktree.
 
+**Under CCC (AI Code Conductor) the app chooses the directory.** The PTY
+environment carries `CCC_SESSION_WORKTREE` -- `../ccc-wt/<ccc-session>` -- and
+`claim` creates the worktree exactly there. That is the one path the Agent
+Canvas will serve, so a mockup written into your worktree renders by
+`htmlPath` (ADR-016). It is per CCC session (tile), not per conversation: after
+`/clear` or a restart, `claim` finds the previous conversation's worktree there
+(its process having exited) and **adopts it in place** -- same directory, same
+branch, uncommitted work reported in the output. Branch off `beta` yourself if
+you want a fresh start. If the directory is held by a *concurrent live* process
+of the same tile (a nested `claude` you launched from inside the session), by
+another tile, or by a worktree of a different repository, `claim` says so and
+falls back to the default location (that worktree is then simply not
+canvas-served) -- it never takes over a worktree another live process is using.
+`--slug` names only the branch in this mode.
+
 Already standing in a worktree someone made for you -- by hand, or via Claude
 Code's own `--worktree` / `EnterWorktree`? Take ownership of it instead:
 
@@ -125,7 +140,10 @@ shared checkout, and prefer `git -C` at a specific path over changing directory.
 - Leases live in `<git-common-dir>/ccc-sessions/` -- shared by every linked
   worktree, never tracked by git.
 - Worktree location defaults to `../ccc-wt/` beside the primary checkout;
-  override with `CCC_WT_ROOT`.
+  override with `CCC_WT_ROOT`. Under CCC the exact directory comes from
+  `CCC_SESSION_WORKTREE` (see "claim" above); CCC computes it from the same
+  `CCC_WT_ROOT` it was started with, so set that variable for the app, not just
+  in a shell, or the two disagree and the worktree is not canvas-served.
 - Worktrees share the primary checkout's object store, so they are cheap. They
   do **not** share `node_modules`; install per worktree, or junction it if the
   lockfile matches. Never run a native rebuild against a junctioned

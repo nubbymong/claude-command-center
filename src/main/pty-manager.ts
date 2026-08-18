@@ -36,7 +36,8 @@ import {
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
-import { registerCanvasUatRoot, revokeCanvasUatRoots } from './canvas/canvas-store'
+import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot } from './canvas/canvas-store'
+import { designatedWorktreeDir } from './canvas/canvas-worktree'
 import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
@@ -423,12 +424,17 @@ export function spawnPty(
 
     const sshBinary = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
 
+    // SSH sessions never designate a canvas worktree (their cwd is remote); pass
+    // a clone with any inherited CCC_SESSION_WORKTREE removed, never process.env
+    // by reference (which we must not mutate).
+    const sshEnv = { ...(process.env as Record<string, string>) }
+    delete sshEnv.CCC_SESSION_WORKTREE
     ptyProcess = pty.spawn(sshBinary, sshArgs, {
       name: 'xterm-256color',
       cols,
       rows,
       cwd: os.homedir(),
-      env: process.env as Record<string, string>,
+      env: sshEnv,
       useConpty: true
     })
 
@@ -958,6 +964,8 @@ export function spawnPty(
         codexOptions: options?.codexOptions,
       })
       logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
+      // Codex sessions never designate a canvas worktree; drop any inherited hint.
+      delete (spawnEnv as Record<string, string>).CCC_SESSION_WORKTREE
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
@@ -1077,6 +1085,25 @@ export function spawnPty(
     // session-state.json and label conversations with their CCC work name
     // (customName). Read-only, best-effort — never block the spawn (#130).
     try { finalSpawnEnv.CCC_CONFIG_DIR = getConfigDir() } catch { /* best-effort */ }
+    // Session isolation + Agent Canvas (ADR-016): CCC DESIGNATES where this
+    // session's guard worktree lives — `<worktree base>/<ccc-session-short>`,
+    // derived from the CONFIGURED project directory and CCC's own session id,
+    // never from anything the agent writes — tells the guard through
+    // CCC_SESSION_WORKTREE, and (below, once the project itself is registered
+    // as a served root) designates the same path as a pending canvas root, so
+    // a mockup the agent writes into its own worktree is renderable by
+    // htmlPath. Interactive Claude sessions only: the canvas is bound to those.
+    // Null when the project is not a primary git checkout (the guard has
+    // nothing to anchor to there either).
+    const designatedWorktree = !shellOnly && !isHomeOrAncestor(resolvedCwd)
+      ? designatedWorktreeDir(resolvedCwd, sessionId)
+      : null
+    // Set only when THIS session designates; otherwise DELETE any value inherited
+    // from CCC's own environment (a dev CCC launched from inside a guarded tile
+    // inherits the outer tile's CCC_SESSION_WORKTREE — it must not leak into a
+    // shell-only / home-project / non-designated session and misdirect its guard).
+    if (designatedWorktree) finalSpawnEnv.CCC_SESSION_WORKTREE = designatedWorktree
+    else delete finalSpawnEnv.CCC_SESSION_WORKTREE
     logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} resolvedProfileId=${resolvedProfileId ?? '(none/bare-global)'} shellOnly=${shellOnly} USERPROFILE=${home ?? '(real home)'}`)
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.
@@ -1300,6 +1327,17 @@ export function spawnPty(
         // between a prompt-injected agent and a file read with the app's
         // privileges.
         logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the configured project directory was refused by the canvas store.`)
+      } else if (designatedWorktree) {
+        // The project is servable, so the worktree CCC designated beside it is
+        // too — PENDING: the store consults it only once it exists as a real,
+        // un-linked directory (canvas-store.designateCanvasWorktreeRoot). The
+        // path is CCC's, the contents are the agent's own; nothing an agent can
+        // write moves it (ADR-016).
+        if (designateCanvasWorktreeRoot(sessionId, designatedWorktree)) {
+          logInfo(`[pty] canvas: designated session worktree ${designatedWorktree} for ${sessionId} (served once it exists)`)
+        } else {
+          logWarn(`[pty] canvas: designated session worktree ${designatedWorktree} for ${sessionId} was refused by the canvas store floor.`)
+        }
       }
 
       // Explicitly cd to the project directory, then launch Claude.

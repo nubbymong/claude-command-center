@@ -65,12 +65,16 @@ Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`
    canvas_render { mode: "design", htmlPath: "<absolute path>" }
 
    The canvas only reads files under THIS session's own project folder — the
-   directory configured for this session in CCC. A path outside it is refused,
-   so do not write the mockup to a temp or scratch directory, and note that
-   another session's project folder is refused too. (A session whose configured
-   folder is the user's home folder has no project folder at all and cannot
-   render by path; nor can one resuming a conversation from outside its
-   configured folder — say so and move on.) Never pass the document inline in \`html\` when you can write
+   directory configured for this session in CCC — and, if the project uses
+   session isolation (\`node scripts/session-guard.mjs claim\`), the worktree
+   CCC set aside for this session (the directory \`claim\` printed; also in
+   \`CCC_SESSION_WORKTREE\`). Write the mockup in whichever of those you are
+   working in. A path anywhere else is refused, so do not write it to a temp
+   or scratch directory, and note that another session's project folder or
+   worktree is refused too. (A session whose configured folder is the user's
+   home folder has no project folder at all and cannot render by path; nor can
+   one resuming a conversation from outside its configured folder — say so and
+   move on.) Never pass the document inline in \`html\` when you can write
    a file: the inline form floods the user's approval prompt with the whole
    document (it once cost a user eleven minutes on one render).
 4. Self-check before handing back: \`canvas_snapshot\` scoped to the
@@ -88,9 +92,10 @@ Build the project to a static directory with its own build command, then:
 
    canvas_render { mode: "uat", distRoot: "<absolute dist path>" }
 
-- \`distRoot\` must sit inside THIS session's own project folder — build there
-  (\`<project>/dist\`), not into a temp directory. There is no way for the user
-  to grant another folder, so if it is refused, move the build and retry.
+- \`distRoot\` must sit inside THIS session's own project folder or its
+  session worktree — build there (\`<project>/dist\`), not into a temp
+  directory. There is no way for the user to grant another folder, so if it is
+  refused, move the build and retry.
 - Pages that need a backend: mock the data layer inside the build. The canvas
   serves static files only, and a dead fetch shows up as a broken page.
 
@@ -117,8 +122,9 @@ resolved yourself — resolution is theirs.
 ## Exceptions you may hit
 
 - Render refused ("not inside this session's project folder"): write or build
-  the file inside the project folder configured for this session, then retry.
-  Do not ask the user to allow a folder — nothing in the app grants one.
+  the file inside the project folder configured for this session (or the
+  worktree CCC set aside for it), then retry. Do not ask the user to allow a
+  folder — nothing in the app grants one.
 - "version limit" on render: the canvas is full — continue in a new session.
 - Snapshot "did not finish loading in time": heavy page — retry once, then
   continue without the self-check and say you did.
