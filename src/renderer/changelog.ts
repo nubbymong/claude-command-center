@@ -21,6 +21,21 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.15',
+    date: '2026-08-19',
+    highlights: 'The terminal stops going unreadable during long output and switching between sessions repaints them clean; the Agent Canvas gets a library, keeps subjects apart, and can be deleted safely; What\'s New and the first-run tour now know which version you came from; and the README finally describes the app that ships.',
+    changes: [
+      { type: 'fix', description: 'The terminal no longer degrades into unreadable, broken text during a long stream of output with no way out but the mouse wheel. The font atlas is now rebuilt in the pauses between output, and — because a build log or a long Claude Code response never pauses — also after at most five seconds of staleness. Switching to a session repaints it as you arrive, which is the moment you are about to read it and the one moment a rebuild cannot be seen; a session left streaming in the background is the likeliest to have gone stale unseen. GPU rendering can also be switched off entirely in Settings for anyone whose driver misbehaves.' },
+      { type: 'feature', description: 'The Agent Canvas has a library: every canvas on this machine, newest first, with what it is of, the project it came from and how many versions it holds — and each can be deleted, which nothing could do before. Deleting was reviewed hard: it takes an id and never a path, is confined to the canvas store, and refuses to follow a link planted inside a canvas folder on the runtime the app actually ships. A locked file no longer leaves a half-deleted canvas that reports either success or failure untruthfully.' },
+      { type: 'feature', description: 'A canvas now holds one subject. Claude names what it is showing on every render — "Title bar logo placement", "Checkout flow" — so re-rendering the same subject adds a version, and rendering a different one files the current canvas and starts fresh. That stops the panel showing "open notes from earlier reviews" that belong to something else entirely, anchored to elements that are not on the page. Coming back to a filed subject reopens it with its versions and its notes; a restart reopens the one you were last working on; and it works in every script, not only English.' },
+      { type: 'improvement', description: 'After you finish a canvas review and submit, the pane hands back to the terminal on its own, and a mode badge says whether you are looking at a mockup or the real built site.' },
+      { type: 'feature', description: 'What\'s New and the first-run tour now decide what to show from the version you came from, not just whether the version changed. A fresh install gets the tour and no release notes; an upgrade across a release line — 2.0 to 2.1 — gets everything new since 2.0 and walks the tour again; a move within a line gets the notes only. The notes cover every release you missed rather than the newest one, the tour\'s upgrade page finally describes 2.1 instead of 2.0, and the release-notes surface that had been silently missing for anyone updating within a stable line is back.' },
+      { type: 'improvement', description: 'The brand mark now sits beside the app name in the title bar rather than stranded at the far edge with the sidebar button between them.' },
+      { type: 'improvement', description: 'The README was rewritten against what the app actually does. Download names, notarisation, the permissions description, the outbound-traffic list, the engine versions and several described-but-never-built features were all wrong; the 2.1 line — remote sessions that survive a dropped link, the Agent Canvas, in-app sign-in, Insights — was absent. Screenshots are next.' },
+      { type: 'fix', description: 'Saved-config labels in the sidebar are no longer truncated against invisible hover buttons.' }
+    ]
+  },
+  {
     version: '2.1.0-beta.14',
     date: '2026-08-18',
     highlights: 'Fixes severe terminal flashing and unreadable, broken text introduced in 2.1.0-beta.13. If you are on beta.13, update.',
