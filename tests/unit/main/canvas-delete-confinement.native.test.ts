@@ -150,6 +150,36 @@ describe('deleteCanvas confinement, on the shipped runtime', () => {
     expect(fs.existsSync(path.join(canvasRoot(), id))).toBe(true)
   })
 
+  // Fail posture. Not runtime-specific, but it exercises the same delete path
+  // and round 2 found the bug here, so it is pinned alongside its neighbours.
+  it('reports failure and KEEPS the record when the canvas could not be removed', () => {
+    const { canvasId } = renderDesign('one')
+    const anchor = path.join(canvasRoot(), canvasId, 'canvas.json')
+
+    // Stand in for the un-unlinkable anchor. The real-world shape is a sharing
+    // violation — antivirus or the search indexer holding a handle without
+    // FILE_SHARE_DELETE — which cannot be produced from Node (its own opens
+    // permit delete, and the read-only attribute does not stop unlink). A
+    // non-empty directory in the anchor's place makes `unlinkSync` throw for the
+    // same reason the real case does: the anchor survives the attempt.
+    fs.rmSync(anchor)
+    fs.mkdirSync(anchor)
+    fs.writeFileSync(path.join(anchor, 'held'), 'x')
+
+    expect(store.deleteCanvas(canvasId)).toBe(false)
+
+    // The claim and the disk agree: nothing was removed, the row is still there
+    // to retry, and its reviews were not dropped out from under it.
+    expect(fs.existsSync(path.join(canvasRoot(), canvasId))).toBe(true)
+    expect(store.listAllCanvases().some((e) => e.canvasId === canvasId)).toBe(true)
+
+    // And it deletes cleanly once the obstruction is gone.
+    fs.rmSync(anchor, { recursive: true })
+    fs.writeFileSync(anchor, '{}')
+    expect(store.deleteCanvas(canvasId)).toBe(true)
+    expect(fs.existsSync(path.join(canvasRoot(), canvasId))).toBe(false)
+  })
+
   it('does not delete a SIBLING canvas reached through a top-level link', () => {
     // The in-root variant: <root>/<idA> is a link to <root>/<idB>. `path.relative`
     // sees a single in-root segment, so the top-level check alone would allow it.

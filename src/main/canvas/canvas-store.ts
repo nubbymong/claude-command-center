@@ -1080,6 +1080,49 @@ export function listAllCanvases(openTileSessionIds: readonly string[] = []): Can
  * depth cap bounds recursion over a tree that has been tampered with; a real
  * canvas is three levels deep.
  */
+/**
+ * Remove one canvas directory, reporting what actually happened.
+ *
+ * Three outcomes rather than a boolean, because "I deleted nothing" and "the
+ * canvas is gone" were previously indistinguishable and the caller guessed
+ * wrong: a sharing violation from AV or the search indexer left the canvas
+ * fully intact on disk while the UI said it had been deleted, and the record
+ * came back on the next disk scan.
+ */
+function removeCanvasDirectory(dir: string): 'removed' | 'absent' | 'failed' {
+  let st: fs.Stats
+  try {
+    st = fs.lstatSync(dir)
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'absent' : 'failed'
+  }
+  // A link sitting where the canvas directory should be is refused outright:
+  // every path built from here would resolve through it.
+  if (!st.isDirectory() || st.isSymbolicLink()) return 'failed'
+
+  // canvas.json is the provenance anchor — `ensureDiskScanned` does not see a
+  // canvas without one — so removing it FIRST makes the deletion irreversible
+  // before any bulk removal can fail part-way. `dir` was just confirmed to be a
+  // real directory, so this join cannot resolve through a planted link.
+  try {
+    fs.unlinkSync(path.join(dir, 'canvas.json'))
+  } catch (err) {
+    // Already gone is fine. Anything else means the anchor SURVIVES, so the
+    // canvas would reappear on the next scan — report failure instead of
+    // half-deleting it and dropping the record.
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return 'failed'
+  }
+
+  try {
+    removeTreeNoFollow(dir)
+  } catch (err) {
+    // The anchor is already gone, so the canvas cannot return; some files just
+    // could not be unlinked. Destroyed either way — say so, and leave a trace.
+    console.warn('[canvas-store] canvas deleted with files left behind:', err)
+  }
+  return 'removed'
+}
+
 function removeTreeNoFollow(target: string, depth = 0): void {
   if (depth > 64) throw new Error('canvas delete: tree deeper than expected, refusing to recurse')
   let st: fs.Stats
@@ -1141,6 +1184,7 @@ export function deleteCanvas(canvasId: string): boolean {
   }
   const dir = path.join(root, canvasId)
   let removable = false
+  let alreadyGone = false
   try {
     // realpath, NOT the joined string: the join is traversal-safe thanks to the
     // charset gate, but only resolving links proves the directory is really
@@ -1159,45 +1203,20 @@ export function deleteCanvas(canvasId: string): boolean {
       process.platform === 'win32'
         ? realDir.toLowerCase() === expected.toLowerCase()
         : realDir === expected
-  } catch {
-    removable = false // already gone, or unresolvable -- drop the record anyway
+  } catch (err) {
+    // ENOENT is a successful outcome for a delete — there is nothing there to
+    // remove. Any other error (typically a sharing violation) means we do NOT
+    // know what is on disk, and must not report success.
+    alreadyGone = (err as NodeJS.ErrnoException)?.code === 'ENOENT'
+    removable = false
   }
 
-  if (removable) {
-    // Order matters. canvas.json is the provenance anchor — a directory without
-    // one is not a canvas to `ensureDiskScanned`, so unlinking it FIRST makes
-    // the deletion irreversible before any bulk removal can fail part-way.
-    //
-    // But `unlinkSync` follows links in the PATH it is given, so this is only
-    // safe once `dir` has been re-confirmed to be a real directory rather than
-    // a link. Skipping that check is not hypothetical: it is what the first
-    // version of this fix did, and the sibling-link test caught it reaching
-    // through a planted junction to delete another canvas's record.
-    let dirIsReal = false
-    try {
-      const st = fs.lstatSync(dir)
-      dirIsReal = st.isDirectory() && !st.isSymbolicLink()
-    } catch {
-      dirIsReal = false
-    }
-    if (dirIsReal) {
-      try {
-        fs.unlinkSync(canvasJsonPath(canvasId))
-      } catch {
-        /* already gone, or the dir has no record file */
-      }
-    }
-    try {
-      removeTreeNoFollow(dir)
-    } catch (err) {
-      // A locked file (the app serving it, a browser holding a handle, the
-      // indexer) leaves part of the tree behind. Removal is NOT atomic, so by
-      // this point files are already unlinked and canvas.json is gone: the
-      // canvas is destroyed either way. Keeping the record would surface a row
-      // that opens to a blank pane, which is the worse lie — so fall through
-      // and drop it, and leave a trace of the residue for diagnosis.
-      console.warn('[canvas-store] canvas', canvasId, 'deleted with files left behind:', err)
-    }
+  const outcome = removable ? removeCanvasDirectory(dir) : alreadyGone ? 'absent' : 'failed'
+  if (outcome === 'failed') {
+    // Nothing was removed and the canvas is still whole. Keep the record: a row
+    // the user can retry is honest, where dropping it would hide a canvas that
+    // reappears at the next launch — and would take its reviews with it.
+    return false
   }
 
   canvases.delete(canvasId)
@@ -1210,7 +1229,7 @@ export function deleteCanvas(canvasId: string): boolean {
   if (record) {
     emitChanged({ ...record, activeVersionId: null })
   }
-  return record !== undefined || removable
+  return record !== undefined || outcome === 'removed'
 }
 
 export function adoptCanvasForSession(
