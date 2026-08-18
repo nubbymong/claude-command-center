@@ -1,5 +1,6 @@
 import { useSessionStore } from './stores/sessionStore'
 import { useAccountGateStore } from './stores/accountGateStore'
+import { useSettingsStore } from './stores/settingsStore'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Serialize the current sessionStore into the shape the main process persists.
@@ -135,6 +136,16 @@ export function markRestoredSessionsPredetermined(sessionIds: string[]): void {
 
 export async function persistLastUsedAccount(sessionId: string, profileId: string | undefined): Promise<void> {
   useSessionStore.getState().updateSession(sessionId, { profileId })
+  // Record it as the GLOBAL last-used account so the launch gate can offer it as
+  // a one-click default for the next new session. Only a real choice updates it
+  // (never clear it back to undefined). Best-effort persist.
+  if (profileId) {
+    // updateSettings returns a Promise: attach .catch (a bare try/catch would
+    // not see an async rejection and it would surface as unhandled).
+    try {
+      void useSettingsStore.getState().updateSettings({ lastUsedAccountId: profileId }).catch(() => { /* non-fatal */ })
+    } catch { /* non-fatal (synchronous set() failure) */ }
+  }
   try {
     await window.electronAPI.session.save(buildSessionState())
   } catch {

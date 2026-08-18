@@ -103,17 +103,30 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     expect(toggle()).toBeNull()
   })
 
-  it('the one-row layout is visually unchanged: gap-6, no extra vertical padding, no truncation', () => {
+  it('the one-row layout keeps the tighter gap and no extra vertical padding, no truncation', () => {
     useAccounts(3)
     render()
     const strip = container.querySelector<HTMLElement>('[data-testid="multi-account-statusline"]')!
     expect(strip.className).not.toContain('py-1') // the bar does not grow
-    expect(rows()[0].className).toContain('gap-6') // the original inter-pill gap
-    expect(rows()[0].className).not.toContain('gap-4')
+    // The boxed-pill design carries the visual boundary, so the inter-pill gap
+    // tightened from gap-6 to gap-3.
+    expect(rows()[0].className).toContain('gap-3')
+    expect(rows()[0].className).not.toContain('gap-6')
     // Pills keep their full width (email un-truncated) exactly as before.
     for (const p of pills()) {
       expect(p.className).toContain('shrink-0')
       expect(p.innerHTML).not.toContain('truncate')
+    }
+  })
+
+  it('every account sits in its own bounded pill (border + rounded), separating them structurally', () => {
+    useAccounts(3)
+    render()
+    for (const p of pills()) {
+      expect(p.className).toContain('rounded-full')
+      expect(p.className).toContain('border')
+      // A visible boundary, not whitespace alone.
+      expect(p.getAttribute('style') ?? '').toContain('border-color')
     }
   })
 
@@ -122,7 +135,7 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     render()
     const strip = container.querySelector<HTMLElement>('[data-testid="multi-account-statusline"]')!
     expect(strip.className).toContain('py-1')
-    expect(rows()[0].className).toContain('gap-4')
+    expect(rows()[0].className).toContain('gap-2')
     // Pills may shrink and the email ellipsises so three fit at the 1280px
     // minimum window width; the full address stays in the pill's title.
     for (const p of pills()) {
