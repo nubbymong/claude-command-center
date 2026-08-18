@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   shouldRepaintOnOutput,
+  shouldSoftRepaintOnOutput,
   outputRepaintIntervalMs,
   createStaleGlyphRepainter,
   REPAINT_MIN_INTERVAL_MS,
@@ -31,11 +32,31 @@ describe('shouldRepaintOnOutput', () => {
     expect(shouldRepaintOnOutput({ ...base, msSinceWheel: WHEEL_ACTIVE_MS - 1 })).toBe(true)
   })
 
-  // #273 follow-up: the ghost also forms under steady at-bottom streaming with
-  // no scroll at all (a slicer's stderr) — and stayed, because nothing repainted.
-  it('repaints at the bottom with no recent scroll too (ghost-at-bottom follow-up)', () => {
-    expect(shouldRepaintOnOutput({ ...base, msSinceWheel: WHEEL_ACTIVE_MS })).toBe(true)
-    expect(shouldRepaintOnOutput({ ...base, msSinceWheel: Infinity })).toBe(true)
+  // beta.14 regression fix. #292 made this return true for EVERY normal-buffer
+  // chunk, which meant an atlas rebuild 1-4 times a second for as long as output
+  // flowed. Claude Code renders in the normal buffer, so that ran for the whole
+  // life of every session: continuous flashing, and frames drawn against a
+  // half-rebuilt atlas. The STRONG (atlas-rebuilding) repaint is only for the
+  // conditions that corrupt the atlas; at-bottom streaming takes the cheap path.
+  it('does NOT force an atlas rebuild for steady at-bottom streaming', () => {
+    expect(shouldRepaintOnOutput({ ...base, msSinceWheel: WHEEL_ACTIVE_MS })).toBe(false)
+    expect(shouldRepaintOnOutput({ ...base, msSinceWheel: Infinity })).toBe(false)
+  })
+})
+
+// #273 follow-up: the ghost also forms under steady at-bottom streaming with no
+// scroll at all (a slicer's stderr) — and stayed, because nothing repainted. That
+// coverage is kept, as a refresh-only repaint.
+describe('shouldSoftRepaintOnOutput', () => {
+  const base = { alternateBuffer: false, scrolledUp: false, msSinceWheel: Infinity, wheelActiveMs: WHEEL_ACTIVE_MS }
+
+  it('covers steady at-bottom streaming (the case the strong repaint no longer takes)', () => {
+    expect(shouldSoftRepaintOnOutput({ ...base, msSinceWheel: WHEEL_ACTIVE_MS })).toBe(true)
+    expect(shouldSoftRepaintOnOutput({ ...base, msSinceWheel: Infinity })).toBe(true)
+  })
+
+  it('still leaves the alternate screen alone', () => {
+    expect(shouldSoftRepaintOnOutput({ ...base, alternateBuffer: true })).toBe(false)
   })
 })
 
@@ -66,6 +87,7 @@ function makeHarness({ webglActive = true }: { webglActive?: boolean } = {}) {
 
   const deps = {
     clearAtlas: () => { clearAtlas++; return webglActive },
+    atlasActive: () => webglActive,
     refresh: () => { refresh++ },
     now: () => time,
     setTimer: (cb: () => void, ms: number) => {
@@ -98,6 +120,61 @@ function makeHarness({ webglActive = true }: { webglActive?: boolean } = {}) {
     pendingTimers: () => timers.length,
   }
 }
+
+describe('createStaleGlyphRepainter — the cheap (soft) repaint, beta.14', () => {
+  // The beta.13 regression: every chunk of normal-buffer output rebuilt the
+  // glyph atlas, so a Claude Code session (normal buffer, output essentially
+  // continuous) flashed nonstop and drew frames against a half-rebuilt atlas.
+  // A stale painted cell only needs the viewport re-rendered from the atlas
+  // already in memory.
+  it('refreshes WITHOUT rebuilding the atlas when strong=false', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    r.schedule(1000, false)
+    expect(h.counts()).toEqual({ clearAtlas: 0, refresh: 1 })
+  })
+
+  it('never rebuilds the atlas across a long at-bottom stream', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    // 30 seconds of steady output at the at-bottom pace.
+    for (let i = 0; i < 300; i++) {
+      r.schedule(1000, false)
+      r.settle(300, 1000, false)
+      h.advance(100)
+    }
+    h.advance(2000)
+    expect(h.counts().clearAtlas).toBe(0)
+  })
+
+  it('skips even the refresh when WebGL is inactive (nothing to repaint)', () => {
+    const h = makeHarness({ webglActive: false })
+    const r = createStaleGlyphRepainter(h.deps)
+    r.schedule(1000, false)
+    expect(h.counts()).toEqual({ clearAtlas: 0, refresh: 0 })
+  })
+
+  // A wheel landing mid-stream must still get the atlas rebuild it asked for,
+  // rather than being swallowed by a cheap repaint that coalesced first.
+  it('upgrades a coalesced window to strong when any request in it was strong', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    r.schedule(1000, false)            // leading edge: cheap repaint
+    expect(h.counts()).toEqual({ clearAtlas: 0, refresh: 1 })
+    h.advance(50)
+    r.schedule(1000, false)            // coalesced, cheap
+    r.schedule(1000, true)             // ...then a wheel arrives: strong
+    h.advance(1000)
+    expect(h.counts().clearAtlas).toBe(1)
+  })
+
+  it('defaults to a strong repaint when no flag is passed', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    r.schedule(1000)
+    expect(h.counts()).toEqual({ clearAtlas: 1, refresh: 1 })
+  })
+})
 
 describe('createStaleGlyphRepainter', () => {
   it('exposes the documented throttle interval default', () => {

@@ -65,15 +65,37 @@ export interface OutputRepaintState {
 }
 
 /**
- * Should arriving output trigger a stale-glyph repaint?
+ * Should arriving output trigger the STRONG repaint (atlas rebuild + refresh)?
  *
- * Every NORMAL-buffer chunk qualifies — at the bottom too, since the ghost also
+ * beta.14 regression fix: #292 widened this to every normal-buffer chunk, so an
+ * atlas rebuild ran 1-4 times a second for as long as output flowed. Claude Code
+ * renders in the NORMAL buffer, not the alternate screen, so the exemption below
+ * never applied to this app's main use case: sessions flashed continuously and
+ * drew frames against a half-rebuilt atlas. The strong repaint is back to the
+ * conditions that actually corrupt the atlas (scrolled up, or wheeling); steady
+ * at-bottom streaming takes the cheap path instead (shouldSoftRepaintOnOutput).
+ *
+ * Superseded text kept for context: every NORMAL-buffer chunk qualified — at the bottom too, since the ghost also
  * forms under steady at-bottom streaming with no scroll (#273 follow-up). The
  * alternate screen (a TUI, Claude's own UI) owns its full repaints and does not
  * accumulate these stale cells, so it is left alone. How OFTEN a qualifying
  * stream repaints is `outputRepaintIntervalMs`.
  */
 export function shouldRepaintOnOutput(s: OutputRepaintState): boolean {
+  if (s.alternateBuffer) return false
+  return s.scrolledUp || s.msSinceWheel < s.wheelActiveMs
+}
+
+/**
+ * Should arriving output trigger the CHEAP repaint (refresh only, no atlas
+ * rebuild)?
+ *
+ * This is the at-bottom coverage #292 added, minus the part that made beta.13
+ * unusable. A merely-stale viewport is fixed by marking it dirty and
+ * re-rendering from the atlas already in memory; rebuilding the atlas was never
+ * what fixed that, and doing so on a schedule is what caused the flashing.
+ */
+export function shouldSoftRepaintOnOutput(s: OutputRepaintState): boolean {
   return !s.alternateBuffer
 }
 
@@ -92,6 +114,11 @@ export interface RepainterDeps {
    *  atlas was actually cleared; false on the DOM-renderer fallback (or an
    *  unrecovered context loss) — nothing to clear, so nothing to repaint. */
   clearAtlas: () => boolean
+  /** True when the WebGL renderer is live, WITHOUT rebuilding anything. Gates
+   *  the cheap repaint so a DOM-renderer session (which never had the artifact)
+   *  pays nothing — the same reasoning that gates the strong path on
+   *  clearAtlas()'s return value. */
+  atlasActive: () => boolean
   /** Mark the viewport dirty so it re-renders (term.refresh(0, rows-1)). */
   refresh: () => void
   now: () => number
@@ -102,16 +129,19 @@ export interface RepainterDeps {
 }
 
 export interface StaleGlyphRepainter {
-  /** Request a strong repaint soon. Leading-edge immediate, then coalesced into
-   *  at most one repaint per interval for the rest of a burst. `intervalMs`
-   *  overrides the pace for this request (defaults to the repainter's). */
-  schedule(intervalMs?: number): void
+  /** Request a repaint soon. Leading-edge immediate, then coalesced into at most
+   *  one repaint per interval for the rest of a burst. `intervalMs` overrides
+   *  the pace for this request (defaults to the repainter's). `strong` (default
+   *  true) rebuilds the glyph atlas; pass false for the cheap refresh-only
+   *  repaint. If ANY request coalesced into a window was strong, the single
+   *  repaint that window produces is strong. */
+  schedule(intervalMs?: number, strong?: boolean): void
   /** Arm (or re-arm) ONE repaint for when requests go quiet: fires `quietMs`
    *  after the last settle() call, through the normal throttle at `intervalMs`
    *  (default the repainter's). A continuous stream keeps pushing it out; the
    *  moment it stops, the last chunk's ghost is cleared. Pass the stream's own
    *  pace so a settle firing mid-stream cannot repaint faster than the stream. */
-  settle(quietMs?: number, intervalMs?: number): void
+  settle(quietMs?: number, intervalMs?: number, strong?: boolean): void
   /** Cancel any pending repaint and refuse further ones. */
   dispose(): void
 }
@@ -128,6 +158,8 @@ export interface StaleGlyphRepainter {
 export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepainter {
   const minInterval = deps.minIntervalMs ?? REPAINT_MIN_INTERVAL_MS
   let lastPaintAt = Number.NEGATIVE_INFINITY
+  /** Whether the repaint this throttle window will produce must rebuild the atlas. */
+  let pendingStrong = false
   let timer: ReturnType<typeof setTimeout> | null = null
   /** When the armed trailing timer is due (deps.now() clock), so a faster-paced
    *  request can tell whether it would fire sooner and bring it forward. */
@@ -135,8 +167,16 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
   let settleTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
 
-  const paint = () => {
+  const paint = (strong: boolean) => {
     lastPaintAt = deps.now()
+    if (!strong) {
+      // Cheap path (#292 at-bottom coverage): re-render the viewport from the
+      // atlas ALREADY in memory. Fixes a stale painted cell without the rebuild
+      // that made beta.13 flash. Gated on WebGL being live for the same reason
+      // the strong path is.
+      if (deps.atlasActive()) deps.refresh()
+      return
+    }
     // clearAtlas() rebuilds the WebGL glyph atlas; refresh() then re-rasters
     // against it (the programmatic equivalent of the window-move full repaint).
     // When WebGL isn't active clearAtlas() returns false — there is no atlas
@@ -146,14 +186,20 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
     if (deps.clearAtlas()) deps.refresh()
   }
 
-  const schedule = (intervalMs: number = minInterval) => {
+  const schedule = (intervalMs: number = minInterval, strong: boolean = true) => {
     if (disposed) return
     const since = deps.now() - lastPaintAt
     if (since >= intervalMs) {
       if (timer) { deps.clearTimer(timer); timer = null; timerDueAt = Number.POSITIVE_INFINITY }
-      paint()
+      const wasStrong = strong || pendingStrong
+      pendingStrong = false
+      paint(wasStrong)
       return
     }
+    // A strong request anywhere in the window wins: a wheel landing mid at-bottom
+    // stream must still get its atlas rebuild, not be swallowed by the cheap
+    // repaint that happened to be scheduled first.
+    pendingStrong = pendingStrong || strong
     // Inside the window: one trailing repaint at the edge of THIS request's
     // window (lastPaintAt + intervalMs). An armed timer that is due no later
     // stands (never push a repaint out — that would starve a steady stream); a
@@ -171,11 +217,13 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
       timer = null
       timerDueAt = Number.POSITIVE_INFINITY
       if (disposed) return
-      paint()
+      const wasStrong = pendingStrong
+      pendingStrong = false
+      paint(wasStrong)
     }, intervalMs - since)
   }
 
-  const settle = (quietMs: number = SETTLE_QUIET_MS, intervalMs: number = minInterval) => {
+  const settle = (quietMs: number = SETTLE_QUIET_MS, intervalMs: number = minInterval, strong: boolean = true) => {
     if (disposed) return
     // Debounce: every call pushes the settle repaint out to quietMs from NOW.
     if (settleTimer) deps.clearTimer(settleTimer)
@@ -189,7 +237,7 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
       // at-bottom stream stays at its 1/sec pace instead of the settle dragging
       // it up to the chunk rate; when the stream truly stops, the final ghost is
       // still cleared within one interval. See BOTTOM_STREAM_INTERVAL_MS.
-      schedule(intervalMs)
+      schedule(intervalMs, strong)
     }, quietMs)
   }
 

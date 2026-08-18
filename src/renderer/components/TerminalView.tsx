@@ -8,6 +8,7 @@ import { installWebglWithRecovery, type WebglHandle } from './terminal/terminalW
 import {
   createStaleGlyphRepainter,
   shouldRepaintOnOutput,
+  shouldSoftRepaintOnOutput,
   outputRepaintIntervalMs,
   WHEEL_ACTIVE_MS,
   type StaleGlyphRepainter,
@@ -449,6 +450,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // wasn't (DOM-renderer fallback / unrecovered context loss) the repainter
         // skips the refresh — a DOM-renderer session has no atlas ghost to bust.
         clearAtlas: () => webglHandle?.clearTextureAtlas() ?? false,
+        atlasActive: () => webglHandle?.isActive() ?? false,
         refresh: () => { try { term?.refresh(0, term.rows - 1) } catch { /* disposed */ } },
         now: Date.now,
         setTimer: (cb, ms) => setTimeout(cb, ms),
@@ -828,6 +830,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // scrolled up / wheel-active and 1/sec for steady at-bottom streaming,
         // and one settle repaint clears the last chunk's ghost once the stream
         // goes quiet. The repainter skips the refresh when WebGL isn't active.
+        //
+        // beta.14: only the scrolled-up / wheel-active case rebuilds the glyph
+        // ATLAS. At-bottom streaming gets a refresh-only repaint, because Claude
+        // Code renders in the normal buffer, so a rebuild-per-chunk ran for the
+        // entire life of every session — continuous flashing and frames drawn
+        // against a half-rebuilt atlas (the beta.13 regression).
         if (term && repainter) {
           const repaintState = {
             alternateBuffer: term.buffer.active.type === 'alternate',
@@ -835,14 +843,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             msSinceWheel: Date.now() - lastWheelAt,
             wheelActiveMs: WHEEL_ACTIVE_MS,
           }
-          if (shouldRepaintOnOutput(repaintState)) {
+          const strong = shouldRepaintOnOutput(repaintState)
+          if (strong || shouldSoftRepaintOnOutput(repaintState)) {
             const paceMs = outputRepaintIntervalMs(repaintState)
-            repainter.schedule(paceMs)
+            repainter.schedule(paceMs, strong)
             // Settle at the SAME pace: a between-chunks settle on a steady
             // at-bottom stream must not repaint faster than the stream (it would
             // defeat the 1/sec bound); when output truly stops it still clears
             // the final ghost within one interval.
-            repainter.settle(undefined, paceMs)
+            repainter.settle(undefined, paceMs, strong)
           }
         }
 

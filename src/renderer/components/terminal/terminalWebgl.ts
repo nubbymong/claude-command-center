@@ -28,8 +28,22 @@ export interface WebglHandle {
    * true if it ran, false when WebGL isn't active (initial load failed, or a
    * context loss dropped us to the DOM renderer) — in which case the caller's
    * `term.refresh()` is the repaint that matters.
+   *
+   * EXPENSIVE: every glyph on screen must be re-rasterized afterwards. Calling
+   * it on a schedule during continuous output makes the terminal flash and
+   * renders frames against a half-rebuilt atlas (beta.13 regression, #292).
+   * Reserve it for the cases that actually corrupt the atlas; use `isActive()`
+   * plus a plain `term.refresh()` for a merely-stale viewport.
    */
   clearTextureAtlas(): boolean
+  /**
+   * True when the WebGL renderer is currently live. Lets a caller do the cheap
+   * half of a repaint (mark the viewport dirty, re-render from the EXISTING
+   * atlas) without paying for an atlas rebuild, while still skipping the work
+   * entirely on a DOM-renderer session that never had the artifact (#273
+   * adversarial review).
+   */
+  isActive(): boolean
 }
 
 /**
@@ -101,6 +115,9 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
         // active" so the caller falls back to a plain refresh.
         return false
       }
+    },
+    isActive() {
+      return currentAddon !== null
     },
   }
 }
