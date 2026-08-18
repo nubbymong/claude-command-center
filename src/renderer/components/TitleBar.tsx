@@ -198,11 +198,6 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         ...(isDev ? { boxShadow: 'inset 0 -2px 0 var(--status-warning)' } : {}),
       }}
     >
-      {/* Brand mark. Deliberately left INSIDE the drag region: it is decorative,
-          so the window stays draggable by it rather than presenting a dead
-          click target. aria-hidden — the window title already names the app. */}
-      <BrandMark className="w-[18px] h-[18px] shrink-0 mr-2.5 opacity-95" />
-
       <div className="titlebar-no-drag flex items-center gap-1 mr-3">
         <button
           onClick={onToggleSidebar}
@@ -217,6 +212,13 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       </div>
 
       <div className="flex-1 text-center text-xs text-overlay1 font-medium flex items-center justify-center gap-0">
+        {/* Brand mark, beside the name it belongs to rather than stranded at the
+            far edge with the sidebar toggle between them — the two read as one
+            lockup. Still INSIDE the drag region (this container never opts out
+            with titlebar-no-drag), so the window is still draggable by it
+            rather than presenting a dead click target. aria-hidden lives on the
+            svg itself: the window title already names the app. */}
+        <BrandMark className="w-[18px] h-[18px] shrink-0 mr-2 opacity-95" />
         <span>AI Code Conductor</span>
         {isDev && (
           <span
