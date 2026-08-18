@@ -79,7 +79,7 @@ export interface CanvasToolDeps {
   readAttachment: (absPath: string) => Buffer
   /** Mark notes the agent has acted on. The agent's one write into the review
    *  store, and it can only ever say "addressed" — see canvas_resolve. */
-  markAddressed: (sessionId: string, annotationIds: readonly string[]) => { addressed: string[]; skipped: string[] }
+  markAddressed: (sessionId: string, reviewId: string, annotationIds: readonly string[]) => { addressed: string[]; skipped: string[] }
 }
 
 function textResult(text: string, isError = false) {
@@ -651,9 +651,12 @@ export async function runCanvasReview(
 }
 
 interface RawResolveArgs {
+  reviewId?: unknown
   annotationIds?: unknown
   cccSessionId?: unknown
 }
+
+const REVIEW_ID_SHAPE = /^R[0-9]{1,9}$/
 
 /** Bound on one call. A review holds at most 100 notes; a list longer than
  *  that is not a review the user wrote. */
@@ -679,6 +682,12 @@ export function runCanvasResolve(
   sessionId: string,
   deps: Pick<CanvasToolDeps, 'markAddressed'>,
 ): { text: string; isError: boolean } {
+  // The review the notes belong to. Required: annotation ids restart per
+  // canvas and the session's canvas can change between review and resolve, so
+  // without it the write could land on the wrong canvas's a1/a2.
+  if (typeof rawArgs.reviewId !== 'string' || !REVIEW_ID_SHAPE.test(rawArgs.reviewId)) {
+    return { text: 'canvas_resolve needs `reviewId` — the review the notes came from, as the chat marker gave it (e.g. "R3").', isError: true }
+  }
   const raw = rawArgs.annotationIds
   if (!Array.isArray(raw) || raw.length === 0) {
     return { text: 'canvas_resolve needs `annotationIds`: the note ids from canvas_review that you have acted on, e.g. ["a2","a3"].', isError: true }
@@ -695,7 +704,7 @@ export function runCanvasResolve(
   }
   let result: { addressed: string[]; skipped: string[] }
   try {
-    result = deps.markAddressed(sessionId, ids)
+    result = deps.markAddressed(sessionId, rawArgs.reviewId, ids)
   } catch (err) {
     return { text: `Could not mark notes: ${describeResolveFailure(err)}`, isError: true }
   }
@@ -710,6 +719,8 @@ export function runCanvasResolve(
 function describeResolveFailure(err: unknown): string {
   const msg = err instanceof Error ? err.message : ''
   if (msg === 'no canvas for session') return 'this session has no canvas.'
+  if (msg === 'review not on this canvas') return 'that review is not on this session\'s current canvas. If your last render named a different subject, the canvas changed under you — re-render the subject the review belongs to, then resolve.'
+  if (msg === 'review is still a draft') return 'that review has not been submitted yet.'
   if (msg.includes('review store')) return 'the review store for this canvas is unreadable.'
   return 'the review store refused the change.'
 }
@@ -841,8 +852,9 @@ export function registerCanvasTools(
 
   server.tool(
     'canvas_resolve',
-    'Mark notes from a canvas review as ADDRESSED once you have acted on them. Pass the note ids canvas_review gave you (e.g. ["a2","a3"]). Call this after your canvas_render of the result, for every note you handled — including notes the user answered in chat instead of the pane, so they do not sit open forever. This never approves anything: the user still gives the final verdict from the Canvas pane, and addressed notes stay visible there until they do. Notes the user has already resolved, or is still drafting, are left alone.',
+    'Mark notes from a canvas review as ADDRESSED once you have acted on them. Pass the review id and the note ids canvas_review gave you (e.g. reviewId "R3", annotationIds ["a2","a3"]). Call this after your canvas_render of the result, for every note you handled — including notes the user answered in chat instead of the pane, so they do not sit open forever. This never approves anything: the user still gives the final verdict from the Canvas pane, and addressed notes stay visible there until they do. Notes the user has already resolved, or is still drafting, are left alone.',
     {
+      reviewId: zMod.string().describe('The review the notes came from, e.g. "R3" — the same id you passed to canvas_review.'),
       annotationIds: zMod
         .array(zMod.string())
         .describe('The note ids you acted on, exactly as canvas_review reported them ("a2", "a3", …). At most 100.'),

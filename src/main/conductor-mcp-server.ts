@@ -805,7 +805,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
         readAttachment: (absPath) => fs.readFileSync(absPath),
-        markAddressed: (sessionId, ids) => markAnnotationsAddressed(sessionId, ids),
+        markAddressed: (sessionId, reviewId, ids) => markAnnotationsAddressed(sessionId, reviewId, ids),
         /**
          * Read a design document the agent wrote to disk (`htmlPath`).
          *

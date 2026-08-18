@@ -325,19 +325,19 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
   // let the agent say "done with these", so a review the user finished in chat
   // rather than in the pane sat as N open notes forever and rode forward onto
   // the next render as if unanswered.
-  function submitted(): { versionId: string; a1: string; a2: string; a3: string } {
+  function submitted(): { versionId: string; rid: string; a1: string; a2: string; a3: string } {
     const { versionId } = renderCanvas()
     const one = store.upsertAnnotation(SID, elementDraft(versionId, 'first'))
     const two = store.upsertAnnotation(SID, elementDraft(versionId, 'second'))
     const three = store.upsertAnnotation(SID, { scope: 'general', note: 'third', versionId })
     const reviewId = one.state.reviews.find((r) => r.status === 'draft')!.id
     store.submitReview(SID, reviewId, [])
-    return { versionId, a1: one.annotationId, a2: two.annotationId, a3: three.annotationId }
+    return { versionId, rid: reviewId, a1: one.annotationId, a2: two.annotationId, a3: three.annotationId }
   }
 
   it('moves open notes on a submitted review to addressed', () => {
-    const { a1, a2, a3 } = submitted()
-    const r = store.markAnnotationsAddressed(SID, [a1, a3])
+    const { rid, a1, a2, a3 } = submitted()
+    const r = store.markAnnotationsAddressed(SID, rid, [a1, a3])
     expect(r.addressed).toEqual([a1, a3])
     expect(r.skipped).toEqual([])
     const by = Object.fromEntries(r.state.annotations.map((a) => [a.id, a.state]))
@@ -347,10 +347,10 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
   })
 
   it('never touches what the user has already resolved', () => {
-    const { a1, a2 } = submitted()
+    const { rid, a1, a2 } = submitted()
     store.resolveAnnotation(SID, a1, 'approve')
     store.resolveAnnotation(SID, a2, 'dismiss')
-    const r = store.markAnnotationsAddressed(SID, [a1, a2])
+    const r = store.markAnnotationsAddressed(SID, rid, [a1, a2])
     expect(r.addressed).toEqual([])
     expect(r.skipped).toEqual(expect.arrayContaining([a1, a2]))
     const by = Object.fromEntries(r.state.annotations.map((a) => [a.id, a.state]))
@@ -359,17 +359,16 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
     expect(by[a2]).toBe('dismissed')
   })
 
-  it('leaves a draft the user is still writing alone', () => {
+  it('refuses a review the user is still drafting', () => {
     const { versionId } = renderCanvas()
-    const { annotationId } = store.upsertAnnotation(SID, elementDraft(versionId))
-    const r = store.markAnnotationsAddressed(SID, [annotationId])
-    expect(r.addressed).toEqual([])
-    expect(r.skipped).toEqual([annotationId])
+    const { state, annotationId } = store.upsertAnnotation(SID, elementDraft(versionId))
+    const draftId = state.reviews.find((r) => r.status === 'draft')!.id
+    expect(() => store.markAnnotationsAddressed(SID, draftId, [annotationId])).toThrow(/still a draft/)
   })
 
   it('skips unknown and malformed ids rather than failing the whole call', () => {
-    const { a1 } = submitted()
-    const r = store.markAnnotationsAddressed(SID, [a1, 'a999', 'not-an-id', '../x'])
+    const { rid, a1 } = submitted()
+    const r = store.markAnnotationsAddressed(SID, rid, [a1, 'a999', 'not-an-id', '../x'])
     expect(r.addressed).toEqual([a1])
     // Malformed ids never even reach the record; unknown-but-well-formed are
     // reported so the agent knows.
@@ -377,26 +376,26 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
   })
 
   it('does not write when nothing changed', () => {
-    const { a1 } = submitted()
+    const { rid, a1 } = submitted()
     store.resolveAnnotation(SID, a1, 'approve')
     const canvas = canvasStore.getCanvasStateForSession(SID)!
     const file = path.join(getResourcesDirectory(), 'canvas', canvas.canvasId, 'reviews.json')
     const before = fs.statSync(file).mtimeMs
-    store.markAnnotationsAddressed(SID, [a1])
+    store.markAnnotationsAddressed(SID, rid, [a1])
     expect(fs.statSync(file).mtimeMs).toBe(before)
   })
 
   it('the user can still approve or dismiss an ADDRESSED note — the verdict is theirs', () => {
-    const { a1 } = submitted()
-    store.markAnnotationsAddressed(SID, [a1])
+    const { rid, a1 } = submitted()
+    store.markAnnotationsAddressed(SID, rid, [a1])
     const r = store.resolveAnnotation(SID, a1, 'approve')
     expect(r.state.annotations.find((a) => a.id === a1)!.state).toBe('approved')
   })
 
   it('an addressed note keeps its review OPEN until the user gives a verdict', () => {
     // "Addressed" is the agent's claim; the review closes on the user's word.
-    const { a1, a2, a3 } = submitted()
-    store.markAnnotationsAddressed(SID, [a1, a2, a3])
+    const { rid, a1, a2, a3 } = submitted()
+    store.markAnnotationsAddressed(SID, rid, [a1, a2, a3])
     let review = store.getReviewStateForSession(SID)!.reviews.find((r) => r.status !== 'draft')!
     expect(review.status).toBe('submitted')
     store.resolveAnnotation(SID, a1, 'approve')
@@ -407,13 +406,68 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
   })
 
   it('survives a reload with the addressed state intact', () => {
-    const { a1 } = submitted()
-    store.markAnnotationsAddressed(SID, [a1])
+    const { rid, a1 } = submitted()
+    store.markAnnotationsAddressed(SID, rid, [a1])
     store._resetCanvasReviewStoreForTest()
     const st = store.getReviewStateForSession(SID)!
     // A record carrying an 'addressed' note must still VALIDATE on load, or the
     // whole review store for that canvas is marked broken and answers empty.
     expect(st.annotations.length).toBeGreaterThan(0)
     expect(st.annotations.find((a) => a.id === a1)!.state).toBe('addressed')
+  })
+
+  it('resolves against the CURRENT canvas, and says so when the review is not there', () => {
+    // Annotation ids restart per canvas and the session's canvas can change
+    // between review and resolve (a render naming a different subject files
+    // the current one). Round-4 attack: fetch B's review, re-render naming A's
+    // subject, resolve — and A's a1 went addressed while B's stayed open. The
+    // review id now scopes the write; it cannot tell R1-on-A from R1-on-B by
+    // id alone, so the guarantee is: the review must exist on the canvas the
+    // agent is currently looking at, and only its own notes move.
+    const cs = canvasStore
+    cs.renderVersion(SID, { mode: 'design', html: '<p>login</p>', title: 'Login page' })
+    const login = cs.getCanvasStateForSession(SID)!
+    const l1 = store.upsertAnnotation(SID, { scope: 'general', note: 'login note', versionId: login.activeVersionId! })
+    const loginReview = l1.state.reviews.find((r) => r.status === 'draft')!.id
+    store.submitReview(SID, loginReview, [])
+
+    cs.renderVersion(SID, { mode: 'design', html: '<p>checkout</p>', title: 'Checkout flow' })
+    const checkout = cs.getCanvasStateForSession(SID)!
+    expect(checkout.canvasId).not.toBe(login.canvasId)
+    const c1 = store.upsertAnnotation(SID, { scope: 'general', note: 'checkout note', versionId: checkout.activeVersionId! })
+    const checkoutReview = c1.state.reviews.find((r) => r.status === 'draft')!.id
+    store.submitReview(SID, checkoutReview, [])
+    expect(loginReview).toBe(checkoutReview)
+    expect(l1.annotationId).toBe(c1.annotationId)
+
+    // Agent is on checkout; resolves checkout's note. Lands on checkout.
+    const r = store.markAnnotationsAddressed(SID, checkoutReview, [c1.annotationId])
+    expect(r.addressed).toEqual([c1.annotationId])
+    expect(r.state.canvasId).toBe(checkout.canvasId)
+
+    // Now the login canvas — its note must be untouched.
+    cs.renderVersion(SID, { mode: 'design', html: '<p>login v2</p>', title: 'Login page' })
+    const st = store.getReviewStateForSession(SID)!
+    expect(st.canvasId).toBe(login.canvasId)
+    expect(st.annotations.find((a) => a.id === l1.annotationId)!.state).toBe('open')
+  })
+
+  it('refuses a review id that does not exist on the current canvas', () => {
+    const { rid } = submitted()
+    expect(() => store.markAnnotationsAddressed(SID, 'R99', ['a1'])).toThrow(/not on this canvas/)
+    expect(store.markAnnotationsAddressed(SID, rid, ['a1']).addressed).toEqual(['a1'])
+  })
+
+  it('only moves notes that BELONG to the named review', () => {
+    // Two submitted reviews on one canvas; resolving R1 with R2's note id must
+    // not touch R2's note (it is well-formed and open, but not a member).
+    const { versionId, rid, a1 } = submitted()
+    const extra = store.upsertAnnotation(SID, { scope: 'general', note: 'later', versionId })
+    const r2 = extra.state.reviews.find((r) => r.status === 'draft')!.id
+    store.submitReview(SID, r2, [])
+    const r = store.markAnnotationsAddressed(SID, rid, [a1, extra.annotationId])
+    expect(r.addressed).toEqual([a1])
+    expect(r.skipped).toEqual([extra.annotationId])
+    expect(r.state.annotations.find((a) => a.id === extra.annotationId)!.state).toBe('open')
   })
 })

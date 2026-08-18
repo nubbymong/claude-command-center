@@ -117,7 +117,7 @@ submitted a review. Then:
    then make the edits.
 3. Re-render the same mode, with the SAME \`title\`. Versions are linear — v4
    follows v3 on the same canvas; nothing is overwritten or lost.
-4. \`canvas_resolve { annotationIds: [...] }\` with the id of every note you
+4. \`canvas_resolve { reviewId: "R3", annotationIds: [...] }\` with the id of every note you
    acted on — including notes the user answered in chat instead of the pane
    ("C is fine", "option B") — so they stop showing as untouched. Do this
    even if you handled all of them: it is how the pane learns you are done.

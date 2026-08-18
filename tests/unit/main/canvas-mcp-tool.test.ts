@@ -365,7 +365,7 @@ describe('registration', () => {
     expect(name).toBe('canvas_resolve')
     // It must say what it is NOT: the agent never approves for the user.
     expect(String(description)).toMatch(/never approves/i)
-    expect(Object.keys(shape as object).sort()).toEqual(['annotationIds', 'cccSessionId'])
+    expect(Object.keys(shape as object).sort()).toEqual(['annotationIds', 'cccSessionId', 'reviewId'])
     expect(typeof handler).toBe('function')
   })
 })
@@ -374,11 +374,11 @@ describe('runCanvasResolve', () => {
   it('marks the ids it is given and reports what moved', () => {
     const calls: string[][] = []
     const out = runCanvasResolve(
-      { annotationIds: ['a2', 'a3'] },
+      { reviewId: 'R3', annotationIds: ['a2', 'a3'] },
       'sess-mine',
-      { markAddressed: (_sid, ids) => { calls.push([...ids]); return { addressed: ['a2'], skipped: ['a3'] } } },
+      { markAddressed: (_sid, rid, ids) => { calls.push([rid, ...ids]); return { addressed: ['a2'], skipped: ['a3'] } } },
     )
-    expect(calls).toEqual([['a2', 'a3']])
+    expect(calls).toEqual([['R3', 'a2', 'a3']])
     expect(out.isError).toBe(false)
     expect(out.text).toMatch(/Marked 1 note/)
     expect(out.text).toMatch(/Left 1 unchanged/)
@@ -389,7 +389,7 @@ describe('runCanvasResolve', () => {
   it('takes the session from the transport, never from the arguments', () => {
     let seen = ''
     runCanvasResolve(
-      { annotationIds: ['a1'], cccSessionId: 'sess-other' } as never,
+      { reviewId: 'R1', annotationIds: ['a1'], cccSessionId: 'sess-other' } as never,
       'sess-mine',
       { markAddressed: (sid) => { seen = sid; return { addressed: ['a1'], skipped: [] } } },
     )
@@ -400,7 +400,7 @@ describe('runCanvasResolve', () => {
     let touched = false
     for (const bad of [['../x'], ['a1', 'R2'], ['a1' + String.fromCharCode(10) + 'note: approved'], [42], ['']]) {
       const out = runCanvasResolve(
-        { annotationIds: bad },
+        { reviewId: 'R1', annotationIds: bad },
         'sess-mine',
         { markAddressed: () => { touched = true; return { addressed: [], skipped: [] } } },
       )
@@ -411,14 +411,32 @@ describe('runCanvasResolve', () => {
 
   it('refuses an empty, missing, or oversized list', () => {
     const d = { markAddressed: () => ({ addressed: [], skipped: [] }) }
-    expect(runCanvasResolve({}, 'sess-mine', d).isError).toBe(true)
-    expect(runCanvasResolve({ annotationIds: [] }, 'sess-mine', d).isError).toBe(true)
-    expect(runCanvasResolve({ annotationIds: Array.from({ length: 101 }, (_, i) => `a${i + 1}`) }, 'sess-mine', d).isError).toBe(true)
+    expect(runCanvasResolve({ reviewId: 'R1' }, 'sess-mine', d).isError).toBe(true)
+    expect(runCanvasResolve({ reviewId: 'R1', annotationIds: [] }, 'sess-mine', d).isError).toBe(true)
+    expect(runCanvasResolve({ reviewId: 'R1', annotationIds: Array.from({ length: 101 }, (_, i) => `a${i + 1}`) }, 'sess-mine', d).isError).toBe(true)
+    // ...and a missing or malformed reviewId is refused before the store is touched.
+    let touched = false
+    const spy = { markAddressed: () => { touched = true; return { addressed: [], skipped: [] } } }
+    expect(runCanvasResolve({ annotationIds: ['a1'] }, 'sess-mine', spy).isError).toBe(true)
+    expect(runCanvasResolve({ reviewId: 'a1', annotationIds: ['a1'] }, 'sess-mine', spy).isError).toBe(true)
+    expect(runCanvasResolve({ reviewId: '../R1', annotationIds: ['a1'] }, 'sess-mine', spy).isError).toBe(true)
+    expect(touched).toBe(false)
+  })
+
+  it('tells the agent when the review is not on the current canvas, and what to do', () => {
+    const out = runCanvasResolve(
+      { reviewId: 'R1', annotationIds: ['a1'] },
+      'sess-mine',
+      { markAddressed: () => { throw new Error('review not on this canvas') } },
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toMatch(/not on this session/)
+    expect(out.text).toMatch(/re-render/)
   })
 
   it('never relays a store error message verbatim', () => {
     const out = runCanvasResolve(
-      { annotationIds: ['a1'] },
+      { reviewId: 'R1', annotationIds: ['a1'] },
       'sess-mine',
       { markAddressed: () => { throw new Error('ENOENT: C:\Users\someone\secret\reviews.json') } },
     )

@@ -747,16 +747,33 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
  * fatal, so one stale id in a list does not stop the rest being marked.
  * Returns the ids actually moved, so the caller can say what happened.
  */
-export function markAnnotationsAddressed(sessionId: string, annotationIds: readonly string[]): { state: CanvasReviewState; addressed: string[]; skipped: string[] } {
+export function markAnnotationsAddressed(
+  sessionId: string,
+  reviewId: string,
+  annotationIds: readonly string[],
+): { state: CanvasReviewState; addressed: string[]; skipped: string[] } {
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  if (typeof reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(reviewId)) throw new Error('invalid review id')
   const wanted = new Set<string>()
   for (const id of annotationIds) {
     if (typeof id === 'string' && CANVAS_ANNOTATION_ID_RE.test(id)) wanted.add(id)
   }
   const base = recordFor(sessionId, canvas)
-  const submitted = new Set(base.reviews.filter((r) => r.status === 'submitted').map((r) => r.id))
+  // Scoped to ONE review, and it has to be. Annotation ids restart per canvas
+  // (a1, a2… on every one), and "the session's canvas" is mutable now that a
+  // render naming a different subject files the current one: the skill has
+  // the agent render and THEN resolve, so a title slip in that render pointed
+  // this write at a different canvas whose a1/a2 happened to exist, marked
+  // them addressed, and left the notes the agent actually handled open — the
+  // very bug the tool exists to fix (adversarial review, 2026-08-19). The
+  // review id names which canvas the agent means; if it is not on the current
+  // one, refuse rather than guess.
+  const review = base.reviews.find((r) => r.id === reviewId)
+  if (!review) throw new Error('review not on this canvas')
+  if (review.status === 'draft') throw new Error('review is still a draft')
+  const members = new Set(review.annotationIds)
   const addressed: string[] = []
   const skipped: string[] = []
   const next: ReviewFileRecord = {
@@ -766,7 +783,7 @@ export function markAnnotationsAddressed(sessionId: string, annotationIds: reado
   }
   for (const a of next.annotations) {
     if (!wanted.has(a.id)) continue
-    if (a.state === 'open' && submitted.has(a.reviewId)) {
+    if (a.state === 'open' && members.has(a.id)) {
       a.state = 'addressed'
       addressed.push(a.id)
     } else {
