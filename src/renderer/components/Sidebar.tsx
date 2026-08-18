@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useSessionStore, Session } from '../stores/sessionStore'
 import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../stores/configStore'
+import { reorderLoose } from '../utils/reorderLoose'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
@@ -139,6 +140,20 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const [configSearchQuery, setConfigSearchQuery] = useState('')
   const [dragConfigId, setDragConfigId] = useState<string | null>(null)
   const [dragOverConfigId, setDragOverConfigId] = useState<string | null>(null)
+  // The LOOSE configs: in no group and no section (a stale id pointing at a
+  // group or section that no longer exists counts as loose, which is also how
+  // they render). Over ALL configs, not the search-filtered view, so a drag
+  // means the same thing whatever the search box holds. These are the only
+  // rows drag-to-reorder applies to; see reorderLoose.
+  const looseConfigIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const c of configs) {
+      const grouped = !!c.groupId && groups.some((g) => g.id === c.groupId)
+      const sectioned = !!c.sectionId && sections.some((s) => s.id === c.sectionId)
+      if (!grouped && !sectioned) ids.add(c.id)
+    }
+    return ids
+  }, [configs, groups, sections])
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [focusedSessionIndex, setFocusedSessionIndex] = useState(-1)
   const configPanelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -401,14 +416,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   }
   const handleConfigDrop = (e: React.DragEvent, targetConfigId: string) => {
     e.preventDefault()
-    if (!dragConfigId || dragConfigId === targetConfigId) return
-    const fromIdx = configs.findIndex(c => c.id === dragConfigId)
-    const toIdx = configs.findIndex(c => c.id === targetConfigId)
-    if (fromIdx === -1 || toIdx === -1) return
-    const reordered = [...configs]
-    const [moved] = reordered.splice(fromIdx, 1)
-    reordered.splice(toIdx, 0, moved)
-    reorderConfigs(reordered)
+    // Only among the loose configs — see reorderLoose for why a drag between
+    // grouped rows changed nothing visible, or the wrong thing.
+    const reordered = dragConfigId ? reorderLoose(configs, looseConfigIds, dragConfigId, targetConfigId) : null
+    if (reordered) reorderConfigs(reordered)
     setDragConfigId(null)
     setDragOverConfigId(null)
   }
@@ -558,23 +569,30 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   }
 
   // Helper to render a config row with DnD props
-  const renderConfigRow = (config: TerminalConfig) => (
-    <ConfigRow
-      key={config.id}
-      config={config}
-      onLaunch={() => launchFromConfig(config)}
-      onEdit={() => setEditingConfig(config)}
-      onDelete={() => handleDeleteConfig(config.id)}
-      onPin={() => togglePinned(config.id)}
-      onContextMenu={(e) => handleConfigContextMenu(e, config.id)}
-      draggable
-      onDragStart={(e) => handleConfigDragStart(e, config.id)}
-      onDragOver={(e) => handleConfigDragOver(e, config.id)}
-      onDrop={(e) => handleConfigDrop(e, config.id)}
-      onDragEnd={handleConfigDragEnd}
-      isDragOver={dragOverConfigId === config.id}
-    />
-  )
+  const renderConfigRow = (config: TerminalConfig) => {
+    // Drag-to-reorder is for the loose list only — the one place the flat
+    // array order is the visible order. Rows inside a group or section are
+    // neither drag sources nor drop targets, so a stray drag over them shows
+    // no drop affordance and does nothing.
+    const loose = looseConfigIds.has(config.id)
+    return (
+      <ConfigRow
+        key={config.id}
+        config={config}
+        onLaunch={() => launchFromConfig(config)}
+        onEdit={() => setEditingConfig(config)}
+        onDelete={() => handleDeleteConfig(config.id)}
+        onPin={() => togglePinned(config.id)}
+        onContextMenu={(e) => handleConfigContextMenu(e, config.id)}
+        draggable={loose}
+        onDragStart={loose ? (e) => handleConfigDragStart(e, config.id) : undefined}
+        onDragOver={loose ? (e) => handleConfigDragOver(e, config.id) : undefined}
+        onDrop={loose ? (e) => handleConfigDrop(e, config.id) : undefined}
+        onDragEnd={handleConfigDragEnd}
+        isDragOver={loose && dragOverConfigId === config.id}
+      />
+    )
+  }
 
   // Helper to render a session row with multi-select and keyboard nav
   const renderSessionRow = (session: Session) => {
@@ -832,7 +850,18 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
           </div>
         ))}
 
-        {/* Unsectioned ungrouped configs */}
+        {/* Unsectioned ungrouped configs — the loose list. Divided from the
+            organised part above so the eye stops reading it as the tail of
+            the last group; the rule only appears when there IS something above
+            it, so a sidebar of nothing but loose configs stays clean. */}
+        {unsectionedUngroupedConfigs.length > 0 && (sectionData.length > 0 || unsectionedGroups.length > 0) && (
+          <div
+            className="mx-2 mt-2 mb-1.5 border-t border-surface1"
+            role="separator"
+            aria-label="Configs not in a section or group"
+            data-testid="loose-configs-divider"
+          />
+        )}
         {unsectionedUngroupedConfigs.map(renderConfigRow)}
       </div>
       </div>{/* end overlay */}
