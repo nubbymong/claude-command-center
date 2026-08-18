@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest'
 import { decideUpgradeFlow, entriesSince } from '../../../src/renderer/onboarding/upgrade-flow'
 import { compareVersions, crossedReleaseLine, releaseLine } from '../../../src/shared/version-order'
+import { cardsFor } from '../../../src/renderer/onboarding/WhatsNewV2Step'
 
 describe('compareVersions', () => {
   it('orders the release tuple', () => {
@@ -174,5 +175,39 @@ describe('entriesSince', () => {
 
   it('returns nothing for a first install', () => {
     expect(entriesSince(log, undefined, '2.1.0-beta.14')).toEqual([])
+  })
+})
+
+describe('cardsFor — which highlights the upgrade page shows', () => {
+  it('shows the 2.1 story to someone coming from 2.0', () => {
+    const titles = cardsFor('2.0.4', '2.1.0').map((c) => c.title)
+    expect(titles).toContain('A new name')
+    expect(titles).toContain('The Agent Canvas')
+    // They lived through 2.0; re-announcing it is noise.
+    expect(titles).not.toContain('This guided setup')
+  })
+
+  it('shows both to someone arriving from 1.x', () => {
+    const titles = cardsFor('1.5.45', '2.1.0').map((c) => c.title)
+    expect(titles).toContain('This guided setup')
+    expect(titles).toContain('A new name')
+    // Oldest first: the order the app actually changed in.
+    expect(titles.indexOf('This guided setup')).toBeLessThan(titles.indexOf('A new name'))
+  })
+
+  it('shows both when the stored version cannot be read', () => {
+    expect(cardsFor(undefined, '2.1.0').map((c) => c.title)).toContain('This guided setup')
+    expect(cardsFor('garbage', '2.1.0').map((c) => c.title)).toContain('A new name')
+  })
+
+  it('keeps a beta tester on the 2.1 set', () => {
+    const titles = cardsFor('2.1.0-beta.13', '2.1.0-beta.14').map((c) => c.title)
+    expect(titles).toContain('A new name')
+    expect(titles).not.toContain('This guided setup')
+  })
+
+  it('falls back to the 2.0 set on a future line rather than showing nothing', () => {
+    // 2.2 has no card set yet; an empty page would be worse than a stale one.
+    expect(cardsFor('2.1.0', '2.2.0').length).toBeGreaterThan(0)
   })
 })
