@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { isSshPersistenceFailureReason, formatPersistenceUnavailableMessage } from '../../shared/ssh-tmux-persistence'
+import { useSessionStore } from '../stores/sessionStore'
 
 interface Props {
   sessionId: string
@@ -40,6 +41,9 @@ type FlowState =
 export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, enabled, onRetry }: Props) {
   const [state, setState] = useState<FlowState>('connecting')
   const [info, setInfo] = useState<string | undefined>(undefined)
+  // Copilot review, #298: only a session main has REPORTED as tmux-wrapped has
+  // something running on the far side to come back to.
+  const isPersistent = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.sshTmuxPersistent) === true
   const [busy, setBusy] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
 
@@ -255,9 +259,15 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
       )}
       {state === 'failed' && info === 'connection' && (
         <div className="space-y-1.5">
+          {/* Copilot review, #298: the reassurance is only TRUE when this
+              session is known to have reached a persistent (tmux-wrapped)
+              remote. On a first connect that never got that far, or one that
+              died before tmux started, there is nothing on the far side to pick
+              back up, and promising otherwise is worse than saying nothing. */}
           <p className="text-red text-[11px] leading-snug">
-            Couldn’t reach the host — it may be offline or asleep. Nothing was lost; a remote
-            session (if any) is still running and reconnecting will pick it back up.
+            {isPersistent
+              ? 'Couldn’t reach the host — it may be offline or asleep. Nothing was lost: your remote session is still running there, and reconnecting will pick it back up.'
+              : 'Couldn’t reach the host — it may be offline or asleep. Check the address and that the machine is awake, then retry.'}
           </p>
           <div className="flex gap-1.5">
             <button

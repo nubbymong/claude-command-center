@@ -317,7 +317,7 @@ export default function SessionHeader({ session, onShowTip }: Props) {
           {session.sshRemoteAccount && (
             <HeaderPill
               label={<span className="truncate max-w-[140px]">{session.sshRemoteAccount}</span>}
-              tone="var(--color-mauve, #cba6f7)"
+              tone="var(--color-mauve)"
               title={`Remote Claude account: ${session.sshRemoteAccount}`}
               testId="ssh-remote-account-pill"
             />

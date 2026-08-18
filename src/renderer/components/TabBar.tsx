@@ -1,7 +1,6 @@
 import React from 'react'
 import { requestCloseSession } from '../stores/sshCloseStore'
 import { useSessionStore } from '../stores/sessionStore'
-import { killSessionPty } from './TerminalView'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'

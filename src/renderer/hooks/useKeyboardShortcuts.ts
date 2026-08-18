@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { killSessionPty } from '../ptyTracker'
 import { requestCloseSession } from '../stores/sshCloseStore'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { sendImageToSession } from '../utils/imageTransfer'

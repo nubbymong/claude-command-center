@@ -194,9 +194,9 @@ export interface TmuxLaunchInput {
  * session is still alive, attach to it" apart from "the session is gone
  * (remote reboot), create a fresh one and resume the conversation". Produces,
  * for a tier-1 (`staged: false`) binary:
- *   `if "$(command -v tmux)" has-session -t ccc-<sid> 2>/dev/null; then`
- *   ` "$(command -v tmux)" attach -t ccc-<sid>;`
- *   ` else "$(command -v tmux)" new-session -s ccc-<sid> '<innerCmd[ --continue]>'; fi`
+ *   `if command tmux has-session -t ccc-<sid> 2>/dev/null; then`
+ *   ` command tmux attach -t ccc-<sid>;`
+ *   ` else command tmux new-session -s ccc-<sid> '<innerCmd[ --continue]>'; fi`
  * and for a tier-2/3/4 (`staged: true`) binary the identical shape with
  * `"$HOME"/.claude/bin/tmux` as the token. The leading token is literally
  * `ON_PATH_TMUX_BIN_EXPR` / `STAGED_TMUX_BIN_EXPR`, NEVER a value this
