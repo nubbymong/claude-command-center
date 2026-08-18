@@ -341,6 +341,20 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                   <div className="flex items-center gap-1.5">
                     <span className={`text-[10px] uppercase tracking-wide ${SCOPE_BADGE[note.scope]}`}>{note.scope}</span>
                     <span className="text-overlay1 text-[10px]">{note.reviewId.replace('R', 'Review #')}</span>
+                    {/* The agent said it acted on this one (canvas_resolve). The
+                        verdict is still the user's — the buttons below stay —
+                        but the row says which notes are waiting on THEM rather
+                        than on the agent, so a review finished in chat does not
+                        look like five things nobody did. */}
+                    {note.state === 'addressed' && (
+                      <span
+                        className="text-[10px] px-1 py-0.5 rounded border text-mauve border-mauve/40 bg-mauve/10"
+                        title="The agent marked this note as addressed. Approve if the change is right, re-annotate if it is not."
+                        data-testid="note-addressed-chip"
+                      >
+                        addressed
+                      </span>
+                    )}
                     <span
                       className={`ml-auto text-[10px] px-1 py-0.5 rounded border ${
                         status.kind === 'ghost'

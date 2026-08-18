@@ -111,7 +111,15 @@ export interface FocusObject {
 // ── Annotations & reviews (P3, spec §4) ─────────────────────────────────────
 
 export type AnnotationScope = 'element' | 'region' | 'general'
-export type AnnotationState = 'open' | 'approved' | 'reannotated' | 'dismissed'
+/**
+ * `open` is the only state a note is born in. The user moves it to `approved`,
+ * `dismissed` or `reannotated` from the panel. `addressed` is the AGENT's:
+ * "I acted on this note" — set through canvas_resolve after the agent has done
+ * the work, so a review the user finishes in chat rather than in the panel
+ * does not sit as five open notes forever. It is deliberately not `approved`:
+ * approval is the user's word, and the agent never speaks it for them.
+ */
+export type AnnotationState = 'open' | 'addressed' | 'approved' | 'reannotated' | 'dismissed'
 export type PlanVerdict = 'accept' | 'reject' | 'question'
 
 /** A sketch attached to a note (D6). The glass is never the data model: this

@@ -181,7 +181,7 @@ function isValidStoredSketch(value: unknown): value is AnnotationSketch {
   return pngPath === '' || (typeof pngPath === 'string' && PNG_PATH_RE.test(pngPath))
 }
 
-const ANNOTATION_STATES = new Set(['open', 'approved', 'reannotated', 'dismissed'])
+const ANNOTATION_STATES = new Set(['open', 'addressed', 'approved', 'reannotated', 'dismissed'])
 const REVIEW_STATUSES = new Set(['draft', 'submitted', 'resolved'])
 const ANNOTATION_SCOPES = new Set(['element', 'region', 'general'])
 
@@ -615,7 +615,10 @@ export function resolveAnnotation(
   const base = recordFor(sessionId, canvas)
   const target = base.annotations.find((a) => a.id === annotationId)
   if (!target) throw new Error('unknown annotation')
-  if (target.state !== 'open') throw new Error('only an open note can be resolved')
+  // An ADDRESSED note is still the user's to resolve: "addressed" is the
+  // agent saying it acted; approve / dismiss / re-annotate is the user's
+  // verdict on whether that was right, and it must stay available.
+  if (target.state !== 'open' && target.state !== 'addressed') throw new Error('only an open or addressed note can be resolved')
   const owner = base.reviews.find((r) => r.id === target.reviewId)
   if (!owner || owner.status === 'draft') throw new Error('only a submitted note can be resolved')
 
@@ -669,7 +672,10 @@ export function resolveAnnotation(
   }
 
   const nextOwner = next.reviews.find((r) => r.id === owner.id)!
-  const stillOpen = next.annotations.some((a) => a.reviewId === nextOwner.id && a.state === 'open')
+  // A review is done when nothing on it is left OPEN. Addressed notes still
+  // hold it open: the agent has acted, but the user has not yet said whether
+  // the action was right, and that verdict is what closes a review.
+  const stillOpen = next.annotations.some((a) => a.reviewId === nextOwner.id && (a.state === 'open' || a.state === 'addressed'))
   if (!stillOpen && nextOwner.status === 'submitted') nextOwner.status = 'resolved'
 
   commit(next)
@@ -727,6 +733,49 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
     })),
     submittedReviewIds,
   }
+}
+
+/**
+ * The agent marks notes it has acted on. The counterpart of `resolveAnnotation`
+ * for the OTHER side of the loop: that one is the user's (approve / dismiss /
+ * re-annotate, from the panel); this one is the agent's, reached through the
+ * canvas_resolve MCP tool, and it can only ever say one thing — "addressed".
+ *
+ * Only OPEN notes on SUBMITTED reviews move; anything the user has already
+ * resolved is left exactly as they left it, and a draft the user is still
+ * writing is not the agent's to touch. Unknown ids are skipped rather than
+ * fatal, so one stale id in a list does not stop the rest being marked.
+ * Returns the ids actually moved, so the caller can say what happened.
+ */
+export function markAnnotationsAddressed(sessionId: string, annotationIds: readonly string[]): { state: CanvasReviewState; addressed: string[]; skipped: string[] } {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  requireHealthy(canvas.canvasId)
+  const wanted = new Set<string>()
+  for (const id of annotationIds) {
+    if (typeof id === 'string' && CANVAS_ANNOTATION_ID_RE.test(id)) wanted.add(id)
+  }
+  const base = recordFor(sessionId, canvas)
+  const submitted = new Set(base.reviews.filter((r) => r.status === 'submitted').map((r) => r.id))
+  const addressed: string[] = []
+  const skipped: string[] = []
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+  for (const a of next.annotations) {
+    if (!wanted.has(a.id)) continue
+    if (a.state === 'open' && submitted.has(a.reviewId)) {
+      a.state = 'addressed'
+      addressed.push(a.id)
+    } else {
+      skipped.push(a.id)
+    }
+  }
+  for (const id of wanted) if (!addressed.includes(id) && !skipped.includes(id)) skipped.push(id)
+  if (addressed.length > 0) commit(next)
+  return { state: toState(addressed.length > 0 ? next : base), addressed, skipped }
 }
 
 /**

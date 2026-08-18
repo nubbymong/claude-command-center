@@ -77,6 +77,9 @@ export interface CanvasToolDeps {
   /** Read one sketch PNG. Injected so this module touches no filesystem —
    *  the caller decides what a path means. */
   readAttachment: (absPath: string) => Buffer
+  /** Mark notes the agent has acted on. The agent's one write into the review
+   *  store, and it can only ever say "addressed" — see canvas_resolve. */
+  markAddressed: (sessionId: string, annotationIds: readonly string[]) => { addressed: string[]; skipped: string[] }
 }
 
 function textResult(text: string, isError = false) {
@@ -647,6 +650,70 @@ export async function runCanvasReview(
   }
 }
 
+interface RawResolveArgs {
+  annotationIds?: unknown
+  cccSessionId?: unknown
+}
+
+/** Bound on one call. A review holds at most 100 notes; a list longer than
+ *  that is not a review the user wrote. */
+const MAX_RESOLVE_IDS = 100
+const ANNOTATION_ID_SHAPE = /^a[0-9]{1,9}$/
+
+/**
+ * canvas_resolve: the agent marks the notes it has acted on as ADDRESSED.
+ *
+ * Closes the loop from the other side. `canvas_review` hands the agent the
+ * user's notes; until this existed nothing let the agent say "done with these",
+ * so a review the user finished in chat rather than in the panel sat as N open
+ * notes forever, and the next render carried them forward as if unanswered.
+ *
+ * Deliberately narrow: ids only, one state, no text. It never approves —
+ * approval is the user's word — and the store refuses to touch anything the
+ * user has already resolved or is still drafting. The session comes from the
+ * transport (the #188 precedent): a prompt-injected session cannot mark notes
+ * on someone else's canvas.
+ */
+export function runCanvasResolve(
+  rawArgs: RawResolveArgs,
+  sessionId: string,
+  deps: Pick<CanvasToolDeps, 'markAddressed'>,
+): { text: string; isError: boolean } {
+  const raw = rawArgs.annotationIds
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { text: 'canvas_resolve needs `annotationIds`: the note ids from canvas_review that you have acted on, e.g. ["a2","a3"].', isError: true }
+  }
+  if (raw.length > MAX_RESOLVE_IDS) {
+    return { text: `That is more than ${MAX_RESOLVE_IDS} note ids; a review never holds that many.`, isError: true }
+  }
+  const ids: string[] = []
+  for (const v of raw) {
+    if (typeof v !== 'string' || !ANNOTATION_ID_SHAPE.test(v)) {
+      return { text: 'Every entry in `annotationIds` must be a note id of the shape "a<number>", as canvas_review reported it.', isError: true }
+    }
+    ids.push(v)
+  }
+  let result: { addressed: string[]; skipped: string[] }
+  try {
+    result = deps.markAddressed(sessionId, ids)
+  } catch (err) {
+    return { text: `Could not mark notes: ${describeResolveFailure(err)}`, isError: true }
+  }
+  const parts: string[] = []
+  if (result.addressed.length > 0) parts.push(`Marked ${result.addressed.length} note(s) as addressed: ${result.addressed.join(', ')}.`)
+  if (result.skipped.length > 0) parts.push(`Left ${result.skipped.length} unchanged (already resolved by the user, still a draft, or unknown): ${result.skipped.join(', ')}.`)
+  parts.push('The user still gives the final verdict from the Canvas pane; addressed notes stay visible there until they approve or dismiss them.')
+  return { text: parts.join(' '), isError: false }
+}
+
+/** Operator-authored causes only; the store's messages are our own text. */
+function describeResolveFailure(err: unknown): string {
+  const msg = err instanceof Error ? err.message : ''
+  if (msg === 'no canvas for session') return 'this session has no canvas.'
+  if (msg.includes('review store')) return 'the review store for this canvas is unreadable.'
+  return 'the review store refused the change.'
+}
+
 export function registerCanvasTools(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   server: any, // McpServer — lazy-typed in conductor-mcp-server.ts
@@ -769,6 +836,31 @@ export function registerCanvasTools(
         ],
         isError: result.isError,
       }
+    },
+  )
+
+  server.tool(
+    'canvas_resolve',
+    'Mark notes from a canvas review as ADDRESSED once you have acted on them. Pass the note ids canvas_review gave you (e.g. ["a2","a3"]). Call this after your canvas_render of the result, for every note you handled — including notes the user answered in chat instead of the pane, so they do not sit open forever. This never approves anything: the user still gives the final verdict from the Canvas pane, and addressed notes stay visible there until they do. Notes the user has already resolved, or is still drafting, are left alone.',
+    {
+      annotationIds: zMod
+        .array(zMod.string())
+        .describe('The note ids you acted on, exactly as canvas_review reported them ("a2", "a3", …). At most 100.'),
+      cccSessionId: zMod
+        .string()
+        .optional()
+        .describe('Ignored — the session is resolved from the MCP connection and cannot be set here. Leave unset.'),
+    },
+    async (rawArgs: RawResolveArgs) => {
+      const sessionId = getBoundSessionId()
+      if (!sessionId) {
+        return textResult(
+          'Canvas unavailable: this MCP connection has no bound Conductor session. Restart the session from inside AI Code Conductor.',
+          true,
+        )
+      }
+      const result = runCanvasResolve(rawArgs, sessionId, deps)
+      return textResult(result.text, result.isError)
     },
   )
 }

@@ -319,3 +319,101 @@ describe('getReviewPayload (the canvas_review read)', () => {
     )
   })
 })
+
+describe('markAnnotationsAddressed — the agent closes its side of the loop', () => {
+  // canvas_review hands the agent the user's notes; until this existed nothing
+  // let the agent say "done with these", so a review the user finished in chat
+  // rather than in the pane sat as N open notes forever and rode forward onto
+  // the next render as if unanswered.
+  function submitted(): { versionId: string; a1: string; a2: string; a3: string } {
+    const { versionId } = renderCanvas()
+    const one = store.upsertAnnotation(SID, elementDraft(versionId, 'first'))
+    const two = store.upsertAnnotation(SID, elementDraft(versionId, 'second'))
+    const three = store.upsertAnnotation(SID, { scope: 'general', note: 'third', versionId })
+    const reviewId = one.state.reviews.find((r) => r.status === 'draft')!.id
+    store.submitReview(SID, reviewId, [])
+    return { versionId, a1: one.annotationId, a2: two.annotationId, a3: three.annotationId }
+  }
+
+  it('moves open notes on a submitted review to addressed', () => {
+    const { a1, a2, a3 } = submitted()
+    const r = store.markAnnotationsAddressed(SID, [a1, a3])
+    expect(r.addressed).toEqual([a1, a3])
+    expect(r.skipped).toEqual([])
+    const by = Object.fromEntries(r.state.annotations.map((a) => [a.id, a.state]))
+    expect(by[a1]).toBe('addressed')
+    expect(by[a2]).toBe('open')
+    expect(by[a3]).toBe('addressed')
+  })
+
+  it('never touches what the user has already resolved', () => {
+    const { a1, a2 } = submitted()
+    store.resolveAnnotation(SID, a1, 'approve')
+    store.resolveAnnotation(SID, a2, 'dismiss')
+    const r = store.markAnnotationsAddressed(SID, [a1, a2])
+    expect(r.addressed).toEqual([])
+    expect(r.skipped).toEqual(expect.arrayContaining([a1, a2]))
+    const by = Object.fromEntries(r.state.annotations.map((a) => [a.id, a.state]))
+    // The user's words stand.
+    expect(by[a1]).toBe('approved')
+    expect(by[a2]).toBe('dismissed')
+  })
+
+  it('leaves a draft the user is still writing alone', () => {
+    const { versionId } = renderCanvas()
+    const { annotationId } = store.upsertAnnotation(SID, elementDraft(versionId))
+    const r = store.markAnnotationsAddressed(SID, [annotationId])
+    expect(r.addressed).toEqual([])
+    expect(r.skipped).toEqual([annotationId])
+  })
+
+  it('skips unknown and malformed ids rather than failing the whole call', () => {
+    const { a1 } = submitted()
+    const r = store.markAnnotationsAddressed(SID, [a1, 'a999', 'not-an-id', '../x'])
+    expect(r.addressed).toEqual([a1])
+    // Malformed ids never even reach the record; unknown-but-well-formed are
+    // reported so the agent knows.
+    expect(r.skipped).toEqual(['a999'])
+  })
+
+  it('does not write when nothing changed', () => {
+    const { a1 } = submitted()
+    store.resolveAnnotation(SID, a1, 'approve')
+    const canvas = canvasStore.getCanvasStateForSession(SID)!
+    const file = path.join(getResourcesDirectory(), 'canvas', canvas.canvasId, 'reviews.json')
+    const before = fs.statSync(file).mtimeMs
+    store.markAnnotationsAddressed(SID, [a1])
+    expect(fs.statSync(file).mtimeMs).toBe(before)
+  })
+
+  it('the user can still approve or dismiss an ADDRESSED note — the verdict is theirs', () => {
+    const { a1 } = submitted()
+    store.markAnnotationsAddressed(SID, [a1])
+    const r = store.resolveAnnotation(SID, a1, 'approve')
+    expect(r.state.annotations.find((a) => a.id === a1)!.state).toBe('approved')
+  })
+
+  it('an addressed note keeps its review OPEN until the user gives a verdict', () => {
+    // "Addressed" is the agent's claim; the review closes on the user's word.
+    const { a1, a2, a3 } = submitted()
+    store.markAnnotationsAddressed(SID, [a1, a2, a3])
+    let review = store.getReviewStateForSession(SID)!.reviews.find((r) => r.status !== 'draft')!
+    expect(review.status).toBe('submitted')
+    store.resolveAnnotation(SID, a1, 'approve')
+    store.resolveAnnotation(SID, a2, 'approve')
+    store.resolveAnnotation(SID, a3, 'dismiss')
+    review = store.getReviewStateForSession(SID)!.reviews.find((r) => r.id === review.id)!
+    expect(review.status).toBe('resolved')
+  })
+
+  it('survives a reload with the addressed state intact', () => {
+    const { a1 } = submitted()
+    store.markAnnotationsAddressed(SID, [a1])
+    store._resetCanvasReviewStoreForTest()
+    const st = store.getReviewStateForSession(SID)!
+    // A record carrying an 'addressed' note must still VALIDATE on load, or the
+    // whole review store for that canvas is marked broken and answers empty.
+    expect(st.annotations.length).toBeGreaterThan(0)
+    expect(st.annotations.find((a) => a.id === a1)!.state).toBe('addressed')
+  })
+})

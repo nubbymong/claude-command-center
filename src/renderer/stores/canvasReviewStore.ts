@@ -308,9 +308,11 @@ export function draftAnnotationsOf(state: CanvasReviewSessionState): Annotation[
   return state.annotations.filter((a) => members.has(a.id))
 }
 
-/** Open notes from SUBMITTED reviews — what the resolution checklist works
- *  through (oldest review first, so the list reads in the order given). */
+/** Notes from SUBMITTED reviews still awaiting the USER's verdict — what the
+ *  resolution checklist works through (oldest review first, so the list reads
+ *  in the order given). 'addressed' is included: the agent has said it acted,
+ *  and that is exactly when the user needs to look and approve or dismiss. */
 export function openSubmittedNotesOf(state: CanvasReviewSessionState): Annotation[] {
   const submitted = new Set(state.reviews.filter((r) => r.status === 'submitted').map((r) => r.id))
-  return state.annotations.filter((a) => submitted.has(a.reviewId) && a.state === 'open')
+  return state.annotations.filter((a) => submitted.has(a.reviewId) && (a.state === 'open' || a.state === 'addressed'))
 }
