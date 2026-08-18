@@ -1063,6 +1063,51 @@ export function listAllCanvases(openTileSessionIds: readonly string[] = []): Can
 }
 
 /**
+ * Remove a tree WITHOUT ever descending through a reparse point.
+ *
+ * `fs.rmSync(dir, { recursive: true })` must NOT be used for this, and the
+ * reason is worth stating because it is invisible in a normal test run:
+ * `rmSync(recursive)` FOLLOWS an NTFS junction nested inside the tree on the
+ * Electron runtime and deletes the junction's *target*, while the same call on
+ * plain Node unlinks the link and leaves the target alone. Same Node version
+ * (24.18.0), opposite behaviour — measured against Electron 43.2.0. vitest
+ * executes under plain Node, so a unit test asserting "the target survived"
+ * passes whether or not the bug is present. That is precisely how a
+ * nested-junction escape reached review labelled "confined".
+ *
+ * Confinement therefore rests on this walker, not on any property of `rmSync`:
+ * every entry is `lstat`ed and a link is removed AS a link, never walked. The
+ * depth cap bounds recursion over a tree that has been tampered with; a real
+ * canvas is three levels deep.
+ */
+function removeTreeNoFollow(target: string, depth = 0): void {
+  if (depth > 64) throw new Error('canvas delete: tree deeper than expected, refusing to recurse')
+  let st: fs.Stats
+  try {
+    st = fs.lstatSync(target)
+  } catch {
+    return // already gone
+  }
+  if (st.isSymbolicLink()) {
+    // A junction or directory symlink needs rmdir; a file symlink needs unlink.
+    // Removing either detaches the link and never touches what it points at —
+    // the same idiom the profile-junction repair uses in account-profiles.ts.
+    try {
+      fs.rmdirSync(target)
+    } catch {
+      fs.unlinkSync(target)
+    }
+    return
+  }
+  if (!st.isDirectory()) {
+    fs.unlinkSync(target)
+    return
+  }
+  for (const entry of fs.readdirSync(target)) removeTreeNoFollow(path.join(target, entry), depth + 1)
+  fs.rmdirSync(target)
+}
+
+/**
  * Delete one canvas: its record, its indexes, and its directory on disk.
  *
  * The only destructive operation this store has, so the path discipline is
@@ -1071,12 +1116,16 @@ export function listAllCanvases(openTileSessionIds: readonly string[] = []): Can
  * and the directory it names is REALPATH-resolved and required to sit directly
  * inside the canvas root before anything is removed — a symlink planted at
  * `<root>/<id>` pointing elsewhere resolves out of the root and is refused
- * rather than followed, so this can never recurse into a user's project.
+ * rather than followed. That check covers the TOP of the tree only, so the
+ * removal itself goes through `removeTreeNoFollow`, which refuses to descend a
+ * link planted further down. Both halves are needed: without the walker, a
+ * junction at `<root>/<id>/versions/<v>/x` pointing at a user's project is a
+ * deterministic arbitrary-directory-deletion primitive on the shipped runtime.
  *
  * The version files are the user's own rendered documents; removing the canvas
- * removes them, which is the point of the button. `rmSync` is not given `force`
- * for the resolve step: a canvas whose directory is already gone still drops out
- * of the in-memory maps, because the record is what surfaces it in the UI.
+ * removes them, which is the point of the button. A canvas whose directory is
+ * already gone still drops out of the in-memory maps, because the record is
+ * what surfaces it in the UI.
  */
 export function deleteCanvas(canvasId: string): boolean {
   if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return false
@@ -1096,18 +1145,58 @@ export function deleteCanvas(canvasId: string): boolean {
     // realpath, NOT the joined string: the join is traversal-safe thanks to the
     // charset gate, but only resolving links proves the directory is really
     // inside the store rather than a link pointing at someone's project.
+    //
+    // The test is IDENTITY, not containment: the directory must BE
+    // `<root>/<id>`. "Resolves to somewhere inside the root" is too weak — a
+    // link at `<root>/<idA>` pointing at sibling `<root>/<idB>` resolves to a
+    // single in-root segment and passes a containment check, so deleting A
+    // would take B's files with it.
     const realDir = fs.realpathSync(dir)
-    const rel = path.relative(realRoot, realDir)
-    removable = rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel) && !rel.includes(path.sep)
+    const expected = path.join(realRoot, canvasId)
+    // Windows resolves paths case-insensitively, and realpath returns on-disk
+    // casing that need not match the id's; elsewhere the comparison is exact.
+    removable =
+      process.platform === 'win32'
+        ? realDir.toLowerCase() === expected.toLowerCase()
+        : realDir === expected
   } catch {
     removable = false // already gone, or unresolvable -- drop the record anyway
   }
 
   if (removable) {
+    // Order matters. canvas.json is the provenance anchor — a directory without
+    // one is not a canvas to `ensureDiskScanned`, so unlinking it FIRST makes
+    // the deletion irreversible before any bulk removal can fail part-way.
+    //
+    // But `unlinkSync` follows links in the PATH it is given, so this is only
+    // safe once `dir` has been re-confirmed to be a real directory rather than
+    // a link. Skipping that check is not hypothetical: it is what the first
+    // version of this fix did, and the sibling-link test caught it reaching
+    // through a planted junction to delete another canvas's record.
+    let dirIsReal = false
     try {
-      fs.rmSync(dir, { recursive: true, force: true })
+      const st = fs.lstatSync(dir)
+      dirIsReal = st.isDirectory() && !st.isSymbolicLink()
     } catch {
-      return false // still on disk: report failure rather than a phantom delete
+      dirIsReal = false
+    }
+    if (dirIsReal) {
+      try {
+        fs.unlinkSync(canvasJsonPath(canvasId))
+      } catch {
+        /* already gone, or the dir has no record file */
+      }
+    }
+    try {
+      removeTreeNoFollow(dir)
+    } catch (err) {
+      // A locked file (the app serving it, a browser holding a handle, the
+      // indexer) leaves part of the tree behind. Removal is NOT atomic, so by
+      // this point files are already unlinked and canvas.json is gone: the
+      // canvas is destroyed either way. Keeping the record would surface a row
+      // that opens to a blank pane, which is the worse lie — so fall through
+      // and drop it, and leave a trace of the residue for diagnosis.
+      console.warn('[canvas-store] canvas', canvasId, 'deleted with files left behind:', err)
     }
   }
 

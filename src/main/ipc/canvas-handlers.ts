@@ -22,6 +22,7 @@ import {
 import {
   MAX_SKETCH_PNG_BYTES,
   deleteAnnotation,
+  dropReviewsForCanvas,
   getReviewStateForSession,
   onReviewChanged,
   resolveAnnotation,
@@ -247,7 +248,13 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   // clicked delete on a specific row.
   ipcMain.handle(IPC.CANVAS_DELETE, async (_e, args: unknown) => {
     const { canvasId } = deleteCanvasSchema.parse(args)
-    return { ok: deleteCanvas(canvasId) }
+    const ok = deleteCanvas(canvasId)
+    // The review store keys off canvasId and its reviews.json lived inside the
+    // directory just removed, so its in-memory entry has to go too. Done here
+    // rather than inside deleteCanvas because the review store imports the
+    // canvas store — this handler is the one place that already holds both.
+    if (ok) dropReviewsForCanvas(canvasId)
+    return { ok }
   })
 
   ipcMain.handle(IPC.CANVAS_RENDER, async (_e, args: unknown) => {

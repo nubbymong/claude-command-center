@@ -729,6 +729,21 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
   }
 }
 
+/**
+ * Forget everything held for one canvas, because that canvas has been deleted.
+ *
+ * `reviews.json` lives inside the canvas directory, so deleting the canvas
+ * already takes the file with it. These two maps are what would otherwise
+ * outlive it: a `records` entry can hold hundreds of reviews with their
+ * annotations, and nothing would ever evict it — canvas ids are random, so no
+ * later canvas reaches the stale entry. Purely a memory concern, but an
+ * unbounded one for a long-running app that renders, reviews and deletes.
+ */
+export function dropReviewsForCanvas(canvasId: string): void {
+  records.delete(canvasId)
+  broken.delete(canvasId)
+}
+
 /** Test seam: drop all in-memory state so each test starts cold. */
 export function _resetCanvasReviewStoreForTest(): void {
   records.clear()
