@@ -152,6 +152,55 @@ describe('buildTmuxLaunchCommand never reads a caller-supplied tmux path (#242 f
   })
 })
 
+// Follow-up adversarial pass (fail-posture MAJOR): the tier-1 launch token
+// must be the alias- AND function-proof form `command tmux`, never the old
+// `"$(command -v tmux)"`. The detection probe runs `command -v tmux` through
+// execSync (non-interactive `sh -c`, alias-blind), but the launch token is
+// expanded by the remote's INTERACTIVE login shell -- where `command -v tmux`
+// prints an alias DEFINITION (`alias tmux='tmux -2'`) for anyone who aliases
+// tmux in their rc file, quoted into one word that exits 127: no claude, on
+// every connect. `command` is a POSIX special builtin that bypasses shell
+// functions, and `tmux` sits in argument position where alias expansion never
+// applies.
+//
+// WHY THE LITERAL TEXT IS ASSERTED, NOT THE IMPORTED CONSTANT: every other
+// test in this file compares buildTmuxLaunchCommand's output against
+// ON_PATH_TMUX_BIN_EXPR / STAGED_TMUX_BIN_EXPR themselves, so a regression
+// INSIDE the constant (e.g. back to `"$(command -v tmux)"`) changes both
+// sides of the comparison at once and every such test stays green -- proven:
+// NO existing test failed when the constant's value changed for this very
+// fix. A self-referential expectation cannot catch a change to the value it
+// re-derives; only the literal can.
+describe('launch-token literals are alias/function-proof (fail-posture follow-up)', () => {
+  it('ON_PATH_TMUX_BIN_EXPR is literally `command tmux` (not a $(command -v) substitution)', () => {
+    expect(ON_PATH_TMUX_BIN_EXPR).toBe('command tmux')
+  })
+
+  it('STAGED_TMUX_BIN_EXPR is literally `"$HOME"/.claude/bin/tmux`', () => {
+    expect(STAGED_TMUX_BIN_EXPR).toBe('"$HOME"/.claude/bin/tmux')
+  })
+
+  it('a tier-1 (staged: false) launch command uses exactly `command tmux` as every tmux token and contains no `$(command -v` anywhere', () => {
+    const cmd = buildTmuxLaunchCommand({ ...base, staged: false })
+    // All three invocation sites carry the literal token (has-session guard,
+    // live attach, and the fresh create used by both the attach fallback and
+    // the else branch).
+    expect(cmd.startsWith('if command tmux has-session -t ccc-sid-1 ')).toBe(true)
+    expect(cmd).toContain('then command tmux attach -t ccc-sid-1 || command tmux new-session -s ccc-sid-1 ')
+    expect(cmd).toContain('else command tmux new-session -s ccc-sid-1 ')
+    // The alias-expandable substitution form must never come back, anywhere
+    // in the command.
+    expect(cmd).not.toContain('$(command -v')
+    expect(cmd).not.toContain('command -v tmux')
+  })
+
+  it('the staged (tier-2/3/4) launch command carries the literal `"$HOME"/.claude/bin/tmux` token and no `$(command -v` either', () => {
+    const cmd = buildTmuxLaunchCommand({ ...base, staged: true })
+    expect(cmd.startsWith('if "$HOME"/.claude/bin/tmux has-session -t ccc-sid-1 ')).toBe(true)
+    expect(cmd).not.toContain('$(command -v')
+  })
+})
+
 // #242 tier 5: `--continue` on the BARE (non-tmux) launch on a reconnect,
 // gated OFF whenever tmux is in play -- there the has-session wrapper owns
 // the --continue decision itself (fresh branch only), so this flag going ON

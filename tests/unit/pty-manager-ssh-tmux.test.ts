@@ -1944,6 +1944,307 @@ describe('endSshRemote target lifecycle — survives a drop, cleared on delibera
   })
 })
 
+// ===========================================================================
+// Follow-up adversarial pass (2026-08-18) — regression tests for two fixes:
+//
+//  1. The wrapped-launch WATCHDOG (handleWrappedLaunchFailure): the stage/push
+//     smoke test runs `tmux new-session -d`, which never opens a client tty
+//     and therefore never exercises terminfo — so a remote with no terminfo
+//     db reports `ok`, the ATTACHED launch dies (`open terminal failed`), and
+//     tier 2 re-selects the same binary forever with no recovery. The fix
+//     watches the PTY for a bounded window after a tmux-WRAPPED launch and
+//     falls back to the BARE claude launch on any refusal the remote reports.
+//
+//  2. The `destroyed` INVARIANT: destroying the flow mid-tier and then feeding
+//     the stage sentinel used to drive a buildTmuxBinPatchCommand write into
+//     the torn-down PTY and re-arm the idle fallback; and a destroy during the
+//     tier-4 download/push made the resolving promise emit 'running-claude' on
+//     `ssh:flowState:<sessionId>` — the channel a RESPAWNED session with the
+//     same id is already subscribed to. Guards now sit in the onData handler
+//     (right after the renderer data forward) and, as defence in depth, at the
+//     top of setFlowState / armIdleFallback / writeClaudeCmd.
+// ===========================================================================
+
+/** Like makeSpyWin above, but records the RAW payload for every channel —
+ *  needed to observe ssh:sessionInfo:<id> messages ({tmuxPersistent, ...}) and
+ *  pty:data:<id> chunks, which makeSpyWin's {state, info} projection drops. */
+function makeRecordingWin(): { win: unknown; sends: Array<{ channel: string; payload: unknown }> } {
+  const sends: Array<{ channel: string; payload: unknown }> = []
+  const win = {
+    webContents: {
+      send: (channel: string, payload: unknown) => {
+        sends.push({ channel, payload })
+      },
+    },
+    isDestroyed: () => false,
+  }
+  return { win, sends }
+}
+
+/**
+ * Drive the manual SSH flow to a tmux-WRAPPED claude launch write (tier 1,
+ * tmux=path). The wrapped-launch watchdog arms only when the wrapped command
+ * is actually WRITTEN (inside writeClaudeCmd's 200ms-deferred write), so after
+ * this helper returns the watch window is open and claude has NOT latched.
+ */
+function driveToWrappedLaunch(sessionId: string, win: unknown, sshExtra: Record<string, unknown> = {}): void {
+  onDataListeners.length = 0
+  spawnPty(win as never, sessionId, { ssh: { ...SSH, ...sshExtra } } as never)
+  writeMock.mockClear()
+  getSshFlow(sessionId)!.launchClaude()
+  vi.advanceTimersByTime(300) // past writeHostSetupCmd's 200ms setup write
+  feedPtyData(nonceSentinel(sessionId, 'setup ok {NONCE} tmux=path\r\n'))
+  vi.advanceTimersByTime(1500) // idle fallback: setupDone -> proceedAfterSetup -> writeClaudeCmd scheduled
+  vi.advanceTimersByTime(300) // writeClaudeCmd's 200ms write delay: wrapped write lands + watchdog arms
+}
+
+/** The exact refusal shape the fix was filed against (terminfo-less remote). */
+const TMUX_REFUSAL = 'open terminal failed: missing or unsuitable terminal: xterm-256color\r\n'
+
+/** Every write so far that is a claude launch NOT wrapped in tmux. */
+function bareClaudeWrites(): string[] {
+  return writeMock.mock.calls
+    .map((c) => (typeof c[0] === 'string' ? c[0] : ''))
+    .filter((s) => s.includes('claude ') && !s.includes('has-session'))
+}
+
+describe('spawnPty SSH branch — wrapped-launch watchdog falls back to the bare launch (fail-posture follow-up)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  // Mutation to prove this can fail: make handleWrappedLaunchFailure return
+  // immediately — no bare write ever lands, tmuxPersistent stays true, and
+  // the flow info never carries 'tmux-launch-refused'.
+  it('(a)+(c) a remote refusal within the window writes a BARE claude launch, corrects tmuxPersistent to false, and carries tmux-launch-refused', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-refused', win)
+    // Precondition: the launch really was tmux-wrapped (and announced as
+    // persistent) before the refusal arrives.
+    expect(writeMock.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('has-session -t ccc-s-wd-refused'))).toBe(true)
+    expect(sends.some((s) => s.channel === 'ssh:sessionInfo:s-wd-refused' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === true)).toBe(true)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData(TMUX_REFUSAL)
+    // The bare fallback write lands synchronously off the refusal chunk.
+    const bare = bareClaudeWrites()
+    expect(bare).toHaveLength(1)
+    expect(bare[0]).not.toMatch(/new-session\s+-s\s+ccc-/)
+    expect(bare[0]).toContain('claude ')
+    // The persistence signal the wrapped write already emitted is corrected.
+    const corrected = sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-refused' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === false)
+    expect(corrected).toHaveLength(1)
+    // And the observable flow state carries the reason.
+    expect(getSshFlow('s-wd-refused')!.getState()).toEqual({ state: 'running-claude', info: 'tmux-launch-refused' })
+  })
+
+  // Tier 5's whole point: reconnecting with no tmux in play is exactly the
+  // case --continue exists for, so the bare RETRY carries it on a respawn.
+  it('(b) the bare fallback carries --continue when the spawn was a reconnect', () => {
+    const { win } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-recon', win, { reconnect: true })
+    writeMock.mockClear()
+    feedPtyData(TMUX_REFUSAL)
+    const bare = bareClaudeWrites()
+    expect(bare).toHaveLength(1)
+    expect(bare[0]).toContain('--continue')
+    expect(bare[0]).not.toContain('has-session')
+  })
+
+  it('(b) the bare fallback does NOT carry --continue on a first connect', () => {
+    const { win } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-first', win) // no reconnect flag
+    writeMock.mockClear()
+    feedPtyData(TMUX_REFUSAL)
+    const bare = bareClaudeWrites()
+    expect(bare).toHaveLength(1)
+    expect(bare[0]).not.toContain('--continue')
+  })
+
+  it('(d) fires AT MOST ONCE — a second refusal chunk produces no second bare write and no second sessionInfo emit', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-once', win)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData(TMUX_REFUSAL)
+    feedPtyData(TMUX_REFUSAL)
+    expect(bareClaudeWrites()).toHaveLength(1)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-once' && (s.payload as { tmuxPersistent?: boolean }).tmuxPersistent === false)).toHaveLength(1)
+  })
+
+  it('(e) does NOT fire for an UNwrapped launch — refusal-shaped output after a bare launch writes nothing', () => {
+    // tmux=none: the helper routes through staging (fails it) and lands on
+    // the bare launch, so the watchdog was never armed.
+    driveToClaudeWrite('s-wd-unwrapped', 'setup ok {NONCE} tmux=none\r\n')
+    expect(bareClaudeWrites()).toHaveLength(1)
+    writeMock.mockClear()
+    feedPtyData('sh: tmux: command not found\r\n')
+    expect(writeMock.mock.calls).toHaveLength(0)
+  })
+
+  it('(f) does NOT fire once claude has latched as running — a refusal-shaped chunk after the UI latch writes nothing and leaves state alone', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-latched', win)
+    // Claude's UI renders: the strict box-drawing latch flips claudeRunning.
+    feedPtyData('╭──────────╮\r\n')
+    expect(getSshFlow('s-wd-latched')!.getState().state).toBe('claude-running')
+    writeMock.mockClear()
+    sends.length = 0
+    // e.g. claude's own output happens to quote a matching phrase.
+    feedPtyData(TMUX_REFUSAL)
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-latched')).toHaveLength(0)
+    expect(getSshFlow('s-wd-latched')!.getState().state).toBe('claude-running')
+  })
+
+  it('(g) does NOT fire once the 6s window has elapsed', () => {
+    const { win, sends } = makeRecordingWin()
+    driveToWrappedLaunch('s-wd-elapsed', win)
+    // No refusal inside the window; the fake clock (Date is faked by
+    // vi.useFakeTimers) crosses TMUX_LAUNCH_WATCH_MS = 6000.
+    vi.advanceTimersByTime(6001)
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData(TMUX_REFUSAL)
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel === 'ssh:sessionInfo:s-wd-elapsed')).toHaveLength(0)
+  })
+})
+
+describe('spawnPty SSH branch — the destroyed invariant (lifecycle follow-up)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => {
+    vi.useRealTimers()
+    _setTmuxArchiveResolverForTest(null)
+  })
+
+  // The attacker probe this pins: destroy mid-tier-3, then feed a VALID
+  // (correct-nonce) stage-ok sentinel — pre-fix this drove a
+  // buildTmuxBinPatchCommand write into the torn-down PTY and re-armed the
+  // idle fallback. Mutation to prove this can fail: remove the
+  // `if (destroyed) return` from the SSH onData handler — the stage-sentinel
+  // block then runs and its synchronous settings-patch write lands
+  // (writeMock gains a call), failing the zero-writes assertion.
+  it('(a) destroy mid-tier-3: a later VALID stage-ok sentinel drives ZERO PTY writes and ZERO ssh:flowState/ssh:sessionInfo emits', () => {
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-stage', { ssh: SSH } as never)
+    writeMock.mockClear()
+    getSshFlow('s-destroyed-stage')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel('s-destroyed-stage', 'setup ok {NONCE} tmux=none\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300) // staging fragment written; the stage sentinel is now awaited
+    // Build the genuine sentinel BEFORE destroy so the test cannot depend on
+    // the nonce registry's post-destroy lifetime.
+    const sentinel = nonceSentinel('s-destroyed-stage', 'ccc-tmux-stage {NONCE} ok path=/home/dev/.claude/bin/tmux\r\n')
+    getSshFlow('s-destroyed-stage')!.destroy()
+    writeMock.mockClear()
+    sends.length = 0
+    feedPtyData(sentinel)
+    vi.advanceTimersByTime(1000) // past writeClaudeCmd's 200ms delay, had one been scheduled
+    expect(writeMock.mock.calls).toHaveLength(0) // no CCC_TMUX_BIN patch write, no claude write
+    expect(sends.filter((s) => s.channel.startsWith('ssh:flowState:'))).toHaveLength(0)
+    expect(sends.filter((s) => s.channel.startsWith('ssh:sessionInfo:'))).toHaveLength(0)
+  })
+
+  // The second attacker probe: a destroy during the tier-4 download let the
+  // resolving promise emit 'running-claude' on ssh:flowState:<id> — a channel
+  // a RESPAWNED session with the same id is already subscribed to. Mutation to
+  // prove this can fail: remove writeClaudeCmd's top `if (destroyed) return` —
+  // the aborted-push recovery path (writeClaudeCmd('tmux-push-fail:aborted'))
+  // then runs its body and emitSshSessionInfo lands on ssh:sessionInfo:<id>,
+  // failing the zero-sessionInfo assertion. (Its setFlowState call is caught
+  // by setFlowState's own guard — that layer is pinned by (b2) below.)
+  it('(b) destroy during the tier-4 download: the resolver settling afterwards writes nothing and emits nothing on ssh:flowState/ssh:sessionInfo', async () => {
+    let resolveArchive!: (b: Buffer | null) => void
+    _setTmuxArchiveResolverForTest(() => new Promise<Buffer | null>((res) => { resolveArchive = res }))
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-push', { ssh: SSH } as never)
+    writeMock.mockClear()
+    getSshFlow('s-destroyed-push')!.launchClaude()
+    vi.advanceTimersByTime(300)
+    feedPtyData(nonceSentinel('s-destroyed-push', 'setup ok {NONCE} tmux=none\r\n'))
+    vi.advanceTimersByTime(1500)
+    vi.advanceTimersByTime(300)
+    feedPtyData('ccc-tmux-push-arch Linux-x86_64\r\n')
+    feedPtyData(nonceSentinel('s-destroyed-push', 'ccc-tmux-stage {NONCE} fail=download\r\n')) // attemptTmuxPush: download now pending
+    getSshFlow('s-destroyed-push')!.destroy()
+    writeMock.mockClear()
+    sends.length = 0
+    resolveArchive(FAKE_TMUX_ARCHIVE)
+    await flushMicrotasks()
+    await vi.advanceTimersByTimeAsync(6000) // would drain the transfer + writeClaudeCmd's delay if unguarded
+    expect(writeMock.mock.calls).toHaveLength(0)
+    expect(sends.filter((s) => s.channel.startsWith('ssh:flowState:'))).toHaveLength(0)
+    expect(sends.filter((s) => s.channel.startsWith('ssh:sessionInfo:'))).toHaveLength(0)
+  })
+
+  // Defence-in-depth layer for the promise/captured-reference call sites that
+  // never pass through onData: the flowController object outlives its sshFlows
+  // entry (teardown races reach these methods through captured references —
+  // the same seam M3's direct-destroy test uses). Mutation to prove this can
+  // fail: remove the `if (destroyed) return` at the top of setFlowState — both
+  // calls below then emit on ssh:flowState:<id> AND mutate the state a
+  // still-held getState() reports.
+  it('(b2) setFlowState itself is destroyed-guarded: a captured controller driven after destroy neither emits nor mutates state', () => {
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-direct', { ssh: SSH } as never)
+    const flow = getSshFlow('s-destroyed-direct')!
+    expect(flow.getState().state).toBe('connecting')
+    flow.destroy()
+    sends.length = 0
+    flow.handlePtyExit() // would setFlowState('failed', 'connection')
+    flow.skip() //          would setFlowState('skipped')
+    expect(sends.filter((s) => s.channel.startsWith('ssh:flowState:'))).toHaveLength(0)
+    expect(flow.getState().state).toBe('connecting') // not even locally mutated
+  })
+
+  // The guard must sit AFTER the renderer data forward: a destroyed flow's
+  // terminal is still a terminal. Mutation to prove this can fail: move the
+  // onData `if (destroyed) return` ABOVE the win.webContents.send data
+  // forward — the pty:data send below disappears.
+  it('(c) terminal bytes STILL reach pty:data:<sessionId> after destroy', () => {
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-data', { ssh: SSH } as never)
+    getSshFlow('s-destroyed-data')!.destroy()
+    sends.length = 0
+    feedPtyData('post-destroy shell output\r\n')
+    const dataSends = sends.filter((s) => s.channel === 'pty:data:s-destroyed-data')
+    expect(dataSends).toHaveLength(1)
+    expect(dataSends[0].payload).toContain('post-destroy shell output')
+  })
+
+  // Belt-and-braces by design, like the staging-timer destroy test above: the
+  // re-arm is blocked TWICE (the onData guard bails before armIdleFallback is
+  // ever called, and armIdleFallback's own guard bails if reached some other
+  // way), so no SINGLE mutation fails this test — verified: removing only the
+  // onData guard leaves it green (armIdleFallback's guard catches it), and
+  // removing only armIdleFallback's guard leaves it green (onData bails
+  // first). Removing BOTH (the full pre-fix shape) is what makes the
+  // timer-count assertion fail. Recorded precisely so nobody later trusts a
+  // single-mutation sensitivity this test does not have.
+  it('(d) post-destroy data does not re-arm the idle fallback: no new timer, no state advance past 1.5s', () => {
+    const { win, sends } = makeRecordingWin()
+    onDataListeners.length = 0
+    spawnPty(win as never, 's-destroyed-idle', { ssh: SSH } as never)
+    const flow = getSshFlow('s-destroyed-idle')!
+    // 'connecting' is the state whose idle handler WOULD advance (to
+    // awaiting-claude) if the fallback re-armed and fired.
+    expect(flow.getState().state).toBe('connecting')
+    flow.destroy()
+    sends.length = 0
+    const timersBefore = vi.getTimerCount()
+    feedPtyData('late teardown chatter\r\n')
+    expect(vi.getTimerCount()).toBe(timersBefore) // nothing re-armed
+    vi.advanceTimersByTime(5000) // way past IDLE_FALLBACK_MS (1.5s)
+    expect(flow.getState().state).toBe('connecting')
+    expect(sends.filter((s) => s.channel.startsWith('ssh:flowState:'))).toHaveLength(0)
+  })
+})
+
 describe('spawnPty SSH branch — Windows remote skips the POSIX tmux staging ladder (item 3, adversarial review)', () => {
   beforeEach(() => { vi.useFakeTimers() })
   afterEach(() => { vi.useRealTimers() })

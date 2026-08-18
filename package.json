@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "2.1.0-beta.13-test.2",
+  "version": "2.1.0-beta.12",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
@@ -129,7 +129,14 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "signtoolOptions": {
+        "signingHashAlgorithms": [
+          "sha256"
+        ],
+        "rfc3161TimeStampServer": "http://ts.ssl.com",
+        "publisherName": "Nicholas Moger"
+      }
     },
     "mac": {
       "executableName": "AI Code Conductor",

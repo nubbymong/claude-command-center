@@ -90,10 +90,23 @@ export const STAGED_TMUX_BIN_EXPR = '"$HOME"/.claude/bin/tmux'
  * question tier 1 needs ("is tmux on this user's PATH") with no
  * wire-reported operand in the sink at all -- generateRemoteSetupScript
  * (ssh-shim.ts) now emits a CLASS (`path`/`home`/`none`), never a path, for
- * exactly this reason. Quoted as a single command-substitution token so a
- * PATH entry containing whitespace can't split the argument.
+ * exactly this reason.
+ *
+ * Follow-up adversarial pass (fail-posture MAJOR): this used to be
+ * `"$(command -v tmux)"`. The DETECTION probe runs `command -v tmux` through
+ * `execSync` (a non-interactive `sh -c`, where aliases do not exist), but this
+ * token is expanded by the remote's INTERACTIVE login shell -- and there
+ * `command -v` prints an alias DEFINITION (`alias tmux='tmux -2'`) rather than a
+ * path for anyone who aliases tmux in their rc file. Quoted as one word that is
+ * exit 127 and no claude, on every connect, where the pre-#242 bare launch
+ * always worked. `command tmux` is the alias- AND function-proof form: `command`
+ * is a POSIX special builtin that bypasses shell functions, and `tmux` sits in
+ * argument position where alias expansion never applies. It remains a
+ * compile-time literal with no wire-reported operand, which is the property
+ * this constant exists to guarantee, and the remote's own PATH lookup still
+ * happens in the authenticated user's shell at launch time.
  */
-export const ON_PATH_TMUX_BIN_EXPR = '"$(command -v tmux)"'
+export const ON_PATH_TMUX_BIN_EXPR = 'command tmux'
 
 /**
  * Sanitize a CCC session id into a tmux-safe session name. Mirrors the

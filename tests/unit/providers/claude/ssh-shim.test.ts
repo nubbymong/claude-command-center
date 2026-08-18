@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'fs'
+import * as nodePath from 'path'
 
 // P7.8: getConductorMcpPort returns 0 unless the server has actually bound,
 // which never happens in the test sandbox. Mock to a non-zero port so the
@@ -392,6 +393,171 @@ describe('SSH remote setup script -- tmux detection (#242)', () => {
     // else on the line -- assert that exact literal is gone, not merely
     // that the new one was added alongside it.
     expect(script).not.toContain(`process.stdout.write('setup ok\\n')`)
+  })
+})
+
+// ===========================================================================
+// Follow-up adversarial pass (fail-posture) — two remote-probe fixes:
+//   1. tier-2 must EXECUTE the ~/.claude/bin/tmux candidate (`-V`, bounded)
+//      before reporting class `home` — X_OK alone is satisfied by a zero-byte
+//      file, a half-written download, a wrong-arch binary and even a DIRECTORY
+//      named `tmux` (POSIX X_OK on a searchable dir succeeds), each of which
+//      wrapped every future launch on that host in a binary that cannot run;
+//   2. a login shell ALREADY inside tmux ($TMUX set — the common
+//      `[ -z "$TMUX" ] && exec tmux new -A` rc pattern) must report `none`:
+//      nesting `new-session -A` is refused by tmux ("sessions should be
+//      nested with care"), exit 1, no claude, on every connect.
+// Text pins first, then a runtime harness (mirroring
+// ssh-shim-runtime-harness.test.ts) that actually EXECUTES the generated
+// setup script — substring assertions alone survive any refactor that keeps
+// the text but reorders/loses the behaviour.
+// ===========================================================================
+describe('SSH remote setup script — tier-2 -V execution probe + nested-tmux override (fail-posture follow-up)', () => {
+  // Mutation to prove this can fail: drop the execFileSync('-V') call from
+  // the tier-2 probe line — both the containment and the ordering fail.
+  it('the tier-2 probe EXECUTES the candidate (`-V`, bounded, output discarded) between the X_OK check and the `home` class assignment', () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    expect(script).toContain(`execFileSync(cb,['-V'],{timeout:5000,stdio:'ignore'})`)
+    // Order inside the one shared try: access -> execute -> assign, so a
+    // throw from EITHER probe prevents `home` from ever being reported.
+    const accessIdx = script.indexOf('fs.accessSync(cb,fs.constants.X_OK)')
+    const execIdx = script.indexOf(`execFileSync(cb,['-V'],{timeout:5000,stdio:'ignore'})`)
+    const assignHomeIdx = script.indexOf(`tmuxClass='home'`)
+    expect(accessIdx).toBeGreaterThan(-1)
+    expect(execIdx).toBeGreaterThan(accessIdx)
+    expect(assignHomeIdx).toBeGreaterThan(execIdx)
+  })
+
+  // Mutation to prove this can fail: delete the override line — the
+  // existence assertion fails (and the runtime tests below fail too).
+  // Order matters: the override must come AFTER both the tier-1 and tier-2
+  // assignments, or an assignment would simply overwrite it and the nested
+  // remote would still get the doomed wrap.
+  it('contains the $TMUX -> tmuxClass=none override, AFTER both tier-1 and tier-2 assignments (it must win)', () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    const override = `if(process.env.TMUX){tmuxPath='';tmuxClass='none'}`
+    const overrideIdx = script.indexOf(override)
+    expect(overrideIdx).toBeGreaterThan(-1)
+    const tier1Idx = script.indexOf(`tmuxClass='path'`)
+    const tier2Idx = script.indexOf(`tmuxClass='home'`)
+    expect(tier1Idx).toBeGreaterThan(-1)
+    expect(tier2Idx).toBeGreaterThan(-1)
+    expect(overrideIdx).toBeGreaterThan(tier1Idx)
+    expect(overrideIdx).toBeGreaterThan(tier2Idx)
+  })
+})
+
+// Runtime harness for the WHOLE generated setup script (the outer node
+// script, not the statusline shim ssh-shim-runtime-harness.test.ts runs):
+// `new Function('require','process',script)` with `require`/`process`
+// shadowed by scripted stand-ins, capturing the sentinel the real remote
+// would write to stdout. What class the sentinel carries under each remote
+// condition IS the behaviour under test.
+interface SetupRunResult {
+  stdout: string
+  execFileCalls: Array<{ file: string; args: string[] }>
+}
+
+function runSetupScript(opts: {
+  env: Record<string, string>
+  /** tier 1 (`command -v tmux` via execSync): throw = not on PATH. */
+  execSync: (cmd: string) => string
+  /** tier 2 access probe: throw = candidate missing / not executable. */
+  accessSync?: (p: string) => void
+  /** tier 2 execution probe (`-V`): throw = candidate cannot actually run. */
+  execFileSync?: (file: string, args: string[]) => string
+}): SetupRunResult {
+  const result: SetupRunResult = { stdout: '', execFileCalls: [] }
+  const enoent = (): Error => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+  const fakeFs = {
+    mkdirSync: () => {},
+    chmodSync: () => {},
+    rmSync: () => {},
+    writeFileSync: () => {},
+    readFileSync: () => { throw enoent() },
+    existsSync: () => false,
+    accessSync: (p: string) => { (opts.accessSync ?? (() => { throw enoent() }))(p) },
+    constants: { X_OK: 1 },
+  }
+  const fakeChildProcess = {
+    execSync: (cmd: string) => opts.execSync(cmd),
+    execFileSync: (file: string, args: string[]) => {
+      result.execFileCalls.push({ file, args })
+      return (opts.execFileSync ?? (() => ''))(file, args)
+    },
+  }
+  const fakeRequire = (name: string): unknown => {
+    if (name === 'fs') return fakeFs
+    if (name === 'os') return { homedir: () => '/fake-home' }
+    // posix flavour deliberately: the script runs on a POSIX remote; the
+    // host-side win32 path module would splice backslashes into the tier-2
+    // candidate and trip the script's own charset guard for reasons no real
+    // remote can reproduce.
+    if (name === 'path') return nodePath.posix
+    if (name === 'child_process') return fakeChildProcess
+    throw new Error('setup-script harness: unexpected require: ' + name)
+  }
+  const fakeProcess = {
+    env: opts.env,
+    stdout: { write: (s: string) => { result.stdout += s; return true } },
+  }
+  const script = generateRemoteSetupScript('sid-rt', null, undefined, NONCE)
+  // eslint-disable-next-line no-new-func -- deliberate: this IS the harness.
+  new Function('require', 'process', script)(fakeRequire, fakeProcess)
+  return result
+}
+
+/** The one location tier 2 ever probes, as the fake remote resolves it. */
+const TIER2_CANDIDATE = '/fake-home/.claude/bin/tmux'
+
+function sentinelTmuxClass(stdout: string): string | undefined {
+  return stdout.match(new RegExp(`setup ok ${NONCE} tmux=(\\S+) acct=`))?.[1]
+}
+
+describe('SSH remote setup script — runtime behaviour of the tmux probes (fail-posture follow-up)', () => {
+  // Mutation to prove this can fail: drop the execFileSync('-V') from the
+  // tier-2 probe — with only X_OK consulted this reports `home` and
+  // execFileCalls stays empty.
+  it('a candidate that passes X_OK but cannot execute -V (zero-byte file, wrong arch, a directory) is NOT reported as home', () => {
+    const r = runSetupScript({
+      env: {},
+      execSync: () => { throw new Error('command -v: not found') }, // tier 1 misses
+      accessSync: () => {}, // X_OK passes — exactly the pre-fix trap
+      execFileSync: () => { throw Object.assign(new Error('spawnSync ENOEXEC'), { code: 'ENOEXEC' }) },
+    })
+    expect(sentinelTmuxClass(r.stdout)).toBe('none')
+    // The probe really EXECUTED the candidate, with -V, output discarded.
+    expect(r.execFileCalls).toEqual([{ file: TIER2_CANDIDATE, args: ['-V'] }])
+  })
+
+  it('control: a candidate that passes X_OK AND runs -V IS reported as home', () => {
+    const r = runSetupScript({
+      env: {},
+      execSync: () => { throw new Error('command -v: not found') },
+      accessSync: () => {},
+      execFileSync: () => 'tmux 3.5a\n',
+    })
+    expect(sentinelTmuxClass(r.stdout)).toBe('home')
+  })
+
+  // Mutation to prove this can fail: delete the
+  // `if(process.env.TMUX){tmuxPath='';tmuxClass='none'}` line — this reports
+  // `path` and pty-manager wraps the launch in a nested new-session tmux
+  // refuses on every connect.
+  it('a login shell ALREADY inside tmux ($TMUX set) reports tmux=none even when tier 1 found tmux on PATH', () => {
+    const r = runSetupScript({
+      env: { TMUX: '/tmp/tmux-1000/default,1234,0' },
+      execSync: () => '/usr/bin/tmux\n', // tier 1 HITS — the override must beat it
+    })
+    expect(sentinelTmuxClass(r.stdout)).toBe('none')
+  })
+
+  it('control: without $TMUX the same tier-1 hit reports tmux=path', () => {
+    const r = runSetupScript({
+      env: {},
+      execSync: () => '/usr/bin/tmux\n',
+    })
+    expect(sentinelTmuxClass(r.stdout)).toBe('path')
   })
 })
 

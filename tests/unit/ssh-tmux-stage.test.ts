@@ -49,13 +49,62 @@ describe('buildTmuxStageScript', () => {
     expect(cmd).toMatch(/_sfx=""[\s\S]*fail=arch/)
   })
 
-  it('downloads with curl -fsSL, falling back to wget -qO-, into a temp file', () => {
+  // Follow-up adversarial pass (fail-posture MAJOR): both fetchers must be
+  // time-bounded well inside the host's 20s STAGE_TIMEOUT_MS (a function-local
+  // const in pty-manager.ts, not exported -- the literal 20 below mirrors it).
+  // Unbounded, a DROP-egress host blocks curl for ~127s of SYN retries and GNU
+  // wget then retries 20 times: the host-side timer fires at 20s and queues the
+  // claude launch into a tty that is still mid-download with echo off, and the
+  // fail=download sentinel (the thing that unlocks tier 4) is never printed.
+  it('downloads with a bounded curl, then bounded wget, then a busybox-safe bounded wget, all inside the 20s stage budget', () => {
     const cmd = buildTmuxStageScript(NONCE)
-    expect(cmd).toMatch(/curl -fsSL "\$_url" -o "\$_tmp"/)
-    expect(cmd).toMatch(/wget -qO- "\$_url" > "\$_tmp"/)
-    // The two are chained with || so wget only runs if curl failed.
-    expect(cmd).toMatch(/curl -fsSL[^|]*\|\|\s*wget -qO-/)
+    // curl leg: BOTH a connect bound and a total-time bound, into the temp file.
+    const curlLeg = cmd.match(/curl [^|;]*"\$_tmp"/)?.[0] ?? ''
+    expect(curlLeg).toMatch(/--connect-timeout \d+/)
+    expect(curlLeg).toMatch(/--max-time \d+/)
+    expect(curlLeg).toMatch(/-o "\$_tmp"/)
+    // First wget leg (GNU): -T (network timeout) AND -t 1 (GNU defaults to
+    // --tries=20, which alone blows the budget).
+    expect(cmd).toMatch(/wget -q -T \d+ -t 1 -O "\$_tmp" "\$_url"/)
+    // Second wget leg (busybox-safe): -T but NO -t -- busybox wget (Alpine,
+    // OpenWrt) has no -t flag at all and usage-errors out of the GNU form.
+    expect(cmd).toMatch(/wget -q -T \d+ -O "\$_tmp" "\$_url"/)
+    // The three are chained with || in exactly that order: curl, GNU wget,
+    // busybox-safe wget -- each only runs if the previous fetcher failed.
+    expect(cmd).toMatch(/curl [^|]*\|\|\s*wget -q -T \d+ -t 1 [^|]*\|\|\s*wget -q -T \d+ -O /)
+    // Every timeout number any leg carries stays inside the 20s stage budget.
+    const timeouts = [...cmd.matchAll(/--connect-timeout (\d+)|--max-time (\d+)|-T (\d+)/g)]
+      .map((m) => Number(m[1] ?? m[2] ?? m[3]))
+    expect(timeouts.length).toBeGreaterThanOrEqual(4) // curl x2 + one -T per wget leg
+    for (const t of timeouts) {
+      expect(t).toBeGreaterThan(0)
+      expect(t).toBeLessThanOrEqual(20)
+    }
     expect(cmd).toMatch(/_tmp=\$\(mktemp/)
+  })
+
+  // Invariant form of the same fix, deliberately NOT pinned to today's literal
+  // flags: split the fragment into individual commands and require that EVERY
+  // curl invocation carries --max-time and EVERY wget invocation carries -T.
+  // This is the test that must fail if someone later adds a new, unbounded
+  // fetcher (or drops the bound from an existing one) anywhere in the script,
+  // even if the shape-pinning test above is updated to match the new layout.
+  it('contains no unbounded fetch: every curl has --max-time and every wget has -T', () => {
+    const cmd = buildTmuxStageScript(NONCE)
+    // Command separators in this fragment: ||, |, ;, and subshell parens.
+    const fragments = cmd.split(/\|\||[|;()]/)
+    const curlFragments = fragments.filter((f) => /\bcurl\b/.test(f))
+    const wgetFragments = fragments.filter((f) => /\bwget\b/.test(f))
+    // Guard the guard: the script must actually contain both fetchers, so an
+    // accidental tokenizer change cannot turn this test into a vacuous pass.
+    expect(curlFragments.length).toBeGreaterThanOrEqual(1)
+    expect(wgetFragments.length).toBeGreaterThanOrEqual(2)
+    for (const f of curlFragments) {
+      expect(f, `unbounded curl invocation: ${f}`).toMatch(/--max-time \d+/)
+    }
+    for (const f of wgetFragments) {
+      expect(f, `unbounded wget invocation: ${f}`).toMatch(/-T \d+/)
+    }
   })
 
   // Adversarial review round 2, MINOR: a predictable /tmp path fallback on

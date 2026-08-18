@@ -397,6 +397,22 @@ const TMUX_DOWNLOAD_REQUEST_TIMEOUT_MS = 20000
  */
 const TMUX_ARCHIVE_MAX_BYTES = 8 * 1024 * 1024
 
+/**
+ * Follow-up adversarial pass (coverage MAJOR): exported for tests.
+ *
+ * Every guard in this function was previously unreachable from the suite --
+ * `attemptTmuxPush` goes through the `tmuxArchiveResolver` seam, which tests
+ * stub ABOVE this level, so raising TMUX_ARCHIVE_MAX_BYTES to
+ * Number.MAX_SAFE_INTEGER, or deleting the https-only redirect refusal
+ * outright, left the entire targeted suite green. This is the function whose
+ * unbounded body was a round-4 BLOCKER; its guards must be able to fail a test.
+ * Exported (rather than reached through a new seam) so the tests drive the real
+ * https path with a mocked `https.get`.
+ */
+export function _downloadAndCacheTmuxArchiveForTest(arch: TmuxStageTarget): Promise<Buffer | null> {
+  return downloadAndCacheTmuxArchive(arch)
+}
+
 function downloadAndCacheTmuxArchive(arch: TmuxStageTarget): Promise<Buffer | null> {
   // #242 finding F6: same URL parts buildTmuxStageScript's remote curl/wget
   // fragment builds its `_url` from (ssh-tmux-stage.ts) -- see
@@ -1240,6 +1256,16 @@ export function spawnPty(
     const DOWNLOAD_TIMEOUT_MS = 45000
 
     const setFlowState = (s: SshFlowState, info?: string) => {
+      // Follow-up adversarial pass (lifecycle MAJOR): `destroyed` used to gate
+      // only the PTY WRITES, not this emit. A flow torn down mid-tier (the
+      // download promise, a push abort) still resolved afterwards and emitted
+      // onto `ssh:flowState:<sessionId>` -- a channel a RESPAWNED session with
+      // the same id is already subscribed to, so the dead flow's
+      // 'running-claude'/failure state painted the new session's overlay and
+      // could falsely latch "reached claude-running" on it (which then adds
+      // --continue with no conversation to continue). A destroyed flow emits
+      // nothing: it no longer exists as far as the renderer is concerned.
+      if (destroyed) return
       currentFlowState = s
       currentFlowInfo = info
       logInfo(`[ssh] ${sessionId}: flow → ${s}${info ? ` (${info})` : ''}`)
@@ -1257,6 +1283,11 @@ export function spawnPty(
     let idleFallbackHandle: ReturnType<typeof setTimeout> | null = null
     let receivedAnyData = false
     const armIdleFallback = () => {
+      // Follow-up adversarial pass (lifecycle MAJOR): destroy() clears this
+      // timer, but any data arriving during the PTY's teardown grace window
+      // re-armed it immediately afterwards -- resurrecting the whole ladder
+      // (up to a 'claude-running' emit) on a session that no longer exists.
+      if (destroyed) return
       if (idleFallbackHandle) clearTimeout(idleFallbackHandle)
       idleFallbackHandle = setTimeout(() => {
         idleFallbackHandle = null
@@ -1524,6 +1555,14 @@ export function spawnPty(
     // the reason. Passing it through here means the state a listener
     // actually observes carries the info.
     const writeClaudeCmd = (runningClaudeInfo?: string) => {
+      // Follow-up adversarial pass (lifecycle MAJOR): bail at the TOP, not just
+      // in the deferred write callback below. Reached from a resolving download
+      // / push promise after teardown, the old code still ran the whole body --
+      // emitting flow state and session-info onto the id's channels and
+      // mutating sshTmuxWrappedBySession -- and only the final write was
+      // suppressed. Everything this function does is meaningless for a
+      // destroyed flow, and harmful once the id has been respawned.
+      if (destroyed) return
       // Idempotent. shellOnly is intentionally NOT gated: this writer
       // only runs after the user clicked Launch Claude (or after a
       // user-consented chain reached this stage), so the click is
@@ -1603,10 +1642,71 @@ export function spawnPty(
         if (destroyed) return
         try {
           ptyProcess.write(cmdToWrite + '\r')
+          // Follow-up adversarial pass (fail-posture MAJOR): arm the
+          // wrapped-launch watchdog only once the wrapped command has actually
+          // been written -- see tmuxLaunchWatchUntil's doc comment.
+          if (tmuxWrapped) tmuxLaunchWatchUntil = Date.now() + TMUX_LAUNCH_WATCH_MS
         } catch (err) {
           logError(`[ssh] ${sessionId}: writeClaudeCmd's write failed post-schedule: ${(err as Error)?.message ?? err}`)
         }
       }, 200)
+    }
+
+    /**
+     * Follow-up adversarial pass (fail-posture MAJOR): the umbrella fallback for
+     * a tmux-wrapped launch that the remote refuses.
+     *
+     * The stage/push scripts smoke-test the binary they install with `tmux -V`
+     * and `tmux new-session -d`, and their doc comments claim that surfaces the
+     * "missing or unsuitable terminal" (terminfo) failure. It does not: a
+     * DETACHED new-session never opens a client tty, so terminfo is never
+     * consulted, and the pinned static build ships without compiled-in fallback
+     * entries. On a remote with no terminfo database for $TERM -- the minimal
+     * container that is exactly this tier's target -- staging reports `ok`, the
+     * ATTACHED launch then dies with `open terminal failed`, and tier 2 selects
+     * the same binary on every later connect. Nothing recovered: claude never
+     * started, and Launch Claude is inert once `claudeSent` latched.
+     *
+     * Rather than teach the smoke test to predict every way a remote can refuse
+     * to run tmux (terminfo, an already-nested session, a wrong-arch or
+     * truncated binary, a tmux too old for `new-session -A`), watch the PTY for
+     * a short window after the wrapped launch and fall back to the BARE launch
+     * the moment the remote says it failed. That is safe precisely because a
+     * failed wrap means nothing is running: the pane is back at a shell prompt.
+     *
+     * The window is deliberately short and closes the instant claude latches, so
+     * this can never fire against claude's own output; every pattern below is a
+     * message a shell or tmux emits about the command we just typed.
+     */
+    const TMUX_LAUNCH_WATCH_MS = 6000
+    /** Deadline (epoch ms) until which the wrapped launch is being watched; 0 = not watching. */
+    let tmuxLaunchWatchUntil = 0
+    let tmuxLaunchFellBack = false
+    const TMUX_LAUNCH_FAILURE_RE = /open terminal failed|sessions should be nested|missing or unsuitable terminal|no server running on|not a terminal|exec format error|cannot execute binary file|command not found|permission denied|is a directory/i
+    const handleWrappedLaunchFailure = (data: string): void => {
+      if (destroyed || tmuxLaunchFellBack || !tmuxLaunchWatchUntil) return
+      if (Date.now() > tmuxLaunchWatchUntil) { tmuxLaunchWatchUntil = 0; return }
+      if (claudeRunning) { tmuxLaunchWatchUntil = 0; return }
+      const m = data.match(TMUX_LAUNCH_FAILURE_RE)
+      if (!m) return
+      tmuxLaunchFellBack = true
+      tmuxLaunchWatchUntil = 0
+      logError(`[ssh] ${sessionId}: tmux-wrapped launch was refused by the remote (${m[0]}) -- falling back to a bare claude launch`)
+      // The wrap is off for this session: correct the persistence signal the
+      // wrapped write already emitted, and stop close/quit from trying to
+      // DETACH from a tmux session that was never created.
+      sshTmuxWrappedBySession.delete(sessionId)
+      emitSshSessionInfo(win, sessionId, { tmuxPersistent: false, remoteAccount })
+      // Reconnecting with no tmux in play is exactly the case tier 5 exists
+      // for, so the bare retry carries --continue when this spawn is a respawn.
+      const bareFlags = buildSshClaudeFlags({ reconnect: !!ssh.reconnect, tmuxInPlay: false })
+      const bareCmd = bareFlags ? `${claudeCmd} ${bareFlags}` : claudeCmd
+      setFlowState('running-claude', 'tmux-launch-refused')
+      try {
+        ptyProcess.write(bareCmd + '\r')
+      } catch (err) {
+        logError(`[ssh] ${sessionId}: bare-launch fallback write failed: ${(err as Error)?.message ?? err}`)
+      }
     }
 
     /**
@@ -2101,6 +2201,23 @@ export function spawnPty(
       const data = extractSshOscSentinels(sessionId, rawData)
       getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       win.webContents.send(`pty:data:${sessionId}`, data)
+
+      // Follow-up adversarial pass (lifecycle MAJOR): once the flow is
+      // destroyed, terminal bytes still belong on the renderer's data channel
+      // (above) but NOTHING below this line does -- every latch, sentinel
+      // parse, settings-patch write and claude launch beneath is flow logic for
+      // a session that has been torn down. Proven reachable: destroying
+      // mid-tier-3 and then feeding the stage sentinel drove a
+      // buildTmuxBinPatchCommand write into the dead PTY and re-armed the idle
+      // fallback. The individual `destroyed` guards on setFlowState /
+      // writeClaudeCmd / armIdleFallback stay as defence in depth for the
+      // promise-driven call sites that never pass through here.
+      if (destroyed) return
+
+      // Follow-up adversarial pass (fail-posture MAJOR): watch a tmux-wrapped
+      // launch for a remote refusal and fall back to the bare launch. No-op
+      // unless a wrapped command was just written -- see its doc comment.
+      handleWrappedLaunchFailure(data)
 
       // Arm the idle-data fallback. Re-arms on every chunk so the timer
       // tracks the most recent activity. The handler itself decides

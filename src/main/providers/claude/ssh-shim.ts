@@ -293,7 +293,24 @@ export function generateRemoteSetupScript(
     // remote-reported path for either tier at all, so there is nothing left
     // for a wire-carried path to influence.
     `let tmuxPath='';let tmuxClass='none';try{tmuxPath=require('child_process').execSync('command -v tmux',{encoding:'utf8'}).trim();if(tmuxPath)tmuxClass='path'}catch{}`,
-    `if(!tmuxPath){const cb=path.join(claudeDir,'bin','tmux');try{fs.accessSync(cb,fs.constants.X_OK);tmuxPath=cb;tmuxClass='home'}catch{}}`,
+    // Follow-up adversarial pass (fail-posture MINOR): the tier-2 probe used
+    // fs.accessSync(X_OK) alone, which is satisfied by a zero-byte file, a
+    // half-written download, a wrong-architecture binary and even a DIRECTORY
+    // named `tmux` (POSIX X_OK on a searchable directory succeeds). Any of
+    // those got reported as `home`, wrapping every future launch on this host
+    // in a binary that cannot run. Actually EXECUTING it (`-V`, bounded) is the
+    // only check that answers the question the class claims to answer.
+    `if(!tmuxPath){const cb=path.join(claudeDir,'bin','tmux');try{fs.accessSync(cb,fs.constants.X_OK);require('child_process').execFileSync(cb,['-V'],{timeout:5000,stdio:'ignore'});tmuxPath=cb;tmuxClass='home'}catch{}}`,
+    // Follow-up adversarial pass (fail-posture MAJOR): if the remote login
+    // shell is ALREADY inside tmux (a very common `[ -z "$TMUX" ] && exec tmux
+    // new -A` in a user's rc file), wrapping the launch in another
+    // `new-session -A` is refused by tmux itself ("sessions should be nested
+    // with care, unset $TMUX to force") -- exit 1, no claude, on every single
+    // connect. Report `none` so the launch stays bare: the user's own outer
+    // tmux is already providing the persistence this tier would have added,
+    // and a session that starts is strictly better than a pill that says
+    // "persistent" over a session that never launched.
+    `if(process.env.TMUX){tmuxPath='';tmuxClass='none'}`,
     // #242 MAJOR (round 2, adversarial review): allowlist guard on tmuxPath,
     // BEFORE its one remaining consumer below (CCC_TMUX_BIN). `command -v
     // tmux` and the ~/.claude/bin access check both hand back a value this
