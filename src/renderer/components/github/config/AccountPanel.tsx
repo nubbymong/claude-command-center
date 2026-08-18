@@ -164,7 +164,7 @@ export default function AccountPanel({ profile, index }: Props) {
   const initials = (profile.label || profile.username).trim().slice(0, 2).toUpperCase()
 
   return (
-    <div className="bg-mantle rounded overflow-hidden">
+    <div className="settings-card overflow-hidden">
       <ExpiryBanner profile={profile} onRenew={() => setAdding(true)} />
 
       {/* Header: click toggles open */}
@@ -183,7 +183,7 @@ export default function AccountPanel({ profile, index }: Props) {
         <div className="flex-1 min-w-0">
           {editing ? (
             <input
-              className="w-full bg-surface0 p-1 rounded text-sm"
+              className="w-full bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue/50 transition-colors"
               value={newLabel}
               onClick={(e) => e.stopPropagation()}
               onChange={(e) => setNewLabel(e.target.value)}
@@ -235,7 +235,7 @@ export default function AccountPanel({ profile, index }: Props) {
 
       {/* Body mounts/unmounts under a 200ms transition (app convention). */}
       {open && (
-        <div className="border-t border-surface0 transition-opacity duration-200 ease-out p-3 space-y-2">
+        <div className="border-t settings-divider transition-opacity duration-200 ease-out p-3 space-y-2">
           {/* Informational line (moved from the old Status tab). */}
           <div className="text-xs text-subtext0">
             Powers {coveredCount} of {AUTH_FEATURE_KEYS.length} auth features ·{' '}
@@ -258,7 +258,7 @@ export default function AccountPanel({ profile, index }: Props) {
             return (
               <div
                 key={key}
-                className={`bg-base p-2 rounded flex items-center gap-2 ${differs ? 'border border-mauve/40' : ''}`}
+                className={`settings-panel p-2 flex items-center gap-2 ${differs ? 'border border-mauve/40' : ''}`}
               >
                 <ToggleSwitch
                   state={on ? 'on' : 'off'}

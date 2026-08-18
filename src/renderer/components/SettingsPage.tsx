@@ -434,7 +434,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                       onClick={() => save({ debugMode: !settings.debugMode })}
                       label="Verbose Logging"
                     />
-                    <span className={`text-xs font-medium ${settings.debugMode ? 'text-green' : 'text-overlay0'}`}>
+                    <span className={`text-xs font-medium ${settings.debugMode ? 'text-blue' : 'text-overlay0'}`}>
                       {settings.debugMode ? 'ON' : 'OFF'}
                     </span>
                   </div>
@@ -613,7 +613,7 @@ function StatusLineTab({
   return (
     <>
       {/* Master switch */}
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 flex items-center gap-3">
+      <div className="settings-card px-4 py-3 flex items-center gap-3">
         <Toggle on={statusLineEnabled} onClick={() => setMaster(!statusLineEnabled)} label="Status line" />
         <div className="min-w-0">
           <div className="text-sm text-text leading-tight">Show the status line</div>
@@ -628,8 +628,8 @@ function StatusLineTab({
         className={statusLineEnabled ? 'space-y-4' : 'space-y-4 opacity-40 pointer-events-none'}
       >
       {/* Live Preview */}
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
+      <div className="settings-card overflow-hidden">
+        <div className="px-4 py-2.5 border-b settings-divider flex items-center gap-2">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
             <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" />
             <path d="M2 6h12" stroke="currentColor" strokeWidth="1.2" />
@@ -647,8 +647,8 @@ function StatusLineTab({
       </div>
 
       {/* Toggle Grid */}
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
+      <div className="settings-card overflow-hidden">
+        <div className="px-4 py-2.5 border-b settings-divider flex items-center gap-2">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
             <path d="M4 8h8M8 4v8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
           </svg>
@@ -711,8 +711,8 @@ function BucketToggleCard({ title, subtitle, labels, hidden, onToggle }: {
   onToggle: (label: string) => void
 }): React.ReactElement {
   return (
-    <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-surface0/40">
+    <div className="settings-card overflow-hidden">
+      <div className="px-4 py-2.5 border-b settings-divider">
         <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">{title}</h3>
         <p className="text-[11px] text-overlay0 mt-0.5">{subtitle}</p>
       </div>
@@ -755,14 +755,14 @@ function UsageBucketToggles(): React.ReactElement | null {
 
   if (labels === null) {
     return (
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 text-[11px] text-overlay0">
+      <div className="settings-card px-4 py-3 text-[11px] text-overlay0">
         Loading your current usage limits…
       </div>
     )
   }
   if (labels.length === 0) {
     return (
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 text-[11px] text-overlay0">
+      <div className="settings-card px-4 py-3 text-[11px] text-overlay0">
         Per-limit toggles appear here once your usage limits load (start a session or open the account usage view once).
       </div>
     )
@@ -1164,10 +1164,9 @@ function FontSizeTab({ settings, save }: {
 export function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div
-      className="rounded-xl overflow-hidden"
-      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      className="settings-card overflow-hidden"
     >
-      <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+      <div className="px-4 py-2.5 flex items-center gap-2 border-b settings-divider">
         {icon && (
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0" style={{ color: 'var(--text-secondary)' }}>
             {icon}
@@ -1209,7 +1208,7 @@ export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => voi
       aria-pressed={on}
       aria-label={label}
       className="relative shrink-0 rounded-full transition-colors duration-200"
-      style={{ width: 44, height: 24, background: on ? 'var(--status-success)' : 'var(--surface-overlay)' }}
+      style={{ width: 44, height: 24, background: on ? 'var(--color-blue)' : 'var(--surface-overlay)' }}
     >
       <span
         className="absolute rounded-full bg-white shadow-sm transition-transform duration-200"
@@ -1230,9 +1229,9 @@ export function TabsRail({ activeTab, onChange }: { activeTab: SettingsTab; onCh
             onClick={() => onChange(tab.id)}
             className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
             style={{
-              background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
-              color: active ? 'var(--accent)' : 'var(--text-secondary)',
-              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+              background: active ? 'color-mix(in srgb, var(--color-blue) 15%, transparent)' : 'transparent',
+              color: active ? 'var(--color-blue)' : 'var(--text-secondary)',
+              borderLeft: `2px solid ${active ? 'var(--color-blue)' : 'transparent'}`,
             }}
           >
             {tab.label}

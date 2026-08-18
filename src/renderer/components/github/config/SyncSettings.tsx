@@ -35,11 +35,11 @@ export default function SyncSettings() {
   return (
     <section>
       <h3 className="text-sm uppercase text-subtext0 mb-3">Sync</h3>
-      <div className="bg-mantle p-3 rounded space-y-3 text-sm">
+      <div className="settings-card p-3 space-y-3 text-sm">
         <label className="flex items-center justify-between">
           <span>Active session</span>
           <select
-            className="bg-surface0 p-1 rounded"
+            className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue/50 transition-colors"
             value={config.syncIntervals.activeSessionSec}
             onChange={(e) => setInt('activeSessionSec', Number(e.target.value))}
           >
@@ -53,7 +53,7 @@ export default function SyncSettings() {
         <label className="flex items-center justify-between">
           <span>Background sessions</span>
           <select
-            className="bg-surface0 p-1 rounded"
+            className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue/50 transition-colors"
             value={config.syncIntervals.backgroundSec}
             onChange={(e) => setInt('backgroundSec', Number(e.target.value))}
           >
@@ -67,7 +67,7 @@ export default function SyncSettings() {
         <label className="flex items-center justify-between">
           <span>Notifications</span>
           <select
-            className="bg-surface0 p-1 rounded"
+            className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue/50 transition-colors"
             value={config.syncIntervals.notificationsSec}
             onChange={(e) => setInt('notificationsSec', Number(e.target.value))}
           >

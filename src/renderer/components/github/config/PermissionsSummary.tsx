@@ -110,7 +110,7 @@ export default function PermissionsSummary() {
         What each feature needs
       </button>
       {open && (
-        <div id="permissions-summary-body" className="bg-mantle p-3 rounded text-sm space-y-3 mt-3">
+        <div id="permissions-summary-body" className="settings-card p-3 text-sm space-y-3 mt-3">
           <div>
             <div className="text-subtext0 text-xs mb-1">
               OAuth / Classic PAT scopes (public repos only)

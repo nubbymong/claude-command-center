@@ -124,7 +124,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     ok ? 'bg-green' : warn ? 'bg-yellow' : 'bg-overlay0'
 
   return (
-    <div className="rounded border border-surface1 bg-mantle p-3 space-y-3">
+    <div className="settings-panel p-3 space-y-3">
       <div className="text-xs text-text font-medium">{accountName} — authentication</div>
 
       {/* Code session */}
@@ -159,7 +159,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
             <select
               value={authMethod}
               onChange={(e) => { void changeAuthMethod(e.target.value as CliAuthMethod) }}
-              className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue"
+              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors"
             >
               {CLI_AUTH_METHODS.map((m) => (
                 <option key={m} value={m}>{CLI_AUTH_METHOD_LABELS[m]}</option>
@@ -183,12 +183,13 @@ export function AccountWebSession({ profileId, accountName }: Props) {
               : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens a window to sign in.'}
           </div>
 
-          {/* SSO ONLY. Non-SSO accounts sign in inside an in-app window, which
-              launches no system browser, so this picker would be inert for them.
-              For SSO the browser IS the user's call: on a managed machine Chrome's
-              force-installed SSO extension is not there yet when claude.ai loads in
-              a fresh profile, while Edge does Entra SSO natively — which one an
-              account needs depends on its org, so CCC asks. */}
+          {/* SSO ONLY. Non-SSO accounts sign in inside an in-app window (#290),
+              which launches no system browser, so this picker would be inert for
+              them. For SSO the browser IS the user's call: on a managed machine
+              Chrome's force-installed SSO extension is not there yet when claude.ai
+              loads in a fresh profile, while Edge does Entra SSO natively — which
+              one an account needs depends on its org, so CCC asks. (Merge: keep
+              #290's SSO-only gate with #294's restyled control.) */}
           {authMethod === 'sso' && (
             <div className="flex items-center gap-2 mt-1.5">
               <span className="text-[10px] text-overlay0 shrink-0">Sign-in browser</span>
@@ -196,7 +197,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
                 value={authBrowser}
                 disabled={busy}
                 onChange={(e) => { void changeAuthBrowser(e.target.value as AuthBrowser) }}
-                className="bg-base border border-surface1 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue disabled:opacity-40"
+                className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors disabled:opacity-40"
               >
                 {AUTH_BROWSERS.map((b) => (
                   <option key={b} value={b}>{AUTH_BROWSER_LABELS[b]}</option>
