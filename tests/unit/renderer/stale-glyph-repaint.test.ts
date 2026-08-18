@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest'
 import {
   shouldRepaintOnOutput,
   shouldSoftRepaintOnOutput,
+  STRONG_SETTLE_QUIET_MS,
   outputRepaintIntervalMs,
   createStaleGlyphRepainter,
   REPAINT_MIN_INTERVAL_MS,
@@ -120,6 +121,48 @@ function makeHarness({ webglActive = true }: { webglActive?: boolean } = {}) {
     pendingTimers: () => timers.length,
   }
 }
+
+describe('settleStrong — the atlas rebuild lands in the GAP, not the stream', () => {
+  // The user constraint that shapes this: no flashing. beta.13 rebuilt the atlas
+  // 1x/sec DURING streaming and strobed. The rebuild is what actually clears a
+  // stale atlas (it is what a window resize does), so it has to happen — just
+  // never while output is flowing.
+  it('does NOT rebuild the atlas while output keeps arriving', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    // Chunks every 200ms for 10s — never a STRONG_SETTLE_QUIET_MS gap.
+    for (let i = 0; i < 50; i++) {
+      r.schedule(1000, false)
+      r.settleStrong()
+      h.advance(200)
+    }
+    expect(h.counts().clearAtlas).toBe(0)
+  })
+
+  it('rebuilds once when output stops', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    for (let i = 0; i < 10; i++) { r.schedule(1000, false); r.settleStrong(); h.advance(200) }
+    expect(h.counts().clearAtlas).toBe(0)
+    h.advance(STRONG_SETTLE_QUIET_MS + 50)   // output stops
+    expect(h.counts().clearAtlas).toBe(1)
+    h.advance(10_000)                        // still quiet: no repeat
+    expect(h.counts().clearAtlas).toBe(1)
+  })
+
+  it('a stream that pauses constantly cannot drag it back to the beta.13 rate', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    // A chunk, then a gap just long enough to fire the settle — over and over.
+    for (let i = 0; i < 20; i++) {
+      r.schedule(1000, false)
+      r.settleStrong()
+      h.advance(STRONG_SETTLE_QUIET_MS + 50)
+    }
+    // 20 quiet gaps across ~17s. Bounded by the 3s floor, not once per gap.
+    expect(h.counts().clearAtlas).toBeLessThanOrEqual(7)
+  })
+})
 
 describe('createStaleGlyphRepainter — the cheap (soft) repaint, beta.14', () => {
   // The beta.13 regression: every chunk of normal-buffer output rebuilt the

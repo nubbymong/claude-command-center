@@ -438,11 +438,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // then we try ONE recreate in the next frame (GPU-blip recovery).
       // If recreate fails, we force term.refresh so the DOM renderer
       // repaints the viewport the dead WebGL canvas left garbled.
-      webglHandle = installWebglWithRecovery(term, {
-        WebglAddonCtor: WebglAddon,
-        raf: requestAnimationFrame,
-        isDisposed: () => disposed,
-      })
+      // The GPU renderer is opt-OUT (see TerminalSettings.gpuRendering). Off, we
+      // never load the addon at all and xterm uses its DOM renderer, which has
+      // no glyph atlas and so cannot show the stale-glyph artifact this whole
+      // repainter exists to bound. Read once at mount — changing it applies to
+      // terminals opened afterwards, which keeps a live session from having its
+      // renderer swapped underneath it.
+      if (ts.gpuRendering !== false) {
+        webglHandle = installWebglWithRecovery(term, {
+          WebglAddonCtor: WebglAddon,
+          raf: requestAnimationFrame,
+          isDisposed: () => disposed,
+        })
+      }
       // #273: bust stale WebGL glyphs by reproducing the window-resize repaint
       // (clearTextureAtlas + refresh) against whichever addon is currently live.
       repainter = createStaleGlyphRepainter({
@@ -852,6 +860,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // defeat the 1/sec bound); when output truly stops it still clears
             // the final ghost within one interval.
             repainter.settle(undefined, paceMs, strong)
+            // ...and one STRONG rebuild once output actually stops. The atlas
+            // goes stale on its own (#273: new glyph variety in the stream is
+            // enough), and only a rebuild fixes it — which is why a window
+            // resize clears it by hand. Doing it in the GAP means the user never
+            // has to: nothing is moving, so it is not competing with a stream of
+            // new frames, and the text they are about to read is corrected.
+            repainter.settleStrong()
           }
         }
 

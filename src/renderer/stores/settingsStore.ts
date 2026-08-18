@@ -98,6 +98,17 @@ export interface TerminalSettings {
   cursorStyle: CursorStyle
   cursorBlink: boolean
   background?: string   // optional user terminal-background override; undefined => --surface-stage token
+  /**
+   * GPU (WebGL) rendering for terminals. Default on — it is materially faster
+   * with several busy sessions.
+   *
+   * Off falls back to xterm's DOM renderer, which has no glyph atlas at all and
+   * therefore cannot show the stale/garbled-glyph artifact (#273) that a resize
+   * clears. The escape hatch exists because that artifact comes from the GPU
+   * renderer itself: the app can bound how long it lasts, but cannot stop it
+   * happening. Applies to terminals opened after the change.
+   */
+  gpuRendering?: boolean
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -107,6 +118,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   lineHeight: 1.2,
   cursorStyle: 'bar',
   cursorBlink: true,
+  gpuRendering: true,
 }
 
 export interface AppSettings {
