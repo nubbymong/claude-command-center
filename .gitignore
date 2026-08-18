@@ -76,3 +76,8 @@ process-snapshot-*.txt
 # Any base64-wrapped cert/key blob (e.g. the `cert.b64` used to load a GitHub
 # secret — see docs/code-signing.md). Make those outside the repo; catch anyway.
 *.b64
+
+# Vitest transform cache. Per-checkout when vitest.config.ts sets cacheDir, so
+# worktrees sharing a junctioned node_modules cannot serve each other stale
+# transforms. Ignored unconditionally so a leftover dir can never be committed.
+.vite-cache/

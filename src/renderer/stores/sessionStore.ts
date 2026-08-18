@@ -116,6 +116,18 @@ export interface Session {
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */
   needsLogin?: boolean
+  /** #242 tier 5: true once this SSH session's flow state has reached
+   *  `claude-running` at least once. Set by TerminalView's flow-state
+   *  subscription, read at the NEXT spawn to compute SSHOptions.reconnect
+   *  (drives `--continue` when no tmux persistence tier is in play).
+   *  Mirrors effortLive/fastMode's lifecycle: never persisted (see
+   *  session-persistence.ts's explicit field allowlist) -- a session
+   *  restored after a full app relaunch starts with this unset, so its
+   *  first post-relaunch spawn is correctly NOT treated as a reconnect.
+   *  Survives an in-app Restart (forceRemount merges the live store record
+   *  without clearing it), which is the actual respawn path this exists
+   *  for. */
+  sshReachedClaudeRunning?: boolean
   codexOptions?: CodexOptions
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead

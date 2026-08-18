@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { isSshPersistenceFailureReason, formatPersistenceUnavailableMessage } from '../../shared/ssh-tmux-persistence'
 
 interface Props {
   sessionId: string
@@ -210,6 +211,19 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
               Skip
             </button>
           </div>
+        </div>
+      )}
+      {/* #242 tier 5: every tmux-ladder tier that gave up already forwards its
+          reason onto this SAME 'running-claude' info field (tmux-stage-fail:*,
+          tmux-push-fail:*, or the probe=none default) -- this was previously
+          rendered nowhere, so the ladder degrading to a bare claude launch was
+          indistinguishable from it succeeding. Shown only for the narrow
+          'running-claude' window before the idle-fallback latches
+          claude-running and the whole overlay unmounts (see the hide check
+          above) -- brief, but the alternative was never showing it at all. */}
+      {state === 'running-claude' && isSshPersistenceFailureReason(info) && (
+        <div className="text-yellow text-[11px] leading-snug mb-1">
+          {formatPersistenceUnavailableMessage(info!)}
         </div>
       )}
       {isRunning && (

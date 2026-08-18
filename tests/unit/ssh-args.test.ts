@@ -7,7 +7,15 @@ import { buildSshArgs } from '../../src/main/ssh-args'
 // dropped `-o`, and an orphaned `ControlPath=none` would become a positional
 // argument -- i.e. the remote command -- breaking every win32 SSH session.
 const target = { username: 'me', host: 'example.com', port: 22 }
-const BASE = ['me@example.com', '-p', '22', '-t', '-o', 'StrictHostKeyChecking=accept-new']
+// ServerAlive* are part of BASE, not a platform extra: #242 adds them on every
+// platform so a dead-but-open TCP connection surfaces and tmux reconnect can
+// take over. They sit inside the base literal, before the win32 mux override.
+const BASE = [
+  'me@example.com', '-p', '22', '-t',
+  '-o', 'StrictHostKeyChecking=accept-new',
+  '-o', 'ServerAliveInterval=30',
+  '-o', 'ServerAliveCountMax=3',
+]
 const WIN_MUX = ['-o', 'ControlMaster=no', '-o', 'ControlPath=none']
 const TUNNEL = ['-R', '5111:127.0.0.1:5111']
 
@@ -42,6 +50,27 @@ describe('buildSshArgs', () => {
     expect(buildSshArgs(target, 0, 'linux').some((a) => a.startsWith('-R'))).toBe(false)
     expect(buildSshArgs(target, 0, 'win32').some((a) => a.startsWith('-R'))).toBe(false)
     expect(buildSshArgs(target, 5111, 'win32')).not.toContain('5111:localhost:5111')
+  })
+
+  it('emits every -o flag as a separate argv entry (never a joined string)', () => {
+    // node-pty passes argv straight to CreateProcess; a joined "-o Foo=bar"
+    // entry would be parsed by ssh.exe as a single malformed option.
+    // 5 = StrictHostKeyChecking + ServerAliveInterval + ServerAliveCountMax
+    // (#242, all platforms) + ControlMaster + ControlPath (#241, win32-only).
+    const args = buildSshArgs(target, 0, 'win32')
+    expect(args.filter((a) => a === '-o')).toHaveLength(5)
+    expect(args.some((a) => a.includes(' '))).toBe(false)
+  })
+
+  // #242: tmux persistence depends on the connection eventually noticing
+  // it's dead (see the doc comment on buildSshArgs). Unlike ControlMaster,
+  // this is NOT platform-conditional.
+  it('sets ServerAliveInterval=30 and ServerAliveCountMax=3 on every platform (#242)', () => {
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      const args = buildSshArgs(target, 0, platform)
+      expect(args).toContain('ServerAliveInterval=30')
+      expect(args).toContain('ServerAliveCountMax=3')
+    }
   })
 })
 

@@ -155,6 +155,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     if (!ssh) return
     return window.electronAPI.ssh.onFlowState(sessionId, (msg) => {
       if (msg.state !== 'claude-running') return
+      // #242 tier 5: latch "this session has reached claude-running at
+      // least once" so a LATER respawn (Restart after a dropped
+      // connection) can pass SSHOptions.reconnect -- read back in doSpawn
+      // below. Set unconditionally on every claude-running emit (already
+      // idempotent: setting true to true is a no-op re-render at worst),
+      // not just the first, since no earlier code path clears it.
+      updateSession(sessionId, { sshReachedClaudeRunning: true })
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
       // requestAnimationFrame so React has time to unmount the overlay
       // and yield the focus stack before we grab it.
@@ -162,7 +169,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         try { terminalRef.current?.focus() } catch { /* ignore */ }
       })
     })
-  }, [sessionId, ssh])
+  }, [sessionId, ssh, updateSession])
 
   // Restore terminal focus when the WINDOW regains focus (#145).
   //
@@ -551,8 +558,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               resumeNudgesLeft = 3
               resumeNudgeGated = true
             }
+            // #242 tier 5: `reconnect` is computed here, not carried on the
+            // `ssh` prop itself -- it reflects THIS session's own history
+            // (sshReachedClaudeRunning, latched by the flow-state
+            // subscription above), not anything the caller configured.
+            // Merging it into a copy of `ssh` keeps that prop's shape a
+            // pure reflection of the session's SAVED config.
+            const sshWithReconnect = ssh ? { ...ssh, reconnect: !!session?.sshReachedClaudeRunning } : ssh
             window.electronAPI.pty
-              .spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
+              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
               .catch((err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled

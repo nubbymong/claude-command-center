@@ -18,6 +18,12 @@ interface RendererSSHOptions {
   username: string
   remotePath: string
   postCommand?: string
+  /** #242 tier 5: true when this spawn respawns a session that had
+   *  previously reached claude-running -- set by the renderer session
+   *  store (Session.sshReachedClaudeRunning, never persisted). Forwarded
+   *  verbatim into SSHOptions.reconnect; see its doc comment in
+   *  pty-manager.ts for how it's consumed. */
+  reconnect?: boolean
 }
 
 // host/username are fused into `${username}@${host}` and handed to ssh as
@@ -40,6 +46,7 @@ const sshSchema = z.object({
   // (adversarial review, #188).
   remotePath: z.string().min(1).regex(/^[~A-Za-z0-9_./-]+$/, 'remote path has invalid characters'),
   postCommand: z.string().optional(),
+  reconnect: z.boolean().optional(),
 }).optional()
 
 export const spawnOptionsSchema = z.object({
@@ -185,12 +192,14 @@ export const spawnOptionsSchema = z.object({
   }
 }).optional()
 
-// Charset-gate the session id (#265). It is interpolated into the remote setup
-// script (base64'd and piped to `node` on the remote) and into filenames on the
-// remote. Real ids are CSPRNG hex (src/shared/id.ts), so this only ever rejects
-// a caller that already controls the renderer or local config — a defence-in-depth
-// gate, not an embargoed bug. ssh-shim re-sanitises via safeSid as a backstop.
-// Exported so the boundary contract is unit-tested against the real schema.
+// Charset-gate the session id (#265; independently reached by #242 F2). It is
+// interpolated into the remote setup script (base64'd and piped to `node` on the
+// remote), into filenames on the remote, and into ssh-shim's statusLine.command
+// (a string Claude runs via `sh -c` on every statusline refresh). Real ids are
+// CSPRNG hex (src/shared/id.ts), so this only ever rejects a caller that already
+// controls the renderer or local config — a defence-in-depth gate, not an
+// embargoed bug. ssh-shim re-sanitises via safeSid as a backstop. Exported so the
+// boundary contract is unit-tested against the real schema.
 export const sessionIdSchema = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/, 'session id has invalid characters')
 
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {

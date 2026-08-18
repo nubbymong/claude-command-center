@@ -110,12 +110,17 @@ export interface SshCapableProvider extends SessionProvider {
   /** Returns shell command to write settings + statusline shim on remote.
    *  opts mirror the renderer master switches (absent = on):
    *  includeStatusLine=false omits the statusLine stanza; includeConductorMcp=false
-   *  writes an empty remote mcpServers (no built-in tools). */
+   *  writes an empty remote mcpServers (no built-in tools).
+   *  `nonce` (#242 finding F1 (b)): host-generated per-session random token
+   *  (randomId(), src/shared/id.ts) baked into the `setup ok` sentinel this
+   *  command's script emits -- required, not optional, so a caller cannot
+   *  silently regress to the pre-nonce sentinel shape. */
   configureRemoteSettings(
     sessionId: string,
     remotePath: string,
     hooksConfig: { port: number; secret: string } | null,
-    opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
+    opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+    nonce: string,
   ): string
 }
 

