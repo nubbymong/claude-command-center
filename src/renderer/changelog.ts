@@ -21,6 +21,22 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.13',
+    date: '2026-08-18',
+    highlights: 'Remote sessions survive a dropped connection: SSH sessions now run inside tmux on the remote, so closing the lid, losing wifi or switching networks no longer kills the work — reconnecting picks it back up where it was. Signing in to claude.ai now happens inside the app, which is what finally gets past Cloudflare\'s "verify you are human" loop.',
+    changes: [
+      { type: 'feature', description: 'SSH sessions can now survive a dropped connection. The remote session runs inside tmux, so a closed lid, lost wifi, a network switch or a VPN drop no longer ends it — Claude keeps working on the remote, and reconnecting attaches to the same session with your conversation and scrollback intact. If the remote has no tmux, the app can fetch a verified copy for it, or push one down the existing connection when the remote has no internet access of its own; where none of that is possible it falls back to an ordinary session and resumes your conversation on reconnect instead. A "Detachable" switch on the session controls the whole thing, and the session header says plainly whether this session is persistent or not.' },
+      { type: 'feature', description: 'Closing a persistent remote session now asks what you meant: leave it running on the remote and just close the tab here, or end it properly. Quitting the app leaves persistent sessions running rather than killing them, and the session header shows which remote account the session is signed in as.' },
+      { type: 'fix', description: 'Signing in to claude.ai for an account now happens in a window inside the app rather than your system browser. That is the fix for the "verify you are human" loop that could never be completed: the previous sign-in ran with a debugging port open, which claude.ai flags. Accounts using a company or Google sign-in still open the system browser, as those providers require.' },
+      { type: 'fix', description: 'Fixed a fault that could make an account\'s shared folders — projects, memory, agents, skills — point at themselves, which made memory and project history unreadable for that account until repaired. The app now refuses to create such a link and repairs any it finds. Nothing was lost in that state: it was a broken shortcut, not a broken store.' },
+      { type: 'fix', description: 'The terminal no longer leaves stale "ghost" characters painted over the screen when output arrives while you are scrolled to the bottom. The previous fix only covered output that arrived while you were scrolled up.' },
+      { type: 'improvement', description: 'Sessions now show connection pills for Claude Code and claude.ai at a glance, the account strip along the bottom separates accounts from services, and the launcher shows which account you last used. Signing in to an account is offered only where it can actually apply.' },
+      { type: 'improvement', description: 'Settings now look like one surface: every tab shares the same card, input and accent styling, and the GitHub tab no longer sits on a slightly different black. Both light and dark themes were brought in line.' },
+      { type: 'fix', description: 'The Agent Canvas now serves the working copy the app actually gave the session, so a page built in a session\'s own worktree can be previewed instead of having to be pasted in.' },
+      { type: 'improvement', description: 'The updater will keep finding releases through the repository rename that is coming, by checking the new location first and falling back to the current one. Nothing changes for you now; this is here so the rename cannot strand anyone on an old version.' }
+    ]
+  },
+  {
     version: '2.1.0-beta.12',
     date: '2026-08-17',
     highlights: 'A stability-and-hardening release: stale glyphs left on the terminal after scrolling are cleared, the attention pulse now covers blocked sub-agent and elicitation prompts, the model and effort pill stops flickering to a sub-agent\'s value, and the SSH connection\'s argument handling is hardened.',
