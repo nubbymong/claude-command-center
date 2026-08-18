@@ -21,6 +21,14 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.14',
+    date: '2026-08-18',
+    highlights: 'Fixes severe terminal flashing and unreadable, broken text introduced in 2.1.0-beta.13. If you are on beta.13, update.',
+    changes: [
+      { type: 'fix', description: 'The terminal no longer flashes constantly and drops most of its text while Claude is working. A repaint added in 2.1.0-beta.13 to clear leftover "ghost" characters was rebuilding the entire font atlas on every burst of output — and because Claude Code draws in the normal scrollback, that ran for the whole life of every session, so characters were being redrawn faster than they could be prepared. The repaint now rebuilds the font atlas only when scrolling, which is where the ghosting actually comes from, and does the cheap redraw everywhere else. 2.1.0-beta.13 is the only affected release.' }
+    ]
+  },
+  {
     version: '2.1.0-beta.13',
     date: '2026-08-18',
     highlights: 'Remote sessions survive a dropped connection: SSH sessions now run inside tmux on the remote, so closing the lid, losing wifi or switching networks no longer kills the work — reconnecting picks it back up where it was. Signing in to claude.ai now happens inside the app, which is what finally gets past Cloudflare\'s "verify you are human" loop.',
