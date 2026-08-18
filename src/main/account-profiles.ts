@@ -13,6 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { atomicWriteFileSync } from './atomic-write'
+import { logWarn } from './debug-logger'
 import { canonicaliseEmail } from '../shared/account-chip-color'
 import type { AccountProfile, AccountProfilesConfig } from '../shared/account-types'
 
@@ -864,6 +865,44 @@ export function createProfile(name?: string): AccountProfile {
 
 const isWin = process.platform === 'win32'
 
+/**
+ * Path equality that folds case on the case-insensitive filesystems (Windows,
+ * macOS) and is exact elsewhere; both inputs are resolved to absolute first. Used
+ * to detect a would-be SELF-REFERENTIAL junction (`target === link`), which is
+ * catastrophic and must never be created.
+ */
+function samePath(a: string, b: string): boolean {
+  const norm = (p: string): string => {
+    const r = path.resolve(p)
+    return isWin || process.platform === 'darwin' ? r.toLowerCase() : r
+  }
+  return norm(a) === norm(b)
+}
+
+/**
+ * Would junctioning `link` -> `target` create a SELF-REFERENCE (link resolving to
+ * itself)? Checks the plain resolved strings first -- catches the reachable field
+ * case, where CCC sets USERPROFILE to `getProfileConfigDir(id)` verbatim so
+ * `sharedRoot()` yields a byte-identical `<profileDir>/.claude`. Then, best-effort,
+ * canonicalises both so an ALTERNATE SPELLING cannot fool it: an 8.3 short name, a
+ * `\\?\` extended prefix, or INDIRECTION (a symlinked shared root that resolves
+ * back into the profile). Each side is realpath'd via its PARENT + basename -- the
+ * leaf (`target`/`link`) usually does NOT exist yet (a junction about to be
+ * created) or may loop, but its parent dir does. If a parent can't be resolved the
+ * string check stands. realpath can only add TRUE positives here -- two paths that
+ * canonicalise to one location genuinely are a loop -- so this never wrongly
+ * refuses a valid, distinct junction.
+ */
+function isSelfReferentialLink(target: string, link: string): boolean {
+  if (samePath(target, link)) return true
+  try {
+    const canon = (p: string): string => path.join(fs.realpathSync.native(path.dirname(p)), path.basename(p))
+    return samePath(canon(target), canon(link))
+  } catch {
+    return false // a parent isn't resolvable -> rely on the string check above
+  }
+}
+
 /** The real user home (parent of the shared ~/.claude). Test-overridable seam. */
 function realHomeDir(): string {
   return rootsOverride ? path.dirname(rootsOverride.sharedRoot) : os.homedir()
@@ -946,6 +985,20 @@ function removeTreeIfDrained(dir: string): boolean {
  * this pass rather than lose data.
  */
 function ensureLink(target: string, link: string, mergeOrphans = false): void {
+  // A junction/symlink pointing at ITSELF is catastrophic: it is an ELOOP that
+  // wedges every traversal INTO `link` -- Claude's memory/projects recall, the
+  // shared agents/skills/commands/plugins config, `--continue`/resume reading a
+  // transcript. It arises when `sharedRoot()` resolves to the profile's OWN
+  // `.claude` -- i.e. os.homedir() read a REDIRECTED profile USERPROFILE rather
+  // than the real home (CCC spawns child sessions with USERPROFILE=<profileDir>,
+  // so any junction (re)built under that env self-references). Refuse it and
+  // leave any existing (correct) link untouched -- deleting a good junction to
+  // plant a self-referential one is strictly worse (adversarial review,
+  // 2026-08-18; the field incident that wedged one profile's memory recall).
+  if (isSelfReferentialLink(target, link)) {
+    logWarn(`[profiles] refusing to create a self-referential junction at ${link} (target resolves to the link itself) -- the shared root resolved to a profile home; leaving the existing entry intact`)
+    return
+  }
   // Replace any existing entry at `link` (safely: never recurse a junction).
   try {
     const st = fs.lstatSync(link)
@@ -1070,26 +1123,61 @@ export function setupProfileLinks(id: string): void {
 }
 
 /**
- * Startup repair (#131): recover sessions orphaned in a profile's REAL
- * `.claude/projects` dir (a junction that never established) by merging them into
- * the shared store and junctioning, for EVERY profile -- so orphans are visible
- * cross-account at launch, not only when that account is next spawned. Idempotent
- * and best-effort: an already-junctioned profile is skipped; a per-profile failure
- * never aborts the sweep. Only ever touches a profile's own `.claude/projects` and
- * the shared store.
+ * Startup self-heal of the per-profile shared junctions, over EVERY profile and
+ * EVERY shared dir (projects/memory/agents/skills/commands/plugins). Two failure
+ * modes are repaired:
+ *  1. #131 orphaned REAL dir -- `.claude/<name>` is a real directory (the junction
+ *     never established, e.g. Claude wrote transcripts there first): merge into the
+ *     shared store (projects only -- union-safe transcripts) / replace-if-empty,
+ *     then junction. So orphans are visible cross-account at launch, not only when
+ *     that account is next spawned.
+ *  2. BROKEN junction -- `.claude/<name>` is a junction whose target is NOT the
+ *     correct shared dir, most importantly a SELF-REFERENTIAL one (target === link),
+ *     an ELOOP that wedges memory/projects recall and resume. Seen in the field
+ *     when a junction was (re)built under a redirected profile USERPROFILE, so
+ *     sharedRoot() resolved to the profile's own `.claude` (adversarial review,
+ *     2026-08-18). The earlier version SKIPPED anything already a junction, so it
+ *     could never heal this.
+ * Idempotent (a correct junction is left alone), best-effort (a per-entry failure
+ * never aborts the sweep), and fail-closed (never creates a self-reference itself).
+ * Only ever touches a profile's own `.claude/<name>` links and the shared store.
  */
 export function repairSharedProjectJunctions(): void {
-  const shared = path.join(sharedRoot(), 'projects')
   for (const p of listProfiles()) {
     if (!isValidProfileId(p.id)) continue
-    const link = path.join(getProfileConfigDir(p.id), '.claude', 'projects')
-    let st: fs.Stats
-    try { st = fs.lstatSync(link) } catch { continue }   // absent -> nothing to repair
-    if (st.isSymbolicLink() || !st.isDirectory()) continue // already a junction (or a file)
-    try {
-      fs.mkdirSync(shared, { recursive: true })
-      ensureLink(shared, link, true)                     // merge orphaned transcripts -> junction
-    } catch { /* best-effort; retried next launch/spawn */ }
+    const claudeDir = path.join(getProfileConfigDir(p.id), '.claude')
+    for (const name of SHARED_DIR_NAMES) {
+      const link = path.join(claudeDir, name)
+      const target = path.join(sharedRoot(), name)
+      // Fail closed: NEVER heal into a self-reference. If the correct target
+      // resolves to the link, the shared root itself resolved to this profile's
+      // home (redirected USERPROFILE) -- skip rather than re-plant the ELOOP.
+      if (isSelfReferentialLink(target, link)) continue
+      let st: fs.Stats
+      try { st = fs.lstatSync(link) } catch { continue }  // absent -> nothing to repair
+      if (st.isSymbolicLink()) {
+        // A junction/symlink. Repair ONLY if it does NOT already point at the
+        // correct shared target -- i.e. self-referential (the field ELOOP),
+        // stale, or otherwise wrong; an unreadable/looping link counts as broken.
+        // A correct junction is left alone (idempotent).
+        let cur: string | null = null
+        try { cur = fs.readlinkSync(link) } catch { cur = null }
+        if (cur !== null && samePath(cur, target)) continue
+        try {
+          fs.mkdirSync(target, { recursive: true })
+          ensureLink(target, link, name === 'projects')  // rebuild -> correct target
+        } catch { /* best-effort; retried next launch/spawn */ }
+      } else if (st.isDirectory()) {
+        // #131 orphaned REAL dir (the junction never established, e.g. Claude
+        // wrote transcripts here first): merge into the shared store (projects
+        // only -- union-safe transcripts) or replace-if-empty, then junction.
+        try {
+          fs.mkdirSync(target, { recursive: true })
+          ensureLink(target, link, name === 'projects')
+        } catch { /* best-effort */ }
+      }
+      // A real FILE at `link` is unexpected -- leave it (never clobber user data).
+    }
   }
 }
 
