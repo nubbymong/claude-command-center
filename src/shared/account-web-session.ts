@@ -21,8 +21,19 @@
  * No default export (project convention).
  */
 
-/** Where a web session came from. Recorded so a stale one can be explained. */
-export type WebSessionOrigin = 'system-browser'
+/**
+ * Where a web session came from. Recorded so a stale one can be explained.
+ *   - `system-browser`: signed in via a launched Chrome/Edge, cookies read over
+ *     CDP and injected into the partition. Kept for SSO accounts, whose identity
+ *     provider may need a policy-installed browser extension an in-app window
+ *     lacks (see the AuthBrowser note below).
+ *   - `in-app`: signed in directly inside an Electron window on the account's
+ *     partition — no launched browser, no debug port. This avoids claude.ai's
+ *     bot-detection, which flags the remote-debugging port `system-browser` uses
+ *     (proven: a browser with that port open is challenged indefinitely; the same
+ *     browser without it signs in cleanly). The default for non-SSO accounts.
+ */
+export type WebSessionOrigin = 'system-browser' | 'in-app'
 
 /**
  * How an account signs in to the Claude Code CLI.

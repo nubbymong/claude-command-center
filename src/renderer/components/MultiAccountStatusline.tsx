@@ -173,7 +173,10 @@ function AccountPill({
 }) {
   return (
     <span
-      className={`flex items-center gap-2 ${compact ? 'min-w-0' : 'shrink-0'}`}
+      // Each account sits in its own subtle rounded pill so the boundary between
+      // accounts reads at a glance, rather than relying on whitespace alone.
+      className={`flex items-center gap-2 rounded-full border px-2.5 py-0.5 ${compact ? 'min-w-0' : 'shrink-0'}`}
+      style={{ borderColor: 'var(--surface1)', background: 'color-mix(in srgb, var(--surface1) 22%, transparent)' }}
       title={tooltip(account)}
       data-testid="multi-account-pill"
     >
@@ -393,7 +396,7 @@ export default function MultiAccountStatusline() {
       {rows.map((row, i) => (
         <div
           key={i}
-          className={`flex items-center justify-center min-w-0 ${multiRow ? 'gap-4' : 'gap-6'}`}
+          className={`flex items-center justify-center min-w-0 ${multiRow ? 'gap-2' : 'gap-3'}`}
           data-testid="multi-account-row"
         >
           {row.map((a) => (

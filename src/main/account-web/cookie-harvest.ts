@@ -105,6 +105,44 @@ export function toElectronCookie(c: CdpCookie): ElectronCookie | null {
   return out
 }
 
+/**
+ * The subset of an Electron `Cookie` (as returned by `session.cookies.get`) this
+ * code reads. Used by the in-app sign-in path, where the user signs in DIRECTLY
+ * in the account's partition, so the session cookie is already in Electron's own
+ * store — there is nothing to convert or inject, only to read back.
+ */
+export interface ElectronReadCookie {
+  name: string
+  /** Electron reports seconds since epoch; absent for a session cookie. */
+  expirationDate?: number
+  /** True for a session cookie (no persistent expiry of its own). */
+  session?: boolean
+}
+
+/**
+ * PURE: decide whether an account's partition holds a usable claude.ai web
+ * session, from the cookies Electron reports for it.
+ *
+ * Mirrors `harvestClaudeCookies`'s success rule exactly — `sessionKey` present is
+ * the only meaningful signal, and the session's lifetime is `sessionKey`'s and
+ * nothing else's (NOT the earliest expiry across the jar, which would report a
+ * fresh session as half-expired the moment a 30-minute `__cf_bm` landed). Kept
+ * pure so the in-app path's completion rule is testable without Electron.
+ */
+export function webSessionFromElectronCookies(
+  cookies: readonly ElectronReadCookie[],
+): { hasSessionCookie: boolean; expiresAt: number | null } {
+  const session = (cookies ?? []).find((c) => c?.name === CLAUDE_SESSION_COOKIE)
+  if (!session) return { hasSessionCookie: false, expiresAt: null }
+  // Electron seconds -> epoch ms, matching everything else in the app. A session
+  // cookie (no expirationDate / session:true) reports null, treated as active.
+  const exp = session.expirationDate
+  return {
+    hasSessionCookie: true,
+    expiresAt: typeof exp === 'number' && exp > 0 ? exp * 1000 : null,
+  }
+}
+
 export interface HarvestResult {
   cookies: ElectronCookie[]
   /** True when the cookie that actually carries the session is present. */

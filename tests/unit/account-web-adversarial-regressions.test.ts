@@ -75,7 +75,10 @@ function cdp(email: string | null, targetInfo: 'ok' | 'throws' | 'missing-url' |
   return f
 }
 
-const RUN = { profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 400, pollMs: 5 } as const
+// method:'sso' keeps these on the system-browser + CDP path they exercise; the
+// non-SSO default now signs in in-app (in-app-sign-in.ts), which spawns no
+// browser and is covered by its own tests.
+const RUN = { profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 400, pollMs: 5, method: 'sso' } as const
 
 beforeEach(() => {
   cookiesSet.mockReset()

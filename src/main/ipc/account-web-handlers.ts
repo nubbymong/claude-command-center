@@ -69,9 +69,11 @@ export function registerAccountWebHandlers(): void {
       const state = await runSignIn({
         profileId: id,
         dataDir: getDataDirectory(),
-        // The ACCOUNT's browser, read here rather than inside the sign-in: the
-        // launcher takes what it is given, and the store is the one authority on
-        // what this account chose.
+        // The ACCOUNT's method + browser, read here rather than inside the
+        // sign-in: the store is the one authority on what this account chose.
+        // `method` routes the flow — 'sso' uses the system browser, everything
+        // else signs in in-app (no debug port; see sign-in.ts).
+        method: getAuthMethod(id),
         browser: getAuthBrowser(id),
       })
       if (state.phase === 'done' && state.session) saveWebSession(state.session)
