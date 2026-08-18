@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { exportToBlob } from '@excalidraw/excalidraw'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import type { Annotation, CanvasSketchExport, CanvasVersion, FocusObject, Rect } from '../../shared/canvas'
@@ -94,6 +94,10 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [justSubmitted, setJustSubmitted] = useState<{ id: string; count: number } | null>(null)
+  /** Pending auto-return, cleared on unmount so a torn-down panel cannot toggle
+   *  a pane that no longer belongs to it. */
+  const returnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (returnTimerRef.current) clearTimeout(returnTimerRef.current) }, [])
 
   useEffect(() => {
     void refresh(sessionId)
@@ -212,6 +216,19 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
       // fetches the payload itself via canvas_review.
       window.electronAPI.pty.write(sessionId, `Review #${review.id.slice(1)} — ${count} notes · canvas_review ${review.id}\r`)
       setJustSubmitted({ id: review.id, count })
+      // Hand back to the session automatically. Submitting is the moment the
+      // work moves from the user to the agent, and the agent has ALREADY been
+      // handed the review by the line written just above -- so leaving the user
+      // on a frozen canvas, with a button they have to find, strands them on the
+      // one surface where nothing is now happening. The confirmation stays up
+      // for a beat first so the hand-off reads as deliberate rather than abrupt,
+      // and the Canvas button pulses again the moment the agent re-renders,
+      // which is what brings them back. The manual control stays for anyone who
+      // wants to leave sooner.
+      returnTimerRef.current = setTimeout(() => {
+        returnTimerRef.current = null
+        onReturnToTerminal()
+      }, 1200)
     } finally {
       setSubmitting(false)
     }
@@ -489,8 +506,12 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
             </span>
             <div className="flex-1" />
             <button
-              onClick={onReturnToTerminal}
+              onClick={() => {
+                if (returnTimerRef.current) { clearTimeout(returnTimerRef.current); returnTimerRef.current = null }
+                onReturnToTerminal()
+              }}
               className="px-2 py-1 text-[11px] rounded border border-blue/50 text-blue hover:bg-blue/10"
+              title="Returning automatically — click to go now"
             >
               Return to terminal
             </button>

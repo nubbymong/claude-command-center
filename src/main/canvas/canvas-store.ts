@@ -20,6 +20,7 @@ import * as path from 'path'
 import { randomId } from '../../shared/id'
 import {
   CANVAS_ID_RE,
+  type CanvasLibraryEntry,
   CANVAS_VERSION_ID_RE,
   CanvasChangedEvent,
   CanvasRenderSource,
@@ -1030,6 +1031,99 @@ export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdop
  * re-binds the review store next (rebindReviewsToSession) — reviews.json
  * carries the owner session id too.
  */
+/**
+ * The canvas LIBRARY: every canvas on disk, newest first.
+ *
+ * Housekeeping, not authorization. Unlike `listOrphanCandidateCanvases` this
+ * deliberately does NOT filter to what the asking session could adopt — the
+ * whole point is to show the user what has accumulated so they can remove it.
+ * Nothing here binds a canvas to a session; only `adoptCanvasForSession` does,
+ * and it is unchanged.
+ */
+export function listAllCanvases(openTileSessionIds: readonly string[] = []): CanvasLibraryEntry[] {
+  ensureDiskScanned()
+  const open = new Set(openTileSessionIds.filter((id) => SESSION_ID_RE.test(id)))
+  const out: CanvasLibraryEntry[] = []
+  for (const record of canvases.values()) {
+    const latest = record.versions[record.versions.length - 1]
+    const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
+    out.push({
+      canvasId: record.canvasId,
+      versionCount: record.versions.length,
+      createdAt: clampToNow(record.createdAt),
+      lastRenderedAt: clampToNow(latest?.createdAt ?? record.createdAt),
+      ...(latest?.source.mode ? { latestMode: latest.source.mode } : {}),
+      ...(record.conversationUuid ? { conversationShortId: record.conversationUuid.slice(0, 8) } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(open.has(record.sessionId) ? { ownedByOpenSession: true } : {}),
+    })
+  }
+  out.sort((a, b) => (a.lastRenderedAt < b.lastRenderedAt ? 1 : a.lastRenderedAt > b.lastRenderedAt ? -1 : 0))
+  return out
+}
+
+/**
+ * Delete one canvas: its record, its indexes, and its directory on disk.
+ *
+ * The only destructive operation this store has, so the path discipline is
+ * explicit rather than inherited. `canvasId` is charset-gated (it is a
+ * `randomId()`, so the gate only ever rejects something a real id could not be)
+ * and the directory it names is REALPATH-resolved and required to sit directly
+ * inside the canvas root before anything is removed — a symlink planted at
+ * `<root>/<id>` pointing elsewhere resolves out of the root and is refused
+ * rather than followed, so this can never recurse into a user's project.
+ *
+ * The version files are the user's own rendered documents; removing the canvas
+ * removes them, which is the point of the button. `rmSync` is not given `force`
+ * for the resolve step: a canvas whose directory is already gone still drops out
+ * of the in-memory maps, because the record is what surfaces it in the UI.
+ */
+export function deleteCanvas(canvasId: string): boolean {
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return false
+  ensureDiskScanned()
+  const record = canvases.get(canvasId)
+
+  const root = canvasRoot()
+  let realRoot: string
+  try {
+    realRoot = fs.realpathSync(root)
+  } catch {
+    realRoot = root
+  }
+  const dir = path.join(root, canvasId)
+  let removable = false
+  try {
+    // realpath, NOT the joined string: the join is traversal-safe thanks to the
+    // charset gate, but only resolving links proves the directory is really
+    // inside the store rather than a link pointing at someone's project.
+    const realDir = fs.realpathSync(dir)
+    const rel = path.relative(realRoot, realDir)
+    removable = rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel) && !rel.includes(path.sep)
+  } catch {
+    removable = false // already gone, or unresolvable -- drop the record anyway
+  }
+
+  if (removable) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true })
+    } catch {
+      return false // still on disk: report failure rather than a phantom delete
+    }
+  }
+
+  canvases.delete(canvasId)
+  for (const [sessionId, id] of sessionIndex) {
+    if (id === canvasId) sessionIndex.delete(sessionId)
+  }
+  // Tell any pane still showing this canvas that it is gone: the event carries
+  // a null active version, which is the same shape the pane already handles for
+  // "this session has no canvas".
+  if (record) {
+    emitChanged({ ...record, activeVersionId: null })
+  }
+  return record !== undefined || removable
+}
+
 export function adoptCanvasForSession(
   sessionId: string,
   canvasId: string,

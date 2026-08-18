@@ -12,7 +12,9 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import {
+  deleteCanvas,
   getCanvasStateForSession,
+  listAllCanvases,
   onCanvasChanged,
   renderVersion,
   setActiveVersion,
@@ -75,6 +77,20 @@ const openTileSessionIdsSchema = z.array(sessionIdSchema).max(256).optional()
 
 const listReclaimableSchema = z
   .object({ sessionId: sessionIdSchema, openTileSessionIds: openTileSessionIdsSchema })
+  .strict()
+
+/** The library is a pure read over every canvas; it takes no session id because
+ *  it is housekeeping, not an ownership question. openTileSessionIds only marks
+ *  which rows are on screen right now so the UI can warn before deleting one. */
+const listAllSchema = z
+  .object({ openTileSessionIds: openTileSessionIdsSchema })
+  .strict()
+
+/** Delete takes an ID and nothing else — never a path. Same charset bound as
+ *  reclaim: app-minted ids only, so a caller cannot name anything outside the
+ *  canvas store even before the store re-checks and realpath-confirms it. */
+const deleteCanvasSchema = z
+  .object({ canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
   .strict()
 
 /** Canvas ids are app-minted (see CANVAS_ID_RE); bounded here at the seam. */
@@ -218,6 +234,20 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     const { sessionId, canvasId, openTileSessionIds } = reclaimSchema.parse(args)
     const ok = reclaimCanvasForSession(sessionId, canvasId, openTileSessionIds ?? [])
     return { ok, state: getCanvasStateForSession(sessionId) }
+  })
+
+  // The library. Pure read over every canvas on disk; listing one never binds
+  // it to anything.
+  ipcMain.handle(IPC.CANVAS_LIST_ALL, async (_e, args: unknown) => {
+    const { openTileSessionIds } = listAllSchema.parse(args ?? {})
+    return listAllCanvases(openTileSessionIds ?? [])
+  })
+
+  // The only destructive canvas operation, and it exists because the user
+  // clicked delete on a specific row.
+  ipcMain.handle(IPC.CANVAS_DELETE, async (_e, args: unknown) => {
+    const { canvasId } = deleteCanvasSchema.parse(args)
+    return { ok: deleteCanvas(canvasId) }
   })
 
   ipcMain.handle(IPC.CANVAS_RENDER, async (_e, args: unknown) => {

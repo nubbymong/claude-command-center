@@ -4,6 +4,7 @@ import { useCanvasStore } from '../stores/canvasStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { relativeTime } from '../utils/relativeTime'
 import type { ReclaimableCanvas } from '../../shared/canvas'
+import { CanvasLibrary } from './CanvasLibrary'
 
 interface Props {
   sessionId: string
@@ -90,6 +91,7 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   const [typed, setTyped] = useState(false)
   const [copied, setCopied] = useState(false)
   const [controlsOpen, setControlsOpen] = useState(false)
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const [reclaimable, setReclaimable] = useState<ReclaimableCanvas[]>([])
   const [reclaiming, setReclaiming] = useState<string | null>(null)
   const refreshCanvas = useCanvasStore((s) => s.refresh)
@@ -174,7 +176,7 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   }
 
   return (
-    <div className="canvas-landing flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
+    <div className="canvas-landing relative flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
       {/* Same chrome as the live canvas surface: 38px, one type size, and no
           version affordances — an empty canvas has nothing to version. */}
       <div className="h-[38px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)] border-b border-[var(--border-subtle)]">
@@ -359,6 +361,18 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
             </ul>
           )}
 
+          {/* The library. Offered here as well as in the pane header because this
+              is the state where the user is asking "what have I got?" — and,
+              before it existed, the reclaim list below was the only place old
+              canvases appeared, with nothing the user could do about them. */}
+          <button
+            onClick={() => setLibraryOpen(true)}
+            className="mt-4 self-start text-[11.5px] rounded px-2 py-1 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-ring"
+            data-testid="canvas-empty-library-open"
+          >
+            Browse the canvas library
+          </button>
+
           {/* Reclaim — a canvas from an earlier session (spec D2 continuity).
               Offered, never taken: moving a canvas moves the user's private
               review notes with it, and only the user can authorise that. */}
@@ -422,6 +436,9 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
           )}
         </div>
       </div>
+      {libraryOpen && (
+        <CanvasLibrary sessionId={sessionId} onClose={() => setLibraryOpen(false)} />
+      )}
     </div>
   )
 }

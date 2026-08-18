@@ -593,6 +593,35 @@ export interface ReclaimableCanvas {
   sameProject?: boolean
 }
 
+/**
+ * One row of the canvas LIBRARY — every canvas on this machine, not just the
+ * ones the asking session could reclaim.
+ *
+ * The library exists because nothing was ever removable: `renderVersion` only
+ * ever appends, and no code path deleted a canvas or a version, so every canvas
+ * a user had ever rendered accumulated forever and surfaced in the reclaim list
+ * of every new session. That is a housekeeping surface, NOT an authorization
+ * one — listing a canvas here never binds it to a session (that is still
+ * `adoptCanvasForSession`, which the user drives). Everything on this row is a
+ * LABEL, sanitized in main, and none of it may be used as a key for serving
+ * content.
+ */
+export interface CanvasLibraryEntry {
+  canvasId: string
+  versionCount: number
+  createdAt: string
+  lastRenderedAt: string
+  /** Project it was last rendered in. Label only; control characters stripped. */
+  cwd?: string
+  /** First 8 chars of the conversation it was last rendered under. Label only. */
+  conversationShortId?: string
+  /** Mode of its most recent version, so a mockup is tellable from a UAT run. */
+  latestMode?: 'design' | 'uat'
+  /** True when the session that owns it is one of the currently-open tiles — the
+   *  UI warns before deleting a canvas that is on screen right now. */
+  ownedByOpenSession?: boolean
+}
+
 export interface CanvasSnapshotRequestEvent {
   requestId: string
   sessionId: string
