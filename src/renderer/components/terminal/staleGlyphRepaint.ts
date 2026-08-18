@@ -84,6 +84,17 @@ export const STRONG_SETTLE_INTERVAL_MS = 3000
  */
 export const STRONG_MAX_STALE_MS = 5000
 
+/**
+ * Staleness ceiling applied when a terminal becomes the ACTIVE tab.
+ *
+ * Switching to a session is the best rebuild moment there is: the user is about
+ * to read that viewport, the pane is appearing anyway so a rebuild cannot be
+ * seen, and nothing is competing with it. Much tighter than the streaming
+ * ceiling for that reason — the only thing it guards against is a rebuild on
+ * every tab switch when someone is flicking between sessions.
+ */
+export const ACTIVATION_MAX_STALE_MS = 1000
+
 /** Output quiet for this long → one settle repaint. Long enough that a
  *  continuous stream keeps re-arming it (the periodic pace covers that), short
  *  enough that a ghost never sits on a finished stream for long. */
