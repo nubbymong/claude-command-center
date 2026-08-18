@@ -686,15 +686,53 @@ function ensureDiskScanned(): void {
     // rule exists to prevent.
     const held = sessionIndex.get(record.sessionId)
     const heldRecord = held ? canvases.get(held) : undefined
-    if (!heldRecord || lastRenderedAt(record) > lastRenderedAt(heldRecord)) {
+    if (!heldRecord || moreRecentlyActive(record, heldRecord)) {
       sessionIndex.set(record.sessionId, record.canvasId)
     }
   }
 }
 
+/**
+ * A render timestamp that is strictly later than the previous one this process
+ * issued. Wall-clock ISO strings carry millisecond precision, and two renders
+ * in one tick — file this subject, start that one — would tie, leaving "the
+ * canvas last rendered to" undefined for the next launch to guess at. Bumping
+ * a tie forward by one millisecond keeps the order the renders actually
+ * happened in, which is the only order the user would recognise.
+ */
+let lastRenderStamp = ''
+function nextRenderStamp(): string {
+  let stamp = new Date().toISOString()
+  if (stamp <= lastRenderStamp) {
+    stamp = new Date(Date.parse(lastRenderStamp) + 1).toISOString()
+  }
+  lastRenderStamp = stamp
+  return stamp
+}
+
 /** When a canvas last received a version; its own creation if it has none. */
 function lastRenderedAt(record: CanvasRecord): string {
   return record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt
+}
+
+/**
+ * Is `a` the canvas the session was more recently working on than `b`?
+ *
+ * Timestamps first — but ISO strings carry millisecond precision and two
+ * renders in one tick tie, which is exactly what a quick "file this, start
+ * that" sequence produces (and what the CI macOS leg produced on the first
+ * run). A tie must still resolve the SAME way on every launch, so it falls to
+ * a stable, content-derived order rather than to readdir: more versions wins
+ * (the canvas that saw more work), then the id, which is random but fixed.
+ * Never the position in the directory listing, which is the arbitrary answer
+ * this replaces.
+ */
+function moreRecentlyActive(a: CanvasRecord, b: CanvasRecord): boolean {
+  const ta = lastRenderedAt(a)
+  const tb = lastRenderedAt(b)
+  if (ta !== tb) return ta > tb
+  if (a.versions.length !== b.versions.length) return a.versions.length > b.versions.length
+  return a.canvasId > b.canvasId
 }
 
 function getRecordForSession(sessionId: string): CanvasRecord | null {
@@ -894,7 +932,7 @@ export function renderVersion(
   // ([v1, v3] has length 2), and `length + 1` would mint a SECOND 'v3' — two
   // versions with one serve key.
   const versionId = nextVersionId(existing?.versions ?? [])
-  const createdAt = new Date().toISOString()
+  const createdAt = nextRenderStamp()
   let version: CanvasVersion
 
   if (source.mode === 'design') {
