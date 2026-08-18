@@ -1,6 +1,6 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
-import { ShellBadge, SshBadge } from './Badges'
+import { SessionTypeBadge, SshBadge } from './Badges'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -56,8 +56,10 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           Codex off
         </span>
       )}
+      {/* Same order as the session card: transport, then type. Every config
+          shows its type now, not just shell ones. */}
       {config.sessionType === 'ssh' && <SshBadge />}
-      {config.shellOnly && <ShellBadge />}
+      <SessionTypeBadge kind={config.shellOnly ? 'shell' : (config.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'} />
       {/* Overlaid on hover rather than held in the row's flex line. As
           layout children these buttons reserved their width permanently, even
           at opacity-0 -- so every label truncated against a strip of blank
