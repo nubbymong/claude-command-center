@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { isAccountActive } from '../../shared/account-types'
 
 const MONITOR = String.fromCodePoint(0x1f5a5)
 const CHECK = String.fromCodePoint(0x2713)
@@ -19,12 +20,16 @@ export function AccountsStep({ onNext, onBack }: { onNext: () => void; onBack: (
     void window.electronAPI.accountProfiles.globalEmail().then(setGlobalEmail).catch(() => {})
   }, [])
 
+  // An account can be switched off in Settings. It stays listed everywhere else
+  // in the app marked inactive rather than hidden (see isAccountActive), so this
+  // page matches: hiding it would make the count here disagree with Settings.
   const accounts =
     profiles.length > 0
-      ? profiles.map((p) => ({ email: p.accountEmail, primary: !!p.isPrimary }))
+      ? profiles.map((p) => ({ email: p.accountEmail, primary: !!p.isPrimary, active: isAccountActive(p) }))
       : globalEmail
-        ? [{ email: globalEmail, primary: true }]
+        ? [{ email: globalEmail, primary: true, active: true }]
         : []
+  const anyInactive = accounts.some((a) => !a.active)
 
   return (
     <>
@@ -41,10 +46,11 @@ export function AccountsStep({ onNext, onBack }: { onNext: () => void; onBack: (
                 or horizontal overflow regardless of how many accounts. */}
             <div className="ma-accounts">
               {accounts.map((a, i) => (
-                <div className="ma-row" key={a.email + i}>
+                <div className={a.active ? 'ma-row' : 'ma-row off'} key={a.email + i}>
                   <span className="ma-dot" style={{ background: DOT_COLOURS[i % DOT_COLOURS.length] }} />
                   <span className="ma-email">{a.email}</span>
                   {a.primary && <span className="ma-badge">Primary</span>}
+                  {!a.active && <span className="ma-badge off">Inactive</span>}
                 </div>
               ))}
               <div className="ma-row add">
@@ -52,6 +58,12 @@ export function AccountsStep({ onNext, onBack }: { onNext: () => void; onBack: (
                 <span className="ma-addsub">any time, in Settings</span>
               </div>
             </div>
+            {anyInactive && (
+              <p className="ma-inactive-note">
+                Accounts marked <b>inactive</b> are switched off in Settings. They stay listed, but cannot be
+                picked for a session until you turn them back on.
+              </p>
+            )}
             <div className="ma-shared">
               <div className="ma-shared-l">Shared across every account</div>
               <div className="ma-chips">

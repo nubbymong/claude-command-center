@@ -23,9 +23,12 @@ export function FinishStep({ onTour, onSkip }: { onTour: () => void; onSkip: () 
           <span>Every choice here can be changed in Settings whenever you like.</span>
         </div>
       </div>
-      <div className="foot">
-        <button className="skip" onClick={onSkip} type="button">Skip to the app</button>
+      {/* Both actions stack on the RIGHT, primary first, so the secondary sits
+          directly under the thing it is an alternative to. Stranding "Skip" at
+          the far left of the footer read as an unrelated control. */}
+      <div className="foot foot-finish">
         <button className="cta" onClick={onTour} type="button">Take the tour →</button>
+        <button className="skip" onClick={onSkip} type="button">Skip to the app</button>
       </div>
     </>
   )

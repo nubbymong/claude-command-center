@@ -137,6 +137,25 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     updateSettings({ configPanelPinned: newVal })
   }
   const [configSearchQuery, setConfigSearchQuery] = useState('')
+  // The panel used to cap itself at a flat 60vh, which cut the list off partway
+  // down a row while empty sidebar sat underneath it. Measure what is actually
+  // free below the panel's top edge instead, keeping SESSION_RESERVE px for the
+  // sessions list so a long config list can never own the whole sidebar.
+  const configPanelRef = useRef<HTMLDivElement | null>(null)
+  const [configPanelMax, setConfigPanelMax] = useState(0)
+  useEffect(() => {
+    if (!configPanelExpanded) return
+    const SESSION_RESERVE = 200
+    const measure = () => {
+      const el = configPanelRef.current
+      if (!el) return
+      const top = el.getBoundingClientRect().top
+      setConfigPanelMax(Math.max(220, Math.round(window.innerHeight - top - SESSION_RESERVE)))
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [configPanelExpanded, configPanelPinned])
   const [dragConfigId, setDragConfigId] = useState<string | null>(null)
   const [dragOverConfigId, setDragOverConfigId] = useState<string | null>(null)
   // The LOOSE configs: in no group and no section (a stale id pointing at a
@@ -710,14 +729,15 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
       {/* Config panel — elevated popover when not pinned, inline raised panel when pinned */}
       <div
+        ref={configPanelRef}
         className={configPanelPinned
-          ? 'border-t border-b border-surface1 overflow-hidden'
-          : 'absolute left-0 right-0 z-50 rounded-lg border border-surface1 overflow-hidden'
+          ? 'border-t border-b border-surface1 overflow-hidden flex flex-col'
+          : 'absolute left-0 right-0 z-50 rounded-lg border border-surface1 overflow-hidden flex flex-col'
         }
         style={configPanelPinned
           ? {
               backgroundColor: 'var(--color-surface0)',
-              maxHeight: configPanelExpanded ? '60vh' : '0',
+              maxHeight: configPanelExpanded ? configPanelMax : 0,
               transition: 'max-height 200ms ease',
             }
           : {
@@ -725,7 +745,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               marginTop: 2,
               backgroundColor: 'var(--color-surface0)',
               boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)',
-              maxHeight: configPanelExpanded ? '60vh' : '0',
+              maxHeight: configPanelExpanded ? configPanelMax : 0,
               opacity: configPanelExpanded ? 1 : 0,
               transform: configPanelExpanded ? 'translateY(0) scaleY(1)' : 'translateY(-4px) scaleY(0.98)',
               transformOrigin: 'top center',
@@ -735,7 +755,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         }
       >
         {/* Search input */}
-        <div className="px-2 pt-2 pb-1">
+        <div className="px-2 pt-2 pb-1 shrink-0">
           <input
             value={configSearchQuery}
             onChange={(e) => setConfigSearchQuery(e.target.value)}
@@ -744,7 +764,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           />
         </div>
 
-        <div className="px-2 space-y-0.5 overflow-y-auto pb-2" style={{ maxHeight: 'calc(60vh - 40px)' }}>
+        {/* Fills whatever height the panel got. Previously a second hard-coded
+            `calc(60vh - 40px)`, which had to be kept in step with the panel cap
+            AND with the search box's real height by hand. */}
+        <div className="px-2 space-y-0.5 overflow-y-auto pb-2 flex-1 min-h-0">
         {configs.length === 0 && !showNewSectionInput && (
           <div className="text-xs text-overlay0 text-center py-4">
             No saved configs.<br />Click + to create one.

@@ -117,6 +117,10 @@
 .ob-root .run:disabled { opacity: .6; cursor: default; }
 .ob-root .cta:disabled { opacity: .6; cursor: default; }
 .ob-root .foot-skip { margin-left: auto; }
+/* Finish page: primary + secondary stacked at the right edge (see FinishStep). */
+.ob-root .foot-finish { flex-direction: column; align-items: flex-end; gap: 4px; }
+.ob-root .foot-finish .cta { margin-left: 0; }
+.ob-root .foot-finish .skip { padding: 6px 4px; }
 .ob-root .self { border: 1px solid var(--border-strong); background: transparent; color: var(--text-secondary); border-radius: 9px; padding: 10px 16px; font-size: 13px; cursor: pointer; }
 .ob-root .skip { background: none; border: 0; color: var(--text-muted); font-size: 13px; cursor: pointer; padding: 10px 8px; text-decoration: underline; }
 .ob-root .p2-priv { display: flex; gap: 9px; align-items: flex-start; margin-top: 12px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
@@ -169,6 +173,13 @@
 .ob-root .ma-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
 .ob-root .ma-email { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: var(--text-primary); white-space: nowrap; }
 .ob-root .ma-badge { margin-left: auto; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); border-radius: 999px; padding: 2px 8px; flex: none; }
+/* Switched off in Settings: listed, plainly marked, visibly not in play. */
+.ob-root .ma-row.off { background: transparent; border-style: dashed; }
+.ob-root .ma-row.off .ma-dot { opacity: .4; }
+.ob-root .ma-row.off .ma-email { color: var(--text-muted); }
+.ob-root .ma-badge.off { color: var(--text-muted); border-color: var(--border-subtle); background: transparent; }
+.ob-root .ma-inactive-note { max-width: 560px; margin: -4px auto 12px; font-size: 11.5px; line-height: 1.5; color: var(--text-muted); text-align: center; }
+.ob-root .ma-inactive-note b { color: var(--text-secondary); font-weight: 650; }
 .ob-root .ma-shared { max-width: 560px; margin: 0 auto; border: 1px solid var(--ob-line); border-radius: 12px; background: var(--ob-soft); padding: 13px 16px; text-align: center; }
 .ob-root .ma-shared-l { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ob); margin-bottom: 10px; }
 .ob-root .ma-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
