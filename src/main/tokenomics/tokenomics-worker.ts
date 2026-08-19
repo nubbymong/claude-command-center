@@ -10,7 +10,17 @@ export interface TkWorkerDeps { fs?: typeof nodeFs; watchDebounceMs?: number; co
 export interface TokenomicsWorker { tickNow(): void; healthNow(): void; stop(): void }
 
 const READ_BUF = 256 * 1024
+/** How much of a Codex rollout's head to scan for its identity lines. */
+const CODEX_HEAD_BYTES = 64 * 1024
+const CODEX_MARK_TOKEN = Buffer.from('"token_count"')
+const CODEX_MARK_META = Buffer.from('"session_meta"')
+const CODEX_MARK_TURN = Buffer.from('"turn_context"')
 const MAX_TICK_BYTES = 16 * 1024 * 1024
+/** Codex rollouts get a bigger tick: nearly every byte is skipped by the
+ *  byte-level pre-filter without being decoded, so a tick is I/O, not CPU.
+ *  16 MB on a 2.5 GB rollout meant ~160 sweeps to finish one file; 64 MB is
+ *  ~40, and a sweep over an 80 GB tree stays under a minute. */
+const CODEX_TICK_BYTES = 64 * 1024 * 1024
 const YIELD_EVERY = 16 // files between event-loop yields during a sweep
 
 export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWorkerDeps = {}): TokenomicsWorker {
@@ -131,23 +141,130 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     return inserted
   }
 
+  /**
+   * Codex rollouts are STREAMED, exactly like Claude transcripts, and for the
+   * same reason the Claude path never read a whole file: they can be enormous.
+   * A real ~/.codex/sessions held 80 GB across 320 files, several of them
+   * 1.8-2.5 GB each. The old `readFileSync(file, 'utf8')` on those either took
+   * tens of seconds and hundreds of MB per file, or threw Node's hard string
+   * ceiling ("Cannot create a string longer than 0x1fffffe8 characters") -
+   * which the catch swallowed WITHOUT writing a cursor, so every sweep re-read
+   * the same unreadable file and never got past the Codex tail. On the user's
+   * machine that showed as Tokenomics stuck at "Indexing 1700/1997" for hours,
+   * with a database that had in fact been complete since July.
+   *
+   * The parser only wants three event types (session_meta, turn_context,
+   * token_count) - a tiny slice of a rollout's bytes - and it is line-oriented,
+   * so it can be fed a chunk at a time. Per-turn ordinals are the position of
+   * each token_count line in the file, which is what makes resumption exact:
+   * the count of Codex rows already stored for the session IS the ordinal to
+   * continue from. Each tick reads at most `maxTickBytes`; the cursor advances
+   * to the last complete line consumed and the next sweep carries on.
+   */
   function ingestCodexFile(file: string): number {
     let st: nodeFs.Stats
     try { st = fs.statSync(file) } catch { return 0 }
     const cursor = db!.getFileCursor(file)
-    if (cursor && st.size === cursor.size && st.mtimeMs === cursor.mtime) return 0
-    let text: string
-    try { text = fs.readFileSync(file, 'utf8') } catch { return 0 }
-    const all = codexEventsFromRollout(text, priceKeys, 0)
+    let offset = cursor ? cursor.lastOffset : 0
+    if (cursor && st.size < cursor.lastOffset) offset = 0 // truncated/rotated -> re-read
+    if (cursor && st.size === cursor.size && st.mtimeMs === cursor.mtime && offset >= st.size) return 0
+    if (st.size <= offset) { db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: offset, lastIngestedAt: Date.now() }); return 0 }
+
+    const end = Math.min(st.size, offset + Math.max(maxTickBytes, deps.maxTickBytes ? maxTickBytes : CODEX_TICK_BYTES))
+    let fd: number
+    try { fd = fs.openSync(file, 'r') } catch { return 0 }
     let inserted = 0
-    if (all.length) {
-      const sessionId = all[0].sessionId
-      const existing = (db!.raw.prepare("SELECT COUNT(*) AS n FROM tk_events WHERE sessionId = ? AND provider = 'codex'").get(sessionId) as { n: number }).n
-      const fresh = all.slice(existing).map((ev) => ({ ...ev, configId: resolveConfigId(ev.cwd) }))
-      if (fresh.length) inserted = db!.insertEvents(fresh)
-    }
-    db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: st.size, lastIngestedAt: Date.now() })
+    try {
+      let pos = offset
+      let carry = Buffer.alloc(0)
+      const buf = Buffer.alloc(READ_BUF)
+      let consumed = offset
+      // The rollout header (session_meta, and the first turn_context that
+      // names the model) sits at the top of the file. On a resumed read we
+      // start past it, so re-read the head of the file for those lines - a
+      // bounded, cheap read that needs no state to survive a restart.
+      const head = offset > 0 ? codexHeadLines(fd) : null
+      const kept: string[] = []
+      while (pos < end) {
+        const n = fs.readSync(fd, buf, 0, Math.min(READ_BUF, end - pos), pos)
+        if (n <= 0) break
+        pos += n
+        const chunk = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : Buffer.from(buf.subarray(0, n))
+        let ls = 0
+        for (;;) {
+          const nl = chunk.indexOf(0x0a, ls)
+          if (nl === -1) break
+          const lb = chunk.subarray(ls, nl)
+          consumed += nl - ls + 1
+          ls = nl + 1
+          if (!lb.length) continue
+          // Cheap pre-filter: only lines that can carry what the parser wants
+          // are decoded at all. A tool-output line of a few MB is skipped by a
+          // byte scan instead of a UTF-8 decode plus JSON.parse.
+          if (!codexLineOfInterest(lb)) continue
+          kept.push(lb.toString('utf8'))
+        }
+        carry = Buffer.from(chunk.subarray(ls))
+      }
+      // A single line larger than one tick's budget can never complete: skip
+      // past it rather than re-reading it forever (a token_count line is a few
+      // hundred bytes; anything that big is tool output we do not want).
+      if (kept.length === 0 && consumed === offset && pos >= end && end < st.size) consumed = end
+
+      if (kept.length) {
+        const text = (head ? head + '\n' : '') + kept.join('\n')
+        // Every token_count in THIS tick is new: the cursor only ever moves
+        // past lines already ingested. Its ordinal continues from the count of
+        // Codex rows the session already has, which keeps the dedup key
+        // (`x:<session>:<ordinal>`) unique across ticks — a resumed tick that
+        // numbered from zero collided with the stored rows and inserted nothing,
+        // so a rollout larger than one tick stopped at its first tick's turns.
+        const probe = codexEventsFromRollout(text, priceKeys, 0)
+        if (probe.length) {
+          const sessionId = probe[0].sessionId
+          const existing = (db!.raw.prepare("SELECT COUNT(*) AS n FROM tk_events WHERE sessionId = ? AND provider = 'codex'").get(sessionId) as { n: number }).n
+          // Fresh read of the whole file (offset 0): the stored rows ARE the
+          // first `existing` ordinals, so skip them. Resumed read: nothing in
+          // this tick is stored yet, so renumber from `existing`.
+          const fresh = (offset === 0 ? probe.slice(existing) : probe.map((ev, i) => ({ ...ev, dedupKey: `x:${sessionId}:${existing + i}` })))
+            .map((ev) => ({ ...ev, configId: resolveConfigId(ev.cwd) }))
+          if (fresh.length) inserted = db!.insertEvents(fresh)
+        }
+      }
+      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now() })
+    } finally { try { fs.closeSync(fd) } catch { /* ignore */ } }
     return inserted
+  }
+
+  /** Byte-level "could this line matter" test, run before any decode. */
+  function codexLineOfInterest(lb: Buffer): boolean {
+    // Every wanted line is small; the giant ones are tool output.
+    if (lb.length > 64 * 1024) return false
+    return lb.includes(CODEX_MARK_TOKEN) || lb.includes(CODEX_MARK_META) || lb.includes(CODEX_MARK_TURN)
+  }
+
+  /**
+   * The identity lines of a rollout, read from the top of an open file. Only
+   * the first CODEX_HEAD_BYTES are looked at: session_meta is the first line
+   * and the first turn_context follows within a few KB. Returns them joined,
+   * or null when the head holds none (not a rollout we understand).
+   */
+  function codexHeadLines(fd: number): string | null {
+    const buf = Buffer.alloc(CODEX_HEAD_BYTES)
+    let n = 0
+    try { n = fs.readSync(fd, buf, 0, CODEX_HEAD_BYTES, 0) } catch { return null }
+    if (n <= 0) return null
+    const lines: string[] = []
+    let ls = 0
+    for (;;) {
+      const nl = buf.indexOf(0x0a, ls)
+      if (nl === -1 || nl >= n) break
+      const lb = buf.subarray(ls, nl)
+      ls = nl + 1
+      if (lb.includes(CODEX_MARK_META) || lb.includes(CODEX_MARK_TURN)) lines.push(lb.toString('utf8'))
+      if (lines.length >= 4) break
+    }
+    return lines.length ? lines.join(String.fromCharCode(10)) : null
   }
 
   async function ingestAll(phase: 'initial' | 'incremental'): Promise<void> {
@@ -245,7 +362,11 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     claudeDir = msg.claudeProjectsDir
     codexDir = msg.codexSessionsDir
     firstSweepDone = db.getMeta('firstIndexComplete') === '1'
-    post({ type: 'ready' }) // ready BEFORE the sweep so queries work during indexing
+    // Ready BEFORE the sweep so queries work during indexing - and it carries
+    // what the DB already knows, so an index completed on a previous run reads
+    // as complete now rather than after this run's sweep (or never, when the
+    // sweep does not finish).
+    post({ type: 'ready', firstIndexComplete: firstSweepDone, eventsTotal: db.eventCount() })
     setTimeout(() => { void ingestAll('initial') }, 0)
     startWatching()
   }

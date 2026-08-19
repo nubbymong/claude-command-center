@@ -9,7 +9,10 @@ export type ToTkWorker =
   | { type: 'shutdown' }
 
 export type FromTkWorker =
-  | { type: 'ready' }
+  /** `firstIndexComplete` is what the DB already knows at open. The supervisor
+   *  used to learn it only from a fresh `index-complete`, so every launch showed
+   *  "Indexing" until a whole sweep finished - or forever, if it did not. */
+  | { type: 'ready'; firstIndexComplete: boolean; eventsTotal: number }
   | { type: 'health'; eventsTotal: number; filesTracked: number; dbBytes: number }
   | { type: 'index-progress'; filesDone: number; filesTotal: number; eventsIngested: number; phase: 'initial' | 'incremental' }
   | { type: 'index-complete'; firstIndex: boolean; eventsTotal: number }

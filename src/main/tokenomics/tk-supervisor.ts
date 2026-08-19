@@ -74,6 +74,11 @@ export class TokenomicsSupervisor {
       case 'ready': {
         this.listening = true
         this.backoffIdx = 0
+        // The DB's own record of a completed first index. Without this the
+        // page said "Indexing usage data" on EVERY launch until a fresh sweep
+        // completed - and stayed there for hours when the sweep wedged on the
+        // Codex tail, over a database that had been complete since July.
+        if (m.firstIndexComplete) { this.firstIndexComplete = true; this.lastEventsTotal = m.eventsTotal }
         const buf = this.buffer
         this.buffer = []
         for (const msg of buf) this.worker?.transport.post(msg)
