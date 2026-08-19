@@ -174,6 +174,24 @@ The changelog is **generated**, not hand-edited. The single source of truth is
   notes** automatically (`scripts/gen-changelog.js --notes <version>`), so there
   is nothing to paste by hand at release time.
 
+### The other user-facing surfaces (no CI guard — check them by hand)
+
+The changelog is the only one of these CI protects, so the rest drift quietly.
+Before a release, walk every surface for each feature added or changed since the
+last one, and either update it or satisfy yourself it needs nothing:
+
+| Surface | File | Miss looks like |
+| --- | --- | --- |
+| What's New / CHANGELOG | `src/renderer/changelog.ts` | (CI catches this one) |
+| Feature Guide reference + what Ask Conductor knows | `src/shared/app-knowledge.ts` | Asking the app about a live bug and being told the docs don't cover it |
+| Tips | `src/renderer/tips-library.ts` | Tips for deleted features; nothing for anything shipped recently |
+| Guided tour + Feature Guide cards | tour steps, guide cards | A whole page nothing mentions |
+| README + screenshots | `README.md` | Describes features that were never built |
+
+Ship anything with a known workaround? Add it to the **known-issues** section of
+`app-knowledge.ts` in the same PR, so users hitting it can be told the fix rather
+than concluding there isn't one.
+
 ## What We're Looking For
 
 - Bug fixes with reproduction steps
