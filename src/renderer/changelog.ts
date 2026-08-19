@@ -21,6 +21,15 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.16',
+    date: '2026-08-20',
+    highlights: 'The terminal corruption is understood and fixed at the root. GPU rendering shared one glyph cache across every open session, so one session refreshing wiped the text out of all the others — which is why it looked random, why it got worse the more sessions you had, and why resizing the window brought it back. GPU rendering is now off by default.',
+    changes: [
+      { type: 'fix', description: 'Terminals no longer lose their text while other sessions are running. The cause was not what months of fixes assumed. Drawing terminals on the GPU keeps one shared cache of character images for the WHOLE app, not one per terminal — so whenever any session refreshed that cache, every OTHER open session kept its background colours and lost its characters, until you resized, scrolled or switched to it. That is why it struck at random, why more sessions made it worse, and why a window resize always cured it. Every previous fix treated it as one terminal\'s own cache going stale and tried to refresh more often, which quietly made it worse: the refresh was the thing doing the damage.' },
+      { type: 'improvement', description: 'GPU rendering for terminals is now OFF by default and marked experimental in Settings, and it is opt-in rather than opt-out — if you have never touched the setting, you get the plain renderer, which keeps no shared cache and cannot show this fault. Text is drawn by the normal font engine instead, so it may look very slightly different. Turning it back on is one checkbox, and Settings now explains exactly what you are trading for the speed.' }
+    ]
+  },
+  {
     version: '2.1.0-beta.15',
     date: '2026-08-19',
     highlights: 'The terminal stops going unreadable during long output and switching between sessions repaints them clean; Tokenomics stops sitting on "Indexing usage data" forever and counts Codex spend correctly; every page — Tokenomics, Settings, the new Feature Guide — now opens as a tab beside your sessions instead of taking over the window; the Agent Canvas gets a library, keeps subjects apart, and can be deleted safely; What\'s New and the first-run tour know which version you came from, and What\'s New is readable whenever you want it; and the README finally describes, and shows, the app that ships.',

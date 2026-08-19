@@ -469,7 +469,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // repainter exists to bound. Read once at mount — changing it applies to
       // terminals opened afterwards, which keeps a live session from having its
       // renderer swapped underneath it.
-      if (ts.gpuRendering !== false) {
+      // Opt-IN since 2.1.0-beta.16, and experimental. `@xterm/addon-webgl` keeps
+      // ONE glyph atlas per process, so a clearTextureAtlas() from ANY terminal
+      // blanks the glyphs of every OTHER open terminal — see TerminalSettings.
+      if (ts.gpuRendering === true) {
         webglHandle = installWebglWithRecovery(term, {
           WebglAddonCtor: WebglAddon,
           raf: requestAnimationFrame,
