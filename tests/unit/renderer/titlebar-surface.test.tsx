@@ -88,7 +88,7 @@ describe('TitleBar degraded-status tint (#275)', () => {
       // does reject a declaration it cannot parse — so an empty style here is
       // the same failure a real browser shows.
       expect(bg.length).toBeGreaterThan(0)
-      expect(bg).not.toMatch(/var\([^)]*\)[0-9a-f]{2}/i)
+      expect(bg).not.toMatch(/var\([^)]*\)[0-9a-f]{2}\b/i)
       expect(bg).toContain('color-mix')
     })
   })

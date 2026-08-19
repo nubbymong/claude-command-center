@@ -219,7 +219,7 @@ describe('codex rollouts are streamed, not slurped', () => {
     fs.mkdirSync(dir, { recursive: true })
     const p = path.join(dir, name)
     const fd = fs.openSync(p, 'w')
-    fs.writeSync(fd, JSON.stringify({ type: 'session_meta', timestamp: '2026-08-01T00:00:00Z', payload: { id: 'cx-1', cwd: 'F:\proj', model: 'gpt-5.5' } }) + '\n')
+    fs.writeSync(fd, JSON.stringify({ type: 'session_meta', timestamp: '2026-08-01T00:00:00Z', payload: { id: 'cx-1', cwd: 'F:\\proj', model: 'gpt-5.5' } }) + '\n')
     fs.writeSync(fd, JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }) + '\n')
     const pad = 'x'.repeat(padBytes)
     for (let i = 0; i < turns; i++) {

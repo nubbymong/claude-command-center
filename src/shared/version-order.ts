@@ -24,7 +24,7 @@ interface Parsed {
 }
 
 function parse(version: string): Parsed | null {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(version.trim())
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version.trim())
   if (!m) return null
   return {
     release: [Number(m[1]), Number(m[2]), Number(m[3])],
