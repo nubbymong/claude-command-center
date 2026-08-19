@@ -204,6 +204,46 @@ describe('tokenomics codex ingest hardening', () => {
     expect(res.rows[0].kpis.lifeToDateCostUsd).toBeCloseTo(2.2, 5)
   })
 
+  it('prices per turn when the switch lands in a LATER tick, not the first', async () => {
+    // The per-turn fix above is defeated if the parse is seeded with the last
+    // model named in the slice: every turn before the slice's first
+    // turn_context then takes the model the slice ENDS on. That only shows up
+    // once a tick starts mid-file, which is where real rollouts spend most of
+    // their life. 4 turns at $1/M, then 4 at $0.1/M = $4.40, not $0.80.
+    const codexDir = path.join(tmp, 'codex')
+    const dir = path.join(codexDir, '2026', '08', '01')
+    fs.mkdirSync(dir, { recursive: true })
+    const pad = 'x'.repeat(60 * 1024)
+    const lines: string[] = [
+      JSON.stringify({ type: 'session_meta', timestamp: '2026-08-01T00:00:00Z', payload: { id: 'cx-late', cwd: 'F:\\proj' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }),
+    ]
+    const turn = (i: number) => JSON.stringify({
+      type: 'event_msg', timestamp: '2026-08-01T00:00:0' + (i % 10) + 'Z',
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, output_tokens: 0 }, last_token_usage: { input_tokens: 1_000_000, cached_input_tokens: 0, output_tokens: 0 } } },
+    })
+    const filler = () => JSON.stringify({ type: 'event_msg', payload: { type: 'tool_output', output: pad } })
+    for (let i = 0; i < 4; i++) { lines.push(filler(), turn(i)) }
+    lines.push(JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5-mini' } }))
+    for (let i = 4; i < 8; i++) { lines.push(filler(), turn(i)) }
+    fs.writeFileSync(path.join(dir, 'rollout-2026-08-01T00-00-00-late.jsonl'), lines.join('\n') + '\n')
+
+    const fake = new FakeTkWorkerTransport()
+    const msgs: FromTkWorker[] = []
+    fake.onMessage((m) => msgs.push(m))
+    track(createTokenomicsWorker(fake.asWorkerSide(), { maxTickBytes: 128 * 1024 }))
+    fake.post({
+      type: 'open', dbPath: ':memory:', configs: [],
+      pricing: { 'gpt-5.5': { input: 1, output: 4, cacheRead: 0.1, cacheWrite: 0 }, 'gpt-5-mini': { input: 0.1, output: 0.4, cacheRead: 0.01, cacheWrite: 0 } },
+      claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: codexDir,
+    })
+    expect(await drain(fake, msgs)).toBe(8)
+    fake.post({ type: 'query', id: 12, kind: 'summary', args: {} })
+    await new Promise((r) => setTimeout(r, 30))
+    const res = msgs.find((m) => m.type === 'query-result' && (m as unknown as { id: number }).id === 12) as unknown as { rows: Array<{ kpis: { lifeToDateCostUsd: number } }> }
+    expect(res.rows[0].kpis.lifeToDateCostUsd).toBeCloseTo(4.4, 5)
+  })
+
   it('keeps the good turns of a rollout whose header timestamp is unparseable', async () => {
     // A turn with no timestamp of its own falls back to the header's, and an
     // unparseable header makes that NaN. NaN binds as NULL against a NOT NULL

@@ -403,11 +403,23 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         // rediscovered from the file's head every time — the thing that silently
         // produced no events when the head did not hold it.
         nextSeed = codexIdentityFrom([...headLines, ...kept], seed)
-        const probe = codexEventsFromRollout(text, priceKeys, 0, nextSeed)
+        // Parse with the identity carried IN, not the one just derived. What
+        // `codexIdentityFrom` returns is the LAST model named anywhere in this
+        // slice; seeding the parse with it stamps that model onto every turn
+        // before the slice's first `turn_context` — which on a resumed tick is
+        // the leading turns, and silently reprices them. The cursor's own seed
+        // is the model actually in effect where this slice begins.
+        const probe = codexEventsFromRollout(text, priceKeys, 0, seed)
         if (probe.length) {
           const sessionId = probe[0].sessionId
           const last = probe[probe.length - 1]
-          nextSeed = { sessionId, cwd: last.cwd || nextSeed.cwd, model: last.model && last.model !== 'unknown' ? last.model : nextSeed.model }
+          // Persist what the identity scan found — it also sees a trailing
+          // `turn_context` that no turn in this slice followed.
+          nextSeed = {
+            sessionId: nextSeed.sessionId || sessionId,
+            cwd: nextSeed.cwd || last.cwd,
+            model: nextSeed.model || (last.model && last.model !== 'unknown' ? last.model : undefined),
+          }
           // A fresh read from the top re-derives ordinals the stored rows
           // already own, so their own keys dedup them; a resumed read holds only
           // turns after the cursor, so they continue from the file's base.
