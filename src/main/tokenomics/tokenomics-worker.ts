@@ -146,6 +146,21 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   let claudeDir = ''
   let codexDir = ''
   let sweeping = false
+  /**
+   * Did anything in THIS sweep leave work behind — a file not read to its end,
+   * or one that could not be read at all?
+   *
+   * Deliberately in memory and per-sweep, rather than a query over the cursor
+   * table. `tk_files` is never pruned, so it accumulates rows for files that no
+   * longer exist — 92% of the rows in a real 221 MB database, nine of them
+   * parked mid-file. Asking the TABLE "is anything unscanned" lets a rollout
+   * deleted years ago veto completion forever, which is the same "Indexing
+   * usage data" wedge this code exists to remove, only now persisted. Asking
+   * the SWEEP counts only files that still exist and were actually visited.
+   */
+  let sweepPending = false
+  /** Note how far a file was read, so the sweep knows whether work remains. */
+  const noteScanned = (scannedTo: number, size: number): void => { if (scannedTo < size) sweepPending = true }
   let firstSweepDone = false
   let lastProgress = { filesDone: 0, filesTotal: 0, eventsIngested: 0 }
   const watchers: Array<{ close(): void }> = []
@@ -221,7 +236,11 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
 
     const end = Math.min(st.size, offset + maxTickBytes)
     let fd: number
-    try { fd = fs.openSync(file, 'r') } catch (err) { logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
+    // A file we could not read is work still outstanding, not work done. It
+    // writes no cursor row, so nothing else can notice it — and an index that
+    // declares itself complete while a file's spend is missing is worse than
+    // one that admits it is still going.
+    try { fd = fs.openSync(file, 'r') } catch (err) { sweepPending = true; logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
     let inserted = 0
     let fileCwd = ''
     try {
@@ -251,6 +270,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         // Per-FILE containment. Letting this escape aborts the whole sweep, so
         // one locked or flaky transcript stops every later file from being read
         // and leaves the index reporting itself incomplete forever.
+        sweepPending = true
         logw('warn', `read failed for ${file}: ${String(err)}`)
         flush()
         return inserted
@@ -262,6 +282,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       if (res.pendingDropped) consumed += res.pendingLen
       else if (res.pendingLen > 0 && consumed === offset && res.pos - offset >= maxTickBytes) consumed = res.pos
       flush()
+      noteScanned(res.pos, st.size)
       db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now(), scannedTo: res.pos })
     } finally { try { fs.closeSync(fd) } catch { /* ignore */ } }
     return inserted
@@ -326,7 +347,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     const tickBytes = deps.maxTickBytes !== undefined ? maxTickBytes : CODEX_TICK_BYTES
     const end = Math.min(st.size, offset + tickBytes)
     let fd: number
-    try { fd = fs.openSync(file, 'r') } catch (err) { logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
+    try { fd = fs.openSync(file, 'r') } catch (err) { sweepPending = true; logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
     let inserted = 0
     try {
       let consumed = offset
@@ -354,9 +375,11 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         // first index never reports complete, and the five-second retry hits the
         // same file forever - the exact "Indexing 1700/1997" wedge this ingester
         // was written to remove, reached through a different door.
+        sweepPending = true
         logw('warn', `read failed for ${file}: ${String(err)}`)
         return 0
       }
+      noteScanned(res.pos, st.size)
       // Skip past a run that can never become a line we want, rather than
       // re-reading it forever. Two ways to know that: it passed the largest line
       // any caller wants, or a WHOLE tick's worth of bytes went by without one
@@ -388,10 +411,19 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
           // A fresh read from the top re-derives ordinals the stored rows
           // already own, so their own keys dedup them; a resumed read holds only
           // turns after the cursor, so they continue from the file's base.
-          const fresh = (offset === 0
+          const keyed = (offset === 0
             ? probe.map((ev, i) => ({ ...ev, dedupKey: `x:${sessionId}:${i}` }))
             : probe.map((ev, i) => ({ ...ev, dedupKey: `x:${sessionId}:${turnBase + i}` })))
             .map((ev) => ({ ...ev, configId: resolveConfigId(ev.cwd) }))
+          // A turn with no usable timestamp cannot be stored: the column is NOT
+          // NULL, and `INSERT OR IGNORE` reports the rejection as changes === 0
+          // — identical to a dedup hit. That is the mechanism that makes a LOST
+          // turn look exactly like an already-counted one, so drop it here and
+          // say so. Keys are already assigned, so the survivors keep theirs.
+          const fresh = keyed.filter((ev) => Number.isFinite(ev.ts))
+          if (fresh.length !== keyed.length) {
+            logw('warn', `codex rollout ${file}: dropped ${keyed.length - fresh.length} turn(s) with an unusable timestamp`)
+          }
           turnBase = offset === 0 ? Math.max(turnBase, probe.length) : turnBase + probe.length
           inserted = db!.insertEventsWithCursor(fresh, { path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now(), scannedTo: res.pos, codexSessionId: nextSeed.sessionId ?? '', codexModel: nextSeed.model ?? '', codexCwd: nextSeed.cwd ?? '', codexTurns: turnBase })
           return inserted
@@ -478,6 +510,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   async function ingestAll(phase: 'initial' | 'incremental'): Promise<void> {
     if (!db || sweeping) return
     sweeping = true
+    sweepPending = false
     try {
       const claude = enumerateClaude()
       const codex = enumerateCodex()
@@ -507,13 +540,13 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       // It is also no longer tied to the 'initial' phase: that phase runs once
       // per process, so a single failed first sweep left the flag unreachable
       // for the life of the process however many healthy sweeps followed.
-      const drained = !db.hasUnscannedFiles()
+      const drained = !sweepPending
       if (drained && !firstSweepDone) {
         firstSweepDone = true
         db.setMeta('firstIndexComplete', '1')
-        post({ type: 'index-complete', firstIndex: true, eventsTotal: db.eventCount() })
+        post({ type: 'index-complete', firstIndex: true, drained, eventsTotal: db.eventCount() })
       } else {
-        post({ type: 'index-complete', firstIndex: false, eventsTotal: db.eventCount() })
+        post({ type: 'index-complete', firstIndex: false, drained, eventsTotal: db.eventCount() })
       }
     } catch (err) { logw('error', `ingestAll failed: ${String(err)}`) }
     finally { sweeping = false }

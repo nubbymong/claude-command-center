@@ -17,7 +17,7 @@ export interface TokenomicsSupervisorOptions {
 }
 
 export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
-export interface TkIndexCompleteEvent { firstIndex: boolean; eventsTotal: number }
+export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; eventsTotal: number }
 
 const BACKOFFS = [250, 1000, 4000, 4000, 4000]
 const DEFAULT_QUERY_TIMEOUT_MS = 15_000
@@ -90,10 +90,15 @@ export class TokenomicsSupervisor {
         return
       }
       case 'index-complete': {
-        this.firstIndexComplete = true   // any completed sweep means the DB has a first index
+        // A sweep FINISHING is not a first index. With a per-tick byte budget a
+        // multi-GB rollout needs tens of sweeps, so latching on the message
+        // itself put the dashboard up over a fraction of the user's spend and
+        // called it complete. `drained` is the worker saying every file it
+        // visited was actually read to the end.
+        if (m.drained) this.firstIndexComplete = true
         this.lastEventsTotal = m.eventsTotal
         this.lastIndexAt = this.now()
-        for (const cb of this.completeSubs) { try { cb({ firstIndex: m.firstIndex, eventsTotal: m.eventsTotal }) } catch { /* ignore */ } }
+        for (const cb of this.completeSubs) { try { cb({ firstIndex: m.firstIndex, drained: m.drained, eventsTotal: m.eventsTotal }) } catch { /* ignore */ } }
         return
       }
       case 'health': { this.lastEventsTotal = m.eventsTotal; return }

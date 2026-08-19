@@ -622,7 +622,10 @@ export interface TkIndexStatus {
 export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }
 export interface TkSessionsQuery extends TkSummaryFilter { search?: string; cursor?: { lastTs: number; sessionId: string } | null; limit?: number }
 export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
-export interface TkIndexCompleteEvent { firstIndex: boolean; eventsTotal: number }
+/** `drained`: every file that sweep visited was read to its end and none
+ *  failed. A sweep finishing is NOT that — a multi-GB rollout takes tens of
+ *  sweeps — so gate any "indexing finished" UI on `drained`. */
+export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; eventsTotal: number }
 
 // ── Notes ──
 

@@ -182,11 +182,32 @@ describe('tokenomicsStore', () => {
         lastIndexAt: null,
       })
       await useTokenomicsStore.getState().init()
-      completeCbs[completeCbs.length - 1]({ firstIndex: false, eventsTotal: 42 })
+      completeCbs[completeCbs.length - 1]({ firstIndex: false, drained: true, eventsTotal: 42 })
       await new Promise(r => setTimeout(r, 0))
       const s = useTokenomicsStore.getState()
       expect(s.indexStatus!.indexing).toBe(false)
       expect(s.indexStatus!.firstIndexComplete).toBe(true)
+    })
+
+    it('leaves the page indexing when the sweep finished WITHOUT draining', async () => {
+      // A sweep finishing is not the index finishing: with a per-tick byte
+      // budget a multi-GB rollout needs tens of sweeps. Treating the message
+      // itself as completion swapped an honest spinner for a confidently wrong
+      // total, over a fraction of the user's actual spend.
+      tk.indexStatus.mockResolvedValueOnce({
+        firstIndexComplete: false,
+        indexing: true,
+        filesDone: 5,
+        filesTotal: 5,
+        eventsTotal: 0,
+        lastIndexAt: null,
+      })
+      await useTokenomicsStore.getState().init()
+      completeCbs[completeCbs.length - 1]({ firstIndex: false, drained: false, eventsTotal: 3 })
+      await new Promise(r => setTimeout(r, 0))
+      const s = useTokenomicsStore.getState()
+      expect(s.indexStatus!.indexing).toBe(true)
+      expect(s.indexStatus!.firstIndexComplete).toBe(false)
     })
   })
 

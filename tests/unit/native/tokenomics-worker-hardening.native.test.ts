@@ -74,7 +74,17 @@ describe('tokenomics codex ingest hardening', () => {
     fs.rmSync(tmp, { recursive: true, force: true })
   })
 
-  const completions = (msgs: FromTkWorker[]) => msgs.filter((m) => m.type === 'index-complete') as Array<{ firstIndex: boolean; eventsTotal: number }>
+  const completions = (msgs: FromTkWorker[]) => msgs.filter((m) => m.type === 'index-complete') as Array<{ firstIndex: boolean; drained: boolean; eventsTotal: number }>
+
+  /** Reduce a DB to the pre-migration `tk_files` shape, keeping its rows. */
+  function downgradeCursors(dbPath: string): void {
+    const raw = new Database(dbPath)
+    raw.exec('ALTER TABLE tk_files RENAME TO tk_files_new')
+    raw.exec('CREATE TABLE tk_files (path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL, lastOffset INTEGER NOT NULL DEFAULT 0, lastIngestedAt INTEGER NOT NULL DEFAULT 0)')
+    raw.exec('INSERT INTO tk_files SELECT path,size,mtime,lastOffset,lastIngestedAt FROM tk_files_new')
+    raw.exec('DROP TABLE tk_files_new')
+    raw.close()
+  }
 
   async function waitForCompletions(msgs: FromTkWorker[], n: number): Promise<void> {
     for (let i = 0; i < 800; i++) {
@@ -157,6 +167,73 @@ describe('tokenomics codex ingest hardening', () => {
     expect(res.rows[0].kpis.lifeToDateCostUsd).toBeCloseTo(10, 5)
   })
 
+  it('prices each turn at the model that turn actually ran on', async () => {
+    // One mutable model was stamped onto every turn in a parsed slice, so a
+    // session that switched models was billed entirely at whichever model the
+    // slice ended on — and because the slice boundary moves with the tick size,
+    // identical bytes priced differently on different machines. Here: 2 turns at
+    // $1/M then 2 at $0.1/M, 1M input each = $2.20, not $0.40.
+    const codexDir = path.join(tmp, 'codex')
+    const dir = path.join(codexDir, '2026', '08', '01')
+    fs.mkdirSync(dir, { recursive: true })
+    const turn = (i: number) => JSON.stringify({
+      type: 'event_msg', timestamp: '2026-08-01T00:00:0' + i + 'Z',
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 1000, output_tokens: 0 }, last_token_usage: { input_tokens: 1_000_000, cached_input_tokens: 0, output_tokens: 0 } } },
+    })
+    fs.writeFileSync(path.join(dir, 'rollout-2026-08-01T00-00-00-sw.jsonl'), [
+      JSON.stringify({ type: 'session_meta', timestamp: '2026-08-01T00:00:00Z', payload: { id: 'cx-sw', cwd: 'F:\\proj' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }),
+      turn(1), turn(2),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5-mini' } }),
+      turn(3), turn(4),
+    ].join('\n') + '\n')
+
+    const fake = new FakeTkWorkerTransport()
+    const msgs: FromTkWorker[] = []
+    fake.onMessage((m) => msgs.push(m))
+    track(createTokenomicsWorker(fake.asWorkerSide(), {}))
+    fake.post({
+      type: 'open', dbPath: ':memory:', configs: [],
+      pricing: { 'gpt-5.5': { input: 1, output: 4, cacheRead: 0.1, cacheWrite: 0 }, 'gpt-5-mini': { input: 0.1, output: 0.4, cacheRead: 0.01, cacheWrite: 0 } },
+      claudeProjectsDir: path.join(tmp, 'claude'), codexSessionsDir: codexDir,
+    })
+    expect(await drain(fake, msgs)).toBe(4)
+    fake.post({ type: 'query', id: 9, kind: 'summary', args: {} })
+    await new Promise((r) => setTimeout(r, 30))
+    const res = msgs.find((m) => m.type === 'query-result' && (m as unknown as { id: number }).id === 9) as unknown as { rows: Array<{ kpis: { lifeToDateCostUsd: number } }> }
+    expect(res.rows[0].kpis.lifeToDateCostUsd).toBeCloseTo(2.2, 5)
+  })
+
+  it('keeps the good turns of a rollout whose header timestamp is unparseable', async () => {
+    // A turn with no timestamp of its own falls back to the header's, and an
+    // unparseable header makes that NaN. NaN binds as NULL against a NOT NULL
+    // column, and `INSERT OR IGNORE` reports the rejection as changes === 0 —
+    // indistinguishable from a dedup hit. The whole insert batch is one
+    // statement per row, so the undated turn must be dropped where it can be
+    // seen, without taking the dated ones with it.
+    const codexDir = path.join(tmp, 'codex')
+    const dir = path.join(codexDir, '2026', '08', '01')
+    fs.mkdirSync(dir, { recursive: true })
+    const usage = { total_token_usage: { input_tokens: 1000, output_tokens: 0 }, last_token_usage: { input_tokens: 1_000_000, cached_input_tokens: 0, output_tokens: 0 } }
+    fs.writeFileSync(path.join(dir, 'rollout-2026-08-01T00-00-00-nan.jsonl'), [
+      JSON.stringify({ type: 'session_meta', timestamp: 'not-a-date', payload: { id: 'cx-nan', cwd: 'F:\\proj' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }),
+      JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: usage } }),                                  // undated -> NaN
+      JSON.stringify({ type: 'event_msg', timestamp: '2026-08-01T00:00:05Z', payload: { type: 'token_count', info: usage } }), // dated
+    ].join('\n') + '\n')
+    const { fake, msgs } = start({ codexDir })
+    expect(await drain(fake, msgs)).toBe(1)
+    // The dated turn survives...
+    fake.post({ type: 'query', id: 11, kind: 'summary', args: {} })
+    await new Promise((r) => setTimeout(r, 30))
+    const res = msgs.find((m) => m.type === 'query-result' && (m as unknown as { id: number }).id === 11) as unknown as { rows: Array<{ kpis: { lifeToDateCostUsd: number } }> }
+    expect(res.rows[0].kpis.lifeToDateCostUsd).toBeCloseTo(1, 5)
+    // ...and the one that could not be stored is REPORTED, rather than being
+    // swallowed by INSERT OR IGNORE as if it had simply been counted already.
+    const logs = msgs.filter((m) => m.type === 'log') as Array<{ entry: { level: string; message: string } }>
+    expect(logs.some((l) => /unusable timestamp/.test(l.entry.message))).toBe(true)
+  })
+
   // --- Money: replay must not duplicate --------------------------------------
 
   it('does not double-count when a byte range is replayed after a lost cursor write', async () => {
@@ -206,6 +283,49 @@ describe('tokenomics codex ingest hardening', () => {
 
     const b = start({ codexDir, dbPath })
     expect(await drain(b.fake, b.msgs)).toBe(6)
+  })
+
+  it('upgrading a database indexed by the previous build loses no turns', async () => {
+    // The upgrade is the one event every existing user is guaranteed to hit.
+    // Per-file ordinals arrive as 0 on a migrated cursor while its lastOffset is
+    // deep into the file, so numbering the next turns from zero collided with
+    // the rows already stored and INSERT OR IGNORE dropped them — turning the
+    // over-count this work fixed into an equally silent under-count.
+    const codexDir = path.join(tmp, 'codex')
+    const dbPath = path.join(tmp, 'tk.db')
+    const dir = path.join(codexDir, '2026', '08', '01')
+    const name = 'rollout-2026-08-01T00-00-00-upg.jsonl'
+    writeRollout(dir, name, 10, {})
+    const a = start({ codexDir, dbPath })
+    expect(await drain(a.fake, a.msgs)).toBe(10)
+    a.w.stop()
+    await new Promise((r) => setTimeout(r, 30))
+
+    downgradeCursors(dbPath)                 // now it is a pre-migration database
+    writeRollout(dir, name, 40, {})          // ...and the session kept going
+
+    const b = start({ codexDir, dbPath })
+    expect(await drain(b.fake, b.msgs)).toBe(40)   // not 30
+  })
+
+  it('a database migrated mid-drain still finds every turn', async () => {
+    // The normal state of a multi-GB rollout at quit is part-indexed, which is
+    // where the migration did the most damage: it lost every turn the previous
+    // build had already stored for that file.
+    const codexDir = path.join(tmp, 'codex')
+    const dbPath = path.join(tmp, 'tk.db')
+    writeRollout(path.join(codexDir, '2026', '08', '01'), 'rollout-2026-08-01T00-00-00-mid.jsonl', 20, { padBytes: 100 * 1024 })
+    const a = start({ codexDir, dbPath, maxTickBytes: 256 * 1024 })
+    await waitForCompletions(a.msgs, 2)      // stop part-way, as a quit would
+    const partial = completions(a.msgs)[1].eventsTotal
+    expect(partial).toBeGreaterThan(0)
+    expect(partial).toBeLessThan(20)
+    a.w.stop()
+    await new Promise((r) => setTimeout(r, 30))
+
+    downgradeCursors(dbPath)
+    const b = start({ codexDir, dbPath, maxTickBytes: 256 * 1024 })
+    expect(await drain(b.fake, b.msgs)).toBe(20)
   })
 
   // --- Liveness --------------------------------------------------------------
@@ -324,6 +444,45 @@ describe('tokenomics codex ingest hardening', () => {
   })
 
   // --- Honest completion -----------------------------------------------------
+
+  it('a file deleted while part-scanned does not block completion forever', async () => {
+    // `tk_files` is never pruned. Judging completeness by a query over that
+    // table let a row for a file that no longer exists veto the first index for
+    // good — a real 221 MB database already holds nine such rows, all for
+    // missing files. Completeness is now judged by what the SWEEP saw.
+    const codexDir = path.join(tmp, 'codex')
+    const dir = path.join(codexDir, '2026', '08', '01')
+    const doomed = writeRollout(dir, 'rollout-2026-08-01T00-00-00-gone.jsonl', 20, { padBytes: 100 * 1024 })
+    writeRollout(dir, 'rollout-2026-08-01T00-00-00-keep.jsonl', 3, { sessionId: 'cx-keep' })
+    const { fake, msgs } = start({ codexDir, maxTickBytes: 256 * 1024 })
+    await waitForCompletions(msgs, 1)
+    expect(completions(msgs)[0].drained).toBe(false)   // genuinely part-scanned
+    fs.rmSync(doomed)
+    for (let i = 0; i < 6; i++) { fake.post({ type: 'reindex' }); await waitForCompletions(msgs, i + 2) }
+    expect(completions(msgs).some((c) => c.drained)).toBe(true)
+  })
+
+  it('a file that cannot be opened keeps the index from claiming completeness', async () => {
+    // A failed file writes no cursor row at all, so anything reasoning over
+    // rows cannot see it — and an index that declares itself complete while a
+    // file's spend is missing is worse than one that admits it is still going.
+    const codexDir = path.join(tmp, 'codex')
+    const dir = path.join(codexDir, '2026', '08', '01')
+    const bad = writeRollout(dir, 'rollout-2026-08-01T00-00-00-aaa.jsonl', 4, {})
+    writeRollout(dir, 'rollout-2026-08-01T00-00-00-zzz.jsonl', 5, { sessionId: 'cx-2' })
+    const failing = new Proxy(fs, {
+      get(t, k) {
+        if (k === 'openSync') return (p: string, ...rest: unknown[]) => {
+          if (p === bad) { const e: NodeJS.ErrnoException = new Error('EACCES: permission denied'); e.code = 'EACCES'; throw e }
+          return (fs.openSync as unknown as (...a: unknown[]) => number)(p, ...rest)
+        }
+        return (t as unknown as Record<PropertyKey, unknown>)[k]
+      },
+    })
+    const { msgs } = start({ codexDir, fsImpl: failing as unknown as typeof fs })
+    await waitForCompletions(msgs, 1)
+    expect(completions(msgs)[0].drained).toBe(false)
+  })
 
   it('does not report the first index complete while a file is still draining', async () => {
     // A per-tick byte budget means one sweep no longer drains a large rollout,

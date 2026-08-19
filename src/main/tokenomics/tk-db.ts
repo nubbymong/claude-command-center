@@ -170,10 +170,6 @@ export interface TkDb {
    *  spend permanently. The supervisor hard-kills the worker on app quit, so
    *  that window is hit in normal use, not only in a crash. */
   insertEventsWithCursor(events: TkEvent[], cursor: TkFileCursor): number
-  /** Is any tracked file not yet scanned to its end? The first index is only
-   *  honestly "complete" when this is false — a per-tick byte budget means one
-   *  sweep no longer drains a multi-GB rollout. */
-  hasUnscannedFiles(): boolean
   eventCount(): number
   insertEvents(events: TkEvent[]): number
   upsertConfigs(configs: Array<{ configId: string; label: string; workingDirectory: string }>): void
@@ -207,6 +203,15 @@ export function openTkDb(dbPath: string): TkDb {
     // lastOffset; leaving it at 0 would report every known file as unscanned
     // and hold the index at "not complete" forever.
     if (!have.has('scannedTo')) sqlite.exec('UPDATE tk_files SET scannedTo = lastOffset WHERE scannedTo = 0')
+    // A pre-migration Codex cursor cannot say how many turns of ITS file are
+    // already stored — `codexTurns` arrives as 0 while `lastOffset` is deep
+    // into the file. Numbering the next turns from zero would collide with the
+    // rows already there, and `INSERT OR IGNORE` would drop them: a silent,
+    // permanent UNDERCOUNT, once, for every existing user. Rewind those cursors
+    // instead. A Codex file re-read from the top numbers its turns exactly as
+    // they were numbered before, so the stored rows dedup against themselves
+    // and nothing is lost or duplicated. Costs one re-read per rollout, once.
+    if (!have.has('codexTurns')) sqlite.exec("UPDATE tk_files SET lastOffset = 0, scannedTo = 0 WHERE path LIKE '%rollout-%'")
   }
 
   const getMetaStmt = sqlite.prepare('SELECT value FROM tk_meta WHERE key = ?')
@@ -216,7 +221,6 @@ export function openTkDb(dbPath: string): TkDb {
       VALUES(@path,@size,@mtime,@lastOffset,@lastIngestedAt,@scannedTo,@codexSessionId,@codexModel,@codexCwd,@codexTurns)
     ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,lastOffset=excluded.lastOffset,lastIngestedAt=excluded.lastIngestedAt,
       scannedTo=excluded.scannedTo,codexSessionId=excluded.codexSessionId,codexModel=excluded.codexModel,codexCwd=excluded.codexCwd,codexTurns=excluded.codexTurns`)
-  const unscannedStmt = sqlite.prepare('SELECT 1 AS x FROM tk_files WHERE scannedTo < size LIMIT 1')
 
   // Fill the columns a caller predating them does not know about. `scannedTo`
   // defaults to lastOffset (the honest reading of "scanned this far") rather
@@ -305,7 +309,6 @@ export function openTkDb(dbPath: string): TkDb {
     getFileCursor: (path) => (getCursorStmt.get(path) as TkFileCursor | undefined) ?? null,
     setFileCursor: (c) => { setCursorStmt.run(cursorRow(c)) },
     insertEventsWithCursor: (events, cursor) => insertEventsWithCursorTxn(events as any, cursor),
-    hasUnscannedFiles: () => unscannedStmt.get() !== undefined,
     eventCount: () => (countStmt.get() as { n: number }).n,
     insertEvents: (events) => insertEventsTxn(events as any),
     upsertConfigs: (configs) => { const txn = sqlite.transaction((cs: any[]) => { for (const c of cs) upConfig.run(c) }); txn(configs) },

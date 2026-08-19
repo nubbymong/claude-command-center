@@ -60,7 +60,12 @@ export function codexEventsFromRollout(text: string, priceKeys: string[], startO
   let cwd = seed?.cwd ?? ''
   let model = seed?.model ?? ''
   let baseTs = 0
-  const turns: Array<{ ts: number; inNonCached: number; cached: number; out: number }> = []
+  // The model is captured PER TURN, at the point the turn is read. Carrying one
+  // mutable `model` and stamping the final value on every turn priced a whole
+  // slice at whichever model it happened to end on: a session that switched
+  // from a premium model to a cheap one billed entirely at the cheap one, and
+  // the price of identical bytes then depended on where the reader split them.
+  const turns: Array<{ ts: number; inNonCached: number; cached: number; out: number; model: string }> = []
 
   for (const line of lines) {
     let evt: any
@@ -94,6 +99,7 @@ export function codexEventsFromRollout(text: string, priceKeys: string[], startO
       inNonCached: Math.max(0, inputTotal - cached),
       cached,
       out,
+      model,
     })
   }
 
@@ -101,13 +107,15 @@ export function codexEventsFromRollout(text: string, priceKeys: string[], startO
   const events: TkEvent[] = []
   for (let i = startOrdinal; i < turns.length; i++) {
     const t = turns[i]
+    const turnModel = t.model || model || 'unknown'
+    const ts = Number.isFinite(t.ts) ? t.ts : baseTs
     events.push({
       dedupKey: `x:${sessionId}:${i}`,
       sessionId,
       provider: 'codex',
-      model: model || 'unknown',
-      priceModel: toPriceModel(model || 'unknown', priceKeys),
-      ts: Number.isFinite(t.ts) ? t.ts : baseTs,
+      model: turnModel,
+      priceModel: toPriceModel(turnModel, priceKeys),
+      ts,
       cwd,
       inTok: t.inNonCached,
       outTok: t.out,
