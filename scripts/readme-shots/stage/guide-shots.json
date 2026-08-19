@@ -1,0 +1,51 @@
+{
+  "shots": [
+    {
+      "name": "gboot",
+      "steps": [
+        { "wait": 1500 },
+        { "click": "button:has-text(\"Resume\")", "wait": 9000 }
+      ],
+      "settle": 1500,
+      "frames": 2,
+      "interval": 200
+    },
+    {
+      "name": "feature-guide-overview",
+      "steps": [
+        { "click": "[data-tour=\"help-button\"]", "wait": 1600 }
+      ],
+      "settle": 900,
+      "frames": 6,
+      "interval": 180
+    },
+    {
+      "name": "feature-guide-getting-started",
+      "steps": [
+        { "click": "[data-ux-id=\"rail-getting-started\"]", "wait": 1000 }
+      ],
+      "settle": 700,
+      "frames": 6,
+      "interval": 180
+    },
+    {
+      "name": "feature-guide-integrations",
+      "steps": [
+        { "click": "[data-ux-id=\"rail-integrations\"]", "wait": 1000 }
+      ],
+      "settle": 700,
+      "frames": 6,
+      "interval": 180
+    },
+    {
+      "name": "feature-guide-search",
+      "steps": [
+        { "click": "[data-ux-id=\"search\"]", "wait": 300 },
+        { "type": "canvas", "wait": 1000 }
+      ],
+      "settle": 700,
+      "frames": 6,
+      "interval": 180
+    }
+  ]
+}
