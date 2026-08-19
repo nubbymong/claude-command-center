@@ -1,7 +1,7 @@
 import * as nodeFs from 'fs'
 import * as path from 'path'
-import { openTkDb, type TkDb } from './tk-db'
-import { parseClaudeUsageLine, extractCwdFromLine, codexEventsFromRollout } from './tk-parse'
+import { openTkDb, type TkDb, type TkFileCursor } from './tk-db'
+import { parseClaudeUsageLine, extractCwdFromLine, codexEventsFromRollout, type CodexRolloutSeed } from './tk-parse'
 import { findConfigForCwd, isJunkCwd } from './tk-config-match'
 import type { TkConfigDim, TkEvent, TkPricing } from './tk-types'
 import type { ToTkWorker, FromTkWorker, TkWorkerHostTransport } from './tk-worker-transport'
@@ -10,11 +10,35 @@ export interface TkWorkerDeps { fs?: typeof nodeFs; watchDebounceMs?: number; co
 export interface TokenomicsWorker { tickNow(): void; healthNow(): void; stop(): void }
 
 const READ_BUF = 256 * 1024
-/** How much of a Codex rollout's head to scan for its identity lines. */
-const CODEX_HEAD_BYTES = 64 * 1024
+/**
+ * How much of a Codex rollout's head to scan for its identity lines.
+ *
+ * 64 KB was too small twice over on a real tree: `session_meta` alone reached
+ * 47 KB, and the first `turn_context` (the line that names the model, and so
+ * decides what every turn costs) was measured at 36-116 KB into the file, past
+ * the window in 12 of 14 sampled rollouts. This is read at most once per file -
+ * the identity is persisted on the cursor afterwards - so the window can afford
+ * to be generous.
+ */
+const CODEX_HEAD_BYTES = 1024 * 1024
 const CODEX_MARK_TOKEN = Buffer.from('"token_count"')
 const CODEX_MARK_META = Buffer.from('"session_meta"')
 const CODEX_MARK_TURN = Buffer.from('"turn_context"')
+/**
+ * The longest line the Codex parser can possibly want. Everything past this is
+ * tool output, and skipping it undecoded is the whole point of the pre-filter.
+ *
+ * This was 64 KB, which was not a safety margin at all: a rollout's
+ * `session_meta` line carries the instruction blob AND the serialised tool
+ * schemas, so it grows with the user's AGENTS.md and with every MCP server
+ * they add. Measured across a real 320-rollout tree it reached 47 KB — 72 % of
+ * that bound, and climbing every month. Crossing it did not degrade
+ * gracefully: without `session_meta` the parser has no session id and returns
+ * NOTHING, while the cursor still advanced, so the rollout's entire spend
+ * disappeared silently and permanently. 1 MB is ~21x the observed maximum; a
+ * `token_count` line is under 1 KB.
+ */
+const CODEX_MAX_LINE = 1024 * 1024
 const MAX_TICK_BYTES = 16 * 1024 * 1024
 /** Codex rollouts get a bigger tick: nearly every byte is skipped by the
  *  byte-level pre-filter without being decoded, so a tick is I/O, not CPU.
@@ -22,6 +46,94 @@ const MAX_TICK_BYTES = 16 * 1024 * 1024
  *  ~40, and a sweep over an 80 GB tree stays under a minute. */
 const CODEX_TICK_BYTES = 64 * 1024 * 1024
 const YIELD_EVERY = 16 // files between event-loop yields during a sweep
+
+/** What one bounded pass over a file's byte range saw. */
+export interface StreamResult {
+  /** Byte position reached (== `to`, or less on a short read). */
+  pos: number
+  /** Bytes of a trailing line that never got its newline in this range. */
+  pendingLen: number
+  /** That trailing run is already too long to be a line anyone wants, so its
+   *  bytes were counted but never retained — the caller can safely skip it
+   *  rather than re-reading it on every future sweep. */
+  pendingDropped: boolean
+}
+
+/**
+ * Read `[from, to)` from an open fd and hand back COMPLETE lines, each with the
+ * exact number of bytes it consumed (its own length plus its newline) so the
+ * caller's cursor stays byte-exact.
+ *
+ * Why this exists rather than the obvious `Buffer.concat([carry, chunk])` per
+ * read: that rebuilds the entire accumulated run on EVERY 256 KB read, which is
+ * quadratic in the length of a single line. Real Codex rollouts hold tool-output
+ * lines of 34 MB, and at a 64 MB tick that measured 5.5 s of pure memcpy per
+ * line — freezing this worker's event loop, and in aggregate accounting for
+ * essentially all of a sweep's wall clock. Here every byte is scanned once and
+ * copied at most once, and only for lines short enough to want.
+ *
+ * A run longer than `maxLineBytes` cannot be wanted by any caller, so its bytes
+ * are counted but never retained. Peak memory is therefore about
+ * READ_BUF + maxLineBytes however long the file's longest line is.
+ *
+ * NOTE: the Buffer handed to `onLine` may be a view into a reused read buffer.
+ * Decode or test it inside the callback; do not retain it.
+ */
+export function streamLines(
+  fsx: typeof nodeFs,
+  fd: number,
+  from: number,
+  to: number,
+  maxLineBytes: number,
+  onLine: (line: Buffer | null, byteLen: number) => void,
+): StreamResult {
+  const buf = Buffer.alloc(READ_BUF)
+  let pos = from
+  let parts: Buffer[] = []  // pieces of the line currently being assembled
+  let runLen = 0            // its length so far, INCLUDING any dropped pieces
+  let dropped = false       // run passed maxLineBytes -> stop retaining it
+  while (pos < to) {
+    const n = fsx.readSync(fd, buf, 0, Math.min(READ_BUF, to - pos), pos)
+    if (n <= 0) break
+    pos += n
+    let ls = 0
+    for (;;) {
+      const nl = buf.indexOf(0x0a, ls)
+      if (nl === -1 || nl >= n) break
+      const seg = buf.subarray(ls, nl)
+      const byteLen = runLen + seg.length + 1
+      if (dropped) onLine(null, byteLen)
+      else if (parts.length === 0) onLine(seg, byteLen)
+      else { parts.push(Buffer.from(seg)); onLine(Buffer.concat(parts), byteLen) }
+      parts = []; runLen = 0; dropped = false
+      ls = nl + 1
+    }
+    const tail = n - ls
+    if (tail > 0) {
+      runLen += tail
+      if (dropped) { /* already counting only */ }
+      else if (runLen > maxLineBytes) { parts = []; dropped = true }
+      else parts.push(Buffer.from(buf.subarray(ls, n)))
+    }
+  }
+  return { pos, pendingLen: runLen, pendingDropped: dropped }
+}
+
+/**
+ * Nothing new to look at: the file has not changed since the last tick, and we
+ * already scanned to its end.
+ *
+ * Asking this of `lastOffset` instead of `scannedTo` is wrong for any file
+ * whose final line has no newline — the cursor legitimately parks in front of
+ * that partial line, so `lastOffset < size` forever, and the file is re-read in
+ * full on every five-second sweep for the life of the process.
+ */
+function unchangedAndFullyScanned(cursor: TkFileCursor | null, st: nodeFs.Stats, offset: number): boolean {
+  if (!cursor) return false
+  if (st.size !== cursor.size || st.mtimeMs !== cursor.mtime) return false
+  if (offset !== cursor.lastOffset) return false // we reset the offset (truncation) -> re-read
+  return (cursor.scannedTo ?? cursor.lastOffset) >= st.size
+}
 
 export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWorkerDeps = {}): TokenomicsWorker {
   const fs = deps.fs ?? nodeFs
@@ -69,18 +181,26 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
 
   function enumerateCodex(): string[] {
     const out: string[] = []
-    const walk = (dir: string): void => {
-      let entries: string[]
-      try { entries = fs.readdirSync(dir) } catch { return }
+    // Same guards as enumerateClaude, which this had been missing: `statSync`
+    // follows links, so a reparse point or symlink inside the tree could yield
+    // the SAME rollout under two paths. Two paths to one rollout means two
+    // independent cursors over one session's ordinals, and that double-counts
+    // the user's spend.
+    const walk = (dir: string, depth: number): void => {
+      if (depth > 12) return
+      let entries: nodeFs.Dirent[]
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
       for (const e of entries) {
-        const full = path.join(dir, e)
+        if (e.isSymbolicLink()) continue
+        const full = path.join(dir, e.name)
+        if (e.isDirectory()) { walk(full, depth + 1); continue }
+        if (!e.isFile() || !e.name.startsWith('rollout-') || !e.name.endsWith('.jsonl')) continue
         let st: nodeFs.Stats
         try { st = fs.statSync(full) } catch { continue }
-        if (st.isDirectory()) walk(full)
-        else if (e.startsWith('rollout-') && e.endsWith('.jsonl') && st.size > 0) out.push(full)
+        if (st.size > 0) out.push(full)
       }
     }
-    try { if (fs.existsSync(codexDir)) walk(codexDir) } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
+    try { if (fs.existsSync(codexDir)) walk(codexDir, 0) } catch (err) { logw('warn', `enumerateCodex failed: ${String(err)}`) }
     return out
   }
 
@@ -96,47 +216,53 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     const cursor = db!.getFileCursor(file)
     let offset = cursor ? cursor.lastOffset : 0
     if (cursor && st.size < cursor.lastOffset) offset = 0 // truncated/rotated -> re-read
-    if (cursor && st.size === cursor.size && st.mtimeMs === cursor.mtime && offset === cursor.lastOffset && offset >= st.size) return 0
-    if (st.size <= offset) { db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: offset, lastIngestedAt: Date.now() }); return 0 }
+    if (unchangedAndFullyScanned(cursor, st, offset)) return 0
+    if (st.size <= offset) { db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: offset, lastIngestedAt: Date.now(), scannedTo: st.size }); return 0 }
 
     const end = Math.min(st.size, offset + maxTickBytes)
-    const fd = fs.openSync(file, 'r')
+    let fd: number
+    try { fd = fs.openSync(file, 'r') } catch (err) { logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
     let inserted = 0
     let fileCwd = ''
     try {
-      let pos = offset
-      let carry = Buffer.alloc(0)
-      const buf = Buffer.alloc(READ_BUF)
       let batch: Array<TkEvent & { configId?: string | null }> = []
       let consumed = offset
       const flush = (): void => { if (batch.length) { inserted += db!.insertEvents(batch); batch = [] } }
-      while (pos < end) {
-        const n = fs.readSync(fd, buf, 0, Math.min(READ_BUF, end - pos), pos)
-        if (n <= 0) break
-        pos += n
-        const chunk = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : Buffer.from(buf.subarray(0, n))
-        let ls = 0
-        for (;;) {
-          const nl = chunk.indexOf(0x0a, ls)
-          if (nl === -1) break
-          let lb = chunk.subarray(ls, nl)
-          if (lb.length && lb[lb.length - 1] === 0x0d) lb = lb.subarray(0, lb.length - 1)
-          const line = lb.toString('utf8')
-          consumed += nl - ls + 1
-          ls = nl + 1
-          if (!line) continue
+      let res: StreamResult
+      try {
+        // A line that cannot fit in one tick can never be assembled, so it is
+        // capped rather than carried: without that the cursor parks in front of
+        // it and the same bytes are re-read on every sweep, forever.
+        res = streamLines(fs, fd, offset, end, maxTickBytes, (lb, byteLen) => {
+          consumed += byteLen
+          if (!lb || !lb.length) return
+          const trimmed = lb[lb.length - 1] === 0x0d ? lb.subarray(0, lb.length - 1) : lb
+          const line = trimmed.toString('utf8')
+          if (!line) return
           const lineCwd = extractCwdFromLine(line)
           if (lineCwd) fileCwd = lineCwd
           const ev = parseClaudeUsageLine(line, priceKeys)
-          if (!ev) continue
+          if (!ev) return
           const cwd = ev.cwd || fileCwd || db!.getSessionCwd(ev.sessionId) || ''
           batch.push({ ...ev, cwd, configId: resolveConfigId(cwd) })
           if (batch.length >= 500) flush()
-        }
-        carry = Buffer.from(chunk.subarray(ls))
+        })
+      } catch (err) {
+        // Per-FILE containment. Letting this escape aborts the whole sweep, so
+        // one locked or flaky transcript stops every later file from being read
+        // and leaves the index reporting itself incomplete forever.
+        logw('warn', `read failed for ${file}: ${String(err)}`)
+        flush()
+        return inserted
       }
+      // As on the Codex path: a run at least a whole tick long can never be
+      // assembled, so skip it. Merely reaching the end of the file does not
+      // qualify — that is a file being appended to, and its partial last line
+      // must survive until the writer finishes it.
+      if (res.pendingDropped) consumed += res.pendingLen
+      else if (res.pendingLen > 0 && consumed === offset && res.pos - offset >= maxTickBytes) consumed = res.pos
       flush()
-      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now() })
+      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now(), scannedTo: res.pos })
     } finally { try { fs.closeSync(fd) } catch { /* ignore */ } }
     return inserted
   }
@@ -155,114 +281,196 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
    *
    * The parser only wants three event types (session_meta, turn_context,
    * token_count) - a tiny slice of a rollout's bytes - and it is line-oriented,
-   * so it can be fed a chunk at a time. Per-turn ordinals are the position of
-   * each token_count line in the file, which is what makes resumption exact:
-   * the count of Codex rows already stored for the session IS the ordinal to
-   * continue from. Each tick reads at most `maxTickBytes`; the cursor advances
-   * to the last complete line consumed and the next sweep carries on.
+   * so it can be fed a chunk at a time. Each tick reads at most one tick budget;
+   * the cursor advances to the last complete line consumed and the next sweep
+   * carries on.
+   *
+   * The ordinal behind the dedup key (`x:<session>:<n>`) is the position of a
+   * token_count line within THIS FILE, and its base is stored on the file's own
+   * cursor, in the SAME transaction as the rows. It was previously derived from
+   * a live count of the session's stored rows, which is not the same number:
+   * replay a byte range (the worker is hard-killed on app quit, mid-sweep) and
+   * that count has moved, so the same turns are re-inserted under fresh keys and
+   * the user's spend inflates permanently.
+   *
+   * The rollout's identity (session id, cwd, model) is likewise carried on the
+   * cursor rather than re-derived from a bounded read of the file's head. The
+   * head read stays as the way to LEARN it, but a tick that cannot find it there
+   * used to produce zero events while still advancing the cursor - silently
+   * losing every turn in that range - and to price whatever it did produce as
+   * 'unknown', which matches no pricing row and therefore costs nothing.
    */
   function ingestCodexFile(file: string): number {
     let st: nodeFs.Stats
     try { st = fs.statSync(file) } catch { return 0 }
     const cursor = db!.getFileCursor(file)
     let offset = cursor ? cursor.lastOffset : 0
-    if (cursor && st.size < cursor.lastOffset) offset = 0 // truncated/rotated -> re-read
-    if (cursor && st.size === cursor.size && st.mtimeMs === cursor.mtime && offset >= st.size) return 0
-    if (st.size <= offset) { db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: offset, lastIngestedAt: Date.now() }); return 0 }
+    let turnBase = cursor?.codexTurns ?? 0
+    let seed: CodexRolloutSeed = { sessionId: cursor?.codexSessionId || undefined, cwd: cursor?.codexCwd || undefined, model: cursor?.codexModel || undefined }
+    if (cursor && st.size < cursor.lastOffset) {
+      // Truncated or rotated: the file we counted is not this one. Re-read from
+      // the top with the ordinal base back at zero, so the stored rows dedup
+      // against their own keys instead of being re-inserted beside them.
+      offset = 0
+      turnBase = 0
+      seed = { sessionId: undefined, cwd: undefined, model: undefined }
+    }
+    if (unchangedAndFullyScanned(cursor, st, offset)) return 0
+    if (st.size <= offset) {
+      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: offset, lastIngestedAt: Date.now(), scannedTo: st.size, codexSessionId: seed.sessionId ?? '', codexModel: seed.model ?? '', codexCwd: seed.cwd ?? '', codexTurns: turnBase })
+      return 0
+    }
 
-    const end = Math.min(st.size, offset + Math.max(maxTickBytes, deps.maxTickBytes ? maxTickBytes : CODEX_TICK_BYTES))
+    // `!== undefined`, not truthiness: a caller asking for a 0-byte tick meant
+    // it, and silently handing back 64 MB instead is not a kindness.
+    const tickBytes = deps.maxTickBytes !== undefined ? maxTickBytes : CODEX_TICK_BYTES
+    const end = Math.min(st.size, offset + tickBytes)
     let fd: number
-    try { fd = fs.openSync(file, 'r') } catch { return 0 }
+    try { fd = fs.openSync(file, 'r') } catch (err) { logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
     let inserted = 0
     try {
-      let pos = offset
-      let carry = Buffer.alloc(0)
-      const buf = Buffer.alloc(READ_BUF)
       let consumed = offset
-      // The rollout header (session_meta, and the first turn_context that
-      // names the model) sits at the top of the file. On a resumed read we
-      // start past it, so re-read the head of the file for those lines - a
-      // bounded, cheap read that needs no state to survive a restart.
-      const head = offset > 0 ? codexHeadLines(fd) : null
+      // The rollout header sits at the top of the file. On a resumed read we
+      // start past it, so re-read the head for those lines - bounded and cheap.
+      // Unlike before, this is a fallback rather than the only source: what it
+      // finds is persisted on the cursor, so a head that does not hold the
+      // identity is no longer silently fatal to the whole tick.
+      const head = offset > 0 && !seed.sessionId ? codexHeadLines(fd) : null
       const kept: string[] = []
-      while (pos < end) {
-        const n = fs.readSync(fd, buf, 0, Math.min(READ_BUF, end - pos), pos)
-        if (n <= 0) break
-        pos += n
-        const chunk = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : Buffer.from(buf.subarray(0, n))
-        let ls = 0
-        for (;;) {
-          const nl = chunk.indexOf(0x0a, ls)
-          if (nl === -1) break
-          const lb = chunk.subarray(ls, nl)
-          consumed += nl - ls + 1
-          ls = nl + 1
-          if (!lb.length) continue
+      let res: StreamResult
+      try {
+        res = streamLines(fs, fd, offset, end, CODEX_MAX_LINE, (lb, byteLen) => {
+          consumed += byteLen
           // Cheap pre-filter: only lines that can carry what the parser wants
           // are decoded at all. A tool-output line of a few MB is skipped by a
-          // byte scan instead of a UTF-8 decode plus JSON.parse.
-          if (!codexLineOfInterest(lb)) continue
+          // byte scan instead of a UTF-8 decode plus JSON.parse. `null` is a
+          // line already rejected for length by the reader.
+          if (!lb || !lb.length || !codexLineOfInterest(lb)) return
           kept.push(lb.toString('utf8'))
-        }
-        carry = Buffer.from(chunk.subarray(ls))
+        })
+      } catch (err) {
+        // Per-FILE containment, as the pre-streaming code had. Letting this
+        // escape aborts the entire sweep: every later rollout goes unread, the
+        // first index never reports complete, and the five-second retry hits the
+        // same file forever - the exact "Indexing 1700/1997" wedge this ingester
+        // was written to remove, reached through a different door.
+        logw('warn', `read failed for ${file}: ${String(err)}`)
+        return 0
       }
-      // A single line larger than one tick's budget can never complete: skip
-      // past it rather than re-reading it forever (a token_count line is a few
-      // hundred bytes; anything that big is tool output we do not want).
-      if (kept.length === 0 && consumed === offset && pos >= end && end < st.size) consumed = end
+      // Skip past a run that can never become a line we want, rather than
+      // re-reading it forever. Two ways to know that: it passed the largest line
+      // any caller wants, or a WHOLE tick's worth of bytes went by without one
+      // complete line, so the run is at least a tick long.
+      //
+      // The second test is on bytes actually read, NOT on reaching the end of
+      // the file. A file that simply ends mid-line is the normal shape of one
+      // being appended to right now, and its partial last line has to be left
+      // alone until the writer finishes it. What stops THAT from being re-read
+      // on every sweep is `scannedTo`, not skipping it.
+      if (res.pendingDropped) consumed += res.pendingLen
+      else if (res.pendingLen > 0 && consumed === offset && res.pos - offset >= tickBytes) consumed = res.pos
 
+      let nextSeed = seed
       if (kept.length) {
+        const headLines = head ? head.split('\n') : []
         const text = (head ? head + '\n' : '') + kept.join('\n')
-        // Every token_count in THIS tick is new: the cursor only ever moves
-        // past lines already ingested. Its ordinal continues from the count of
-        // Codex rows the session already has, which keeps the dedup key
-        // (`x:<session>:<ordinal>`) unique across ticks — a resumed tick that
-        // numbered from zero collided with the stored rows and inserted nothing,
-        // so a rollout larger than one tick stopped at its first tick's turns.
-        const probe = codexEventsFromRollout(text, priceKeys, 0)
+        // Learn the identity from ANY line that carries it, and carry it forward
+        // whether or not this tick also found turns. A tick holding only the
+        // header used to teach the next tick nothing, so the identity had to be
+        // rediscovered from the file's head every time — the thing that silently
+        // produced no events when the head did not hold it.
+        nextSeed = codexIdentityFrom([...headLines, ...kept], seed)
+        const probe = codexEventsFromRollout(text, priceKeys, 0, nextSeed)
         if (probe.length) {
           const sessionId = probe[0].sessionId
-          const existing = (db!.raw.prepare("SELECT COUNT(*) AS n FROM tk_events WHERE sessionId = ? AND provider = 'codex'").get(sessionId) as { n: number }).n
-          // Fresh read of the whole file (offset 0): the stored rows ARE the
-          // first `existing` ordinals, so skip them. Resumed read: nothing in
-          // this tick is stored yet, so renumber from `existing`.
-          const fresh = (offset === 0 ? probe.slice(existing) : probe.map((ev, i) => ({ ...ev, dedupKey: `x:${sessionId}:${existing + i}` })))
+          const last = probe[probe.length - 1]
+          nextSeed = { sessionId, cwd: last.cwd || nextSeed.cwd, model: last.model && last.model !== 'unknown' ? last.model : nextSeed.model }
+          // A fresh read from the top re-derives ordinals the stored rows
+          // already own, so their own keys dedup them; a resumed read holds only
+          // turns after the cursor, so they continue from the file's base.
+          const fresh = (offset === 0
+            ? probe.map((ev, i) => ({ ...ev, dedupKey: `x:${sessionId}:${i}` }))
+            : probe.map((ev, i) => ({ ...ev, dedupKey: `x:${sessionId}:${turnBase + i}` })))
             .map((ev) => ({ ...ev, configId: resolveConfigId(ev.cwd) }))
-          if (fresh.length) inserted = db!.insertEvents(fresh)
+          turnBase = offset === 0 ? Math.max(turnBase, probe.length) : turnBase + probe.length
+          inserted = db!.insertEventsWithCursor(fresh, { path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now(), scannedTo: res.pos, codexSessionId: nextSeed.sessionId ?? '', codexModel: nextSeed.model ?? '', codexCwd: nextSeed.cwd ?? '', codexTurns: turnBase })
+          return inserted
+        }
+        if (offset > 0 && !nextSeed.sessionId) {
+          // Lines we wanted, but nothing to attribute them to. Advancing the
+          // cursor here is how a rollout's whole spend used to vanish without a
+          // trace, so say so.
+          logw('warn', `codex rollout ${file}: no session identity for ${kept.length} line(s) at offset ${offset}`)
         }
       }
-      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now() })
+      db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: consumed, lastIngestedAt: Date.now(), scannedTo: res.pos, codexSessionId: nextSeed.sessionId ?? '', codexModel: nextSeed.model ?? '', codexCwd: nextSeed.cwd ?? '', codexTurns: turnBase })
     } finally { try { fs.closeSync(fd) } catch { /* ignore */ } }
     return inserted
   }
 
+  /**
+   * What a rollout's header lines say about it, learned from whatever lines are
+   * to hand. Kept separate from event parsing on purpose: a tick can hold the
+   * header and no turns at all, and it still has to teach the next tick who
+   * this file belongs to and what model it is billing.
+   */
+  function codexIdentityFrom(lines: string[], seed: CodexRolloutSeed): CodexRolloutSeed {
+    let { sessionId, cwd, model } = seed
+    for (const line of lines) {
+      if (!line) continue
+      let evt: { type?: string; payload?: Record<string, unknown> }
+      try { evt = JSON.parse(line) } catch { continue }
+      const p = evt?.payload ?? {}
+      if (evt?.type === 'session_meta') {
+        if (p.id) sessionId = String(p.id)
+        if (p.cwd) cwd = String(p.cwd)
+        if (p.model) model = String(p.model)
+      } else if (evt?.type === 'turn_context' && p.model) model = String(p.model)
+    }
+    return { sessionId, cwd, model }
+  }
+
   /** Byte-level "could this line matter" test, run before any decode. */
   function codexLineOfInterest(lb: Buffer): boolean {
-    // Every wanted line is small; the giant ones are tool output.
-    if (lb.length > 64 * 1024) return false
+    // The giant lines are tool output. The bound has to clear the largest line
+    // we actually WANT, which is `session_meta` - it carries the instruction
+    // blob and the serialised tool schemas, so it grows with the user's setup.
+    if (lb.length > CODEX_MAX_LINE) return false
     return lb.includes(CODEX_MARK_TOKEN) || lb.includes(CODEX_MARK_META) || lb.includes(CODEX_MARK_TURN)
   }
 
   /**
-   * The identity lines of a rollout, read from the top of an open file. Only
-   * the first CODEX_HEAD_BYTES are looked at: session_meta is the first line
-   * and the first turn_context follows within a few KB. Returns them joined,
-   * or null when the head holds none (not a rollout we understand).
+   * The identity lines of a rollout, read from the top of an open file. Used
+   * only to LEARN the identity once; it is then carried on the file's cursor.
+   * Returns them joined, or null when the head holds none.
+   *
+   * The window has to clear a whole `session_meta` line plus the first
+   * `turn_context`, and `session_meta` was measured at 47 KB on a real tree and
+   * growing - a 64 KB window left no margin, and running out of it produced
+   * zero events rather than a degraded result.
    */
   function codexHeadLines(fd: number): string | null {
     const buf = Buffer.alloc(CODEX_HEAD_BYTES)
     let n = 0
     try { n = fs.readSync(fd, buf, 0, CODEX_HEAD_BYTES, 0) } catch { return null }
     if (n <= 0) return null
+    // Look for the two DISTINCT things the head can tell us, not simply for the
+    // first few matching lines: taking "the first 4 markers" meant a rollout
+    // whose turn_context lines precede its session_meta yielded four models and
+    // no session id at all - and without a session id the parser returns
+    // nothing, so the whole tick was discarded.
     const lines: string[] = []
+    let haveMeta = false
+    let turns = 0
     let ls = 0
     for (;;) {
       const nl = buf.indexOf(0x0a, ls)
       if (nl === -1 || nl >= n) break
       const lb = buf.subarray(ls, nl)
       ls = nl + 1
-      if (lb.includes(CODEX_MARK_META) || lb.includes(CODEX_MARK_TURN)) lines.push(lb.toString('utf8'))
-      if (lines.length >= 4) break
+      if (!haveMeta && lb.includes(CODEX_MARK_META)) { lines.push(lb.toString('utf8')); haveMeta = true }
+      else if (turns < 3 && lb.includes(CODEX_MARK_TURN)) { lines.push(lb.toString('utf8')); turns++ }
+      if (haveMeta && turns > 0) break
     }
     return lines.length ? lines.join(String.fromCharCode(10)) : null
   }
@@ -290,7 +498,17 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       lastProgress = { filesDone: done, filesTotal: total, eventsIngested: events }
       post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase })
       db.setMeta('lastIndexAt', String(Date.now()))
-      if (phase === 'initial' && !firstSweepDone) {
+      // "Complete" has to mean every tracked file has been read to its end, not
+      // merely that one pass over the file LIST finished. A per-tick byte budget
+      // means a multi-GB rollout needs tens of sweeps, and claiming completion
+      // after the first one puts a confidently wrong spend figure in front of
+      // the user with no indication it is still climbing.
+      //
+      // It is also no longer tied to the 'initial' phase: that phase runs once
+      // per process, so a single failed first sweep left the flag unreachable
+      // for the life of the process however many healthy sweeps followed.
+      const drained = !db.hasUnscannedFiles()
+      if (drained && !firstSweepDone) {
         firstSweepDone = true
         db.setMeta('firstIndexComplete', '1')
         post({ type: 'index-complete', firstIndex: true, eventsTotal: db.eventCount() })

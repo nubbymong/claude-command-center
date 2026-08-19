@@ -5,7 +5,7 @@ import { FakeTkWorkerTransport } from '../../../src/main/tokenomics/tk-worker-tr
 function fakeFork() {
   const t = new FakeTkWorkerTransport()
   t.onWorker((m) => {
-    if (m.type === 'open') t.emitToMain({ type: 'ready' })
+    if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 })
     if (m.type === 'query') t.emitToMain({ type: 'query-result', id: m.id, rows: [{ ok: m.kind }] })
   })
   return { transport: t, kill: () => t.kill(), onExit: () => {}, _t: t }
@@ -52,7 +52,7 @@ describe('TokenomicsSupervisor', () => {
 
   it('query timeout rejects without hanging', async () => {
     const t = new FakeTkWorkerTransport()
-    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready' }) /* never answers queries */ })
+    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 }) /* never answers queries */ })
     const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts(), queryTimeoutMs: 30 })
     sup.start()
     await expect(sup.query('summary', {})).rejects.toThrow(/timed out/)
@@ -78,7 +78,7 @@ describe('TokenomicsSupervisor', () => {
   it('a correlated error still rejects its query and is NOT treated as fatal', async () => {
     const t = new FakeTkWorkerTransport()
     t.onWorker((m) => {
-      if (m.type === 'open') t.emitToMain({ type: 'ready' })
+      if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 })
       if (m.type === 'query') t.emitToMain({ type: 'error', id: m.id, message: 'bad query' })
     })
     const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts() })
@@ -90,9 +90,34 @@ describe('TokenomicsSupervisor', () => {
     expect(sup.getIndexStatus().error ?? null).toBe(null)
   })
 
+  it('takes a completed index from the ready message, before any sweep runs', () => {
+    // The supervisor learned this ONLY from a fresh index-complete, so a machine
+    // whose index had been complete for months still showed "Indexing usage
+    // data" on every launch — and showed it forever if the sweep wedged. The
+    // line that fixed it had no test at all: deleting it left the whole suite
+    // green, which is the state that lets a fix quietly stop working.
+    const t = new FakeTkWorkerTransport()
+    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: true, eventsTotal: 4200 }) })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts() })
+    sup.start()
+    const status = sup.getIndexStatus()
+    expect(status.firstIndexComplete).toBe(true)
+    expect(status.indexing).toBe(false)
+    expect(status.eventsTotal).toBe(4200)
+  })
+
+  it('a ready that reports no completed index leaves the page indexing', () => {
+    const t = new FakeTkWorkerTransport()
+    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 }) })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts() })
+    sup.start()
+    expect(sup.getIndexStatus().firstIndexComplete).toBe(false)
+    expect(sup.getIndexStatus().indexing).toBe(true)
+  })
+
   it('shutdown rejects pending queries and is safe', async () => {
     const t = new FakeTkWorkerTransport()
-    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready' }) })
+    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 }) })
     const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts(), queryTimeoutMs: 5000 })
     sup.start()
     const p = sup.query('summary', {})

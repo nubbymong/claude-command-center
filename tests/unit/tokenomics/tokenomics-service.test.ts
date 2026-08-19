@@ -5,7 +5,7 @@ const forks: FakeTkWorkerTransport[] = []
 vi.mock('../../../src/main/tokenomics/fork-tokenomics-worker', () => ({
   forkTokenomicsWorker: () => {
     const t = new FakeTkWorkerTransport()
-    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready' }) })
+    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready', firstIndexComplete: false, eventsTotal: 0 }) })
     forks.push(t)
     return { transport: t, kill: () => t.kill(), onExit: () => {} }
   },
