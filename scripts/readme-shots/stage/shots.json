@@ -1,0 +1,75 @@
+{
+  "shots": [
+    {
+      "name": "boot",
+      "steps": [
+        { "wait": 1500 },
+        { "click": "button:has-text(\"Resume\")", "wait": 9000 }
+      ],
+      "settle": 1500,
+      "frames": 2,
+      "interval": 200
+    },
+    {
+      "name": "hero-banner",
+      "steps": [{ "wait": 1500 }],
+      "settle": 800,
+      "frames": 60,
+      "interval": 130,
+      "clip": { "x": 0, "y": 0, "width": 1600, "height": 440 }
+    },
+    {
+      "name": "shot-sessions",
+      "steps": [{ "wait": 600 }],
+      "settle": 700,
+      "frames": 64,
+      "interval": 130
+    },
+    {
+      "name": "shot-canvas",
+      "steps": [
+        { "click": "button[title*=\"Agent Canvas\"]", "wait": 2400 }
+      ],
+      "settle": 1000,
+      "frames": 64,
+      "interval": 130
+    },
+    {
+      "name": "shot-tokenomics",
+      "steps": [
+        { "click": "[data-tour=\"nav-tokenomics\"]", "wait": 2600 }
+      ],
+      "settle": 900,
+      "frames": 60,
+      "interval": 140
+    },
+    {
+      "name": "shot-logs",
+      "steps": [
+        { "click": "[data-tour=\"nav-logs\"]", "wait": 1400 },
+        { "click": "button:has-text(\"runs\")", "wait": 1800 }
+      ],
+      "settle": 900,
+      "frames": 64,
+      "interval": 130
+    },
+    {
+      "name": "shot-memory",
+      "steps": [
+        { "click": "[data-tour=\"nav-memory\"]", "wait": 1800 }
+      ],
+      "settle": 900,
+      "frames": 60,
+      "interval": 140
+    },
+    {
+      "name": "shot-insights",
+      "steps": [
+        { "click": "[data-tour=\"nav-insights\"]", "wait": 2200 }
+      ],
+      "settle": 900,
+      "frames": 60,
+      "interval": 140
+    }
+  ]
+}
