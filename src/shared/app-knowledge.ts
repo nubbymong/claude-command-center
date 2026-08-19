@@ -83,6 +83,11 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
     title: 'Troubleshooting basics',
     body: `If the status line is missing, check the master switch in Settings, Status Line, and note it applies to newly launched sessions. If the Logs page is greyed out, session-log indexing is off in Settings, General. If GitHub features look dead, re-check the account's access in Settings, GitHub (tokens can expire or lack scopes). If Codex features are missing, confirm the Codex CLI is installed and signed in under Settings, Codex. Compatibility with your installed Claude Code version is checked during onboarding and can be re-run by reinstalling or updating Claude Code and reopening the app.`,
   },
+  {
+    id: 'known-issues',
+    title: 'Known issues and workarounds',
+    body: `Terminal text vanishing while other sessions are open. If a terminal keeps its background colours but loses its characters, and resizing the window, scrolling it, or clicking into it brings the text straight back, that is GPU rendering. Drawing terminals on the GPU uses one shared store of character images for the whole app rather than one per terminal, so whenever any single session refreshes that store, every other open terminal loses its characters until something makes it redraw. It needs two or more sessions open, which is why it can look random, and it gets worse the more sessions you have. The workaround is to turn GPU rendering off in Settings, General, under Terminal, then open your sessions again; terminals opened after the change are drawn by the normal font engine, which keeps no shared store and cannot show the fault. From version 2.1.0-beta.16 GPU rendering is off by default and marked experimental, so this reaches you only if you switched it on yourself or are running an older build. A proper fix for the GPU path is being worked on, and switching it back on before then brings the behaviour back with it.`,
+  },
 ]
 
 /** The full knowledge as one markdown document (for the ask-session workspace). */
