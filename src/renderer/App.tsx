@@ -34,7 +34,7 @@ import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import SessionDialog from './components/SessionDialog'
 import GuidedTour from './components/GuidedTour'
-import HelpPanel from './components/HelpPanel'
+import FeatureGuidePage from './components/FeatureGuidePage'
 import AccountUsagePanel from './components/AccountUsagePanel'
 import TipModal from './components/TipModal'
 import { useTipsStore, trackUsage } from './stores/tipsStore'
@@ -176,9 +176,9 @@ export default function App() {
   // Feature Guide button). Anchored coach-marks over the real UI, ending by
   // opening the first-config dialog.
   const [tourActive, setTourActive] = useState(false)
-  // One home for help (searchable guide + feature tour + Ask Claude); opened
-  // by the sidebar ? button.
-  const [showHelpPanel, setShowHelpPanel] = useState(false)
+  // The Feature Guide is a full-screen peer view (ViewType 'help'), opened from
+  // the sidebar ? button — no longer a floating panel (it used to be a portal
+  // modal that covered whatever page was open).
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   // Sessions whose partner terminal has been opened at least once — gates the
@@ -751,6 +751,7 @@ export default function App() {
       onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
     />
     if (view === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
+    if (view === 'help') return <FeatureGuidePage onNavigateToSessions={() => setView('sessions')} onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }} />
     return null
   }
 
@@ -1076,13 +1077,6 @@ export default function App() {
         )}
         {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} sinceVersion={whatsNewSinceRef.current} />}
         {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
-        {showHelpPanel && (
-          <HelpPanel
-            onClose={() => setShowHelpPanel(false)}
-            onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }}
-            onShowSessions={() => setView('sessions')}
-          />
-        )}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -1216,7 +1210,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} onShowAccountUsage={() => setView('account-usage')} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
               {/* The live app is always what's behind — the first-config flow is

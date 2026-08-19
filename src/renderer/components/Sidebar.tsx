@@ -67,7 +67,6 @@ interface Props {
   currentView: ViewType
   onViewChange: (view: ViewType) => void
   collapsed?: boolean
-  onShowHelp?: () => void
   onShowAccountUsage?: () => void
   onShowFirstRun?: () => void
   // Suppresses the FirstRunCard while the training/walkthrough is
@@ -77,7 +76,7 @@ interface Props {
   tourActive?: boolean
 }
 
-export default function Sidebar({ currentView, onViewChange, collapsed, onShowHelp, onShowAccountUsage, onShowFirstRun, tourActive }: Props) {
+export default function Sidebar({ currentView, onViewChange, collapsed, onShowAccountUsage, onShowFirstRun, tourActive }: Props) {
   const launchConfig = useLaunchConfig()
   const sideType = useRegionTypography('sidebar')
   const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
@@ -561,7 +560,6 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
           serverRunning={serverRunning}
           tokenomicsIndexComplete={tokenomicsIndexComplete}
           collapsed
-          onShowHelp={onShowHelp}
           onShowAccountUsage={onShowAccountUsage}
         />
       </aside>
@@ -632,7 +630,6 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
         visionRunning={visionRunning}
         serverRunning={serverRunning}
         tokenomicsIndexComplete={tokenomicsIndexComplete}
-        onShowHelp={onShowHelp}
         onShowAccountUsage={onShowAccountUsage}
       />
 

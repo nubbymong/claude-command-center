@@ -18,7 +18,6 @@ interface SidebarNavProps {
   serverRunning?: boolean
   tokenomicsIndexComplete?: boolean
   collapsed?: boolean
-  onShowHelp?: () => void
   /** Opens the all-accounts usage overview. Button shown only with 2+ accounts. */
   onShowAccountUsage?: () => void
 }
@@ -249,7 +248,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   )
 }
 
-export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, collapsed, onShowHelp, onShowAccountUsage }: SidebarNavProps) {
+export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, collapsed, onShowAccountUsage }: SidebarNavProps) {
   const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
   // Account-usage button lives here in the nav rail (alongside Insights etc.),
   // shown only with 2+ accounts (never single-account or macOS).
@@ -281,12 +280,15 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
     </button>
   ) : null
 
-  const helpButton = onShowHelp ? (
+  const helpActive = currentView === 'help'
+  const helpButton = (
     <button
-      onClick={onShowHelp}
+      onClick={() => onViewChange('help')}
       aria-label="Feature Guide"
+      aria-current={helpActive ? 'page' : undefined}
       data-tour="help-button"
-      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring relative`}
+      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors ${helpActive ? 'bg-surface0/60' : 'text-overlay0 hover:text-text hover:bg-surface0/50'} focus-ring relative`}
+      style={helpActive ? { color: 'var(--accent)' } : undefined}
     >
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" />
@@ -302,7 +304,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
         Feature Guide
       </span>
     </button>
-  ) : null
+  )
 
   const primary = navItems.filter(i => ['cloud-agents', 'insights', 'tokenomics'].includes(i.view))
   const system = navItems.filter(i => !['cloud-agents', 'insights', 'tokenomics'].includes(i.view))
