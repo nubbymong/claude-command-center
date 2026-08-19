@@ -3,6 +3,7 @@ import { changelog, ChangelogEntry } from '../changelog'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { decideUpgradeFlow, entriesSince } from '../onboarding/upgrade-flow'
 import { useSettingsStore } from '../stores/settingsStore'
+import { WhatsNewEntries } from './WhatsNewEntries'
 
 declare const __BUILD_TIME__: string
 
@@ -15,23 +16,6 @@ interface Props {
   sinceVersion?: string
 }
 
-const TYPE_COLORS = {
-  feature: 'text-green',
-  fix: 'text-red',
-  improvement: 'text-blue',
-}
-
-const TYPE_LABELS = {
-  feature: 'New',
-  fix: 'Fix',
-  improvement: 'Improved',
-}
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr)
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
 function formatBuildTime(iso: string): string {
   try {
     const d = new Date(iso)
@@ -40,30 +24,6 @@ function formatBuildTime(iso: string): string {
   } catch {
     return iso
   }
-}
-
-function VersionSection({ entry }: { entry: ChangelogEntry }) {
-  return (
-    <div className="mb-6 last:mb-0">
-      <div className="flex items-center gap-3 mb-2">
-        <span className="text-lg font-bold text-text">v{entry.version}</span>
-        <span className="text-xs text-overlay0">{formatDate(entry.date)}</span>
-      </div>
-      {entry.highlights && (
-        <p className="text-sm text-subtext1 mb-3 italic">{entry.highlights}</p>
-      )}
-      <ul className="space-y-1.5">
-        {entry.changes.map((change, i) => (
-          <li key={i} className="flex items-start gap-2 text-sm">
-            <span className={`${TYPE_COLORS[change.type]} font-medium shrink-0 w-16`}>
-              {TYPE_LABELS[change.type]}
-            </span>
-            <span className="text-subtext0">{change.description}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
 }
 
 // Must match the Tailwind `duration-200` transition on the backdrop + dialog.
@@ -148,9 +108,7 @@ export default function WhatsNewModal({ onClose, showAllVersions = false, sinceV
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4">
-          {versionsToShow.map((entry) => (
-            <VersionSection key={entry.version} entry={entry} />
-          ))}
+          <WhatsNewEntries entries={versionsToShow} />
         </div>
 
         {/* Footer */}

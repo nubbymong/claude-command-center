@@ -4,6 +4,8 @@ import { useSessionStore } from '../stores/sessionStore'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
+import { ViewType } from '../types/views'
+import { PAGE_TAB_META } from '../page-tab-meta'
 
 // Inject keyframes for attention pulse animation
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -88,8 +90,22 @@ function TabLabelEditor({
   )
 }
 
-export default function TabBar() {
-  const { sessions, activeSessionId, setActiveSession, removeSession } = useSessionStore()
+interface TabBarProps {
+  /** The current main-pane view. When it is a page (not 'sessions'), no session
+   *  tab is the active one — the active tab is a page tab. */
+  activeView: ViewType
+  /** Pages currently open as tabs, in open order, rendered after the sessions. */
+  openPageTabs: ViewType[]
+  /** Activate a session tab (switches the pane back to sessions). */
+  onActivateSession: (id: string) => void
+  /** Activate an already-open page tab. */
+  onActivatePage: (v: ViewType) => void
+  /** Close a page tab. */
+  onClosePage: (v: ViewType) => void
+}
+
+export default function TabBar({ activeView, openPageTabs, onActivateSession, onActivatePage, onClosePage }: TabBarProps) {
+  const { sessions, activeSessionId } = useSessionStore()
   const renamingSessionId = useSessionStore((s) => s.renamingSessionId)
   const beginRename = useSessionStore((s) => s.beginRename)
   const renameSession = useSessionStore((s) => s.renameSession)
@@ -121,7 +137,7 @@ export default function TabBar() {
     }
   }, [menu])
 
-  if (sessions.length === 0) return null
+  if (sessions.length === 0 && openPageTabs.length === 0) return null
 
   const closeSession = (id: string) => {
     // item 4: a persistent SSH session gets the End-vs-Leave-running choice.
@@ -132,8 +148,8 @@ export default function TabBar() {
     <div className="flex items-center shrink-0" style={{ background: 'var(--surface-panel)', borderBottom: '1px solid var(--border-subtle)', ...headerType }}>
       <div className="flex items-center overflow-x-auto flex-1 min-w-0">
       {sessions.map((session) => {
-        const needsAttention = session.needsAttention && activeSessionId !== session.id
-        const isActive = activeSessionId === session.id
+        const needsAttention = session.needsAttention && !(activeSessionId === session.id && activeView === 'sessions')
+        const isActive = activeSessionId === session.id && activeView === 'sessions'
         const color = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
         const name = displayNameOf(session)
         const isRenaming = renamingSessionId === session.id
@@ -171,11 +187,11 @@ export default function TabBar() {
               </div>
             ) : (
               <button
-                onClick={() => setActiveSession(session.id)}
+                onClick={() => onActivateSession(session.id)}
                 onDoubleClick={() => beginRename(session.id)}
                 onContextMenu={(e) => {
                   e.preventDefault()
-                  setActiveSession(session.id)
+                  onActivateSession(session.id)
                   setMenu({ id: session.id, x: e.clientX, y: e.clientY })
                 }}
                 aria-label={name}
@@ -218,6 +234,41 @@ export default function TabBar() {
               }}
               aria-label={`Close ${name}`}
               title={`Close ${name}`}
+              className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 hover:text-red transition-opacity cursor-pointer z-20 focus-ring rounded"
+            >
+              &times;
+            </button>
+          </div>
+        )
+      })}
+      {/* Page tabs — the nav-rail pages (Tokenomics, Logs, Feature Guide, …)
+          opened as tabs. They sit after the session tabs in open order, use the
+          app accent rather than a per-session identity colour, and carry the
+          same close affordance. */}
+      {openPageTabs.map((v) => {
+        const meta = PAGE_TAB_META[v]
+        if (!meta) return null
+        const isActive = activeView === v
+        return (
+          <div key={`page:${v}`} className="group relative inline-flex items-center mt-1 mx-0.5 shrink-0">
+            <button
+              onClick={() => onActivatePage(v)}
+              aria-label={meta.label}
+              aria-current={isActive ? 'page' : undefined}
+              title={meta.label}
+              className={`relative flex items-center gap-2 pl-3 pr-7 py-1.5 text-xs rounded-t-lg transition-all duration-150 overflow-hidden focus-ring ${isActive ? 'text-text' : 'text-overlay1 hover:text-text'}`}
+              style={{ backgroundColor: isActive ? 'color-mix(in srgb, var(--accent) 16%, transparent)' : undefined }}
+              onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = 'color-mix(in srgb, var(--accent) 9%, transparent)' }}
+              onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
+            >
+              <span className="shrink-0 relative z-10 flex items-center" style={{ color: isActive ? 'var(--accent)' : 'var(--text-muted)' }}>{meta.icon}</span>
+              <span className="truncate max-w-[140px] relative z-10">{meta.label}</span>
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onClosePage(v) }}
+              aria-label={`Close ${meta.label}`}
+              title={`Close ${meta.label}`}
               className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 hover:text-red transition-opacity cursor-pointer z-20 focus-ring rounded"
             >
               &times;

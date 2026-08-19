@@ -95,8 +95,14 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [viewRaw, setViewRaw] = useState<ViewType>('sessions')
   const view = viewRaw
+  // Pages (Tokenomics, Logs, Feature Guide, …) open as TABS in the main strip
+  // alongside sessions, in open order, and persist until closed. `view` is the
+  // active tab: 'sessions' means a session tab is active, any other value means
+  // that page tab is active. Opening a page adds it here if not already open.
+  const [openPageTabs, setOpenPageTabs] = useState<ViewType[]>([])
   const setView = (v: ViewType) => {
     setViewRaw(v)
+    if (v !== 'sessions') setOpenPageTabs((prev) => (prev.includes(v) ? prev : [...prev, v]))
     // Track view usage for the tips system
     const map: Record<string, string> = {
       'memory': 'memory.memory-page',
@@ -109,6 +115,21 @@ export default function App() {
     const featureId = map[v]
     if (featureId) trackUsage(featureId)
   }
+  // Close a page tab. If it was the active tab, fall back to the last remaining
+  // page tab, else the sessions view.
+  const closePageTab = (v: ViewType) => {
+    setOpenPageTabs((prev) => prev.filter((x) => x !== v))
+    setViewRaw((cur) => {
+      if (cur !== v) return cur
+      const remaining = openPageTabs.filter((x) => x !== v)
+      return remaining.length ? remaining[remaining.length - 1] : 'sessions'
+    })
+  }
+  // Activate a session tab: switch the pane back to sessions and select it.
+  const activateSessionTab = (id: string) => {
+    useSessionStore.getState().setActiveSession(id)
+    setViewRaw('sessions')
+  }
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
   const [configLoaded, setConfigLoaded] = useState(false)
   // Logs v2 first-run wipe gate: null = not yet detected, >0 = old artifacts
@@ -119,10 +140,6 @@ export default function App() {
   const [isUpdating, setIsUpdating] = useState(false)
   const [closeDialog, setCloseDialog] = useState<'close' | 'update' | null>(null)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
-  /** On-demand What's New, opened from the Feature Guide (shows the full
-   *  changelog, like the manual feature tour shows every step). Independent of
-   *  the boot upgrade gate above. */
-  const [manualWhatsNew, setManualWhatsNew] = useState(false)
   /** lastSeenVersion as it was at boot, captured when the What's New modal is
    *  armed so its "since" range cannot be moved by a later stamp. */
   const whatsNewSinceRef = useRef<string | undefined>(undefined)
@@ -180,9 +197,9 @@ export default function App() {
   // Feature Guide button). Anchored coach-marks over the real UI, ending by
   // opening the first-config dialog.
   const [tourActive, setTourActive] = useState(false)
-  // The Feature Guide is a full-screen peer view (ViewType 'help'), opened from
-  // the sidebar ? button — no longer a floating panel (it used to be a portal
-  // modal that covered whatever page was open).
+  // The Feature Guide is a page tab (ViewType 'help'), opened from the sidebar ?
+  // button — it opens in the main tab strip like any other page, no longer a
+  // portal modal that covered whatever page was open.
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   // Sessions whose partner terminal has been opened at least once — gates the
@@ -741,21 +758,23 @@ export default function App() {
     return () => unsub()
   }, [isClosing])
 
-  // Render non-session views (shown on top of sessions)
-  const renderOverlayView = () => {
-    if (view === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
-    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} onUpdateRequested={handleUpdateRequested} />
-    if (view === 'insights') return <InsightsPage onNavigateToSessions={() => setView('sessions')} />
-    if (view === 'cloud-agents') return <CloudAgentsPage />
-    if (view === 'tokenomics') return <TokenomicsPage />
-    if (view === 'vision') return <ConductorMcpPage />
-    if (view === 'memory') return <MemoryPage
+  // Render one page for a given view. Each open page tab renders its own
+  // instance, kept mounted (display-toggled) so it persists while another tab is
+  // active — the same way sessions stay alive.
+  const renderPage = (v: ViewType) => {
+    if (v === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
+    if (v === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} onUpdateRequested={handleUpdateRequested} />
+    if (v === 'insights') return <InsightsPage onNavigateToSessions={() => setView('sessions')} />
+    if (v === 'cloud-agents') return <CloudAgentsPage />
+    if (v === 'tokenomics') return <TokenomicsPage />
+    if (v === 'vision') return <ConductorMcpPage />
+    if (v === 'memory') return <MemoryPage
       onClose={() => setView('sessions')}
       onOpenSessionLogs={(sessionId) => { setPendingLogsSessionId(sessionId); setView('logs') }}
       onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
     />
-    if (view === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
-    if (view === 'help') return <FeatureGuidePage onNavigateToSessions={() => setView('sessions')} onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }} onShowWhatsNew={() => setManualWhatsNew(true)} />
+    if (v === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
+    if (v === 'help') return <FeatureGuidePage onNavigateToSessions={() => setView('sessions')} onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }} />
     return null
   }
 
@@ -776,7 +795,6 @@ export default function App() {
 
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
-        <TabBar />
         <SessionHeader session={activeSession} onShowTip={() => setShowTipModal(true)} />
         {(() => {
           const gi = activeSession.githubIntegration
@@ -1080,7 +1098,6 @@ export default function App() {
           />
         )}
         {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} sinceVersion={whatsNewSinceRef.current} />}
-        {manualWhatsNew && <WhatsNewModal onClose={() => setManualWhatsNew(false)} showAllVersions />}
         {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
@@ -1217,13 +1234,30 @@ export default function App() {
         <div className="flex flex-1 overflow-hidden">
           <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
+            {/* One tab strip for the whole main window: session tabs + any open
+                page tabs (Tokenomics, Logs, Feature Guide, …). Always visible so
+                a page is a peer of a session, never a full-pane takeover. */}
+            <TabBar
+              activeView={view}
+              openPageTabs={openPageTabs}
+              onActivateSession={activateSessionTab}
+              onActivatePage={(v) => setView(v)}
+              onClosePage={closePageTab}
+            />
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
               {/* The live app is always what's behind — the first-config flow is
                   the REAL SessionDialog rendered as an overlay (below), so the
                   user sees the workbench while creating their first session.
                   (The old full-column GuidedConfigView is retired.) */}
               {renderSessions()}
-              {renderOverlayView()}
+              {/* Every open page tab is kept mounted and display-toggled, so
+                  switching to a session and back preserves its state — the same
+                  discipline the session list uses to keep PTYs alive. */}
+              {openPageTabs.map((v) => (
+                <div key={`page-pane:${v}`} className="flex-1 flex flex-col min-h-0" style={{ display: view === v ? 'flex' : 'none' }}>
+                  {renderPage(v)}
+                </div>
+              ))}
             </div>
           </main>
         </div>

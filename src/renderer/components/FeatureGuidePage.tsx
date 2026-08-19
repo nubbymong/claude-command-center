@@ -5,6 +5,8 @@ import { trainingSteps, SECTION_LABELS, type TrainingStep, type TrainingSection 
 import { useConfigStore, type TerminalConfig } from '../stores/configStore'
 import { useLaunchConfig } from '../hooks/useLaunchConfig'
 import { generateId } from '../utils/id'
+import { changelog } from '../changelog'
+import { WhatsNewEntries } from './WhatsNewEntries'
 
 // Full-screen Feature Guide — a peer page (ViewType 'help'), NOT the old
 // createPortal modal that floated over every other page. It renders the same
@@ -44,7 +46,7 @@ function renderRich(text: string): React.ReactNode[] {
   return out
 }
 
-type GuideSectionId = 'overview' | TrainingSection | 'reference'
+type GuideSectionId = 'overview' | 'whatsnew' | TrainingSection | 'reference'
 
 const SECTION_ORDER: TrainingSection[] = ['getting-started', 'productivity', 'integrations', 'admin', 'tips']
 
@@ -59,11 +61,9 @@ interface Props {
   onNavigateToSessions: () => void
   /** Launch the classic step-by-step feature tour (TrainingWalkthrough help mode). */
   onStartTour: () => void
-  /** Open the full-screen What's New / release notes (WhatsNewModal, all versions). */
-  onShowWhatsNew: () => void
 }
 
-export default function FeatureGuidePage({ onNavigateToSessions, onStartTour, onShowWhatsNew }: Props) {
+export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: Props) {
   const [active, setActive] = useState<GuideSectionId>('overview')
   const [query, setQuery] = useState('')
   const [question, setQuestion] = useState('')
@@ -132,6 +132,7 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour, on
 
   const railItems: { id: GuideSectionId; label: string; count?: number }[] = [
     { id: 'overview', label: 'Overview' },
+    { id: 'whatsnew', label: "What's New" },
     ...SECTION_ORDER.map((s) => ({ id: s, label: SECTION_LABELS[s], count: stepsBySection.get(s)?.length ?? 0 })),
     { id: 'reference', label: 'Reference' },
   ]
@@ -216,9 +217,10 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour, on
             onAsk={ask}
             launching={launching}
             onStartTour={onStartTour}
-            onShowWhatsNew={onShowWhatsNew}
             onGo={(id) => setActive(id)}
           />
+        ) : active === 'whatsnew' ? (
+          <WhatsNewSection />
         ) : active === 'reference' ? (
           <Reference />
         ) : (
@@ -340,7 +342,7 @@ function SectionHero({ eyebrow, title, blurb }: { eyebrow: string; title: string
 
 // ── Overview landing ─────────────────────────────────────────────────────────
 function Overview({
-  question, setQuestion, askInputRef, onAsk, launching, onStartTour, onShowWhatsNew, onGo,
+  question, setQuestion, askInputRef, onAsk, launching, onStartTour, onGo,
 }: {
   question: string
   setQuestion: (v: string) => void
@@ -348,7 +350,6 @@ function Overview({
   onAsk: () => void
   launching: boolean
   onStartTour: () => void
-  onShowWhatsNew: () => void
   onGo: (id: GuideSectionId) => void
 }) {
   const overview = APP_KNOWLEDGE_SECTIONS.find((s) => s.id === 'overview')
@@ -413,9 +414,9 @@ function Overview({
         <WalkCard
           dataUxId="whatsnew-card"
           title="What's new"
-          desc="See what changed in this release, and browse the recent updates before them."
+          desc="Browse the version-by-version changelog — what shipped in this release and every one before it."
           button="What's new"
-          onClick={onShowWhatsNew}
+          onClick={() => onGo('whatsnew')}
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" /><circle cx="12" cy="12" r="3.2" /></svg>}
         />
         <WalkCard
@@ -440,6 +441,18 @@ function WalkCard({ dataUxId, title, desc, button, onClick, icon }: { dataUxId: 
       </div>
       <p className="text-[12.5px] mb-3.5 flex-1" style={{ color: 'var(--text-secondary)' }}>{desc}</p>
       <button onClick={onClick} className="self-start text-[12.5px] font-medium px-3.5 py-2 rounded-lg transition-colors focus-ring" style={{ background: 'var(--surface-base)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}>{button}</button>
+    </div>
+  )
+}
+
+// ── What's New (the browsable changelog, shared with the after-install modal) ─
+function WhatsNewSection() {
+  return (
+    <div data-ux-id="whatsnew-section">
+      <SectionHero eyebrow="What's New" title="Release history" blurb="Every version, newest first — the same notes you're shown after an update, here to browse any time." />
+      <div className="rounded-2xl p-6" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
+        <WhatsNewEntries entries={changelog} />
+      </div>
     </div>
   )
 }
