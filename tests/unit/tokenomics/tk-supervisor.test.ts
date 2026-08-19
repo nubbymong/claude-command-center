@@ -36,7 +36,7 @@ describe('TokenomicsSupervisor', () => {
     sup.onIndexComplete(() => { done = true })
     sup.start()
     fork._t.emitToMain({ type: 'index-progress', filesDone: 1, filesTotal: 2, eventsIngested: 3, phase: 'initial' })
-    fork._t.emitToMain({ type: 'index-complete', firstIndex: true, drained: true, eventsTotal: 5 })
+    fork._t.emitToMain({ type: 'index-complete', firstIndex: true, drained: true, filesFailed: 0, eventsTotal: 5 })
     expect(progresses).toHaveLength(1)
     expect(done).toBe(true)
     expect(sup.getIndexStatus().firstIndexComplete).toBe(true)
@@ -46,7 +46,7 @@ describe('TokenomicsSupervisor', () => {
     const fork = fakeFork()
     const sup = new TokenomicsSupervisor({ forkChild: (() => fork) as any, ...baseOpts() })
     sup.start()
-    fork._t.emitToMain({ type: 'index-complete', firstIndex: false, drained: true, eventsTotal: 9 })
+    fork._t.emitToMain({ type: 'index-complete', firstIndex: false, drained: true, filesFailed: 0, eventsTotal: 9 })
     expect(sup.getIndexStatus().firstIndexComplete).toBe(true)
   })
 
@@ -58,11 +58,11 @@ describe('TokenomicsSupervisor', () => {
     const fork = fakeFork()
     const sup = new TokenomicsSupervisor({ forkChild: (() => fork) as any, ...baseOpts() })
     sup.start()
-    fork._t.emitToMain({ type: 'index-complete', firstIndex: false, drained: false, eventsTotal: 3 })
+    fork._t.emitToMain({ type: 'index-complete', firstIndex: false, drained: false, filesFailed: 0, eventsTotal: 3 })
     expect(sup.getIndexStatus().firstIndexComplete).toBe(false)
     expect(sup.getIndexStatus().indexing).toBe(true)
     // ...and the honest signal still arrives once the tree really is drained.
-    fork._t.emitToMain({ type: 'index-complete', firstIndex: true, drained: true, eventsTotal: 20 })
+    fork._t.emitToMain({ type: 'index-complete', firstIndex: true, drained: true, filesFailed: 0, eventsTotal: 20 })
     expect(sup.getIndexStatus().firstIndexComplete).toBe(true)
   })
 
