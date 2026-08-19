@@ -159,6 +159,19 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
    * the SWEEP counts only files that still exist and were actually visited.
    */
   let sweepPending = false
+  /**
+   * Files this sweep could not open or read at all.
+   *
+   * Counted SEPARATELY from `sweepPending`, and deliberately not allowed to
+   * block completion. Those are two different states: "there are more bytes to
+   * read, come back" is temporary and will resolve on its own, while "this file
+   * cannot be read" may never resolve — and blocking on it meant a single
+   * unreadable transcript left a first index unfinished for the life of the
+   * install, showing a spinner with no error and no way out. Reading everything
+   * that CAN be read is the honest definition of done; what could not be read
+   * is reported alongside it rather than hidden behind a spinner.
+   */
+  let sweepFailed = 0
   /** Note how far a file was read, so the sweep knows whether work remains. */
   const noteScanned = (scannedTo: number, size: number): void => { if (scannedTo < size) sweepPending = true }
   let firstSweepDone = false
@@ -240,7 +253,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     // writes no cursor row, so nothing else can notice it — and an index that
     // declares itself complete while a file's spend is missing is worse than
     // one that admits it is still going.
-    try { fd = fs.openSync(file, 'r') } catch (err) { sweepPending = true; logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
+    try { fd = fs.openSync(file, 'r') } catch (err) { sweepFailed++; logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
     let inserted = 0
     let fileCwd = ''
     try {
@@ -270,7 +283,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         // Per-FILE containment. Letting this escape aborts the whole sweep, so
         // one locked or flaky transcript stops every later file from being read
         // and leaves the index reporting itself incomplete forever.
-        sweepPending = true
+        sweepFailed++
         logw('warn', `read failed for ${file}: ${String(err)}`)
         flush()
         return inserted
@@ -347,7 +360,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     const tickBytes = deps.maxTickBytes !== undefined ? maxTickBytes : CODEX_TICK_BYTES
     const end = Math.min(st.size, offset + tickBytes)
     let fd: number
-    try { fd = fs.openSync(file, 'r') } catch (err) { sweepPending = true; logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
+    try { fd = fs.openSync(file, 'r') } catch (err) { sweepFailed++; logw('warn', `open failed for ${file}: ${String(err)}`); return 0 }
     let inserted = 0
     try {
       let consumed = offset
@@ -375,7 +388,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
         // first index never reports complete, and the five-second retry hits the
         // same file forever - the exact "Indexing 1700/1997" wedge this ingester
         // was written to remove, reached through a different door.
-        sweepPending = true
+        sweepFailed++
         logw('warn', `read failed for ${file}: ${String(err)}`)
         return 0
       }
@@ -523,6 +536,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     if (!db || sweeping) return
     sweeping = true
     sweepPending = false
+    sweepFailed = 0
     try {
       const claude = enumerateClaude()
       const codex = enumerateCodex()
@@ -552,13 +566,20 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       // It is also no longer tied to the 'initial' phase: that phase runs once
       // per process, so a single failed first sweep left the flag unreachable
       // for the life of the process however many healthy sweeps followed.
+      //
+      // Files that could not be READ deliberately do not hold this back. A file
+      // that is unreadable now may be unreadable forever, and gating on it left
+      // a first index permanently unfinished — a spinner, no error, no way out.
+      // "Everything we can read has been read" is the honest bar; `filesFailed`
+      // rides alongside so the count that is missing can be shown rather than
+      // hidden.
       const drained = !sweepPending
       if (drained && !firstSweepDone) {
         firstSweepDone = true
         db.setMeta('firstIndexComplete', '1')
-        post({ type: 'index-complete', firstIndex: true, drained, eventsTotal: db.eventCount() })
+        post({ type: 'index-complete', firstIndex: true, drained, filesFailed: sweepFailed, eventsTotal: db.eventCount() })
       } else {
-        post({ type: 'index-complete', firstIndex: false, drained, eventsTotal: db.eventCount() })
+        post({ type: 'index-complete', firstIndex: false, drained, filesFailed: sweepFailed, eventsTotal: db.eventCount() })
       }
     } catch (err) { logw('error', `ingestAll failed: ${String(err)}`) }
     finally { sweeping = false }
@@ -572,6 +593,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       filesDone: lastProgress.filesDone,
       filesTotal: lastProgress.filesTotal,
       eventsTotal: db!.eventCount(),
+      filesFailed: sweepFailed,
       lastIndexAt: lastAt ? Number(lastAt) : null,
     }
   }

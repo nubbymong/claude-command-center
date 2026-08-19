@@ -74,7 +74,7 @@ describe('tokenomics codex ingest hardening', () => {
     fs.rmSync(tmp, { recursive: true, force: true })
   })
 
-  const completions = (msgs: FromTkWorker[]) => msgs.filter((m) => m.type === 'index-complete') as Array<{ firstIndex: boolean; drained: boolean; eventsTotal: number }>
+  const completions = (msgs: FromTkWorker[]) => msgs.filter((m) => m.type === 'index-complete') as Array<{ firstIndex: boolean; drained: boolean; filesFailed: number; eventsTotal: number }>
 
   /** Reduce a DB to the pre-migration `tk_files` shape, keeping its rows. */
   function downgradeCursors(dbPath: string): void {
@@ -502,10 +502,11 @@ describe('tokenomics codex ingest hardening', () => {
     expect(completions(msgs).some((c) => c.drained)).toBe(true)
   })
 
-  it('a file that cannot be opened keeps the index from claiming completeness', async () => {
-    // A failed file writes no cursor row at all, so anything reasoning over
-    // rows cannot see it — and an index that declares itself complete while a
-    // file's spend is missing is worse than one that admits it is still going.
+  it('a file that cannot be opened is reported, not allowed to block the index', async () => {
+    // A file that cannot be read may never become readable, so blocking on it
+    // left a first index unfinished for the life of the install — a spinner,
+    // no error, no way out. The bar is "everything we CAN read has been read";
+    // what could not be read is counted and surfaced instead of hidden.
     const codexDir = path.join(tmp, 'codex')
     const dir = path.join(codexDir, '2026', '08', '01')
     const bad = writeRollout(dir, 'rollout-2026-08-01T00-00-00-aaa.jsonl', 4, {})
@@ -519,9 +520,14 @@ describe('tokenomics codex ingest hardening', () => {
         return (t as unknown as Record<PropertyKey, unknown>)[k]
       },
     })
-    const { msgs } = start({ codexDir, fsImpl: failing as unknown as typeof fs })
-    await waitForCompletions(msgs, 1)
-    expect(completions(msgs)[0].drained).toBe(false)
+    const { fake, msgs } = start({ codexDir, fsImpl: failing as unknown as typeof fs })
+    // The healthy rollout is indexed, the index reaches completion, and the
+    // unreadable one is counted rather than silently absent.
+    expect(await drain(fake, msgs)).toBe(5)
+    const last = completions(msgs)[completions(msgs).length - 1]
+    expect(last.drained).toBe(true)
+    expect(last.filesFailed).toBe(1)
+    expect(completions(msgs).some((c) => c.firstIndex)).toBe(true)
   })
 
   it('does not report the first index complete while a file is still draining', async () => {

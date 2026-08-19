@@ -69,6 +69,10 @@ export interface TkIndexStatus {
   filesTotal: number
   eventsTotal: number
   lastIndexAt: number | null
+  /** Files the index could not open or read at all. They do NOT hold the index
+   *  back — gating on one unreadable file left a first index unfinished for the
+   *  life of the install — so this is how the user learns something is missing. */
+  filesFailed?: number
   /** Non-null when the worker reported a fatal/uncorrelated error (e.g. a failed
    *  DB open). The renderer surfaces this instead of an endless 'indexing' state. */
   error?: string | null

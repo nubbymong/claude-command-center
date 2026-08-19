@@ -127,6 +127,23 @@ export default function TokenomicsPage() {
               </span>
             </div>
 
+            {/* Files the index could not read. These deliberately do not hold
+                the dashboard back — gating on one unreadable transcript left the
+                index unfinished for the life of the install, showing a spinner
+                and nothing else — so the figures are shown and what is missing
+                is said plainly. */}
+            {(indexStatus.filesFailed ?? 0) > 0 && (
+              <div
+                className="rounded-xl px-3 py-2 mb-4 text-[11px]"
+                style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                role="status"
+              >
+                {indexStatus.filesFailed === 1
+                  ? 'One transcript could not be read, so its usage is missing from these figures.'
+                  : `${indexStatus.filesFailed} transcripts could not be read, so their usage is missing from these figures.`}
+              </div>
+            )}
+
             {/* Filter bar */}
             <NewFilterBar />
 

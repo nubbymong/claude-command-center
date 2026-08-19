@@ -17,7 +17,7 @@ export interface TokenomicsSupervisorOptions {
 }
 
 export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
-export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; eventsTotal: number }
+export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; filesFailed: number; eventsTotal: number }
 
 const BACKOFFS = [250, 1000, 4000, 4000, 4000]
 const DEFAULT_QUERY_TIMEOUT_MS = 15_000
@@ -39,6 +39,8 @@ export class TokenomicsSupervisor {
   private lastProgress: TkIndexProgress = { filesDone: 0, filesTotal: 0, eventsIngested: 0, phase: 'initial' }
   private firstIndexComplete = false
   private lastEventsTotal = 0
+  /** Files the last sweep could not read at all. Reported, never blocking. */
+  private lastFilesFailed = 0
   private lastIndexAt: number | null = null
   // Set when the worker reports an UNCORRELATED error (e.g. a failed DB open,
   // which leaves the worker alive but never `ready` — no exit, no restart). The
@@ -97,8 +99,9 @@ export class TokenomicsSupervisor {
         // visited was actually read to the end.
         if (m.drained) this.firstIndexComplete = true
         this.lastEventsTotal = m.eventsTotal
+        this.lastFilesFailed = m.filesFailed
         this.lastIndexAt = this.now()
-        for (const cb of this.completeSubs) { try { cb({ firstIndex: m.firstIndex, drained: m.drained, eventsTotal: m.eventsTotal }) } catch { /* ignore */ } }
+        for (const cb of this.completeSubs) { try { cb({ firstIndex: m.firstIndex, drained: m.drained, filesFailed: m.filesFailed, eventsTotal: m.eventsTotal }) } catch { /* ignore */ } }
         return
       }
       case 'health': { this.lastEventsTotal = m.eventsTotal; return }
@@ -171,6 +174,7 @@ export class TokenomicsSupervisor {
       filesDone: this.lastProgress.filesDone,
       filesTotal: this.lastProgress.filesTotal,
       eventsTotal: this.lastEventsTotal,
+      filesFailed: this.lastFilesFailed,
       lastIndexAt: this.lastIndexAt,
       error,
     }

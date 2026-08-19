@@ -89,8 +89,10 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
         // with a multi-GB rollout barely started, and taking that as completion
         // swapped the honest spinner for a confidently wrong total.
         indexStatus: s.indexStatus && e.drained
-          ? { ...s.indexStatus, firstIndexComplete: true, indexing: false }
-          : s.indexStatus,
+          ? { ...s.indexStatus, firstIndexComplete: true, indexing: false, filesFailed: e.filesFailed }
+          : s.indexStatus
+            ? { ...s.indexStatus, filesFailed: e.filesFailed }
+            : s.indexStatus,
         indexJustCompleted: e.firstIndex ? true : s.indexJustCompleted,
       }))
       // Always refresh after an index completion
