@@ -463,15 +463,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // then we try ONE recreate in the next frame (GPU-blip recovery).
       // If recreate fails, we force term.refresh so the DOM renderer
       // repaints the viewport the dead WebGL canvas left garbled.
-      // The GPU renderer is opt-OUT (see TerminalSettings.gpuRendering). Off, we
-      // never load the addon at all and xterm uses its DOM renderer, which has
-      // no glyph atlas and so cannot show the stale-glyph artifact this whole
-      // repainter exists to bound. Read once at mount — changing it applies to
-      // terminals opened afterwards, which keeps a live session from having its
-      // renderer swapped underneath it.
-      // Opt-IN since 2.1.0-beta.16, and experimental. `@xterm/addon-webgl` keeps
-      // ONE glyph atlas per process, so a clearTextureAtlas() from ANY terminal
-      // blanks the glyphs of every OTHER open terminal — see TerminalSettings.
+      // The GPU renderer is opt-IN and experimental since 2.1.0-beta.16 (see
+      // TerminalSettings.gpuRendering): `@xterm/addon-webgl` keeps ONE glyph
+      // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal blanks the
+      // glyphs of every OTHER mounted terminal until it is resized/scrolled/
+      // activated. Unset therefore has to mean OFF — testing `!== false` would
+      // leave every install that never opened Settings on the faulty path.
+      // With the addon absent xterm uses its DOM renderer, which keeps no atlas
+      // and so cannot show the fault at all. Read once at mount — changing it
+      // applies to terminals opened afterwards, which keeps a live session from
+      // having its renderer swapped underneath it.
       if (ts.gpuRendering === true) {
         webglHandle = installWebglWithRecovery(term, {
           WebglAddonCtor: WebglAddon,
@@ -479,8 +480,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           isDisposed: () => disposed,
         })
       }
-      // #273: bust stale WebGL glyphs by reproducing the window-resize repaint
-      // (clearTextureAtlas + refresh) against whichever addon is currently live.
+      // #273: reproduces the window-resize repaint (clearTextureAtlas + refresh)
+      // against whichever addon is currently live. Its premise — that a
+      // terminal's OWN atlas goes stale and needs rebuilding — was wrong: the
+      // atlas is process-global and these clears were themselves what blanked
+      // the other terminals. It is inert on the default path (clearAtlas()
+      // returns false with no WebGL addon) and is kept only for the opt-in
+      // renderer until that path is either repaired or removed.
       repainter = createStaleGlyphRepainter({
         // Return whether the atlas was actually cleared (WebGL active). When it
         // wasn't (DOM-renderer fallback / unrecovered context loss) the repainter
