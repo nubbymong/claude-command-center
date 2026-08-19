@@ -264,7 +264,7 @@ export default function App() {
   }, [sessions])
 
   // Global keyboard shortcuts
-  useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
+  useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView, view, openPageTabs, closePageTab)
   // Stamp data-theme on <html> from the persisted setting + listen for
   // OS prefers-color-scheme changes when in 'system' mode.
   useThemeController()
