@@ -81,3 +81,4 @@ process-snapshot-*.txt
 # worktrees sharing a junctioned node_modules cannot serve each other stale
 # transforms. Ignored unconditionally so a leftover dir can never be committed.
 .vite-cache/
+.canvas-scratch/

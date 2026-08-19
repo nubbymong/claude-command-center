@@ -1,6 +1,6 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { CodexBadge, ShellBadge, SshBadge, SshPersistentBadge } from './Badges'
+import { SessionTypeBadge, SshBadge, SshPersistentBadge } from './Badges'
 import { type SessionState } from '../ui/StatusDot'
 import { EffortPill } from '../ui/EffortPill'
 import { FastBolt } from '../ui/FastBolt'
@@ -139,8 +139,6 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           deliberately or add min-w-0 + flex-shrink rules at that point. */}
       <span className="nm relative z-10 row-start-1 flex items-center gap-1.5">
         <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600 }} title={session.customName?.trim() ? `${session.customName.trim()} · ${session.label}` : session.label}>{session.customName?.trim() || session.label}</span>
-        {session.sessionType === 'ssh' && (session.sshTmuxPersistent === true ? <SshPersistentBadge /> : <SshBadge />)}
-        {session.shellOnly ? <ShellBadge /> : (session.provider ?? 'claude') === 'codex' ? <CodexBadge needsAttention={needsAttention} /> : null}
       </span>
 
       {/* Line 1, col 3: status pill only. The account colour dot lives on line 3
@@ -148,6 +146,15 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           were redundant with that dot and the card's left identity rail. */}
       <span className="relative z-10 row-start-1 flex items-center gap-1.5 justify-self-end">
         <StatusPill state={st} />
+        {/* Session TYPE, in one place on every card (canvas review 2026-08-19).
+            Transport first (SSH, or SSH+tmux — the link icon), then the type
+            icon, then effort. A local Claude Code session used to be marked
+            by having NOTHING here while Codex and Shell had an icon after the
+            name and SSH had a text badge in the same spot: four treatments,
+            with the common case as the odd one out. The name column gets its
+            full width back. */}
+        {session.sessionType === 'ssh' && (session.sshTmuxPersistent === true ? <SshPersistentBadge /> : <SshBadge />)}
+        <SessionTypeBadge kind={session.shellOnly ? 'shell' : (session.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'} />
         {/* Graceful-fail: show effort ONLY once a live tick (statusline / hooks)
             has confirmed it. A spawn-time or persisted guess (e.g. a default
             xhigh) is suppressed until effortLive flips, so the card never shows

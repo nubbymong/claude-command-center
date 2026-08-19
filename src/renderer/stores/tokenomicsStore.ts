@@ -85,9 +85,14 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
     // Subscribe to complete events
     const unsubComplete = tk.onIndexComplete((e) => {
       set((s) => ({
-        indexStatus: s.indexStatus
-          ? { ...s.indexStatus, firstIndexComplete: true, indexing: false }
-          : s.indexStatus,
+        // Only a DRAINED sweep means the numbers are whole. A sweep can finish
+        // with a multi-GB rollout barely started, and taking that as completion
+        // swapped the honest spinner for a confidently wrong total.
+        indexStatus: s.indexStatus && e.drained
+          ? { ...s.indexStatus, firstIndexComplete: true, indexing: false, filesFailed: e.filesFailed }
+          : s.indexStatus
+            ? { ...s.indexStatus, filesFailed: e.filesFailed }
+            : s.indexStatus,
         indexJustCompleted: e.firstIndex ? true : s.indexJustCompleted,
       }))
       // Always refresh after an index completion

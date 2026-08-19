@@ -3,6 +3,7 @@ import { Excalidraw } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import CanvasEmptyState from './CanvasEmptyState'
+import { CanvasLibrary } from './CanvasLibrary'
 import CanvasNotesPanel from './CanvasNotesPanel'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
@@ -43,8 +44,26 @@ function versionClock(iso: string): string | null {
  *  the app under test, so its build label (when the agent supplied one) is the
  *  most useful thing we can say about it. */
 function versionKind(version: CanvasVersion): string {
-  if (version.source.mode === 'uat') return version.source.buildLabel?.trim() || 'live app'
-  return 'design mock'
+  if (version.source.mode === 'uat') return version.source.buildLabel?.trim() || 'Live site'
+  return 'Mockup'
+}
+
+/**
+ * The canvas MODE, in the product's own vocabulary.
+ *
+ * The pane already used the word "mode" for something else entirely — the
+ * interaction mode (Browse / Draw / Region), which decides where clicks land —
+ * while the thing the user calls a mode (a mockup, the live site, and in time a
+ * plan) was only implied by a small grey word beside the version id. Two
+ * different meanings of one word, and the one the user thinks in was the
+ * quieter of the two. This badge says which KIND of thing is on the canvas,
+ * using the same words as the library so they name the same concept in both
+ * places.
+ */
+function canvasModeBadge(version: CanvasVersion): { label: string; title: string } {
+  return version.source.mode === 'uat'
+    ? { label: 'Live site', title: 'A built site, served for UI testing' }
+    : { label: 'Mockup', title: 'A standalone mockup document' }
 }
 
 /** Full stamp for the label's tooltip — the human line is deliberately short. */
@@ -162,6 +181,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
    *  second one while the first is unanswered. */
   const inspectPendingRef = useRef(false)
 
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const [bridgeReady, setBridgeReady] = useState(false)
   const bridgeReadyRef = useRef(false)
   /** The page flooded the bridge and its channel was dropped: live inspection
@@ -510,6 +530,13 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
             because a version EXISTS — the empty state's own chrome carries no
             version label and no picker, because there is nothing to version. */}
         <span
+          className="shrink-0 text-[10px] rounded px-1.5 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)]"
+          title={canvasModeBadge(version).title}
+          data-testid="canvas-mode-badge"
+        >
+          {canvasModeBadge(version).label}
+        </span>
+        <span
           className="min-w-0 truncate text-[11.5px] text-[var(--text-primary)]"
           title={versionTooltip(version)}
         >
@@ -533,6 +560,14 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
             ))}
           </select>
         )}
+        <button
+          onClick={() => setLibraryOpen(true)}
+          className="shrink-0 text-[11.5px] rounded px-1.5 py-0.5 bg-[var(--surface-panel)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] transition-colors focus-ring"
+          title="Every canvas on this machine — open one here, or delete it"
+          data-testid="canvas-library-open"
+        >
+          Library
+        </button>
         <div className="flex-1" />
         {/* THE control of this surface: who owns the pointer (spec §6). */}
         <div
@@ -592,7 +627,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
         <span className="text-[var(--text-secondary)] truncate">{modeStrip.hint}</span>
       </div>
 
-      <div className="flex-1 flex min-h-0">
+      <div className="relative flex-1 flex min-h-0">
         {/* Stage: content iframe below, glass above, transient overlay on top.
             overflow-hidden so highlight boxes for offscreen page coords can
             never bleed over the chrome around the stage. */}
@@ -827,6 +862,10 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
             )}
           </div>
         </div>
+
+        {libraryOpen && (
+          <CanvasLibrary sessionId={sessionId} onClose={() => setLibraryOpen(false)} />
+        )}
 
         {/* Notes panel — docked (spec D3). */}
         <CanvasNotesPanel

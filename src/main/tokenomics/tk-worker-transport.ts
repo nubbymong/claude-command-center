@@ -9,10 +9,23 @@ export type ToTkWorker =
   | { type: 'shutdown' }
 
 export type FromTkWorker =
-  | { type: 'ready' }
+  /** `firstIndexComplete` is what the DB already knows at open. The supervisor
+   *  used to learn it only from a fresh `index-complete`, so every launch showed
+   *  "Indexing" until a whole sweep finished - or forever, if it did not. */
+  | { type: 'ready'; firstIndexComplete: boolean; eventsTotal: number }
   | { type: 'health'; eventsTotal: number; filesTracked: number; dbBytes: number }
   | { type: 'index-progress'; filesDone: number; filesTotal: number; eventsIngested: number; phase: 'initial' | 'incremental' }
-  | { type: 'index-complete'; firstIndex: boolean; eventsTotal: number }
+  /** `drained` = every file this sweep visited that COULD be read was read to
+   *  its end; `filesFailed` counts the ones that could not be opened or read at
+   *  all. Those are separate on purpose — a file that is unreadable now may be
+   *  unreadable forever, so letting it block completion left a first index
+   *  permanently unfinished. A sweep FINISHING is a third thing again: with a
+   *  per-tick byte budget a multi-GB rollout needs tens of sweeps, so a sweep
+   *  can finish with most of the user's spend still unread. Anything deciding
+   *  whether to stop saying "Indexing" must gate on this, not on the message
+   *  merely arriving — which is what left the page showing a confidently wrong
+   *  total after the very first sweep. */
+  | { type: 'index-complete'; firstIndex: boolean; drained: boolean; filesFailed: number; eventsTotal: number }
   | { type: 'log'; entry: { level: 'info' | 'warn' | 'error'; message: string } }
   | { type: 'query-result'; id: number; rows: unknown[] }
   | { type: 'error'; id?: number; message: string }

@@ -1,4 +1,5 @@
 import type { UpdateChannel } from '../stores/settingsStore'
+import { releaseLine as sharedReleaseLine } from '../../shared/version-order'
 
 // "current installed version + channel" label for the update UI -- the Settings
 // Check-for-Updates field and the BottomBar update-pill tooltip (#250). Pure so
@@ -19,8 +20,11 @@ export function formatInstalledVersion(version: string, channel: UpdateChannel):
  * rather than throwing during first-run.
  */
 export function releaseLine(version: string): string {
-  const m = /^(\d+)\.(\d+)/.exec(String(version || '').trim())
-  return m ? `${m[1]}.${m[2]}` : String(version || '')
+  // Delegates to the shared parser so there is ONE definition of what a release
+  // line is, while keeping this one's forgiving contract: callers here put the
+  // result straight into a heading, so an unparseable build degrades to the raw
+  // string rather than to null.
+  return sharedReleaseLine(String(version || '')) ?? String(version || '')
 }
 
 /**

@@ -181,7 +181,7 @@ function isValidStoredSketch(value: unknown): value is AnnotationSketch {
   return pngPath === '' || (typeof pngPath === 'string' && PNG_PATH_RE.test(pngPath))
 }
 
-const ANNOTATION_STATES = new Set(['open', 'approved', 'reannotated', 'dismissed'])
+const ANNOTATION_STATES = new Set(['open', 'addressed', 'approved', 'reannotated', 'dismissed'])
 const REVIEW_STATUSES = new Set(['draft', 'submitted', 'resolved'])
 const ANNOTATION_SCOPES = new Set(['element', 'region', 'general'])
 
@@ -615,7 +615,10 @@ export function resolveAnnotation(
   const base = recordFor(sessionId, canvas)
   const target = base.annotations.find((a) => a.id === annotationId)
   if (!target) throw new Error('unknown annotation')
-  if (target.state !== 'open') throw new Error('only an open note can be resolved')
+  // An ADDRESSED note is still the user's to resolve: "addressed" is the
+  // agent saying it acted; approve / dismiss / re-annotate is the user's
+  // verdict on whether that was right, and it must stay available.
+  if (target.state !== 'open' && target.state !== 'addressed') throw new Error('only an open or addressed note can be resolved')
   const owner = base.reviews.find((r) => r.id === target.reviewId)
   if (!owner || owner.status === 'draft') throw new Error('only a submitted note can be resolved')
 
@@ -669,7 +672,10 @@ export function resolveAnnotation(
   }
 
   const nextOwner = next.reviews.find((r) => r.id === owner.id)!
-  const stillOpen = next.annotations.some((a) => a.reviewId === nextOwner.id && a.state === 'open')
+  // A review is done when nothing on it is left OPEN. Addressed notes still
+  // hold it open: the agent has acted, but the user has not yet said whether
+  // the action was right, and that verdict is what closes a review.
+  const stillOpen = next.annotations.some((a) => a.reviewId === nextOwner.id && (a.state === 'open' || a.state === 'addressed'))
   if (!stillOpen && nextOwner.status === 'submitted') nextOwner.status = 'resolved'
 
   commit(next)
@@ -727,6 +733,81 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
     })),
     submittedReviewIds,
   }
+}
+
+/**
+ * The agent marks notes it has acted on. The counterpart of `resolveAnnotation`
+ * for the OTHER side of the loop: that one is the user's (approve / dismiss /
+ * re-annotate, from the panel); this one is the agent's, reached through the
+ * canvas_resolve MCP tool, and it can only ever say one thing — "addressed".
+ *
+ * Only OPEN notes on SUBMITTED reviews move; anything the user has already
+ * resolved is left exactly as they left it, and a draft the user is still
+ * writing is not the agent's to touch. Unknown ids are skipped rather than
+ * fatal, so one stale id in a list does not stop the rest being marked.
+ * Returns the ids actually moved, so the caller can say what happened.
+ */
+export function markAnnotationsAddressed(
+  sessionId: string,
+  reviewId: string,
+  annotationIds: readonly string[],
+): { state: CanvasReviewState; addressed: string[]; skipped: string[] } {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  requireHealthy(canvas.canvasId)
+  if (typeof reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(reviewId)) throw new Error('invalid review id')
+  const wanted = new Set<string>()
+  for (const id of annotationIds) {
+    if (typeof id === 'string' && CANVAS_ANNOTATION_ID_RE.test(id)) wanted.add(id)
+  }
+  const base = recordFor(sessionId, canvas)
+  // Scoped to ONE review, and it has to be. Annotation ids restart per canvas
+  // (a1, a2… on every one), and "the session's canvas" is mutable now that a
+  // render naming a different subject files the current one: the skill has
+  // the agent render and THEN resolve, so a title slip in that render pointed
+  // this write at a different canvas whose a1/a2 happened to exist, marked
+  // them addressed, and left the notes the agent actually handled open — the
+  // very bug the tool exists to fix (adversarial review, 2026-08-19). The
+  // review id names which canvas the agent means; if it is not on the current
+  // one, refuse rather than guess.
+  const review = base.reviews.find((r) => r.id === reviewId)
+  if (!review) throw new Error('review not on this canvas')
+  if (review.status === 'draft') throw new Error('review is still a draft')
+  const members = new Set(review.annotationIds)
+  const addressed: string[] = []
+  const skipped: string[] = []
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+  for (const a of next.annotations) {
+    if (!wanted.has(a.id)) continue
+    if (a.state === 'open' && members.has(a.id)) {
+      a.state = 'addressed'
+      addressed.push(a.id)
+    } else {
+      skipped.push(a.id)
+    }
+  }
+  for (const id of wanted) if (!addressed.includes(id) && !skipped.includes(id)) skipped.push(id)
+  if (addressed.length > 0) commit(next)
+  return { state: toState(addressed.length > 0 ? next : base), addressed, skipped }
+}
+
+/**
+ * Forget everything held for one canvas, because that canvas has been deleted.
+ *
+ * `reviews.json` lives inside the canvas directory, so deleting the canvas
+ * already takes the file with it. These two maps are what would otherwise
+ * outlive it: a `records` entry can hold hundreds of reviews with their
+ * annotations, and nothing would ever evict it — canvas ids are random, so no
+ * later canvas reaches the stale entry. Purely a memory concern, but an
+ * unbounded one for a long-running app that renders, reviews and deletes.
+ */
+export function dropReviewsForCanvas(canvasId: string): void {
+  records.delete(canvasId)
+  broken.delete(canvasId)
 }
 
 /** Test seam: drop all in-memory state so each test starts cold. */

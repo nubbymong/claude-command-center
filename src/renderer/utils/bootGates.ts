@@ -46,7 +46,7 @@ export interface BootGateState {
   showGitHubOnboarding: boolean
   showMachineNamePrompt: boolean
   loggingConsentSeen: boolean
-  /** shouldShowWhatsNew() — true before the 500ms boot timer flips showWhatsNew. */
+  /** shouldShowWhatsNew() — true before postConfigInit arms showWhatsNew (or the tour covers it). */
   whatsNewDue: boolean
   /** shouldShowTraining() || isFirstInstall() — true before the tour opens. */
   trainingDue: boolean

@@ -10,6 +10,7 @@ import {
   shouldRepaintOnOutput,
   shouldSoftRepaintOnOutput,
   outputRepaintIntervalMs,
+  ACTIVATION_MAX_STALE_MS,
   WHEEL_ACTIVE_MS,
   type StaleGlyphRepainter,
 } from './terminal/staleGlyphRepaint'
@@ -117,6 +118,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   const attentionAckedRef = useRef(false)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
   const isScrolledUpRef = useRef(false)
+  /** The live repainter, so effects outside the init effect can ask for a
+   *  repaint — see the tab-activation repaint below. */
+  const repainterRef = useRef<StaleGlyphRepainter | null>(null)
   // Mirror of the isActive prop for `document`-level listeners installed by the
   // init effect (which keys on session identity, not activation) — reading the
   // captured prop there would go stale on tab switches. See the paste handler.
@@ -136,6 +140,27 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // backdrop's mousedown-close, so it must be closed here.
   useEffect(() => {
     if (!isActive) setCtxMenu(null)
+  }, [isActive])
+
+  // Rebuild the glyph atlas when this terminal becomes the active tab.
+  //
+  // This is the best repaint moment in the app and it comes from the observation
+  // that a mouse wheel clears the corruption: switching to a session is exactly
+  // when someone is about to READ that viewport, and the pane is appearing
+  // anyway, so the rebuild is invisible here in a way it never is mid-stream.
+  // Inactive sessions render display:none, so a session left streaming in the
+  // background is the most likely one to have gone stale unseen.
+  //
+  // Deliberately NOT a synthetic wheel event: a real scroll moves the viewport
+  // and would yank the view of anyone who had scrolled up to read something.
+  // This fires the repaint the wheel would have caused, and nothing else.
+  //
+  // No `terminalReady` dependency: before the repainter exists there is nothing
+  // to rebuild and the atlas is new anyway, so the mount pass is a deliberate
+  // no-op. Every later activation is what this is for.
+  useEffect(() => {
+    if (!isActive) return
+    repainterRef.current?.strongIfStale(ACTIVATION_MAX_STALE_MS)
   }, [isActive])
   const updateSession = useSessionStore((s) => s.updateSession)
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
@@ -438,11 +463,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // then we try ONE recreate in the next frame (GPU-blip recovery).
       // If recreate fails, we force term.refresh so the DOM renderer
       // repaints the viewport the dead WebGL canvas left garbled.
-      webglHandle = installWebglWithRecovery(term, {
-        WebglAddonCtor: WebglAddon,
-        raf: requestAnimationFrame,
-        isDisposed: () => disposed,
-      })
+      // The GPU renderer is opt-OUT (see TerminalSettings.gpuRendering). Off, we
+      // never load the addon at all and xterm uses its DOM renderer, which has
+      // no glyph atlas and so cannot show the stale-glyph artifact this whole
+      // repainter exists to bound. Read once at mount — changing it applies to
+      // terminals opened afterwards, which keeps a live session from having its
+      // renderer swapped underneath it.
+      if (ts.gpuRendering !== false) {
+        webglHandle = installWebglWithRecovery(term, {
+          WebglAddonCtor: WebglAddon,
+          raf: requestAnimationFrame,
+          isDisposed: () => disposed,
+        })
+      }
       // #273: bust stale WebGL glyphs by reproducing the window-resize repaint
       // (clearTextureAtlas + refresh) against whichever addon is currently live.
       repainter = createStaleGlyphRepainter({
@@ -456,6 +489,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         setTimer: (cb, ms) => setTimeout(cb, ms),
         clearTimer: (h) => clearTimeout(h),
       })
+      repainterRef.current = repainter
 
       // #119: cursor options passed to the Terminal constructor do NOT reliably
       // initialize the WebGL renderer's cursor layer — the caret stays absent
@@ -852,6 +886,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // defeat the 1/sec bound); when output truly stops it still clears
             // the final ghost within one interval.
             repainter.settle(undefined, paceMs, strong)
+            // ...and one STRONG rebuild once output actually stops. The atlas
+            // goes stale on its own (#273: new glyph variety in the stream is
+            // enough), and only a rebuild fixes it — which is why a window
+            // resize clears it by hand. Doing it in the GAP means the user never
+            // has to: nothing is moving, so it is not competing with a stream of
+            // new frames, and the text they are about to read is corrected.
+            repainter.settleStrong()
+            // ...and a backstop, because settleStrong is DEBOUNCED: a stream
+            // that never leaves an 800ms gap pushes it out indefinitely, so the
+            // atlas stays stale for the whole length of a long build log or
+            // Claude Code response and the mouse wheel is the only way out.
+            // This only fires once the atlas has been stale that long anyway.
+            repainter.strongIfStale()
           }
         }
 
@@ -1058,6 +1105,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
       repainter?.dispose()
+      if (repainterRef.current === repainter) repainterRef.current = null
       resizeObserver?.disconnect()
       unsubData?.()
       unsubExit?.()

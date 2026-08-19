@@ -1,6 +1,6 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
-import { ShellBadge, SshBadge } from './Badges'
+import { SessionTypeBadge, SshBadge } from './Badges'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -34,7 +34,7 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
   const launchBlocked = codexOff && config.provider === 'codex'
   return (
     <div
-      className={`flex items-center gap-1.5 rounded py-1 px-2 group transition-colors hover:bg-surface0/50 ${isDragOver ? 'border-t-2 border-blue' : ''}`}
+      className={`relative flex items-center gap-1.5 rounded py-1 px-2 group transition-colors hover:bg-surface0/50 ${isDragOver ? 'border-t-2 border-blue' : ''}`}
       onContextMenu={onContextMenu}
       draggable={draggable}
       onDragStart={onDragStart}
@@ -56,9 +56,18 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           Codex off
         </span>
       )}
+      {/* Same order as the session card: transport, then type. Every config
+          shows its type now, not just shell ones. */}
       {config.sessionType === 'ssh' && <SshBadge />}
-      {config.shellOnly && <ShellBadge />}
-      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+      <SessionTypeBadge kind={config.shellOnly ? 'shell' : (config.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'} />
+      {/* Overlaid on hover rather than held in the row's flex line. As
+          layout children these buttons reserved their width permanently, even
+          at opacity-0 -- so every label truncated against a strip of blank
+          space that only exists for controls the user cannot see. Absolute
+          positioning gives the label the full row at rest and still avoids the
+          reflow that display:none would cause on hover. The backdrop keeps the
+          buttons legible over the tail of a long label. */}
+      <div className="absolute right-2 flex gap-0.5 items-center rounded pl-2 bg-gradient-to-l from-surface0 via-surface0 to-transparent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity">
         <button
           onClick={launchBlocked ? undefined : onLaunch}
           disabled={launchBlocked}

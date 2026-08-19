@@ -145,7 +145,12 @@ export function setupCanvasListener(): void {
     // pane is CLOSED is news the user has not seen — pulse the Canvas button
     // until they open it. With the pane open, the surface itself shows the
     // change (and version switches the user makes in-pane are not news).
-    if (!useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
+    //
+    // A null active version is never news: that is the shape emitted when a
+    // canvas goes AWAY (deleted from the library, possibly from another
+    // session's window). Pulsing there promises the owning session something
+    // new to look at and then shows it an empty pane.
+    if (event.activeVersionId && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
       store.markUnseenRender(event.sessionId)
     }
     void store.refresh(event.sessionId)

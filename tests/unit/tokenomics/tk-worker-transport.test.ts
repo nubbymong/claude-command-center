@@ -12,8 +12,8 @@ describe('FakeTkWorkerTransport', () => {
     t.post({ type: 'open', dbPath: ':memory:', pricing: {}, configs: [], claudeProjectsDir: '/c', codexSessionsDir: '/x' })
     expect(t.workerMessages).toHaveLength(1)
     expect(fromMain[0].type).toBe('open')
-    t.emitToMain({ type: 'ready' })
-    expect(fromWorker[0]).toEqual({ type: 'ready' })
+    t.emitToMain({ type: 'ready', firstIndexComplete: true, eventsTotal: 7 })
+    expect(fromWorker[0]).toEqual({ type: 'ready', firstIndexComplete: true, eventsTotal: 7 })
   })
   it('kill() flips killed', () => {
     const t = new FakeTkWorkerTransport(); t.kill(); expect(t.killed).toBe(true)

@@ -38,7 +38,12 @@ CREATE TABLE IF NOT EXISTS tk_files (
   size           INTEGER NOT NULL,
   mtime          INTEGER NOT NULL,
   lastOffset     INTEGER NOT NULL DEFAULT 0,
-  lastIngestedAt INTEGER NOT NULL DEFAULT 0
+  lastIngestedAt INTEGER NOT NULL DEFAULT 0,
+  scannedTo      INTEGER NOT NULL DEFAULT 0,
+  codexSessionId TEXT    NOT NULL DEFAULT '',
+  codexModel     TEXT    NOT NULL DEFAULT '',
+  codexCwd       TEXT    NOT NULL DEFAULT '',
+  codexTurns     INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tk_events (
@@ -121,7 +126,36 @@ CREATE TABLE IF NOT EXISTS tk_configs (
 );
 `
 
-export interface TkFileCursor { path: string; size: number; mtime: number; lastOffset: number; lastIngestedAt: number }
+export interface TkFileCursor {
+  path: string
+  size: number
+  mtime: number
+  /** Where PARSING resumes: the end of the last complete line consumed. */
+  lastOffset: number
+  lastIngestedAt: number
+  /** How far the file has been LOOKED AT, which runs ahead of `lastOffset`
+   *  whenever the tail is a partial line. "Have we seen all of this file yet"
+   *  is `scannedTo >= size` — asking that of `lastOffset` is wrong for any
+   *  file whose last line has no newline, and re-reading such a tail on every
+   *  sweep is how a healthy file turns into permanent background I/O. */
+  scannedTo?: number
+  /** Codex only: the rollout's identity, carried across ticks. A resumed tick
+   *  used to re-derive this from a bounded read of the file's head, which
+   *  silently yielded ZERO events for the whole tick whenever the head did not
+   *  hold it — the parser returns nothing without a session id. */
+  codexSessionId?: string
+  /** Codex only: last model seen. The model is announced by `turn_context`
+   *  lines near the top of a rollout, so a tick starting past them priced its
+   *  turns as 'unknown' — which matches no pricing row and costs $0. */
+  codexModel?: string
+  codexCwd?: string
+  /** Codex only: token_count lines already ingested FROM THIS FILE — the base
+   *  for the dedup ordinal. Per-FILE, and written in the same transaction as
+   *  the rows themselves, so it can never drift from what is stored. Deriving
+   *  it from a per-session row count instead let a replayed byte range mint
+   *  fresh keys for turns already stored, double-counting real money. */
+  codexTurns?: number
+}
 
 export interface TkDb {
   raw: Database.Database
@@ -129,6 +163,13 @@ export interface TkDb {
   setMeta(key: string, value: string): void
   getFileCursor(path: string): TkFileCursor | null
   setFileCursor(c: TkFileCursor): void
+  /** Insert events AND advance that file's cursor in ONE transaction. Two
+   *  separate transactions leave a window where the rows are committed and the
+   *  cursor is not; the next tick then re-reads the same bytes against a moved
+   *  ordinal base and inserts the same turns under fresh dedup keys, inflating
+   *  spend permanently. The supervisor hard-kills the worker on app quit, so
+   *  that window is hit in normal use, not only in a crash. */
+  insertEventsWithCursor(events: TkEvent[], cursor: TkFileCursor): number
   eventCount(): number
   insertEvents(events: TkEvent[]): number
   upsertConfigs(configs: Array<{ configId: string; label: string; workingDirectory: string }>): void
@@ -144,11 +185,54 @@ export function openTkDb(dbPath: string): TkDb {
   const sqlite = new Database(dbPath)
   sqlite.exec(DDL)
 
+  // `CREATE TABLE IF NOT EXISTS` leaves an existing tk_files alone, so the
+  // per-file streaming state added after the first release has to be grafted
+  // on. Every column is NOT NULL DEFAULT, so an existing row migrates to the
+  // "nothing known yet" state and simply re-derives on its next tick.
+  {
+    const have = new Set((sqlite.pragma('table_info(tk_files)') as Array<{ name: string }>).map((c) => c.name))
+    const added: Array<[string, string]> = [
+      ['scannedTo', 'INTEGER NOT NULL DEFAULT 0'],
+      ['codexSessionId', "TEXT NOT NULL DEFAULT ''"],
+      ['codexModel', "TEXT NOT NULL DEFAULT ''"],
+      ['codexCwd', "TEXT NOT NULL DEFAULT ''"],
+      ['codexTurns', 'INTEGER NOT NULL DEFAULT 0'],
+    ]
+    for (const [col, ddl] of added) if (!have.has(col)) sqlite.exec(`ALTER TABLE tk_files ADD COLUMN ${col} ${ddl}`)
+    // A pre-migration row has scannedTo=0 but was in fact scanned to
+    // lastOffset; leaving it at 0 would report every known file as unscanned
+    // and hold the index at "not complete" forever.
+    if (!have.has('scannedTo')) sqlite.exec('UPDATE tk_files SET scannedTo = lastOffset WHERE scannedTo = 0')
+    // A pre-migration Codex cursor cannot say how many turns of ITS file are
+    // already stored — `codexTurns` arrives as 0 while `lastOffset` is deep
+    // into the file. Numbering the next turns from zero would collide with the
+    // rows already there, and `INSERT OR IGNORE` would drop them: a silent,
+    // permanent UNDERCOUNT, once, for every existing user. Rewind those cursors
+    // instead. A Codex file re-read from the top numbers its turns exactly as
+    // they were numbered before, so the stored rows dedup against themselves
+    // and nothing is lost or duplicated. Costs one re-read per rollout, once.
+    if (!have.has('codexTurns')) sqlite.exec("UPDATE tk_files SET lastOffset = 0, scannedTo = 0 WHERE path LIKE '%rollout-%'")
+  }
+
   const getMetaStmt = sqlite.prepare('SELECT value FROM tk_meta WHERE key = ?')
   const setMetaStmt = sqlite.prepare('INSERT INTO tk_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
-  const getCursorStmt = sqlite.prepare('SELECT path,size,mtime,lastOffset,lastIngestedAt FROM tk_files WHERE path = ?')
-  const setCursorStmt = sqlite.prepare(`INSERT INTO tk_files(path,size,mtime,lastOffset,lastIngestedAt) VALUES(@path,@size,@mtime,@lastOffset,@lastIngestedAt)
-    ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,lastOffset=excluded.lastOffset,lastIngestedAt=excluded.lastIngestedAt`)
+  const getCursorStmt = sqlite.prepare('SELECT path,size,mtime,lastOffset,lastIngestedAt,scannedTo,codexSessionId,codexModel,codexCwd,codexTurns FROM tk_files WHERE path = ?')
+  const setCursorStmt = sqlite.prepare(`INSERT INTO tk_files(path,size,mtime,lastOffset,lastIngestedAt,scannedTo,codexSessionId,codexModel,codexCwd,codexTurns)
+      VALUES(@path,@size,@mtime,@lastOffset,@lastIngestedAt,@scannedTo,@codexSessionId,@codexModel,@codexCwd,@codexTurns)
+    ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,lastOffset=excluded.lastOffset,lastIngestedAt=excluded.lastIngestedAt,
+      scannedTo=excluded.scannedTo,codexSessionId=excluded.codexSessionId,codexModel=excluded.codexModel,codexCwd=excluded.codexCwd,codexTurns=excluded.codexTurns`)
+
+  // Fill the columns a caller predating them does not know about. `scannedTo`
+  // defaults to lastOffset (the honest reading of "scanned this far") rather
+  // than 0, so an old caller never reports a file as unscanned.
+  const cursorRow = (c: TkFileCursor): Record<string, unknown> => ({
+    path: c.path, size: c.size, mtime: c.mtime, lastOffset: c.lastOffset, lastIngestedAt: c.lastIngestedAt,
+    scannedTo: c.scannedTo ?? c.lastOffset,
+    codexSessionId: c.codexSessionId ?? '',
+    codexModel: c.codexModel ?? '',
+    codexCwd: c.codexCwd ?? '',
+    codexTurns: c.codexTurns ?? 0,
+  })
   const countStmt = sqlite.prepare('SELECT COUNT(*) AS n FROM tk_events')
 
   const insEvent = sqlite.prepare(`INSERT OR IGNORE INTO tk_events
@@ -209,12 +293,22 @@ export function openTkDb(dbPath: string): TkDb {
     return inserted
   })
 
+  // One transaction over both writes. better-sqlite3 turns the nested
+  // transaction into a savepoint, so a failure anywhere rolls back the rows
+  // AND the cursor together — the invariant the ordinal base depends on.
+  const insertEventsWithCursorTxn = sqlite.transaction((events: Array<TkEvent & { configId?: string | null }>, c: TkFileCursor) => {
+    const n = events.length ? insertEventsTxn(events) : 0
+    setCursorStmt.run(cursorRow(c))
+    return n
+  })
+
   return {
     raw: sqlite,
     getMeta: (key) => (getMetaStmt.get(key) as { value: string } | undefined)?.value ?? null,
     setMeta: (key, value) => { setMetaStmt.run(key, value) },
     getFileCursor: (path) => (getCursorStmt.get(path) as TkFileCursor | undefined) ?? null,
-    setFileCursor: (c) => { setCursorStmt.run(c) },
+    setFileCursor: (c) => { setCursorStmt.run(cursorRow(c)) },
+    insertEventsWithCursor: (events, cursor) => insertEventsWithCursorTxn(events as any, cursor),
     eventCount: () => (countStmt.get() as { n: number }).n,
     insertEvents: (events) => insertEventsTxn(events as any),
     upsertConfigs: (configs) => { const txn = sqlite.transaction((cs: any[]) => { for (const c of cs) upConfig.run(c) }); txn(configs) },

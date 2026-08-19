@@ -34,7 +34,7 @@ import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import SessionDialog from './components/SessionDialog'
 import GuidedTour from './components/GuidedTour'
-import HelpPanel from './components/HelpPanel'
+import FeatureGuidePage from './components/FeatureGuidePage'
 import AccountUsagePanel from './components/AccountUsagePanel'
 import TipModal from './components/TipModal'
 import { useTipsStore, trackUsage } from './stores/tipsStore'
@@ -49,7 +49,8 @@ import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
-import { deriveOnboarding, shouldReonboardForBeta } from './onboarding/gate'
+import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
+import { bootWhatsNewSurface } from './onboarding/upgrade-flow'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
@@ -94,8 +95,14 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [viewRaw, setViewRaw] = useState<ViewType>('sessions')
   const view = viewRaw
+  // Pages (Tokenomics, Logs, Feature Guide, …) open as TABS in the main strip
+  // alongside sessions, in open order, and persist until closed. `view` is the
+  // active tab: 'sessions' means a session tab is active, any other value means
+  // that page tab is active. Opening a page adds it here if not already open.
+  const [openPageTabs, setOpenPageTabs] = useState<ViewType[]>([])
   const setView = (v: ViewType) => {
     setViewRaw(v)
+    if (v !== 'sessions') setOpenPageTabs((prev) => (prev.includes(v) ? prev : [...prev, v]))
     // Track view usage for the tips system
     const map: Record<string, string> = {
       'memory': 'memory.memory-page',
@@ -108,6 +115,21 @@ export default function App() {
     const featureId = map[v]
     if (featureId) trackUsage(featureId)
   }
+  // Close a page tab. If it was the active tab, fall back to the last remaining
+  // page tab, else the sessions view.
+  const closePageTab = (v: ViewType) => {
+    setOpenPageTabs((prev) => prev.filter((x) => x !== v))
+    setViewRaw((cur) => {
+      if (cur !== v) return cur
+      const remaining = openPageTabs.filter((x) => x !== v)
+      return remaining.length ? remaining[remaining.length - 1] : 'sessions'
+    })
+  }
+  // Activate a session tab: switch the pane back to sessions and select it.
+  const activateSessionTab = (id: string) => {
+    useSessionStore.getState().setActiveSession(id)
+    setViewRaw('sessions')
+  }
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
   const [configLoaded, setConfigLoaded] = useState(false)
   // Logs v2 first-run wipe gate: null = not yet detected, >0 = old artifacts
@@ -118,6 +140,9 @@ export default function App() {
   const [isUpdating, setIsUpdating] = useState(false)
   const [closeDialog, setCloseDialog] = useState<'close' | 'update' | null>(null)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
+  /** lastSeenVersion as it was at boot, captured when the What's New modal is
+   *  armed so its "since" range cannot be moved by a later stamp. */
+  const whatsNewSinceRef = useRef<string | undefined>(undefined)
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
@@ -172,9 +197,9 @@ export default function App() {
   // Feature Guide button). Anchored coach-marks over the real UI, ending by
   // opening the first-config dialog.
   const [tourActive, setTourActive] = useState(false)
-  // One home for help (searchable guide + feature tour + Ask Claude); opened
-  // by the sidebar ? button.
-  const [showHelpPanel, setShowHelpPanel] = useState(false)
+  // The Feature Guide is a page tab (ViewType 'help'), opened from the sidebar ?
+  // button — it opens in the main tab strip like any other page, no longer a
+  // portal modal that covered whatever page was open.
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   // Sessions whose partner terminal has been opened at least once — gates the
@@ -239,7 +264,7 @@ export default function App() {
   }, [sessions])
 
   // Global keyboard shortcuts
-  useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
+  useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView, view, openPageTabs, closePageTab)
   // Stamp data-theme on <html> from the persisted setting + listen for
   // OS prefers-color-scheme changes when in 'system' mode.
   useThemeController()
@@ -375,14 +400,41 @@ export default function App() {
     async function postConfigInit() {
       const appMeta = useAppMetaStore.getState().meta
 
-      // Beta line: re-fire the first-run tour on every app version so testers see
-      // the latest flow. Clearing completedSteps + onboardingCompletedVersion
-      // flips deriveOnboarding back to due (the harness re-runs); its finish step
-      // re-stamps onboardingAppVersion so it won't re-fire until the next version.
-      // First install runs via deriveOnboarding already; stable retriggers only on
-      // an ONBOARDING_VERSION bump (a major feature).
-      if (shouldReonboardForBeta(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)) {
+      // Re-fire the first-run tour when the VERSION warrants it: every build on
+      // the beta line so testers see the current flow, and on any channel when
+      // the user has crossed a release line (2.0.x → 2.1.x). Clearing
+      // completedSteps + onboardingCompletedVersion flips deriveOnboarding back
+      // to due (the harness re-runs); its finish step re-stamps
+      // onboardingAppVersion so it will not re-fire until the next one that
+      // qualifies. A first install runs through deriveOnboarding already.
+      const reonboard = shouldReonboardForVersion(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)
+      if (reonboard) {
         useAppMetaStore.getState().update({ completedSteps: {}, onboardingCompletedVersion: undefined })
+      }
+
+      // What's New, for the launch where NO tour runs. The tour is the what's-new
+      // surface for its own cohort (its finish step stamps lastSeenVersion for
+      // exactly that reason), so a version change that does not re-run the tour
+      // — a stable user moving within a line — must show the notes itself. This
+      // arm was removed at 2.0 on the reasoning that the harness replaced it,
+      // which is true only when the harness runs; without it a within-line
+      // stable upgrade showed nothing, ever, and lastSeenVersion stayed stale —
+      // which also kept the GitHub onboarding modal from arming (its gate
+      // waits on shouldShowWhatsNew() clearing).
+      //
+      // The whole decision comes from one place; see decideUpgradeFlow and
+      // bootWhatsNewSurface. Read BEFORE the harness can stamp anything.
+      const surface = bootWhatsNewSurface({
+        tourWillRun: reonboard || deriveOnboarding(useAppMetaStore.getState().meta, {}).due,
+        whatsNewDue: shouldShowWhatsNew(),
+      })
+      if (surface === 'modal') {
+        // Snapshot the origin now. The modal must compute "since when" from the
+        // version at BOOT, not from whatever lastSeenVersion holds when it
+        // mounts — anything that stamps in between would collapse the range to
+        // the newest entry, which is the bug this replaces.
+        whatsNewSinceRef.current = useAppMetaStore.getState().meta.lastSeenVersion
+        setShowWhatsNew(true)
       }
 
       if (appMeta.setupVersion !== __APP_VERSION__) {
@@ -706,20 +758,23 @@ export default function App() {
     return () => unsub()
   }, [isClosing])
 
-  // Render non-session views (shown on top of sessions)
-  const renderOverlayView = () => {
-    if (view === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
-    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} onUpdateRequested={handleUpdateRequested} />
-    if (view === 'insights') return <InsightsPage onNavigateToSessions={() => setView('sessions')} />
-    if (view === 'cloud-agents') return <CloudAgentsPage />
-    if (view === 'tokenomics') return <TokenomicsPage />
-    if (view === 'vision') return <ConductorMcpPage />
-    if (view === 'memory') return <MemoryPage
+  // Render one page for a given view. Each open page tab renders its own
+  // instance, kept mounted (display-toggled) so it persists while another tab is
+  // active — the same way sessions stay alive.
+  const renderPage = (v: ViewType) => {
+    if (v === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
+    if (v === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} onUpdateRequested={handleUpdateRequested} />
+    if (v === 'insights') return <InsightsPage onNavigateToSessions={() => setView('sessions')} />
+    if (v === 'cloud-agents') return <CloudAgentsPage />
+    if (v === 'tokenomics') return <TokenomicsPage />
+    if (v === 'vision') return <ConductorMcpPage />
+    if (v === 'memory') return <MemoryPage
       onClose={() => setView('sessions')}
       onOpenSessionLogs={(sessionId) => { setPendingLogsSessionId(sessionId); setView('logs') }}
       onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
     />
-    if (view === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
+    if (v === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
+    if (v === 'help') return <FeatureGuidePage onNavigateToSessions={() => setView('sessions')} onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }} />
     return null
   }
 
@@ -740,7 +795,6 @@ export default function App() {
 
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
-        <TabBar />
         <SessionHeader session={activeSession} onShowTip={() => setShowTipModal(true)} />
         {(() => {
           const gi = activeSession.githubIntegration
@@ -1043,15 +1097,8 @@ export default function App() {
             }}
           />
         )}
-        {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} />}
+        {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} sinceVersion={whatsNewSinceRef.current} />}
         {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
-        {showHelpPanel && (
-          <HelpPanel
-            onClose={() => setShowHelpPanel(false)}
-            onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }}
-            onShowSessions={() => setView('sessions')}
-          />
-        )}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -1185,15 +1232,32 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} onShowAccountUsage={() => setView('account-usage')} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
+            {/* One tab strip for the whole main window: session tabs + any open
+                page tabs (Tokenomics, Logs, Feature Guide, …). Always visible so
+                a page is a peer of a session, never a full-pane takeover. */}
+            <TabBar
+              activeView={view}
+              openPageTabs={openPageTabs}
+              onActivateSession={activateSessionTab}
+              onActivatePage={(v) => setView(v)}
+              onClosePage={closePageTab}
+            />
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
               {/* The live app is always what's behind — the first-config flow is
                   the REAL SessionDialog rendered as an overlay (below), so the
                   user sees the workbench while creating their first session.
                   (The old full-column GuidedConfigView is retired.) */}
               {renderSessions()}
-              {renderOverlayView()}
+              {/* Every open page tab is kept mounted and display-toggled, so
+                  switching to a session and back preserves its state — the same
+                  discipline the session list uses to keep PTYs alive. */}
+              {openPageTabs.map((v) => (
+                <div key={`page-pane:${v}`} className="flex-1 flex flex-col min-h-0" style={{ display: view === v ? 'flex' : 'none' }}>
+                  {renderPage(v)}
+                </div>
+              ))}
             </div>
           </main>
         </div>

@@ -41,6 +41,60 @@ export const REPAINT_MIN_INTERVAL_MS = 250
  *  flows and the settle repaint clears the final one when it stops. */
 export const BOTTOM_STREAM_INTERVAL_MS = 1000
 
+/**
+ * Output quiet for this long → one STRONG (atlas-rebuilding) settle repaint, at
+ * most once per STRONG_SETTLE_INTERVAL_MS.
+ *
+ * This is the answer to "can it just not happen". The glyph atlas goes stale on
+ * its own (#273) — new glyph variety in the stream is enough, which is why a
+ * fresh piece of Claude Code UI can trigger it — and only an atlas rebuild
+ * fixes it, which is what a window resize does by hand. beta.13 rebuilt it
+ * DURING the stream and flashed constantly; beta.14 stopped, and the staleness
+ * became visible until the user scrolled.
+ *
+ * Rebuilding when output has gone QUIET gets both: nothing is moving on screen,
+ * so the rebuild is not competing with a stream of new frames, and the stale
+ * text the user is about to sit and read is corrected without them touching
+ * anything. A chatty stream with sub-second gaps keeps pushing it out, and the
+ * interval floor stops a stream that pauses constantly from turning back into
+ * beta.13.
+ */
+export const STRONG_SETTLE_QUIET_MS = 800
+
+/** Floor between STRONG settle repaints, so a stream that pauses every second
+ *  cannot drag the atlas rebuild back up to the beta.13 rate. */
+export const STRONG_SETTLE_INTERVAL_MS = 3000
+
+/**
+ * Hard ceiling on atlas staleness: rebuild after this long even if output never
+ * goes quiet.
+ *
+ * `settleStrong` puts the rebuild in the GAP, which is the right place — but it
+ * is DEBOUNCED, so a stream whose chunks are consistently closer together than
+ * STRONG_SETTLE_QUIET_MS pushes it out indefinitely and the rebuild never
+ * happens at all. A build log, a long Claude Code response, a test runner —
+ * anything that streams steadily for minutes is exactly that stream, and the
+ * user watches the viewport degrade with no way out but the mouse wheel. That
+ * is the reported symptom, and it is why the gap has to be the PREFERRED moment
+ * rather than the only one.
+ *
+ * At 5s this is ~20x gentler than the per-chunk rebuild that made beta.13
+ * flash, and it only ever fires on a stream that has denied the scheduler a gap
+ * for that long.
+ */
+export const STRONG_MAX_STALE_MS = 5000
+
+/**
+ * Staleness ceiling applied when a terminal becomes the ACTIVE tab.
+ *
+ * Switching to a session is the best rebuild moment there is: the user is about
+ * to read that viewport, the pane is appearing anyway so a rebuild cannot be
+ * seen, and nothing is competing with it. Much tighter than the streaming
+ * ceiling for that reason — the only thing it guards against is a rebuild on
+ * every tab switch when someone is flicking between sessions.
+ */
+export const ACTIVATION_MAX_STALE_MS = 1000
+
 /** Output quiet for this long → one settle repaint. Long enough that a
  *  continuous stream keeps re-arming it (the periodic pace covers that), short
  *  enough that a ghost never sits on a finished stream for long. */
@@ -142,6 +196,16 @@ export interface StaleGlyphRepainter {
    *  moment it stops, the last chunk's ghost is cleared. Pass the stream's own
    *  pace so a settle firing mid-stream cannot repaint faster than the stream. */
   settle(quietMs?: number, intervalMs?: number, strong?: boolean): void
+  /** Arm (or re-arm) ONE STRONG (atlas-rebuilding) repaint for when output goes
+   *  quiet. Its own debounce timer, independent of `settle`, so the cheap
+   *  during-stream settle and this cannot clobber each other. See
+   *  STRONG_SETTLE_QUIET_MS for why the rebuild belongs in the gap rather than
+   *  in the stream. */
+  settleStrong(quietMs?: number, intervalMs?: number): void
+  /** Rebuild the atlas NOW if it has not been rebuilt for `maxStaleMs`, whether
+   *  or not output ever went quiet. The backstop for a stream that never leaves
+   *  a gap for `settleStrong` to land in; see STRONG_MAX_STALE_MS. */
+  strongIfStale(maxStaleMs?: number): void
   /** Cancel any pending repaint and refuse further ones. */
   dispose(): void
 }
@@ -160,15 +224,32 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
   let lastPaintAt = Number.NEGATIVE_INFINITY
   /** Whether the repaint this throttle window will produce must rebuild the atlas. */
   let pendingStrong = false
+  /** When the atlas was last actually REBUILT. Tracked separately from
+   *  lastPaintAt because the two are throttled for different reasons: cheap
+   *  refreshes are paced so they do not spam the renderer, the rebuild is paced
+   *  because it is the thing that can flash. Sharing one clock let a steady
+   *  stream of cheap refreshes defer the rebuild indefinitely (it never ran),
+   *  and let a stream that paused constantly run one on every pause. */
+  let lastStrongPaintAt = Number.NEGATIVE_INFINITY
+  /** When the atlas was last known-good: a rebuild, or the moment this repainter
+   *  was created (a fresh terminal starts with a fresh atlas). Separate from
+   *  lastStrongPaintAt, which stays at -Infinity so the FIRST settleStrong is
+   *  never held off by its own floor. */
+  let atlasFreshAt = deps.now()
   let timer: ReturnType<typeof setTimeout> | null = null
   /** When the armed trailing timer is due (deps.now() clock), so a faster-paced
    *  request can tell whether it would fire sooner and bring it forward. */
   let timerDueAt = Number.POSITIVE_INFINITY
   let settleTimer: ReturnType<typeof setTimeout> | null = null
+  let strongSettleTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
 
   const paint = (strong: boolean) => {
     lastPaintAt = deps.now()
+    if (strong) {
+      lastStrongPaintAt = lastPaintAt
+      atlasFreshAt = lastPaintAt
+    }
     if (!strong) {
       // Cheap path (#292 at-bottom coverage): re-render the viewport from the
       // atlas ALREADY in memory. Fixes a stale painted cell without the rebuild
@@ -241,11 +322,43 @@ export function createStaleGlyphRepainter(deps: RepainterDeps): StaleGlyphRepain
     }, quietMs)
   }
 
+  const settleStrong = (quietMs: number = STRONG_SETTLE_QUIET_MS, intervalMs: number = STRONG_SETTLE_INTERVAL_MS) => {
+    if (disposed) return
+    // Debounced on its OWN timer: every chunk pushes the rebuild out, so it only
+    // lands in a real gap in the output. Routed through the shared throttle at
+    // the strong interval, which is what stops a stream that pauses every second
+    // from rebuilding the atlas every second.
+    if (strongSettleTimer) deps.clearTimer(strongSettleTimer)
+    strongSettleTimer = deps.setTimer(() => {
+      strongSettleTimer = null
+      if (disposed) return
+      // Against its OWN floor, and SKIPPED rather than deferred when inside it:
+      // the next chunk of output re-arms this anyway, so there is nothing to
+      // queue up, and queueing was what let a rebuild land in the middle of the
+      // next burst instead of in a gap.
+      if (deps.now() - lastStrongPaintAt < intervalMs) return
+      if (timer) { deps.clearTimer(timer); timer = null; timerDueAt = Number.POSITIVE_INFINITY }
+      pendingStrong = false
+      paint(true)
+    }, quietMs)
+  }
+
+  const strongIfStale = (maxStaleMs: number = STRONG_MAX_STALE_MS) => {
+    if (disposed) return
+    if (deps.now() - atlasFreshAt < maxStaleMs) return
+    // Take over any pending trailing repaint rather than letting it fire a
+    // second time straight after this one.
+    if (timer) { deps.clearTimer(timer); timer = null; timerDueAt = Number.POSITIVE_INFINITY }
+    pendingStrong = false
+    paint(true)
+  }
+
   const dispose = () => {
     disposed = true
     if (timer) { deps.clearTimer(timer); timer = null; timerDueAt = Number.POSITIVE_INFINITY }
     if (settleTimer) { deps.clearTimer(settleTimer); settleTimer = null }
+    if (strongSettleTimer) { deps.clearTimer(strongSettleTimer); strongSettleTimer = null }
   }
 
-  return { schedule, settle, dispose }
+  return { schedule, settle, settleStrong, strongIfStale, dispose }
 }

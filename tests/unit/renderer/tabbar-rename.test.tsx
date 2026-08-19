@@ -44,7 +44,7 @@ afterEach(() => {
   container.remove()
 })
 
-const render = () => act(() => { root.render(<TabBar />) })
+const render = () => act(() => { root.render(<TabBar activeView="sessions" openPageTabs={[]} onActivateSession={() => {}} onActivatePage={() => {}} onClosePage={() => {}} />) })
 const tabButton = () =>
   Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('aria-label') === 'API Refactor')
 

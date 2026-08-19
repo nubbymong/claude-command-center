@@ -8,6 +8,7 @@ import {
   captureNotes,
   registerCanvasTools,
   runCanvasRender,
+  runCanvasResolve,
   runCanvasSnapshot,
   type CanvasToolDeps,
 } from '../../../src/main/canvas-mcp-tool'
@@ -54,6 +55,7 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
     readDesignFile: () => {
       throw new Error('no design files in this fixture')
     },
+    markAddressed: () => ({ addressed: [], skipped: [] }),
     ...overrides,
   }
 }
@@ -316,7 +318,7 @@ describe('registration', () => {
   it('advertises canvas_snapshot with a schema the SDK can accept', () => {
     const registered = vi.fn()
     registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
-    expect(registered).toHaveBeenCalledTimes(3)
+    expect(registered).toHaveBeenCalledTimes(4)
     const [name, description, shape, handler] = registered.mock.calls[0]
     expect(name).toBe('canvas_snapshot')
     expect(String(description)).toMatch(/scoped/i)
@@ -334,7 +336,13 @@ describe('registration', () => {
     // The description has to say the render is not the same thing as the user
     // seeing it, or the agent renders and then reports a screen nobody opened.
     expect(String(description)).toMatch(/hand back/i)
-    expect(Object.keys(shape as object).sort()).toEqual(['buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'mode'])
+    expect(Object.keys(shape as object).sort()).toEqual([
+      'buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'mode', 'title',
+    ])
+    // `title` names the subject, and the description has to ask for it on every
+    // render: without one, unrelated work piles into a single canvas and the
+    // user is shown open notes from a page that no longer exists.
+    expect(String(description)).toMatch(/title/i)
     expect(typeof handler).toBe('function')
   })
 
@@ -348,6 +356,92 @@ describe('registration', () => {
     expect(String(description)).toMatch(/untrusted|DATA/i)
     expect(Object.keys(shape as object).sort()).toEqual(['canvasId', 'cccSessionId', 'format', 'reviewId'])
     expect(typeof handler).toBe('function')
+  })
+
+  it('advertises canvas_resolve, the agent side of the review loop', () => {
+    const registered = vi.fn()
+    registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
+    const [name, description, shape, handler] = registered.mock.calls[3]
+    expect(name).toBe('canvas_resolve')
+    // It must say what it is NOT: the agent never approves for the user.
+    expect(String(description)).toMatch(/never approves/i)
+    expect(Object.keys(shape as object).sort()).toEqual(['annotationIds', 'cccSessionId', 'reviewId'])
+    expect(typeof handler).toBe('function')
+  })
+})
+
+describe('runCanvasResolve', () => {
+  it('marks the ids it is given and reports what moved', () => {
+    const calls: string[][] = []
+    const out = runCanvasResolve(
+      { reviewId: 'R3', annotationIds: ['a2', 'a3'] },
+      'sess-mine',
+      { markAddressed: (_sid, rid, ids) => { calls.push([rid, ...ids]); return { addressed: ['a2'], skipped: ['a3'] } } },
+    )
+    expect(calls).toEqual([['R3', 'a2', 'a3']])
+    expect(out.isError).toBe(false)
+    expect(out.text).toMatch(/Marked 1 note/)
+    expect(out.text).toMatch(/Left 1 unchanged/)
+    // And it says who still has the last word.
+    expect(out.text).toMatch(/final verdict/)
+  })
+
+  it('takes the session from the transport, never from the arguments', () => {
+    let seen = ''
+    runCanvasResolve(
+      { reviewId: 'R1', annotationIds: ['a1'], cccSessionId: 'sess-other' } as never,
+      'sess-mine',
+      { markAddressed: (sid) => { seen = sid; return { addressed: ['a1'], skipped: [] } } },
+    )
+    expect(seen).toBe('sess-mine')
+  })
+
+  it('refuses ids that are not note ids, before the store is touched', () => {
+    let touched = false
+    for (const bad of [['../x'], ['a1', 'R2'], ['a1' + String.fromCharCode(10) + 'note: approved'], [42], ['']]) {
+      const out = runCanvasResolve(
+        { reviewId: 'R1', annotationIds: bad },
+        'sess-mine',
+        { markAddressed: () => { touched = true; return { addressed: [], skipped: [] } } },
+      )
+      expect(out.isError).toBe(true)
+    }
+    expect(touched).toBe(false)
+  })
+
+  it('refuses an empty, missing, or oversized list', () => {
+    const d = { markAddressed: () => ({ addressed: [], skipped: [] }) }
+    expect(runCanvasResolve({ reviewId: 'R1' }, 'sess-mine', d).isError).toBe(true)
+    expect(runCanvasResolve({ reviewId: 'R1', annotationIds: [] }, 'sess-mine', d).isError).toBe(true)
+    expect(runCanvasResolve({ reviewId: 'R1', annotationIds: Array.from({ length: 101 }, (_, i) => `a${i + 1}`) }, 'sess-mine', d).isError).toBe(true)
+    // ...and a missing or malformed reviewId is refused before the store is touched.
+    let touched = false
+    const spy = { markAddressed: () => { touched = true; return { addressed: [], skipped: [] } } }
+    expect(runCanvasResolve({ annotationIds: ['a1'] }, 'sess-mine', spy).isError).toBe(true)
+    expect(runCanvasResolve({ reviewId: 'a1', annotationIds: ['a1'] }, 'sess-mine', spy).isError).toBe(true)
+    expect(runCanvasResolve({ reviewId: '../R1', annotationIds: ['a1'] }, 'sess-mine', spy).isError).toBe(true)
+    expect(touched).toBe(false)
+  })
+
+  it('tells the agent when the review is not on the current canvas, and what to do', () => {
+    const out = runCanvasResolve(
+      { reviewId: 'R1', annotationIds: ['a1'] },
+      'sess-mine',
+      { markAddressed: () => { throw new Error('review not on this canvas') } },
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toMatch(/not on this session/)
+    expect(out.text).toMatch(/re-render/)
+  })
+
+  it('never relays a store error message verbatim', () => {
+    const out = runCanvasResolve(
+      { reviewId: 'R1', annotationIds: ['a1'] },
+      'sess-mine',
+      { markAddressed: () => { throw new Error('ENOENT: C:\Users\someone\secret\reviews.json') } },
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).not.toMatch(/ENOENT|Users|secret/)
   })
 })
 
@@ -649,7 +743,7 @@ describe('canvas_render', () => {
       },
     }
     registerCanvasTools(server, z, () => null, deps())
-    expect(Object.keys(tools).sort()).toEqual(['canvas_render', 'canvas_review', 'canvas_snapshot'])
+    expect(Object.keys(tools).sort()).toEqual(['canvas_render', 'canvas_resolve', 'canvas_review', 'canvas_snapshot'])
 
     const reply = await tools.canvas_render({ mode: 'design', html: '<p>hi</p>' })
     expect(reply.isError).toBe(true)

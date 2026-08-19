@@ -62,7 +62,7 @@ export type {
   CanvasReviewChangedEvent, CanvasReviewState, CanvasSketchExport,
   CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasSnapshotResult,
   CanvasState, CanvasVersion, CanvasVersionSource, CanvasViewportInfo,
-  FocusObject, ReclaimableCanvas, Review,
+  FocusObject, ReclaimableCanvas, Review, CanvasLibraryEntry,
 } from '../../shared/canvas'
 import type {
   ChannelPayload,
@@ -360,6 +360,8 @@ export interface ElectronAPI {
      *  `openTileSessionIds` are the tiles the user has on screen; main uses
      *  them only to EXCLUDE candidates whose own tile is still live. */
     listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ReclaimableCanvas[]>
+    listAll: (args?: { openTileSessionIds?: string[] }) => Promise<CanvasLibraryEntry[]>
+    deleteCanvas: (args: { canvasId: string }) => Promise<{ ok: boolean }>
     /** The user reclaims a named canvas — the only path that moves ownership. */
     reclaim: (args: {
       sessionId: string

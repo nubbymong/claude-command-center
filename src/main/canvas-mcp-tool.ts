@@ -77,6 +77,9 @@ export interface CanvasToolDeps {
   /** Read one sketch PNG. Injected so this module touches no filesystem —
    *  the caller decides what a path means. */
   readAttachment: (absPath: string) => Buffer
+  /** Mark notes the agent has acted on. The agent's one write into the review
+   *  store, and it can only ever say "addressed" — see canvas_resolve. */
+  markAddressed: (sessionId: string, reviewId: string, annotationIds: readonly string[]) => { addressed: string[]; skipped: string[] }
 }
 
 function textResult(text: string, isError = false) {
@@ -250,7 +253,21 @@ interface RawRenderArgs {
   distRoot?: unknown
   entry?: unknown
   buildLabel?: unknown
+  title?: unknown
   cccSessionId?: unknown
+}
+
+/**
+ * The subject title, passed through only when it is a usable string.
+ *
+ * Not validated against a shape and not refused, unlike `buildLabel`: this is
+ * prose naming what the canvas is of, so there is nothing to be wrong about.
+ * The store does the cleaning (control characters, whitespace, length) because
+ * the store is what persists it, and a title that cleans away to nothing simply
+ * means none was given.
+ */
+function titleOf(rawArgs: RawRenderArgs): { title?: string } {
+  return typeof rawArgs.title === 'string' && rawArgs.title.trim().length > 0 ? { title: rawArgs.title } : {}
 }
 
 /** An absolute path on either OS: `X:\`/`X:/` or a POSIX root. Checked here so
@@ -350,7 +367,7 @@ export async function runCanvasRender(
       }
       html = rawArgs.html
     }
-    source = { mode: 'design', html }
+    source = { mode: 'design', html, ...titleOf(rawArgs) }
   } else {
     if (typeof rawArgs.distRoot !== 'string' || rawArgs.distRoot.length === 0) {
       return { text: 'A uat render needs the built directory in `distRoot`.', isError: true }
@@ -369,6 +386,7 @@ export async function runCanvasRender(
       distRoot: rawArgs.distRoot,
       ...(typeof rawArgs.entry === 'string' && rawArgs.entry.length > 0 ? { entry: rawArgs.entry } : {}),
       ...(typeof rawArgs.buildLabel === 'string' ? { buildLabel: rawArgs.buildLabel } : {}),
+      ...titleOf(rawArgs),
     }
   }
 
@@ -632,6 +650,81 @@ export async function runCanvasReview(
   }
 }
 
+interface RawResolveArgs {
+  reviewId?: unknown
+  annotationIds?: unknown
+  cccSessionId?: unknown
+}
+
+const REVIEW_ID_SHAPE = /^R[0-9]{1,9}$/
+
+/** Bound on one call. A review holds at most 100 notes; a list longer than
+ *  that is not a review the user wrote. */
+const MAX_RESOLVE_IDS = 100
+const ANNOTATION_ID_SHAPE = /^a[0-9]{1,9}$/
+
+/**
+ * canvas_resolve: the agent marks the notes it has acted on as ADDRESSED.
+ *
+ * Closes the loop from the other side. `canvas_review` hands the agent the
+ * user's notes; until this existed nothing let the agent say "done with these",
+ * so a review the user finished in chat rather than in the panel sat as N open
+ * notes forever, and the next render carried them forward as if unanswered.
+ *
+ * Deliberately narrow: ids only, one state, no text. It never approves —
+ * approval is the user's word — and the store refuses to touch anything the
+ * user has already resolved or is still drafting. The session comes from the
+ * transport (the #188 precedent): a prompt-injected session cannot mark notes
+ * on someone else's canvas.
+ */
+export function runCanvasResolve(
+  rawArgs: RawResolveArgs,
+  sessionId: string,
+  deps: Pick<CanvasToolDeps, 'markAddressed'>,
+): { text: string; isError: boolean } {
+  // The review the notes belong to. Required: annotation ids restart per
+  // canvas and the session's canvas can change between review and resolve, so
+  // without it the write could land on the wrong canvas's a1/a2.
+  if (typeof rawArgs.reviewId !== 'string' || !REVIEW_ID_SHAPE.test(rawArgs.reviewId)) {
+    return { text: 'canvas_resolve needs `reviewId` — the review the notes came from, as the chat marker gave it (e.g. "R3").', isError: true }
+  }
+  const raw = rawArgs.annotationIds
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return { text: 'canvas_resolve needs `annotationIds`: the note ids from canvas_review that you have acted on, e.g. ["a2","a3"].', isError: true }
+  }
+  if (raw.length > MAX_RESOLVE_IDS) {
+    return { text: `That is more than ${MAX_RESOLVE_IDS} note ids; a review never holds that many.`, isError: true }
+  }
+  const ids: string[] = []
+  for (const v of raw) {
+    if (typeof v !== 'string' || !ANNOTATION_ID_SHAPE.test(v)) {
+      return { text: 'Every entry in `annotationIds` must be a note id of the shape "a<number>", as canvas_review reported it.', isError: true }
+    }
+    ids.push(v)
+  }
+  let result: { addressed: string[]; skipped: string[] }
+  try {
+    result = deps.markAddressed(sessionId, rawArgs.reviewId, ids)
+  } catch (err) {
+    return { text: `Could not mark notes: ${describeResolveFailure(err)}`, isError: true }
+  }
+  const parts: string[] = []
+  if (result.addressed.length > 0) parts.push(`Marked ${result.addressed.length} note(s) as addressed: ${result.addressed.join(', ')}.`)
+  if (result.skipped.length > 0) parts.push(`Left ${result.skipped.length} unchanged (already resolved by the user, still a draft, or unknown): ${result.skipped.join(', ')}.`)
+  parts.push('The user still gives the final verdict from the Canvas pane; addressed notes stay visible there until they approve or dismiss them.')
+  return { text: parts.join(' '), isError: false }
+}
+
+/** Operator-authored causes only; the store's messages are our own text. */
+function describeResolveFailure(err: unknown): string {
+  const msg = err instanceof Error ? err.message : ''
+  if (msg === 'no canvas for session') return 'this session has no canvas.'
+  if (msg === 'review not on this canvas') return 'that review is not on this session\'s current canvas. If your last render named a different subject, the canvas changed under you — re-render the subject the review belongs to, then resolve.'
+  if (msg === 'review is still a draft') return 'that review has not been submitted yet.'
+  if (msg.includes('review store')) return 'the review store for this canvas is unreadable.'
+  return 'the review store refused the change.'
+}
+
 export function registerCanvasTools(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   server: any, // McpServer — lazy-typed in conductor-mcp-server.ts
@@ -679,7 +772,7 @@ export function registerCanvasTools(
 
   server.tool(
     'canvas_render',
-    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': write a complete HTML document to a file INSIDE this session\'s project folder, then pass its absolute path as htmlPath — use this to show a proposed screen. \'uat\': you supply the path of a built directory, also inside the project folder, and the app in it is served — use this to review the real product. Both modes read only from this session\'s own project folder; a path outside it is refused. Every call creates a new version; nothing is overwritten. The canvas is per-session and this tool always renders to THIS session\'s canvas. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
+    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': write a complete HTML document to a file INSIDE this session\'s project folder, then pass its absolute path as htmlPath — use this to show a proposed screen. \'uat\': you supply the path of a built directory, also inside the project folder, and the app in it is served — use this to review the real product. Both modes read only from this session\'s own project folder; a path outside it is refused. Name what you are showing with `title` on every call: a canvas holds ONE subject, so the same title adds a version to it and a different title files the current canvas and starts a fresh one. Nothing is ever overwritten. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
     {
       mode: zMod.enum(['design', 'uat']).describe("'design' renders the html document you wrote; 'uat' serves a built directory."),
       htmlPath: zMod
@@ -696,6 +789,12 @@ export function registerCanvasTools(
         .describe('uat mode only. Absolute path of the built directory. It must sit inside this session’s project folder; anything else is refused.'),
       entry: zMod.string().optional().describe("uat mode only. Entry .html file relative to distRoot. Defaults to 'index.html'."),
       buildLabel: zMod.string().optional().describe('uat mode only. Optional short label recorded with this build (letters, numbers, spaces and . _ : @ / + - only).'),
+      title: zMod
+        .string()
+        .optional()
+        .describe(
+          'What this canvas is OF, in a few words — "Title bar logo placement", "Checkout flow". Pass it on EVERY render. A canvas holds one subject and collects versions of it, so re-rendering the same subject adds a version, and naming a different subject files the current canvas and starts a fresh one. Without a title everything piles into one canvas and the user sees unresolved notes from unrelated work.',
+        ),
       cccSessionId: zMod
         .string()
         .optional()
@@ -748,6 +847,32 @@ export function registerCanvasTools(
         ],
         isError: result.isError,
       }
+    },
+  )
+
+  server.tool(
+    'canvas_resolve',
+    'Mark notes from a canvas review as ADDRESSED once you have acted on them. Pass the review id and the note ids canvas_review gave you (e.g. reviewId "R3", annotationIds ["a2","a3"]). Call this after your canvas_render of the result, for every note you handled — including notes the user answered in chat instead of the pane, so they do not sit open forever. This never approves anything: the user still gives the final verdict from the Canvas pane, and addressed notes stay visible there until they do. Notes the user has already resolved, or is still drafting, are left alone.',
+    {
+      reviewId: zMod.string().describe('The review the notes came from, e.g. "R3" — the same id you passed to canvas_review.'),
+      annotationIds: zMod
+        .array(zMod.string())
+        .describe('The note ids you acted on, exactly as canvas_review reported them ("a2", "a3", …). At most 100.'),
+      cccSessionId: zMod
+        .string()
+        .optional()
+        .describe('Ignored — the session is resolved from the MCP connection and cannot be set here. Leave unset.'),
+    },
+    async (rawArgs: RawResolveArgs) => {
+      const sessionId = getBoundSessionId()
+      if (!sessionId) {
+        return textResult(
+          'Canvas unavailable: this MCP connection has no bound Conductor session. Restart the session from inside AI Code Conductor.',
+          true,
+        )
+      }
+      const result = runCanvasResolve(rawArgs, sessionId, deps)
+      return textResult(result.text, result.isError)
     },
   )
 }

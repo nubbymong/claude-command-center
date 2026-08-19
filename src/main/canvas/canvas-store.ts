@@ -20,11 +20,13 @@ import * as path from 'path'
 import { randomId } from '../../shared/id'
 import {
   CANVAS_ID_RE,
+  type CanvasLibraryEntry,
   CANVAS_VERSION_ID_RE,
   CanvasChangedEvent,
   CanvasRenderSource,
   CanvasState,
   CanvasVersion,
+  MAX_CANVAS_TITLE_CHARS,
   ReclaimableCanvas,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
@@ -36,6 +38,9 @@ const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** Defensive cap on a design document; the IPC schema caps tighter. */
 const MAX_DESIGN_HTML_BYTES = 8 * 1024 * 1024
 const MAX_VERSIONS_PER_CANVAS = 500
+/** Canvases one session may own. Generous for real work (each is a subject the
+ *  user chose to review) and a hard stop for title-cycling. */
+const MAX_CANVASES_PER_SESSION = 50
 
 /** A Claude conversation uuid as it appears in transcript basenames. Kept loose
  *  (hex + dashes) — it is a MATCHING key, never a path segment. */
@@ -599,6 +604,15 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
   if (r.cwd !== undefined && (typeof r.cwd !== 'string' || r.cwd.length === 0 || r.cwd.length > MAX_CWD_CHARS)) return null
   if (r.conversationUuid !== undefined && (typeof r.conversationUuid !== 'string' || !CONVERSATION_UUID_RE.test(r.conversationUuid))) return null
   if (r.profileId !== undefined && (typeof r.profileId !== 'string' || !PROFILE_ID_RE.test(r.profileId))) return null
+  // The title is re-cleaned rather than validated: it is free text from the
+  // agent, so a record written by an older build (or hand-edited) is normalised
+  // to the same shape a fresh render produces, and an unusable one simply drops
+  // out rather than condemning the whole record.
+  if (r.title !== undefined) {
+    const cleanTitle = sanitizeCanvasTitle(r.title)
+    if (cleanTitle) r.title = cleanTitle
+    else delete r.title
+  }
   if (r.activeVersionId !== null && (typeof r.activeVersionId !== 'string' || !CANVAS_VERSION_ID_RE.test(r.activeVersionId))) return null
   if (!Array.isArray(r.versions)) return null
 
@@ -661,9 +675,64 @@ function ensureDiskScanned(): void {
     const record = loadFromDisk(entry.name)
     if (!record) continue
     canvases.set(record.canvasId, record)
-    // First record wins for a session; later duplicates stay addressable by canvasId.
-    if (!sessionIndex.has(record.sessionId)) sessionIndex.set(record.sessionId, record.canvasId)
+    // The session's ACTIVE canvas is the one it rendered to most recently.
+    //
+    // This used to be "first record wins", written when a session had exactly
+    // one canvas. Now that a subject change files a canvas and starts another,
+    // several records share a session, and readdir order on NTFS is by id —
+    // random. Relaunching then reopened the pane on whichever filed subject
+    // sorted first, complete with that subject's old notes, and the next
+    // same-title render forked a duplicate: both of the things the subject
+    // rule exists to prevent.
+    const held = sessionIndex.get(record.sessionId)
+    const heldRecord = held ? canvases.get(held) : undefined
+    if (!heldRecord || moreRecentlyActive(record, heldRecord)) {
+      sessionIndex.set(record.sessionId, record.canvasId)
+    }
   }
+}
+
+/**
+ * A render timestamp that is strictly later than the previous one this process
+ * issued. Wall-clock ISO strings carry millisecond precision, and two renders
+ * in one tick — file this subject, start that one — would tie, leaving "the
+ * canvas last rendered to" undefined for the next launch to guess at. Bumping
+ * a tie forward by one millisecond keeps the order the renders actually
+ * happened in, which is the only order the user would recognise.
+ */
+let lastRenderStamp = ''
+function nextRenderStamp(): string {
+  let stamp = new Date().toISOString()
+  if (stamp <= lastRenderStamp) {
+    stamp = new Date(Date.parse(lastRenderStamp) + 1).toISOString()
+  }
+  lastRenderStamp = stamp
+  return stamp
+}
+
+/** When a canvas last received a version; its own creation if it has none. */
+function lastRenderedAt(record: CanvasRecord): string {
+  return record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt
+}
+
+/**
+ * Is `a` the canvas the session was more recently working on than `b`?
+ *
+ * Timestamps first — but ISO strings carry millisecond precision and two
+ * renders in one tick tie, which is exactly what a quick "file this, start
+ * that" sequence produces (and what the CI macOS leg produced on the first
+ * run). A tie must still resolve the SAME way on every launch, so it falls to
+ * a stable, content-derived order rather than to readdir: more versions wins
+ * (the canvas that saw more work), then the id, which is random but fixed.
+ * Never the position in the directory listing, which is the arbitrary answer
+ * this replaces.
+ */
+function moreRecentlyActive(a: CanvasRecord, b: CanvasRecord): boolean {
+  const ta = lastRenderedAt(a)
+  const tb = lastRenderedAt(b)
+  if (ta !== tb) return ta > tb
+  if (a.versions.length !== b.versions.length) return a.versions.length > b.versions.length
+  return a.canvasId > b.canvasId
 }
 
 function getRecordForSession(sessionId: string): CanvasRecord | null {
@@ -684,6 +753,7 @@ function toState(record: CanvasRecord): CanvasState {
     sessionId: record.sessionId,
     activeVersionId: record.activeVersionId,
     versions: record.versions.map((v) => ({ ...v, source: { ...v.source } })),
+    ...(record.title ? { title: record.title } : {}),
   }
 }
 
@@ -711,15 +781,146 @@ function nextVersionId(versions: CanvasVersion[]): string {
  * on first render) and make it active. This is THE ingress for content — the
  * IPC dev path and the future canvas_render MCP tool both land here.
  */
+/**
+ * A canvas title as it will be STORED: a label, and treated like every other
+ * label that crosses this boundary. Control and format characters go (they can
+ * reorder or hide what the user reads), whitespace collapses, and the result is
+ * capped. Empty after cleaning means "no title given", not an error — a render
+ * without one keeps the old behaviour of appending to whatever canvas the
+ * session holds.
+ */
+function sanitizeCanvasTitle(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  // Strip → cap → strip again. The cap is in UTF-16 code units and can cut a
+  // surrogate pair in half, and it can leave a trailing space that a re-clean
+  // on load would then remove — either way the stored title would not equal its
+  // own re-sanitisation, which is the shape of a MAC hazard. Cleaning after the
+  // cap makes the function idempotent, and Array.from splits by code point so
+  // an emoji at the boundary is dropped whole rather than halved.
+  const clean = (s: string) => s.replace(TITLE_STRIP_RE, '').replace(/\s+/g, ' ').trim()
+  const cleaned = clean(raw)
+  if (cleaned.length === 0) return undefined
+  const capped = Array.from(cleaned).slice(0, MAX_CANVAS_TITLE_CHARS).join('')
+  const final = clean(capped)
+  return final.length === 0 ? undefined : final
+}
+
+/**
+ * Characters a title may not carry, over and above FORMAT_CONTROLS_RE.
+ *
+ * The title sits in the library beside a delete button, so the question is not
+ * "can this break anything" but "can this make one row read as another". Format
+ * controls (bidi overrides) are the classic; combining marks, variation
+ * selectors, private-use, unassigned and surrogate code points also render as
+ * nothing or as decoration and let `Chеckout` (Cyrillic е) or `Check͏out`
+ * pass for `Checkout`. All of those go. Letters and digits of every script stay,
+ * which is what `sameSubject` below is written against.
+ */
+const TITLE_STRIP_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Mn}\p{Me}\p{Co}\p{Cn}\p{Cs}ᅟᅠㅤﾠ]/gu
+
+/**
+ * The comparison key for a subject.
+ *
+ * NFKC-folded, lower-cased, reduced to letters and digits OF ANY SCRIPT. The
+ * first version of this used `[^a-z0-9]`, which turned every non-Latin title —
+ * Cyrillic, CJK, Arabic, emoji-only — into the empty string, so all of them
+ * were "the same subject" and the feature did nothing for anyone not writing
+ * English. Returns undefined when nothing survives, and callers must treat that
+ * as "no comparable subject" rather than compare two empties as equal.
+ */
+function subjectKey(title: string): string | undefined {
+  const key = title
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+  return key.length > 0 ? key : undefined
+}
+
+/**
+ * Do two titles name the same subject?
+ *
+ * Deliberately forgiving: case and surrounding punctuation should not split a
+ * canvas in two, because the cost of a false DIFFERENT (the user's version
+ * history silently forks) is worse than the cost of a false SAME (one extra
+ * version on the right canvas). An agent that means a new subject will not
+ * express it as a change of capitalisation. Two titles that reduce to NOTHING
+ * are not the same subject — they are unrelated titles we cannot compare.
+ */
+function sameSubject(a: string, b: string): boolean {
+  const ka = subjectKey(a)
+  const kb = subjectKey(b)
+  return ka !== undefined && ka === kb
+}
+
+/**
+ * A canvas this session filed earlier under the same subject, if any. Owned by
+ * THIS session only: another session's canvas is never adopted here — that is
+ * an authorization decision and stays with `adoptCanvasForSession`, which the
+ * user drives. Newest first, so returning to a subject the session has filed
+ * twice picks the one most recently worked on.
+ */
+function countCanvasesForSession(sessionId: string): number {
+  let n = 0
+  for (const record of canvases.values()) if (record.sessionId === sessionId) n++
+  return n
+}
+
+function findFiledCanvas(sessionId: string, title: string): CanvasRecord | undefined {
+  let best: CanvasRecord | undefined
+  for (const record of canvases.values()) {
+    if (record.sessionId !== sessionId || !record.title || !sameSubject(title, record.title)) continue
+    if (!best || lastRenderedAt(record) > lastRenderedAt(best)) best = record
+  }
+  return best
+}
+
 export function renderVersion(
   sessionId: string,
   source: CanvasRenderSource,
 ): { canvasId: string; versionId: string } {
   if (!SESSION_ID_RE.test(sessionId)) throw new Error('invalid session id')
 
-  const existing = getRecordForSession(sessionId)
+  const held = getRecordForSession(sessionId)
+  const title = sanitizeCanvasTitle(source.title)
+
+  // A canvas holds ONE subject, and this is where that is decided.
+  //
+  // Without it a session has exactly one canvas forever: every render appends,
+  // whatever it is of. Show a login screen, then a title bar, then a chart, and
+  // all three are "the same canvas" — the version list mixes unrelated work and,
+  // worse, unresolved notes from the earlier subject are carried forward and
+  // presented as open notes against the new page, anchored to elements that do
+  // not exist in it. That is confusing on its own and it makes the user wary of
+  // annotating at all, which costs the whole review loop.
+  //
+  // So a render that names a DIFFERENT subject files the current canvas — it
+  // stays on disk and in the library, it simply stops being this session's
+  // active one — and starts a fresh canvas. Same subject (or no title given at
+  // all, which is the pre-existing behaviour) appends a version as before.
+  // A title with no readable subject — emoji only, punctuation only — is
+  // treated as no title: it cannot start a canvas we could ever come back to,
+  // and it must not fork the one we are on. It still gets stored as the label.
+  const comparable = title !== undefined && subjectKey(title) !== undefined
+  const subjectChanged = Boolean(held && comparable && held.title && !sameSubject(title!, held.title))
+  // Coming BACK to a subject re-activates its canvas rather than minting a
+  // third: "Login page" → "Checkout" → "Login page" must land on the login
+  // canvas, with its versions and its notes, not open a second one beside it.
+  const returnedTo = subjectChanged && title ? findFiledCanvas(sessionId, title) : undefined
+  const existing = subjectChanged ? returnedTo : held
+
   if (existing && existing.versions.length >= MAX_VERSIONS_PER_CANVAS) {
     throw new Error(`canvas ${existing.canvasId} is at its version cap (${MAX_VERSIONS_PER_CANVAS})`)
+  }
+  // A subject change that starts a NEW canvas is the one thing that can grow
+  // the number of canvases a session owns; before it, a session had one. Cap
+  // it, so an agent cycling titles cannot mint directories without bound —
+  // each is a synchronous read and an HMAC at the next launch. Filing goes on
+  // working: the user clears room from the library.
+  if (subjectChanged && !existing && countCanvasesForSession(sessionId) >= MAX_CANVASES_PER_SESSION) {
+    throw new Error(
+      `this session already has ${MAX_CANVASES_PER_SESSION} canvases; delete some from the library before starting another subject`,
+    )
   }
 
   // Everything that can REJECT the render is validated up front, before any
@@ -731,7 +932,7 @@ export function renderVersion(
   // ([v1, v3] has length 2), and `length + 1` would mint a SECOND 'v3' — two
   // versions with one serve key.
   const versionId = nextVersionId(existing?.versions ?? [])
-  const createdAt = new Date().toISOString()
+  const createdAt = nextRenderStamp()
   let version: CanvasVersion
 
   if (source.mode === 'design') {
@@ -810,6 +1011,13 @@ export function renderVersion(
     ...(conversationStamp ? { conversationUuid: conversationStamp } : {}),
     // Stamped once, like cwd: the account a canvas was born under is fixed.
     ...(profileStamp && !base.profileId ? { profileId: profileStamp } : {}),
+    // The subject. Only ever set to a title that names the SAME subject (a
+    // different one took the new-canvas branch above), so this fills in a
+    // missing title and refreshes the wording, never repurposes the canvas.
+    // An UNREADABLE title (emoji-only) may fill an empty label but never
+    // overwrite a readable one — that would relabel "Checkout flow" as "🔥🔥🔥"
+    // in the library while the notes underneath stayed about checkout.
+    ...(title && (comparable || !base.title) ? { title } : {}),
     versions: [...base.versions, version],
     activeVersionId: versionId,
   }
@@ -1030,6 +1238,208 @@ export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdop
  * re-binds the review store next (rebindReviewsToSession) — reviews.json
  * carries the owner session id too.
  */
+/**
+ * The canvas LIBRARY: every canvas on disk, newest first.
+ *
+ * Housekeeping, not authorization. Unlike `listOrphanCandidateCanvases` this
+ * deliberately does NOT filter to what the asking session could adopt — the
+ * whole point is to show the user what has accumulated so they can remove it.
+ * Nothing here binds a canvas to a session; only `adoptCanvasForSession` does,
+ * and it is unchanged.
+ */
+export function listAllCanvases(openTileSessionIds: readonly string[] = []): CanvasLibraryEntry[] {
+  ensureDiskScanned()
+  const open = new Set(openTileSessionIds.filter((id) => SESSION_ID_RE.test(id)))
+  const out: CanvasLibraryEntry[] = []
+  for (const record of canvases.values()) {
+    const latest = record.versions[record.versions.length - 1]
+    const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
+    out.push({
+      canvasId: record.canvasId,
+      versionCount: record.versions.length,
+      createdAt: clampToNow(record.createdAt),
+      lastRenderedAt: clampToNow(latest?.createdAt ?? record.createdAt),
+      ...(latest?.source.mode ? { latestMode: latest.source.mode } : {}),
+      ...(record.conversationUuid ? { conversationShortId: record.conversationUuid.slice(0, 8) } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(record.title ? { title: record.title } : {}),
+      ...(open.has(record.sessionId) ? { ownedByOpenSession: true } : {}),
+    })
+  }
+  out.sort((a, b) => (a.lastRenderedAt < b.lastRenderedAt ? 1 : a.lastRenderedAt > b.lastRenderedAt ? -1 : 0))
+  return out
+}
+
+/**
+ * Remove a tree WITHOUT ever descending through a reparse point.
+ *
+ * `fs.rmSync(dir, { recursive: true })` must NOT be used for this, and the
+ * reason is worth stating because it is invisible in a normal test run:
+ * `rmSync(recursive)` FOLLOWS an NTFS junction nested inside the tree on the
+ * Electron runtime and deletes the junction's *target*, while the same call on
+ * plain Node unlinks the link and leaves the target alone. Same Node version
+ * (24.18.0), opposite behaviour — measured against Electron 43.2.0. vitest
+ * executes under plain Node, so a unit test asserting "the target survived"
+ * passes whether or not the bug is present. That is precisely how a
+ * nested-junction escape reached review labelled "confined".
+ *
+ * Confinement therefore rests on this walker, not on any property of `rmSync`:
+ * every entry is `lstat`ed and a link is removed AS a link, never walked. The
+ * depth cap bounds recursion over a tree that has been tampered with; a real
+ * canvas is three levels deep.
+ */
+/**
+ * Remove one canvas directory, reporting what actually happened.
+ *
+ * Three outcomes rather than a boolean, because "I deleted nothing" and "the
+ * canvas is gone" were previously indistinguishable and the caller guessed
+ * wrong: a sharing violation from AV or the search indexer left the canvas
+ * fully intact on disk while the UI said it had been deleted, and the record
+ * came back on the next disk scan.
+ */
+function removeCanvasDirectory(dir: string): 'removed' | 'absent' | 'failed' {
+  let st: fs.Stats
+  try {
+    st = fs.lstatSync(dir)
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'absent' : 'failed'
+  }
+  // A link sitting where the canvas directory should be is refused outright:
+  // every path built from here would resolve through it.
+  if (!st.isDirectory() || st.isSymbolicLink()) return 'failed'
+
+  // canvas.json is the provenance anchor — `ensureDiskScanned` does not see a
+  // canvas without one — so removing it FIRST makes the deletion irreversible
+  // before any bulk removal can fail part-way. `dir` was just confirmed to be a
+  // real directory, so this join cannot resolve through a planted link.
+  try {
+    fs.unlinkSync(path.join(dir, 'canvas.json'))
+  } catch (err) {
+    // Already gone is fine. Anything else means the anchor SURVIVES, so the
+    // canvas would reappear on the next scan — report failure instead of
+    // half-deleting it and dropping the record.
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return 'failed'
+  }
+
+  try {
+    removeTreeNoFollow(dir)
+  } catch (err) {
+    // The anchor is already gone, so the canvas cannot return; some files just
+    // could not be unlinked. Destroyed either way — say so, and leave a trace.
+    console.warn('[canvas-store] canvas deleted with files left behind:', err)
+  }
+  return 'removed'
+}
+
+function removeTreeNoFollow(target: string, depth = 0): void {
+  if (depth > 64) throw new Error('canvas delete: tree deeper than expected, refusing to recurse')
+  let st: fs.Stats
+  try {
+    st = fs.lstatSync(target)
+  } catch {
+    return // already gone
+  }
+  if (st.isSymbolicLink()) {
+    // A junction or directory symlink needs rmdir; a file symlink needs unlink.
+    // Removing either detaches the link and never touches what it points at —
+    // the same idiom the profile-junction repair uses in account-profiles.ts.
+    try {
+      fs.rmdirSync(target)
+    } catch {
+      fs.unlinkSync(target)
+    }
+    return
+  }
+  if (!st.isDirectory()) {
+    fs.unlinkSync(target)
+    return
+  }
+  for (const entry of fs.readdirSync(target)) removeTreeNoFollow(path.join(target, entry), depth + 1)
+  fs.rmdirSync(target)
+}
+
+/**
+ * Delete one canvas: its record, its indexes, and its directory on disk.
+ *
+ * The only destructive operation this store has, so the path discipline is
+ * explicit rather than inherited. `canvasId` is charset-gated (it is a
+ * `randomId()`, so the gate only ever rejects something a real id could not be)
+ * and the directory it names is REALPATH-resolved and required to sit directly
+ * inside the canvas root before anything is removed — a symlink planted at
+ * `<root>/<id>` pointing elsewhere resolves out of the root and is refused
+ * rather than followed. That check covers the TOP of the tree only, so the
+ * removal itself goes through `removeTreeNoFollow`, which refuses to descend a
+ * link planted further down. Both halves are needed: without the walker, a
+ * junction at `<root>/<id>/versions/<v>/x` pointing at a user's project is a
+ * deterministic arbitrary-directory-deletion primitive on the shipped runtime.
+ *
+ * The version files are the user's own rendered documents; removing the canvas
+ * removes them, which is the point of the button. A canvas whose directory is
+ * already gone still drops out of the in-memory maps, because the record is
+ * what surfaces it in the UI.
+ */
+export function deleteCanvas(canvasId: string): boolean {
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return false
+  ensureDiskScanned()
+  const record = canvases.get(canvasId)
+
+  const root = canvasRoot()
+  let realRoot: string
+  try {
+    realRoot = fs.realpathSync(root)
+  } catch {
+    realRoot = root
+  }
+  const dir = path.join(root, canvasId)
+  let removable = false
+  let alreadyGone = false
+  try {
+    // realpath, NOT the joined string: the join is traversal-safe thanks to the
+    // charset gate, but only resolving links proves the directory is really
+    // inside the store rather than a link pointing at someone's project.
+    //
+    // The test is IDENTITY, not containment: the directory must BE
+    // `<root>/<id>`. "Resolves to somewhere inside the root" is too weak — a
+    // link at `<root>/<idA>` pointing at sibling `<root>/<idB>` resolves to a
+    // single in-root segment and passes a containment check, so deleting A
+    // would take B's files with it.
+    const realDir = fs.realpathSync(dir)
+    const expected = path.join(realRoot, canvasId)
+    // Windows resolves paths case-insensitively, and realpath returns on-disk
+    // casing that need not match the id's; elsewhere the comparison is exact.
+    removable =
+      process.platform === 'win32'
+        ? realDir.toLowerCase() === expected.toLowerCase()
+        : realDir === expected
+  } catch (err) {
+    // ENOENT is a successful outcome for a delete — there is nothing there to
+    // remove. Any other error (typically a sharing violation) means we do NOT
+    // know what is on disk, and must not report success.
+    alreadyGone = (err as NodeJS.ErrnoException)?.code === 'ENOENT'
+    removable = false
+  }
+
+  const outcome = removable ? removeCanvasDirectory(dir) : alreadyGone ? 'absent' : 'failed'
+  if (outcome === 'failed') {
+    // Nothing was removed and the canvas is still whole. Keep the record: a row
+    // the user can retry is honest, where dropping it would hide a canvas that
+    // reappears at the next launch — and would take its reviews with it.
+    return false
+  }
+
+  canvases.delete(canvasId)
+  for (const [sessionId, id] of sessionIndex) {
+    if (id === canvasId) sessionIndex.delete(sessionId)
+  }
+  // Tell any pane still showing this canvas that it is gone: the event carries
+  // a null active version, which is the same shape the pane already handles for
+  // "this session has no canvas".
+  if (record) {
+    emitChanged({ ...record, activeVersionId: null })
+  }
+  return record !== undefined || outcome === 'removed'
+}
+
 export function adoptCanvasForSession(
   sessionId: string,
   canvasId: string,

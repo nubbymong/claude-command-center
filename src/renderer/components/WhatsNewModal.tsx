@@ -1,28 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { changelog, ChangelogEntry } from '../changelog'
+import { useAppMetaStore } from '../stores/appMetaStore'
+import { decideUpgradeFlow, entriesSince } from '../onboarding/upgrade-flow'
+import { useSettingsStore } from '../stores/settingsStore'
+import { WhatsNewEntries } from './WhatsNewEntries'
 
 declare const __BUILD_TIME__: string
 
 interface Props {
   onClose: () => void
   showAllVersions?: boolean
-}
-
-const TYPE_COLORS = {
-  feature: 'text-green',
-  fix: 'text-red',
-  improvement: 'text-blue',
-}
-
-const TYPE_LABELS = {
-  feature: 'New',
-  fix: 'Fix',
-  improvement: 'Improved',
-}
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr)
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  /** The version the user was on before this launch, captured by the caller at
+   *  boot. Everything newer than it is shown. When omitted, read from app meta
+   *  at mount — correct only when nothing has stamped lastSeenVersion first. */
+  sinceVersion?: string
 }
 
 function formatBuildTime(iso: string): string {
@@ -35,37 +26,29 @@ function formatBuildTime(iso: string): string {
   }
 }
 
-function VersionSection({ entry }: { entry: ChangelogEntry }) {
-  return (
-    <div className="mb-6 last:mb-0">
-      <div className="flex items-center gap-3 mb-2">
-        <span className="text-lg font-bold text-text">v{entry.version}</span>
-        <span className="text-xs text-overlay0">{formatDate(entry.date)}</span>
-      </div>
-      {entry.highlights && (
-        <p className="text-sm text-subtext1 mb-3 italic">{entry.highlights}</p>
-      )}
-      <ul className="space-y-1.5">
-        {entry.changes.map((change, i) => (
-          <li key={i} className="flex items-start gap-2 text-sm">
-            <span className={`${TYPE_COLORS[change.type]} font-medium shrink-0 w-16`}>
-              {TYPE_LABELS[change.type]}
-            </span>
-            <span className="text-subtext0">{change.description}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
 // Must match the Tailwind `duration-200` transition on the backdrop + dialog.
 // Single source of truth so a future tweak to one keeps the other in sync.
 const CLOSE_ANIMATION_MS = 200
 
-export default function WhatsNewModal({ onClose, showAllVersions = false }: Props) {
+export default function WhatsNewModal({ onClose, showAllVersions = false, sinceVersion }: Props) {
   const latestVersion = changelog[0]
-  const versionsToShow = showAllVersions ? changelog : [latestVersion]
+  // Everything released since the user last looked — not just the newest entry.
+  // Someone coming from 2.0.0 to 2.1.0 skipped fourteen releases, and showing
+  // them one of those and calling it "what's new" is how the modal came to be
+  // ignored.
+  //
+  // Captured ONCE, in a lazy initial state, because closing the modal stamps
+  // lastSeenVersion to the current build: read it on any later render and the
+  // list collapses to nothing underneath the user mid-read. The caller passes
+  // the boot-time value where it can, for the same reason one step earlier.
+  const [versionsToShow] = useState<ChangelogEntry[]>(() => {
+    if (showAllVersions) return changelog
+    const from = sinceVersion ?? useAppMetaStore.getState().meta.lastSeenVersion
+    const since = entriesSince(changelog, from, latestVersion.version)
+    // A first install, or a stored version newer than this build, leaves the
+    // range empty — fall back to the newest entry so the modal is never blank.
+    return since.length > 0 ? since : [latestVersion]
+  })
   // Animation state: `entering` false on mount → true after one frame
   // fades the dialog in. `closing` flips true when the user dismisses,
   // giving the fade-out CLOSE_ANIMATION_MS before we call the parent's
@@ -125,9 +108,7 @@ export default function WhatsNewModal({ onClose, showAllVersions = false }: Prop
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4">
-          {versionsToShow.map((entry) => (
-            <VersionSection key={entry.version} entry={entry} />
-          ))}
+          <WhatsNewEntries entries={versionsToShow} />
         </div>
 
         {/* Footer */}
@@ -153,14 +134,25 @@ export default function WhatsNewModal({ onClose, showAllVersions = false }: Prop
   )
 }
 
-import { useAppMetaStore } from '../stores/appMetaStore'
-
+/**
+ * Should this launch show What's New?
+ *
+ * Now one branch of a single decision (see `decideUpgradeFlow`) rather than its
+ * own rule. The old one was `lastSeen !== changelog[0].version`, which treated
+ * a FIRST INSTALL as "everything is new to you" and opened a wall of release
+ * notes in front of someone who had not seen the app yet — they get the tour
+ * instead. It also compared strings, so a stored `v2.1.0` re-fired the modal on
+ * every single launch.
+ */
 export function shouldShowWhatsNew(): boolean {
   try {
-    const lastSeen = useAppMetaStore.getState().meta.lastSeenVersion
-    if (!lastSeen) return true // First launch
     const currentVersion = changelog[0]?.version
-    return lastSeen !== currentVersion
+    if (!currentVersion) return false
+    return decideUpgradeFlow({
+      lastSeenVersion: useAppMetaStore.getState().meta.lastSeenVersion,
+      currentVersion,
+      channel: useSettingsStore.getState().settings.updateChannel,
+    }).showWhatsNew
   } catch {
     return false
   }

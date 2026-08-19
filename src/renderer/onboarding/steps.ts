@@ -1,7 +1,15 @@
 import type { FC } from 'react'
 
-/** Bump ONLY to force every user through the full flow again (rare). NOT __APP_VERSION__. */
-export const ONBOARDING_VERSION = '2'
+/**
+ * Bump ONLY to force every user through the full flow again (rare). NOT __APP_VERSION__.
+ *
+ * '3' for the 2.1 line. A release that renamed the app, made remote sessions
+ * survive a dropped link, and added the Agent Canvas is worth walking someone
+ * through again rather than announcing in a modal nobody reads — and the
+ * upgrade page's own content changed for the 2.1 cohort, which is the case this
+ * constant exists for.
+ */
+export const ONBOARDING_VERSION = '3'
 
 /** The minimal settings view the step `when` predicates read. Widen as later steps need it. */
 export interface OnboardingSettingsView {

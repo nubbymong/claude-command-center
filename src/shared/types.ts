@@ -614,6 +614,10 @@ export interface TkIndexStatus {
   filesTotal: number
   eventsTotal: number
   lastIndexAt: number | null
+  /** Files the index could not open or read at all. They do not hold the index
+   *  back — one unreadable file used to leave it unfinished forever — so this is
+   *  how the user learns something is missing. */
+  filesFailed?: number
   /** Non-null when the worker reported a fatal/uncorrelated error (e.g. a failed
    *  DB open). The renderer surfaces this instead of an endless 'indexing' state. */
   error?: string | null
@@ -622,7 +626,10 @@ export interface TkIndexStatus {
 export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }
 export interface TkSessionsQuery extends TkSummaryFilter { search?: string; cursor?: { lastTs: number; sessionId: string } | null; limit?: number }
 export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
-export interface TkIndexCompleteEvent { firstIndex: boolean; eventsTotal: number }
+/** `drained`: every file that sweep visited was read to its end and none
+ *  failed. A sweep finishing is NOT that — a multi-GB rollout takes tens of
+ *  sweeps — so gate any "indexing finished" UI on `drained`. */
+export interface TkIndexCompleteEvent { firstIndex: boolean; drained: boolean; filesFailed: number; eventsTotal: number }
 
 // ── Notes ──
 

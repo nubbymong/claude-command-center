@@ -70,9 +70,16 @@ const STATUS_LONG_LABELS: Record<string, string> = {
   major_outage: 'Major Outage',
 }
 
+// The bar's degraded-state tint. Each is a full CSS colour VALUE — a token
+// reference, never a bare hex — because it goes into color-mix() below. It used
+// to be hex with an alpha suffix appended (`${hex}18`); when the hex became a
+// var() token that suffix made the whole background declaration invalid, and
+// the bar silently fell to transparent for every non-green status from June
+// until #275. partial_outage takes the same warm peach as its chip dot rather
+// than the brand blue it had drifted to.
 const STATUS_GRADIENT_COLORS: Record<string, string> = {
   degraded_performance: 'var(--status-warning)',
-  partial_outage: 'var(--brand)',
+  partial_outage: 'var(--color-peach)',
   major_outage: 'var(--status-danger)',
 }
 
@@ -187,7 +194,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       style={{
         ...(isMac ? { paddingLeft: 84 } : {}),
         ...(gradientColor ? {
-          background: `linear-gradient(90deg, var(--surface-panel) 0%, ${gradientColor}18 30%, ${gradientColor}25 50%, ${gradientColor}18 70%, var(--surface-panel) 100%)`,
+          background: `linear-gradient(90deg, var(--surface-panel) 0%, color-mix(in srgb, ${gradientColor} 9%, var(--surface-panel)) 30%, color-mix(in srgb, ${gradientColor} 15%, var(--surface-panel)) 50%, color-mix(in srgb, ${gradientColor} 9%, var(--surface-panel)) 70%, var(--surface-panel) 100%)`,
           color: 'var(--text-on-chrome)',
         } : {
           background: 'var(--surface-panel)',
@@ -198,11 +205,6 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         ...(isDev ? { boxShadow: 'inset 0 -2px 0 var(--status-warning)' } : {}),
       }}
     >
-      {/* Brand mark. Deliberately left INSIDE the drag region: it is decorative,
-          so the window stays draggable by it rather than presenting a dead
-          click target. aria-hidden — the window title already names the app. */}
-      <BrandMark className="w-[18px] h-[18px] shrink-0 mr-2.5 opacity-95" />
-
       <div className="titlebar-no-drag flex items-center gap-1 mr-3">
         <button
           onClick={onToggleSidebar}
@@ -217,6 +219,13 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       </div>
 
       <div className="flex-1 text-center text-xs text-overlay1 font-medium flex items-center justify-center gap-0">
+        {/* Brand mark, beside the name it belongs to rather than stranded at the
+            far edge with the sidebar toggle between them — the two read as one
+            lockup. Still INSIDE the drag region (this container never opts out
+            with titlebar-no-drag), so the window is still draggable by it
+            rather than presenting a dead click target. aria-hidden lives on the
+            svg itself: the window title already names the app. */}
+        <BrandMark className="w-[18px] h-[18px] shrink-0 mr-2 opacity-95" />
         <span>AI Code Conductor</span>
         {isDev && (
           <span

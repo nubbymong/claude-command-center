@@ -8,11 +8,13 @@ import { describe, it, expect } from 'vitest'
 import {
   shouldRepaintOnOutput,
   shouldSoftRepaintOnOutput,
+  STRONG_SETTLE_QUIET_MS,
   outputRepaintIntervalMs,
   createStaleGlyphRepainter,
   REPAINT_MIN_INTERVAL_MS,
   BOTTOM_STREAM_INTERVAL_MS,
   SETTLE_QUIET_MS,
+  STRONG_MAX_STALE_MS,
   WHEEL_ACTIVE_MS,
 } from '../../../src/renderer/components/terminal/staleGlyphRepaint'
 
@@ -120,6 +122,120 @@ function makeHarness({ webglActive = true }: { webglActive?: boolean } = {}) {
     pendingTimers: () => timers.length,
   }
 }
+
+describe('settleStrong — the atlas rebuild lands in the GAP, not the stream', () => {
+  // The user constraint that shapes this: no flashing. beta.13 rebuilt the atlas
+  // 1x/sec DURING streaming and strobed. The rebuild is what actually clears a
+  // stale atlas (it is what a window resize does), so it has to happen — just
+  // never while output is flowing.
+  it('does NOT rebuild the atlas while output keeps arriving', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    // Chunks every 200ms for 10s — never a STRONG_SETTLE_QUIET_MS gap.
+    for (let i = 0; i < 50; i++) {
+      r.schedule(1000, false)
+      r.settleStrong()
+      h.advance(200)
+    }
+    expect(h.counts().clearAtlas).toBe(0)
+  })
+
+  it('rebuilds once when output stops', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    for (let i = 0; i < 10; i++) { r.schedule(1000, false); r.settleStrong(); h.advance(200) }
+    expect(h.counts().clearAtlas).toBe(0)
+    h.advance(STRONG_SETTLE_QUIET_MS + 50)   // output stops
+    expect(h.counts().clearAtlas).toBe(1)
+    h.advance(10_000)                        // still quiet: no repeat
+    expect(h.counts().clearAtlas).toBe(1)
+  })
+
+  it('a stream that pauses constantly cannot drag it back to the beta.13 rate', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    // A chunk, then a gap just long enough to fire the settle — over and over.
+    for (let i = 0; i < 20; i++) {
+      r.schedule(1000, false)
+      r.settleStrong()
+      h.advance(STRONG_SETTLE_QUIET_MS + 50)
+    }
+    // 20 quiet gaps across ~17s. Bounded by the 3s floor, not once per gap.
+    expect(h.counts().clearAtlas).toBeLessThanOrEqual(7)
+  })
+})
+
+describe('strongIfStale — the backstop for a stream that never leaves a gap', () => {
+  // The hole the gap-rebuild left, and the one actually reported: a stream whose
+  // chunks are always closer together than STRONG_SETTLE_QUIET_MS keeps pushing
+  // the debounced rebuild out, so it never happens at all and the viewport
+  // degrades until the user reaches for the mouse wheel. The gap stays the
+  // preferred moment; this only bounds how long staleness can last.
+  //
+  // The neighbouring settleStrong tests still assert "no rebuild while output
+  // keeps arriving" — that remains true OF settleStrong. The call site uses
+  // both, and the combination is what makes it correct.
+
+  it('does not rebuild while the atlas is still fresh', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    // A brand new terminal has a brand new atlas — no rebuild just for existing.
+    r.strongIfStale()
+    expect(h.counts().clearAtlas).toBe(0)
+    h.advance(STRONG_MAX_STALE_MS - 100)
+    r.strongIfStale()
+    expect(h.counts().clearAtlas).toBe(0)
+  })
+
+  it('rebuilds a gapless stream that settleStrong alone would never reach', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    // Exactly the real call site, at 200ms chunks for 30s: never an 800ms gap.
+    for (let i = 0; i < 150; i++) {
+      r.schedule(BOTTOM_STREAM_INTERVAL_MS, false)
+      r.settleStrong()
+      r.strongIfStale()
+      h.advance(200)
+    }
+    // Without the backstop this is 0 — the reported bug.
+    expect(h.counts().clearAtlas).toBeGreaterThan(0)
+    // And it stays a backstop, not a strobe: ~1 per STRONG_MAX_STALE_MS over 30s.
+    expect(h.counts().clearAtlas).toBeLessThanOrEqual(7)
+  })
+
+  it('leaves the atlas fresh again, so the ceiling re-arms from the rebuild', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    h.advance(STRONG_MAX_STALE_MS + 100)
+    r.strongIfStale()
+    expect(h.counts().clearAtlas).toBe(1)
+    // Immediately after, the atlas is fresh: no second rebuild.
+    r.strongIfStale()
+    expect(h.counts().clearAtlas).toBe(1)
+    h.advance(STRONG_MAX_STALE_MS + 100)
+    r.strongIfStale()
+    expect(h.counts().clearAtlas).toBe(2)
+  })
+
+  it('costs a DOM-renderer session nothing', () => {
+    const h = makeHarness({ webglActive: false })
+    const r = createStaleGlyphRepainter(h.deps)
+    h.advance(STRONG_MAX_STALE_MS + 100)
+    r.strongIfStale()
+    // clearAtlas reports "no WebGL", so no viewport refresh is taxed onto a
+    // session that never had the artifact.
+    expect(h.counts().refresh).toBe(0)
+  })
+
+  it('does nothing after dispose', () => {
+    const h = makeHarness()
+    const r = createStaleGlyphRepainter(h.deps)
+    h.advance(STRONG_MAX_STALE_MS + 100)
+    r.dispose()
+    r.strongIfStale()
+    expect(h.counts().clearAtlas).toBe(0)
+  })
+})
 
 describe('createStaleGlyphRepainter — the cheap (soft) repaint, beta.14', () => {
   // The beta.13 regression: every chunk of normal-buffer output rebuilt the

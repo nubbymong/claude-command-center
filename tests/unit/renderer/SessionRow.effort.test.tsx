@@ -117,3 +117,60 @@ describe('SessionRow context meter', () => {
     expect(container.querySelector('[data-testid="context-meter-row"] .meter-fill')).not.toBeNull()
   })
 })
+
+describe('SessionRow session-type badge (canvas review 2026-08-19)', () => {
+  // Every card shows its type, in ONE place: the right cluster, left of the
+  // effort pill. Before this a local Claude Code session was marked by having
+  // nothing, while Codex and Shell had an icon after the name and SSH had a
+  // text badge in the same spot — four treatments, common case the odd one out.
+  const renderRow = (over: Partial<Session>) => {
+    act(() => { root.render(createElement(SessionRow, { ...baseProps, session: makeSession(over) })) })
+    return container
+  }
+
+  it('gives a plain local Claude Code session a type badge', () => {
+    const c = renderRow({})
+    expect(c.querySelector('[data-testid="type-badge-claude"]')).not.toBeNull()
+    expect(c.querySelector('[data-testid="type-badge-codex"]')).toBeNull()
+    expect(c.querySelector('[data-testid="type-badge-shell"]')).toBeNull()
+  })
+
+  it('shows codex and shell as their own types, never two at once', () => {
+    expect(renderRow({ provider: 'codex' } as Partial<Session>).querySelector('[data-testid="type-badge-codex"]')).not.toBeNull()
+    expect(container.querySelectorAll('[data-testid^="type-badge-"]').length).toBe(1)
+    expect(renderRow({ shellOnly: true }).querySelector('[data-testid="type-badge-shell"]')).not.toBeNull()
+    expect(container.querySelectorAll('[data-testid^="type-badge-"]').length).toBe(1)
+  })
+
+  it('puts the type badge in the RIGHT cluster, not after the name', () => {
+    const c = renderRow({})
+    const badge = c.querySelector('[data-testid="type-badge-claude"]')!
+    // The name column is the `.nm` span; the badge must not be inside it.
+    expect(badge.closest('.nm')).toBeNull()
+    // And it sits in the same cluster as the status pill / effort pill.
+    const cluster = badge.parentElement!
+    expect(cluster.className).toContain('justify-self-end')
+  })
+
+  it('keeps SSH and tmux as separate badges, placed before the type badge', () => {
+    const c = renderRow({ sessionType: 'ssh', sshTmuxPersistent: true } as Partial<Session>)
+    const tmux = c.querySelector('[data-testid="ssh-persistent-badge"]')!
+    const type = c.querySelector('[data-testid="type-badge-claude"]')!
+    expect(tmux).not.toBeNull()
+    // Same parent, transport first: reads "SSH · Claude" left to right.
+    expect(tmux.parentElement).toBe(type.parentElement)
+    expect(tmux.compareDocumentPosition(type) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Plain SSH likewise.
+    const c2 = renderRow({ sessionType: 'ssh' })
+    expect(c2.querySelector('[data-testid="ssh-badge"]')).not.toBeNull()
+    expect(c2.querySelector('[data-testid="ssh-persistent-badge"]')).toBeNull()
+  })
+
+  it('places the type badge before the effort pill', () => {
+    const c = renderRow({ effortLevel: 'high', effortLive: true } as Partial<Session>)
+    const type = c.querySelector('[data-testid="type-badge-claude"]')!
+    const effort = c.querySelector('[data-testid="effort-pill"]')!
+    expect(effort).not.toBeNull()
+    expect(type.compareDocumentPosition(effort) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})

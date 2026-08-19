@@ -388,6 +388,18 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
                   <input
                     type="checkbox"
+                    checked={(settings.terminal || DEFAULT_TERMINAL_SETTINGS).gpuRendering !== false}
+                    onChange={(e) => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), gpuRendering: e.target.checked } })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    GPU rendering
+                    <span className="block text-[10px] text-overlay0">Draws terminals on the GPU. Faster with several busy sessions, and on by default. Turn it off if you see text render as wrong or broken characters until you scroll or resize — that artifact comes from the GPU renderer&apos;s glyph cache, and the plain renderer has no such cache. Applies to terminals opened after the change.</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
                     checked={settings.classicTerminalCopyPaste !== false}
                     onChange={(e) => save({ classicTerminalCopyPaste: e.target.checked })}
                     className="mt-0.5 rounded border-surface1"

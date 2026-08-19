@@ -15,9 +15,30 @@ import type { ViewType } from '../types/views'
 export function useKeyboardShortcuts(
   activeSessionId: string | null,
   setSidebarOpen: React.Dispatch<React.SetStateAction<boolean>>,
-  setView: (view: ViewType) => void
+  setView: (view: ViewType) => void,
+  // The active main-pane view and the open page tabs, so the tab shortcuts
+  // cycle the WHOLE strip (sessions + page tabs), not sessions alone.
+  view: ViewType,
+  openPageTabs: ViewType[],
+  closePageTab: (v: ViewType) => void,
 ) {
   useEffect(() => {
+    // One ordered tab list: sessions first (their order), then the open page
+    // tabs (open order) — the same order the TabBar renders.
+    type Tab = { kind: 'session'; id: string } | { kind: 'page'; view: ViewType }
+    const buildTabs = (): Tab[] => [
+      ...useSessionStore.getState().sessions.map((s) => ({ kind: 'session' as const, id: s.id })),
+      ...openPageTabs.map((v) => ({ kind: 'page' as const, view: v })),
+    ]
+    const activateTab = (t: Tab) => {
+      if (t.kind === 'session') { useSessionStore.getState().setActiveSession(t.id); setView('sessions') }
+      else setView(t.view)
+    }
+    const activeTabIndex = (tabs: Tab[]): number =>
+      view === 'sessions'
+        ? tabs.findIndex((t) => t.kind === 'session' && t.id === useSessionStore.getState().activeSessionId)
+        : tabs.findIndex((t) => t.kind === 'page' && t.view === view)
+
     const handleKeyDown = async (e: KeyboardEvent) => {
       // The onboarding overlay covers the whole shell: a global shortcut
       // firing under it would act on invisible UI (close a session, switch
@@ -26,34 +47,30 @@ export function useKeyboardShortcuts(
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
       const shortcuts = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
 
-      // Close current session
+      // Close current tab: a page tab closes the page; a session tab routes
+      // through the End-vs-Leave-running choice.
       if (matchesShortcut(e, shortcuts.closeSession)) {
         e.preventDefault()
-        // item 4: persistent SSH sessions route through the End-vs-Leave choice.
-        if (activeSessionId) requestCloseSession(activeSessionId)
+        if (view !== 'sessions') closePageTab(view)
+        else if (activeSessionId) requestCloseSession(activeSessionId)
       }
-      // Next/Previous session
+      // Next/Previous tab — cycles the whole strip (sessions + page tabs).
       if (matchesShortcut(e, shortcuts.nextSession) || matchesShortcut(e, shortcuts.prevSession)) {
         e.preventDefault()
-        const state = useSessionStore.getState()
-        if (state.sessions.length > 1 && state.activeSessionId) {
-          const idx = state.sessions.findIndex(s => s.id === state.activeSessionId)
+        const tabs = buildTabs()
+        const idx = activeTabIndex(tabs)
+        if (tabs.length > 1 && idx >= 0) {
           const isNext = matchesShortcut(e, shortcuts.nextSession)
-          const nextIdx = isNext
-            ? (idx + 1) % state.sessions.length
-            : (idx - 1 + state.sessions.length) % state.sessions.length
-          state.setActiveSession(state.sessions[nextIdx].id)
+          const nextIdx = isNext ? (idx + 1) % tabs.length : (idx - 1 + tabs.length) % tabs.length
+          activateTab(tabs[nextIdx])
         }
       }
-      // Ctrl+1-9: jump to session (always hardcoded)
+      // Ctrl+1-9: jump to the Nth tab in the strip (sessions then page tabs).
       if (e.ctrlKey && e.key >= '1' && e.key <= '9') {
         e.preventDefault()
         const idx = parseInt(e.key) - 1
-        const state = useSessionStore.getState()
-        if (idx < state.sessions.length) {
-          state.setActiveSession(state.sessions[idx].id)
-          setView('sessions')
-        }
+        const tabs = buildTabs()
+        if (idx < tabs.length) activateTab(tabs[idx])
       }
       // Toggle sidebar
       if (matchesShortcut(e, shortcuts.toggleSidebar)) {
@@ -92,5 +109,7 @@ export function useKeyboardShortcuts(
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeSessionId])
+    // view / openPageTabs / closePageTab / setView are read in the closure; keep
+    // the listener bound to their current values so tab cycling stays correct.
+  }, [activeSessionId, view, openPageTabs, closePageTab, setView, setSidebarOpen])
 }

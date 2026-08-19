@@ -52,9 +52,12 @@ describe('SessionRow card', () => {
     expect(container.querySelector('[title="Waiting for input"]')).toBeNull()
   })
 
-  it('renders a Codex glyph for codex provider (non-default)', () => {
+  it('renders a Codex glyph for codex provider', () => {
+    // The type badge is a TYPE mark now, not an attention indicator: its title
+    // is the plain type name and it no longer changes colour with state (the
+    // status pill owns attention). Canvas review 2026-08-19.
     render(root, { provider: 'codex' })
-    expect(container.querySelector('[title="Codex is working"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="type-badge-codex"]')).toBeTruthy()
   })
 
   it('applies the quiet dashed focus ring class when focused', () => {

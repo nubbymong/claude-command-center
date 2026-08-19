@@ -19,13 +19,19 @@ export function ClaudeBadge({ needsAttention }: { needsAttention: boolean }) {
 export function ShellBadge() {
   return (
     <div
-      className="flex items-center justify-center w-4 h-4 rounded shrink-0 bg-surface1 text-overlay1"
-      title="Shell terminal"
+      className="flex items-center justify-center w-4 h-4 rounded shrink-0 bg-sky/15 text-sky"
+      title="Terminal only"
+      data-testid="type-badge-shell"
     >
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-        <polyline points="7 8 3 12 7 16" />
-        <polyline points="17 8 21 12 17 16" />
-        <line x1="14" y1="4" x2="10" y2="20" />
+      {/* Prompt chevron + a solid block cursor (canvas review 2026-08-19,
+          option C). Replaces the code-brackets glyph, which read as "code"
+          rather than "a shell" and, in grey, as disabled next to the tinted
+          Claude and Codex chips. Sky is the terminal's own hue: peach Claude,
+          mauve Codex, sky terminal — SSH stays blue and tmux green, so the
+          transport family never shares a colour with the type family. */}
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <polyline points="4 6 10 12 4 18" fill="none" />
+        <rect x="12.5" y="14.5" width="8" height="4" rx="1" stroke="none" />
       </svg>
     </div>
   )
@@ -37,6 +43,7 @@ export function SshBadge() {
       className="flex items-center justify-center h-4 px-1 rounded shrink-0 bg-blue/15 text-blue"
       title="SSH session"
       style={{ fontSize: '8px', fontWeight: 700, letterSpacing: '0.5px' }}
+      data-testid="ssh-badge"
     >
       SSH
     </div>
@@ -65,25 +72,57 @@ export function SshPersistentBadge() {
   )
 }
 
-export function CodexBadge({ needsAttention }: { needsAttention: boolean }) {
-  const isWorking = !needsAttention
+export function CodexBadge() {
   return (
     <div
-      className={`flex items-center justify-center w-4 h-4 rounded shrink-0 transition-colors ${
-        isWorking ? 'bg-green/20 text-green' : 'bg-blue/20 text-blue'
-      }`}
-      title={isWorking ? 'Codex is working' : 'Waiting for input'}
+      className="flex items-center justify-center w-4 h-4 rounded shrink-0 bg-mauve/20 text-mauve"
+      title="Codex"
+      data-testid="type-badge-codex"
     >
       {/*
         OpenAI-style mark: rounded lobed outline with a centred plus
-        cross, drawn into the same 10x10 viewBox the ClaudeBadge uses
+        cross, drawn into the same 10x10 viewBox the Claude badge uses
         so layout stays identical. (Not the literal six-arc OpenAI
         rosette -- a simplified glyph that still reads as "OpenAI" at
         the 10px sidebar size where the rosette's detail would mush.)
+        Mauve, not green: green is tmux's colour (canvas review 2026-08-19).
       */}
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
         <path d="M12 2C9 2 6.5 4 6 7c-2.5 1-4 3.5-4 6.5C2 17 5 20 8.5 20c1.5 0 3-.5 4-1.5 1 1 2.5 1.5 4 1.5 3.5 0 6.5-3 6.5-6.5 0-3-1.5-5.5-4-6.5C18.5 4 15.5 2 12 2z" />
         <path d="M12 8v8M8 12h8" />
+      </svg>
+    </div>
+  )
+}
+
+/**
+ * The session TYPE badge — exactly one per row, always in the same place.
+ *
+ * Before this a Claude Code session had no icon at all, Codex and Shell had
+ * one inline after the name, and SSH/tmux was a separate text badge in the
+ * same spot: four treatments across five cards, and the common case marked
+ * by absence. Now every row shows its type here (canvas review 2026-08-19,
+ * "one home, every type"); SSH/tmux stay separate badges — they are the
+ * transport, not the type — and sit immediately left of this.
+ */
+export function SessionTypeBadge({ kind }: { kind: 'claude' | 'codex' | 'shell' }) {
+  if (kind === 'shell') return <ShellBadge />
+  if (kind === 'codex') return <CodexBadge />
+  return <ClaudeTypeBadge />
+}
+
+/** Claude Code, as a TYPE mark: fixed peach, never attention-coloured. The
+ *  older ClaudeBadge above flips colour with attention state and is kept for
+ *  the callers that want that. */
+export function ClaudeTypeBadge() {
+  return (
+    <div
+      className="flex items-center justify-center w-4 h-4 rounded shrink-0 bg-peach/20 text-peach"
+      title="Claude Code"
+      data-testid="type-badge-claude"
+    >
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
+        <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
       </svg>
     </div>
   )

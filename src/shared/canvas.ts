@@ -48,7 +48,14 @@ export interface CanvasState {
   sessionId: string
   activeVersionId: string | null
   versions: CanvasVersion[]
+  /** What this canvas is OF, in the agent's own words — "Title bar logo
+   *  placement", "Checkout flow". Label only: sanitized in main, shown to the
+   *  user, and never a key for serving or authorizing anything. */
+  title?: string
 }
+
+/** Longest canvas title kept. A title names a subject; it is not a description. */
+export const MAX_CANVAS_TITLE_CHARS = 80
 
 /** Payload of the `canvas:changed` main → renderer push. */
 export interface CanvasChangedEvent {
@@ -58,10 +65,15 @@ export interface CanvasChangedEvent {
 }
 
 /** Renderer → main render request (dev/test ingress; the `canvas_render` MCP
- *  tool is the agent-facing ingress — both land in the store's renderVersion). */
+ *  tool is the agent-facing ingress — both land in the store's renderVersion).
+ *
+ *  `title` names the SUBJECT. A canvas holds one subject and accumulates
+ *  versions of it; naming a different subject files the old canvas and starts a
+ *  new one, so a fresh topic never inherits the previous topic's versions or
+ *  its unresolved review notes. See renderVersion. */
 export type CanvasRenderSource =
-  | { mode: 'design'; html: string }
-  | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string }
+  | { mode: 'design'; html: string; title?: string }
+  | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string; title?: string }
 
 // ── Anchoring (P3, spec §4) ─────────────────────────────────────────────────
 
@@ -99,7 +111,15 @@ export interface FocusObject {
 // ── Annotations & reviews (P3, spec §4) ─────────────────────────────────────
 
 export type AnnotationScope = 'element' | 'region' | 'general'
-export type AnnotationState = 'open' | 'approved' | 'reannotated' | 'dismissed'
+/**
+ * `open` is the only state a note is born in. The user moves it to `approved`,
+ * `dismissed` or `reannotated` from the panel. `addressed` is the AGENT's:
+ * "I acted on this note" — set through canvas_resolve after the agent has done
+ * the work, so a review the user finishes in chat rather than in the panel
+ * does not sit as five open notes forever. It is deliberately not `approved`:
+ * approval is the user's word, and the agent never speaks it for them.
+ */
+export type AnnotationState = 'open' | 'addressed' | 'approved' | 'reannotated' | 'dismissed'
 export type PlanVerdict = 'accept' | 'reject' | 'question'
 
 /** A sketch attached to a note (D6). The glass is never the data model: this
@@ -591,6 +611,38 @@ export interface ReclaimableCanvas {
   conversationShortId?: string
   /** Whether it matches the asking session's project, for ordering only. */
   sameProject?: boolean
+}
+
+/**
+ * One row of the canvas LIBRARY — every canvas on this machine, not just the
+ * ones the asking session could reclaim.
+ *
+ * The library exists because nothing was ever removable: `renderVersion` only
+ * ever appends, and no code path deleted a canvas or a version, so every canvas
+ * a user had ever rendered accumulated forever and surfaced in the reclaim list
+ * of every new session. That is a housekeeping surface, NOT an authorization
+ * one — listing a canvas here never binds it to a session (that is still
+ * `adoptCanvasForSession`, which the user drives). Everything on this row is a
+ * LABEL, sanitized in main, and none of it may be used as a key for serving
+ * content.
+ */
+export interface CanvasLibraryEntry {
+  canvasId: string
+  versionCount: number
+  createdAt: string
+  lastRenderedAt: string
+  /** What the canvas is OF. The row's headline when present — an id and a
+   *  timestamp do not tell anyone which canvas they are about to delete. */
+  title?: string
+  /** Project it was last rendered in. Label only; control characters stripped. */
+  cwd?: string
+  /** First 8 chars of the conversation it was last rendered under. Label only. */
+  conversationShortId?: string
+  /** Mode of its most recent version, so a mockup is tellable from a UAT run. */
+  latestMode?: 'design' | 'uat'
+  /** True when the session that owns it is one of the currently-open tiles — the
+   *  UI warns before deleting a canvas that is on screen right now. */
+  ownedByOpenSession?: boolean
 }
 
 export interface CanvasSnapshotRequestEvent {
