@@ -24,6 +24,21 @@ export function secretRef(isWindows: boolean): string {
   return isWindows ? '$env:CCC_ARG_SECRET' : '"$CCC_ARG_SECRET"'
 }
 
+/** Shell-appropriate reference to the Ask Conductor opening prompt.
+ *
+ *  Same contract as {@link secretRef}, and for the same reason: the value is
+ *  free text typed by a user, so interpolating it into a shell-parsed command
+ *  would put the safety of the whole launch line on an escaping routine. A
+ *  variable reference removes the question from the parse entirely — the shell
+ *  expands it to exactly one argument AFTER tokenising.
+ *
+ *  Quoted on POSIX so a question containing spaces or glob characters stays a
+ *  single argument; PowerShell does not word-split `$env:VAR`, so it needs no
+ *  quoting (matching secretRef exactly). */
+export function askPromptRef(isWindows: boolean): string {
+  return isWindows ? '$env:CCC_ASK_PROMPT' : '"$CCC_ASK_PROMPT"'
+}
+
 /**
  * Returns the command line to run, or '' when nothing should be run.
  * With no secret stored, `{secret}` collapses to an empty string rather than

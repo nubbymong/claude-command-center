@@ -44,6 +44,13 @@ export interface SpawnOptions {
    *  Code's startup theme auto-detection matches the terminal. Resolved by the
    *  caller from AppSettings.theme + the OS preference. Absent = no COLORFGBG. */
   hostColorScheme?: 'light' | 'dark'
+  /** Ask Conductor: the user's question, launched as Claude's opening prompt so
+   *  nobody has to paste it. Like {@link terminalSecret} this goes in the spawn
+   *  ENV and the command text carries only a REFERENCE to the variable, so the
+   *  question is never parsed by the shell — free text is exactly the input that
+   *  would otherwise need quoting to be safe — and never reaches PSReadLine's
+   *  on-disk history. Absent = no opening prompt (an ordinary session). */
+  askPrompt?: string
   // Codex-specific (only present when provider === 'codex')
   codexOptions?: CodexOptions
 }

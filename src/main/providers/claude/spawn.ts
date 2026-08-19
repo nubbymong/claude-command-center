@@ -72,6 +72,13 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
     env.COLORFGBG = opts.hostColorScheme === 'light' ? '0;15' : '15;0'
   }
 
+  // Ask Conductor's opening question. The launch line references this variable
+  // (askPromptRef) rather than carrying the text, so the shell never parses the
+  // user's words and they never reach the shell's on-disk history. Set only when
+  // non-empty: an empty variable would make `claude ""` start with a blank
+  // prompt argument rather than no argument at all.
+  if (opts.askPrompt) env.CCC_ASK_PROMPT = opts.askPrompt
+
   if (opts.disableAutoMemory) env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
   // Terminal-only secret argument. The secret goes in the ENV, and the launch

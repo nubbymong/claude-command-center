@@ -947,6 +947,9 @@ export function spawnPty(
     terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
     /** Secret argument resolved from the OS keychain in the IPC handler (main only). */
     terminalSecret?: string
+    /** Ask Conductor's opening question. Travels in the spawn ENV; the launch
+     *  line carries only a reference to it (see askPromptRef). */
+    askPrompt?: string
     elevated?: boolean
     configLabel?: string
     /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
@@ -2689,6 +2692,7 @@ export function spawnPty(
       clickableQuestions,
       disableBackgroundTasks,
       hostColorScheme,
+      askPrompt: options?.askPrompt,
     })
     const wantProfileId = options?.profileId
     // Validate before the join. This is the FOURTH site with the resolver shape,
@@ -3148,6 +3152,9 @@ export function spawnPty(
         useResumePicker: !!options?.useResumePicker,
         pickerScript: getResumePickerPath(),
         resumeUuid,
+        // Boolean only: the question itself travels in the spawn env
+        // (CCC_ASK_PROMPT), never through the command string.
+        askPrompt: !!options?.askPrompt,
       })
       setTimeout(() => {
         // Liveness guard (see shell-only branch): the 300ms launch-write can race
