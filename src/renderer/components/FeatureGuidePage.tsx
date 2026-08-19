@@ -59,9 +59,11 @@ interface Props {
   onNavigateToSessions: () => void
   /** Launch the classic step-by-step feature tour (TrainingWalkthrough help mode). */
   onStartTour: () => void
+  /** Open the full-screen What's New / release notes (WhatsNewModal, all versions). */
+  onShowWhatsNew: () => void
 }
 
-export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: Props) {
+export default function FeatureGuidePage({ onNavigateToSessions, onStartTour, onShowWhatsNew }: Props) {
   const [active, setActive] = useState<GuideSectionId>('overview')
   const [query, setQuery] = useState('')
   const [question, setQuestion] = useState('')
@@ -214,6 +216,7 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
             onAsk={ask}
             launching={launching}
             onStartTour={onStartTour}
+            onShowWhatsNew={onShowWhatsNew}
             onGo={(id) => setActive(id)}
           />
         ) : active === 'reference' ? (
@@ -337,7 +340,7 @@ function SectionHero({ eyebrow, title, blurb }: { eyebrow: string; title: string
 
 // ── Overview landing ─────────────────────────────────────────────────────────
 function Overview({
-  question, setQuestion, askInputRef, onAsk, launching, onStartTour, onGo,
+  question, setQuestion, askInputRef, onAsk, launching, onStartTour, onShowWhatsNew, onGo,
 }: {
   question: string
   setQuestion: (v: string) => void
@@ -345,6 +348,7 @@ function Overview({
   onAsk: () => void
   launching: boolean
   onStartTour: () => void
+  onShowWhatsNew: () => void
   onGo: (id: GuideSectionId) => void
 }) {
   const overview = APP_KNOWLEDGE_SECTIONS.find((s) => s.id === 'overview')
@@ -404,13 +408,38 @@ function Overview({
         <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>Your question is copied to the clipboard; paste it when the Claude prompt appears.</p>
       </div>
 
-      <div className="flex items-center justify-between rounded-2xl px-5 py-4" data-ux-id="tour-card" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
-        <div>
-          <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>Prefer a walkthrough?</h3>
-          <p className="text-[12.5px]" style={{ color: 'var(--text-secondary)' }}>Step through every feature one at a time, docked beside the live app.</p>
-        </div>
-        <button onClick={onStartTour} className="text-[12.5px] font-medium px-3.5 py-2 rounded-lg transition-colors focus-ring shrink-0" style={{ background: 'var(--surface-base)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}>Take the tour</button>
+      {/* The two full-screen walkthrough surfaces the app already has. */}
+      <div className="grid gap-4" data-ux-id="walkthroughs" style={{ gridTemplateColumns: '1fr 1fr' }}>
+        <WalkCard
+          dataUxId="whatsnew-card"
+          title="What's new"
+          desc="See what changed in this release, and browse the recent updates before them."
+          button="What's new"
+          onClick={onShowWhatsNew}
+          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" /><circle cx="12" cy="12" r="3.2" /></svg>}
+        />
+        <WalkCard
+          dataUxId="tour-card"
+          title="Take the tour"
+          desc="Step through every feature one at a time, docked beside the live app."
+          button="Take the tour"
+          onClick={onStartTour}
+          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><polygon points="14.5 9.5 9.5 11 9.5 14.5 14.5 13 14.5 9.5" fill="currentColor" stroke="none" /></svg>}
+        />
       </div>
+    </div>
+  )
+}
+
+function WalkCard({ dataUxId, title, desc, button, onClick, icon }: { dataUxId: string; title: string; desc: string; button: string; onClick: () => void; icon: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl p-5 flex flex-col" data-ux-id={dataUxId} style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
+      <div className="flex items-center gap-2.5 mb-1.5">
+        <span className="grid place-items-center rounded-lg shrink-0" style={{ width: 30, height: 30, background: 'color-mix(in srgb, var(--accent) 14%, transparent)', color: 'var(--accent)' }}>{icon}</span>
+        <h3 className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h3>
+      </div>
+      <p className="text-[12.5px] mb-3.5 flex-1" style={{ color: 'var(--text-secondary)' }}>{desc}</p>
+      <button onClick={onClick} className="self-start text-[12.5px] font-medium px-3.5 py-2 rounded-lg transition-colors focus-ring" style={{ background: 'var(--surface-base)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}>{button}</button>
     </div>
   )
 }

@@ -119,6 +119,10 @@ export default function App() {
   const [isUpdating, setIsUpdating] = useState(false)
   const [closeDialog, setCloseDialog] = useState<'close' | 'update' | null>(null)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
+  /** On-demand What's New, opened from the Feature Guide (shows the full
+   *  changelog, like the manual feature tour shows every step). Independent of
+   *  the boot upgrade gate above. */
+  const [manualWhatsNew, setManualWhatsNew] = useState(false)
   /** lastSeenVersion as it was at boot, captured when the What's New modal is
    *  armed so its "since" range cannot be moved by a later stamp. */
   const whatsNewSinceRef = useRef<string | undefined>(undefined)
@@ -751,7 +755,7 @@ export default function App() {
       onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
     />
     if (view === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
-    if (view === 'help') return <FeatureGuidePage onNavigateToSessions={() => setView('sessions')} onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }} />
+    if (view === 'help') return <FeatureGuidePage onNavigateToSessions={() => setView('sessions')} onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }} onShowWhatsNew={() => setManualWhatsNew(true)} />
     return null
   }
 
@@ -1076,6 +1080,7 @@ export default function App() {
           />
         )}
         {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} sinceVersion={whatsNewSinceRef.current} />}
+        {manualWhatsNew && <WhatsNewModal onClose={() => setManualWhatsNew(false)} showAllVersions />}
         {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal

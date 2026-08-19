@@ -20,28 +20,19 @@
       "interval": 180
     },
     {
+      "name": "feature-guide-whatsnew",
+      "steps": [
+        { "click": "[data-ux-id=\"whatsnew-card\"] button", "wait": 1900 }
+      ],
+      "settle": 900,
+      "frames": 6,
+      "interval": 180
+    },
+    {
       "name": "feature-guide-getting-started",
       "steps": [
+        { "key": "Escape", "wait": 500 },
         { "click": "[data-ux-id=\"rail-getting-started\"]", "wait": 1000 }
-      ],
-      "settle": 700,
-      "frames": 6,
-      "interval": 180
-    },
-    {
-      "name": "feature-guide-integrations",
-      "steps": [
-        { "click": "[data-ux-id=\"rail-integrations\"]", "wait": 1000 }
-      ],
-      "settle": 700,
-      "frames": 6,
-      "interval": 180
-    },
-    {
-      "name": "feature-guide-search",
-      "steps": [
-        { "click": "[data-ux-id=\"search\"]", "wait": 300 },
-        { "type": "canvas", "wait": 1000 }
       ],
       "settle": 700,
       "frames": 6,
