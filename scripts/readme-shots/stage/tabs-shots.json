@@ -1,0 +1,52 @@
+{
+  "shots": [
+    {
+      "name": "gboot",
+      "steps": [
+        { "wait": 1500 },
+        { "click": "button:has-text(\"Resume\")", "wait": 9000 }
+      ],
+      "settle": 1500,
+      "frames": 2,
+      "interval": 200
+    },
+    {
+      "name": "tabs-one-page",
+      "steps": [
+        { "click": "[data-tour=\"nav-tokenomics\"]", "wait": 2400 }
+      ],
+      "settle": 900,
+      "frames": 6,
+      "interval": 180
+    },
+    {
+      "name": "tabs-multi",
+      "steps": [
+        { "click": "[data-tour=\"nav-logs\"]", "wait": 1500 },
+        { "click": "[data-tour=\"help-button\"]", "wait": 1800 }
+      ],
+      "settle": 900,
+      "frames": 6,
+      "interval": 180
+    },
+    {
+      "name": "tabs-back-to-session",
+      "steps": [
+        { "click": "[data-testid=\"session-tab\"]", "wait": 1400 }
+      ],
+      "settle": 800,
+      "frames": 6,
+      "interval": 180
+    },
+    {
+      "name": "tabs-fg-whatsnew",
+      "steps": [
+        { "click": "[data-testid=\"page-tab\"][data-page=\"help\"]", "wait": 1000 },
+        { "click": "[data-ux-id=\"rail-whatsnew\"]", "wait": 1200 }
+      ],
+      "settle": 800,
+      "frames": 6,
+      "interval": 180
+    }
+  ]
+}

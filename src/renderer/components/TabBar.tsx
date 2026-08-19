@@ -187,6 +187,7 @@ export default function TabBar({ activeView, openPageTabs, onActivateSession, on
               </div>
             ) : (
               <button
+                data-testid="session-tab"
                 onClick={() => onActivateSession(session.id)}
                 onDoubleClick={() => beginRename(session.id)}
                 onContextMenu={(e) => {
@@ -252,6 +253,8 @@ export default function TabBar({ activeView, openPageTabs, onActivateSession, on
         return (
           <div key={`page:${v}`} className="group relative inline-flex items-center mt-1 mx-0.5 shrink-0">
             <button
+              data-testid="page-tab"
+              data-page={v}
               onClick={() => onActivatePage(v)}
               aria-label={meta.label}
               aria-current={isActive ? 'page' : undefined}
