@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { appKnowledgeMarkdown } from '../shared/app-knowledge'
+import { mkdirSecure, hardenCredentialDir } from './account-profiles'
 
 /**
  * "Ask Conductor" workspace. A folder under the resources directory
@@ -38,9 +39,23 @@ Rules:
   worse than "I do not know".
 `
 
+/**
+ * CLAUDE.md here is not data: it is the instruction file a real Claude Code
+ * session reads at startup, and this directory becomes that session's cwd (so
+ * `.mcp.json` / `.claude/settings.local.json` beside it are live too). A plain
+ * mkdirSync writes straight THROUGH a junction planted at `<resources>/help`,
+ * and succeeds, so the swallowed-error path upstream never fires.
+ *
+ * mkdirSecure refuses a reparse point anywhere below the resources anchor;
+ * hardenCredentialDir then makes the directory owner-only so it cannot be
+ * re-planted. A throw propagates -- the caller returns null and the Ask session
+ * fails closed, which is the right answer for an instruction file we cannot
+ * vouch for.
+ */
 export function ensureHelpWorkspace(resourcesDir: string): string {
   const dir = path.join(resourcesDir, 'help')
-  fs.mkdirSync(dir, { recursive: true })
+  mkdirSecure(dir)
+  hardenCredentialDir(dir)
   fs.writeFileSync(path.join(dir, 'CLAUDE.md'), CLAUDE_MD, 'utf-8')
   fs.writeFileSync(path.join(dir, 'app-knowledge.md'), appKnowledgeMarkdown(), 'utf-8')
   return dir
