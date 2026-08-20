@@ -133,6 +133,29 @@ a `release-2.2` issue later gets a fix merged to `beta`, drop `release-2.2` and
 add `in-beta`. This invariant is cheap to enforce in CI alongside the changelog
 gate.
 
+### Desktop-test gate (`desktop-tested` / `skip-desktop-test`)
+
+Headless CI (typecheck, unit tests, build) can pass while the packaged app fails
+to run usefully on a real desktop — that has happened. So a PR does not merge on
+green CI alone: **a human must open the app and exercise the change**, and that
+fact is recorded as a label, enforced by the `Desktop test gate` check.
+
+- **`desktop-tested`** — the app was launched and exercised on a real desktop for
+  this change. Apply it once you (or the tester) have actually driven the feature
+  in the running app, not just watched CI go green.
+- **`skip-desktop-test`** — this PR needs no desktop test: docs-, deps-, CI- or
+  changelog-only changes with no runtime surface. Apply it instead of
+  `desktop-tested` for those.
+
+The `Desktop test gate` check **fails until one of these two labels is present**,
+so it is the inverse of `ci-run` (which is opt-in — apply it to *run* the matrix;
+this one must be present to *allow* the merge). Removing the label turns the check
+red again.
+
+Maintainer note: the check only becomes a hard merge block once it is marked a
+**required status check** in branch protection for `beta` (and `main`) — that step
+is admin-only. Until then the check is advisory (a red X, not a stop).
+
 ## Commit Messages
 
 This project follows [Conventional Commits](https://www.conventionalcommits.org/).
