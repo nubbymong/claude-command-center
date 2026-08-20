@@ -1067,7 +1067,25 @@ export function spawnPty(
     const pending = pendingWrites.get(sessionId)
     if (!pending) return
     logInfo(`[pty] Replaying ${pending.length} buffered write(s) for ${sessionId}`)
-    for (const data of pending) ptyProcess.write(data)
+    for (const data of pending) {
+      // Same chunking rule the live path uses: a paste larger than
+      // WRITE_CHUNK_SIZE overflows/truncates ConPTY's input buffer if written in
+      // one go. Holding a write must not change how it is delivered.
+      if (data.length > WRITE_CHUNK_SIZE) writeChunked(sessionId, ptyProcess, data)
+      else ptyProcess.write(data)
+    }
+    pendingWrites.delete(sessionId)
+  }
+  /**
+   * The launch never landed (the PTY was killed/replaced inside the window, or
+   * the launch write threw). There is no program to deliver held writes to, so
+   * drop them with the hold -- leaving them buffered orphans them: nothing
+   * replays that buffer, and it survives until session teardown.
+   */
+  const abandonLaunchHold = () => {
+    launchPendingSessions.delete(sessionId)
+    const dropped = pendingWrites.get(sessionId)?.length ?? 0
+    if (dropped > 0) logWarn(`[pty] Dropping ${dropped} held write(s) for ${sessionId}: launch never completed`)
     pendingWrites.delete(sessionId)
   }
 
@@ -2826,7 +2844,7 @@ export function spawnPty(
         // window — writing to a dead or already-replaced PTY here would throw
         // inside the timer (uncaught in main). Only write when our PTY is still
         // the registered one.
-        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { launchPendingSessions.delete(sessionId); return }
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { abandonLaunchHold(); return }
         try {
           ptyProcess.write(cdCmd + '\r')
           // Queued straight after the cd: the shell runs them in order, so the
@@ -2836,7 +2854,7 @@ export function spawnPty(
             ptyProcess.write(launchLine + '\r')
           }
           releaseLaunchHold()
-        } catch { launchPendingSessions.delete(sessionId) /* session died mid-launch */ }
+        } catch { abandonLaunchHold() /* session died mid-launch */ }
       }, 300)
     } else {
       // Launch Claude Code interactive mode.
@@ -3200,11 +3218,11 @@ export function spawnPty(
         // Liveness guard (see shell-only branch): the 300ms launch-write can race
         // a kill / Restart / app-quit; writing to a dead/replaced PTY from this
         // timer would crash main. Only write when our PTY is still registered.
-        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { launchPendingSessions.delete(sessionId); return }
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { abandonLaunchHold(); return }
         try {
           ptyProcess.write(escapedCmd + '\r')
           releaseLaunchHold()
-        } catch { launchPendingSessions.delete(sessionId) /* session died mid-launch */ }
+        } catch { abandonLaunchHold() /* session died mid-launch */ }
       }, 300)
     }
 
@@ -3493,11 +3511,17 @@ export function writePty(sessionId: string, data: string): void {
     } else if (sessionId === '__cli_setup__') {
       writeCliSetupPty(data)
     } else {
-      // PTY not spawned yet — buffer the write (e.g., partner terminal command clicked before PTY ready)
+      // Buffer: either there is no PTY yet (partner terminal command clicked
+      // before it was ready) or there is one but it is still the bare shell
+      // waiting for its launch line. The two are different states and the log
+      // says which, because "not yet spawned" against a live PTY reads as a bug.
+      const held = launchPendingSessions.has(sessionId)
       const pending = pendingWrites.get(sessionId) || []
       pending.push(data)
       pendingWrites.set(sessionId, pending)
-      logInfo(`[pty] Buffered write for ${sessionId} (PTY not yet spawned, ${pending.length} pending)`)
+      logInfo(
+        `[pty] Buffered write for ${sessionId} (${held ? 'launch line still pending' : 'PTY not yet spawned'}, ${pending.length} pending)`,
+      )
     }
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code

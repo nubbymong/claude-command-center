@@ -112,6 +112,29 @@ describe('a write that lands while the launch line is still queued', () => {
     killPty(id)
   })
 
+  it('replays a large held paste in chunks, not as one oversized write', () => {
+    const id = 'ask-window-chunked'
+    spawnPty(fakeWin, id, { cwd: process.cwd(), cols: 80, rows: 24 })
+    vi.advanceTimersByTime(100)
+
+    // Well over WRITE_CHUNK_SIZE (256B). Written in one go this overflows or
+    // truncates ConPTY's input buffer -- the reason writePty chunks at all.
+    const big = 'X'.repeat(4096)
+    writePty(id, big)
+
+    vi.advanceTimersByTime(400) // launch line lands, hold releases
+    vi.advanceTimersByTime(5000) // let the chunked writer drain its interval
+
+    const payloads = writeMock.mock.calls
+      .map((c) => (typeof c[0] === 'string' ? c[0] : ''))
+      .filter((s) => s.includes('X'))
+    expect(payloads.length).toBeGreaterThan(1) // chunked, not one write
+    expect(Math.max(...payloads.map((p) => p.length))).toBeLessThanOrEqual(256)
+    expect(payloads.join('').length).toBe(big.length) // and nothing lost
+
+    killPty(id)
+  })
+
   it('releases the hold when the session dies inside the window', () => {
     const id = 'ask-window-3'
     spawnPty(fakeWin, id, { cwd: process.cwd(), cols: 80, rows: 24 })
