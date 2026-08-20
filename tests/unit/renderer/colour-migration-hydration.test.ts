@@ -48,7 +48,7 @@ describe('applyConfigColourMigration', () => {
 
   it('config save rejects: guard NOT set, returns original', async () => {
     const data = { settings: {}, configs: [{ color: '#FF3366' }] }
-    setupSave((key) => key === 'configs' ? Promise.reject(new Error('disk')) : Promise.resolve())
+    setupSave((key) => key === 'configs' ? Promise.reject(new Error('disk')) : Promise.resolve(true))
     const out: any = await applyConfigColourMigration(data)
     expect(out).toBe(data)
   })
@@ -131,9 +131,13 @@ describe('applyConfigColourMigration', () => {
 
   it('config save ok but settings save rejects: returns original (retry next launch)', async () => {
     const data = { settings: {}, configs: [{ color: '#FF3366' }] }
-    setupSave((key) => key === 'settings' ? Promise.reject(new Error('disk')) : Promise.resolve())
+    const { calls } = setupSave((key) => key === 'settings' ? Promise.reject(new Error('disk')) : Promise.resolve(true))
     const out: any = await applyConfigColourMigration(data)
     expect(out).toBe(data)
+    // The configs write must actually have SUCCEEDED and the settings write
+    // must actually have been attempted, or this is passing on the wrong path.
+    expect(calls.map((c) => c.key)).toContain('configs')
+    expect(calls.map((c) => c.key)).toContain('settings')
   })
 
   it('partial-success recovery: guard false, changed 0, records already keyed+legacy -> guard + pending', async () => {
