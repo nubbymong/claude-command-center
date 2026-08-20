@@ -119,81 +119,40 @@ describe('opening a canvas this session already owns', () => {
   })
 })
 
-describe('the account floor survives the "already mine" fast path', () => {
-  // "A canvas must never cross accounts" (adversarial review 2026-08-14) is
-  // enforced by isReclaimCandidate, which the own-canvas branch above runs
-  // BEFORE. That matters because a session id outlives an account switch — the
-  // tile is re-added with the same id — while the record's profileId is stamped
-  // once, at birth. So after switching accounts in a tile, every canvas that
-  // tile authored still says "mine" and would be one click from binding to a
-  // session now running as somebody else.
+describe('the ACCOUNT does not decide anything about a canvas (ADR-017)', () => {
+  // A canvas belongs to the PROJECT it was made for. Which Claude account was
+  // signed in when it was drawn is not part of its identity: a session id
+  // outlives an in-tile account switch, so making the account an adoption key
+  // left a tile unable to re-open the canvases it had drawn itself.
   const P1 = 'profile-one'
-  const P2 = 'profile-two'
 
-  it('refuses a canvas stamped with a DIFFERENT account, even to its own session', () => {
-    // Two subjects under account one, so the SECOND is what the session points
-    // at and switching back to the first is a real re-point, not a no-op.
+  it('opens a canvas drawn under a DIFFERENT account', () => {
     const first = renderAs(MINE, PROJECT, 'under account one', P1)
-    const second = renderAs(MINE, PROJECT, 'also under account one', P1)
-
-    const crossed = store.adoptCanvasForSession(MINE, first.canvasId, {
-      profileId: P2,
-      isSessionCurrent: allCurrent,
-    })
-    expect(crossed).toBeNull()
-    // ...and the refusal actually held: the session still points where it did.
-    expect(store.getCanvasStateForSession(MINE)?.canvasId).toBe(second.canvasId)
-  })
-
-  it('refuses in the other direction too: an UNSTAMPED record into a profiled session', () => {
-    const legacy = renderAs(MINE, PROJECT, 'no account stamp')
-    expect(store.adoptCanvasForSession(MINE, legacy.canvasId, {
-      profileId: P1,
-      isSessionCurrent: allCurrent,
-    })).toBeNull()
-  })
-
-  it('refuses a PROFILED record to the same session now on the DEFAULT account', () => {
-    // The third direction, and the one a real user takes most often: switching
-    // a tile BACK to the default account, where the query carries no profile at
-    // all. A floor written as "only compare when a profile was given" passes
-    // both cases above and lets this one through.
-    const first = renderAs(MINE, PROJECT, 'one', P1)
     renderAs(MINE, PROJECT, 'two', P1)
-    expect(store.adoptCanvasForSession(MINE, first.canvasId, {
-      isSessionCurrent: allCurrent,
-    })).toBeNull()
-  })
-
-  it('badges a row "mine" only when the action would actually open it', () => {
-    // The library and the action must answer the same question. Badging on the
-    // session id alone offered rows that Open here refuses, with a message
-    // about a session that is still running — which is not what happened.
-    const authored = renderAs(MINE, PROJECT, 'under account one', P1)
-
-    const sameAccount = store.listAllCanvases([], PROJECT, MINE, P1)
-      .find((e) => e.canvasId === authored.canvasId)
-    expect(sameAccount?.ownedByThisSession).toBe(true)
-
-    const afterSwitch = store.listAllCanvases([], PROJECT, MINE, P2)
-      .find((e) => e.canvasId === authored.canvasId)
-    // Still listed — the library shows everything — but not as this session's.
-    expect(afterSwitch).toBeTruthy()
-    expect(afterSwitch?.ownedByThisSession).toBeUndefined()
-    expect(afterSwitch?.isActiveForThisSession).toBeUndefined()
-  })
-
-  it('still opens the session\'s own canvas when the account MATCHES', () => {
-    // The floor must not cost the fix it sits inside: same session, same
-    // account, an earlier canvas that a new subject filed.
-    const first = renderAs(MINE, PROJECT, 'one', P1)
-    renderAs(MINE, PROJECT, 'two', P1)
-    const reopened = store.adoptCanvasForSession(MINE, first.canvasId, {
-      profileId: P1,
-      isSessionCurrent: allCurrent,
-    })
+    const reopened = store.adoptCanvasForSession(MINE, first.canvasId, { isSessionCurrent: allCurrent })
     expect(reopened?.canvasId).toBe(first.canvasId)
     expect(store.getCanvasStateForSession(MINE)?.canvasId).toBe(first.canvasId)
+  })
+
+  it('badges it as yours in the library too, so list and action agree', () => {
+    const authored = renderAs(MINE, PROJECT, 'under account one', P1)
+    const row = store.listAllCanvases([], PROJECT, MINE).find((e) => e.canvasId === authored.canvasId)
+    expect(row?.ownedByThisSession).toBe(true)
+  })
+
+  it('opens an UNSTAMPED legacy canvas just the same', () => {
+    const legacy = renderAs(MINE, PROJECT, 'no account stamp')
+    expect(store.adoptCanvasForSession(MINE, legacy.canvasId, { isSessionCurrent: allCurrent })?.canvasId)
+      .toBe(legacy.canvasId)
+  })
+
+  it('mentions the account nowhere in what the library hands back', () => {
+    // The stamp may still exist on records written before ADR-017. Nothing
+    // reads it, and it must not leak into a row the renderer draws.
+    renderAs(MINE, PROJECT, 'under account one', P1)
+    for (const row of store.listAllCanvases([], PROJECT, MINE)) {
+      expect(Object.keys(row)).not.toContain('profileId')
+    }
   })
 })
 

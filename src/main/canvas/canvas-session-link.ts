@@ -68,7 +68,6 @@ export function installCanvasSessionLink(): void {
   setCanvasSessionInfoResolver((sessionId) => ({
     cwd: spawnInfo.get(sessionId)?.cwd,
     conversationUuid: conversationUuidFor(sessionId),
-    profileId: spawnInfo.get(sessionId)?.profileId,
   }))
 }
 
@@ -183,7 +182,6 @@ export function listReclaimableCanvases(sessionId: string, openTileSessionIds: s
   const info = spawnInfo.get(sessionId)
   const ownCwd = info?.cwd
   return listOrphanCandidateCanvases(sessionId, {
-    profileId: info?.profileId,
     isSessionCurrent: currentSessionOracle(openTileSessionIds),
   })
     .map((c) => ({ ...c, sameProject: !!ownCwd && !!c.cwd && c.cwd === ownCwd }))
@@ -203,9 +201,7 @@ export function reclaimCanvasForSession(
   canvasId: string,
   openTileSessionIds: string[] = [],
 ): boolean {
-  const info = spawnInfo.get(sessionId)
   const adopted = adoptCanvasForSession(sessionId, canvasId, {
-    profileId: info?.profileId,
     // The SAME oracle the list used. Reclaim is addressed by id, so a canvas
     // the list correctly refused to offer must not be takeable by naming it.
     isSessionCurrent: currentSessionOracle(openTileSessionIds),
@@ -232,18 +228,6 @@ export function canvasCwdForSession(sessionId: string): string | undefined {
   return spawnInfo.get(sessionId)?.cwd
 }
 
-/**
- * The account a session was spawned under, or undefined for the default account
- * (and for a session we never saw spawn).
- *
- * Unlike the cwd above, this one IS part of an authorization key: it is what
- * `adoptCanvasForSession` compares against the record's stamp. The library takes
- * it so a row badged "yours" is a row the action will actually open — resolved
- * in main from its own spawn record, never accepted from the renderer.
- */
-export function canvasProfileForSession(sessionId: string): string | undefined {
-  return spawnInfo.get(sessionId)?.profileId
-}
 
 /** Drop a session's link state when its PTY is gone for good. */
 export function forgetSessionForCanvas(sessionId: string): void {

@@ -199,36 +199,28 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     expect(store.adoptCanvasForSession(SID_B, '', { isSessionCurrent: notCurrent })).toBeNull()
   })
 
-  it('never crosses accounts: profileId must match exactly, undefined included', () => {
+  it('does not care which ACCOUNT a canvas was drawn under (ADR-017)', () => {
+    // A canvas belongs to the project it was made for, not to whichever
+    // Claude account happened to be signed in. Requiring the account to match
+    // meant a tile that had switched accounts could not open the mockups it
+    // had drawn itself, which is an ordinary thing to want to do.
     const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'work account', 'profile-work')
     restart()
-    // A different account is neither offered nor takeable by id.
     expect(
-      store.listOrphanCandidateCanvases(SID_B, { profileId: 'profile-personal', isSessionCurrent: notCurrent }),
-    ).toEqual([])
-    expect(
-      store.adoptCanvasForSession(SID_B, canvasId, { profileId: 'profile-personal', isSessionCurrent: notCurrent }),
-    ).toBeNull()
-    // An unprofiled session cannot take a profiled record either.
-    expect(store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })).toBeNull()
-    expect(canvasJson(canvasId).sessionId).toBe(SID_A)
-    // The matching account can.
-    const ok = store.adoptCanvasForSession(SID_B, canvasId, {
-      profileId: 'profile-work',
-      isSessionCurrent: notCurrent,
-    })
+      store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent }).map((c) => c.canvasId),
+    ).toContain(canvasId)
+    const ok = store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: notCurrent })
     expect(ok?.canvasId).toBe(canvasId)
+    expect(canvasJson(canvasId).sessionId).toBe(SID_B)
   })
 
-  it('an unprofiled legacy record does not cross into a profiled session', () => {
-    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'legacy')
+  it('still refuses a canvas whose owner might come back — the one floor left', () => {
+    // Removing the account term must not weaken the guard that actually stops
+    // one tile taking a live tile$([char]39)s canvas and its private notes.
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'still running', 'profile-work')
     restart()
-    expect(
-      store.listOrphanCandidateCanvases(SID_B, { profileId: 'profile-work', isSessionCurrent: notCurrent }),
-    ).toEqual([])
-    expect(
-      store.adoptCanvasForSession(SID_B, canvasId, { profileId: 'profile-work', isSessionCurrent: notCurrent }),
-    ).toBeNull()
+    expect(store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: () => true })).toBeNull()
+    expect(canvasJson(canvasId).sessionId).toBe(SID_A)
   })
 
   it('never re-homes a session that already owns a canvas', () => {
