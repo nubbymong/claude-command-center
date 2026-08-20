@@ -4,7 +4,7 @@
  * without needing a real GPU or DOM.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { installWebglWithRecovery } from '../../../src/renderer/components/terminal/terminalWebgl'
+import { installWebglWithRecovery, DEFAULT_MAX_RECREATES } from '../../../src/renderer/components/terminal/terminalWebgl'
 
 describe('installWebglWithRecovery', () => {
   let contextLossCallback: (() => void) | null
@@ -209,5 +209,44 @@ describe('installWebglWithRecovery', () => {
 
     // No load attempt either.
     expect(loadAddonCallCount).toBe(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // Recreate cap: a flapping context must NOT recreate forever (#311)
+  // -------------------------------------------------------------------------
+
+  it('stops recreating after maxRecreates consecutive context losses', () => {
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: syncRaf,
+      isDisposed: () => false,
+      maxRecreates: 2,
+    })
+
+    // Initial load => 1 construct.
+    contextLossCallback!() // loss 1: under cap -> recreate (construct 2)
+    contextLossCallback!() // loss 2: under cap -> recreate (construct 3)
+    const atCap = constructCallCount
+    expect(atCap).toBe(3)
+
+    contextLossCallback!() // loss 3: cap reached -> NO recreate, repaint instead
+    contextLossCallback!() // loss 4: still capped -> still no recreate
+
+    expect(constructCallCount).toBe(atCap)          // no further addons built
+    expect(refreshCallCount).toBeGreaterThanOrEqual(1) // capped losses repaint the DOM
+    expect(refreshArgs).toEqual([0, 23])
+  })
+
+  it('bounds total recreations under a persistent context-loss storm (default cap)', () => {
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: syncRaf,
+      isDisposed: () => false,
+    })
+
+    for (let i = 0; i < 50; i++) contextLossCallback!()
+
+    // 1 initial + at most DEFAULT_MAX_RECREATES recreations — never one per loss.
+    expect(constructCallCount).toBe(1 + DEFAULT_MAX_RECREATES)
   })
 })

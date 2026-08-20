@@ -12,7 +12,20 @@ export interface WebglRecoveryOptions {
   WebglAddonCtor: new () => WebglAddon
   raf: (cb: () => void) => number
   isDisposed: () => boolean
+  /**
+   * How many consecutive context losses to recover from before staying on the
+   * DOM renderer for good. A flapping GPU context (a driver reset / Windows TDR)
+   * fires context loss every frame; without a cap the addon recreates on every
+   * one — the storm that shows as garbled glyphs, a white flash, then a renderer
+   * crash, on repeat (#311). After the cap we stay on the DOM renderer and
+   * repaint the garbled viewport. Defaults to DEFAULT_MAX_RECREATES.
+   */
+  maxRecreates?: number
 }
+
+/** Consecutive context losses recovered from before we stay on the DOM renderer.
+ *  Enough to ride out a genuine one-off GPU blip, low enough to kill a storm. */
+export const DEFAULT_MAX_RECREATES = 3
 
 /**
  * A handle onto the LIVE WebGL addon, valid across context-loss recreations.
@@ -54,6 +67,9 @@ export interface WebglHandle {
  *   2. In the next animation frame, try to construct + load a fresh addon (GPU-blip recovery).
  *   3. If the recreate throws (GPU genuinely gone), call `term.refresh(0, rows-1)` so the
  *      DOM renderer repaints the viewport that the dead WebGL canvas left garbled.
+ *   4. After `maxRecreates` consecutive losses, stop recreating and stay on the DOM
+ *      renderer — a context that keeps dying would otherwise recreate every frame and
+ *      storm the renderer into a crash (#311).
  *
  * Returns a WebglHandle so the caller can force a full repaint (#273) against
  * whichever addon is currently live. The happy path (WebGL works, no context
@@ -61,6 +77,17 @@ export interface WebglHandle {
  */
 export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOptions): WebglHandle {
   const { WebglAddonCtor, raf, isDisposed } = opts
+  const maxRecreates = opts.maxRecreates ?? DEFAULT_MAX_RECREATES
+  // Consecutive context losses recovered from so far. Shared across every
+  // recreated addon (each re-arms its own onContextLoss), so a flapping context
+  // that keeps recreating is counted across the whole storm, not per addon.
+  let recreateCount = 0
+
+  const forceDomRepaint = () => {
+    // The DOM renderer is already active (dispose() switched to it); repaint the
+    // viewport the dead WebGL canvas left garbled.
+    try { term.refresh(0, term.rows - 1) } catch { /* terminal may have been disposed */ }
+  }
 
   // The addon currently loaded on the terminal, or null when WebGL isn't active
   // (never loaded, or dropped to the DOM renderer after a context loss). Kept in
@@ -82,6 +109,14 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
       // touching a dead addon.
       currentAddon = null
       addon.dispose()
+      if (recreateCount >= maxRecreates) {
+        // Cap reached: the context keeps dying (a flapping GPU / Windows TDR).
+        // Stop recreating and stay on the DOM renderer — recreating again just
+        // feeds the crash loop (#311). Repaint the garbled viewport and give up.
+        forceDomRepaint()
+        return
+      }
+      recreateCount++
       raf(() => {
         if (isDisposed()) return
         try {
@@ -89,7 +124,7 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
         } catch {
           // Recreate failed: DOM renderer is already active (dispose() did
           // that), but the existing viewport rows are garbled. Force a repaint.
-          try { term.refresh(0, term.rows - 1) } catch { /* terminal may have been disposed */ }
+          forceDomRepaint()
         }
       })
     })
