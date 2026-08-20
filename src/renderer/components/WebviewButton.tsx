@@ -66,7 +66,7 @@ export default function WebviewButton({ sessionId, hasWebviewCommand = false }: 
     isIdle
       ? 'Run a webview-enabled command, or wait for auto-detect when the server starts.'
       : isOpen
-        ? 'Hide webview pane'
+        ? 'Back to the terminal (closes the webview pane)'
         : 'Show webview pane',
     state?.currentUrl ? `\nURL: ${state.currentUrl}` : '',
     isPending ? '\nPolling for content…' : '',
@@ -75,8 +75,12 @@ export default function WebviewButton({ sessionId, hasWebviewCommand = false }: 
 
   // Idle = visually present but unactionable. Cursor + opacity signal
   // "this is here, but there's nothing to click yet."
+  // Open = accent-tinted and labelled with the DESTINATION, matching the Partner
+  // toggle and the Agent Canvas button. The webview REPLACES the terminal, and
+  // a button that still read "Web" left new users with no visible way back —
+  // "Hide webview pane" was tooltip-only.
   const baseInteractive = isOpen
-    ? `bg-surface1 ${borderClass} text-text`
+    ? 'bg-blue/20 border-blue/70 text-blue hover:bg-blue/30'
     : `bg-surface0/60 ${borderClass} hover:bg-surface1 text-overlay1 hover:text-text`
   const idleClasses = 'bg-surface0/30 border-surface0 text-overlay0/60 cursor-not-allowed opacity-60'
 
@@ -95,18 +99,28 @@ export default function WebviewButton({ sessionId, hasWebviewCommand = false }: 
       }`}
       title={titleParts.join('').trim()}
     >
-      <svg
-        width="12" height="12" viewBox="0 0 16 16"
-        fill="none" stroke="currentColor" strokeWidth="1.4"
-        strokeLinecap="round" strokeLinejoin="round"
-      >
-        {/* Browser-window glyph: rounded rect + dot row + content area */}
-        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
-        <line x1="1.5" y1="6" x2="14.5" y2="6" />
-        <circle cx="3.5" cy="4.25" r="0.5" fill="currentColor" />
-        <circle cx="5.5" cy="4.25" r="0.5" fill="currentColor" />
-      </svg>
-      <span>Web</span>
+      {isOpen ? (
+        <svg
+          width="12" height="12" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" strokeWidth="2"
+          strokeLinecap="round" strokeLinejoin="round"
+        >
+          <path d="M19 12H5M11 18l-6-6 6-6" />
+        </svg>
+      ) : (
+        <svg
+          width="12" height="12" viewBox="0 0 16 16"
+          fill="none" stroke="currentColor" strokeWidth="1.4"
+          strokeLinecap="round" strokeLinejoin="round"
+        >
+          {/* Browser-window glyph: rounded rect + dot row + content area */}
+          <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+          <line x1="1.5" y1="6" x2="14.5" y2="6" />
+          <circle cx="3.5" cy="4.25" r="0.5" fill="currentColor" />
+          <circle cx="5.5" cy="4.25" r="0.5" fill="currentColor" />
+        </svg>
+      )}
+      <span>{isOpen ? 'Terminal' : 'Web'}</span>
       <span
         className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${dotClass} ${dotPulseClass}`}
         aria-hidden
