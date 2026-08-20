@@ -4,7 +4,7 @@
  * without needing a real GPU or DOM.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { installWebglWithRecovery } from '../../../src/renderer/components/terminal/terminalWebgl'
+import { installWebglWithRecovery, createAtlasRefresh, DEFAULT_MAX_RECREATES } from '../../../src/renderer/components/terminal/terminalWebgl'
 
 describe('installWebglWithRecovery', () => {
   let contextLossCallback: (() => void) | null
@@ -209,5 +209,156 @@ describe('installWebglWithRecovery', () => {
 
     // No load attempt either.
     expect(loadAddonCallCount).toBe(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // Recreate cap: a flapping context must NOT recreate forever (#311)
+  // -------------------------------------------------------------------------
+
+  it('stops recreating after maxRecreates consecutive context losses', () => {
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: syncRaf,
+      isDisposed: () => false,
+      maxRecreates: 2,
+    })
+
+    // Initial load => 1 construct.
+    contextLossCallback!() // loss 1: under cap -> recreate (construct 2)
+    contextLossCallback!() // loss 2: under cap -> recreate (construct 3)
+    const atCap = constructCallCount
+    expect(atCap).toBe(3)
+
+    contextLossCallback!() // loss 3: cap reached -> NO recreate, repaint instead
+    contextLossCallback!() // loss 4: still capped -> still no recreate
+
+    expect(constructCallCount).toBe(atCap)          // no further addons built
+    expect(refreshCallCount).toBeGreaterThanOrEqual(1) // capped losses repaint the DOM
+    expect(refreshArgs).toEqual([0, 23])
+  })
+
+  it('bounds total recreations under a persistent context-loss storm (default cap)', () => {
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: syncRaf,
+      isDisposed: () => false,
+    })
+
+    for (let i = 0; i < 50; i++) contextLossCallback!()
+
+    // 1 initial + at most DEFAULT_MAX_RECREATES recreations — never one per loss.
+    expect(constructCallCount).toBe(1 + DEFAULT_MAX_RECREATES)
+  })
+
+  // -------------------------------------------------------------------------
+  // The cap counts ONE storm, not the terminal's lifetime (#312 review)
+  // -------------------------------------------------------------------------
+
+  it('does not recreate for a loss still inside the stable period once capped', () => {
+    let clock = 0
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: syncRaf,
+      isDisposed: () => false,
+      maxRecreates: 2,
+      stablePeriodMs: 30_000,
+      now: () => clock,
+    })
+
+    clock = 0; contextLossCallback!()      // recreate -> construct 2
+    clock = 1_000; contextLossCallback!()  // recreate -> construct 3
+    clock = 2_000; contextLossCallback!()  // cap reached -> no recreate
+    expect(constructCallCount).toBe(3)
+
+    // Still inside the stable period: the storm is ongoing, stay capped.
+    clock = 2_000 + 30_000; contextLossCallback!() // gap == stablePeriodMs, NOT >
+    expect(constructCallCount).toBe(3)
+  })
+
+  it('resets the cap for a loss that arrives after the context held stable', () => {
+    let clock = 0
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: syncRaf,
+      isDisposed: () => false,
+      maxRecreates: 2,
+      stablePeriodMs: 30_000,
+      now: () => clock,
+    })
+
+    clock = 0; contextLossCallback!()
+    clock = 1_000; contextLossCallback!()
+    clock = 2_000; contextLossCallback!()  // capped
+    expect(constructCallCount).toBe(3)
+
+    // The context then rendered for well past the stable period. This loss is a
+    // NEW incident — a driver update, a sleep/wake — not the same storm, so the
+    // terminal gets its recoveries back instead of being stuck on the DOM
+    // renderer for the rest of its life.
+    clock = 2_000 + 30_001; contextLossCallback!()
+    expect(constructCallCount).toBe(4)
+  })
+
+  it('survives three unrelated blips a day apart without giving up WebGL', () => {
+    let clock = 0
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: syncRaf,
+      isDisposed: () => false,
+      now: () => clock,
+    })
+
+    const DAY = 24 * 60 * 60 * 1000
+    for (let i = 1; i <= 6; i++) { clock = i * DAY; contextLossCallback!() }
+
+    // Every one recovered: 1 initial + 6 recreations. A lifetime cap would have
+    // stopped at 1 + DEFAULT_MAX_RECREATES.
+    expect(constructCallCount).toBe(7)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createAtlasRefresh: the coordinator callback is inert without live WebGL
+// ---------------------------------------------------------------------------
+
+describe('createAtlasRefresh', () => {
+  it('repaints while WebGL is live on this terminal', () => {
+    let refreshes = 0
+    const handle = { isActive: () => true, clearTextureAtlas: () => true }
+    createAtlasRefresh(() => handle as any, () => { refreshes++ })()
+    expect(refreshes).toBe(1)
+  })
+
+  it('does not repaint a terminal whose WebGL never loaded', () => {
+    let refreshes = 0
+    // installWebglWithRecovery swallows an initial load failure and hands back a
+    // handle that is simply never active — the DOM renderer is doing the work
+    // and its viewport is already correct.
+    const handle = { isActive: () => false, clearTextureAtlas: () => false }
+    createAtlasRefresh(() => handle as any, () => { refreshes++ })()
+    expect(refreshes).toBe(0)
+  })
+
+  it('stops repainting once a terminal falls back to the DOM renderer for good', () => {
+    let refreshes = 0
+    let live = true
+    const handle = { isActive: () => live, clearTextureAtlas: () => live }
+    const cb = createAtlasRefresh(() => handle as any, () => { refreshes++ })
+
+    cb()
+    expect(refreshes).toBe(1)
+
+    // Context-loss storm hit the recreate cap: WebGL is gone for this terminal.
+    // Registration happened at mount, so only a liveness check inside the
+    // callback can notice.
+    live = false
+    cb()
+    expect(refreshes).toBe(1)
+  })
+
+  it('does not repaint before the handle exists', () => {
+    let refreshes = 0
+    createAtlasRefresh(() => null, () => { refreshes++ })()
+    expect(refreshes).toBe(0)
   })
 })
