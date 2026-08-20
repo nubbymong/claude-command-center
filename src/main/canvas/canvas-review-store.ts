@@ -37,6 +37,7 @@ import {
   type ReviewPayload,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
+import { logInfo } from '../debug-logger'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
 import { getCanvasStateForSession } from './canvas-store'
 
@@ -460,7 +461,14 @@ function readRecordNoRebind(canvasId: string): ReviewFileRecord | null {
     // maxima (200 reviews × 100 notes × 4000 chars) allow tens of megabytes, and
     // whatever else happens to be sitting at that path allows anything at all.
     // Refusing to read it is the same outcome as failing to parse it: no counts.
-    if (fs.statSync(file).size > MAX_REVIEW_FILE_BYTES) return null
+    const size = fs.statSync(file).size
+    if (size > MAX_REVIEW_FILE_BYTES) {
+      // Say so. A silent refusal leaves the counts simply absent on both
+      // surfaces — the library row and the agent's "notes waiting" line — for a
+      // canvas whose notes still open perfectly well when you click into it.
+      logInfo(`[canvas-reviews] counts skipped for ${canvasId}: reviews.json is ${size} bytes`)
+      return null
+    }
     raw = fs.readFileSync(file, 'utf8')
   } catch {
     return null

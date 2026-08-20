@@ -178,6 +178,12 @@ describe('normaliseQuestion', () => {
     expect(normaliseQuestion('why\u202edoes\u200bthis\u2066break')).toBe('why does this break')
   })
 
+  it('strips the line and paragraph separators too', () => {
+    // \p{Zl}\p{Zp}. Without a case for them, that arm of the class can be
+    // dropped with every test still green.
+    expect(normaliseQuestion('one\u2028two\u2029three')).toBe('one two three')
+  })
+
   it('returns undefined for a question that is only control characters', () => {
     expect(normaliseQuestion('\u0000\u001b\u0007')).toBeUndefined()
   })

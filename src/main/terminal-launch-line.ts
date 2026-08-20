@@ -82,9 +82,13 @@ const QUESTION_CONTROLS_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
  * shim, so cmd.exe re-parses the line before forwarding `%*`, and `&`/`|`/`^`
  * are live in an UNQUOTED token (`foo&whoami` ran whoami). Inside quotes they
  * are inert. `%VAR%` is still expanded by cmd.exe there — cmd expands inside
- * quotes too — which substitutes the user's own environment into their own
- * question. That is a cosmetic leak into their own prompt, not execution, and
- * is left alone rather than mangling every `%` in ordinary English.
+ * quotes too — so a question naming a variable substitutes the user's own
+ * environment into their own prompt. Left alone rather than mangling every `%`
+ * in ordinary English: the question can only NAME a variable, never set one.
+ * (If a variable's VALUE contained a `"`, that expansion would reopen cmd's
+ * quoting — but writing such a value into the session's environment is already
+ * the same-user local-trust boundary this app accepts elsewhere, and it is not
+ * reachable from the question text.)
  *
  * The `"` → `”` substitution is deliberate and visible: a typographic quote
  * reads identically in the question, and keeping the user's words is worth more

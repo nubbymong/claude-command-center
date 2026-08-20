@@ -80,9 +80,17 @@ export function isRetiredAskConfig(config: unknown, helpDir: string): boolean {
 export async function retireAskConfig(
   configData: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  // ABSENT is not CORRUPT, and the difference is the common case: `readConfig`
+  // returns NULL for a config file that does not exist, so every install that
+  // has never written app-meta.json arrives here with `appMeta: null`. Treating
+  // that as corrupt would leave the one-shot flag permanently unwritable — and
+  // this migration stages the help workspace to run, which REWRITES the two
+  // files in it, so "never records the flag" means "restages on every launch,
+  // forever". Same distinction the configs section draws below.
   const rawMeta = configData.appMeta
-  const metaIsObject = !!rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta)
-  const meta = metaIsObject ? { ...(rawMeta as Record<string, unknown>) } : {}
+  const metaAbsent = rawMeta === undefined || rawMeta === null
+  const metaIsWritable = metaAbsent || (typeof rawMeta === 'object' && !Array.isArray(rawMeta))
+  const meta = metaIsWritable && !metaAbsent ? { ...(rawMeta as Record<string, unknown>) } : {}
   if (meta.askConfigRetired) return configData
 
   let helpDir: string | null = null
@@ -123,7 +131,7 @@ export async function retireAskConfig(
     // fresh `{askConfigRetired:true}` over it instead would be a silent repair
     // that discards the bytes. It stays out of the return value too, so
     // coerceObject still sees the original and warns.
-    if (!metaIsObject) return removed > 0 ? { ...configData, configs: kept } : configData
+    if (!metaIsWritable) return removed > 0 ? { ...configData, configs: kept } : configData
     const newMeta = { ...meta, askConfigRetired: true }
     const metaSaved = await window.electronAPI.config.save('appMeta', newMeta)
     if (metaSaved === false) return removed > 0 ? { ...configData, configs: kept } : configData
@@ -402,7 +410,16 @@ export async function applyConfigColourMigration(
   const rawSettings = { ...((configData.settings as any) || {}) }
   if (rawSettings.identityColorMigratedV2) return configData            // guard set: fast path
 
-  const configs = (configData.configs as any[]) || []
+  // `|| []` accepted anything truthy, so a configs section that is present but
+  // not an array reached migrateColorRecords and threw `records.map is not a
+  // function` from OUTSIDE the try blocks below. App.tsx's catch then hydrated
+  // from {}, resetting every store to defaults — and the next config the user
+  // touches persists that empty state over the file that held their real one.
+  // A corrupt section is left for hydrateStores to coerce and report.
+  if (configData.configs !== undefined && configData.configs !== null && !Array.isArray(configData.configs)) {
+    return configData
+  }
+  const configs = (Array.isArray(configData.configs) ? configData.configs : []) as any[]
   const { records, summary } = migrateColorRecords(configs)
   console.log('[colourMigration] configs', summary)
 
@@ -415,7 +432,9 @@ export async function applyConfigColourMigration(
   if (!changedNow && !hasPriorMigrated) {
     try {
       const newSettings = { ...rawSettings, identityColorMigratedV2: true }
-      await window.electronAPI.config.save('settings', newSettings)
+      // Boolean, not a rejection: config.save catches its own write errors and
+      // resolves false, so the catch below never sees a failed write.
+      if ((await window.electronAPI.config.save('settings', newSettings)) === false) return configData
       return { ...configData, settings: newSettings }
     } catch (e) {
       console.error('[colourMigration] guard persist failed (no-op case); will retry', e)
@@ -426,7 +445,14 @@ export async function applyConfigColourMigration(
   // Something changed now, OR a prior partial success left migrated records.
   try {
     if (changedNow) {
-      await window.electronAPI.config.save('configs', records)          // 1) persist configs FIRST
+      // 1) persist configs FIRST. A false return means they are NOT on disk, so
+      // the guard must not be written either — otherwise the migration records
+      // itself as done and the notice invites the user to review colours that
+      // were never saved.
+      if ((await window.electronAPI.config.save('configs', records)) === false) {
+        console.error('[colourMigration] configs did not persist; guard NOT set, will retry')
+        return configData
+      }
     }
     const dismissed = rawSettings.colourMigrationNoticeDismissed === true
     const newSettings = {
@@ -434,7 +460,12 @@ export async function applyConfigColourMigration(
       identityColorMigratedV2: true,
       colourMigrationNoticePending: dismissed ? rawSettings.colourMigrationNoticePending : true,
     }
-    await window.electronAPI.config.save('settings', newSettings)       // 2) guard + pending SECOND
+    // 2) guard + pending SECOND
+    if ((await window.electronAPI.config.save('settings', newSettings)) === false) {
+      // The configs ARE on disk; only the guard is not. Hydrate from what was
+      // written so memory matches, and let the next launch retry the guard.
+      return { ...configData, configs: changedNow ? records : configs }
+    }
     return { ...configData, configs: changedNow ? records : configs, settings: newSettings }
   } catch (e) {
     console.error('[colourMigration] persist failed; guard NOT set, hydrating original data', e)

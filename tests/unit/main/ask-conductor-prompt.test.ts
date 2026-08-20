@@ -195,7 +195,9 @@ describe('askPromptEnvValue — the value the reference expands to', () => {
   it('strips control, format and bidi characters on BOTH platforms', () => {
     // node-pty, unlike child_process, will put a NUL in an environment block,
     // where it ends the entry early and the rest is parsed as further variables.
-    const q = 'why\u0000 does\u001b[Z this\u0007 hang\u202e?'
+    // U+2028/U+2029 are in the class too and are not what JS \s covers in
+    // every engine; without a case for them that arm could be dropped green.
+    const q = 'why\u0000 does\u001b[Z this\u0007 hang\u202e\u2028?\u2029'
     for (const isWindows of [true, false]) {
       const value = askPromptEnvValue(q, isWindows)
       expect(value).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u)

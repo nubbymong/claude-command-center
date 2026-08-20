@@ -131,6 +131,25 @@ describe('getReviewCountsForCanvas does not write', () => {
     expect(JSON.parse(fs.readFileSync(file, 'utf8')).sessionId).toBe(OWNER)
   })
 
+  it('does not WARM the record cache, which would disable the rebind entirely', () => {
+    // Deliberately no reset between the two calls — the test above goes cold
+    // each time, and going cold is exactly what hides a cache warm.
+    //
+    // `loadRecord` returns a cached record BEFORE it compares owners, so a
+    // count read that seeded the cache would make the re-stamp unreachable: the
+    // session that now owns the canvas would write its notes into a record
+    // still stamped with the previous owner. Same defect as the one the
+    // two-reader split exists to prevent, pointing the other way.
+    const canvasId = seed()
+    detachReviewsOwner(canvasId)
+
+    expect(store.getReviewCountsForCanvas(canvasId)).not.toBeNull()
+
+    const state = store.getReviewStateForSession(OTHER)
+    expect(state?.canvasId).toBe(canvasId)
+    expect(JSON.parse(fs.readFileSync(reviewsPath(canvasId), 'utf8')).sessionId).toBe(OTHER)
+  })
+
   it('never CREATES a record for a canvas that has none', () => {
     const { canvasId } = canvasStore.renderVersion(OWNER, {
       mode: 'design',

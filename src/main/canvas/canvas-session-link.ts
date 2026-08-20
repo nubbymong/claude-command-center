@@ -232,6 +232,19 @@ export function canvasCwdForSession(sessionId: string): string | undefined {
   return spawnInfo.get(sessionId)?.cwd
 }
 
+/**
+ * The account a session was spawned under, or undefined for the default account
+ * (and for a session we never saw spawn).
+ *
+ * Unlike the cwd above, this one IS part of an authorization key: it is what
+ * `adoptCanvasForSession` compares against the record's stamp. The library takes
+ * it so a row badged "yours" is a row the action will actually open — resolved
+ * in main from its own spawn record, never accepted from the renderer.
+ */
+export function canvasProfileForSession(sessionId: string): string | undefined {
+  return spawnInfo.get(sessionId)?.profileId
+}
+
 /** Drop a session's link state when its PTY is gone for good. */
 export function forgetSessionForCanvas(sessionId: string): void {
   spawnInfo.delete(sessionId)

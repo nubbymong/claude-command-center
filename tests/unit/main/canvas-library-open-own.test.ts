@@ -153,6 +153,36 @@ describe('the account floor survives the "already mine" fast path', () => {
     })).toBeNull()
   })
 
+  it('refuses a PROFILED record to the same session now on the DEFAULT account', () => {
+    // The third direction, and the one a real user takes most often: switching
+    // a tile BACK to the default account, where the query carries no profile at
+    // all. A floor written as "only compare when a profile was given" passes
+    // both cases above and lets this one through.
+    const first = renderAs(MINE, PROJECT, 'one', P1)
+    renderAs(MINE, PROJECT, 'two', P1)
+    expect(store.adoptCanvasForSession(MINE, first.canvasId, {
+      isSessionCurrent: allCurrent,
+    })).toBeNull()
+  })
+
+  it('badges a row "mine" only when the action would actually open it', () => {
+    // The library and the action must answer the same question. Badging on the
+    // session id alone offered rows that Open here refuses, with a message
+    // about a session that is still running — which is not what happened.
+    const authored = renderAs(MINE, PROJECT, 'under account one', P1)
+
+    const sameAccount = store.listAllCanvases([], PROJECT, MINE, P1)
+      .find((e) => e.canvasId === authored.canvasId)
+    expect(sameAccount?.ownedByThisSession).toBe(true)
+
+    const afterSwitch = store.listAllCanvases([], PROJECT, MINE, P2)
+      .find((e) => e.canvasId === authored.canvasId)
+    // Still listed — the library shows everything — but not as this session's.
+    expect(afterSwitch).toBeTruthy()
+    expect(afterSwitch?.ownedByThisSession).toBeUndefined()
+    expect(afterSwitch?.isActiveForThisSession).toBeUndefined()
+  })
+
   it('still opens the session\'s own canvas when the account MATCHES', () => {
     // The floor must not cost the fix it sits inside: same session, same
     // account, an earlier canvas that a new subject filed.

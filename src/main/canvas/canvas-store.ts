@@ -1310,17 +1310,33 @@ export function listAllCanvases(
    * a permission.
    */
   askingSessionId?: string,
+  /**
+   * The account the asking session runs under, so "mine" means the same thing
+   * here as it does to the action behind it.
+   *
+   * A session id outlives an account switch while a record's profileId is
+   * stamped at birth, and adoptCanvasForSession refuses across accounts. Badging
+   * on the session id alone therefore offered rows that "Open here" would refuse
+   * with "it may belong to a session that is still running" — a list that
+   * disagrees with the action is the shape this code has been bitten by before
+   * (canvas-session-link: "a list that refuses while the by-id reclaim allows is
+   * the hole"), inverted.
+   */
+  askingProfileId?: string,
 ): CanvasLibraryEntry[] {
   ensureDiskScanned()
   const open = new Set(openTileSessionIds.filter((id) => SESSION_ID_RE.test(id)))
   const asking = askingSessionId && SESSION_ID_RE.test(askingSessionId) ? askingSessionId : undefined
+  const askingProfile = normalizedProfile({ profileId: askingProfileId, isSessionCurrent: () => false })
   const activeForAsking = asking ? sessionIndex.get(asking) : undefined
   const out: CanvasLibraryEntry[] = []
   for (const record of canvases.values()) {
     if (projectCwd && record.cwd && record.cwd !== projectCwd) continue
     const latest = record.versions[record.versions.length - 1]
     const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
-    const mine = asking !== undefined && record.sessionId === asking
+    // Exact, `undefined` included — the same comparison adoptCanvasForSession
+    // makes, so the badge and the action can never disagree.
+    const mine = asking !== undefined && record.sessionId === asking && record.profileId === askingProfile
     out.push({
       canvasId: record.canvasId,
       versionCount: record.versions.length,

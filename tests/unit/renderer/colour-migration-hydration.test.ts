@@ -48,6 +48,45 @@ describe('applyConfigColourMigration', () => {
     expect(out).toBe(data)
   })
 
+  it('config save RESOLVES FALSE: guard NOT set, returns original', async () => {
+    // This is how the write actually fails. writeConfig catches everything and
+    // returns a boolean, so the reject case above cannot happen in production —
+    // and reading it as a rejection set the guard on a write that never landed,
+    // then told the user to go review colours that were never saved.
+    const data = { settings: {}, configs: [{ color: '#FF3366' }] }
+    const { calls } = setupSave((key) => Promise.resolve(key === 'configs' ? false : true))
+    const out: any = await applyConfigColourMigration(data)
+    expect(out).toBe(data)
+    expect(calls.map((c) => c.key)).toEqual(['configs'])
+  })
+
+  it('settings save RESOLVES FALSE: keeps the written configs, leaves the guard unset', async () => {
+    const data = { settings: {}, configs: [{ color: '#FF3366' }] }
+    setupSave((key) => Promise.resolve(key === 'settings' ? false : true))
+    const out: any = await applyConfigColourMigration(data)
+    expect(out.configs[0].identityColorKey).toBe('rose')
+    expect(out.settings?.identityColorMigratedV2).toBeUndefined()
+  })
+
+  it('no-op case, settings save RESOLVES FALSE: guard NOT set', async () => {
+    const data = { settings: {}, configs: [{ color: '#FF3366', identityColorKey: 'rose' }] }
+    setupSave(() => Promise.resolve(false))
+    const out: any = await applyConfigColourMigration(data)
+    expect(out).toBe(data)
+  })
+
+  it('stands aside for a corrupt configs section instead of throwing the hydrate away', async () => {
+    // `|| []` let a non-array through to migrateColorRecords, where
+    // `records.map` threw from OUTSIDE the try — App.tsx then hydrated from {},
+    // resetting every store to defaults and overwriting the user's real configs
+    // on their next edit.
+    const { save } = setupSave()
+    const data = { settings: {}, configs: { nope: true } }
+    const out = await applyConfigColourMigration(data)
+    expect(out).toBe(data)
+    expect(save).not.toHaveBeenCalled()
+  })
+
   it('config save ok but settings save rejects: returns original (retry next launch)', async () => {
     const data = { settings: {}, configs: [{ color: '#FF3366' }] }
     setupSave((key) => key === 'settings' ? Promise.reject(new Error('disk')) : Promise.resolve())

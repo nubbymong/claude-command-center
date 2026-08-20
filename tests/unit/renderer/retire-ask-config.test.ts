@@ -188,6 +188,24 @@ describe('retireAskConfig', () => {
     expect((out.appMeta as any).askConfigRetired).toBe(true)
   })
 
+  it('records the guard when appMeta is NULL, which is what a missing file reads as', async () => {
+    // readConfig returns null for a config file that does not exist, so this is
+    // the shape every install without an app-meta.json arrives with. Treating
+    // it as corrupt made the guard unwritable — and this migration stages the
+    // help workspace, which REWRITES the files in it, so "guard never recorded"
+    // means "restaged on every launch, forever".
+    const out = await retireAskConfig({ configs: [projectConfig, askConfig()], appMeta: null })
+    expect((out.configs as unknown[]).map((c: any) => c.id)).toEqual(['proj'])
+    expect((out.appMeta as any).askConfigRetired).toBe(true)
+    expect(save).toHaveBeenCalledWith('appMeta', { askConfigRetired: true })
+  })
+
+  it('records the guard when the appMeta key is absent entirely', async () => {
+    const out = await retireAskConfig({ configs: [projectConfig] })
+    expect((out.appMeta as any).askConfigRetired).toBe(true)
+    expect(save).toHaveBeenCalledWith('appMeta', { askConfigRetired: true })
+  })
+
   it('stands aside for a CORRUPT configs section instead of silently emptying it', async () => {
     // Normalising a non-array to [] here would hand hydrateStores a clean value
     // and swallow the "section was not an array and was reset" warning, which is
