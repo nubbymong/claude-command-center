@@ -9,7 +9,7 @@ import {
   canonicaliseEmail,
 } from '../../shared/account-chip-color'
 import { resolveIdentityColor, type IdentityColorKey } from '../../shared/identity-colors'
-import RateLimitBar from './terminal/RateLimitBar'
+import RateLimitBar, { RateLimitBarPending } from './terminal/RateLimitBar'
 import type { AccountProfile } from '../../shared/account-types'
 import type { UsageBucket } from '../../shared/usage-types'
 
@@ -155,6 +155,15 @@ function shownBuckets(a: LiveAccount, hidden: string[]): UsageBucket[] {
 }
 
 /**
+ * Placeholder meters for an account whose statusline has not reported yet.
+ * These two always exist once a payload lands (model buckets like Fable are
+ * discovered from the API and cannot be predicted), so showing exactly these
+ * keeps the pill close to its eventual width without inventing a bucket that
+ * may never appear.
+ */
+export const PENDING_FOOTER_LABELS = ['5h', 'Weekly']
+
+/**
  * One account: identity dot + full email + its meters. `compact` is the two-row
  * layout -- the pill may shrink and the email ellipsises (tooltip keeps it), so
  * three pills survive a narrow window. Single-row keeps `shrink-0` + the full
@@ -181,6 +190,7 @@ function AccountPill({
   // TEXT colour — a near-white outline on the chrome — and the `color-mix()`
   // background silently dropped, leaving no fill at all.
   const accent = resolveIdentityColor(account.colourKey, theme)
+  const shown = shownBuckets(account, hidden)
   return (
     <span
       // Each account sits in its own subtle rounded pill so the boundary between
@@ -210,9 +220,16 @@ function AccountPill({
           each bar's tooltip, and the "+N" popover below stays fully labelled --
           glanceable strip, detailed popover. */}
       <span className="flex items-center gap-2 shrink-0">
-        {shownBuckets(account, hidden).map((b) => (
-          <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact />
-        ))}
+        {shown.length > 0
+          ? shown.map((b) => (
+              <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact />
+            ))
+          : // The account is live but its statusline has not reported yet. An
+            // account with no meters at all reads as an account with no usage,
+            // which is the opposite of the truth on a fresh session.
+            PENDING_FOOTER_LABELS.filter((l) => !hidden.includes(l)).map((l) => (
+              <RateLimitBarPending key={l} label={l} compact />
+            ))}
       </span>
     </span>
   )
@@ -414,7 +431,14 @@ export default function MultiAccountStatusline() {
       {rows.map((row, i) => (
         <div
           key={i}
-          className={`flex items-center justify-center min-w-0 ${multiRow ? 'gap-2' : 'gap-3'}`}
+          // flex-wrap is the occlusion fix. The count-based split above caps a
+          // row at 3 accounts, but 3 pills still overflow a narrow window --
+          // and the centred cluster then spilled equally out of BOTH sides of
+          // its zone and was clipped by the footer's overflow-hidden, cutting
+          // the first pill in half against the CLI band. Wrapping turns that
+          // horizontal overflow into an extra line, which the footer can absorb
+          // because its height is a MINIMUM (min-h-7), not a fixed size.
+          className={`flex flex-wrap items-center justify-center min-w-0 ${multiRow ? 'gap-x-2 gap-y-1' : 'gap-x-3 gap-y-1'}`}
           data-testid="multi-account-row"
         >
           {row.map((a) => (

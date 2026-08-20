@@ -79,9 +79,13 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
     }
   }, [])
 
+  // py-0.5 gives a wrapped account cluster breathing room instead of butting
+  // against the border; min-h-7 is a MINIMUM, so the bar grows to fit it. The
+  // old overflow-hidden is gone -- it clipped the cluster rather than letting
+  // it wrap, which is what cut the leading account pill against the CLI band.
   return (
     <div
-      className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t overflow-hidden"
+      className="min-h-7 shrink-0 flex items-center gap-3 px-3 py-0.5 text-xs border-t"
       style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)', ...statusType }}
     >
       {/* Runtime band */}
@@ -146,7 +150,13 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
           only when >=2 accounts are live (else null). The flex-1 spacer centres
           it between the runtime band and the disclaimer, and keeps the disclaimer
           pinned right when single-account. Pure render over session-store data. */}
-      <div className="flex-1 flex justify-center min-w-0 overflow-hidden">
+      {/* No overflow-hidden here. It used to clip the cluster instead of letting
+          it wrap, which is what cut the leading account pill in half against the
+          runtime band -- `justify-center` spills an over-wide child out of BOTH
+          sides, and the clip then hid the left one. The cluster now wraps
+          internally, so it is bounded by this zone's width and grows downward;
+          the footer's min-h-7 absorbs the extra height. */}
+      <div className="flex-1 flex justify-center min-w-0">
         <MultiAccountStatusline />
       </div>
 

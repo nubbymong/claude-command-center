@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
-import RateLimitBar from './terminal/RateLimitBar'
+import RateLimitBar, { RateLimitBarPending } from './terminal/RateLimitBar'
 import { formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
@@ -146,6 +146,20 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // off there is nothing left to show — collapse the band entirely.
   if (!statusLineEnabled && !isClaude) return null
 
+  // "The meters should appear, but nothing has arrived yet." Every clause is
+  // load-bearing: a shell-only session runs no Claude and never reports; a
+  // disconnected one never will again; and with the master switch off the user
+  // asked for no telemetry at all. Getting this wrong means shimmering forever
+  // on a session that has nothing to say, which is worse than the blank it
+  // replaces.
+  const awaitingStatusline =
+    statusLineEnabled &&
+    isClaude &&
+    !session.shellOnly &&
+    session.status !== 'disconnected' &&
+    (session.usageBuckets == null || session.usageBuckets.length === 0) &&
+    session.rateLimitCurrent == null
+
   const pct = session.contextPercent ?? 0
   // Context-meter thresholds: >85 danger, >=70 warning -- carried over from
   // the BottomBar middle zone verbatim.
@@ -283,7 +297,25 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
               </span>
             )
           }
-          if (session.rateLimitCurrent == null) return null
+          if (session.rateLimitCurrent == null) {
+            // Nothing has been reported yet. Rendering null here is what made a
+            // cold session look broken: the statusline is written by a detached
+            // child process and can trail the terminal by several seconds, so
+            // the meters were simply absent with no indication they were coming.
+            // Only for a session that should actually produce them -- a dead or
+            // shell-only session never will, and a permanent shimmer there would
+            // be a worse lie than showing nothing.
+            if (!awaitingStatusline) return null
+            const pendingLabels = ['5h', 'Weekly'].filter((l) => !hiddenBuckets.includes(l))
+            if (pendingLabels.length === 0) return null
+            return (
+              <span className="flex items-center gap-3 shrink-0" data-testid="statusline-pending">
+                {pendingLabels.map((l) => (
+                  <RateLimitBarPending key={l} label={l === 'Weekly' ? '7d' : l} />
+                ))}
+              </span>
+            )
+          }
           return (
             <span className="flex items-center gap-3 shrink-0">
               {!hiddenBuckets.includes('5h') && <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} showReset={sl.showResetTime} />}
