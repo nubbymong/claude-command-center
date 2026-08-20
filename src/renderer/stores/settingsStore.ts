@@ -99,28 +99,26 @@ export interface TerminalSettings {
   cursorBlink: boolean
   background?: string   // optional user terminal-background override; undefined => --surface-stage token
   /**
-   * GPU (WebGL) rendering for terminals. **On unless explicitly turned off** —
-   * absent means on. Read it through `gpuRenderingEnabled`, never by comparing
-   * directly.
+   * GPU (WebGL) rendering for terminals. **Opt-IN** — absent or false means the
+   * DOM renderer, which is what ships. Read it through `gpuRenderingEnabled`,
+   * never by comparing directly.
    *
-   * It was turned off by default DURING beta.16's development (#308) — not in
-   * any released build, since beta.16 had not been cut — because
-   * `@xterm/addon-webgl` keeps ONE glyph atlas per process (a module-level
-   * `charAtlasCache`, keyed on font + colours, which every CCC terminal matches).
-   * `clearTextureAtlas()` wipes that shared atlas for EVERY terminal but repairs
-   * only the caller's render model, and `term.refresh()` cannot undo it because
-   * the renderer skips cells whose contents have not changed. So one session
-   * repainting blanked the glyphs of every other open session — backgrounds
-   * intact, text gone — until that terminal was resized, scrolled, or activated.
-   * That is the real #273, misdiagnosed for months as "the atlas goes stale on
-   * its own".
+   * The fault: `@xterm/addon-webgl` keeps ONE glyph atlas per process (a
+   * module-level `charAtlasCache`, keyed on font + colours, which every CCC
+   * terminal matches). `clearTextureAtlas()` wipes that shared atlas for EVERY
+   * terminal but rebuilds only the caller's render model, and `term.refresh()`
+   * cannot undo it for the others because the renderer skips cells whose
+   * contents have not changed. So one session repainting blanks the glyphs of
+   * every other open session — backgrounds intact, text gone — until that
+   * terminal is resized, scrolled, or activated. That is the real #273,
+   * misdiagnosed for months as "the atlas goes stale on its own".
    *
-   * #312 fixed the cause rather than hiding it: a process-wide coordinator now
-   * repaints every OTHER terminal on the frame after any one of them rebuilds
-   * the shared atlas, so a clear no longer strands anybody. The containment was
-   * lifted before beta.16 shipped, so the release history is: default-on
-   * throughout, with one unreleased window in between. Applies to terminals
-   * opened after the change.
+   * #312 attempted a repair (a process-wide coordinator that refreshes the other
+   * terminals) and it does NOT hold: refresh alone cannot rebuild a victim's
+   * model, so the victim redraws blank. It was briefly default-on on the
+   * strength of that repair, entirely within beta.16's unreleased development
+   * window, and is opt-in again. See `gpuRenderingEnabled` for the disproof and
+   * for the repair that does work. Applies to terminals opened after the change.
    */
   gpuRendering?: boolean
 }
@@ -128,19 +126,27 @@ export interface TerminalSettings {
 /**
  * Whether a terminal should render through WebGL.
  *
- * Unset means ON — the default from 2.1.0-beta.16 onwards. An explicitly stored
- * `false` always wins, so anyone who turned the renderer off keeps it off: the
- * default moved, their setting did not, and no migration rewrites it. A build
- * from beta.16's development window may well have persisted a `false` that its
- * owner never chose; that is still their stored value and is still honoured.
+ * OPT-IN: only an explicit, literal `true` enables it. Absent, false, or any
+ * non-boolean value a corrupt config might hold means the DOM renderer.
  *
- * Every reader goes through here rather than comparing the field itself. Two
- * call sites each doing their own `=== true` / `!== false` is how "unset" comes
- * to mean one thing in the terminal and the opposite in the settings checkbox —
- * which is precisely the drift the previous guard was written to catch.
+ * It was briefly flipped to default-on during beta.16's development, on the
+ * basis that #312 had repaired the shared-atlas fault. An adversarial pass
+ * disproved that. The coordinator repairs a victim terminal with
+ * `term.refresh()`, and refresh alone cannot undo a foreign atlas wipe:
+ * `WebglRenderer._updateModel` skips every cell whose contents have not changed
+ * (`// Nothing has changed, no updates needed`), so the victim redraws stale
+ * vertices against an emptied texture and goes BLANK. Only the terminal that
+ * called `clearTextureAtlas()` gets `_clearModel(true)`; the others get nothing
+ * that would rebuild their model. Measured in a real WebGL renderer, the
+ * victim's ink pixels drop to zero the moment the coordinator's refresh lands.
+ *
+ * So this stays opt-in until a repair is proven on a real GPU. Every reader goes
+ * through this predicate rather than comparing the field itself: two call sites
+ * each spelling their own check is how "unset" comes to mean one thing in the
+ * terminal and the opposite in the settings checkbox.
  */
 export function gpuRenderingEnabled(ts: Pick<TerminalSettings, 'gpuRendering'> | undefined): boolean {
-  return ts?.gpuRendering !== false
+  return ts?.gpuRendering === true
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -150,7 +156,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   lineHeight: 1.2,
   cursorStyle: 'bar',
   cursorBlink: true,
-  gpuRendering: true,
+  gpuRendering: false,
 }
 
 export interface AppSettings {
