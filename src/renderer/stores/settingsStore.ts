@@ -99,23 +99,44 @@ export interface TerminalSettings {
   cursorBlink: boolean
   background?: string   // optional user terminal-background override; undefined => --surface-stage token
   /**
-   * GPU (WebGL) rendering for terminals. **Opt-IN and experimental** — absent or
-   * false means the DOM renderer, which is what ships.
+   * GPU (WebGL) rendering for terminals. **On unless explicitly turned off** —
+   * absent means on. Read it through `gpuRenderingEnabled`, never by comparing
+   * directly.
    *
-   * It was default-on until 2.1.0-beta.16, and the reason it is not any more is
-   * that `@xterm/addon-webgl` keeps ONE glyph atlas per process (a module-level
+   * It was turned off by default in 2.1.0-beta.16 because
+   * `@xterm/addon-webgl` keeps ONE glyph atlas per process (a module-level
    * `charAtlasCache`, keyed on font + colours, which every CCC terminal matches).
    * `clearTextureAtlas()` wipes that shared atlas for EVERY terminal but repairs
    * only the caller's render model, and `term.refresh()` cannot undo it because
    * the renderer skips cells whose contents have not changed. So one session
    * repainting blanked the glyphs of every other open session — backgrounds
    * intact, text gone — until that terminal was resized, scrolled, or activated.
-   *
    * That is the real #273, misdiagnosed for months as "the atlas goes stale on
-   * its own". The DOM renderer has no atlas and therefore no such failure.
-   * Applies to terminals opened after the change.
+   * its own".
+   *
+   * #312 fixed the cause rather than hiding it: a process-wide coordinator now
+   * repaints every OTHER terminal on the frame after any one of them rebuilds
+   * the shared atlas, so a clear no longer strands anybody. Turning the renderer
+   * off was containment for a bug that no longer exists, so the default is back
+   * on. Applies to terminals opened after the change.
    */
   gpuRendering?: boolean
+}
+
+/**
+ * Whether a terminal should render through WebGL.
+ *
+ * Unset means ON — that is the 2.1.0-beta.16+ default. An explicitly stored
+ * `false` always wins, so anyone who turned the renderer off keeps it off: the
+ * default moved, their setting did not, and no migration rewrites it.
+ *
+ * Every reader goes through here rather than comparing the field itself. Two
+ * call sites each doing their own `=== true` / `!== false` is how "unset" comes
+ * to mean one thing in the terminal and the opposite in the settings checkbox —
+ * which is precisely the drift the previous guard was written to catch.
+ */
+export function gpuRenderingEnabled(ts: Pick<TerminalSettings, 'gpuRendering'> | undefined): boolean {
+  return ts?.gpuRendering !== false
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -125,7 +146,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   lineHeight: 1.2,
   cursorStyle: 'bar',
   cursorBlink: true,
-  gpuRendering: false,
+  gpuRendering: true,
 }
 
 export interface AppSettings {

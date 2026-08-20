@@ -30,7 +30,7 @@ import TerminalContextMenu from './TerminalContextMenu'
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
-import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
+import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostics'
 import { ScrollToBottomButton } from './terminal'
@@ -465,14 +465,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // then we try ONE recreate in the next frame (GPU-blip recovery).
       // If recreate fails, we force term.refresh so the DOM renderer
       // repaints the viewport the dead WebGL canvas left garbled.
-      // The GPU renderer is opt-IN and experimental since 2.1.0-beta.16 (see
-      // TerminalSettings.gpuRendering): `@xterm/addon-webgl` keeps ONE glyph
-      // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal blanks the
-      // glyphs of every OTHER mounted terminal until it is resized/scrolled/
-      // activated. Unset therefore has to mean OFF — testing `!== false` would
-      // leave every install that never opened Settings on the faulty path.
-      // With the addon absent xterm uses its DOM renderer, which keeps no atlas
-      // and so cannot show the fault at all. Read once at mount — changing it
+      // The GPU renderer is ON unless explicitly turned off (see
+      // TerminalSettings.gpuRendering). `@xterm/addon-webgl` keeps ONE glyph
+      // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal used to
+      // blank the glyphs of every OTHER mounted terminal until it was
+      // resized/scrolled/activated — which is why beta.16 shipped it off. #312
+      // fixed that: the atlasCoordinator below repaints the others on the next
+      // frame, so the clear is survivable and the containment is no longer
+      // needed. Unset means ON; a stored `false` is a user who turned it off and
+      // is left exactly as it is. Read once at mount — changing the setting
       // applies to terminals opened afterwards, which keeps a live session from
       // having its renderer swapped underneath it.
       // Repaint this terminal's viewport from the (shared) glyph atlas.
@@ -483,7 +484,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // by callback identity, so two different closures would repaint the source
       // twice (once via the repainter's clear-then-refresh, once via the frame).
       const atlasRefresh = createAtlasRefresh(() => webglHandle, domRefresh)
-      if (ts.gpuRendering === true) {
+      if (gpuRenderingEnabled(ts)) {
         webglHandle = installWebglWithRecovery(term, {
           WebglAddonCtor: WebglAddon,
           raf: requestAnimationFrame,
