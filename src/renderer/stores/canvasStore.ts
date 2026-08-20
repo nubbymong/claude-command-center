@@ -19,6 +19,11 @@ export type CanvasEmptyView = 'intro' | 'sketchpad'
 
 export interface CanvasSessionState {
   canvasId: string | null
+  /** What this canvas is OF, in the agent's own words. A LABEL: sanitized in
+   *  main, and never a key for serving or authorizing anything. It crossed the
+   *  IPC boundary from the start and was then dropped here, which is why the
+   *  pane could show which VERSION you were on but never which canvas. */
+  title?: string
   versions: CanvasVersion[]
   activeVersionId: string | null
   /** Browse first: land on the content, explore, then flip to draw. */
@@ -54,10 +59,11 @@ const EMPTY: CanvasSessionState = {
 
 function fromMain(prev: CanvasSessionState | undefined, state: CanvasState | null): CanvasSessionState {
   const base = prev ?? EMPTY
-  if (!state) return { ...base, canvasId: null, versions: [], activeVersionId: null, loaded: true }
+  if (!state) return { ...base, canvasId: null, title: undefined, versions: [], activeVersionId: null, loaded: true }
   return {
     ...base,
     canvasId: state.canvasId,
+    title: state.title,
     versions: state.versions,
     activeVersionId: state.activeVersionId,
     loaded: true,

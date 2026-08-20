@@ -308,6 +308,23 @@ export function draftAnnotationsOf(state: CanvasReviewSessionState): Annotation[
   return state.annotations.filter((a) => members.has(a.id))
 }
 
+/**
+ * Reviews that are OPEN: sent, and not closed out.
+ *
+ * 'submitted' is not an approximation of that — it IS the store's definition. A
+ * review only becomes 'resolved' when no member note is still 'open' or
+ * 'addressed', and the agent's own write never recomputes status. So a count
+ * derived from this cannot disagree with the data behind it.
+ *
+ * Deliberately NOT a note count. An 'open' note is waiting on the AGENT and an
+ * 'addressed' one is waiting on the USER; they live in the same list, so a
+ * number over them means two things at once and cannot be cleared by either
+ * party alone.
+ */
+export function openReviewsOf(state: CanvasReviewSessionState): Review[] {
+  return state.reviews.filter((r) => r.status === 'submitted')
+}
+
 /** Notes from SUBMITTED reviews still awaiting the USER's verdict — what the
  *  resolution checklist works through (oldest review first, so the list reads
  *  in the order given). 'addressed' is included: the agent has said it acted,

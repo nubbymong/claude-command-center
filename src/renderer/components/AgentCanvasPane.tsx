@@ -21,7 +21,7 @@ import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
 import { askCanvasFrame } from '../canvas/canvas-frame-rpc'
 import { createCanvasInboundChannel } from '../canvas/canvas-inbound-channel'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
-import { openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
+import { openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { relativeTime } from '../utils/relativeTime'
 
 /** JetBrains Mono ships with the app (@font-face in styles.css) but Tailwind's
@@ -162,6 +162,7 @@ const MARQUEE_MIN_PX = 8
 function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps) {
   const togglePane = useExcalidrawStore((s) => s.togglePane)
   const mode = useCanvasStore((s) => s.bySessionId[sessionId]?.interactionMode ?? 'browse')
+  const canvasTitle = useCanvasStore((s) => s.bySessionId[sessionId]?.title)
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
   const setActiveVersion = useCanvasStore((s) => s.setActiveVersion)
 
@@ -368,6 +369,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
   // wins (ux-id is stored ahead of the fingerprint). Notes made against THIS
   // version need no pass; regions and generals have nothing to re-anchor.
   const openNotes = useMemo(() => (reviewSession ? openSubmittedNotesOf(reviewSession) : []), [reviewSession])
+  const openReviewCount = useMemo(() => (reviewSession ? openReviewsOf(reviewSession).length : 0), [reviewSession])
   const openNotesKey = useMemo(() => openNotes.map((n) => n.id).join(','), [openNotes])
 
   useEffect(() => {
@@ -523,8 +525,16 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
           weight because it decides where the user's clicks land. */}
       <div className="h-[38px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)] border-b border-[var(--border-subtle)]">
         <span className="w-[5px] h-[5px] shrink-0 rounded-full bg-[var(--brand)]" aria-hidden="true" />
-        <span className="shrink-0 text-[12px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]">
-          Agent Canvas
+        {/* WHAT this canvas is of, leading. "Agent Canvas" was a label for a
+            pane that could only ever show one thing; a session authors many, so
+            the pane has to say which one you are looking at. Falls back to the
+            product name for a canvas rendered before titles existed. */}
+        <span
+          className="shrink-0 max-w-[240px] truncate text-[12px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]"
+          title={canvasTitle ? `Canvas subject: ${canvasTitle}` : undefined}
+          data-testid="canvas-subject"
+        >
+          {canvasTitle || 'Agent Canvas'}
         </span>
         {/* The version identity, in words a person can act on. It lives here
             because a version EXISTS — the empty state's own chrome carries no
@@ -559,6 +569,26 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
               </option>
             ))}
           </select>
+        )}
+        {/* What is still owed on THIS canvas. From one, unlike the Canvas
+            button's pill: in here you are already looking at the thing, so one
+            outstanding round is worth naming rather than hiding. */}
+        {openReviewCount > 0 && (
+          <span
+            className="shrink-0 flex items-center gap-1.5 text-[11px] font-semibold rounded-full px-2 py-0.5"
+            style={{
+              color: 'var(--color-peach)',
+              background: 'color-mix(in srgb, var(--color-peach) 13%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--color-peach) 40%, transparent)',
+            }}
+            title="Sent for review and not closed out. A review closes when every note in it has your verdict."
+            data-testid="canvas-pane-open-reviews"
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            {openReviewCount} review{openReviewCount === 1 ? '' : 's'} open
+          </span>
         )}
         <button
           onClick={() => setLibraryOpen(true)}
