@@ -370,6 +370,41 @@ input[type="range"] {
   .footer-update-pulse { animation: none; }
 }
 
+/* Statusline meters, awaiting their first payload. The statusline is fed by a
+   detached child process, so on a cold session the meters can be several
+   seconds behind the terminal appearing -- and rendering nothing at all in that
+   gap reads as "the meters are broken" rather than "not here yet". A slow
+   shimmer over an empty track says waiting, without implying a value.
+
+   Deliberately calm: 1.6s, low contrast, no colour. It sits next to live meters
+   whose fill colour carries meaning (green->red), so the placeholder must never
+   look like a reading. Respects prefers-reduced-motion -- the track stays, the
+   sweep stops. */
+@keyframes statusline-pending-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+.statusline-pending-track {
+  position: relative;
+  overflow: hidden;
+}
+.statusline-pending-track::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 50%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--text-muted) 45%, transparent),
+    transparent
+  );
+  animation: statusline-pending-sweep 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .statusline-pending-track::after { animation: none; opacity: 0.35; width: 100%; }
+}
+
 /* Footer multi-account "+N" overflow popover. Anchored above the runtime
    footer (position: fixed off the chip's rect -- the footer is overflow-hidden),
    so it enters upward. Appear-only, like the GitHub panel below. Respects

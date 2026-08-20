@@ -9,7 +9,7 @@ import {
   canonicaliseEmail,
 } from '../../shared/account-chip-color'
 import { resolveIdentityColor, type IdentityColorKey } from '../../shared/identity-colors'
-import RateLimitBar from './terminal/RateLimitBar'
+import RateLimitBar, { RateLimitBarPending } from './terminal/RateLimitBar'
 import type { AccountProfile } from '../../shared/account-types'
 import type { UsageBucket } from '../../shared/usage-types'
 
@@ -155,6 +155,15 @@ function shownBuckets(a: LiveAccount, hidden: string[]): UsageBucket[] {
 }
 
 /**
+ * Placeholder meters for an account whose statusline has not reported yet.
+ * These two always exist once a payload lands (model buckets like Fable are
+ * discovered from the API and cannot be predicted), so showing exactly these
+ * keeps the pill close to its eventual width without inventing a bucket that
+ * may never appear.
+ */
+export const PENDING_FOOTER_LABELS = ['5h', 'Weekly']
+
+/**
  * One account: identity dot + full email + its meters. `compact` is the two-row
  * layout -- the pill may shrink and the email ellipsises (tooltip keeps it), so
  * three pills survive a narrow window. Single-row keeps `shrink-0` + the full
@@ -165,11 +174,14 @@ function AccountPill({
   hidden,
   theme,
   compact,
+  showPending,
 }: {
   account: LiveAccount
   hidden: string[]
   theme: 'dark' | 'light'
   compact: boolean
+  /** Whether a payload is still expected -- see the gate in the parent. */
+  showPending: boolean
 }) {
   // The pill is tinted with the account's OWN identity colour — the same colour
   // as its dot — so the rim ties the row to the account instead of drawing a
@@ -181,6 +193,13 @@ function AccountPill({
   // TEXT colour — a near-white outline on the chrome — and the `color-mix()`
   // background silently dropped, leaving no fill at all.
   const accent = resolveIdentityColor(account.colourKey, theme)
+  const shown = shownBuckets(account, hidden)
+  // "Nothing to show" has two causes and they need opposite treatments:
+  // nothing has been REPORTED yet (waiting -- shimmer), or the user has hidden
+  // every bucket for the footer (their choice -- show nothing). Keying the
+  // placeholder off `shown` conflated them and overrode the setting with a
+  // shimmer that never resolves. Key it off the raw buckets instead.
+  const reportedNothing = account.buckets.length === 0
   return (
     <span
       // Each account sits in its own subtle rounded pill so the boundary between
@@ -210,9 +229,23 @@ function AccountPill({
           each bar's tooltip, and the "+N" popover below stays fully labelled --
           glanceable strip, detailed popover. */}
       <span className="flex items-center gap-2 shrink-0">
-        {shownBuckets(account, hidden).map((b) => (
-          <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact />
-        ))}
+        {shown.length > 0
+          ? shown.map((b) => (
+              <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact />
+            ))
+          : // The account is live but its statusline has not reported yet. An
+            // account with no meters at all reads as an account with no usage,
+            // which is the opposite of the truth on a fresh session.
+            //
+            // Only when a payload is actually coming: something must still be
+            // unreported, and the status line must be on. With the switch off,
+            // or with every bucket hidden by choice, nothing will ever replace
+            // the shimmer -- and one that never resolves is worse than blank.
+            reportedNothing &&
+            showPending &&
+            PENDING_FOOTER_LABELS.filter((l) => !hidden.includes(l)).map((l) => (
+              <RateLimitBarPending key={l} label={l} compact />
+            ))}
       </span>
     </span>
   )
@@ -388,6 +421,12 @@ export default function MultiAccountStatusline() {
   const aliases = useSettingsStore((s) => s.settings.accountAliases)
   const overrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const hidden = useSettingsStore((s) => s.settings.footerHiddenUsageBuckets) ?? EMPTY_HIDDEN
+  // Master status-line switch, same flag the session strip gates on. It does NOT
+  // gate the live bars here (the footer has always shown whatever the store
+  // holds); it gates only the PENDING placeholder, which is a promise that data
+  // is on its way. With the switch off that promise is false. Absent
+  // (pre-upgrade config) means on.
+  const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
   const theme = useResolvedTheme()
 
   const accounts = React.useMemo(
@@ -414,11 +453,18 @@ export default function MultiAccountStatusline() {
       {rows.map((row, i) => (
         <div
           key={i}
-          className={`flex items-center justify-center min-w-0 ${multiRow ? 'gap-2' : 'gap-3'}`}
+          // flex-wrap is the occlusion fix. The count-based split above caps a
+          // row at 3 accounts, but 3 pills still overflow a narrow window --
+          // and the centred cluster then spilled equally out of BOTH sides of
+          // its zone and was clipped by the footer's overflow-hidden, cutting
+          // the first pill in half against the CLI band. Wrapping turns that
+          // horizontal overflow into an extra line, which the footer can absorb
+          // because its height is a MINIMUM (min-h-7), not a fixed size.
+          className={`flex flex-wrap items-center justify-center min-w-0 ${multiRow ? 'gap-x-2 gap-y-1' : 'gap-x-3 gap-y-1'}`}
           data-testid="multi-account-row"
         >
           {row.map((a) => (
-            <AccountPill key={a.email} account={a} hidden={hidden} theme={theme} compact={multiRow} />
+            <AccountPill key={a.email} account={a} hidden={hidden} theme={theme} compact={multiRow} showPending={statusLineEnabled} />
           ))}
           {i === rows.length - 1 && overflow.length > 0 && (
             <AccountOverflow accounts={overflow} hidden={hidden} theme={theme} />
