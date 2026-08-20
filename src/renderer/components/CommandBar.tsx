@@ -555,10 +555,19 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         {partnerEnabled && onTogglePartner && (
           <>
             <div className="w-px h-4 bg-surface1 mx-0.5" />
+            {/* The label already named the destination ("Partner" -> "Claude"),
+                but the STYLING was static, so sitting in the partner terminal
+                looked identical to not being there — and both panes are
+                terminals, so there was nothing else to notice. Accent-tinted
+                while active, matching the Canvas and Web toggles. */}
             <button
               onClick={onTogglePartner}
-              className="flex items-center gap-1.5 px-2 py-0.5 text-xs rounded bg-surface0/60 border border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text transition-colors whitespace-nowrap shrink-0 focus-ring"
-              title={isPartnerActive ? 'Switch back to Claude terminal' : 'Switch to partner terminal'}
+              className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${
+                isPartnerActive
+                  ? 'bg-green/20 border-green/70 text-green hover:bg-green/30'
+                  : 'bg-surface0/60 border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text'
+              }`}
+              title={isPartnerActive ? 'Back to the Claude terminal' : 'Switch to partner terminal'}
             >
               {isPartnerActive ? (
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

@@ -939,6 +939,38 @@ export default function App() {
                         minHeight: 0,
                       }}
                     >
+                      {/* Which terminal am I in? The Canvas and webview panes
+                          answer that by looking different; the partner pane is
+                          another terminal, so a user who switched could be
+                          typing into a plain shell believing it was Claude, with
+                          the only cue a label change on one button in the command
+                          bar. This strip states it and carries the way back. */}
+                      <div
+                        className="flex-none flex items-center gap-2 px-3 py-1 text-[11px] border-b"
+                        style={{
+                          background: 'color-mix(in srgb, var(--color-green) 12%, transparent)',
+                          borderColor: 'color-mix(in srgb, var(--color-green) 28%, transparent)',
+                          color: 'var(--color-subtext0)',
+                        }}
+                        data-ux-id="partner-identity-strip"
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--color-green)' }} aria-hidden>
+                          <polyline points="4 17 10 11 4 5" />
+                          <line x1="12" y1="19" x2="20" y2="19" />
+                        </svg>
+                        <span>Partner terminal &mdash; a plain shell, not Claude</span>
+                        <button
+                          onClick={() => togglePartner(session.id)}
+                          className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded focus-ring transition-colors hover:bg-surface1"
+                          style={{ color: 'var(--color-text)' }}
+                          title="Back to the Claude terminal"
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M19 12H5M11 18l-6-6 6-6" />
+                          </svg>
+                          Back to Claude
+                        </button>
+                      </div>
                       <TerminalView
                         key={partnerPtyId + '-' + session.createdAt}
                         sessionId={partnerPtyId}
