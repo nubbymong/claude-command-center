@@ -38,11 +38,16 @@ jobs:
   # PR carries `desktop-tested` or `skip-desktop-test`). Only PRs are gated;
   # direct pushes to `main` have no label and are exempt by the event guard.
   #
-  # The job ALWAYS runs (no `if` that could skip it) and decides pass/fail from
-  # the labels internally — a required check that is "skipped" is treated as
-  # pending and blocks forever, so skipping is not an option once @nubbymong marks
-  # this required in branch protection (the step that turns this from an advisory
-  # red X into an actual merge block; admin-only, tracked in #309).
+  # The job's only `if` is event-scoped (`pull_request`), and that is the whole
+  # design: on every PR it ALWAYS runs, then decides pass/fail from the labels
+  # INTERNALLY. Do not "optimise" this into a label-based `if:`. A required check
+  # that is *skipped* never reports, so GitHub treats it as pending and the PR
+  # blocks forever — a label-gated skip would deadlock exactly the PRs it was
+  # meant to wave through. Decide inside the job; never skip it.
+  #
+  # That matters once @nubbymong marks this a required status check in branch
+  # protection — the step that turns it from an advisory red X into an actual
+  # merge block (admin-only, tracked in #309).
   desktop-gate:
     name: Desktop test gate
     if: github.event_name == 'pull_request'
