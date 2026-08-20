@@ -1159,9 +1159,19 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                     // that no longer exists) produced no window and no message —
                     // indistinguishable from the menu item simply not working.
                     const pid = (s.profileId ?? primaryProfileId)!
-                    void window.electronAPI.accountWeb.openArtifacts(pid).then((r) => {
-                      if (!r.ok) alert(`Could not open artifacts for this account: ${r.error}`)
-                    })
+                    void window.electronAPI.accountWeb.openArtifacts(pid)
+                      .then((r) => {
+                        if (!r.ok) alert(`Could not open artifacts for this account: ${r.error}`)
+                      })
+                      // A rejected invoke -- IPC transport gone, or the handler dying
+                      // before it can build its envelope -- lands here, not in the
+                      // ok:false branch. Without this it is silent again, which is the
+                      // whole bug: no window and no message are indistinguishable from
+                      // a menu item that does not work.
+                      .catch((err: unknown) => {
+                        const why = (err as Error)?.message ?? String(err)
+                        alert(`Could not open artifacts for this account: ${why}`)
+                      })
                   }
                 : undefined
             }
