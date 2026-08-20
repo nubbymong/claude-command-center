@@ -174,11 +174,14 @@ function AccountPill({
   hidden,
   theme,
   compact,
+  showPending,
 }: {
   account: LiveAccount
   hidden: string[]
   theme: 'dark' | 'light'
   compact: boolean
+  /** Whether a payload is still expected -- see the gate in the parent. */
+  showPending: boolean
 }) {
   // The pill is tinted with the account's OWN identity colour — the same colour
   // as its dot — so the rim ties the row to the account instead of drawing a
@@ -227,6 +230,11 @@ function AccountPill({
           : // The account is live but its statusline has not reported yet. An
             // account with no meters at all reads as an account with no usage,
             // which is the opposite of the truth on a fresh session.
+            //
+            // Only when a payload is actually coming. With the status line
+            // switched off nothing will ever arrive, and a shimmer that never
+            // resolves is worse than the blank it replaced.
+            showPending &&
             PENDING_FOOTER_LABELS.filter((l) => !hidden.includes(l)).map((l) => (
               <RateLimitBarPending key={l} label={l} compact />
             ))}
@@ -405,6 +413,12 @@ export default function MultiAccountStatusline() {
   const aliases = useSettingsStore((s) => s.settings.accountAliases)
   const overrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const hidden = useSettingsStore((s) => s.settings.footerHiddenUsageBuckets) ?? EMPTY_HIDDEN
+  // Master status-line switch, same flag the session strip gates on. It does NOT
+  // gate the live bars here (the footer has always shown whatever the store
+  // holds); it gates only the PENDING placeholder, which is a promise that data
+  // is on its way. With the switch off that promise is false. Absent
+  // (pre-upgrade config) means on.
+  const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
   const theme = useResolvedTheme()
 
   const accounts = React.useMemo(
@@ -442,7 +456,7 @@ export default function MultiAccountStatusline() {
           data-testid="multi-account-row"
         >
           {row.map((a) => (
-            <AccountPill key={a.email} account={a} hidden={hidden} theme={theme} compact={multiRow} />
+            <AccountPill key={a.email} account={a} hidden={hidden} theme={theme} compact={multiRow} showPending={statusLineEnabled} />
           ))}
           {i === rows.length - 1 && overflow.length > 0 && (
             <AccountOverflow accounts={overflow} hidden={hidden} theme={theme} />

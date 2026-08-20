@@ -146,14 +146,16 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // off there is nothing left to show — collapse the band entirely.
   if (!statusLineEnabled && !isClaude) return null
 
-  // "The meters should appear, but nothing has arrived yet." Every clause is
-  // load-bearing: a shell-only session runs no Claude and never reports; a
-  // disconnected one never will again; and with the master switch off the user
-  // asked for no telemetry at all. Getting this wrong means shimmering forever
-  // on a session that has nothing to say, which is worse than the blank it
-  // replaces.
+  // "The meters should appear, but nothing has arrived yet." Shimmering forever
+  // on a session that has nothing to say is worse than the blank it replaces, so
+  // this excludes the two cases that will never report: a shell-only session
+  // runs no Claude, and a disconnected one is finished.
+  //
+  // Deliberately NOT re-checking statusLineEnabled here. The whole telemetry
+  // band below is already inside `{statusLineEnabled ? ... }`, so a clause for
+  // it would be unreachable -- verified by mutation: deleting it changes no test
+  // result. The footer needs its own check because it has no such wrapper.
   const awaitingStatusline =
-    statusLineEnabled &&
     isClaude &&
     !session.shellOnly &&
     session.status !== 'disconnected' &&

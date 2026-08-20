@@ -156,6 +156,18 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     expect(container.querySelectorAll('[role="progressbar"]').length).toBe(4)
   })
 
+  it('shows NO waiting meters when the status line is switched off', () => {
+    // Nothing will ever arrive with the master switch off, so a shimmer there
+    // never resolves -- worse than the blank it replaced.
+    settingsState.settings = { ...settingsState.settings, statusLineEnabled: false }
+    sessionState.sessions = [
+      { id: '1', label: 'x', status: 'working', accountEmail: 'a@x.com', rateLimitCurrent: 30, rateLimitWeekly: 12 },
+      { id: '2', label: 'y', status: 'working', accountEmail: 'jane.doe@example.com' },
+    ]
+    render()
+    expect(container.querySelectorAll('[data-testid="rate-limit-pending"]').length).toBe(0)
+  })
+
   it('every account sits in its own bounded pill (border + rounded), separating them structurally', () => {
     useAccounts(3)
     render()
