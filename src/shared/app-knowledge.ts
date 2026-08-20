@@ -59,6 +59,11 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
     body: `Agent Hub dispatches headless agent runs and pipelines from templates you author in its Library. Insights builds a qualitative digest of how your Claude sessions have been going. Tokenomics is the spend dashboard: daily charts, per-account costs, and a filterable session table. Memory is a dashboard over Claude's auto-memory, with drilldown and a reading drawer. Logs is a full chat-transcript viewer over your sessions with a timeline rail and full-text search. Conductor MCP shows the built-in tool server and its browser connection. Settings holds everything else.`,
   },
   {
+    id: 'ask-conductor',
+    title: 'Ask Conductor',
+    body: `Ask Conductor is the help session: a real Claude session that has read this app's documentation, so you can ask about the Conductor in plain English instead of hunting through Settings. It also answers questions about Claude Code itself, and will tell you which of the two you are asking about. Open it from the pill at the bottom of the sidebar, the button in the footer, the Feature Guide's Ask box, or Discuss on any tip. Type your question in the Feature Guide first and the session opens with it already asked. It gets its own tab and behaves like any other session, so you can leave it open, come back to it, and use Past discussions in its header to reopen an earlier conversation. It runs in its own documentation folder rather than your project, which is why it cannot see your code: for a question about your repository, ask in that project's session. It is not a saved config and never appears in your Saved Configs list.`,
+  },
+  {
     id: 'draw',
     title: 'Canvas, Snap, and the webview',
     body: `Inside a session you can swap the terminal for a webview pane (Web), freeze that page into the Excalidraw scratchpad to sketch over it (Freeze), or take a Snap screenshot that lands in the conversation. The alternative pane replaces the terminal while it is open, and closing it brings the terminal straight back.`,
@@ -82,6 +87,11 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
     id: 'troubleshooting',
     title: 'Troubleshooting basics',
     body: `If the status line is missing, check the master switch in Settings, Status Line, and note it applies to newly launched sessions. If the Logs page is greyed out, session-log indexing is off in Settings, General. If GitHub features look dead, re-check the account's access in Settings, GitHub (tokens can expire or lack scopes). If Codex features are missing, confirm the Codex CLI is installed and signed in under Settings, Codex. Compatibility with your installed Claude Code version is checked during onboarding and can be re-run by reinstalling or updating Claude Code and reopening the app.`,
+  },
+  {
+    id: 'known-issues',
+    title: 'Known issues and workarounds',
+    body: `Terminal text vanishing while other sessions are open. If a terminal keeps its background colours but loses its characters, and resizing the window, scrolling it, or clicking into it brings the text straight back, that is GPU rendering. Drawing terminals on the GPU uses one shared store of character images for the whole app rather than one per terminal, so whenever any single session refreshes that store, every other open terminal loses its characters until something makes it redraw. It needs two or more sessions open, which is why it can look random, and it gets worse the more sessions you have. The workaround is to turn GPU rendering off in Settings, General, under Terminal, then open your sessions again; terminals opened after the change are drawn by the normal font engine, which keeps no shared store and cannot show the fault. From version 2.1.0-beta.16 GPU rendering is off by default and marked experimental, so this reaches you only if you switched it on yourself or are running an older build. A proper fix for the GPU path is being worked on, and switching it back on before then brings the behaviour back with it.`,
   },
 ]
 

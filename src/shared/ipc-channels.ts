@@ -374,7 +374,7 @@ export const IPC = {
   CANVAS_SNAPSHOT_RESULT: 'canvas:snapshotResult',     // renderer -> main: the reply to one snapshotRequest
   CANVAS_LIST_RECLAIMABLE: 'canvas:listReclaimable',   // renderer -> main: { sessionId, openTileSessionIds? } -> ReclaimableCanvas[] (read-only)
   CANVAS_RECLAIM: 'canvas:reclaim',                    // renderer -> main: the USER moves a named canvas to this session
-  CANVAS_LIST_ALL: 'canvas:listAll',                   // renderer -> main: { openTileSessionIds? } -> CanvasLibraryEntry[] (the library; read-only)
+  CANVAS_LIST_ALL: 'canvas:listAll',                   // renderer -> main: { openTileSessionIds?, sessionId? } -> CanvasLibraryEntry[] (the library, scoped to that session's project; read-only)
   CANVAS_DELETE: 'canvas:delete',                      // renderer -> main: the USER deletes a canvas and its files
 
   // Agent Canvas P3 — reviews & annotations (the review loop, spec §6)

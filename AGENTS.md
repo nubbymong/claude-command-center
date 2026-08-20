@@ -80,6 +80,12 @@ RC-branch model (adopted with #89): `beta` is never frozen — features merge th
 - Prerelease tags: `-beta.N` and `-rc.N` — both ride the beta update channel; rc outranks beta, final outranks rc
 - Promote to stable: merge `release/vX.Y.Z` → `main`, run the release workflow from `main` with `channel=stable`, then delete the release branch
 - Changelog is generated from `src/renderer/changelog.ts` (single source; also drives the in-app "What's New" modal). Before a release, add the version's entry there, run `npm run changelog` to refresh `CHANGELOG.md`, and commit both. `release.js` already syncs the version line; the release workflow auto-populates the GitHub release notes from the same file (`scripts/gen-changelog.js --notes <version>`) — no hand-pasting. CI (`Changelog in sync`) fails on drift
+- **User-facing surface sweep — required before any release.** The changelog is not the only thing a user reads, and the others have no CI guard, so they drift silently: beta.15 shipped with a README describing features that were never built, and a tips library whose newest entry predated the Agent Canvas, the Feature Guide and pages-as-tabs by two months. For every feature added or changed since the last release, walk this list and either update the surface or record that it needs nothing:
+  - `src/renderer/changelog.ts` — What's New + `CHANGELOG.md` (CI-guarded, the only one that is)
+  - `src/shared/app-knowledge.ts` — the Feature Guide reference AND what "Ask Conductor" knows; **add a known-issues entry for anything shipping with a live workaround**, so users are not left believing a bug has no fix
+  - `src/renderer/tips-library.ts` — a tip for anything discoverable that a user would not find alone; delete tips for removed features
+  - the guided tour + Feature Guide cards — a new page or panel that no card mentions is invisible
+  - `README.md` — screenshots included; a shot of a superseded UI is worse than none
 - Commits/PR titles follow Conventional Commits, enforced by a Husky `commit-msg` hook and the `PR Title` workflow (`commitlint.config.js`)
 - **Security-sensitive changes need an adversarial-review PASS before merge is recommended** (ADR-009). Touching IPC/preload, the Conductor MCP server, PTY argv construction, credential/keychain code, the updater's verification path, Electron `webPreferences`, or bumping a *runtime* dependency's major version? Run `/adversarial-review` — independent attacker sub-agents, not a re-read of your own diff. The author never attacks their own change. Docs/styling/changelog-only work is exempt. Unsure → it's required (fail closed). Dismissing a CodeQL/Dependabot alert as a false positive goes through the same pass
 - **Required means run it, not offer it.** When the change touches one of those paths, dispatch the pass — do not stop and ask whether to. "It spawns several agents" and "I wrote it so I can't review it" are the reasons the skill exists, not reasons to defer; the author orchestrates and the sub-agents attack. The skill is model-tiered for cost: `fable` scopes the surface and runs a thesis-assertion check, then `opus`/`sonnet` attack only what that narrowed down. Writing security-sensitive code and leaving the gate unrun is the one outcome to avoid
@@ -118,6 +124,30 @@ tracked file; a fragment describing a live bug is a disclosure with a repro atta
 fragment written during an embargo may say *that* a finding exists and was routed
 privately — never the component, the mechanism, or the repro. The public record (fragment,
 changelog entry, advisory) is written **after** the fix ships, all at once.
+
+## Showing visual work — use the Agent Canvas
+
+**Anything the user has to LOOK at goes on the Agent Canvas, not into an HTML
+file you tell them to open.** A mockup, a proposed screen, a design comparison,
+the built site — invoke the `agent-canvas` skill and `canvas_render` it. They
+annotate it in place, anchored to the elements they are pointing at, and you
+fetch the notes as one review.
+
+This is written here because it keeps being missed: the file is the artifact,
+the canvas is the mechanism, and an agent that has seen `.canvas-scratch/*.html`
+in the repo reproduces the artifact and drops the mechanism. Two separate
+sessions did exactly that on 2026-08-20.
+
+Two traps worth knowing before you hit them:
+
+- **The canvas serves ONLY this session's configured project folder and the
+  worktree CCC set aside for it.** A scratch or temp directory is refused, and
+  the standing "put temporary files in the scratchpad" instruction does not
+  apply to anything you intend to render. Write it under
+  `<your worktree>/.ccc-canvas/`.
+- **A render is a handover.** Batch what you know, render once, then stop
+  touching that surface until their notes arrive. Rendering again while they are
+  annotating means they are marking up something already stale.
 
 ## Documentation protocol (CARP)
 

@@ -7,6 +7,9 @@ export interface AppMeta {
   lastTrainingVersion?: string
   commandsSeeded?: boolean
   colorMigrated?: boolean
+  /** Set once the saved config the RETIRED "Ask the Conductor" path used to
+   *  create has been removed from Saved Configs. See retireAskConfig. */
+  askConfigRetired?: boolean
   hasCreatedFirstConfig?: boolean
   firstRunCardDismissed?: boolean
   accountWizardDismissed?: boolean

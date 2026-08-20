@@ -277,6 +277,25 @@ describe('roots are scoped to the session that registered them', () => {
     )
   })
 
+  it('refuses a SIBLING directory whose name merely starts with the root', () => {
+    // Containment is a prefix test, and a prefix test without the separator
+    // makes `<root>-evil` look like it is inside `<root>`. Nothing in the suite
+    // caught the separator being dropped — with `startsWith(base)` in place of
+    // `startsWith(base + path.sep)` every canvas test stayed green (adversarial
+    // review of #308), so this is that one assertion.
+    const a = makeProject('ccc-root-sibling-')
+    const sibling = `${a.project}-evil`
+    fs.mkdirSync(sibling, { recursive: true })
+    tempDirs.push(sibling)
+    fs.writeFileSync(path.join(sibling, 'x.html'), '<p>NOT YOURS</p>')
+
+    expect(store.registerCanvasUatRoot(SID_A, a.project)).toBe(true)
+    expect(store.resolveInsideCanvasRoot(path.join(a.dist, 'index.html'), SID_A)).toBeTruthy()
+    expect(() => store.resolveInsideCanvasRoot(path.join(sibling, 'x.html'), SID_A)).toThrow(
+      /registered canvas root/i,
+    )
+  })
+
   it('a session with no roots of its own resolves nothing, however many others have registered', () => {
     // The SSH case: its cwd is remote so it registers nothing, and under the
     // global set it still reached every local project.

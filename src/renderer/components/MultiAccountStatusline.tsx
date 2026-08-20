@@ -171,18 +171,31 @@ function AccountPill({
   theme: 'dark' | 'light'
   compact: boolean
 }) {
+  // The pill is tinted with the account's OWN identity colour — the same colour
+  // as its dot — so the rim ties the row to the account instead of drawing a
+  // neutral box around it.
+  //
+  // It previously asked for `var(--surface1)`, which does not exist: the token
+  // is `--color-surface1`. An undefined custom property makes `border-color`
+  // invalid, so it fell back to `currentColor` and the rim was drawn in the
+  // TEXT colour — a near-white outline on the chrome — and the `color-mix()`
+  // background silently dropped, leaving no fill at all.
+  const accent = resolveIdentityColor(account.colourKey, theme)
   return (
     <span
       // Each account sits in its own subtle rounded pill so the boundary between
       // accounts reads at a glance, rather than relying on whitespace alone.
       className={`flex items-center gap-2 rounded-full border px-2.5 py-0.5 ${compact ? 'min-w-0' : 'shrink-0'}`}
-      style={{ borderColor: 'var(--surface1)', background: 'color-mix(in srgb, var(--surface1) 22%, transparent)' }}
+      style={{
+        borderColor: `color-mix(in srgb, ${accent} 38%, transparent)`,
+        background: `color-mix(in srgb, ${accent} 9%, transparent)`,
+      }}
       title={tooltip(account)}
       data-testid="multi-account-pill"
     >
       <span
         className="w-2 h-2 rounded-full shrink-0"
-        style={{ background: resolveIdentityColor(account.colourKey, theme) }}
+        style={{ background: accent }}
       />
       <span
         className={`font-medium ${compact ? 'truncate' : ''}`}
@@ -190,10 +203,15 @@ function AccountPill({
       >
         {account.email}
       </span>
-      {/* Meters never shrink -- the email is what gives way when space is tight. */}
+      {/* Meters never shrink -- the email is what gives way when space is tight.
+          COMPACT here: short codes and no trailing percentage. With four accounts
+          on the strip the words and numbers repeated twelve times and crowded out
+          the bars, which are the part you actually read. The exact figure is in
+          each bar's tooltip, and the "+N" popover below stays fully labelled --
+          glanceable strip, detailed popover. */}
       <span className="flex items-center gap-2 shrink-0">
         {shownBuckets(account, hidden).map((b) => (
-          <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} />
+          <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact />
         ))}
       </span>
     </span>

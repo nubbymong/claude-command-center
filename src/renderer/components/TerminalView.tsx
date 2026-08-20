@@ -463,21 +463,30 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // then we try ONE recreate in the next frame (GPU-blip recovery).
       // If recreate fails, we force term.refresh so the DOM renderer
       // repaints the viewport the dead WebGL canvas left garbled.
-      // The GPU renderer is opt-OUT (see TerminalSettings.gpuRendering). Off, we
-      // never load the addon at all and xterm uses its DOM renderer, which has
-      // no glyph atlas and so cannot show the stale-glyph artifact this whole
-      // repainter exists to bound. Read once at mount — changing it applies to
-      // terminals opened afterwards, which keeps a live session from having its
-      // renderer swapped underneath it.
-      if (ts.gpuRendering !== false) {
+      // The GPU renderer is opt-IN and experimental since 2.1.0-beta.16 (see
+      // TerminalSettings.gpuRendering): `@xterm/addon-webgl` keeps ONE glyph
+      // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal blanks the
+      // glyphs of every OTHER mounted terminal until it is resized/scrolled/
+      // activated. Unset therefore has to mean OFF — testing `!== false` would
+      // leave every install that never opened Settings on the faulty path.
+      // With the addon absent xterm uses its DOM renderer, which keeps no atlas
+      // and so cannot show the fault at all. Read once at mount — changing it
+      // applies to terminals opened afterwards, which keeps a live session from
+      // having its renderer swapped underneath it.
+      if (ts.gpuRendering === true) {
         webglHandle = installWebglWithRecovery(term, {
           WebglAddonCtor: WebglAddon,
           raf: requestAnimationFrame,
           isDisposed: () => disposed,
         })
       }
-      // #273: bust stale WebGL glyphs by reproducing the window-resize repaint
-      // (clearTextureAtlas + refresh) against whichever addon is currently live.
+      // #273: reproduces the window-resize repaint (clearTextureAtlas + refresh)
+      // against whichever addon is currently live. Its premise — that a
+      // terminal's OWN atlas goes stale and needs rebuilding — was wrong: the
+      // atlas is process-global and these clears were themselves what blanked
+      // the other terminals. It is inert on the default path (clearAtlas()
+      // returns false with no WebGL addon) and is kept only for the opt-in
+      // renderer until that path is either repaired or removed.
       repainter = createStaleGlyphRepainter({
         // Return whether the atlas was actually cleared (WebGL active). When it
         // wasn't (DOM-renderer fallback / unrecovered context loss) the repainter
@@ -606,6 +615,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               !shellOnly && session?.resumeUuid && session?.resumeCwd
                 ? { uuid: session.resumeUuid, cwd: session.resumeCwd }
                 : undefined
+            // Ask Conductor's opening question. Read off the session record for
+            // the same reason `resume` is: it is one-shot launch state, not
+            // configuration. Consumed immediately below so a later in-session
+            // Restart (which re-runs this spawn) never re-submits it. Only ever
+            // set on a local, non-shell Claude session -- the SSH path does not
+            // set CCC_ASK_PROMPT and Codex ignores it.
+            const askPrompt = !shellOnly ? session?.askPrompt : undefined
+            if (askPrompt) updateSession(sessionId, { askPrompt: undefined })
             if (resume) {
               updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
               resumeNudgesLeft = 2
@@ -621,7 +638,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // pure reflection of the session's SAVED config.
             const sshWithReconnect = ssh ? { ...ssh, reconnect: !!session?.sshReachedClaudeRunning } : ssh
             window.electronAPI.pty
-              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
+              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt })
               .catch((err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled

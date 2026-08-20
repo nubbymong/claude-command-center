@@ -947,6 +947,9 @@ export function spawnPty(
     terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
     /** Secret argument resolved from the OS keychain in the IPC handler (main only). */
     terminalSecret?: string
+    /** Ask Conductor's opening question. Travels in the spawn ENV; the launch
+     *  line carries only a reference to it (see askPromptRef). */
+    askPrompt?: string
     elevated?: boolean
     configLabel?: string
     /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
@@ -2689,6 +2692,7 @@ export function spawnPty(
       clickableQuestions,
       disableBackgroundTasks,
       hostColorScheme,
+      askPrompt: options?.askPrompt,
     })
     const wantProfileId = options?.profileId
     // Validate before the join. This is the FOURTH site with the resolver shape,
@@ -3148,6 +3152,19 @@ export function spawnPty(
         useResumePicker: !!options?.useResumePicker,
         pickerScript: getResumePickerPath(),
         resumeUuid,
+        // Boolean only: the question itself travels in the spawn env
+        // (CCC_ASK_PROMPT), never through the command string.
+        //
+        // Read off the ENV THIS SPAWN ACTUALLY GOT — `finalSpawnEnv` is the
+        // object handed to pty.spawn above — rather than re-deciding from the
+        // question. "Does the variable exist" and "does the line reference the
+        // variable" are the same question, so they must not be two answers that
+        // happen to agree: asked of the raw string, a question made only of
+        // control characters left the variable unset while the line still
+        // referenced it, and `"$CCC_ASK_PROMPT"` on POSIX is QUOTED — an unset
+        // variable expands to one EMPTY argument, not to none. That is
+        // `claude -- ""`, the blank opening prompt the env route exists to avoid.
+        askPrompt: finalSpawnEnv.CCC_ASK_PROMPT !== undefined,
       })
       setTimeout(() => {
         // Liveness guard (see shell-only branch): the 300ms launch-write can race

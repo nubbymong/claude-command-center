@@ -7,6 +7,7 @@
 import { create } from 'zustand'
 import type { CanvasState, CanvasVersion } from '../../shared/canvas'
 import { useExcalidrawStore } from './excalidrawStore'
+import { useCanvasReviewStore } from './canvasReviewStore'
 
 export type CanvasInteractionMode = 'draw' | 'browse'
 
@@ -19,6 +20,11 @@ export type CanvasEmptyView = 'intro' | 'sketchpad'
 
 export interface CanvasSessionState {
   canvasId: string | null
+  /** What this canvas is OF, in the agent's own words. A LABEL: sanitized in
+   *  main, and never a key for serving or authorizing anything. It crossed the
+   *  IPC boundary from the start and was then dropped here, which is why the
+   *  pane could show which VERSION you were on but never which canvas. */
+  title?: string
   versions: CanvasVersion[]
   activeVersionId: string | null
   /** Browse first: land on the content, explore, then flip to draw. */
@@ -28,7 +34,27 @@ export interface CanvasSessionState {
    *  user has not seen yet. Drives the Canvas button's attention pulse;
    *  cleared the moment the pane shows the canvas. */
   unseenRender: boolean
+  /** The canvas that was moved aside under the user, if one was.
+   *
+   *  A render naming a different subject FILES the current canvas and repoints
+   *  the session at a new one — taking any unresolved notes on it out of view —
+   *  and nothing said a word. The pane could always see the change (the id
+   *  underneath it changed); it just had nowhere to say so. Cleared when the
+   *  user dismisses it or goes back. */
+  filedNotice?: FiledNotice | null
   loaded: boolean
+}
+
+/** What was filed, and what went with it. The note counts come from the review
+ *  mirror as it stood BEFORE the switch — the only moment the renderer knows
+ *  them, since every session-scoped read follows the session to its new canvas. */
+export interface FiledNotice {
+  canvasId: string
+  title?: string
+  /** Notes still in play on submitted reviews when it was filed. */
+  openNotes: number
+  /** Notes the user had written and not yet sent. The sharper loss. */
+  draftNotes: number
 }
 
 interface CanvasStoreState {
@@ -39,6 +65,16 @@ interface CanvasStoreState {
   setActiveVersion: (sessionId: string, versionId: string) => Promise<void>
   markUnseenRender: (sessionId: string) => void
   clearUnseenRender: (sessionId: string) => void
+  /** The user is deliberately switching canvas — the next change under this
+   *  session is theirs, not a filing, and must not be announced as one. */
+  expectSwitch: (sessionId: string) => void
+  /** ...and the switch did not happen. The flag is consumed by the change push,
+   *  so a switch that fails never consumes it, and it would go on to swallow the
+   *  next REAL filing notice for that session — the one case the notice exists
+   *  for. Every caller of expectSwitch owns cancelling it on failure. */
+  cancelExpectedSwitch: (sessionId: string) => void
+  noteFiled: (sessionId: string, notice: FiledNotice) => void
+  dismissFiled: (sessionId: string) => void
   reset: () => void
 }
 
@@ -49,19 +85,43 @@ const EMPTY: CanvasSessionState = {
   interactionMode: 'browse',
   emptyView: 'intro',
   unseenRender: false,
+  filedNotice: null,
   loaded: false,
 }
 
 function fromMain(prev: CanvasSessionState | undefined, state: CanvasState | null): CanvasSessionState {
   const base = prev ?? EMPTY
-  if (!state) return { ...base, canvasId: null, versions: [], activeVersionId: null, loaded: true }
+  if (!state) return { ...base, canvasId: null, title: undefined, versions: [], activeVersionId: null, loaded: true }
   return {
     ...base,
     canvasId: state.canvasId,
+    title: state.title,
     versions: state.versions,
     activeVersionId: state.activeVersionId,
     loaded: true,
   }
+}
+
+/**
+ * How many canvas switches the USER has asked for and not yet seen land, per
+ * session. Module-level, not store state: it is a handshake between the picker
+ * and the push listener, never something a component renders.
+ *
+ * A COUNT, not a flag. Two switch attempts can be in flight at once — the filed
+ * strip and the subject picker are both mounted, with independent busy state —
+ * and with a flag the failing one's cancel took the succeeding one's
+ * announcement with it, so a switch the user asked for was reported to them as
+ * a filing. The opposite of what any of this is for.
+ */
+const expectedSwitches = new Map<string, number>()
+
+/** Take one expectation if this session has any. */
+function consumeExpectedSwitch(sessionId: string): boolean {
+  const pending = expectedSwitches.get(sessionId) ?? 0
+  if (pending <= 0) return false
+  if (pending === 1) expectedSwitches.delete(sessionId)
+  else expectedSwitches.set(sessionId, pending - 1)
+  return true
 }
 
 export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
@@ -117,6 +177,32 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     })
   },
 
+  expectSwitch: (sessionId: string) => {
+    expectedSwitches.set(sessionId, (expectedSwitches.get(sessionId) ?? 0) + 1)
+  },
+
+  cancelExpectedSwitch: (sessionId: string) => {
+    consumeExpectedSwitch(sessionId)
+  },
+
+  noteFiled: (sessionId: string, notice: FiledNotice) => {
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...(s.bySessionId[sessionId] ?? EMPTY), filedNotice: notice },
+      },
+    }))
+  },
+
+  dismissFiled: (sessionId: string) => {
+    set((s) => {
+      if (!s.bySessionId[sessionId]?.filedNotice) return {}
+      return {
+        bySessionId: { ...s.bySessionId, [sessionId]: { ...s.bySessionId[sessionId], filedNotice: null } },
+      }
+    })
+  },
+
   setActiveVersion: async (sessionId: string, versionId: string) => {
     try {
       const state = await window.electronAPI.canvas.setActiveVersion({ sessionId, versionId })
@@ -128,7 +214,13 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     }
   },
 
-  reset: () => set({ bySessionId: {} }),
+  // Resets the pending-switch counts too. They live outside the store object
+  // but they ARE store state, and a reset that left them behind meant an
+  // expectation could outlive everything it referred to.
+  reset: () => {
+    expectedSwitches.clear()
+    set({ bySessionId: {} })
+  },
 }))
 
 // Main → renderer push: any render/switch (IPC today, canvas_render MCP in P3)
@@ -152,6 +244,43 @@ export function setupCanvasListener(): void {
     // new to look at and then shows it an empty pane.
     if (event.activeVersionId && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
       store.markUnseenRender(event.sessionId)
+    }
+    // FILING: the canvas under this session changed identity. That happens when
+    // the agent names a different subject — the canvas the user was reviewing is
+    // moved aside, unresolved notes and all — and it used to happen in silence.
+    // A switch the USER asked for changes the same id and is not news, so the
+    // picker announces itself first.
+    const prev = store.bySessionId[event.sessionId]
+    // Only an IDENTITY change consumes an expectation. The consume used to run
+    // on every change for the session, so an ordinary new version rendered on
+    // the canvas you are already on ate the announcement, and the switch you
+    // had actually asked for then arrived looking like a filing.
+    // Named rather than inlined so the consume can be gated on it too — and
+    // typed as the id it is, so the notice below keeps its narrowing.
+    const filedCanvasId: string | null =
+      prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId ? prev.canvasId : null
+    const userAsked = filedCanvasId !== null && consumeExpectedSwitch(event.sessionId)
+    if (!userAsked && filedCanvasId !== null) {
+      // Counted from the review mirror as it stands NOW, before the refresh
+      // below follows the session to its new canvas. This is the only moment
+      // the renderer knows what was left behind.
+      const review = useCanvasReviewStore.getState().bySessionId[event.sessionId]
+      let openNotes = 0
+      let draftNotes = 0
+      if (review && review.canvasId === filedCanvasId) {
+        const submitted = new Set(review.reviews.filter((r) => r.status === 'submitted').map((r) => r.id))
+        const drafts = new Set(review.reviews.filter((r) => r.status === 'draft').flatMap((r) => r.annotationIds))
+        for (const a of review.annotations) {
+          if (drafts.has(a.id)) draftNotes++
+          else if (submitted.has(a.reviewId) && (a.state === 'open' || a.state === 'addressed')) openNotes++
+        }
+      }
+      store.noteFiled(event.sessionId, {
+        canvasId: filedCanvasId,
+        title: prev?.title,
+        openNotes,
+        draftNotes,
+      })
     }
     void store.refresh(event.sessionId)
   })

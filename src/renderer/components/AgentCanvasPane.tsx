@@ -4,6 +4,8 @@ import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import CanvasEmptyState from './CanvasEmptyState'
 import { CanvasLibrary } from './CanvasLibrary'
+import CanvasSubjectPicker from './CanvasSubjectPicker'
+import CanvasFiledStrip from './CanvasFiledStrip'
 import CanvasNotesPanel from './CanvasNotesPanel'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
@@ -21,7 +23,7 @@ import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
 import { askCanvasFrame } from '../canvas/canvas-frame-rpc'
 import { createCanvasInboundChannel } from '../canvas/canvas-inbound-channel'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
-import { openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
+import { openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { relativeTime } from '../utils/relativeTime'
 
 /** JetBrains Mono ships with the app (@font-face in styles.css) but Tailwind's
@@ -105,6 +107,7 @@ export default function AgentCanvasPane({ sessionId }: Props) {
   const refresh = useCanvasStore((s) => s.refresh)
   const clearUnseenRender = useCanvasStore((s) => s.clearUnseenRender)
   const togglePane = useExcalidrawStore((s) => s.togglePane)
+  const [libraryOpen, setLibraryOpen] = useState(false)
 
   useEffect(() => {
     void refresh(sessionId)
@@ -121,27 +124,51 @@ export default function AgentCanvasPane({ sessionId }: Props) {
     [canvasState],
   )
 
-  // Empty state: the Agent Canvas landing — what this surface is and how to
-  // start the loop — with the classic sketchpad one click away (spec D2:
-  // old Draw behaviour is preserved; it is just no longer the greeting).
+  // The library lives HERE, above the empty-state branch, not inside the
+  // surface. Deleting the canvas you are looking at empties the pane, which
+  // used to unmount the very overlay the delete button was in — a destructive
+  // control that destroys its own host, mid-action.
   if (!canvasState?.canvasId || !activeVersion) {
-    return <CanvasEmptyState sessionId={sessionId} onClose={() => togglePane(sessionId)} />
+    return (
+      <div className="flex-1 flex flex-col min-h-0">
+        <CanvasFiledStrip sessionId={sessionId} />
+        <CanvasEmptyState sessionId={sessionId} onClose={() => togglePane(sessionId)} />
+        {libraryOpen && (
+          <CanvasLibrary sessionId={sessionId} onClose={() => setLibraryOpen(false)} onOpened={() => setLibraryOpen(false)} />
+        )}
+      </div>
+    )
   }
   return (
-    <CanvasSurface
-      sessionId={sessionId}
-      canvasId={canvasState.canvasId}
-      version={activeVersion}
-      versions={canvasState.versions}
-    />
+    <div className="flex-1 flex flex-col min-h-0 relative">
+      {/* Above the surface, so the one thing that happened without asking is
+          the first thing read. */}
+      <CanvasFiledStrip sessionId={sessionId} />
+      <CanvasSurface
+        sessionId={sessionId}
+        canvasId={canvasState.canvasId}
+        title={canvasState.title}
+        version={activeVersion}
+        versions={canvasState.versions}
+        onOpenLibrary={() => setLibraryOpen(true)}
+      />
+      {libraryOpen && (
+        <CanvasLibrary sessionId={sessionId} onClose={() => setLibraryOpen(false)} onOpened={() => setLibraryOpen(false)} />
+      )}
+    </div>
   )
 }
 
 interface SurfaceProps {
   sessionId: string
   canvasId: string
+  /** The canvas's SUBJECT. Undefined for a canvas rendered before titles. */
+  title?: string
   version: CanvasVersion
   versions: CanvasVersion[]
+  /** Owned by the pane, not by this surface: the library has to outlive a
+   *  delete that empties the pane. */
+  onOpenLibrary: () => void
 }
 
 interface HoverState {
@@ -159,7 +186,7 @@ interface MarqueeDrag {
  *  click, not a drag. */
 const MARQUEE_MIN_PX = 8
 
-function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps) {
+function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versions, onOpenLibrary }: SurfaceProps) {
   const togglePane = useExcalidrawStore((s) => s.togglePane)
   const mode = useCanvasStore((s) => s.bySessionId[sessionId]?.interactionMode ?? 'browse')
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
@@ -181,7 +208,6 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
    *  second one while the first is unanswered. */
   const inspectPendingRef = useRef(false)
 
-  const [libraryOpen, setLibraryOpen] = useState(false)
   const [bridgeReady, setBridgeReady] = useState(false)
   const bridgeReadyRef = useRef(false)
   /** The page flooded the bridge and its channel was dropped: live inspection
@@ -368,6 +394,7 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
   // wins (ux-id is stored ahead of the fingerprint). Notes made against THIS
   // version need no pass; regions and generals have nothing to re-anchor.
   const openNotes = useMemo(() => (reviewSession ? openSubmittedNotesOf(reviewSession) : []), [reviewSession])
+  const openReviewCount = useMemo(() => (reviewSession ? openReviewsOf(reviewSession).length : 0), [reviewSession])
   const openNotesKey = useMemo(() => openNotes.map((n) => n.id).join(','), [openNotes])
 
   useEffect(() => {
@@ -523,9 +550,16 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
           weight because it decides where the user's clicks land. */}
       <div className="h-[38px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)] border-b border-[var(--border-subtle)]">
         <span className="w-[5px] h-[5px] shrink-0 rounded-full bg-[var(--brand)]" aria-hidden="true" />
-        <span className="shrink-0 text-[12px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]">
-          Agent Canvas
-        </span>
+        {/* WHAT this canvas is of, leading, and the way to the others. "Agent
+            Canvas" was a label for a pane that could only ever show one thing;
+            a session authors many, so the pane has to say which one you are
+            looking at and let you reach the rest. */}
+        <CanvasSubjectPicker
+          sessionId={sessionId}
+          canvasId={canvasId}
+          title={canvasTitle}
+          onOpenLibrary={onOpenLibrary}
+        />
         {/* The version identity, in words a person can act on. It lives here
             because a version EXISTS — the empty state's own chrome carries no
             version label and no picker, because there is nothing to version. */}
@@ -560,10 +594,30 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
             ))}
           </select>
         )}
+        {/* What is still owed on THIS canvas. From one, unlike the Canvas
+            button's pill: in here you are already looking at the thing, so one
+            outstanding round is worth naming rather than hiding. */}
+        {openReviewCount > 0 && (
+          <span
+            className="shrink-0 flex items-center gap-1.5 text-[11px] font-semibold rounded-full px-2 py-0.5"
+            style={{
+              color: 'var(--color-peach)',
+              background: 'color-mix(in srgb, var(--color-peach) 13%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--color-peach) 40%, transparent)',
+            }}
+            title="Sent for review and not closed out. A review closes when every note in it has your verdict."
+            data-testid="canvas-pane-open-reviews"
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            {openReviewCount} review{openReviewCount === 1 ? '' : 's'} open
+          </span>
+        )}
         <button
-          onClick={() => setLibraryOpen(true)}
+          onClick={onOpenLibrary}
           className="shrink-0 text-[11.5px] rounded px-1.5 py-0.5 bg-[var(--surface-panel)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] transition-colors focus-ring"
-          title="Every canvas on this machine — open one here, or delete it"
+          title="Every canvas in this project — open one here, or delete it"
           data-testid="canvas-library-open"
         >
           Library
@@ -862,10 +916,6 @@ function CanvasSurface({ sessionId, canvasId, version, versions }: SurfaceProps)
             )}
           </div>
         </div>
-
-        {libraryOpen && (
-          <CanvasLibrary sessionId={sessionId} onClose={() => setLibraryOpen(false)} />
-        )}
 
         {/* Notes panel — docked (spec D3). */}
         <CanvasNotesPanel

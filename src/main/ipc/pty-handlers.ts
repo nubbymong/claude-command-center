@@ -77,6 +77,24 @@ export const spawnOptionsSchema = z.object({
   }).optional(),
   configId: z.string().optional(),
   configLabel: z.string().max(100).optional(),
+  // Ask Conductor's opening question. Bounded, NOT charset-guarded, for the same
+  // reason as agentsConfig below: this is a natural-language sentence the user
+  // typed, so rejecting metacharacters would break the feature for anyone who
+  // writes "what's the $ cost?" while stopping no attack.
+  //
+  // The real control is that the value never becomes command TEXT: it is placed
+  // in the spawn env as CCC_ASK_PROMPT and the launch line carries only
+  // `$env:CCC_ASK_PROMPT` / `"$CCC_ASK_PROMPT"` (askPromptRef). That removes the
+  // SHELL's parse — but on Windows it does not remove the child's, because
+  // PowerShell re-serialises native arguments into one command line and
+  // CommandLineToArgvW re-splits it. askPromptEnvValue (terminal-launch-line.ts)
+  // is what makes the value survive that, and it is the injection boundary for
+  // this field. The bound here is defence in depth against an oversized payload.
+  //
+  // Guards on this field must REJECT (`.refine`), never sanitise: the spawn
+  // handler builds its options from the raw object and discards the parse
+  // result, so a `.transform()` here would read as a sanitiser and do nothing.
+  askPrompt: z.string().max(8000).optional(),
   // Task 9: per-config logging opt-out (DEFAULT-TRUE; only false disables).
   loggingEnabled: z.boolean().optional(),
   useResumePicker: z.boolean().optional(),
@@ -223,6 +241,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     terminalSecret?: string
     configId?: string
     configLabel?: string
+    /** Ask Conductor's opening question (see spawnOptionsSchema.askPrompt). */
+    askPrompt?: string
     loggingEnabled?: boolean
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }

@@ -22,6 +22,19 @@ export interface SSHConfig {
 export interface Session {
   id: string
   configId?: string
+  /** What this session IS, when that is not "a launched saved config".
+   *  'ask' = the Ask Conductor help session: a real interactive Claude session
+   *  in the staged help workspace, deliberately WITHOUT a saved config (it is
+   *  not something the user filed, so it must not appear in Saved Configs).
+   *  `configId === undefined` is NOT a marker for it -- the add-account login
+   *  shell, the re-auth shell and a resumed project folder are all config-less
+   *  too. Set once at creation; never changes. */
+  kind?: 'ask'
+  /** One-shot opening question for an Ask session. Rides `pty.spawn` into the
+   *  spawn ENVIRONMENT as CCC_ASK_PROMPT (never into the command text), is
+   *  cleared the moment the spawn is issued, and is NEVER persisted -- see the
+   *  allowlist in session-persistence.ts. */
+  askPrompt?: string
   label: string
   /** User-assigned "work name" for this session, editable while it's open and
    *  persisted by id across restarts (until the session is closed in CCC).
@@ -265,7 +278,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
  * telemetry-only ticks and stop the full-tree re-render cascade.
  */
 export const STRUCTURAL_SESSION_FIELDS = [
-  'id', 'createdAt', 'configId', 'label', 'customName', 'workingDirectory', 'sessionType',
+  // `kind` is structural: the shell renders an Ask session differently (tab
+  // monogram, docked pill, banded header). `askPrompt` is deliberately NOT here
+  // -- it is cleared one tick after spawn, and listing it would force a whole
+  // -shell re-render for a field nothing structural reads.
+  'id', 'createdAt', 'configId', 'kind', 'label', 'customName', 'workingDirectory', 'sessionType',
   'shellOnly', 'terminalOptions', 'sshConfig', 'partnerTerminalPath', 'partnerElevated',
   'legacyVersion', 'agentIds', 'effortLevel', 'permissionMode', 'extraArgs', 'disableAutoMemory',
   'enableCodexReview', 'loggingEnabled', 'model', 'provider', 'codexOptions',

@@ -99,14 +99,21 @@ export interface TerminalSettings {
   cursorBlink: boolean
   background?: string   // optional user terminal-background override; undefined => --surface-stage token
   /**
-   * GPU (WebGL) rendering for terminals. Default on — it is materially faster
-   * with several busy sessions.
+   * GPU (WebGL) rendering for terminals. **Opt-IN and experimental** — absent or
+   * false means the DOM renderer, which is what ships.
    *
-   * Off falls back to xterm's DOM renderer, which has no glyph atlas at all and
-   * therefore cannot show the stale/garbled-glyph artifact (#273) that a resize
-   * clears. The escape hatch exists because that artifact comes from the GPU
-   * renderer itself: the app can bound how long it lasts, but cannot stop it
-   * happening. Applies to terminals opened after the change.
+   * It was default-on until 2.1.0-beta.16, and the reason it is not any more is
+   * that `@xterm/addon-webgl` keeps ONE glyph atlas per process (a module-level
+   * `charAtlasCache`, keyed on font + colours, which every CCC terminal matches).
+   * `clearTextureAtlas()` wipes that shared atlas for EVERY terminal but repairs
+   * only the caller's render model, and `term.refresh()` cannot undo it because
+   * the renderer skips cells whose contents have not changed. So one session
+   * repainting blanked the glyphs of every other open session — backgrounds
+   * intact, text gone — until that terminal was resized, scrolled, or activated.
+   *
+   * That is the real #273, misdiagnosed for months as "the atlas goes stale on
+   * its own". The DOM renderer has no atlas and therefore no such failure.
+   * Applies to terminals opened after the change.
    */
   gpuRendering?: boolean
 }
@@ -118,7 +125,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   lineHeight: 1.2,
   cursorStyle: 'bar',
   cursorBlink: true,
-  gpuRendering: true,
+  gpuRendering: false,
 }
 
 export interface AppSettings {

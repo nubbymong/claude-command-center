@@ -219,6 +219,32 @@ export function reclaimCanvasForSession(
   return true
 }
 
+/**
+ * The project directory a session was spawned in, or undefined if we never saw
+ * it spawn (a session restored from a previous run, for example).
+ *
+ * Used to scope the canvas LIBRARY to the project you are in. Note this is a
+ * relevance filter and nothing more — the cwd is not an authorization key here
+ * any more than it is in `listReclaimableCanvases`, and a session we have no
+ * cwd for is shown everything rather than nothing.
+ */
+export function canvasCwdForSession(sessionId: string): string | undefined {
+  return spawnInfo.get(sessionId)?.cwd
+}
+
+/**
+ * The account a session was spawned under, or undefined for the default account
+ * (and for a session we never saw spawn).
+ *
+ * Unlike the cwd above, this one IS part of an authorization key: it is what
+ * `adoptCanvasForSession` compares against the record's stamp. The library takes
+ * it so a row badged "yours" is a row the action will actually open — resolved
+ * in main from its own spawn record, never accepted from the renderer.
+ */
+export function canvasProfileForSession(sessionId: string): string | undefined {
+  return spawnInfo.get(sessionId)?.profileId
+}
+
 /** Drop a session's link state when its PTY is gone for good. */
 export function forgetSessionForCanvas(sessionId: string): void {
   spawnInfo.delete(sessionId)

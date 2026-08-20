@@ -56,6 +56,11 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
       throw new Error('no design files in this fixture')
     },
     markAddressed: () => ({ addressed: [], skipped: [] }),
+    // Defaults are the "could not tell" answers, so every pre-existing
+    // expectation over the reply text stays exactly as it was. Tests that care
+    // about the context lines override them.
+    getReviewCounts: () => null,
+    canvasRootsForSession: () => ({ project: null, worktree: null, worktreePending: false }),
     ...overrides,
   }
 }

@@ -643,6 +643,19 @@ export interface CanvasLibraryEntry {
   /** True when the session that owns it is one of the currently-open tiles — the
    *  UI warns before deleting a canvas that is on screen right now. */
   ownedByOpenSession?: boolean
+  /** True when the ASKING session owns this canvas. DISPLAY ONLY — the in-pane
+   *  switcher offers only your own canvases, while the library shows the whole
+   *  project. It grants nothing: ownership is decided by adoptCanvasForSession,
+   *  and delete takes an id with no ownership check at the IPC seam. */
+  ownedByThisSession?: boolean
+  /** True when this is the one canvas the asking session is currently showing.
+   *  A session OWNS many and points at one, so this is a separate question. */
+  isActiveForThisSession?: boolean
+  /** What is outstanding on this canvas: submitted reviews with notes still in
+   *  play, and unsubmitted notes. `undefined` means the review store could not
+   *  be read — deliberately not 0, so a broken store never renders as "clear". */
+  openReviewCount?: number
+  draftNoteCount?: number
 }
 
 export interface CanvasSnapshotRequestEvent {

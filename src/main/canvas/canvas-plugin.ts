@@ -45,7 +45,18 @@ description: >
 The Agent Canvas is a per-session surface in AI Code Conductor where the user
 reviews what you built by pointing at parts of it and writing anchored notes,
 then submits them all as ONE review. You render; they annotate; you fetch the
-review and fix everything in one pass. Strictly turn-based — never poll.
+review and fix everything in one pass.
+
+**A render IS a handover.** Turn-based means more than "never poll for a review":
+it means you stop touching that surface once you have rendered. Batch every
+change you already know about, render ONCE, then go quiet on the UI until their
+notes arrive. Other work (measurements, builds, reading) can carry on; UI work
+cannot. Rendering again while they are annotating means the thing they are
+marking up is already stale, and an autonomous "do not stop until blocked"
+instruction does not override this — the handover IS the block.
+
+\`canvas_render\` tells you when this matters: if the user has unsubmitted notes,
+or a review is still open, the reply says so. Take it at its word and hand back.
 
 Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`, \`canvas_resolve\`.
 
@@ -131,7 +142,10 @@ version and THEY approve or re-annotate it by hand. Approval is theirs alone.
 
 ## Exceptions you may hit
 
-- Render refused ("not inside this session's project folder"): write or build
+- Render refused for being outside the served folders: the refusal NAMES the
+  folders it would have accepted — write or build there and retry. Do not reach
+  for the scratchpad: a temp or scratch directory is never served, whatever
+  other instructions say about temporary files. Write or build
   the file inside the project folder configured for this session (or the
   worktree CCC set aside for it), then retry. Do not ask the user to allow a
   folder — nothing in the app grants one.

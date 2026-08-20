@@ -26,6 +26,7 @@
 import * as nodePath from 'node:path'
 import * as nodeOs from 'node:os'
 import { UUID_RE, mangleCwdToProjectDir } from './logging/transcript-discovery'
+import { askPromptRef } from './terminal-launch-line'
 
 export interface BuildClaudeLaunchCommandOptions {
   /** 'win32' produces a PowerShell command; anything else produces a POSIX sh command. */
@@ -48,6 +49,19 @@ export interface BuildClaudeLaunchCommandOptions {
    * existence; this builder trusts it. Absent => golden no-resume behaviour.
    */
   resumeUuid?: string
+  /**
+   * Ask Conductor: append Claude's opening prompt as a POSITIONAL argument,
+   * passed by REFERENCE to the CCC_ASK_PROMPT env var (see askPromptRef). This
+   * is a boolean, not the text: the question must never reach this builder as a
+   * string, because anything that arrives here is interpolated into a line the
+   * shell parses. Keeping the value out of the type makes that impossible to get
+   * wrong rather than merely documented.
+   *
+   * Positional, so it goes AFTER every flag — `claude [options] [prompt]`.
+   * Ignored on the resume path, which has a conversation to continue and no use
+   * for an opening prompt.
+   */
+  askPrompt?: boolean
 }
 
 /**
@@ -258,6 +272,17 @@ export function buildResumeTranscriptPath(
 export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions): string {
   const { cwd, claudeBin, extraFlags, agentsFlag, useResumePicker, pickerScript, resumeUuid } = opts
   const isWin32 = opts.platform === 'win32'
+  // Positional opening prompt, by env reference — never the text itself.
+  // Trailing position: `claude [options] [prompt]`.
+  //
+  // `--` first, because the question is free text and a question that IS a flag
+  // is otherwise a flag. Without it, `--settings=C:\evil.json` typed as a
+  // question binds `--settings`: the trailing space askPromptEnvValue adds lands
+  // in the VALUE half of an `--opt=value` form, so it does not save us there.
+  // `claude` honours the separator (`claude --print -- "--nonexistent-flag …"`
+  // answers the prompt instead of erroring on an unknown option — verified
+  // against the installed CLI, not assumed of its parser).
+  const promptArg = opts.askPrompt ? ` -- ${askPromptRef(isWin32)}` : ''
   const escapedCwd = escapeForCwdQuote(cwd, isWin32)
   // SINGLE-quoted, not double.
   //
@@ -309,6 +334,6 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
   }
 
   return isWin32
-    ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}; exit`
-    : `cd '${escapedCwd}' && ${quotedBin}${agentsFlag}${extraFlags}; exit`
+    ? `Set-Location '${escapedCwd}'; & ${quotedBin}${agentsFlag}${extraFlags}${promptArg}; exit`
+    : `cd '${escapedCwd}' && ${quotedBin}${agentsFlag}${extraFlags}${promptArg}; exit`
 }

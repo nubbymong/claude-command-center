@@ -308,6 +308,82 @@ export function draftAnnotationsOf(state: CanvasReviewSessionState): Annotation[
   return state.annotations.filter((a) => members.has(a.id))
 }
 
+/**
+ * Reviews that are OPEN: sent, and not closed out.
+ *
+ * 'submitted' is not an approximation of that — it IS the store's definition. A
+ * review only becomes 'resolved' when no member note is still 'open' or
+ * 'addressed', and the agent's own write never recomputes status. So a count
+ * derived from this cannot disagree with the data behind it.
+ *
+ * Deliberately NOT a note count. An 'open' note is waiting on the AGENT and an
+ * 'addressed' one is waiting on the USER; they live in the same list, so a
+ * number over them means two things at once and cannot be cleared by either
+ * party alone.
+ */
+export function openReviewsOf(state: CanvasReviewSessionState): Review[] {
+  return state.reviews.filter((r) => r.status === 'submitted')
+}
+
+/** A round of feedback, as the user sent it, with who it is waiting on. */
+export interface ReviewGroup {
+  review: Review
+  /** The notes still in play: 'open' (the agent has not said it acted) and
+   *  'addressed' (it has, and the verdict is yours). Dismissed, approved and
+   *  superseded notes are done and are not listed. */
+  notes: Annotation[]
+  /** 'agent' while ANY note is still open — the round cannot be closed by you
+   *  alone. 'you' once every remaining note is addressed. 'closed' when nothing
+   *  is left. */
+  waitingOn: 'you' | 'agent' | 'closed'
+  openCount: number
+  addressedCount: number
+}
+
+/** Sort key for a review: when it was sent, falling back to when it was
+ *  started, then to its ordinal. Ids are R1, R2, … per canvas. */
+function reviewOrdinal(r: Review): number {
+  const n = Number(r.id.slice(1))
+  return Number.isFinite(n) ? n : 0
+}
+
+/**
+ * The submitted reviews as ROUNDS, newest first.
+ *
+ * The panel used to flatten every open note from every review into one list
+ * under a single heading, so a round you sent as a unit came back as loose
+ * items: no way to see that a whole round was finished, no way to close one,
+ * and this morning's note sitting between two from ten minutes ago.
+ *
+ * The DRAFT review is deliberately excluded — that one is the composer's own
+ * list, below, and showing it twice is how the two get out of step.
+ */
+export function reviewGroupsOf(state: CanvasReviewSessionState): ReviewGroup[] {
+  const byReview = new Map<string, Annotation[]>()
+  for (const a of state.annotations) {
+    if (a.state !== 'open' && a.state !== 'addressed') continue
+    const list = byReview.get(a.reviewId)
+    if (list) list.push(a)
+    else byReview.set(a.reviewId, [a])
+  }
+  return state.reviews
+    .filter((r) => r.status !== 'draft')
+    .map((review) => {
+      const notes = byReview.get(review.id) ?? []
+      const openCount = notes.filter((n) => n.state === 'open').length
+      const addressedCount = notes.length - openCount
+      const waitingOn: ReviewGroup['waitingOn'] =
+        notes.length === 0 ? 'closed' : openCount > 0 ? 'agent' : 'you'
+      return { review, notes, waitingOn, openCount, addressedCount }
+    })
+    .sort((a, b) => {
+      const at = Date.parse(a.review.submittedAt ?? a.review.createdAt)
+      const bt = Date.parse(b.review.submittedAt ?? b.review.createdAt)
+      if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return bt - at
+      return reviewOrdinal(b.review) - reviewOrdinal(a.review)
+    })
+}
+
 /** Notes from SUBMITTED reviews still awaiting the USER's verdict — what the
  *  resolution checklist works through (oldest review first, so the list reads
  *  in the order given). 'addressed' is included: the agent has said it acted,

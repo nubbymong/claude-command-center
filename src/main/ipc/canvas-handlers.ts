@@ -23,6 +23,7 @@ import {
   MAX_SKETCH_PNG_BYTES,
   deleteAnnotation,
   dropReviewsForCanvas,
+  getReviewCountsForCanvas,
   getReviewStateForSession,
   onReviewChanged,
   resolveAnnotation,
@@ -31,10 +32,17 @@ import {
 } from '../canvas/canvas-review-store'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 import {
+  canvasCwdForSession,
+  canvasProfileForSession,
   installCanvasSessionLink,
   listReclaimableCanvases,
   reclaimCanvasForSession,
 } from '../canvas/canvas-session-link'
+
+/** How many canvases NOT belonging to the asking session get a review-count
+ *  read per library open. Their own are always counted; the rest are a courtesy
+ *  and must not turn one click into a hundred synchronous file reads. */
+const MAX_REVIEW_SWEEP = 20
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -80,11 +88,13 @@ const listReclaimableSchema = z
   .object({ sessionId: sessionIdSchema, openTileSessionIds: openTileSessionIdsSchema })
   .strict()
 
-/** The library is a pure read over every canvas; it takes no session id because
- *  it is housekeeping, not an ownership question. openTileSessionIds only marks
- *  which rows are on screen right now so the UI can warn before deleting one. */
+/** The library is a pure read; listing never binds anything, so the session id
+ *  here is not an ownership question. It scopes the list to the PROJECT the
+ *  session is in, because a library mixing every project's mockups together is
+ *  unreadable. openTileSessionIds only marks which rows are on screen right now
+ *  so the UI can warn before deleting one. */
 const listAllSchema = z
-  .object({ openTileSessionIds: openTileSessionIdsSchema })
+  .object({ openTileSessionIds: openTileSessionIdsSchema, sessionId: sessionIdSchema.optional() })
   .strict()
 
 /** Delete takes an ID and nothing else — never a path. Same charset bound as
@@ -240,8 +250,37 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   // The library. Pure read over every canvas on disk; listing one never binds
   // it to anything.
   ipcMain.handle(IPC.CANVAS_LIST_ALL, async (_e, args: unknown) => {
-    const { openTileSessionIds } = listAllSchema.parse(args ?? {})
-    return listAllCanvases(openTileSessionIds ?? [])
+    const { openTileSessionIds, sessionId } = listAllSchema.parse(args ?? {})
+    // Scope to the asking session's project. Resolved HERE from main's own spawn
+    // record rather than accepted from the renderer, so the caller cannot ask to
+    // see another project's list by naming its path.
+    const cwd = sessionId ? canvasCwdForSession(sessionId) : undefined
+    // Same source, same reason, and this one decides what "yours" means: the
+    // account floor adoptCanvasForSession enforces has to be the one the badge
+    // is drawn from, or the library offers rows that "Open here" refuses.
+    const profileId = sessionId ? canvasProfileForSession(sessionId) : undefined
+    const entries = listAllCanvases(openTileSessionIds ?? [], cwd, sessionId, profileId)
+    // What is outstanding on each, joined HERE: the review store imports the
+    // canvas store, so the reverse import would be a cycle, and this handler
+    // already holds both (same reason the delete handler drops reviews here).
+    //
+    // Bounded on purpose. Every miss is a synchronous read + full validation, so
+    // the sweep covers the rows a user actually acts on -- their own canvases,
+    // and the head of the rest -- and everything past that renders without a
+    // count rather than turning one library open into a hundred file reads.
+    let swept = 0
+    for (const e of entries) {
+      const isMine = e.ownedByThisSession || e.isActiveForThisSession
+      if (!isMine && swept >= MAX_REVIEW_SWEEP) continue
+      if (!isMine) swept++
+      const counts = getReviewCountsForCanvas(e.canvasId)
+      // Left UNDEFINED, never zeroed, when the store is unreadable: "nothing
+      // outstanding" and "could not tell" must not look the same in the UI.
+      if (!counts) continue
+      e.openReviewCount = counts.openReviewIds.length
+      e.draftNoteCount = counts.draftNotes
+    }
+    return entries
   })
 
   // The only destructive canvas operation, and it exists because the user

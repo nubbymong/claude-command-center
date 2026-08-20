@@ -9,10 +9,57 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountAuthStore } from '../stores/accountAuthStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountName, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
+import { BrandMark } from './BrandMark'
+import { useRestartSession } from '../hooks/useRestartSession'
+import { ASK_LABEL } from '../lib/askConductor'
+
+declare const __APP_VERSION__: string
 
 interface Props {
   session: Session
   onShowTip?: () => void
+}
+
+/**
+ * The left half of the header for the Ask Conductor session: the app monogram,
+ * a fixed title, and one line naming WHAT IT KNOWS -- the thing a help session
+ * has to say up front, so nobody asks it about their own code and takes the
+ * answer seriously. The right half (account/auth pills, notes, tip) is shared
+ * with every other session, which is where requirement "account chip" is met.
+ */
+function AskHeaderLead({ session }: { session: Session }) {
+  const { restart } = useRestartSession(session)
+  return (
+    <>
+      <BrandMark className="w-6 h-6 shrink-0" />
+      <span className="min-w-0 flex-1 leading-tight">
+        <span className="block text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+          {ASK_LABEL}
+        </span>
+        <span className="block text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+          Knows this app at v{__APP_VERSION__} -- features, settings, known issues. Not your code.
+        </span>
+      </span>
+      {/* Restart already marks the session for the resume picker, so this is the
+          ordinary "pick an older conversation" path, not a second mechanism. */}
+      <button
+        data-ux-id="ask-band-history"
+        onClick={() => restart()}
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-medium shrink-0 focus-ring transition-colors"
+        style={{
+          color: 'var(--brand)',
+          background: 'color-mix(in srgb, var(--brand) 12%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--brand) 42%, transparent)',
+        }}
+        title="Reopen an earlier Ask Conductor conversation"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 4v4h4" /><path d="M12 8v4l3 2" />
+        </svg>
+        Past discussions
+      </button>
+    </>
+  )
 }
 
 /**
@@ -257,10 +304,21 @@ export default function SessionHeader({ session, onShowTip }: Props) {
   // working directory (middle) + GitHub repo slug/connection (right). One bar
   // instead of two.
   const cwd = session.workingDirectory || ''
+  // Ask Conductor wears a banded header instead of the ordinary name + cwd row:
+  // it is the app answering, not one of your projects, and its working directory
+  // (the staged help workspace) is an implementation detail nobody needs to read.
+  const isAsk = session.kind === 'ask'
   return (
     <div
+      data-ux-id={isAsk ? 'ask-band' : undefined}
       className="flex items-center gap-3 px-4 py-2 border-b shrink-0 relative"
-      style={{ background: 'var(--surface-panel)', borderColor: 'var(--border-subtle)', ...headerType }}
+      style={{
+        background: isAsk
+          ? 'linear-gradient(180deg, color-mix(in srgb, var(--brand) 16%, var(--surface-panel)), var(--surface-panel))'
+          : 'var(--surface-panel)',
+        borderColor: isAsk ? 'color-mix(in srgb, var(--brand) 26%, var(--border-subtle))' : 'var(--border-subtle)',
+        ...headerType,
+      }}
     >
       {/* Session-color accent line that fades out toward the right --
           the gradient stops before fully transparent at ~70% so the
@@ -270,17 +328,21 @@ export default function SessionHeader({ session, onShowTip }: Props) {
         style={{ background: `linear-gradient(to right, ${identity} 0%, ${identity}80 15%, transparent 55%)` }}
         aria-hidden
       />
-      {/* Color dot: at-a-glance session identifier */}
-      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: identity }} />
+      {isAsk ? <AskHeaderLead session={session} /> : (
+        <>
+          {/* Color dot: at-a-glance session identifier */}
+          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: identity }} />
 
-      {/* Editable work name for this session (F2 / double-click tab / here). */}
-      <SessionNameField session={session} />
+          {/* Editable work name for this session (F2 / double-click tab / here). */}
+          <SessionNameField session={session} />
 
-      {/* Working directory — flexible middle, truncates first on narrow widths.
-          (Passive orientation, no actions — formerly RepoBreadcrumb.) */}
-      <span className="font-mono text-[11px] truncate min-w-0 flex-1" style={{ color: 'var(--text-muted)' }} title={cwd}>
-        {cwd}
-      </span>
+          {/* Working directory — flexible middle, truncates first on narrow widths.
+              (Passive orientation, no actions — formerly RepoBreadcrumb.) */}
+          <span className="font-mono text-[11px] truncate min-w-0 flex-1" style={{ color: 'var(--text-muted)' }} title={cwd}>
+            {cwd}
+          </span>
+        </>
+      )}
 
       {session.sessionType === 'ssh' && session.sshConfig && (
         <span className="flex items-center gap-1.5 shrink-0">

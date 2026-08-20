@@ -191,6 +191,10 @@ export interface ElectronAPI {
       extraArgs?: string
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
+      /** Ask Conductor's opening question. Travels in the spawn ENVIRONMENT as
+       *  CCC_ASK_PROMPT; the launch line carries only the env reference, never
+       *  the text. Claude + local + non-shell only. */
+      askPrompt?: string
       resume?: { uuid: string; cwd: string }
       model?: string
       profileId?: string
@@ -360,7 +364,7 @@ export interface ElectronAPI {
      *  `openTileSessionIds` are the tiles the user has on screen; main uses
      *  them only to EXCLUDE candidates whose own tile is still live. */
     listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ReclaimableCanvas[]>
-    listAll: (args?: { openTileSessionIds?: string[] }) => Promise<CanvasLibraryEntry[]>
+    listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) => Promise<CanvasLibraryEntry[]>
     deleteCanvas: (args: { canvasId: string }) => Promise<{ ok: boolean }>
     /** The user reclaims a named canvas — the only path that moves ownership. */
     reclaim: (args: {

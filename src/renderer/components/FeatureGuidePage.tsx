@@ -2,9 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import PageFrame from './PageFrame'
 import { APP_KNOWLEDGE_SECTIONS } from '../../shared/app-knowledge'
 import { trainingSteps, SECTION_LABELS, type TrainingStep, type TrainingSection } from '../training-steps'
-import { useConfigStore, type TerminalConfig } from '../stores/configStore'
-import { useLaunchConfig } from '../hooks/useLaunchConfig'
-import { generateId } from '../utils/id'
+import { launchAskConductor } from '../lib/askConductor'
 import { changelog } from '../changelog'
 import { WhatsNewEntries } from './WhatsNewEntries'
 
@@ -69,8 +67,6 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
   const [question, setQuestion] = useState('')
   const [launching, setLaunching] = useState(false)
   const askInputRef = useRef<HTMLInputElement | null>(null)
-  const launchConfig = useLaunchConfig()
-  const configs = useConfigStore((s) => s.configs)
 
   const stepsBySection = useMemo(() => {
     const map = new Map<TrainingSection, TrainingStep[]>()
@@ -94,36 +90,20 @@ export default function FeatureGuidePage({ onNavigateToSessions, onStartTour }: 
     return APP_KNOWLEDGE_SECTIONS.filter((s) => s.title.toLowerCase().includes(q) || s.body.toLowerCase().includes(q))
   }, [q])
 
-  // "Ask the Conductor": stage the help workspace, reuse/create the Ask config,
-  // copy any typed question, launch through the normal config path. Mirrors the
-  // retired HelpPanel.ask so behaviour is unchanged, only relocated.
+  // "Ask the Conductor": open the help session with the typed question already
+  // submitted. It is NOT a saved config any more -- the old path created and
+  // persisted one called "Ask Conductor" into the user's Saved Configs, which is
+  // not something they filed -- and the question no longer goes via the
+  // clipboard: it rides the spawn environment as CCC_ASK_PROMPT, so the session
+  // opens with it already asked instead of asking the user to paste.
   const ask = async () => {
     setLaunching(true)
     try {
-      const dir = await window.electronAPI.help.workspace()
-      if (!dir) return
-      let config = useConfigStore.getState().configs.find((c) => c.workingDirectory === dir)
-      if (config && config.label === 'Ask Command Center') {
-        useConfigStore.getState().updateConfig(config.id, { label: 'Ask Conductor' })
-        config = { ...config, label: 'Ask Conductor' }
-      }
-      if (!config) {
-        const created: TerminalConfig = {
-          id: generateId(),
-          label: 'Ask Conductor',
-          workingDirectory: dir,
-          color: '#a78bfa',
-          identityColorKey: 'mauve',
-          sessionType: 'local',
-          provider: 'claude',
-        }
-        useConfigStore.getState().addConfig(created)
-        config = created
-      }
-      if (question.trim()) {
-        try { await navigator.clipboard.writeText(question.trim()) } catch { /* clipboard may be unavailable; session is still primed */ }
-      }
-      launchConfig(config)
+      const id = await launchAskConductor(question)
+      // '' means the help workspace could not be staged; the reason is shown in
+      // the sidebar dock, so don't navigate away from the page that explains it.
+      if (!id) return
+      setQuestion('')
       onNavigateToSessions()
     } finally {
       setLaunching(false)
@@ -406,7 +386,7 @@ function Overview({
             {launching ? 'Opening…' : 'Ask'}
           </button>
         </div>
-        <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>Your question is copied to the clipboard; paste it when the Claude prompt appears.</p>
+        <p className="text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>Opens the Ask Conductor session with your question already asked. It reads this app&apos;s own documentation, not your code.</p>
       </div>
 
       {/* The two full-screen walkthrough surfaces the app already has. */}

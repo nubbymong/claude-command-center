@@ -28,6 +28,7 @@ import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
+import AskConductorDock from './sidebar/AskConductorDock'
 import { resolveConfigPanelExpanded, toggleConfigPanel, overrideAfterPinChange, type ConfigPanelOverride } from './sidebar/configPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
@@ -79,7 +80,16 @@ interface Props {
 export default function Sidebar({ currentView, onViewChange, collapsed, onShowAccountUsage, onShowFirstRun, tourActive }: Props) {
   const launchConfig = useLaunchConfig()
   const sideType = useRegionTypography('sidebar')
-  const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
+  const { sessions: allSessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
+  // Ask Conductor is docked at the BOTTOM of the sidebar, apart from your
+  // project sessions — that separation is the whole point of the design. It is
+  // split out here, once, rather than at each of the four bucketing expressions
+  // below (sectioned groups, section-loose, unsectioned groups, unsectioned
+  // loose): missing any one of them would show it twice or lose it. Everything
+  // downstream — the "Active Sessions" count, the arrow-key list, the
+  // empty-state — reads `sessions` and so agrees with what is rendered.
+  const askSession = allSessions.find((s) => s.kind === 'ask')
+  const sessions = allSessions.filter((s) => s.kind !== 'ask')
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
   const appMeta = useAppMetaStore((s) => s.meta)
   const updateAppMeta = useAppMetaStore((s) => s.update)
@@ -137,6 +147,27 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     updateSettings({ configPanelPinned: newVal })
   }
   const [configSearchQuery, setConfigSearchQuery] = useState('')
+  // The panel used to cap itself at a flat 60vh, which cut the list off partway
+  // down a row while empty sidebar sat underneath it. Measure what is actually
+  // free below the panel's top edge instead, keeping SESSION_RESERVE px for the
+  // sessions list so a long config list can never own the whole sidebar.
+  const configPanelRef = useRef<HTMLDivElement | null>(null)
+  const [configPanelMax, setConfigPanelMax] = useState(0)
+  useEffect(() => {
+    if (!configPanelExpanded) return
+    // Sessions list + the Ask Conductor dock pinned under it (~62px). Without
+    // the dock's share a long config list expands over the pill.
+    const SESSION_RESERVE = 262
+    const measure = () => {
+      const el = configPanelRef.current
+      if (!el) return
+      const top = el.getBoundingClientRect().top
+      setConfigPanelMax(Math.max(220, Math.round(window.innerHeight - top - SESSION_RESERVE)))
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [configPanelExpanded, configPanelPinned])
   const [dragConfigId, setDragConfigId] = useState<string | null>(null)
   const [dragOverConfigId, setDragOverConfigId] = useState<string | null>(null)
   // The LOOSE configs: in no group and no section (a stale id pointing at a
@@ -562,6 +593,13 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           collapsed
           onShowAccountUsage={onShowAccountUsage}
         />
+        {/* `mt-auto` because the collapsed rail has no flex-1 child to push
+            against — the nav is content-height. */}
+        <AskConductorDock
+          collapsed
+          onOpened={() => onViewChange('sessions')}
+          isActive={currentView === 'sessions' && !!askSession && activeSessionId === askSession.id}
+        />
       </aside>
     )
   }
@@ -710,14 +748,15 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
       {/* Config panel — elevated popover when not pinned, inline raised panel when pinned */}
       <div
+        ref={configPanelRef}
         className={configPanelPinned
-          ? 'border-t border-b border-surface1 overflow-hidden'
-          : 'absolute left-0 right-0 z-50 rounded-lg border border-surface1 overflow-hidden'
+          ? 'border-t border-b border-surface1 overflow-hidden flex flex-col'
+          : 'absolute left-0 right-0 z-50 rounded-lg border border-surface1 overflow-hidden flex flex-col'
         }
         style={configPanelPinned
           ? {
               backgroundColor: 'var(--color-surface0)',
-              maxHeight: configPanelExpanded ? '60vh' : '0',
+              maxHeight: configPanelExpanded ? configPanelMax : 0,
               transition: 'max-height 200ms ease',
             }
           : {
@@ -725,7 +764,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               marginTop: 2,
               backgroundColor: 'var(--color-surface0)',
               boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)',
-              maxHeight: configPanelExpanded ? '60vh' : '0',
+              maxHeight: configPanelExpanded ? configPanelMax : 0,
               opacity: configPanelExpanded ? 1 : 0,
               transform: configPanelExpanded ? 'translateY(0) scaleY(1)' : 'translateY(-4px) scaleY(0.98)',
               transformOrigin: 'top center',
@@ -735,7 +774,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         }
       >
         {/* Search input */}
-        <div className="px-2 pt-2 pb-1">
+        <div className="px-2 pt-2 pb-1 shrink-0">
           <input
             value={configSearchQuery}
             onChange={(e) => setConfigSearchQuery(e.target.value)}
@@ -744,7 +783,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           />
         </div>
 
-        <div className="px-2 space-y-0.5 overflow-y-auto pb-2" style={{ maxHeight: 'calc(60vh - 40px)' }}>
+        {/* Fills whatever height the panel got. Previously a second hard-coded
+            `calc(60vh - 40px)`, which had to be kept in step with the panel cap
+            AND with the search box's real height by hand. */}
+        <div className="px-2 space-y-0.5 overflow-y-auto pb-2 flex-1 min-h-0">
         {configs.length === 0 && !showNewSectionInput && (
           <div className="text-xs text-overlay0 text-center py-4">
             No saved configs.<br />Click + to create one.
@@ -946,7 +988,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       </div>
 
       <div
-        className="flex-1 overflow-y-auto px-2 space-y-0.5 pb-28"
+        className="flex-1 overflow-y-auto px-2 space-y-0.5 pb-2"
         tabIndex={0}
         onKeyDown={(e) => {
           if (sessions.length === 0) return
@@ -1055,6 +1097,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         {/* Unsectioned ungrouped sessions */}
         {unsectionedUngroupedSessions.map(renderSessionRow)}
       </div>
+
+      {/* Ask Conductor, docked below the session list. Sibling of the scroller
+          (which is the only flex-1 child), so it stays pinned to the bottom
+          however long the list gets. */}
+      <AskConductorDock
+        onOpened={() => onViewChange('sessions')}
+        isActive={currentView === 'sessions' && !!askSession && activeSessionId === askSession.id}
+      />
 
       {/* Session context menu */}
       {sessionContextMenu && (() => {
