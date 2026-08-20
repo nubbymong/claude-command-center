@@ -465,17 +465,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // then we try ONE recreate in the next frame (GPU-blip recovery).
       // If recreate fails, we force term.refresh so the DOM renderer
       // repaints the viewport the dead WebGL canvas left garbled.
-      // The GPU renderer is ON unless explicitly turned off (see
-      // TerminalSettings.gpuRendering). `@xterm/addon-webgl` keeps ONE glyph
-      // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal used to
-      // blank the glyphs of every OTHER mounted terminal until it was
-      // resized/scrolled/activated — which is why beta.16 shipped it off. #312
-      // fixed that: the atlasCoordinator below repaints the others on the next
-      // frame, so the clear is survivable and the containment is no longer
-      // needed. Unset means ON; a stored `false` is a user who turned it off and
-      // is left exactly as it is. Read once at mount — changing the setting
-      // applies to terminals opened afterwards, which keeps a live session from
-      // having its renderer swapped underneath it.
+      // The GPU renderer is OPT-IN: only a literal `true` enables it (see
+      // settingsStore.gpuRenderingEnabled). `@xterm/addon-webgl` keeps ONE glyph
+      // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal blanks the
+      // glyphs of every OTHER mounted terminal until it is
+      // resized/scrolled/activated. That is NOT fixed: the atlasCoordinator below
+      // is necessary but not sufficient, because a victim's render model is never
+      // cleared and refresh() alone therefore repaints it blank. The coordinator
+      // is kept as scaffolding and is inert while the renderer is off. Read once
+      // at mount — changing the setting applies to terminals opened afterwards,
+      // which keeps a live session from having its renderer swapped underneath it.
       // Repaint this terminal's viewport from the (shared) glyph atlas.
       const domRefresh = () => { try { term?.refresh(0, term.rows - 1) } catch { /* disposed */ } }
       // The coordinator's view of this terminal: repaint, but only while WebGL
@@ -496,10 +495,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       }
       // #273 / #311: reproduces the window-resize repaint (clearTextureAtlas +
       // refresh) against whichever addon is currently live. The glyph atlas is
-      // shared across every terminal, so a clear here empties it for all of them
-      // — the coordinator repaints the others (#311) so the clear is now
-      // multi-session-safe rather than blanking their glyphs. Inert on the DOM
-      // path (clearAtlas() returns false — no WebGL addon, nothing to clear).
+      // shared across every terminal, so a clear here empties it for all of them.
+      // The coordinator (#311) refreshes the others, which is necessary but does
+      // NOT make the clear safe — a victim keeps its old render model, so the
+      // refresh repaints it blank. Only relevant when the opt-in GPU renderer is
+      // on; inert on the DOM path (clearAtlas() returns false — nothing to clear).
       repainter = createStaleGlyphRepainter({
         // Rebuild the shared atlas; when it actually happened (WebGL live), tell
         // the coordinator so every OTHER terminal repaints — otherwise they

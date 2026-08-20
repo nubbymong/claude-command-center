@@ -10,11 +10,19 @@
  * keeps rendering against the emptied atlas and loses its glyphs (backgrounds
  * intact) until it happens to repaint. That is the beta.16 corruption.
  *
- * The fix is coordination: each live WebGL terminal registers a `refresh`
- * callback here; when one rebuilds the shared atlas it calls `notifyCleared`,
- * and every OTHER registered terminal is refreshed on the next animation frame.
- * The blank a clear leaves in the other terminals is therefore corrected within
- * ~1 frame instead of lasting until a resize/scroll/activate.
+ * Coordination is PART of a fix, not the whole one: each live WebGL terminal
+ * registers a `refresh` callback here; when one rebuilds the shared atlas it
+ * calls `notifyCleared`, and every OTHER registered terminal is refreshed on the
+ * next animation frame.
+ *
+ * That is necessary but NOT sufficient, and this module does not repair the
+ * corruption on its own. `clearTextureAtlas()` calls `_clearModel(true)` for the
+ * CALLER only, so a victim still holds its old cells, `_updateModel` concludes
+ * nothing changed, and refresh() draws stale vertices against an emptied
+ * texture — i.e. blank. A working repair has to clear the victim's render model
+ * WITHOUT re-wiping the shared texture. This module is retained as scaffolding
+ * for that, and is inert while `gpuRendering` is off — which is the default,
+ * since the setting is opt-in (a literal `true`; see gpuRenderingEnabled).
  *
  * Calls are coalesced per frame: N terminals each clearing in the same frame
  * produce ONE refresh pass over the others, not N. A terminal that cleared this
