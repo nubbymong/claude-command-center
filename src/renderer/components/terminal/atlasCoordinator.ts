@@ -71,7 +71,23 @@ export function createAtlasCoordinator(
       clearedThisFrame.add(source)
       if (!armed) {
         armed = true
-        raf(flush)
+        // If scheduling itself fails, DISARM. `armed` is the only thing that
+        // stops a second frame being queued, so leaving it true after a throw
+        // means this process-wide singleton never schedules another refresh for
+        // the life of the app -- the whole coordination silently switched off by
+        // one bad frame. Swallowing here is right for the same reason the
+        // per-callback catch in flush() is: a terminal repaint is best-effort.
+        try {
+          raf(flush)
+        } catch {
+          armed = false
+          // Drop the accumulated sources too. No flush will ever run for this
+          // frame, so nothing has been repainted on their behalf -- and keeping
+          // them would make the NEXT successful flush treat them as having
+          // cleared in ITS frame and skip them, which is the very miss this
+          // coordinator exists to prevent.
+          clearedThisFrame.clear()
+        }
       }
     },
   }
