@@ -2,7 +2,10 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    # `unlabeled` added alongside `labeled` (#309): the desktop-test gate below
+    # keys on a label, so removing `desktop-tested` must re-run the check and
+    # turn it red again, not leave a stale green.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [main, beta, 'release/**']
   push:
     branches: [main]
@@ -24,6 +27,42 @@ jobs:
           node-version: '20'
       - name: Verify CHANGELOG.md matches changelog.ts
         run: node scripts/gen-changelog.js --check
+
+  # Desktop-test merge gate (#309). Headless CI can pass while the packaged app
+  # fails to run usefully on a real desktop (it has), so "did a human open it?"
+  # is the real acceptance gate — and it should be enforced by the merge button,
+  # not left to a reviewer's memory or a PR-body note.
+  #
+  # This is the INVERSE of the `ci-run` label below: `ci-run` is opt-in (present
+  # => run the matrix); this one is required-to-allow (the check FAILS unless the
+  # PR carries `desktop-tested` or `skip-desktop-test`). Only PRs are gated;
+  # direct pushes to `main` have no label and are exempt by the event guard.
+  #
+  # The job ALWAYS runs (no `if` that could skip it) and decides pass/fail from
+  # the labels internally — a required check that is "skipped" is treated as
+  # pending and blocks forever, so skipping is not an option once @nubbymong marks
+  # this required in branch protection (the step that turns this from an advisory
+  # red X into an actual merge block; admin-only, tracked in #309).
+  desktop-gate:
+    name: Desktop test gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require desktop-tested (or skip-desktop-test) label
+        env:
+          HAS_TESTED: ${{ contains(github.event.pull_request.labels.*.name, 'desktop-tested') }}
+          HAS_SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'skip-desktop-test') }}
+        run: |
+          if [ "$HAS_TESTED" = "true" ]; then
+            echo "PR carries 'desktop-tested' — the app was exercised on a real desktop. Gate open."
+            exit 0
+          fi
+          if [ "$HAS_SKIP" = "true" ]; then
+            echo "PR carries 'skip-desktop-test' — no desktop test required (docs/deps/CI/changelog-only). Gate open."
+            exit 0
+          fi
+          echo "::error::Desktop-test merge gate: this PR must carry the 'desktop-tested' label (app launched and exercised on a real desktop) or 'skip-desktop-test' (docs/deps/CI/changelog-only) before it can merge. See CONTRIBUTING.md > Desktop-test gate."
+          exit 1
 
   test:
     # Gate the test matrix on a `ci-run` label for PRs.
