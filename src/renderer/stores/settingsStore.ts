@@ -103,24 +103,22 @@ export interface TerminalSettings {
    * DOM renderer, which is what ships. Read it through `gpuRenderingEnabled`,
    * never by comparing directly.
    *
-   * It was turned off by default DURING beta.16's development (#308) — not in
-   * any released build, since beta.16 had not been cut — because
-   * `@xterm/addon-webgl` keeps ONE glyph atlas per process (a module-level
-   * `charAtlasCache`, keyed on font + colours, which every CCC terminal matches).
-   * `clearTextureAtlas()` wipes that shared atlas for EVERY terminal but repairs
-   * only the caller's render model, and `term.refresh()` cannot undo it because
-   * the renderer skips cells whose contents have not changed. So one session
-   * repainting blanked the glyphs of every other open session — backgrounds
-   * intact, text gone — until that terminal was resized, scrolled, or activated.
-   * That is the real #273, misdiagnosed for months as "the atlas goes stale on
-   * its own".
+   * The fault: `@xterm/addon-webgl` keeps ONE glyph atlas per process (a
+   * module-level `charAtlasCache`, keyed on font + colours, which every CCC
+   * terminal matches). `clearTextureAtlas()` wipes that shared atlas for EVERY
+   * terminal but rebuilds only the caller's render model, and `term.refresh()`
+   * cannot undo it for the others because the renderer skips cells whose
+   * contents have not changed. So one session repainting blanks the glyphs of
+   * every other open session — backgrounds intact, text gone — until that
+   * terminal is resized, scrolled, or activated. That is the real #273,
+   * misdiagnosed for months as "the atlas goes stale on its own".
    *
-   * #312 fixed the cause rather than hiding it: a process-wide coordinator now
-   * repaints every OTHER terminal on the frame after any one of them rebuilds
-   * the shared atlas, so a clear no longer strands anybody. The containment was
-   * lifted before beta.16 shipped, so the release history is: default-on
-   * throughout, with one unreleased window in between. Applies to terminals
-   * opened after the change.
+   * #312 attempted a repair (a process-wide coordinator that refreshes the other
+   * terminals) and it does NOT hold: refresh alone cannot rebuild a victim's
+   * model, so the victim redraws blank. It was briefly default-on on the
+   * strength of that repair, entirely within beta.16's unreleased development
+   * window, and is opt-in again. See `gpuRenderingEnabled` for the disproof and
+   * for the repair that does work. Applies to terminals opened after the change.
    */
   gpuRendering?: boolean
 }
