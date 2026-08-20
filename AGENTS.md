@@ -125,6 +125,30 @@ fragment written during an embargo may say *that* a finding exists and was route
 privately — never the component, the mechanism, or the repro. The public record (fragment,
 changelog entry, advisory) is written **after** the fix ships, all at once.
 
+## Showing visual work — use the Agent Canvas
+
+**Anything the user has to LOOK at goes on the Agent Canvas, not into an HTML
+file you tell them to open.** A mockup, a proposed screen, a design comparison,
+the built site — invoke the `agent-canvas` skill and `canvas_render` it. They
+annotate it in place, anchored to the elements they are pointing at, and you
+fetch the notes as one review.
+
+This is written here because it keeps being missed: the file is the artifact,
+the canvas is the mechanism, and an agent that has seen `.canvas-scratch/*.html`
+in the repo reproduces the artifact and drops the mechanism. Two separate
+sessions did exactly that on 2026-08-20.
+
+Two traps worth knowing before you hit them:
+
+- **The canvas serves ONLY this session's configured project folder and the
+  worktree CCC set aside for it.** A scratch or temp directory is refused, and
+  the standing "put temporary files in the scratchpad" instruction does not
+  apply to anything you intend to render. Write it under
+  `<your worktree>/.ccc-canvas/`.
+- **A render is a handover.** Batch what you know, render once, then stop
+  touching that surface until their notes arrive. Rendering again while they are
+  annotating means they are marking up something already stale.
+
 ## Documentation protocol (CARP)
 
 - **Running log:** add a dated fragment under `CONTEXT.d/` for your work (see `CONTEXT.d/README.md`). `CONTEXT.md` is generated + gitignored — never commit it.

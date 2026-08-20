@@ -23,6 +23,7 @@ import {
   MAX_SKETCH_PNG_BYTES,
   deleteAnnotation,
   dropReviewsForCanvas,
+  getReviewCountsForCanvas,
   getReviewStateForSession,
   onReviewChanged,
   resolveAnnotation,
@@ -36,6 +37,11 @@ import {
   listReclaimableCanvases,
   reclaimCanvasForSession,
 } from '../canvas/canvas-session-link'
+
+/** How many canvases NOT belonging to the asking session get a review-count
+ *  read per library open. Their own are always counted; the rest are a courtesy
+ *  and must not turn one click into a hundred synchronous file reads. */
+const MAX_REVIEW_SWEEP = 20
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -248,7 +254,28 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     // record rather than accepted from the renderer, so the caller cannot ask to
     // see another project's list by naming its path.
     const cwd = sessionId ? canvasCwdForSession(sessionId) : undefined
-    return listAllCanvases(openTileSessionIds ?? [], cwd)
+    const entries = listAllCanvases(openTileSessionIds ?? [], cwd, sessionId)
+    // What is outstanding on each, joined HERE: the review store imports the
+    // canvas store, so the reverse import would be a cycle, and this handler
+    // already holds both (same reason the delete handler drops reviews here).
+    //
+    // Bounded on purpose. Every miss is a synchronous read + full validation, so
+    // the sweep covers the rows a user actually acts on -- their own canvases,
+    // and the head of the rest -- and everything past that renders without a
+    // count rather than turning one library open into a hundred file reads.
+    let swept = 0
+    for (const e of entries) {
+      const isMine = e.ownedByThisSession || e.isActiveForThisSession
+      if (!isMine && swept >= MAX_REVIEW_SWEEP) continue
+      if (!isMine) swept++
+      const counts = getReviewCountsForCanvas(e.canvasId)
+      // Left UNDEFINED, never zeroed, when the store is unreadable: "nothing
+      // outstanding" and "could not tell" must not look the same in the UI.
+      if (!counts) continue
+      e.openReviewCount = counts.openReviewIds.length
+      e.draftNoteCount = counts.draftNotes
+    }
+    return entries
   })
 
   // The only destructive canvas operation, and it exists because the user

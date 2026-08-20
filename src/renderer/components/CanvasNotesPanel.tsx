@@ -5,8 +5,9 @@ import type { Annotation, CanvasSketchExport, CanvasVersion, FocusObject, Rect }
 import {
   draftAnnotationsOf,
   draftReviewOf,
-  openSubmittedNotesOf,
+  reviewGroupsOf,
   useCanvasReviewStore,
+  type ReviewGroup,
 } from '../stores/canvasReviewStore'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
 
@@ -43,6 +44,18 @@ async function blobToBase64(blob: Blob): Promise<string> {
     binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
   }
   return btoa(binary)
+}
+
+/** "sent 14:20 · on v3" — when the round went out, and against what. The
+ *  version matters: a note was written against the render that was on screen
+ *  then, which is not necessarily the one you are looking at now. */
+function reviewSentLabel(review: { submittedAt?: string; createdAt: string; versionId: string }): string {
+  const raw = review.submittedAt ?? review.createdAt
+  const ms = Date.parse(raw)
+  const when = Number.isFinite(ms)
+    ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null
+  return when ? `sent ${when} · on ${review.versionId}` : `on ${review.versionId}`
 }
 
 const SCOPE_BADGE: Record<Annotation['scope'], string> = {
@@ -111,7 +124,21 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
 
   const draftReview = state ? draftReviewOf(state) : null
   const draftNotes = state ? draftAnnotationsOf(state) : []
-  const openNotes = state ? openSubmittedNotesOf(state) : []
+  // Every submitted round, newest first, with who it is waiting on.
+  const groups = useMemo(() => (state ? reviewGroupsOf(state) : []), [state])
+  /** Explicit user toggles only. The DEFAULT is derived per group (a closed
+   *  round starts collapsed, an outstanding one starts open) so a round that
+   *  becomes closed folds itself away without the user having to tidy up. */
+  const [groupOverride, setGroupOverride] = useState<Record<string, boolean>>({})
+  const isGroupCollapsed = useCallback(
+    (g: ReviewGroup) => groupOverride[g.review.id] ?? g.waitingOn === 'closed',
+    [groupOverride],
+  )
+  const toggleGroup = useCallback((reviewId: string, defaultCollapsed: boolean) => {
+    setGroupOverride((prev) => ({ ...prev, [reviewId]: !(prev[reviewId] ?? defaultCollapsed) }))
+  }, [])
+  const [busyReviewId, setBusyReviewId] = useState<string | null>(null)
+  const [confirmDismissId, setConfirmDismissId] = useState<string | null>(null)
 
   const editingNote = useMemo(
     () => (editingId ? (draftNotes.find((a) => a.id === editingId) ?? null) : null),
@@ -161,6 +188,34 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
       setJustSubmitted(null)
     }
   }, [noteText, editingNote, composerScope, focus, attachedSketch, sessionId, version.id, upsertNote, setEditing, clearFocus])
+
+  /**
+   * Close a whole round in one action.
+   *
+   * Sequential, not parallel: every resolve round-trips through main and
+   * commits the state main returns, so firing them together would have each
+   * response overwrite the last and leave the panel showing a stale mirror.
+   * Guarded by `busyReviewId` so a double-click cannot start a second pass over
+   * notes the first pass has already consumed.
+   */
+  const resolveGroup = useCallback(
+    async (group: ReviewGroup, action: 'approve' | 'dismiss') => {
+      if (busyReviewId) return
+      setBusyReviewId(group.review.id)
+      try {
+        // Snapshot the ids first: `group` is derived from the store, which each
+        // resolve mutates underneath us.
+        const ids = group.notes.filter((n) => n.state === 'addressed').map((n) => n.id)
+        for (const id of ids) {
+          await resolveNote(sessionId, id, action)
+        }
+      } finally {
+        setBusyReviewId(null)
+        setConfirmDismissId(null)
+      }
+    },
+    [busyReviewId, resolveNote, sessionId],
+  )
 
   const cancelEdit = useCallback(() => {
     setEditing(sessionId, null)
@@ -323,13 +378,47 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
           </div>
         )}
 
-        {/* ── Resolution checklist (spec §6 step 2) ── */}
-        {openNotes.length > 0 && (
-          <div className="border-b border-surface0">
-            <div className="px-3 pt-2 pb-1 text-[11px] font-medium text-subtext0">
-              Open notes from earlier reviews
-            </div>
-            {openNotes.map((note) => {
+        {/* ── Resolution checklist (spec §6 step 2), by ROUND ──
+            A review is sent as a unit, so it comes back as one. Flattening every
+            open note under a single heading lost the round: nothing said a whole
+            review was finished, there was no way to close one, and a note from
+            this morning sat between two from ten minutes ago. */}
+        {groups.map((group) => {
+          const collapsed = isGroupCollapsed(group)
+          return (
+          <div key={group.review.id} className="border-b border-surface0" data-testid="review-group" data-review={group.review.id}>
+            <button
+              type="button"
+              onClick={() => toggleGroup(group.review.id, group.waitingOn === 'closed')}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface0/40 focus-ring"
+              aria-expanded={!collapsed}
+            >
+              <svg
+                width="9" height="9" viewBox="0 0 10 10" fill="currentColor" aria-hidden
+                className="shrink-0 text-overlay0 transition-transform"
+                style={{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
+              >
+                <polygon points="2,2 8,5 2,8" />
+              </svg>
+              <span className="text-[11px] font-semibold text-text shrink-0">
+                {group.review.id.replace('R', 'Review #')}
+              </span>
+              <span className="text-[10px] text-overlay1 truncate">{reviewSentLabel(group.review)}</span>
+              <span className={`ml-auto shrink-0 text-[9.5px] font-semibold px-1.5 py-px rounded-full border ${
+                group.waitingOn === 'you'
+                  ? 'text-peach border-peach/40 bg-peach/10'
+                  : group.waitingOn === 'agent'
+                    ? 'text-blue border-blue/40 bg-blue/10'
+                    : 'text-green border-green/40 bg-green/10'
+              }`}>
+                {group.waitingOn === 'you'
+                  ? `${group.addressedCount} for you`
+                  : group.waitingOn === 'agent'
+                    ? `${group.openCount} with the agent`
+                    : 'closed'}
+              </span>
+            </button>
+            {!collapsed && group.notes.map((note) => {
               const status = checklistStatus(note)
               return (
                 <div
@@ -340,7 +429,9 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                 >
                   <div className="flex items-center gap-1.5">
                     <span className={`text-[10px] uppercase tracking-wide ${SCOPE_BADGE[note.scope]}`}>{note.scope}</span>
-                    <span className="text-overlay1 text-[10px]">{note.reviewId.replace('R', 'Review #')}</span>
+                    {/* The "Review #N" tag that used to live here is gone: the
+                        row now sits UNDER its review's header, so repeating it
+                        on every note was the flat list showing through. */}
                     {/* The agent said it acted on this one (canvas_resolve). The
                         verdict is still the user's — the buttons below stay —
                         but the row says which notes are waiting on THEM rather
@@ -396,8 +487,49 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                 </div>
               )
             })}
+            {/* Close the whole round at once. Offered ONLY when every remaining
+                note is 'addressed' -- i.e. the agent says it did all of them and
+                has already summarised that in chat. While anything is still open
+                there is nothing here for the user to decide, and a bulk button
+                would just be a way to approve work nobody claims to have done.
+                Dismiss is two-step, because it drops notes without action. */}
+            {!collapsed && group.waitingOn === 'you' && group.notes.length > 1 && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 border-t border-surface0/60">
+                <button
+                  onClick={() => void resolveGroup(group, 'approve')}
+                  disabled={busyReviewId === group.review.id}
+                  className="px-2 py-0.5 text-[10px] font-semibold rounded border border-green/40 text-green bg-green/10 hover:bg-green/20 disabled:opacity-40"
+                  title="Mark every remaining note in this round as done. The agent has already said it addressed them."
+                  data-testid="review-approve-rest"
+                >
+                  Approve all {group.addressedCount} as done
+                </button>
+                <div className="flex-1" />
+                {confirmDismissId === group.review.id ? (
+                  <button
+                    onClick={() => void resolveGroup(group, 'dismiss')}
+                    disabled={busyReviewId === group.review.id}
+                    className="px-2 py-0.5 text-[10px] font-semibold rounded border border-red/50 text-red bg-red/15 hover:bg-red/25 disabled:opacity-40"
+                    title="Drop these notes without action. They will not come back."
+                    data-testid="review-dismiss-rest-confirm"
+                  >
+                    Drop {group.addressedCount} without action
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDismissId(group.review.id)}
+                    className="px-2 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:text-red"
+                    title="Drop the remaining notes in this round without action"
+                    data-testid="review-dismiss-rest"
+                  >
+                    Dismiss the rest
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-        )}
+          )
+        })}
 
         {/* ── Composer ── */}
         <div className="px-3 py-2 border-b border-surface0">

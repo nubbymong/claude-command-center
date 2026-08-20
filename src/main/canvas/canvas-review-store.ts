@@ -21,6 +21,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import {
   CANVAS_ANNOTATION_ID_RE,
+  CANVAS_ID_RE,
   CANVAS_REVIEW_ID_RE,
   CANVAS_VERSION_ID_RE,
   type AnchorRef,
@@ -370,6 +371,94 @@ function cloneAnnotation(a: Annotation): Annotation {
       ? { focus: { ...a.focus, targets: a.focus.targets.map((t) => ({ ...t })), bboxPage: { ...a.focus.bboxPage } } }
       : {}),
     ...(a.sketch ? { sketch: { ...a.sketch, excalidrawElementIds: [...a.sketch.excalidrawElementIds], bboxPage: { ...a.sketch.bboxPage } } } : {}),
+  }
+}
+
+/**
+ * What is outstanding on ONE canvas, as counts and store-minted ids only.
+ *
+ * Keyed by canvasId, deliberately, not by session. Every session-keyed read
+ * resolves through `canvasForSession` -> `sessionIndex`, which after a FILING
+ * already points at the new canvas — and the canvas we most need to report on
+ * is the one that was just filed out from under the user's open notes.
+ *
+ * READ-ONLY, and that is load-bearing: `loadRecord` re-stamps and PERSISTS a
+ * record whose embedded owner differs from the session it was asked for. A
+ * report must never write, so this reads the file itself and shares only the
+ * validator, which checks internal self-consistency and nothing about ownership.
+ *
+ * Returns `null` — never zeroes — when the store is broken or unreadable. "No
+ * open notes" and "I could not tell" are different messages, and only one of
+ * them should ever reassure an agent.
+ */
+export interface CanvasReviewCounts {
+  /** Notes in the user's unsubmitted draft: work in progress, not yours yet. */
+  draftNotes: number
+  /** Versions those draft notes were written against, store-minted 'v<n>'. */
+  draftVersionIds: string[]
+  /** Submitted reviews with notes still in play, store-minted 'R<n>'. */
+  openReviewIds: string[]
+  /** Notes on submitted reviews awaiting the AGENT (state 'open'). Kept apart
+   *  from 'addressed', which awaits the USER — summing them would produce a
+   *  number neither party can act on. */
+  openNotes: number
+  /** Notes the agent has marked addressed and the user has not ruled on. */
+  addressedNotes: number
+}
+
+export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts | null {
+  if (!CANVAS_ID_RE.test(canvasId)) return null
+  if (broken.has(canvasId)) return null
+  const record = records.get(canvasId) ?? readRecordNoRebind(canvasId)
+  if (!record) return null
+
+  const draftIds = new Set(record.reviews.filter((r) => r.status === 'draft').flatMap((r) => r.annotationIds))
+  const openReviewIds: string[] = []
+  const submitted = new Set<string>()
+  for (const r of record.reviews) {
+    if (r.status === 'submitted') submitted.add(r.id)
+  }
+  let openNotes = 0
+  let addressedNotes = 0
+  const withOpenNotes = new Set<string>()
+  const draftVersions = new Set<string>()
+  for (const a of record.annotations) {
+    if (draftIds.has(a.id)) {
+      draftVersions.add(a.versionId)
+      continue
+    }
+    if (!submitted.has(a.reviewId)) continue
+    if (a.state === 'open') { openNotes++; withOpenNotes.add(a.reviewId) }
+    else if (a.state === 'addressed') { addressedNotes++; withOpenNotes.add(a.reviewId) }
+  }
+  for (const r of record.reviews) {
+    if (r.status === 'submitted' && withOpenNotes.has(r.id)) openReviewIds.push(r.id)
+  }
+  return {
+    draftNotes: draftIds.size,
+    draftVersionIds: [...draftVersions],
+    openReviewIds,
+    openNotes,
+    addressedNotes,
+  }
+}
+
+/** Read + validate reviews.json WITHOUT loadRecord's owner re-stamp, its disk
+ *  heal, or its counter repair. Nothing here is cached either: a reporting read
+ *  must not warm a cache that only `dropReviewsForCanvas` ever evicts. */
+function readRecordNoRebind(canvasId: string): ReviewFileRecord | null {
+  let raw: string
+  try {
+    raw = fs.readFileSync(reviewsJsonPath(canvasId), 'utf8')
+  } catch {
+    return null
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!isValidRecord(parsed, canvasId)) return null
+    return parsed
+  } catch {
+    return null
   }
 }
 

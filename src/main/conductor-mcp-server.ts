@@ -42,8 +42,8 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
-import { getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
-import { getReviewPayload, markAnnotationsAddressed } from './canvas/canvas-review-store'
+import { canvasRootsForSession, getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
+import { getReviewCountsForCanvas, getReviewPayload, markAnnotationsAddressed } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 import { readCheckedFile } from './utils/safe-file-read'
 
@@ -806,6 +806,12 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
         readAttachment: (absPath) => fs.readFileSync(absPath),
         markAddressed: (sessionId, reviewId, ids) => markAnnotationsAddressed(sessionId, reviewId, ids),
+        // Read-only, by canvasId, counts and store-minted ids only. It is what
+        // lets a tool reply say "the user is mid-review" instead of the agent
+        // rendering over notes nobody has submitted yet.
+        getReviewCounts: (canvasId) => getReviewCountsForCanvas(canvasId),
+        // So a refused render can NAME the folders it would have accepted.
+        canvasRootsForSession: (sessionId) => canvasRootsForSession(sessionId),
         /**
          * Read a design document the agent wrote to disk (`htmlPath`).
          *

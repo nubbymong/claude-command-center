@@ -263,6 +263,39 @@ function liveDesignatedRoot(lexical: string): string | null {
   return real
 }
 
+/**
+ * The folders THIS session may render from, for the purpose of SAYING SO.
+ *
+ * The two refusal messages stated the rule and never named a destination, so an
+ * agent that put a mockup in the wrong place learned only that it was wrong.
+ * (Field notes from two separate sessions, 2026-08-20: one avoided it by having
+ * read the skill, the other wrote the file to a scratch directory and never
+ * recovered.) The refusal is the one moment we know exactly which folders would
+ * have worked, so it should say them.
+ *
+ * Safe to disclose: both paths are CCC's own — the configured project directory
+ * and a worktree location CCC computed itself — never anything the model
+ * supplied, and the agent's own PTY is already cd'd into the first with the
+ * second in its environment as CCC_SESSION_WORKTREE. Keyed on the
+ * transport-bound session id only, so it can never widen to another session's.
+ *
+ * `worktreePending` distinguishes "designated but not created yet" from "no
+ * worktree at all" — different advice.
+ */
+export function canvasRootsForSession(
+  sessionId: string,
+): { project: string | null; worktree: string | null; worktreePending: boolean } {
+  if (!SESSION_ID_RE.test(sessionId)) return { project: null, worktree: null, worktreePending: false }
+  const live = uatRootsBySession.get(sessionId)
+  // A session registers exactly one live root (its resolved cwd); take the
+  // first deterministically rather than assuming a count.
+  const project = live && live.size > 0 ? [...live][0] : null
+  const designated = designatedRootsBySession.get(sessionId)
+  const lexical = designated && designated.size > 0 ? [...designated][0] : null
+  const worktree = lexical ? liveDesignatedRoot(lexical) : null
+  return { project, worktree, worktreePending: Boolean(lexical) && worktree === null }
+}
+
 /** Drop every root a session was allowed to serve — live and designated.
  *  Called when its PTY is gone (pty-manager cleanupSessionResources) — a root
  *  outlives nothing. */
@@ -878,7 +911,7 @@ function findFiledCanvas(sessionId: string, title: string): CanvasRecord | undef
 export function renderVersion(
   sessionId: string,
   source: CanvasRenderSource,
-): { canvasId: string; versionId: string } {
+): { canvasId: string; versionId: string; filed?: { canvasId: string } } {
   if (!SESSION_ID_RE.test(sessionId)) throw new Error('invalid session id')
 
   const held = getRecordForSession(sessionId)
@@ -1025,7 +1058,13 @@ export function renderVersion(
   canvases.set(canvasId, nextRecord)
   sessionIndex.set(sessionId, canvasId)
   emitChanged(nextRecord)
-  return { canvasId, versionId }
+  // Report a FILING to the caller. `subjectChanged` was a local boolean that
+  // never left this function, so nothing downstream could tell that the canvas
+  // the user was reviewing had just been moved aside -- taking any unresolved
+  // notes on it out of view. The ID only: the filed canvas's title is
+  // agent-authored text, and the tool reply it feeds is operator voice.
+  const filedId = subjectChanged && held && held.canvasId !== canvasId ? held.canvasId : undefined
+  return { canvasId, versionId, ...(filedId ? { filed: { canvasId: filedId } } : {}) }
 }
 
 /** Windows reserved device basenames — a request for `CON`/`NUL`/`COM1`/… can
@@ -1260,14 +1299,28 @@ export function listAllCanvases(
    * ownership is decided by adoptCanvasForSession alone.
    */
   projectCwd?: string,
+  /**
+   * The session ASKING. Purely so the list can say which rows are this
+   * session's own and which one it is showing — the in-pane switcher offers
+   * only its own, while the library shows everything.
+   *
+   * DISPLAY ONLY, and the distinction matters: nothing here grants anything.
+   * Ownership is decided by adoptCanvasForSession, and delete is id-only with
+   * no ownership check at the IPC seam, so a "mine" badge must never be read as
+   * a permission.
+   */
+  askingSessionId?: string,
 ): CanvasLibraryEntry[] {
   ensureDiskScanned()
   const open = new Set(openTileSessionIds.filter((id) => SESSION_ID_RE.test(id)))
+  const asking = askingSessionId && SESSION_ID_RE.test(askingSessionId) ? askingSessionId : undefined
+  const activeForAsking = asking ? sessionIndex.get(asking) : undefined
   const out: CanvasLibraryEntry[] = []
   for (const record of canvases.values()) {
     if (projectCwd && record.cwd && record.cwd !== projectCwd) continue
     const latest = record.versions[record.versions.length - 1]
     const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
+    const mine = asking !== undefined && record.sessionId === asking
     out.push({
       canvasId: record.canvasId,
       versionCount: record.versions.length,
@@ -1278,11 +1331,38 @@ export function listAllCanvases(
       ...(cwd ? { cwd } : {}),
       ...(record.title ? { title: record.title } : {}),
       ...(open.has(record.sessionId) ? { ownedByOpenSession: true } : {}),
+      // A session OWNS up to MAX_CANVASES_PER_SESSION records while pointing at
+      // exactly one, so these two are different questions and both are asked.
+      ...(mine ? { ownedByThisSession: true } : {}),
+      ...(mine && activeForAsking === record.canvasId ? { isActiveForThisSession: true } : {}),
     })
   }
-  out.sort((a, b) => (a.lastRenderedAt < b.lastRenderedAt ? 1 : a.lastRenderedAt > b.lastRenderedAt ? -1 : 0))
-  return out
+  // Banded, then newest-first inside each band: the canvas you are looking at,
+  // then the rest of your own, then everyone else's. A flat recency list is
+  // unreadable once a project has accumulated a few dozen, and the cap below
+  // would slice an unbanded list arbitrarily.
+  //
+  // Sorted on parsed time, not on the ISO strings: lexical order is only
+  // correct while every stamp is the same UTC spelling, and a tie previously
+  // left the order down to Map insertion.
+  const band = (e: CanvasLibraryEntry): number =>
+    e.isActiveForThisSession ? 0 : e.ownedByThisSession ? 1 : 2
+  out.sort((a, b) => {
+    const bandDiff = band(a) - band(b)
+    if (bandDiff !== 0) return bandDiff
+    const at = Date.parse(a.lastRenderedAt)
+    const bt = Date.parse(b.lastRenderedAt)
+    if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return bt - at
+    return a.canvasId < b.canvasId ? -1 : a.canvasId > b.canvasId ? 1 : 0
+  })
+  // One library open must not become an unbounded wall. Sliced AFTER the sort,
+  // so what survives is the most relevant, never an arbitrary prefix.
+  return out.length > MAX_LIBRARY_ENTRIES ? out.slice(0, MAX_LIBRARY_ENTRIES) : out
 }
+
+/** How many library rows one call returns. Well above a session's own cap
+ *  (MAX_CANVASES_PER_SESSION) so a session always sees all of its own. */
+const MAX_LIBRARY_ENTRIES = 120
 
 /**
  * Remove a tree WITHOUT ever descending through a reparse point.

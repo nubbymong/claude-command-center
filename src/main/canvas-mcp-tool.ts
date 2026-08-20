@@ -49,7 +49,39 @@ export interface CanvasToolDeps {
     entry: string
     options: CanvasSnapshotOptions
   }) => Promise<CanvasSnapshotResult>
-  renderVersion: (sessionId: string, source: CanvasRenderSource) => { canvasId: string; versionId: string }
+  renderVersion: (
+    sessionId: string,
+    source: CanvasRenderSource,
+  ) => { canvasId: string; versionId: string; filed?: { canvasId: string } }
+  /**
+   * What is outstanding on ONE canvas: counts, and ids the STORE minted.
+   *
+   * Keyed by canvasId rather than session, because the canvas most worth
+   * reporting on after a render is often the one that render just filed — a
+   * session-keyed read already points at the new one.
+   *
+   * Contract: it must not write. The obvious reader in the review store
+   * re-stamps and persists a record whose embedded owner differs from the
+   * session asked for; a report that heals a file as a side effect of being
+   * read is not a report. Returns null for "could not tell", NEVER zeroes —
+   * only one of those two should ever reassure an agent that nothing is
+   * outstanding.
+   */
+  getReviewCounts: (canvasId: string) => {
+    draftNotes: number
+    draftVersionIds: string[]
+    openReviewIds: string[]
+    openNotes: number
+    addressedNotes: number
+  } | null
+  /** The folders this session may render from, so a REFUSAL can name them
+   *  instead of only restating the rule. Both are CCC's own paths; the agent's
+   *  PTY is already inside the first with the second in its environment. */
+  canvasRootsForSession: (sessionId: string) => {
+    project: string | null
+    worktree: string | null
+    worktreePending: boolean
+  }
   /**
    * Read a design document the agent wrote to disk (`htmlPath`). Injected so
    * this module touches no filesystem; the caller confines the path to the
@@ -226,7 +258,10 @@ function captureFailureReason(err: unknown): string {
  * string is not), and this line lands outside the untrusted envelope where it
  * carries operator authority. Closed vocabulary, matched on shape.
  */
-function renderFailureReason(err: unknown): string {
+function renderFailureReason(
+  err: unknown,
+  roots?: { project: string | null; worktree: string | null; worktreePending: boolean },
+): string {
   const message = err instanceof Error ? err.message : ''
   if (/version cap/i.test(message)) {
     return 'this canvas has reached its version limit. Start a new session to render again.'
@@ -235,7 +270,12 @@ function renderFailureReason(err: unknown): string {
     // Says what the allowlist actually IS. The old wording ("a folder the user
     // has allowed … ask the user to add it in the Canvas pane") described a
     // control that does not exist, and sent the agent to ask for something the
-    // user cannot grant.
+    // user cannot grant. It now also NAMES the folders, because "not there" on
+    // its own has sent more than one agent hunting.
+    const advice = roots ? rootAdvice(roots, 'serves') : null
+    if (advice) {
+      return `that directory is not inside the folders this session serves from: ${advice} Build into one of them (for example <that folder>/dist) and render that path.`
+    }
     return 'that directory is not inside this session’s project folder, which is the only place the canvas serves from. Build inside the project you are working in and render that path.'
   }
   if (/distRoot does not exist|not a directory/i.test(message)) return 'that build directory does not exist.'
@@ -276,13 +316,74 @@ function isAbsolutePathShape(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/')
 }
 
+/**
+ * A root path, safe to put in an un-enveloped operator line.
+ *
+ * The path itself is CCC's own (a configured project directory, or a worktree
+ * location CCC computed) — never model-supplied — but a FOLDER NAME inside it is
+ * user-authored, so it is stripped of control, format and bidi characters and
+ * capped before it is interpolated. That keeps "nothing outside the envelope is
+ * anything but operator text" literally true rather than nearly true.
+ */
+function safeRootLabel(p: string): string {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = p.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, '')
+  return cleaned.length > 200 ? `${cleaned.slice(0, 200)}…` : cleaned
+}
+
+/**
+ * "…and here is where it WOULD have worked."
+ *
+ * The refusals used to state the rule and stop, so an agent that wrote its
+ * mockup to the wrong folder learned only that the folder was wrong — and the
+ * message never mentioned the session worktree at all, though the skill does.
+ * The refusal is the one moment we know exactly which folders would have been
+ * accepted, so it names them.
+ */
+/** Roots for the refusal line, or undefined if they cannot be read. A refusal
+ *  must never itself throw — it is already the error path. */
+function safeRoots(
+  deps: CanvasToolDeps,
+  sessionId: string,
+): { project: string | null; worktree: string | null; worktreePending: boolean } | undefined {
+  try {
+    return deps.canvasRootsForSession(sessionId)
+  } catch {
+    return undefined
+  }
+}
+
+function rootAdvice(
+  roots: { project: string | null; worktree: string | null; worktreePending: boolean },
+  verb: 'reads' | 'serves',
+): string | null {
+  const project = roots.project ? safeRootLabel(roots.project) : null
+  const worktree = roots.worktree ? safeRootLabel(roots.worktree) : null
+  if (project && worktree) {
+    return `the two folders this session ${verb} from are ${project} and ${worktree} (this session’s own worktree). Use whichever you are working in.`
+  }
+  if (project && roots.worktreePending) {
+    return `this session ${verb} from ${project}. If you claimed a session worktree, CCC set one aside for you and it is ${verb === 'reads' ? 'read' : 'served'} as soon as it exists.`
+  }
+  if (project) return `this session ${verb} from ${project}.`
+  if (worktree) return `this session ${verb} from ${worktree} (this session’s own worktree).`
+  return null
+}
+
 /** Operator-authored causes for a refused htmlPath read. The dependency's own
  *  message carries a model-supplied path and is never relayed. */
-function designFileFailureReason(err: unknown): string {
+function designFileFailureReason(
+  err: unknown,
+  roots?: { project: string | null; worktree: string | null; worktreePending: boolean },
+): string {
   const message = err instanceof Error ? err.message : ''
   if (/too large/i.test(message)) return 'that html file is too large to render.'
   if (/not a regular file/i.test(message)) return 'that path is not a regular html file.'
   if (/registered canvas root/i.test(message)) {
+    const advice = roots ? rootAdvice(roots, 'reads') : null
+    if (advice) {
+      return `that file is outside the folders this session can read from: ${advice} Write the html there — a scratch or temp directory is never served — then render that path.`
+    }
     // The confinement (resolveInsideCanvasRoot). Says what to do instead
     // without echoing the path the model supplied. True as written since the
     // allowlist became per-session: the roots this read resolves against are
@@ -343,7 +444,7 @@ export async function runCanvasRender(
         // one the render itself is keyed to — never rawArgs.cccSessionId.
         bytes = deps.readDesignFile(rawArgs.htmlPath, sessionId)
       } catch (err) {
-        return { text: `Could not render the canvas: ${designFileFailureReason(err)}`, isError: true }
+        return { text: `Could not render the canvas: ${designFileFailureReason(err, safeRoots(deps, sessionId))}`, isError: true }
       }
       // Re-measured here even though the reader guards too: this is the
       // untrusted ingress and the cap must hold in THIS file's logic.
@@ -399,19 +500,87 @@ export async function runCanvasRender(
     // their own agent's work.
     rendered = deps.renderVersion(sessionId, source)
   } catch (err) {
-    return { text: `Could not render the canvas: ${renderFailureReason(err)}`, isError: true }
+    return { text: `Could not render the canvas: ${renderFailureReason(err, safeRoots(deps, sessionId))}`, isError: true }
   }
 
   // Both ids are ours: one minted by the store, one a `v<n>` counter. Nothing
   // the model supplied is echoed back at all — not the build label, not the
   // path, not the html — so this line carries operator authority without
-  // carrying operator-forgeable text.
+  // carrying operator-forgeable text. The same rule governs everything
+  // appended below: counts, and ids the STORE minted. Never a title.
   return {
     text:
       `Rendered ${rendered.versionId} on canvas ${rendered.canvasId}. ` +
       'You can call canvas_snapshot now to self-check the layout (it works even while the pane is closed). ' +
-      'The user sees it when they open the Canvas pane (its button is pulsing) — hand back and tell them in plain words what to look at.',
+      'The user sees it when they open the Canvas pane (its button is pulsing) — hand back and tell them in plain words what to look at.' +
+      renderContextSuffix(rendered, deps),
     isError: false,
+  }
+}
+
+/** Cap on ids listed inline before falling back to a count. */
+const MAX_LISTED_IDS = 5
+
+function listIds(ids: readonly string[]): string {
+  if (ids.length <= MAX_LISTED_IDS) return ids.join(', ')
+  return `${ids.slice(0, MAX_LISTED_IDS).join(', ')} and ${ids.length - MAX_LISTED_IDS} more`
+}
+
+/**
+ * What the agent needs to know that it cannot see: that this render moved the
+ * user's canvas out from under them, and that the user may be mid-review.
+ *
+ * At most TWO sentences on any one call. This reply is the last thing read
+ * before the skill says to hand back in one short line, and a wall of status
+ * is how a handover turns into another paragraph of tool talk.
+ *
+ * Wrapped whole in try/catch: a throw here escapes into the MCP SDK, which
+ * relays the raw message — paths included — unwrapped and outside any envelope.
+ */
+function renderContextSuffix(
+  rendered: { canvasId: string; filed?: { canvasId: string } },
+  deps: CanvasToolDeps,
+): string {
+  try {
+    const parts: string[] = []
+    if (rendered.filed) {
+      parts.push(
+        ` You named a different subject, so canvas ${rendered.filed.canvasId} was filed and this is a new canvas.`,
+      )
+      const filedCounts = deps.getReviewCounts(rendered.filed.canvasId)
+      if (filedCounts && filedCounts.draftNotes > 0) {
+        parts.push(
+          ` The canvas you filed still has ${filedCounts.draftNotes} unsubmitted note(s) on it — the user was mid-review; say so rather than moving on.`,
+        )
+        return parts.join('')
+      }
+      if (filedCounts && filedCounts.openReviewIds.length > 0) {
+        parts.push(
+          ` It still has open notes on ${listIds(filedCounts.openReviewIds)}.`,
+        )
+        return parts.join('')
+      }
+    }
+    // Counts AFTER the render: a read before it describes whichever canvas this
+    // very call may have just filed.
+    const counts = deps.getReviewCounts(rendered.canvasId)
+    if (!counts) return parts.join('')
+    if (counts.draftNotes > 0) {
+      const against = counts.draftVersionIds.length > 0 ? ` against ${listIds(counts.draftVersionIds)}` : ''
+      parts.push(
+        ` The user has ${counts.draftNotes} unsubmitted note(s) on this canvas${against}: they are mid-review, so hand back rather than rendering again.`,
+      )
+      return parts.join('')
+    }
+    if (counts.openReviewIds.length > 0) {
+      parts.push(
+        ` ${counts.openReviewIds.length} submitted review(s) on this canvas still have notes in play: ${listIds(counts.openReviewIds)}. Fetch with canvas_review before re-rendering.`,
+      )
+    }
+    return parts.join('')
+  } catch {
+    // Never fail a successful render over a status line.
+    return ''
   }
 }
 
@@ -680,7 +849,7 @@ const ANNOTATION_ID_SHAPE = /^a[0-9]{1,9}$/
 export function runCanvasResolve(
   rawArgs: RawResolveArgs,
   sessionId: string,
-  deps: Pick<CanvasToolDeps, 'markAddressed'>,
+  deps: Pick<CanvasToolDeps, 'markAddressed' | 'getCanvasState' | 'getReviewCounts'>,
 ): { text: string; isError: boolean } {
   // The review the notes belong to. Required: annotation ids restart per
   // canvas and the session's canvas can change between review and resolve, so
@@ -712,6 +881,23 @@ export function runCanvasResolve(
   if (result.addressed.length > 0) parts.push(`Marked ${result.addressed.length} note(s) as addressed: ${result.addressed.join(', ')}.`)
   if (result.skipped.length > 0) parts.push(`Left ${result.skipped.length} unchanged (already resolved by the user, still a draft, or unknown): ${result.skipped.join(', ')}.`)
   parts.push('The user still gives the final verdict from the Canvas pane; addressed notes stay visible there until they approve or dismiss them.')
+  // What is LEFT. Read after the write, so it reflects what actually persisted
+  // rather than what the caller asked for -- this is the line that stops an
+  // agent handing back "all addressed" over notes nobody has touched.
+  try {
+    const canvas = deps.getCanvasState(sessionId)
+    const counts = canvas ? deps.getReviewCounts(canvas.canvasId) : null
+    if (counts) {
+      if (counts.openNotes > 0) {
+        parts.push(`${counts.openNotes} note(s) on this canvas are still open and waiting on you.`)
+      }
+      if (counts.draftNotes > 0) {
+        parts.push(`The user also has ${counts.draftNotes} unsubmitted note(s) here — more may be coming.`)
+      }
+    }
+  } catch {
+    /* never fail a completed write over a status line */
+  }
   return { text: parts.join(' '), isError: false }
 }
 
