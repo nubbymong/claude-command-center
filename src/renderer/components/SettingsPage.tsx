@@ -394,7 +394,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     GPU rendering
-                    <span className="block text-[10px] text-overlay0">Draws terminals on the GPU, which is faster with several busy sessions. On unless you have turned it off — so if this box is unchecked, that setting came from you and has been left alone. There was a fault where the GPU renderer shared one cache of character images across every open terminal, so one session refreshing it wiped the text out of all the others until you scrolled or switched to them; that is fixed, and the sessions now repaint each other when the cache is rebuilt. Applies to terminals opened after the change.</span>
+                    <span className="block text-[10px] text-overlay0">Draws terminals on the GPU, which is faster with several busy sessions. OFF by default and experimental. The GPU renderer shares one cache of character images across every open terminal, so when one session rebuilds that cache the others lose their text until you scroll, resize or switch to them. A fix was attempted and does not hold, so the setting stays opt-in. Turn it on only if you run a single session, or can live with that. Applies to terminals opened after the change.</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
