@@ -46,6 +46,10 @@ describe('app knowledge is publishable', () => {
       expect(text, `${s.id} home path`).not.toMatch(/(^|\s)~[\\/]/)
       expect(text, `${s.id} users path`).not.toMatch(/[\\/](home|Users)[\\/]/)
       expect(text, `${s.id} windows profile dir`).not.toMatch(/AppData|Roaming|ProgramData/i)
+      // A generic POSIX absolute path, which the checks above do not cover.
+      // Two segments minimum, so the slash commands this text legitimately
+      // names (/config) are not false positives.
+      expect(text, `${s.id} posix absolute path`).not.toMatch(/(^|\s)\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/)
     }
   })
 
