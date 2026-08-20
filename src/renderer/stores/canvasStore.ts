@@ -102,10 +102,27 @@ function fromMain(prev: CanvasSessionState | undefined, state: CanvasState | nul
   }
 }
 
-/** Sessions whose next canvas change the USER asked for. Module-level, not
- *  store state: it is a one-shot handshake between the picker and the push
- *  listener, never something a component renders. */
-const expectedSwitches = new Set<string>()
+/**
+ * How many canvas switches the USER has asked for and not yet seen land, per
+ * session. Module-level, not store state: it is a handshake between the picker
+ * and the push listener, never something a component renders.
+ *
+ * A COUNT, not a flag. Two switch attempts can be in flight at once — the filed
+ * strip and the subject picker are both mounted, with independent busy state —
+ * and with a flag the failing one's cancel took the succeeding one's
+ * announcement with it, so a switch the user asked for was reported to them as
+ * a filing. The opposite of what any of this is for.
+ */
+const expectedSwitches = new Map<string, number>()
+
+/** Take one expectation if this session has any. */
+function consumeExpectedSwitch(sessionId: string): boolean {
+  const pending = expectedSwitches.get(sessionId) ?? 0
+  if (pending <= 0) return false
+  if (pending === 1) expectedSwitches.delete(sessionId)
+  else expectedSwitches.set(sessionId, pending - 1)
+  return true
+}
 
 export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
   bySessionId: {},
@@ -161,11 +178,11 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
   },
 
   expectSwitch: (sessionId: string) => {
-    expectedSwitches.add(sessionId)
+    expectedSwitches.set(sessionId, (expectedSwitches.get(sessionId) ?? 0) + 1)
   },
 
   cancelExpectedSwitch: (sessionId: string) => {
-    expectedSwitches.delete(sessionId)
+    consumeExpectedSwitch(sessionId)
   },
 
   noteFiled: (sessionId: string, notice: FiledNotice) => {
@@ -197,7 +214,13 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     }
   },
 
-  reset: () => set({ bySessionId: {} }),
+  // Resets the pending-switch counts too. They live outside the store object
+  // but they ARE store state, and a reset that left them behind meant an
+  // expectation could outlive everything it referred to.
+  reset: () => {
+    expectedSwitches.clear()
+    set({ bySessionId: {} })
+  },
 }))
 
 // Main → renderer push: any render/switch (IPC today, canvas_render MCP in P3)
@@ -228,15 +251,23 @@ export function setupCanvasListener(): void {
     // A switch the USER asked for changes the same id and is not news, so the
     // picker announces itself first.
     const prev = store.bySessionId[event.sessionId]
-    const userAsked = expectedSwitches.delete(event.sessionId)
-    if (!userAsked && prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId) {
+    // Only an IDENTITY change consumes an expectation. The consume used to run
+    // on every change for the session, so an ordinary new version rendered on
+    // the canvas you are already on ate the announcement, and the switch you
+    // had actually asked for then arrived looking like a filing.
+    // Named rather than inlined so the consume can be gated on it too — and
+    // typed as the id it is, so the notice below keeps its narrowing.
+    const filedCanvasId: string | null =
+      prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId ? prev.canvasId : null
+    const userAsked = filedCanvasId !== null && consumeExpectedSwitch(event.sessionId)
+    if (!userAsked && filedCanvasId !== null) {
       // Counted from the review mirror as it stands NOW, before the refresh
       // below follows the session to its new canvas. This is the only moment
       // the renderer knows what was left behind.
       const review = useCanvasReviewStore.getState().bySessionId[event.sessionId]
       let openNotes = 0
       let draftNotes = 0
-      if (review && review.canvasId === prev.canvasId) {
+      if (review && review.canvasId === filedCanvasId) {
         const submitted = new Set(review.reviews.filter((r) => r.status === 'submitted').map((r) => r.id))
         const drafts = new Set(review.reviews.filter((r) => r.status === 'draft').flatMap((r) => r.annotationIds))
         for (const a of review.annotations) {
@@ -245,8 +276,8 @@ export function setupCanvasListener(): void {
         }
       }
       store.noteFiled(event.sessionId, {
-        canvasId: prev.canvasId,
-        title: prev.title,
+        canvasId: filedCanvasId,
+        title: prev?.title,
         openNotes,
         draftNotes,
       })

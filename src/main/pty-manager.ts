@@ -29,7 +29,7 @@ import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
-import { askPromptEnvValue, buildTerminalLaunchLine } from './terminal-launch-line'
+import { buildTerminalLaunchLine } from './terminal-launch-line'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
@@ -3155,14 +3155,16 @@ export function spawnPty(
         // Boolean only: the question itself travels in the spawn env
         // (CCC_ASK_PROMPT), never through the command string.
         //
-        // Derived from the SANITISED value, through the same function that
-        // decides whether the variable gets set at all (buildClaudeLocalSpawn).
-        // Asked of the raw string instead, a question made only of control
-        // characters left the variable unset while the line still referenced it
-        // — and `"$CCC_ASK_PROMPT"` on POSIX is QUOTED, so an unset variable
-        // expands to one EMPTY argument rather than none. That is `claude -- ""`,
-        // the blank opening prompt this whole path exists to avoid.
-        askPrompt: !!askPromptEnvValue(options?.askPrompt ?? '', os.platform() === 'win32'),
+        // Read off the ENV THIS SPAWN ACTUALLY GOT — `finalSpawnEnv` is the
+        // object handed to pty.spawn above — rather than re-deciding from the
+        // question. "Does the variable exist" and "does the line reference the
+        // variable" are the same question, so they must not be two answers that
+        // happen to agree: asked of the raw string, a question made only of
+        // control characters left the variable unset while the line still
+        // referenced it, and `"$CCC_ASK_PROMPT"` on POSIX is QUOTED — an unset
+        // variable expands to one EMPTY argument, not to none. That is
+        // `claude -- ""`, the blank opening prompt the env route exists to avoid.
+        askPrompt: finalSpawnEnv.CCC_ASK_PROMPT !== undefined,
       })
       setTimeout(() => {
         // Liveness guard (see shell-only branch): the 300ms launch-write can race

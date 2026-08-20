@@ -30,30 +30,39 @@ const VERSION: CanvasVersion = {
   source: { mode: 'design', entry: 'index.html' },
 } as CanvasVersion
 
-/** One submitted round, one note the agent says it has addressed — so the round
- *  is waiting on the USER and its default is EXPANDED. */
-function stateFor(canvasId: string, noteText: string): CanvasReviewState {
-  const review: Review = {
-    id: 'R1',
-    canvas: { canvasId, versionId: 'v1' } as Review['canvas'],
-    versionId: 'v1',
-    annotationIds: ['a1'],
-    status: 'submitted',
-    createdAt: '2026-08-21T09:00:00Z',
-    submittedAt: '2026-08-21T09:05:00Z',
-  }
-  const note: Annotation = {
-    id: 'a1',
-    reviewId: 'R1',
-    scope: 'general',
-    note: noteText,
-    versionId: 'v1',
-    state: 'addressed',
-  }
-  return { canvasId, sessionId: SID, reviews: [review], annotations: [note] }
+/** Submitted rounds, each with one note the agent says it has addressed — so
+ *  every round is waiting on the USER and its default is EXPANDED. */
+function stateFor(canvasId: string, ...noteTexts: string[]): CanvasReviewState {
+  const reviews: Review[] = []
+  const annotations: Annotation[] = []
+  noteTexts.forEach((text, i) => {
+    const id = `R${i + 1}`
+    const noteId = `a${i + 1}`
+    reviews.push({
+      id,
+      canvas: { canvasId, versionId: 'v1' } as Review['canvas'],
+      versionId: 'v1',
+      annotationIds: [noteId],
+      status: 'submitted',
+      createdAt: `2026-08-21T09:0${i}:00Z`,
+      submittedAt: `2026-08-21T09:0${i}:30Z`,
+    })
+    annotations.push({
+      id: noteId,
+      reviewId: id,
+      scope: 'general',
+      note: text,
+      versionId: 'v1',
+      state: 'addressed',
+    })
+  })
+  return { canvasId, sessionId: SID, reviews, annotations }
 }
 
-const CANVAS_A = stateFor('canvas-a', 'the header is cramped')
+// Two rounds on A, because "reviews grouped into rounds" is the feature this
+// sits inside: with one round per canvas, a key that ignored the review id
+// entirely would look correct.
+const CANVAS_A = stateFor('canvas-a', 'the header is cramped', 'the sidebar is noisy')
 const CANVAS_B = stateFor('canvas-b', 'the footer needs work')
 
 let current: CanvasReviewState = CANVAS_A
@@ -78,9 +87,9 @@ async function render(): Promise<void> {
 }
 
 /** The round header, whose aria-expanded IS the collapsed state the user sees. */
-function roundHeader(): HTMLButtonElement {
-  const group = container.querySelector('[data-testid="review-group"][data-review="R1"]')
-  expect(group, 'the R1 round').toBeTruthy()
+function roundHeader(reviewId = 'R1'): HTMLButtonElement {
+  const group = container.querySelector(`[data-testid="review-group"][data-review="${reviewId}"]`)
+  expect(group, `the ${reviewId} round`).toBeTruthy()
   const button = group!.querySelector('button')
   expect(button, 'the round header button').toBeTruthy()
   return button as HTMLButtonElement
@@ -125,6 +134,20 @@ describe('a collapsed round does not follow you to another canvas', () => {
     await switchTo(CANVAS_B)
     expect(roundHeader().getAttribute('aria-expanded')).toBe('true')
     expect(container.textContent).toContain('the footer needs work')
+  })
+
+  it('collapses only the round you clicked, not every round on the canvas', async () => {
+    // The key has two halves and both have to be in it. Keyed by canvas alone,
+    // one click folds away rounds the user never touched.
+    await render()
+    await switchTo(CANVAS_A)
+    expect(roundHeader('R1').getAttribute('aria-expanded')).toBe('true')
+    expect(roundHeader('R2').getAttribute('aria-expanded')).toBe('true')
+
+    await act(async () => roundHeader('R2').click())
+    expect(roundHeader('R2').getAttribute('aria-expanded')).toBe('false')
+    expect(roundHeader('R1').getAttribute('aria-expanded')).toBe('true')
+    expect(container.textContent).toContain('the header is cramped')
   })
 
   it('still finds your toggle where you left it when you switch back', async () => {

@@ -230,22 +230,6 @@ describe('askPromptEnvValue — the value the reference expands to', () => {
   })
 })
 
-describe('the spawn call site derives the flag from the sanitised value', () => {
-  // A source assertion, in the same spirit as the GPU opt-in reader test: the
-  // wiring in pty-manager decides whether the line references the variable, and
-  // it has to ask the same function that decides whether the variable gets set.
-  // Nothing else in this suite can reach that call site.
-  it('pty-manager does not pass the raw option through as the boolean', async () => {
-    const fs = await import('node:fs')
-    const url = await import('node:url')
-    const path = await import('node:path')
-    const here = path.dirname(url.fileURLToPath(import.meta.url))
-    const src = fs.readFileSync(path.join(here, '../../../src/main/pty-manager.ts'), 'utf8')
-    expect(src).toContain('askPrompt: !!askPromptEnvValue(')
-    expect(src).not.toContain('askPrompt: !!options?.askPrompt')
-  })
-})
-
 describe('buildClaudeLocalSpawn — the question lives in the env', () => {
   const BASE_SPAWN = { sessionId: 'ses-1', cwd: '/work', cols: 80, rows: 24 }
   const isWindows = process.platform === 'win32'

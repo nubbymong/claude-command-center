@@ -133,6 +133,28 @@ describe('filing notice', () => {
     expect(useCanvasStore.getState().bySessionId.s1.filedNotice?.canvasId).toBe('c-old')
   })
 
+  it('a failed switch does not cancel a CONCURRENT one that succeeded', () => {
+    // Both the filed strip and the subject picker are mounted, with their own
+    // busy state, so two attempts can be in flight. With a flag rather than a
+    // count, the failing one's cancel took the succeeding one's announcement
+    // with it and the user was told their own switch was a filing.
+    useCanvasStore.getState().expectSwitch('s1')
+    useCanvasStore.getState().expectSwitch('s1')
+    useCanvasStore.getState().cancelExpectedSwitch('s1')
+    emit({ sessionId: 's1', canvasId: 'c-new', activeVersionId: 'v1' })
+    expect(useCanvasStore.getState().bySessionId.s1.filedNotice).toBeFalsy()
+  })
+
+  it('an ordinary new version does not eat the expectation', () => {
+    // Only an identity change consumes one. The agent rendering another version
+    // of the canvas you are already on used to consume it, so the switch you
+    // had asked for then arrived looking like a filing.
+    useCanvasStore.getState().expectSwitch('s1')
+    emit({ sessionId: 's1', canvasId: 'c-old', activeVersionId: 'v2' })
+    emit({ sessionId: 's1', canvasId: 'c-new', activeVersionId: 'v1' })
+    expect(useCanvasStore.getState().bySessionId.s1.filedNotice).toBeFalsy()
+  })
+
   it('cancelling is per session and leaves another session\'s expectation alone', () => {
     useCanvasStore.setState({
       bySessionId: {

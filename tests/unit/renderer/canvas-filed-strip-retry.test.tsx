@@ -62,6 +62,9 @@ const backButton = () => container.querySelector('[data-testid="canvas-filed-bac
 
 beforeEach(async () => {
   reclaim.mockReset()
+  // Clears the pending-switch counts as well, so one test's un-landed switch
+  // cannot make the next one think the user asked for what it is about to see.
+  useCanvasStore.getState().reset()
   useSessionStore.setState({ sessions: [], activeSessionId: null, isRestoring: false } as never)
   seedNotice()
   container = document.createElement('div')
@@ -96,6 +99,12 @@ describe('CanvasFiledStrip — Go back', () => {
     await act(async () => backButton()!.click())
     expect(useCanvasStore.getState().bySessionId[SID].filedNotice).toBeTruthy()
     expect(backButton()!.disabled).toBe(false)
+
+    // ...and the throw path cancels the announcement too, not just the refusal
+    // path. Both are one line, and only one of them was covered.
+    await act(async () => useCanvasStore.getState().dismissFiled(SID))
+    await act(async () => emit({ sessionId: SID, canvasId: 'c-third', activeVersionId: 'v1' }))
+    expect(useCanvasStore.getState().bySessionId[SID].filedNotice?.canvasId).toBe('c-new')
   })
 
   it('dismisses the strip when the reclaim SUCCEEDS', async () => {
