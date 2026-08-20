@@ -181,4 +181,31 @@ describe('atlasCoordinator', () => {
     q.splice(0).forEach((fn) => fn())
     expect(b).toBe(1)
   })
+
+  it('does not carry a failed frame sources into the next successful one', () => {
+    // Disarming on a throwing raf is not enough on its own. No flush ever runs
+    // for the failed frame, so nothing was repainted on that source's behalf --
+    // and if it stays in clearedThisFrame, the NEXT successful flush treats it
+    // as having cleared in ITS frame and skips it. That is exactly the miss this
+    // coordinator exists to prevent, reintroduced by the error path.
+    let throwOnce = true
+    const q: Array<() => void> = []
+    const raf = (cb: () => void) => {
+      if (throwOnce) { throwOnce = false; throw new Error('rAF unavailable') }
+      q.push(cb); return q.length
+    }
+    const coord = createAtlasCoordinator(raf)
+    let a = 0, b = 0
+    const rA = () => { a++ }
+    const rB = () => { b++ }
+    coord.register(rA)
+    coord.register(rB)
+
+    coord.notifyCleared(rA)            // frame never scheduled
+    coord.notifyCleared(rB)            // B clears; A is now a VICTIM
+    q.splice(0).forEach((fn) => fn())
+
+    expect(a).toBe(1)                  // A must be repainted, not skipped as stale
+    expect(b).toBe(0)                  // B is this frame's source
+  })
 })

@@ -315,49 +315,49 @@ describe('installWebglWithRecovery', () => {
     // stopped at 1 + DEFAULT_MAX_RECREATES.
     expect(constructCallCount).toBe(7)
   })
-    it('bounds a frame-paced storm, counting losses as they arrive', () => {
-      // A real storm: losses ~one frame apart, and the browser runs the queued
-      // frames later. Counting inside the frame instead of at loss time would let
-      // N losses queue N recreates before the cap is ever consulted.
-      const queue: Array<() => void> = []
-      const queuedRaf = (cb: () => void) => { queue.push(cb); return queue.length }
-      let clock = 0
+  it('bounds a frame-paced storm, counting losses as they arrive', () => {
+    // A real storm: losses ~one frame apart, and the browser runs the queued
+    // frames later. Counting inside the frame instead of at loss time would let
+    // N losses queue N recreates before the cap is ever consulted.
+    const queue: Array<() => void> = []
+    const queuedRaf = (cb: () => void) => { queue.push(cb); return queue.length }
+    let clock = 0
 
-      installWebglWithRecovery(fakeTerm as any, {
-        WebglAddonCtor: FakeWebglAddon as any,
-        raf: queuedRaf,
-        isDisposed: () => false,
-        now: () => clock,
-      })
-
-      for (let i = 0; i < 10; i++) {
-        clock += 16
-        contextLossCallback!()
-      }
-
-      // At most one queued recreate per permitted recovery -- never one per loss.
-      expect(queue.length).toBeLessThanOrEqual(DEFAULT_MAX_RECREATES)
-
-      queue.splice(0).forEach((fn) => fn())
-      expect(constructCallCount).toBeLessThanOrEqual(1 + DEFAULT_MAX_RECREATES)
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: queuedRaf,
+      isDisposed: () => false,
+      now: () => clock,
     })
 
-    it('caps a storm paced just under the stable period', () => {
-      // The case the stable-period reset must NOT rescue: losses seconds apart is
-      // still a storm, not a series of unrelated blips.
-      let clock = 0
-      installWebglWithRecovery(fakeTerm as any, {
-        WebglAddonCtor: FakeWebglAddon as any,
-        raf: syncRaf,
-        isDisposed: () => false,
-        now: () => clock,
-      })
-      for (let i = 0; i < 20; i++) {
-        clock += DEFAULT_STABLE_PERIOD_MS - 1
-        contextLossCallback!()
-      }
-      expect(constructCallCount).toBe(1 + DEFAULT_MAX_RECREATES)
+    for (let i = 0; i < 10; i++) {
+      clock += 16
+      contextLossCallback!()
+    }
+
+    // At most one queued recreate per permitted recovery -- never one per loss.
+    expect(queue.length).toBeLessThanOrEqual(DEFAULT_MAX_RECREATES)
+
+    queue.splice(0).forEach((fn) => fn())
+    expect(constructCallCount).toBeLessThanOrEqual(1 + DEFAULT_MAX_RECREATES)
+  })
+
+  it('caps a storm paced just under the stable period', () => {
+    // The case the stable-period reset must NOT rescue: losses seconds apart is
+    // still a storm, not a series of unrelated blips.
+    let clock = 0
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: syncRaf,
+      isDisposed: () => false,
+      now: () => clock,
     })
+    for (let i = 0; i < 20; i++) {
+      clock += DEFAULT_STABLE_PERIOD_MS - 1
+      contextLossCallback!()
+    }
+    expect(constructCallCount).toBe(1 + DEFAULT_MAX_RECREATES)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -405,8 +405,6 @@ describe('createAtlasRefresh', () => {
     expect(refreshes).toBe(0)
   })
 })
-
-
 
 // ---------------------------------------------------------------------------
 // The cap's own numbers, and its behaviour under a REAL (async) rAF.

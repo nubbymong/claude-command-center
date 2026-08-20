@@ -81,6 +81,12 @@ export function createAtlasCoordinator(
           raf(flush)
         } catch {
           armed = false
+          // Drop the accumulated sources too. No flush will ever run for this
+          // frame, so nothing has been repainted on their behalf -- and keeping
+          // them would make the NEXT successful flush treat them as having
+          // cleared in ITS frame and skip them, which is the very miss this
+          // coordinator exists to prevent.
+          clearedThisFrame.clear()
         }
       }
     },
