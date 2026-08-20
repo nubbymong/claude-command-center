@@ -123,6 +123,52 @@ describe('a canvas whose own tile is still open', () => {
   })
 })
 
+describe('the saved-tile half of the currency oracle', () => {
+  // Since ADR-017 removed the account term, "is the owner still current" is
+  // the ONLY floor under a reclaim. Its three branches are a live PTY, an open
+  // tile the renderer told us about, and the saved-tile file — and until these
+  // tests the saved-tile branches had never executed: the harness pins
+  // savedState to null and savedStateFileExists to false everywhere else.
+  // Mutating either branch to "not current" left the whole canvas suite green.
+
+  it('refuses a canvas whose owner is a SAVED TILE, not a running one', () => {
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    restart()
+    // Graceful Save & Close: no PTY anywhere, and the renderer has not yet
+    // said which tiles it restored — the state file is all we have.
+    h.savedState = { sessions: [{ id: OWNER }] }
+    h.savedStateFileExists = true
+
+    expect(link.listReclaimableCanvases(ASKER, [])).toEqual([])
+    expect(link.reclaimCanvasForSession(ASKER, canvasId, [])).toBe(false)
+  })
+
+  it('treats a state file it cannot read as UNKNOWN, so nothing is takeable', () => {
+    // The fail-safe that matters at boot: the file is there, it did not parse,
+    // and we cannot tell who was open. Fail open here and a reclaim during the
+    // restore window takes a tile that is about to come back.
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    restart()
+    h.savedState = null
+    h.savedStateFileExists = true
+
+    expect(link.listReclaimableCanvases(ASKER, [])).toEqual([])
+    expect(link.reclaimCanvasForSession(ASKER, canvasId, [])).toBe(false)
+  })
+
+  it('still offers it once the saved tiles are known and the owner is NOT among them', () => {
+    // The floor must not become "never" — that would make every stranded
+    // canvas unreachable, which is the bug the reclaim path exists to fix.
+    const canvasId = renderAs(OWNER, PROJECT, CONV)
+    restart()
+    h.savedState = { sessions: [{ id: 'cccc3333cccc3333cccc3333' }] }
+    h.savedStateFileExists = true
+
+    expect(link.listReclaimableCanvases(ASKER, []).map((c) => c.canvasId)).toContain(canvasId)
+    expect(link.reclaimCanvasForSession(ASKER, canvasId, [])).toBe(true)
+  })
+})
+
 describe('what the card is given to tell candidates apart', () => {
   it('carries the conversation short id, so two canvases from one project differ', () => {
     const first = renderAs(OWNER, PROJECT, CONV)

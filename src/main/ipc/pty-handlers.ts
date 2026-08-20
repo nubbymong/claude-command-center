@@ -335,8 +335,6 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       noteSessionSpawnForCanvas(sessionId, {
         cwd: options?.resume?.cwd ?? options?.cwd,
         resumeUuid: options?.resume?.uuid,
-        // Part of the adoption key: a canvas never crosses accounts.
-        profileId: options?.profileId,
       })
     }
 

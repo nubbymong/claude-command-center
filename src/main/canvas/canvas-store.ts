@@ -46,8 +46,6 @@ const MAX_CANVASES_PER_SESSION = 50
  *  (hex + dashes) — it is a MATCHING key, never a path segment. */
 const CONVERSATION_UUID_RE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/
 const MAX_CWD_CHARS = 1024
-/** Account-profile ids are app-minted; bounded defensively like the others. */
-const PROFILE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 
 /**
  * The canvas serving allowlist, PER SESSION.
@@ -396,9 +394,6 @@ interface CanvasRecord extends CanvasState {
    */
   cwd?: string
   conversationUuid?: string
-  /** The account profile the owning session ran under. Part of the adoption
-   *  key: a canvas must never cross accounts (adversarial review 2026-08-14). */
-  profileId?: string
 }
 
 /**
@@ -413,14 +408,17 @@ interface CanvasRecord extends CanvasState {
  * — and the only party able to make it is the user, who is asked (see
  * canvas-session-link.listReclaimableCanvases).
  *
- * What remains is a floor the user's choice cannot lower: an account never
- * changes, and a canvas whose owner might still come back is never taken.
+ * What remains is one floor the user's choice cannot lower: a canvas whose owner
+ * might still come back is never taken.
+ *
+ * The account is deliberately NOT part of this. A canvas belongs to the PROJECT
+ * it was made for, not to whichever Claude account happened to be signed in when
+ * it was drawn — switching accounts in a tile is an ordinary thing to do, and
+ * making it an adoption key left users unable to open their own mockups. The
+ * project is the axis, and it organises rather than forecloses: the library
+ * scopes to it, the reclaim list marks and sorts by it. See ADR-017.
  */
 export interface CanvasAdoptionQuery {
-  /** The account profile this session runs under. Must equal the record's
-   *  stamp — an unstamped legacy record never crosses into a profiled session
-   *  and vice versa. */
-  profileId?: string
   /**
    * True when the given session can still come back and claim its canvas by
    * id — a live PTY, or a tile still in the saved-session list. Fails SAFE:
@@ -435,7 +433,7 @@ export type { ReclaimableCanvas }
  *  layer (canvas-session-link) so this store stays lifecycle-blind. */
 export type CanvasSessionInfoResolver = (
   sessionId: string,
-) => { cwd?: string; conversationUuid?: string; profileId?: string } | null
+) => { cwd?: string; conversationUuid?: string } | null
 
 let sessionInfoResolver: CanvasSessionInfoResolver | null = null
 
@@ -636,7 +634,9 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
   // same strictness as every other field of a record read back from disk.
   if (r.cwd !== undefined && (typeof r.cwd !== 'string' || r.cwd.length === 0 || r.cwd.length > MAX_CWD_CHARS)) return null
   if (r.conversationUuid !== undefined && (typeof r.conversationUuid !== 'string' || !CONVERSATION_UUID_RE.test(r.conversationUuid))) return null
-  if (r.profileId !== undefined && (typeof r.profileId !== 'string' || !PROFILE_ID_RE.test(r.profileId))) return null
+  // Records written before ADR-017 carry a `profileId` stamp. It decides
+  // nothing now, so it is not validated — and because the record below is built
+  // field by field rather than spread, it simply does not survive the read.
   // The title is re-cleaned rather than validated: it is free text from the
   // agent, so a record written by an older build (or hand-edited) is normalised
   // to the same shape a fresh render produces, and an unusable one simply drops
@@ -664,11 +664,27 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     activeVersionId = versions[versions.length - 1]?.id ?? null
   }
 
-  // The MAC is the envelope, not part of the record: strip it so the in-memory
-  // record (and therefore the NEXT persist, which re-MACs) never carries a
-  // stale one inside the authenticated content.
-  const { mac: _mac, ...rest } = r as Partial<CanvasRecord> & { mac?: unknown }
-  return { ...(rest as CanvasRecord), versions, activeVersionId }
+  // Built field by field, not spread from what was on disk.
+  //
+  // The MAC is the envelope rather than part of the record, so it has to come
+  // off — otherwise the in-memory record, and therefore the NEXT persist which
+  // re-MACs, carries a stale one inside the authenticated content. Spreading
+  // `rest` did that but also carried anything ELSE the file happened to hold: an
+  // unknown field survived validation and was written back into a freshly
+  // signed record, which is the opposite of "a hand-edited file is never
+  // repaired". Naming the fields keeps the record exactly the shape this build
+  // understands, and is also how a field that has been retired (`profileId`,
+  // ADR-017) stops travelling.
+  return {
+    canvasId: r.canvasId,
+    sessionId: r.sessionId,
+    createdAt: r.createdAt as string,
+    ...(r.cwd !== undefined ? { cwd: r.cwd } : {}),
+    ...(r.conversationUuid !== undefined ? { conversationUuid: r.conversationUuid } : {}),
+    ...(r.title !== undefined ? { title: r.title } : {}),
+    versions,
+    activeVersionId,
+  }
 }
 
 function loadFromDisk(canvasId: string): CanvasRecord | null {
@@ -1034,16 +1050,12 @@ export function renderVersion(
     typeof info?.conversationUuid === 'string' && CONVERSATION_UUID_RE.test(info.conversationUuid)
       ? info.conversationUuid
       : undefined
-  const profileStamp =
-    typeof info?.profileId === 'string' && PROFILE_ID_RE.test(info.profileId) ? info.profileId : undefined
 
   const base: CanvasRecord = existing ?? { canvasId, sessionId, createdAt, activeVersionId: null, versions: [] }
   const nextRecord: CanvasRecord = {
     ...base,
     ...(cwdStamp && !base.cwd ? { cwd: cwdStamp } : {}),
     ...(conversationStamp ? { conversationUuid: conversationStamp } : {}),
-    // Stamped once, like cwd: the account a canvas was born under is fixed.
-    ...(profileStamp && !base.profileId ? { profileId: profileStamp } : {}),
     // The subject. Only ever set to a title that names the SAME subject (a
     // different one took the new-canvas branch above), so this fills in a
     // missing title and refreshes the wording, never repurposes the canvas.
@@ -1173,10 +1185,12 @@ export function setActiveVersion(sessionId: string, versionId: string): CanvasSt
  * were all consequences of treating a directory as an identity. It is not one.
  * Resuming a conversation is.
  *
- * Both halves of the key must agree and neither may be absent:
- *   - `conversationUuid` — required; no conversation, no adoption;
- *   - `profileId` — the account, compared exactly, `undefined` included, so a
- *     canvas never crosses accounts in either direction.
+ * There is no identity key here at all any more. The account used to be one —
+ * compared exactly, `undefined` included — and ADR-017 removed it: a canvas
+ * belongs to the PROJECT it was made for, not to whichever Claude account
+ * happened to be signed in, and a session id outlives an account switch, so the
+ * check locked users out of their own mockups. Do not re-add it without a new
+ * decision; the ADR is the record of why it went.
  *
  * A canvas is only adoptable when its owner session is not current per the
  * caller's check — a live PTY or a saved tile keeps its canvas reclaimable by
@@ -1187,18 +1201,21 @@ export function setActiveVersion(sessionId: string, versionId: string): CanvasSt
  * the caller is expected to re-bind the canvas's review store next
  * (rebindReviewsToSession) — reviews.json carries the owner session id too.
  */
-function normalizedProfile(query: CanvasAdoptionQuery): string | undefined {
-  return typeof query.profileId === 'string' && PROFILE_ID_RE.test(query.profileId) ? query.profileId : undefined
-}
-
-/** Is `record` one this session could be OFFERED? Shared by the lister and the
- *  reclaim, so the list can never advertise something reclaim would refuse. */
+/**
+ * Is `record` one this session could be OFFERED? Shared by the lister and the
+ * reclaim, so the list can never advertise something reclaim would refuse.
+ *
+ * The project is NOT a filter here, deliberately. The library is already
+ * per-project, so if this path hid other projects' canvases too, a canvas whose
+ * project you never open again would have no route back at all — and being
+ * locked out of your own canvas is a bug this app has already shipped once. The
+ * reclaim list instead offers everything reclaimable and MARKS which rows are
+ * from the project you are in (`sameProject`, sorted first), so the project is
+ * what organises the choice rather than what forecloses it.
+ */
 function isReclaimCandidate(record: CanvasRecord, sessionId: string, query: CanvasAdoptionQuery): boolean {
   if (record.sessionId === sessionId) return false
   if (record.versions.length === 0) return false // nothing to inherit
-  // Exact, `undefined` included: an unstamped legacy record does not cross
-  // into a profiled session, and a profiled record does not cross out.
-  if (record.profileId !== normalizedProfile(query)) return false
   try {
     if (query.isSessionCurrent(record.sessionId)) return false
   } catch {
@@ -1270,8 +1287,9 @@ export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdop
  *
  * Addressed by id, never matched: the canvas the user picked out of
  * listOrphanCandidateCanvases is the one that moves. The floor still applies —
- * same account, owner not current — so a stale id or a canvas that came back
- * to life is refused rather than taken.
+ * owner not current — so a stale id or a canvas that came back to life is
+ * refused rather than taken. That floor is now the ONLY one (ADR-017 removed
+ * the account half), so its oracle is what the whole guarantee rests on.
  *
  * Persists BEFORE memory moves (the renderVersion discipline), and the caller
  * re-binds the review store next (rebindReviewsToSession) — reviews.json
@@ -1310,33 +1328,19 @@ export function listAllCanvases(
    * a permission.
    */
   askingSessionId?: string,
-  /**
-   * The account the asking session runs under, so "mine" means the same thing
-   * here as it does to the action behind it.
-   *
-   * A session id outlives an account switch while a record's profileId is
-   * stamped at birth, and adoptCanvasForSession refuses across accounts. Badging
-   * on the session id alone therefore offered rows that "Open here" would refuse
-   * with "it may belong to a session that is still running" — a list that
-   * disagrees with the action is the shape this code has been bitten by before
-   * (canvas-session-link: "a list that refuses while the by-id reclaim allows is
-   * the hole"), inverted.
-   */
-  askingProfileId?: string,
 ): CanvasLibraryEntry[] {
   ensureDiskScanned()
   const open = new Set(openTileSessionIds.filter((id) => SESSION_ID_RE.test(id)))
   const asking = askingSessionId && SESSION_ID_RE.test(askingSessionId) ? askingSessionId : undefined
-  const askingProfile = normalizedProfile({ profileId: askingProfileId, isSessionCurrent: () => false })
   const activeForAsking = asking ? sessionIndex.get(asking) : undefined
   const out: CanvasLibraryEntry[] = []
   for (const record of canvases.values()) {
     if (projectCwd && record.cwd && record.cwd !== projectCwd) continue
     const latest = record.versions[record.versions.length - 1]
     const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
-    // Exact, `undefined` included — the same comparison adoptCanvasForSession
-    // makes, so the badge and the action can never disagree.
-    const mine = asking !== undefined && record.sessionId === asking && record.profileId === askingProfile
+    // The same question adoptCanvasForSession answers, so the badge and the
+    // action can never disagree: did THIS session author it.
+    const mine = asking !== undefined && record.sessionId === asking
     out.push({
       canvasId: record.canvasId,
       versionCount: record.versions.length,
@@ -1574,18 +1578,12 @@ export function adoptCanvasForSession(
   // every session that has a library to open. Reported as "it says I can't open
   // it", with the list showing the user's own three canvases as belonging to
   // another session.
-  // The account floor still applies, though — it is the one part of the key
-  // that is NOT about who holds the index. A session id survives an in-tile
-  // account switch (useRestartSession re-adds the tile with the same id) while
-  // the record's profileId is stamped once, at birth, so after a switch every
-  // canvas this tile authored under the previous account still says "mine" and
-  // would otherwise be one click from binding to a session now running as
-  // someone else. Exact, `undefined` included, matching isReclaimCandidate:
-  // "a canvas must never cross accounts" (adversarial review 2026-08-14).
-  // A mismatch falls through rather than returning, so the machinery below gets
-  // its ordinary refusal.
+  // Nothing else applies to it. An earlier cut also required the record's
+  // account stamp to match the asking session's, which made a tile that had
+  // switched accounts unable to re-open the canvases it had drawn itself — the
+  // account is not what a canvas belongs to (ADR-017).
   const own = canvases.get(canvasId)
-  if (own && own.sessionId === sessionId && own.profileId === normalizedProfile(query)) {
+  if (own && own.sessionId === sessionId) {
     sessionIndex.set(sessionId, own.canvasId)
     emitChanged(own)
     return { canvasId: own.canvasId, activeVersionId: own.activeVersionId }

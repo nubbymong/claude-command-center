@@ -33,7 +33,6 @@ import {
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 import {
   canvasCwdForSession,
-  canvasProfileForSession,
   installCanvasSessionLink,
   listReclaimableCanvases,
   reclaimCanvasForSession,
@@ -255,11 +254,7 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     // record rather than accepted from the renderer, so the caller cannot ask to
     // see another project's list by naming its path.
     const cwd = sessionId ? canvasCwdForSession(sessionId) : undefined
-    // Same source, same reason, and this one decides what "yours" means: the
-    // account floor adoptCanvasForSession enforces has to be the one the badge
-    // is drawn from, or the library offers rows that "Open here" refuses.
-    const profileId = sessionId ? canvasProfileForSession(sessionId) : undefined
-    const entries = listAllCanvases(openTileSessionIds ?? [], cwd, sessionId, profileId)
+    const entries = listAllCanvases(openTileSessionIds ?? [], cwd, sessionId)
     // What is outstanding on each, joined HERE: the review store imports the
     // canvas store, so the reverse import would be a cycle, and this handler
     // already holds both (same reason the delete handler drops reviews here).
