@@ -684,6 +684,17 @@ interface PtySession {
 // Buffer writes for PTYs that haven't spawned yet (e.g., partner terminal initially hidden)
 const pendingWrites = new Map<string, string[]>()
 
+/**
+ * Sessions whose PTY exists but is still the bare shell, waiting for the launch
+ * line queued 300ms behind it. A write that lands in that window used to go
+ * straight to the shell, and a trailing `\r` submitted it as a SHELL COMMAND --
+ * an Ask Conductor question typed at a session that was still starting was
+ * executed by PowerShell instead of being asked of Claude. `writePty` buffers
+ * while a session is in here, and the launch timer replays once the real
+ * program owns the terminal.
+ */
+const launchPendingSessions = new Set<string>()
+
 export interface SSHOptions {
   host: string
   port: number
@@ -1045,6 +1056,20 @@ export function spawnPty(
   // unless the Claude branch resolved an exact-resume launch.
   let resumeUuidForBind: string | null = null
   let resolvedProfileId: string | undefined = undefined
+
+  // See `launchPendingSessions`. A session with a launch line is not ready for
+  // input until that line has been written, so hold writes until then and flush
+  // here. Always paired with `launchPendingSessions.delete` so a failed or
+  // raced launch releases the hold instead of buffering forever.
+  let launchWriteScheduled = false
+  const releaseLaunchHold = () => {
+    launchPendingSessions.delete(sessionId)
+    const pending = pendingWrites.get(sessionId)
+    if (!pending) return
+    logInfo(`[pty] Replaying ${pending.length} buffered write(s) for ${sessionId}`)
+    for (const data of pending) ptyProcess.write(data)
+    pendingWrites.delete(sessionId)
+  }
 
   if (options?.ssh) {
     // Defensive guard: Codex over SSH is not yet supported. The renderer-side
@@ -2794,12 +2819,14 @@ export function spawnPty(
       // never the secret itself — see terminal-launch-line.ts for the contract.
       const launchLine = buildTerminalLaunchLine(options?.terminalOptions, isWin)
 
+      launchWriteScheduled = true
+      launchPendingSessions.add(sessionId)
       setTimeout(() => {
         // Liveness guard: a kill / Restart / app-quit can land inside this 300ms
         // window — writing to a dead or already-replaced PTY here would throw
         // inside the timer (uncaught in main). Only write when our PTY is still
         // the registered one.
-        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { launchPendingSessions.delete(sessionId); return }
         try {
           ptyProcess.write(cdCmd + '\r')
           // Queued straight after the cd: the shell runs them in order, so the
@@ -2808,7 +2835,8 @@ export function spawnPty(
             logInfo(`[pty-manager] shell-only first-run command for ${sessionId}: ${launchLine}`)
             ptyProcess.write(launchLine + '\r')
           }
-        } catch { /* session died mid-launch */ }
+          releaseLaunchHold()
+        } catch { launchPendingSessions.delete(sessionId) /* session died mid-launch */ }
       }, 300)
     } else {
       // Launch Claude Code interactive mode.
@@ -3166,12 +3194,17 @@ export function spawnPty(
         // `claude -- ""`, the blank opening prompt the env route exists to avoid.
         askPrompt: finalSpawnEnv.CCC_ASK_PROMPT !== undefined,
       })
+      launchWriteScheduled = true
+      launchPendingSessions.add(sessionId)
       setTimeout(() => {
         // Liveness guard (see shell-only branch): the 300ms launch-write can race
         // a kill / Restart / app-quit; writing to a dead/replaced PTY from this
         // timer would crash main. Only write when our PTY is still registered.
-        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
-        try { ptyProcess.write(escapedCmd + '\r') } catch { /* session died mid-launch */ }
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) { launchPendingSessions.delete(sessionId); return }
+        try {
+          ptyProcess.write(escapedCmd + '\r')
+          releaseLaunchHold()
+        } catch { launchPendingSessions.delete(sessionId) /* session died mid-launch */ }
       }, 300)
     }
 
@@ -3185,15 +3218,10 @@ export function spawnPty(
   ptySessions.set(sessionId, { ptyProcess, sessionId })
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
 
-  // Replay any buffered writes (from commands sent before PTY was ready)
-  const pending = pendingWrites.get(sessionId)
-  if (pending) {
-    logInfo(`[pty] Replaying ${pending.length} buffered write(s) for ${sessionId}`)
-    for (const data of pending) {
-      ptyProcess.write(data)
-    }
-    pendingWrites.delete(sessionId)
-  }
+  // Replay any buffered writes (from commands sent before PTY was ready). When a
+  // launch line is queued, its timer owns the replay so the buffered write lands
+  // in the process the user meant, not in the shell that is about to be replaced.
+  if (!launchWriteScheduled) releaseLaunchHold()
 
   // Record the run via the transcripts worker pipeline (Logs v2). Gated on the
   // live `loggingEnabled` setting (default-true) and never for shell-only
@@ -3454,7 +3482,9 @@ export function writePty(sessionId: string, data: string): void {
 
   try {
     const session = ptySessions.get(sessionId)
-    if (session) {
+    // The PTY can exist while still being the bare shell (see
+    // launchPendingSessions): writing now hands the text to THAT shell.
+    if (session && !launchPendingSessions.has(sessionId)) {
       if (data.length > WRITE_CHUNK_SIZE) {
         writeChunked(sessionId, session.ptyProcess, data)
       } else {
@@ -3504,6 +3534,7 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
  */
 function cleanupSessionResources(sessionId: string): void {
   pendingWrites.delete(sessionId)
+  launchPendingSessions.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
   // #242 finding I1: drop ALL of this session's sentinel buffers alongside its
