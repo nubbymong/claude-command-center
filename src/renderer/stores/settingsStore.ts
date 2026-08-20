@@ -103,7 +103,8 @@ export interface TerminalSettings {
    * absent means on. Read it through `gpuRenderingEnabled`, never by comparing
    * directly.
    *
-   * It was turned off by default in 2.1.0-beta.16 because
+   * It was turned off by default DURING beta.16's development (#308) — not in
+   * any released build, since beta.16 had not been cut — because
    * `@xterm/addon-webgl` keeps ONE glyph atlas per process (a module-level
    * `charAtlasCache`, keyed on font + colours, which every CCC terminal matches).
    * `clearTextureAtlas()` wipes that shared atlas for EVERY terminal but repairs
@@ -116,9 +117,10 @@ export interface TerminalSettings {
    *
    * #312 fixed the cause rather than hiding it: a process-wide coordinator now
    * repaints every OTHER terminal on the frame after any one of them rebuilds
-   * the shared atlas, so a clear no longer strands anybody. Turning the renderer
-   * off was containment for a bug that no longer exists, so the default is back
-   * on. Applies to terminals opened after the change.
+   * the shared atlas, so a clear no longer strands anybody. The containment was
+   * lifted before beta.16 shipped, so the release history is: default-on
+   * throughout, with one unreleased window in between. Applies to terminals
+   * opened after the change.
    */
   gpuRendering?: boolean
 }
@@ -126,9 +128,11 @@ export interface TerminalSettings {
 /**
  * Whether a terminal should render through WebGL.
  *
- * Unset means ON — that is the 2.1.0-beta.16+ default. An explicitly stored
+ * Unset means ON — the default from 2.1.0-beta.16 onwards. An explicitly stored
  * `false` always wins, so anyone who turned the renderer off keeps it off: the
- * default moved, their setting did not, and no migration rewrites it.
+ * default moved, their setting did not, and no migration rewrites it. A build
+ * from beta.16's development window may well have persisted a `false` that its
+ * owner never chose; that is still their stored value and is still honoured.
  *
  * Every reader goes through here rather than comparing the field itself. Two
  * call sites each doing their own `=== true` / `!== false` is how "unset" comes
