@@ -7,7 +7,8 @@
 // conversation, two canvases both "v1", and the user typing "repush to canvas".
 //
 // This module resolves each session's identity for the canvas store (so every
-// record is stamped with the conversation and account it belongs to) and runs
+// record is stamped with the project and conversation it belongs to — the
+// account is deliberately not part of that, see ADR-017) and runs
 // ADOPTION: a session with no canvas reclaims the canvas of the same
 // conversation. Adoption is keyed on the CONVERSATION, never the project
 // directory — see the long note on adoptCanvasForSession for why a directory
@@ -37,7 +38,6 @@ const CONVERSATION_UUID_RE = /^[0-9a-fA-F][0-9a-fA-F-]{7,63}$/
 interface SpawnInfo {
   cwd?: string
   resumeUuid?: string
-  profileId?: string
   /** Cleared once this session owns a canvas, so the retry stops running. */
   settled?: boolean
 }
@@ -105,9 +105,9 @@ function savedTileIds(): Set<string> | null {
  */
 export function noteSessionSpawnForCanvas(
   sessionId: string,
-  opts: { cwd?: string; resumeUuid?: string; profileId?: string },
+  opts: { cwd?: string; resumeUuid?: string },
 ): void {
-  spawnInfo.set(sessionId, { cwd: opts.cwd, resumeUuid: opts.resumeUuid, profileId: opts.profileId })
+  spawnInfo.set(sessionId, { cwd: opts.cwd, resumeUuid: opts.resumeUuid })
 }
 
 /**

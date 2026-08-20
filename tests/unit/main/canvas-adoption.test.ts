@@ -55,9 +55,8 @@ function renderAs(
   cwd: string | undefined,
   conversationUuid: string | undefined,
   body: string,
-  profileId?: string,
 ) {
-  store.setCanvasSessionInfoResolver(() => ({ cwd, conversationUuid, profileId }))
+  store.setCanvasSessionInfoResolver(() => ({ cwd, conversationUuid }))
   return store.renderVersion(sessionId, { mode: 'design', html: `<!doctype html><p>${body}</p>` })
 }
 
@@ -204,7 +203,7 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     // Claude account happened to be signed in. Requiring the account to match
     // meant a tile that had switched accounts could not open the mockups it
     // had drawn itself, which is an ordinary thing to want to do.
-    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'work account', 'profile-work')
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'work account')
     restart()
     expect(
       store.listOrphanCandidateCanvases(SID_B, { isSessionCurrent: notCurrent }).map((c) => c.canvasId),
@@ -216,11 +215,55 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
 
   it('still refuses a canvas whose owner might come back — the one floor left', () => {
     // Removing the account term must not weaken the guard that actually stops
-    // one tile taking a live tile$([char]39)s canvas and its private notes.
-    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'still running', 'profile-work')
+    // one tile taking a live tile's canvas and its private notes.
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'still running')
     restart()
     expect(store.adoptCanvasForSession(SID_B, canvasId, { isSessionCurrent: () => true })).toBeNull()
     expect(canvasJson(canvasId).sessionId).toBe(SID_A)
+  })
+
+  it('does not carry an unknown or retired field back out of a record', () => {
+    // sanitizeRecord used to spread whatever was on disk, so a field this build
+    // does not know about survived validation and was written back into a
+    // freshly SIGNED record — the opposite of "a hand-edited file is never
+    // repaired". It also kept the retired account stamp (ADR-017) alive
+    // forever. The record is now built field by field.
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
+    const file = path.join(getResourcesDirectory(), 'canvas', canvasId, 'canvas.json')
+
+    // A legitimately signed record that happens to carry extra keys.
+    const planted = JSON.parse(fs.readFileSync(file, 'utf8'))
+    delete planted.mac
+    planted.profileId = 'profile-work'
+    planted.hostileExtra = { secret: 'C:/Users/v/.ssh/id_ed25519' }
+    planted.mac = store._canvasRecordMacForTest(planted)
+    fs.writeFileSync(file, JSON.stringify(planted))
+
+    restart()
+    const row = store.listAllCanvases([], CWD, SID_A).find((e) => e.canvasId === canvasId)
+    expect(row).toBeTruthy() // the record still loads; only the extras are dropped
+
+    // Touch it so the store re-persists, then read what it wrote.
+    renderAs(SID_A, CWD, CONV_1, 'two')
+    const after = canvasJson(canvasId)
+    expect(after).not.toHaveProperty('profileId')
+    expect(after).not.toHaveProperty('hostileExtra')
+  })
+
+  it('never offers a session a canvas it already owns', () => {
+    // Reachable, though it looks shadowed: a session that owns two canvases is
+    // in the index under one of them, and DELETING that one clears the index
+    // entry while leaving the other still stamped with the session. The reclaim
+    // list then runs for a session that still owns a canvas — which must not be
+    // offered back to it as somebody else's stranded work.
+    store.setCanvasSessionInfoResolver(() => ({ cwd: CWD, conversationUuid: CONV_1 }))
+    const first = store.renderVersion(SID_A, { mode: 'design', title: 'one', html: '<!doctype html><p>one</p>' })
+    const second = store.renderVersion(SID_A, { mode: 'design', title: 'two', html: '<!doctype html><p>two</p>' })
+    expect(second.canvasId).not.toBe(first.canvasId)
+    store.deleteCanvas(second.canvasId)
+
+    const offered = store.listOrphanCandidateCanvases(SID_A, { isSessionCurrent: notCurrent })
+    expect(offered.map((c) => c.canvasId)).not.toContain(first.canvasId)
   })
 
   it('never re-homes a session that already owns a canvas', () => {
