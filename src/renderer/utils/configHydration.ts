@@ -9,6 +9,7 @@ import { useAgentLibraryStore } from '../stores/agentLibraryStore'
 import { useTeamStore } from '../stores/teamStore'
 import { useCommandBarStore } from '../stores/commandBarStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
+import { ASK_LABEL, ASK_LEGACY_LABEL } from '../lib/askConductor'
 import { migrateColorRecords } from './migrateIdentityColors'
 
 /**
@@ -45,8 +46,15 @@ export function removeRetiredCommands(commands: CustomCommand[]): CustomCommand[
 export function isRetiredAskConfig(config: unknown, helpDir: string): boolean {
   if (!config || typeof config !== 'object' || !helpDir) return false
   const c = config as { workingDirectory?: unknown; label?: unknown }
+  // Own properties only. Both comparisons would otherwise be satisfiable from
+  // Object.prototype, and this predicate decides a delete.
+  if (!Object.hasOwn(c, 'workingDirectory') || !Object.hasOwn(c, 'label')) return false
   if (c.workingDirectory !== helpDir) return false
-  return c.label === 'Ask Conductor' || c.label === 'Ask Command Center'
+  // The labels the app itself wrote, from the module that writes them — the
+  // same two strings were spelled out here as literals, so a third rename would
+  // either silently stop matching or, worse, be "fixed" by pointing the deleter
+  // at whatever the current build writes.
+  return c.label === ASK_LABEL || c.label === ASK_LEGACY_LABEL
 }
 
 /**
@@ -55,13 +63,26 @@ export function isRetiredAskConfig(config: unknown, helpDir: string): boolean {
  *
  * Guarded by an appMeta flag rather than by "did we find one", so the help
  * workspace is only staged for this on a single launch. A launch that cannot
- * resolve the workspace path leaves the flag unset and tries again next time --
- * deleting on a guessed path is not worth saving one IPC call.
+ * resolve the workspace path at all leaves the flag unset and tries again next
+ * time -- deleting on a guessed path is not worth saving one IPC call. (A path
+ * that resolves to the WRONG directory -- the registry read failed and the
+ * resources dir fell back, or the user moved it -- is indistinguishable from
+ * "there was nothing to remove", so that one does burn the flag. The cost is an
+ * orphan row the user can delete by hand; the alternative is re-running a delete
+ * on every launch forever.)
+ *
+ * Nothing here may throw into the boot path, and nothing may set the flag on a
+ * write that did not land: `config.save` RESOLVES FALSE on a failed write (it
+ * catches everything internally and returns a boolean), so the outcome has to be
+ * read from the return value. Treating it as a promise that rejects is how this
+ * would have marked itself permanently done having deleted nothing.
  */
 export async function retireAskConfig(
   configData: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const meta = { ...((configData.appMeta as Record<string, unknown>) || {}) }
+  const rawMeta = configData.appMeta
+  const metaIsObject = !!rawMeta && typeof rawMeta === 'object' && !Array.isArray(rawMeta)
+  const meta = metaIsObject ? { ...(rawMeta as Record<string, unknown>) } : {}
   if (meta.askConfigRetired) return configData
 
   let helpDir: string | null = null
@@ -72,17 +93,40 @@ export async function retireAskConfig(
   }
   if (!helpDir) return configData
 
-  const configs = Array.isArray(configData.configs) ? (configData.configs as unknown[]) : []
+  // A section that is PRESENT but not an array is CORRUPT, not empty.
+  // Substituting `[]` for it would hand hydrateStores a clean value and silence
+  // the "your config was reset" notice that is the user's only signal the
+  // section was dropped, so this migration stands aside and lets the coercion
+  // report it. An ABSENT section is just a config file that has never held one.
+  const rawConfigs = configData.configs
+  if (rawConfigs !== undefined && rawConfigs !== null && !Array.isArray(rawConfigs)) return configData
+  const configs = Array.isArray(rawConfigs) ? (rawConfigs as unknown[]) : []
   const kept = configs.filter((c) => !isRetiredAskConfig(c, helpDir))
   const removed = configs.length - kept.length
 
   try {
     if (removed > 0) {
-      await window.electronAPI.config.save('configs', kept)
+      const saved = await window.electronAPI.config.save('configs', kept)
+      if (saved === false) {
+        // The row is still on disk. Leaving the flag unset is the whole point:
+        // it retries next launch instead of recording a deletion that never
+        // happened. The in-memory value stays as read, so the session the user
+        // is in matches what is stored.
+        console.error('[configHydration] Ask config removal did not persist; will retry next launch')
+        return configData
+      }
       console.log(`[configHydration] Removed ${removed} retired Ask Conductor config(s)`)
     }
+    // A corrupt appMeta is left exactly as it was found, flag and all: spreading
+    // a string into `{...}` yields character indices, and writing that back
+    // replaces the user's file with a mangled derivative of itself. Writing a
+    // fresh `{askConfigRetired:true}` over it instead would be a silent repair
+    // that discards the bytes. It stays out of the return value too, so
+    // coerceObject still sees the original and warns.
+    if (!metaIsObject) return removed > 0 ? { ...configData, configs: kept } : configData
     const newMeta = { ...meta, askConfigRetired: true }
-    await window.electronAPI.config.save('appMeta', newMeta)
+    const metaSaved = await window.electronAPI.config.save('appMeta', newMeta)
+    if (metaSaved === false) return removed > 0 ? { ...configData, configs: kept } : configData
     return { ...configData, configs: kept, appMeta: newMeta }
   } catch (e) {
     // Never block boot on this. Without the flag it simply runs again next launch.
