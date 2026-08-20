@@ -115,7 +115,7 @@ export async function retireAskConfig(
   try {
     if (removed > 0) {
       const saved = await window.electronAPI.config.save('configs', kept)
-      if (saved === false) {
+      if (!saved) {
         // The row is still on disk. Leaving the flag unset is the whole point:
         // it retries next launch instead of recording a deletion that never
         // happened. The in-memory value stays as read, so the session the user
@@ -134,7 +134,7 @@ export async function retireAskConfig(
     if (!metaIsWritable) return removed > 0 ? { ...configData, configs: kept } : configData
     const newMeta = { ...meta, askConfigRetired: true }
     const metaSaved = await window.electronAPI.config.save('appMeta', newMeta)
-    if (metaSaved === false) return removed > 0 ? { ...configData, configs: kept } : configData
+    if (!metaSaved) return removed > 0 ? { ...configData, configs: kept } : configData
     return { ...configData, configs: kept, appMeta: newMeta }
   } catch (e) {
     // Never block boot on this. Without the flag it simply runs again next launch.
@@ -407,7 +407,22 @@ export function hydrateStores(configData: Record<string, unknown>): void {
 export async function applyConfigColourMigration(
   configData: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const rawSettings = { ...((configData.settings as any) || {}) }
+  // A settings section that is present but NOT a plain object is left exactly
+  // as it is, the same way the configs section below is. `|| {}` rejects only
+  // FALSY values, so a string or an array is truthy and spreads into
+  // character/index keys -- and this function writes that back, replacing the
+  // user's file with a mangled derivative of itself and setting
+  // identityColorMigratedV2 on it, so it never revisits. Worse, the result is
+  // a genuine plain object, so hydrateStores' coerceObject passes it WITHOUT
+  // setting configHydrationNoticePending: a corruption that would have been
+  // detected and reported becomes silent and permanent. The sibling migration
+  // in this file already guards exactly this via metaIsWritable.
+  const rawSettingsValue = configData.settings
+  const settingsAbsent = rawSettingsValue === undefined || rawSettingsValue === null
+  const settingsIsWritable =
+    settingsAbsent || (typeof rawSettingsValue === 'object' && !Array.isArray(rawSettingsValue))
+  if (!settingsIsWritable) return configData
+  const rawSettings = { ...((rawSettingsValue as any) || {}) }
   if (rawSettings.identityColorMigratedV2) return configData            // guard set: fast path
 
   // `|| []` accepted anything truthy, so a configs section that is present but
@@ -434,7 +449,7 @@ export async function applyConfigColourMigration(
       const newSettings = { ...rawSettings, identityColorMigratedV2: true }
       // Boolean, not a rejection: config.save catches its own write errors and
       // resolves false, so the catch below never sees a failed write.
-      if ((await window.electronAPI.config.save('settings', newSettings)) === false) return configData
+      if (!(await window.electronAPI.config.save('settings', newSettings))) return configData
       return { ...configData, settings: newSettings }
     } catch (e) {
       console.error('[colourMigration] guard persist failed (no-op case); will retry', e)
@@ -449,7 +464,7 @@ export async function applyConfigColourMigration(
       // the guard must not be written either — otherwise the migration records
       // itself as done and the notice invites the user to review colours that
       // were never saved.
-      if ((await window.electronAPI.config.save('configs', records)) === false) {
+      if (!(await window.electronAPI.config.save('configs', records))) {
         console.error('[colourMigration] configs did not persist; guard NOT set, will retry')
         return configData
       }
@@ -461,7 +476,7 @@ export async function applyConfigColourMigration(
       colourMigrationNoticePending: dismissed ? rawSettings.colourMigrationNoticePending : true,
     }
     // 2) guard + pending SECOND
-    if ((await window.electronAPI.config.save('settings', newSettings)) === false) {
+    if (!(await window.electronAPI.config.save('settings', newSettings))) {
       // The configs ARE on disk; only the guard is not. Hydrate from what was
       // written so memory matches, and let the next launch retry the guard.
       return { ...configData, configs: changedNow ? records : configs }

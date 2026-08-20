@@ -5,7 +5,12 @@ function setupSave(impl?: (key: string, data: any) => Promise<unknown>) {
   const calls: Array<{ key: string; data: any }> = []
   const save = vi.fn((key: string, data: any) => {
     calls.push({ key, data })
-    return impl ? impl(key, data) : Promise.resolve()
+    // `true`, not `undefined`. config.save resolves a BOOLEAN -- it reports
+    // failure by resolving FALSE, never by rejecting. A default of undefined
+    // encodes "undefined counts as a successful save", a value the real API
+    // never produces, so hardening the source from `saved === false` to the
+    // safer `!saved` would turn these tests red for the wrong reason.
+    return impl ? impl(key, data) : Promise.resolve(true)
   })
   ;(globalThis as any).window = { electronAPI: { config: { save } } }
   return { calls, save }
@@ -85,6 +90,43 @@ describe('applyConfigColourMigration', () => {
     const out = await applyConfigColourMigration(data)
     expect(out).toBe(data)
     expect(save).not.toHaveBeenCalled()
+  })
+
+
+  it('stands aside for a corrupt settings section instead of mangling it', async () => {
+    // The mirror of the configs case above, and worse in one way. `|| {}` rejects
+    // only FALSY values, so a string is truthy and spreads into character keys:
+    // {"0":"t","1":"h",...}. Writing that back destroys the user's only forensic
+    // copy AND sets identityColorMigratedV2 on it, so it never revisits -- and
+    // because the result is a genuine plain object, hydrateStores' coerceObject
+    // passes it without raising configHydrationNoticePending. A detected,
+    // reportable corruption becomes a silent permanent one.
+    const { save } = setupSave()
+    const data = { settings: 'theme=dark', configs: [{ color: '#FF3366' }] }
+    const out = await applyConfigColourMigration(data)
+    expect(out).toBe(data)
+    expect(data.settings).toBe('theme=dark')
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('stands aside for a settings section that is an array', async () => {
+    const { save } = setupSave()
+    const data = { settings: [{ a: 1 }], configs: [{ color: '#FF3366' }] }
+    const out = await applyConfigColourMigration(data)
+    expect(out).toBe(data)
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('still migrates when settings is absent or null', async () => {
+    // Absent must stay writable: that is an ordinary first-run config, not a
+    // corrupt one, and refusing it would strand the migration forever.
+    for (const settings of [undefined, null]) {
+      const { save } = setupSave()
+      const data: any = { settings, configs: [{ color: '#FF3366' }] }
+      const out: any = await applyConfigColourMigration(data)
+      expect(out).not.toBe(data)
+      expect(save).toHaveBeenCalled()
+    }
   })
 
   it('config save ok but settings save rejects: returns original (retry next launch)', async () => {
