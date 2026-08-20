@@ -34,6 +34,7 @@ import {
   findAskSession,
   useAskErrorStore,
   ASK_LABEL,
+  _resetAskLaunchForTest,
 } from '../../../src/renderer/lib/askConductor'
 
 const ptyWrite = vi.fn()
@@ -55,6 +56,7 @@ describe('launchAskConductor', () => {
     markSessionForResumePicker.mockClear()
     addConfig.mockClear()
     ptyWrite.mockClear()
+    _resetAskLaunchForTest()
     setApi('C:/res/help')
   })
 
@@ -137,6 +139,86 @@ describe('launchAskConductor', () => {
     setApi('C:/res/help')
     await launchAskConductor('q')
     expect(useAskErrorStore.getState().error).toBeNull()
+  })
+
+  // ---------------------------------------------------------------------------
+  // ONE session, even when two clicks land inside one help.workspace() call.
+  //
+  // The reuse guard reads the session list BEFORE `await help.workspace()`, and
+  // that IPC does an mkdir plus two file writes in main -- comfortably wider than
+  // a double-click. Both clicks saw "no ask session" and both called addSession.
+  // Two ask sessions is not a cosmetic duplicate: Sidebar filters kind !== 'ask'
+  // out of the session list and AskConductorDock binds to the FIRST one, so the
+  // second is unreachable from either surface, while buildSessionState still
+  // persists it and it comes back on every launch.
+  // ---------------------------------------------------------------------------
+
+  it('makes ONE session when two launches race inside help.workspace()', async () => {
+    let release: (d: string) => void = () => {}
+    setApi(() => new Promise<never>((res) => { release = res as unknown as (d: string) => void }) as never)
+
+    const a = launchAskConductor('first question')
+    const b = launchAskConductor('second question')
+    release('C:/res/help')
+    const [idA, idB] = await Promise.all([a, b])
+
+    const ask = useSessionStore.getState().sessions.filter((x) => x.kind === 'ask')
+    expect(ask).toHaveLength(1)
+    // Both callers get the SAME session, so neither is left holding a dead id.
+    expect(idA).toBeTruthy()
+    expect(idB).toBe(idA)
+  })
+
+  it('still delivers the second question to the one session', async () => {
+    let release: (d: string) => void = () => {}
+    setApi(() => new Promise<never>((res) => { release = res as unknown as (d: string) => void }) as never)
+
+    const a = launchAskConductor('first question')
+    const b = launchAskConductor('second question')
+    release('C:/res/help')
+    const [id] = await Promise.all([a, b])
+
+    // The first question rides the spawn env (askPrompt); the second cannot,
+    // because the spawn already happened -- so it goes over the PTY, exactly as
+    // it would for a click that arrived a second later.
+    expect(useSessionStore.getState().sessions[0].askPrompt).toBe('first question')
+    expect(ptyWrite).toHaveBeenCalledWith(id, 'second question' + '\r')
+  })
+
+  it('yields to an ask session added by anything else during the await', async () => {
+    // The latch only covers re-entry through this function. The session store is
+    // a live singleton, so a restore or another code path can add an ask session
+    // while help.workspace() is still doing its mkdir. Without the post-await
+    // re-read this launch would add a second one on top of it.
+    let release: (d: string) => void = () => {}
+    setApi(() => new Promise<never>((res) => { release = res as unknown as (d: string) => void }) as never)
+
+    const p = launchAskConductor('mine')
+    useSessionStore.setState({
+      sessions: [{
+        id: 'other-ask-session', kind: 'ask', label: ASK_LABEL, workingDirectory: 'C:/res/help',
+        model: '', status: 'idle', createdAt: Date.now(), sessionType: 'local', provider: 'claude',
+      } as never],
+    })
+    release('C:/res/help')
+    const id = await p
+
+    expect(useSessionStore.getState().sessions.filter((x) => x.kind === 'ask')).toHaveLength(1)
+    expect(id).toBe('other-ask-session')
+    expect(ptyWrite).toHaveBeenCalledWith('other-ask-session', 'mine' + '\r')
+  })
+
+  it('does not latch a failure: a later click can still launch', async () => {
+    setApi(null)
+    expect(await launchAskConductor('q')).toBe('')
+    expect(useSessionStore.getState().sessions).toHaveLength(0)
+
+    // The in-flight latch must clear on the failure path too, or the button is
+    // dead for the rest of the app's life after one bad staging.
+    setApi('C:/res/help')
+    const id = await launchAskConductor('q2')
+    expect(id).toBeTruthy()
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
   })
 })
 
