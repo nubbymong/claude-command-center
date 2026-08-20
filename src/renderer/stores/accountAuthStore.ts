@@ -72,6 +72,13 @@ export const useAccountAuthStore = create<AccountAuthState>((set, get) => ({
     // will publish the fresh status to every subscriber.
     if (inFlight.has(profileId)) return
     inFlight.add(profileId)
+    // Publish the CHEAP half immediately, without waiting for the CLI probe
+    // below. Any caller that needs only "does this account have a claude.ai
+    // session" -- the sidebar context menu deciding whether Open artifacts is
+    // live -- gets its answer in a file read rather than a subprocess. Done
+    // here rather than only at the call site so the fast path cannot be lost
+    // by someone deleting one line of wiring in a component.
+    void get().refreshWeb(profileId)
     set((s) => ({ byProfile: { ...s.byProfile, [profileId]: { ...(s.byProfile[profileId] ?? {}), loading: true, error: undefined } } }))
     try {
       const r = await window.electronAPI.accountWeb.status(profileId)
