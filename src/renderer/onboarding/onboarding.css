@@ -28,6 +28,12 @@
 .ob-root .blogo { width: 22px; height: 22px; }
 .ob-root .blogo line { stroke: var(--ob); stroke-width: 4; stroke-linecap: round; }
 .ob-root .bname { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+/* "New in this release" badge — only on a page an upgrader is being shown
+   BECAUSE the setting it covers is new in this build (OnboardingShell isNew).
+   Tokens are the existing --ob azure family; nothing new is introduced here,
+   because an undefined custom property fails silently to transparent. */
+.ob-root .ob-new { font-size: 10px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); }
 .ob-root .crumbs { margin-left: auto; display: flex; gap: 8px; font-size: 11px; }
 .ob-root .crumb { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border-subtle); color: var(--text-muted); }
 .ob-root .crumb.on { color: var(--text-primary); border-color: var(--ob-line); background: var(--ob-soft); }

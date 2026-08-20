@@ -26,7 +26,7 @@ import TokenomicsPage from './components/TokenomicsPage'
 import ConductorMcpPage from './components/ConductorMcpPage'
 import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
-import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
+import { shouldShowWhatsNew } from './onboarding/whats-new-gate'
 import AccountLaunchGate from './components/AccountLaunchGate'
 import NewAccountPrompt from './components/NewAccountPrompt'
 import SentinelPanel from './components/sentinel/SentinelPanel'
@@ -139,10 +139,10 @@ export default function App() {
   const [isClosing, setIsClosing] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
   const [closeDialog, setCloseDialog] = useState<'close' | 'update' | null>(null)
-  const [showWhatsNew, setShowWhatsNew] = useState(false)
-  /** lastSeenVersion as it was at boot, captured when the What's New modal is
-   *  armed so its "since" range cannot be moved by a later stamp. */
-  const whatsNewSinceRef = useRef<string | undefined>(undefined)
+  /** Run the harness purely to deliver release notes: the user has already
+   *  completed the flow, but has not seen the notes for the build now running.
+   *  Armed once in postConfigInit, cleared when the harness completes. */
+  const [whatsNewOnly, setWhatsNewOnly] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
@@ -417,30 +417,21 @@ export default function App() {
         useAppMetaStore.getState().update({ completedSteps: {}, onboardingCompletedVersion: undefined })
       }
 
-      // What's New, for the launch where NO tour runs. The tour is the what's-new
-      // surface for its own cohort (its finish step stamps lastSeenVersion for
-      // exactly that reason), so a version change that does not re-run the tour
-      // — a stable user moving within a line — must show the notes itself. This
-      // arm was removed at 2.0 on the reasoning that the harness replaced it,
-      // which is true only when the harness runs; without it a within-line
-      // stable upgrade showed nothing, ever, and lastSeenVersion stayed stale —
-      // which also kept the GitHub onboarding modal from arming (its gate
-      // waits on shouldShowWhatsNew() clearing).
+      // Release notes. ONE surface — the full-screen harness — for both the
+      // cohort that is walking the flow anyway and the far commoner one that
+      // has already finished it and only needs the notes. The second case used
+      // to fall to a wall-of-text modal, and did so on every build whose
+      // changelog head sat ahead of its own version (see whats-new-gate.ts).
       //
-      // The whole decision comes from one place; see decideUpgradeFlow and
-      // bootWhatsNewSurface. Read BEFORE the harness can stamp anything.
+      // Read BEFORE the harness can stamp anything.
+      const alreadyRunning = reonboard || deriveOnboarding(useAppMetaStore.getState().meta, {}).due
       const surface = bootWhatsNewSurface({
-        tourWillRun: reonboard || deriveOnboarding(useAppMetaStore.getState().meta, {}).due,
+        tourWillRun: alreadyRunning,
         whatsNewDue: shouldShowWhatsNew(),
       })
-      if (surface === 'modal') {
-        // Snapshot the origin now. The modal must compute "since when" from the
-        // version at BOOT, not from whatever lastSeenVersion holds when it
-        // mounts — anything that stamps in between would collapse the range to
-        // the newest entry, which is the bug this replaces.
-        whatsNewSinceRef.current = useAppMetaStore.getState().meta.lastSeenVersion
-        setShowWhatsNew(true)
-      }
+      // Only arm the notes-only mode when the harness is not already coming up
+      // for its own reasons; there, whatsNewV2 is simply its first page.
+      if (surface === 'tour' && !alreadyRunning) setWhatsNewOnly(true)
 
       if (appMeta.setupVersion !== __APP_VERSION__) {
         const hasExistingConfig = useConfigStore.getState().configs.length > 0 ||
@@ -554,11 +545,11 @@ export default function App() {
     // could arm in the background mid-flow and then surface the instant
     // onboarding completes.
     if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
-    if (showWhatsNew || showTraining || showTrainingAll) return
+    if (whatsNewOnly || showTraining || showTrainingAll) return
     if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
-  }, [githubConfig, logsWipeBytes, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
+  }, [githubConfig, logsWipeBytes, whatsNewOnly, showTraining, showTrainingAll, needsCliSetup])
 
   // useCallback: passed to OnboardingModal as `onClose`, which forwards it
   // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
@@ -1070,18 +1061,6 @@ export default function App() {
     return <SetupDialog initialStep={2} onComplete={() => { useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ }); setNeedsCliSetup(false) }} />
   }
 
-  const handleWhatsNewClose = () => {
-    markWhatsNewSeen()
-    setShowWhatsNew(false)
-    // Training is opened directly here because it's not managed by the
-    // onboarding effect. Onboarding is handled by the useEffect above,
-    // which re-runs when showWhatsNew flips to false and applies its own
-    // 120ms delay so the cross-fade stays smooth.
-    if (shouldShowTraining()) {
-      setTimeout(() => setShowTraining(true), 120)
-    }
-  }
-
   const handleTrainingClose = () => {
     setShowTraining(false)
     setShowTrainingAll(false)
@@ -1098,17 +1077,19 @@ export default function App() {
   // (settleOnboardingFinish) flips due->false and unmounts the harness on the
   // next render. Settings view kept minimal — the codexSignIn when() only
   // narrows the applicable set, never the due decision.
-  const onboardingDue = deriveOnboarding(onboardingMeta, {}).due
+  // `|| whatsNewOnly`: the harness is also the release-notes surface, so it is
+  // due when the notes are due even though no step is outstanding.
+  const onboardingDue = deriveOnboarding(onboardingMeta, {}).due || whatsNewOnly
   const bootGate = pickBootGate({
     configLoaded,
     onboardingDue,
     logsWipeBytes,
-    showWhatsNew,
     showTraining,
     showTrainingAll,
     showGitHubOnboarding,
     showMachineNamePrompt,
     loggingConsentSeen: Boolean(loggingConsentSeen),
+    resumePending: pendingRestore !== null,
     whatsNewDue: shouldShowWhatsNew(),
     trainingDue: shouldShowTraining() || isFirstInstall(),
     githubOnboardingDue: isGitHubOnboardingDue(),
@@ -1122,9 +1103,14 @@ export default function App() {
         )}
         {bootGate === 'onboarding' && (
           <OnboardingHarness
+            whatsNewOnly={whatsNewOnly}
             onComplete={(startTour) => {
-              // settleOnboardingFinish already stamped completion (harness will
-              // unmount on this render). Launch the live-app tour if chosen.
+              // The settle already stamped this run (the harness unmounts on
+              // this render). Clear the notes-only arm explicitly: unlike the
+              // full flow, nothing it writes is read back by deriveOnboarding,
+              // so the gate would otherwise stay open on this state alone.
+              setWhatsNewOnly(false)
+              // Launch the live-app tour if chosen.
               if (startTour) setTourActive(true)
             }}
           />
@@ -1138,8 +1124,7 @@ export default function App() {
             }}
           />
         )}
-        {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} sinceVersion={whatsNewSinceRef.current} />}
-        {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showTipModal && bootGate === null && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -1179,7 +1164,11 @@ export default function App() {
           <LoggingConsentPrompt />
         )}
 
-        {pendingRestore && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
+        {/* Now a proper gate (bootGates: 'resume', lowest priority) rather than
+            a surface that merely stepped around onboarding. It used to be
+            gated on `bootGate !== 'onboarding'` alone, so a launch that showed
+            release notes painted this prompt over them. */}
+        {bootGate === 'resume' && pendingRestore && !tourActive && !showGuidedConfig && (
           <ResumeSessionsPrompt
             sessions={pendingRestore.sessions}
             onResume={() => {
@@ -1343,8 +1332,13 @@ export default function App() {
             under on its first spawn (multi-account only). App-root so it
             overlays every view. */}
         <AccountLaunchGate />
-        {/* Sentinel findings panel: global overlay, driven by sentinelStore. */}
-        <SentinelPanel />
+        {/* Sentinel findings panel: global overlay, driven by sentinelStore.
+            Suppressed while ANY boot gate is up — it is not a gate itself (it
+            owns no turn in the sequence and can arrive at any time), but it
+            used to render unconditionally, which is how a first launch could
+            paint findings on top of the release notes. Its state is kept, so
+            it surfaces the moment the gates clear. */}
+        {bootGate === null && <SentinelPanel />}
       </div>
     </ErrorBoundary>
   )

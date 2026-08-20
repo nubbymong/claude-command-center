@@ -217,17 +217,19 @@ describe('cardsFor — which highlights the upgrade page shows', () => {
 })
 
 describe('bootWhatsNewSurface — which surface carries the notes this launch', () => {
-  it('the tour is the surface whenever it is going to run', () => {
-    // Its finish step stamps lastSeenVersion; a modal on top would show the
-    // same notes twice.
+  it('the harness is the surface whenever it is going to run', () => {
     expect(bootWhatsNewSurface({ tourWillRun: true, whatsNewDue: true })).toBe('tour')
     expect(bootWhatsNewSurface({ tourWillRun: true, whatsNewDue: false })).toBe('tour')
   })
 
-  it('the modal is the surface for a version change with NO tour', () => {
-    // A stable user moving within a line. Between 2.0 and now this case showed
-    // nothing at all, and lastSeenVersion stayed stale forever.
-    expect(bootWhatsNewSurface({ tourWillRun: false, whatsNewDue: true })).toBe('modal')
+  it('the harness is ALSO the surface for a version change with no tour due', () => {
+    // Reversed from the original on 2026-08-21. This case used to return
+    // 'modal' — and it is the case that actually shipped, because the pending
+    // changelog entry is authored ahead of the version bump, so every dev and
+    // preview build read as a within-line upgrade with no tour. That is how a
+    // wall-of-text modal was what an upgrader saw. There is no modal arm now:
+    // the harness opens in what's-new-only mode.
+    expect(bootWhatsNewSurface({ tourWillRun: false, whatsNewDue: true })).toBe('tour')
   })
 
   it('nothing shows when nothing changed', () => {

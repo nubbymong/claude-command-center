@@ -128,7 +128,17 @@ export function cardsFor(lastSeenVersion: string | undefined, currentVersion: st
   return from === '2.0' || from === '2.1' ? CARDS_21 : [...CARDS_20, ...CARDS_21]
 }
 
-export function WhatsNewV2Step({ onNext }: { onNext: () => void }) {
+export function WhatsNewV2Step({
+  onNext,
+  ctaLabel = 'Set it up →',
+  hint = 'The next pages set these up, one at a time.',
+}: {
+  onNext: () => void
+  /** Footer CTA. The harness passes "Continue" when this page ends the run —
+   *  on an ordinary upgrade there is usually nothing left to set up. */
+  ctaLabel?: string
+  hint?: string
+}) {
   const cards = cardsFor(useAppMetaStore.getState().meta.lastSeenVersion, LINE_SOURCE)
   return (
     <>
@@ -160,9 +170,9 @@ export function WhatsNewV2Step({ onNext }: { onNext: () => void }) {
         </div>
       </div>
       <div className="foot">
-        <span className="hint">The next pages set these up, one at a time.</span>
+        <span className="hint">{hint}</span>
         <button className="cta" onClick={onNext} type="button">
-          Set it up →
+          {ctaLabel}
         </button>
       </div>
     </>

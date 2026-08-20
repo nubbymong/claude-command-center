@@ -80,24 +80,26 @@ export function decideUpgradeFlow(input: UpgradeFlowInput): UpgradeFlowDecision 
 /**
  * Which boot surface shows the release notes on THIS launch.
  *
- * The tour is the what's-new surface for its own cohort: its finish step
- * stamps lastSeenVersion for exactly that reason (settle.ts). So the modal is
- * for the launch where NO tour runs — a stable user moving within a line. Both
- * at once would show the notes twice; neither would show them never, which is
- * what happened between 2.0 and now: the modal's boot arm was removed on the
- * reasoning that the harness replaced it, true only when the harness runs.
+ * ONE surface: the full-screen harness. There is no modal arm any more (user
+ * call 2026-08-21 — "the full app window IS the delivery for what's new on
+ * updated installs and for the first run tour"). The old `'modal'` arm was
+ * what actually shipped: on any build whose changelog head sits ahead of its
+ * own version — which is EVERY dev and preview build, because the pending
+ * entry is written before the bump — the launch read as a within-line upgrade,
+ * so `showTour` was false and the wall-of-text modal opened instead of the
+ * page. Removing the arm removes the whole class.
  *
- * Pure so the composition is pinned, not just the pieces. The caller supplies
- * the two facts it already has: is the tour about to run (either because it is
- * being re-fired for this version, or because deriveOnboarding says steps are
- * due), and would What's New show at all.
+ * The two callers-supplied facts are unchanged: is the harness about to run
+ * anyway (re-fired for this version, or deriveOnboarding says steps are due),
+ * and would What's New show at all. Either one now opens the same surface —
+ * whats-new-due ALONE runs the harness in its what's-new-only mode rather than
+ * re-walking a flow the user has already completed.
  */
 export function bootWhatsNewSurface(input: {
   tourWillRun: boolean
   whatsNewDue: boolean
-}): 'tour' | 'modal' | 'none' {
-  if (input.tourWillRun) return 'tour'
-  return input.whatsNewDue ? 'modal' : 'none'
+}): 'tour' | 'none' {
+  return input.tourWillRun || input.whatsNewDue ? 'tour' : 'none'
 }
 
 /**
