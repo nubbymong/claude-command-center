@@ -4,7 +4,7 @@
  * without needing a real GPU or DOM.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { installWebglWithRecovery, createAtlasRefresh, DEFAULT_MAX_RECREATES } from '../../../src/renderer/components/terminal/terminalWebgl'
+import { installWebglWithRecovery, createAtlasRefresh, DEFAULT_MAX_RECREATES, DEFAULT_STABLE_PERIOD_MS } from '../../../src/renderer/components/terminal/terminalWebgl'
 
 describe('installWebglWithRecovery', () => {
   let contextLossCallback: (() => void) | null
@@ -315,6 +315,49 @@ describe('installWebglWithRecovery', () => {
     // stopped at 1 + DEFAULT_MAX_RECREATES.
     expect(constructCallCount).toBe(7)
   })
+    it('bounds a frame-paced storm, counting losses as they arrive', () => {
+      // A real storm: losses ~one frame apart, and the browser runs the queued
+      // frames later. Counting inside the frame instead of at loss time would let
+      // N losses queue N recreates before the cap is ever consulted.
+      const queue: Array<() => void> = []
+      const queuedRaf = (cb: () => void) => { queue.push(cb); return queue.length }
+      let clock = 0
+
+      installWebglWithRecovery(fakeTerm as any, {
+        WebglAddonCtor: FakeWebglAddon as any,
+        raf: queuedRaf,
+        isDisposed: () => false,
+        now: () => clock,
+      })
+
+      for (let i = 0; i < 10; i++) {
+        clock += 16
+        contextLossCallback!()
+      }
+
+      // At most one queued recreate per permitted recovery -- never one per loss.
+      expect(queue.length).toBeLessThanOrEqual(DEFAULT_MAX_RECREATES)
+
+      queue.splice(0).forEach((fn) => fn())
+      expect(constructCallCount).toBeLessThanOrEqual(1 + DEFAULT_MAX_RECREATES)
+    })
+
+    it('caps a storm paced just under the stable period', () => {
+      // The case the stable-period reset must NOT rescue: losses seconds apart is
+      // still a storm, not a series of unrelated blips.
+      let clock = 0
+      installWebglWithRecovery(fakeTerm as any, {
+        WebglAddonCtor: FakeWebglAddon as any,
+        raf: syncRaf,
+        isDisposed: () => false,
+        now: () => clock,
+      })
+      for (let i = 0; i < 20; i++) {
+        clock += DEFAULT_STABLE_PERIOD_MS - 1
+        contextLossCallback!()
+      }
+      expect(constructCallCount).toBe(1 + DEFAULT_MAX_RECREATES)
+    })
 })
 
 // ---------------------------------------------------------------------------
@@ -362,3 +405,31 @@ describe('createAtlasRefresh', () => {
     expect(refreshes).toBe(0)
   })
 })
+
+
+
+// ---------------------------------------------------------------------------
+// The cap's own numbers, and its behaviour under a REAL (async) rAF.
+//
+// Three mutations survived the whole suite before these existed:
+//   - DEFAULT_STABLE_PERIOD_MS 30_000 -> 1. A flapping context re-fires about a
+//     frame apart, so a stable period under the storm cadence resets the counter
+//     on every loss and the cap NEVER engages.
+//   - DEFAULT_MAX_RECREATES 3 -> 25. The storm test asserted
+//     `toBe(1 + DEFAULT_MAX_RECREATES)`, comparing the constant to itself.
+//   - moving `recreateCount++` into the raf() callback. Every other test in this
+//     file uses a SYNCHRONOUS rAF, which makes "counted at loss time" and
+//     "counted at frame time" indistinguishable -- so no ordering bug in this
+//     function was detectable at all.
+// ---------------------------------------------------------------------------
+
+describe('the recreate cap constants', () => {
+  it('pins the numbers, because the storm test compares the constant to itself', () => {
+    expect(DEFAULT_MAX_RECREATES).toBe(3)
+    // Must stay well ABOVE the frame cadence of a real flapping context (~16ms),
+    // or the stable-period reset cancels the cap it is meant to qualify.
+    expect(DEFAULT_STABLE_PERIOD_MS).toBe(30_000)
+    expect(DEFAULT_STABLE_PERIOD_MS).toBeGreaterThan(1_000)
+  })
+})
+
