@@ -8,7 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { logInfo, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { mkdirSecure, hardenCredentialFile } from './account-profiles'
+import { mkdirSecure, hardenCredentialFile, hardenCredentialDir } from './account-profiles'
 
 /** Where backups live: a CCC-managed dir SEPARATE from account-profiles/account-homes
  *  (the feature never writes here), so a feature bug cannot touch the backup. */
@@ -53,6 +53,12 @@ export function backupRealClaudeOnce(opts?: { homeDir?: string; resourcesDir?: s
     // Clear any stale staging dir from a prior crashed attempt so we start clean.
     fs.rmSync(staging, { recursive: true, force: true })
     mkdirSecure(staging)
+    // mkdirSecure refuses a reparse point; it does NOT set a DACL, and
+    // hardenCredentialFile is a no-op on Windows (no mode bits). Without this the
+    // snapshot inherits the resources dir's ACL -- on a user-chosen folder that is
+    // typically Users:(RX) + Authenticated Users:(M) over a live OAuth token.
+    hardenCredentialDir(backupRoot(opts?.resourcesDir))
+    hardenCredentialDir(staging)
 
     const present: string[] = []
 
@@ -75,6 +81,7 @@ export function backupRealClaudeOnce(opts?: { homeDir?: string; resourcesDir?: s
       // so a junction pre-planted at staging/.claude would copy the primary OAuth
       // token into attacker space just as a junction on `staging` would.
       mkdirSecure(destClaude)
+      hardenCredentialDir(destClaude)
       for (const ent of fs.readdirSync(claudeDir, { withFileTypes: true })) {
         if (!ent.isFile()) continue // skip projects/memory/etc subdirs (large; never destructively written)
         const isCritical = (CRITICAL_CLAUDE_DIR_FILES as readonly string[]).includes(ent.name)
@@ -101,6 +108,10 @@ export function backupRealClaudeOnce(opts?: { homeDir?: string; resourcesDir?: s
 
     // Atomic publish: rename staging -> initial only now that every copy succeeded.
     fs.renameSync(staging, dest)
+    // The rename gives the directory a new name, so re-assert: a Windows DACL
+    // follows the inode, but an explicit re-harden also covers the POSIX chmod
+    // and costs nothing on the one boot this runs.
+    hardenCredentialDir(dest)
     logInfo(`[backup] initial Claude config snapshot written to ${dest} (files: ${present.length})`)
     return dest
   } catch (e) {
