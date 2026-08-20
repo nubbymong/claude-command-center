@@ -128,15 +128,26 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   const groups = useMemo(() => (state ? reviewGroupsOf(state) : []), [state])
   /** Explicit user toggles only. The DEFAULT is derived per group (a closed
    *  round starts collapsed, an outstanding one starts open) so a round that
-   *  becomes closed folds itself away without the user having to tidy up. */
+   *  becomes closed folds itself away without the user having to tidy up.
+   *
+   *  Keyed by CANVAS as well as review, because a review id is ordinal within
+   *  its own canvas — every canvas has an R1. The panel does not remount when
+   *  the session switches canvases, so keying on the review id alone carried
+   *  "R2 is collapsed" from the canvas you left onto the one you arrived at.
+   *  Switching back still finds your toggles where you left them. */
   const [groupOverride, setGroupOverride] = useState<Record<string, boolean>>({})
+  const overrideKey = useCallback(
+    (reviewId: string) => `${state?.canvasId ?? ''}:${reviewId}`,
+    [state?.canvasId],
+  )
   const isGroupCollapsed = useCallback(
-    (g: ReviewGroup) => groupOverride[g.review.id] ?? g.waitingOn === 'closed',
-    [groupOverride],
+    (g: ReviewGroup) => groupOverride[overrideKey(g.review.id)] ?? g.waitingOn === 'closed',
+    [groupOverride, overrideKey],
   )
   const toggleGroup = useCallback((reviewId: string, defaultCollapsed: boolean) => {
-    setGroupOverride((prev) => ({ ...prev, [reviewId]: !(prev[reviewId] ?? defaultCollapsed) }))
-  }, [])
+    const key = overrideKey(reviewId)
+    setGroupOverride((prev) => ({ ...prev, [key]: !(prev[key] ?? defaultCollapsed) }))
+  }, [overrideKey])
   const [busyReviewId, setBusyReviewId] = useState<string | null>(null)
   const [confirmDismissId, setConfirmDismissId] = useState<string | null>(null)
 
