@@ -81,4 +81,11 @@ process-snapshot-*.txt
 # worktrees sharing a junctioned node_modules cannot serve each other stale
 # transforms. Ignored unconditionally so a leftover dir can never be committed.
 .vite-cache/
+# Mockups written for the Agent Canvas. `.ccc-canvas/` is the folder the canvas
+# skill names, and the canvas serves ONLY this session's project folder or its
+# worktree — so an agent following the skill necessarily leaves files inside the
+# repo. Ignored so following the instructions cannot dirty the tree, and so the
+# scratch folder never has to be committed to be rendered.
+# `.canvas-scratch/` is the older spelling, kept ignored for existing checkouts.
+.ccc-canvas/
 .canvas-scratch/
