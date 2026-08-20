@@ -21,11 +21,37 @@ export interface WebglRecoveryOptions {
    * repaint the garbled viewport. Defaults to DEFAULT_MAX_RECREATES.
    */
   maxRecreates?: number
+  /**
+   * How long the context must survive for the NEXT loss to count as a fresh
+   * incident rather than a continuation of the current storm. See
+   * DEFAULT_STABLE_PERIOD_MS. Defaults to DEFAULT_STABLE_PERIOD_MS.
+   */
+  stablePeriodMs?: number
+  /** Clock, injectable for tests. Defaults to Date.now. */
+  now?: () => number
 }
 
 /** Consecutive context losses recovered from before we stay on the DOM renderer.
  *  Enough to ride out a genuine one-off GPU blip, low enough to kill a storm. */
 export const DEFAULT_MAX_RECREATES = 3
+
+/**
+ * How long the WebGL context must survive before the next loss is treated as a
+ * NEW incident and the recreate counter resets.
+ *
+ * Without this the cap is a LIFETIME cap, not a consecutive one: a terminal left
+ * open for days would burn its three recoveries on three unrelated blips — a
+ * driver update, a sleep/wake, a monitor replugged — each of which recovered
+ * perfectly, and then permanently drop to the DOM renderer on the fourth. That
+ * is precisely the case the cap is supposed to tolerate.
+ *
+ * A storm is defined by losses arriving back to back (a TDR loop re-fires within
+ * seconds, a flapping context every frame), so it reaches the cap long before
+ * this window elapses and the reset never rescues it. A context that has
+ * rendered for a full 30 seconds has demonstrably recovered, and the loss that
+ * follows is a new event, not the same one.
+ */
+export const DEFAULT_STABLE_PERIOD_MS = 30_000
 
 /**
  * A handle onto the LIVE WebGL addon, valid across context-loss recreations.
@@ -60,6 +86,34 @@ export interface WebglHandle {
 }
 
 /**
+ * Build the callback a terminal registers with the shared atlas coordinator.
+ *
+ * The coordinator repaints every OTHER terminal when one rebuilds the shared
+ * glyph atlas — but only a terminal actually rendering through WebGL has
+ * anything to repaint. Two ways a terminal ends up registered without WebGL:
+ * `installWebglWithRecovery` swallows an initial load failure (WebGL
+ * unavailable in the environment), and a context-loss storm can drop a terminal
+ * to the DOM renderer permanently once the recreate cap is reached. Either way
+ * the viewport is correct already, so the refresh is pure waste.
+ *
+ * Gating here rather than at the registration site covers BOTH cases with one
+ * check — registration happens once at mount, when the second case has not
+ * happened yet.
+ *
+ * Note for callers: register THIS function with the coordinator and pass the
+ * SAME reference to `notifyCleared`. The coordinator skips the terminal that
+ * cleared by callback identity, so passing a different function for the two
+ * would repaint the source twice — once from the repainter's own
+ * clear-then-refresh, once from the coordinator.
+ */
+export function createAtlasRefresh(
+  getHandle: () => WebglHandle | null,
+  refresh: () => void,
+): () => void {
+  return () => { if (getHandle()?.isActive()) refresh() }
+}
+
+/**
  * Loads a WebGL addon onto `term` and wires a self-reloading context-loss handler.
  *
  * On context loss the addon fires its callback; we:
@@ -78,10 +132,15 @@ export interface WebglHandle {
 export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOptions): WebglHandle {
   const { WebglAddonCtor, raf, isDisposed } = opts
   const maxRecreates = opts.maxRecreates ?? DEFAULT_MAX_RECREATES
-  // Consecutive context losses recovered from so far. Shared across every
-  // recreated addon (each re-arms its own onContextLoss), so a flapping context
-  // that keeps recreating is counted across the whole storm, not per addon.
+  const stablePeriodMs = opts.stablePeriodMs ?? DEFAULT_STABLE_PERIOD_MS
+  const now = opts.now ?? Date.now
+  // Consecutive context losses recovered from within the CURRENT storm. Shared
+  // across every recreated addon (each re-arms its own onContextLoss), so a
+  // flapping context that keeps recreating is counted across the whole storm,
+  // not per addon — and reset once the context has held for stablePeriodMs, so
+  // the cap bounds one storm rather than the terminal's whole lifetime.
   let recreateCount = 0
+  let lastLossAt = Number.NEGATIVE_INFINITY
 
   const forceDomRepaint = () => {
     // The DOM renderer is already active (dispose() switched to it); repaint the
@@ -109,6 +168,13 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
       // touching a dead addon.
       currentAddon = null
       addon.dispose()
+      // A loss that arrives after the context has held for stablePeriodMs is a
+      // new incident, not the continuation of a storm — start its count afresh.
+      // Must run BEFORE the cap check, or a terminal that recovered cleanly
+      // hours ago would still be measured against that old count.
+      const lossAt = now()
+      if (lossAt - lastLossAt > stablePeriodMs) recreateCount = 0
+      lastLossAt = lossAt
       if (recreateCount >= maxRecreates) {
         // Cap reached: the context keeps dying (a flapping GPU / Windows TDR).
         // Stop recreating and stay on the DOM renderer — recreating again just

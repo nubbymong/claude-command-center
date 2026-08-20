@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { installWebglWithRecovery, type WebglHandle } from './terminal/terminalWebgl'
+import { installWebglWithRecovery, createAtlasRefresh, type WebglHandle } from './terminal/terminalWebgl'
 import { atlasCoordinator } from './terminal/atlasCoordinator'
 import {
   createStaleGlyphRepainter,
@@ -477,6 +477,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // having its renderer swapped underneath it.
       // Repaint this terminal's viewport from the (shared) glyph atlas.
       const domRefresh = () => { try { term?.refresh(0, term.rows - 1) } catch { /* disposed */ } }
+      // The coordinator's view of this terminal: repaint, but only while WebGL
+      // is actually live here. The SAME reference must go to both register() and
+      // notifyCleared() below — the coordinator skips the terminal that cleared
+      // by callback identity, so two different closures would repaint the source
+      // twice (once via the repainter's clear-then-refresh, once via the frame).
+      const atlasRefresh = createAtlasRefresh(() => webglHandle, domRefresh)
       if (ts.gpuRendering === true) {
         webglHandle = installWebglWithRecovery(term, {
           WebglAddonCtor: WebglAddon,
@@ -485,7 +491,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         })
         // Register with the process-wide coordinator so a clearTextureAtlas()
         // from ANY terminal repaints this one on the next frame (#311).
-        unregisterAtlas = atlasCoordinator.register(domRefresh)
+        unregisterAtlas = atlasCoordinator.register(atlasRefresh)
       }
       // #273 / #311: reproduces the window-resize repaint (clearTextureAtlas +
       // refresh) against whichever addon is currently live. The glyph atlas is
@@ -501,7 +507,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // context loss, so the repainter skips its own refresh too.
         clearAtlas: () => {
           const cleared = webglHandle?.clearTextureAtlas() ?? false
-          if (cleared) atlasCoordinator.notifyCleared(domRefresh)
+          if (cleared) atlasCoordinator.notifyCleared(atlasRefresh)
           return cleared
         },
         atlasActive: () => webglHandle?.isActive() ?? false,
