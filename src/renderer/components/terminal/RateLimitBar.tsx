@@ -49,6 +49,11 @@ export function RateLimitBarPending({ label, compact }: { label: string; compact
         className="statusline-pending-track inline-block bg-surface1 rounded-sm"
         style={{ width: compact ? '46px' : '64px', height: '6px' }}
         role="progressbar"
+        // Indeterminate: aria-valuenow is deliberately ABSENT (there is no
+        // value yet), but min/max stay so the bar matches the live one and
+        // validators that expect a bounded range are satisfied.
+        aria-valuemin={0}
+        aria-valuemax={100}
         aria-valuetext="waiting for the status line"
         aria-label={`${label} rate limit utilisation, not yet reported`}
       />

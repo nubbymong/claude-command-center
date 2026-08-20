@@ -194,6 +194,12 @@ function AccountPill({
   // background silently dropped, leaving no fill at all.
   const accent = resolveIdentityColor(account.colourKey, theme)
   const shown = shownBuckets(account, hidden)
+  // "Nothing to show" has two causes and they need opposite treatments:
+  // nothing has been REPORTED yet (waiting -- shimmer), or the user has hidden
+  // every bucket for the footer (their choice -- show nothing). Keying the
+  // placeholder off `shown` conflated them and overrode the setting with a
+  // shimmer that never resolves. Key it off the raw buckets instead.
+  const reportedNothing = account.buckets.length === 0
   return (
     <span
       // Each account sits in its own subtle rounded pill so the boundary between
@@ -231,9 +237,11 @@ function AccountPill({
             // account with no meters at all reads as an account with no usage,
             // which is the opposite of the truth on a fresh session.
             //
-            // Only when a payload is actually coming. With the status line
-            // switched off nothing will ever arrive, and a shimmer that never
-            // resolves is worse than the blank it replaced.
+            // Only when a payload is actually coming: something must still be
+            // unreported, and the status line must be on. With the switch off,
+            // or with every bucket hidden by choice, nothing will ever replace
+            // the shimmer -- and one that never resolves is worse than blank.
+            reportedNothing &&
             showPending &&
             PENDING_FOOTER_LABELS.filter((l) => !hidden.includes(l)).map((l) => (
               <RateLimitBarPending key={l} label={l} compact />

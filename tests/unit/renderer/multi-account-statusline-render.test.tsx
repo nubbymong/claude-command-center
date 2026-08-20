@@ -156,6 +156,45 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     expect(container.querySelectorAll('[role="progressbar"]').length).toBe(4)
   })
 
+  it('shows NO waiting meters for an account that reported, but whose buckets the user hid', () => {
+    // "Nothing shown" has two causes: nothing reported yet (wait), or the user
+    // hid what was reported (their choice). Shimmering over the second
+    // overrides the setting with an animation that can never resolve.
+    //
+    // The case has to be built carefully: hiding BOTH pending labels empties
+    // the placeholder list anyway, so it would pass with or without the guard.
+    // Here the account reports ONLY Fable and the user hides Fable, so `shown`
+    // is empty while 5h/Weekly survive the placeholder filter -- which is
+    // exactly when the two causes diverge.
+    settingsState.settings = { ...settingsState.settings, footerHiddenUsageBuckets: ['Fable'] }
+    sessionState.sessions = [
+      { id: '1', label: 'x', status: 'working', accountEmail: 'a@x.com', rateLimitCurrent: 30, rateLimitWeekly: 12 },
+      {
+        id: '2',
+        label: 'y',
+        status: 'working',
+        accountEmail: 'jane.doe@example.com',
+        usageBuckets: [{ key: 'fable', label: 'Fable', group: 'model', percent: 61, resetsAt: '', severity: 'normal' }],
+      },
+    ]
+    render()
+    // It DID report. Hidden is a choice, not a wait.
+    expect(container.querySelectorAll('[data-testid="rate-limit-pending"]').length).toBe(0)
+  })
+
+  it('the waiting meter is a bounded, indeterminate progressbar', () => {
+    sessionState.sessions = [
+      { id: '1', label: 'x', status: 'working', accountEmail: 'a@x.com', rateLimitCurrent: 30 },
+      { id: '2', label: 'y', status: 'working', accountEmail: 'jane.doe@example.com' },
+    ]
+    render()
+    const bar = container.querySelector('[data-testid="rate-limit-pending"] [role="progressbar"]')!
+    expect(bar.getAttribute('aria-valuemin')).toBe('0')
+    expect(bar.getAttribute('aria-valuemax')).toBe('100')
+    // Indeterminate: no current value until one is reported.
+    expect(bar.getAttribute('aria-valuenow')).toBeNull()
+  })
+
   it('shows NO waiting meters when the status line is switched off', () => {
     // Nothing will ever arrive with the master switch off, so a shimmer there
     // never resolves -- worse than the blank it replaced.
