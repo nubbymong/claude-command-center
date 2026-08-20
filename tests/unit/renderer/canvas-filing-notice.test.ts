@@ -121,6 +121,38 @@ describe('filing notice', () => {
     expect(useCanvasStore.getState().bySessionId.s1.filedNotice?.canvasId).toBe('c-new')
   })
 
+  it('a switch that never happened does not silence the next real filing', () => {
+    // The flag is consumed by the change push, so a switch that FAILS never
+    // consumes it. Refusals are ordinary on this path — a canvas belonging to
+    // another account is one — and a stale flag would swallow the next genuine
+    // filing notice for that session, which is the one case the notice exists
+    // for. Every expectSwitch caller cancels on failure.
+    useCanvasStore.getState().expectSwitch('s1')
+    useCanvasStore.getState().cancelExpectedSwitch('s1')
+    emit({ sessionId: 's1', canvasId: 'c-new', activeVersionId: 'v1' })
+    expect(useCanvasStore.getState().bySessionId.s1.filedNotice?.canvasId).toBe('c-old')
+  })
+
+  it('cancelling is per session and leaves another session\'s expectation alone', () => {
+    useCanvasStore.setState({
+      bySessionId: {
+        ...useCanvasStore.getState().bySessionId,
+        s2: {
+          canvasId: 'c-two', versions: [], activeVersionId: 'v1',
+          interactionMode: 'browse', emptyView: 'intro', unseenRender: false,
+          filedNotice: null, loaded: true,
+        },
+      },
+    })
+    useCanvasStore.getState().expectSwitch('s1')
+    useCanvasStore.getState().expectSwitch('s2')
+    useCanvasStore.getState().cancelExpectedSwitch('s1')
+    emit({ sessionId: 's2', canvasId: 'c-two-new', activeVersionId: 'v1' })
+    expect(useCanvasStore.getState().bySessionId.s2.filedNotice).toBeFalsy()
+    emit({ sessionId: 's1', canvasId: 'c-new', activeVersionId: 'v1' })
+    expect(useCanvasStore.getState().bySessionId.s1.filedNotice?.canvasId).toBe('c-old')
+  })
+
   it('says nothing on the FIRST canvas a session ever gets', () => {
     useCanvasStore.setState({
       bySessionId: {

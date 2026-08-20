@@ -97,8 +97,16 @@ export default function CanvasSubjectPicker({ sessionId, canvasId, title, onOpen
       })
       // The pane follows the canvas:changed push; nothing to do here but close.
       if (res?.ok) setOpen(false)
-      else setError('That canvas could not be opened here.')
+      else {
+        // No switch, so no push, so nothing consumes the announcement above —
+        // and a stale one silences the next genuine filing notice for this
+        // session. Refusals are ordinary here (a canvas from another account is
+        // one), so this is the common path, not the exceptional one.
+        useCanvasStore.getState().cancelExpectedSwitch(sessionId)
+        setError('That canvas could not be opened here.')
+      }
     } catch {
+      useCanvasStore.getState().cancelExpectedSwitch(sessionId)
       setError('That canvas could not be opened here.')
     } finally {
       setBusy(null)

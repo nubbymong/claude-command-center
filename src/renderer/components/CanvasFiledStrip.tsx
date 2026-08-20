@@ -25,16 +25,22 @@ export default function CanvasFiledStrip({ sessionId }: { sessionId: string }) {
     setBusy(true)
     useCanvasStore.getState().expectSwitch(sessionId)
     try {
-      await window.electronAPI.canvas.reclaim({
+      const res = await window.electronAPI.canvas.reclaim({
         sessionId,
         canvasId: notice.canvasId,
         openTileSessionIds: openSessionIds ? openSessionIds.split(',') : [],
       })
+      // Only on success. Dismissing unconditionally took the strip away on a
+      // refusal too, and the strip IS the offer of a way back — losing it means
+      // the user cannot retry the one action they asked for. The comment below
+      // said the strip stays up; the `finally` it sat next to made that false.
+      if (res?.ok) dismissFiled(sessionId)
+      else useCanvasStore.getState().cancelExpectedSwitch(sessionId)
     } catch {
       /* the strip stays up; the library is the fallback route */
+      useCanvasStore.getState().cancelExpectedSwitch(sessionId)
     } finally {
       setBusy(false)
-      dismissFiled(sessionId)
     }
   }, [notice, sessionId, openSessionIds, dismissFiled])
 

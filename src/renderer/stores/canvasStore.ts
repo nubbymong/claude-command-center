@@ -68,6 +68,11 @@ interface CanvasStoreState {
   /** The user is deliberately switching canvas — the next change under this
    *  session is theirs, not a filing, and must not be announced as one. */
   expectSwitch: (sessionId: string) => void
+  /** ...and the switch did not happen. The flag is consumed by the change push,
+   *  so a switch that fails never consumes it, and it would go on to swallow the
+   *  next REAL filing notice for that session — the one case the notice exists
+   *  for. Every caller of expectSwitch owns cancelling it on failure. */
+  cancelExpectedSwitch: (sessionId: string) => void
   noteFiled: (sessionId: string, notice: FiledNotice) => void
   dismissFiled: (sessionId: string) => void
   reset: () => void
@@ -157,6 +162,10 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
 
   expectSwitch: (sessionId: string) => {
     expectedSwitches.add(sessionId)
+  },
+
+  cancelExpectedSwitch: (sessionId: string) => {
+    expectedSwitches.delete(sessionId)
   },
 
   noteFiled: (sessionId: string, notice: FiledNotice) => {
