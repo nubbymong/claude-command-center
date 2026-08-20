@@ -615,6 +615,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               !shellOnly && session?.resumeUuid && session?.resumeCwd
                 ? { uuid: session.resumeUuid, cwd: session.resumeCwd }
                 : undefined
+            // Ask Conductor's opening question. Read off the session record for
+            // the same reason `resume` is: it is one-shot launch state, not
+            // configuration. Consumed immediately below so a later in-session
+            // Restart (which re-runs this spawn) never re-submits it. Only ever
+            // set on a local, non-shell Claude session -- the SSH path does not
+            // set CCC_ASK_PROMPT and Codex ignores it.
+            const askPrompt = !shellOnly ? session?.askPrompt : undefined
+            if (askPrompt) updateSession(sessionId, { askPrompt: undefined })
             if (resume) {
               updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
               resumeNudgesLeft = 2
@@ -630,7 +638,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // pure reflection of the session's SAVED config.
             const sshWithReconnect = ssh ? { ...ssh, reconnect: !!session?.sshReachedClaudeRunning } : ssh
             window.electronAPI.pty
-              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
+              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt })
               .catch((err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled

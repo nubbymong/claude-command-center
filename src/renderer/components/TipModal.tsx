@@ -2,6 +2,8 @@ import React from 'react'
 import { useTipsStore } from '../stores/tipsStore'
 import type { ViewType } from '../types/views'
 import { resolveBody, resolveFocusHint } from '../tips-library'
+import { BrandMark } from './BrandMark'
+import { launchAskConductor } from '../lib/askConductor'
 
 interface Props {
   onClose: () => void
@@ -68,6 +70,18 @@ export default function TipModal({ onClose, onNavigate }: Props) {
     onClose()
   }
 
+  // A tip card is written once and then ages. Handing it to Ask Conductor turns
+  // it into an answer against the version actually running — which is the whole
+  // reason the help session knows the app's own docs.
+  const handleDiscuss = () => {
+    markTipActed(tip.id)
+    void launchAskConductor(
+      `A tip in AI Code Conductor says: "${content.title}" -- ${body}. ` +
+      'Explain what this does in the version I am running, and how to use it.',
+    ).then((id) => { if (id && onNavigate) onNavigate('sessions') })
+    onClose()
+  }
+
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div
@@ -130,6 +144,20 @@ export default function TipModal({ onClose, onNavigate }: Props) {
               className="px-3 py-1.5 text-sm text-overlay1 hover:text-text transition-colors"
             >
               Next tip
+            </button>
+            <button
+              data-ux-id="tip-ask-conductor"
+              onClick={handleDiscuss}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors focus-ring"
+              style={{
+                color: 'var(--brand)',
+                background: 'color-mix(in srgb, var(--brand) 12%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--brand) 42%, transparent)',
+              }}
+              title="Ask Conductor about this tip"
+            >
+              <BrandMark className="w-3 h-3 shrink-0" />
+              Discuss
             </button>
             {content.actionLabel ? (
               <button

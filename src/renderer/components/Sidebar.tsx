@@ -28,6 +28,7 @@ import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
+import AskConductorDock from './sidebar/AskConductorDock'
 import { resolveConfigPanelExpanded, toggleConfigPanel, overrideAfterPinChange, type ConfigPanelOverride } from './sidebar/configPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
@@ -79,7 +80,16 @@ interface Props {
 export default function Sidebar({ currentView, onViewChange, collapsed, onShowAccountUsage, onShowFirstRun, tourActive }: Props) {
   const launchConfig = useLaunchConfig()
   const sideType = useRegionTypography('sidebar')
-  const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
+  const { sessions: allSessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
+  // Ask Conductor is docked at the BOTTOM of the sidebar, apart from your
+  // project sessions — that separation is the whole point of the design. It is
+  // split out here, once, rather than at each of the four bucketing expressions
+  // below (sectioned groups, section-loose, unsectioned groups, unsectioned
+  // loose): missing any one of them would show it twice or lose it. Everything
+  // downstream — the "Active Sessions" count, the arrow-key list, the
+  // empty-state — reads `sessions` and so agrees with what is rendered.
+  const askSession = allSessions.find((s) => s.kind === 'ask')
+  const sessions = allSessions.filter((s) => s.kind !== 'ask')
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
   const appMeta = useAppMetaStore((s) => s.meta)
   const updateAppMeta = useAppMetaStore((s) => s.update)
@@ -145,7 +155,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const [configPanelMax, setConfigPanelMax] = useState(0)
   useEffect(() => {
     if (!configPanelExpanded) return
-    const SESSION_RESERVE = 200
+    // Sessions list + the Ask Conductor dock pinned under it (~62px). Without
+    // the dock's share a long config list expands over the pill.
+    const SESSION_RESERVE = 262
     const measure = () => {
       const el = configPanelRef.current
       if (!el) return
@@ -581,6 +593,13 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           collapsed
           onShowAccountUsage={onShowAccountUsage}
         />
+        {/* `mt-auto` because the collapsed rail has no flex-1 child to push
+            against — the nav is content-height. */}
+        <AskConductorDock
+          collapsed
+          onOpened={() => onViewChange('sessions')}
+          isActive={currentView === 'sessions' && !!askSession && activeSessionId === askSession.id}
+        />
       </aside>
     )
   }
@@ -969,7 +988,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       </div>
 
       <div
-        className="flex-1 overflow-y-auto px-2 space-y-0.5 pb-28"
+        className="flex-1 overflow-y-auto px-2 space-y-0.5 pb-2"
         tabIndex={0}
         onKeyDown={(e) => {
           if (sessions.length === 0) return
@@ -1078,6 +1097,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         {/* Unsectioned ungrouped sessions */}
         {unsectionedUngroupedSessions.map(renderSessionRow)}
       </div>
+
+      {/* Ask Conductor, docked below the session list. Sibling of the scroller
+          (which is the only flex-1 child), so it stays pinned to the bottom
+          however long the list gets. */}
+      <AskConductorDock
+        onOpened={() => onViewChange('sessions')}
+        isActive={currentView === 'sessions' && !!askSession && activeSessionId === askSession.id}
+      />
 
       {/* Session context menu */}
       {sessionContextMenu && (() => {

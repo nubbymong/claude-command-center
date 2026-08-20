@@ -6,6 +6,7 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
 import { ViewType } from '../types/views'
 import { PAGE_TAB_META } from '../page-tab-meta'
+import { BrandMark } from './BrandMark'
 
 // Inject keyframes for attention pulse animation
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -28,6 +29,25 @@ function injectAttentionStyles() {
 /** The session's display name: user-assigned work name, else the config label. */
 function displayNameOf(s: { customName?: string; label: string }): string {
   return s.customName?.trim() || s.label
+}
+
+/**
+ * The glyph at the head of a session tab. Every session gets its identity dot;
+ * the Ask Conductor session gets the app monogram instead, because it is the
+ * app answering rather than one of your projects. Rendered from ONE helper so
+ * the normal and inline-rename branches cannot drift apart.
+ */
+function TabGlyph({ kind, color }: { kind?: 'ask'; color: string }) {
+  if (kind === 'ask') {
+    return <BrandMark className="w-[13px] h-[13px] shrink-0 relative z-10" />
+  }
+  return (
+    <span
+      className="w-1.5 h-1.5 rounded-full shrink-0 relative z-10"
+      style={{ backgroundColor: color }}
+      aria-hidden
+    />
+  )
 }
 
 /**
@@ -174,11 +194,7 @@ export default function TabBar({ activeView, openPageTabs, onActivateSession, on
                 className="relative flex items-center gap-2 pl-4 pr-7 py-1.5 text-xs rounded-t-lg overflow-hidden text-text"
                 style={{ backgroundColor: color + '20' }}
               >
-                <span
-                  className="w-1.5 h-1.5 rounded-full shrink-0 relative z-10"
-                  style={{ backgroundColor: color }}
-                  aria-hidden
-                />
+                <TabGlyph kind={session.kind} color={color} />
                 <TabLabelEditor
                   initial={name}
                   onCommit={(v) => renameSession(session.id, v)}
@@ -215,12 +231,9 @@ export default function TabBar({ activeView, openPageTabs, onActivateSession, on
                     style={{ backgroundColor: color }}
                   />
                 )}
-                {/* Identity dot -- resolves to the same tint as the active background */}
-                <span
-                  className="w-1.5 h-1.5 rounded-full shrink-0 relative z-10"
-                  style={{ backgroundColor: color }}
-                  aria-hidden
-                />
+                {/* Identity dot -- resolves to the same tint as the active
+                    background. The Ask session wears the app monogram here. */}
+                <TabGlyph kind={session.kind} color={color} />
                 <span className="truncate max-w-[120px] relative z-10">{name}</span>
               </button>
             )}

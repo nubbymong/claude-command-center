@@ -39,6 +39,12 @@ export function useRestartSession(
         // the bolt) until the new run's first statusline tick confirms them.
         effortLive: undefined,
         fastMode: undefined,
+        // A restart re-runs the spawn effect. Ask Conductor's opening question
+        // is one-shot: without this, restarting an Ask session would re-submit
+        // whatever the user first typed. TerminalView also consumes it at spawn;
+        // this is the second fence, because forceRemount merges the CAPTURED
+        // session on top of nothing when the store read races.
+        askPrompt: undefined,
         linesAdded: undefined,
         linesRemoved: undefined,
         inputTokens: undefined,

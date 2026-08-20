@@ -137,6 +137,11 @@ export interface CodexOptions {
 export interface SavedSession {
   id: string
   configId?: string
+  /** Mirrors Session.kind so a restored Ask Conductor session comes back AS one
+   *  (docked pill, tab monogram, banded header) instead of a plain config-less
+   *  session. The opening question is NOT part of this record -- see the
+   *  allowlist in session-persistence.ts. */
+  kind?: 'ask'
   label: string
   /** User-assigned "work name" (see Session.customName). Persisted by id so it
    *  survives restart and returns when the saved session is reopened; dropped

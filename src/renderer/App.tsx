@@ -597,6 +597,10 @@ export default function App() {
         return {
           id: saved.id,
           configId: saved.configId,
+          // Without this an Ask Conductor session comes back as an ordinary
+          // config-less session: plain tab dot, loose in the project list, no
+          // dock. Same silent-drop class as the loggingEnabled / detachable bugs.
+          kind: saved.kind,
           label: saved.label,
           customName: saved.customName,
           workingDirectory: saved.workingDirectory,

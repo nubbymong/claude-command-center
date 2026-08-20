@@ -14,6 +14,11 @@ export function buildSessionState(): SessionState {
   const sessions: SavedSession[] = state.sessions.map((s) => ({
     id: s.id,
     configId: s.configId,
+    kind: s.kind,
+    // `askPrompt` is deliberately absent. This map is an ALLOWLIST, and that
+    // omission is the whole mechanism keeping an Ask Conductor question off
+    // disk: adding it here would write the user's typed question into
+    // session-state.json AND re-submit it on the next launch.
     label: s.label,
     customName: s.customName,
     workingDirectory: s.workingDirectory,

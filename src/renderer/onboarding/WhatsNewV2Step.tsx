@@ -61,8 +61,8 @@ const CARDS_20: Card[] = [
   },
   {
     icon: MAG,
-    title: 'Ask Conductor',
-    desc: 'The ? button in the sidebar opens a searchable guide, or a Claude session that knows the app.',
+    title: 'A guide that answers back',
+    desc: 'The ? button opens a searchable guide of every feature, and a Claude session that has read the app documentation.',
   },
   {
     icon: BOLT,
@@ -101,6 +101,11 @@ const CARDS_21: Card[] = [
     icon: SHIELD,
     title: 'Signed, notarised, verified',
     desc: 'Windows installers are code-signed and macOS builds are notarised, and the updater checks the SHA-256 of everything it installs.',
+  },
+  {
+    icon: MAG,
+    title: 'Ask Conductor, in its own place',
+    desc: 'Ask about the app, or about Claude Code, and get an answer instead of a search. It docks at the bottom of the sidebar, opens as a real session you can come back to, and no longer leaves a config behind in your sidebar.',
   },
 ]
 

@@ -108,6 +108,10 @@ export interface ElectronAPI {
       extraArgs?: string
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
+      /** Ask Conductor's opening question. Travels in the spawn ENVIRONMENT as
+       *  CCC_ASK_PROMPT; the launch line carries only the env reference, never
+       *  the text. Claude + local + non-shell only. */
+      askPrompt?: string
       resume?: { uuid: string; cwd: string }
       model?: string
       profileId?: string
