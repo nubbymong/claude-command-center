@@ -26,7 +26,13 @@ module.exports = {
     (message) => /^deps: Bump \S+ from \S+ to \S+$/.test(message),
     // Grouped bump, e.g. `build(deps): Bump the npm_and_yarn group across 1
     // directory with 6 updates` (#187) — same capitalisation, different shape.
-    (message) => /^(?:deps|build\(deps\)): Bump the \S+ group .+ updates?$/.test(message),
+    // The `across N director(y|ies)` clause appears only for a multi-directory
+    // group, hence optional. Everything else is fixed text or a bare integer, so
+    // there is no free-form run in the middle for an arbitrary subject to ride
+    // in on — `Bump the x group and also Add Support with 2 updates` is rejected.
+    (message) =>
+      /^(?:deps|build\(deps\)): Bump the \S+ group (?:across \d+ director(?:y|ies) )?with \d+ updates?$/
+        .test(message),
   ],
   rules: {
     // Allowed types. Standard Conventional set plus `deps` — Dependabot is
