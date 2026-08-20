@@ -30,6 +30,68 @@ export function removeRetiredCommands(commands: CustomCommand[]): CustomCommand[
 }
 
 /**
+ * Was this saved config created by the RETIRED "Ask the Conductor" launch path?
+ *
+ * Until 2.1.0-beta.16 the only way the app could open a session was through a
+ * saved config, so asking for help created and PERSISTED one -- pointing at the
+ * app's own staged help workspace -- into the user's Saved Configs, beside their
+ * real projects. Ask Conductor no longer needs it, so it is removed once.
+ *
+ * The match is deliberately tight: the exact help-workspace path AND one of the
+ * two labels the app itself ever wrote (it was renamed from "Ask Command Center"
+ * in 2.1). Nobody creates a config in the app's own help folder by hand, and a
+ * config the user has RENAMED is theirs now and is left alone.
+ */
+export function isRetiredAskConfig(config: unknown, helpDir: string): boolean {
+  if (!config || typeof config !== 'object' || !helpDir) return false
+  const c = config as { workingDirectory?: unknown; label?: unknown }
+  if (c.workingDirectory !== helpDir) return false
+  return c.label === 'Ask Conductor' || c.label === 'Ask Command Center'
+}
+
+/**
+ * One-time removal of that config, run before the stores hydrate so the row
+ * never renders even once.
+ *
+ * Guarded by an appMeta flag rather than by "did we find one", so the help
+ * workspace is only staged for this on a single launch. A launch that cannot
+ * resolve the workspace path leaves the flag unset and tries again next time --
+ * deleting on a guessed path is not worth saving one IPC call.
+ */
+export async function retireAskConfig(
+  configData: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const meta = { ...((configData.appMeta as Record<string, unknown>) || {}) }
+  if (meta.askConfigRetired) return configData
+
+  let helpDir: string | null = null
+  try {
+    helpDir = await window.electronAPI.help.workspace()
+  } catch {
+    helpDir = null
+  }
+  if (!helpDir) return configData
+
+  const configs = Array.isArray(configData.configs) ? (configData.configs as unknown[]) : []
+  const kept = configs.filter((c) => !isRetiredAskConfig(c, helpDir))
+  const removed = configs.length - kept.length
+
+  try {
+    if (removed > 0) {
+      await window.electronAPI.config.save('configs', kept)
+      console.log(`[configHydration] Removed ${removed} retired Ask Conductor config(s)`)
+    }
+    const newMeta = { ...meta, askConfigRetired: true }
+    await window.electronAPI.config.save('appMeta', newMeta)
+    return { ...configData, configs: kept, appMeta: newMeta }
+  } catch (e) {
+    // Never block boot on this. Without the flag it simply runs again next launch.
+    console.error('[configHydration] Ask config retirement failed; will retry', e)
+    return removed > 0 ? { ...configData, configs: kept } : configData
+  }
+}
+
+/**
  * Gather all relevant localStorage keys for migration to CONFIG/.
  */
 export function gatherLocalStorageData(): Record<string, string> {

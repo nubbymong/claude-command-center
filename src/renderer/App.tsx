@@ -62,7 +62,7 @@ import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { flushPendingConfigSaves } from './utils/config-saver'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
-import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
+import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration, retireAskConfig } from './utils/configHydration'
 import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupInsightsListener } from './stores/insightsStore'
@@ -351,6 +351,11 @@ export default function App() {
       console.log('[App] Loading config from CONFIG/...')
       const result = await window.electronAPI.config.loadAll()
 
+      // Both one-time config migrations run BEFORE the stores hydrate, so a
+      // retired record never renders even once.
+      const prepare = async (data: Record<string, unknown>) =>
+        retireAskConfig(await applyConfigColourMigration(data))
+
       if (result.needsMigration) {
         console.log('[App] CONFIG/ is empty, migrating from localStorage...')
         const lsData = gatherLocalStorageData()
@@ -358,12 +363,12 @@ export default function App() {
           await window.electronAPI.config.migrateFromLocalStorage(lsData)
           console.log('[App] Migration complete, reloading...')
           const reloaded = await window.electronAPI.config.loadAll()
-          hydrateStores(await applyConfigColourMigration(reloaded.data))
+          hydrateStores(await prepare(reloaded.data))
         } else {
-          hydrateStores(await applyConfigColourMigration(result.data))
+          hydrateStores(await prepare(result.data))
         }
       } else {
-        hydrateStores(await applyConfigColourMigration(result.data))
+        hydrateStores(await prepare(result.data))
       }
 
       setConfigLoaded(true)

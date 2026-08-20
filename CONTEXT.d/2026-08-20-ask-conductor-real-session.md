@@ -96,10 +96,15 @@ tolerate `undefined`.
   invisible to the Settings conflict checker) and a tip teaches it, so both
   handlers would fire on one press. Owner's call: ship the four click entry
   points and decide the chord later.
-- **The orphaned config is left alone.** Installs that used the old path still
-  carry a saved config pointing at the help folder (some still labelled "Ask
-  Command Center"). It still works; deleting stored user config silently was not
-  taken unilaterally. One click removes it.
+- **The orphaned config IS removed**, once, on the launch after upgrading
+  (`retireAskConfig`, before the stores hydrate, so the row never renders). Owner
+  authorised the deletion. It is a deletion of persisted user config, so the
+  match is exact -- the app's own help-workspace path AND one of the two labels
+  the app itself ever wrote ("Ask Conductor" / the pre-rename "Ask Command
+  Center"). A config the user has RENAMED is theirs and stays; that guard is
+  mutation-tested. Guarded by `appMeta.askConfigRetired` so the help workspace is
+  staged for this on exactly one launch; a launch that cannot resolve the path
+  deletes nothing and leaves the guard unset to retry.
 - **Live access to Sentinel / Logs (book of work item 10) is NOT built.** The
   refusal rule that made it useless is gone, but giving the session real tools
   over app data is a new surface and needs its own design and ADR-009 pass.
