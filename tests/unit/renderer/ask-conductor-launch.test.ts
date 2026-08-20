@@ -160,6 +160,27 @@ describe('normaliseQuestion', () => {
     const q = `what's the $(rm -rf /) cost; really \`x\` & 100%?`
     expect(normaliseQuestion(q)).toBe(q)
   })
+
+  it('strips control characters, which on the refocus path are KEYSTROKES', () => {
+    // The refocus branch writes the question into a LIVE Claude TUI and appends
+    // \r to submit it, so ESC is an interrupt, CSI Z is the mode chord, \x03 is
+    // Ctrl+C and \x1b[201~ ends a bracketed paste. `\s` (all this used to
+    // collapse) covers none of them, and <input> strips only CR and LF from a
+    // paste -- so "paste a question you copied from a web page" was the whole
+    // exploit.
+    const q = 'how do I \u001b[Zenable\u0003 auto\u0007-accept\u001b[201~?'
+    const out = normaliseQuestion(q)
+    expect(out).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u)
+    expect(out).toBe('how do I [Zenable auto -accept [201~?')
+  })
+
+  it('strips bidi overrides, which reorder what the user is shown', () => {
+    expect(normaliseQuestion('why\u202edoes\u200bthis\u2066break')).toBe('why does this break')
+  })
+
+  it('returns undefined for a question that is only control characters', () => {
+    expect(normaliseQuestion('\u0000\u001b\u0007')).toBeUndefined()
+  })
 })
 
 describe('findAskSession', () => {

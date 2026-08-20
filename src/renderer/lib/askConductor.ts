@@ -34,16 +34,29 @@ export const ASK_LEGACY_LABEL = 'Ask Command Center'
  *  paste working (truncated) instead of failing the launch outright. */
 const MAX_QUESTION = 8000
 
+/** Control, format and separator characters. `\s` is not this set: it covers
+ *  CR/LF/TAB/VT/FF and Unicode spaces, and lets ESC, BEL, NUL, DEL and the bidi
+ *  overrides through untouched. */
+const CONTROLS_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
+
 /**
- * One line, bounded. Newlines are collapsed rather than preserved because the
- * same question has to work down two very different paths: as a positional
- * argument on a fresh spawn, and as keystrokes typed into an ALREADY-RUNNING
- * Claude TUI, where a bare newline submits early and would split the question
- * into fragments. Collapsing in one place keeps both paths identical.
+ * One line, bounded, and free of control characters. Newlines are collapsed
+ * rather than preserved because the same question has to work down two very
+ * different paths: as a positional argument on a fresh spawn, and as keystrokes
+ * typed into an ALREADY-RUNNING Claude TUI.
+ *
+ * On that second path the question is not text, it is KEY INPUT — the write
+ * below appends `\r` and submits it. Collapsing whitespace alone left every
+ * other control character intact, so a pasted question could carry ESC (which
+ * the TUI reads as interrupt/clear), CSI sequences like back-tab that drive its
+ * mode chords, `\x03`, or a bracketed-paste terminator. `<input>` strips CR and
+ * LF from a paste and nothing else, so "paste a question you copied from a web
+ * page" was the whole exploit. Stripping the class here fixes both paths, which
+ * is what the old comment claimed and did not do.
  */
 export function normaliseQuestion(raw: string | undefined): string | undefined {
   if (!raw) return undefined
-  const one = raw.replace(/\s+/g, ' ').trim()
+  const one = raw.replace(CONTROLS_RE, ' ').replace(/\s+/g, ' ').trim()
   if (!one) return undefined
   return one.length > MAX_QUESTION ? one.slice(0, MAX_QUESTION) : one
 }

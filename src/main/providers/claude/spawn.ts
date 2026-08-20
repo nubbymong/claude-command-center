@@ -1,5 +1,6 @@
 import * as os from 'os'
 import { execSync } from 'child_process'
+import { askPromptEnvValue } from '../../terminal-launch-line'
 import { resolveVersionBinary } from '../../legacy-version-manager'
 import { logInfo } from '../../debug-logger'
 import type { LegacyVersion } from '../../../shared/types'
@@ -77,7 +78,17 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // user's words and they never reach the shell's on-disk history. Set only when
   // non-empty: an empty variable would make `claude ""` start with a blank
   // prompt argument rather than no argument at all.
-  if (opts.askPrompt) env.CCC_ASK_PROMPT = opts.askPrompt
+  //
+  // askPromptEnvValue is the injection boundary, and it belongs HERE rather than
+  // in the IPC schema: zod's parse result is discarded at the spawn seam, so a
+  // `.transform()` there would read as a sanitiser and do nothing. A value that
+  // cleans away to nothing leaves the variable unset — the launch line still
+  // carries the reference and expands it to no argument, which starts an
+  // ordinary session with no opening prompt.
+  if (opts.askPrompt) {
+    const askValue = askPromptEnvValue(opts.askPrompt, os.platform() === 'win32')
+    if (askValue) env.CCC_ASK_PROMPT = askValue
+  }
 
   if (opts.disableAutoMemory) env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
