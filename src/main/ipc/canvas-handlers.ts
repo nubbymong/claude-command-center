@@ -31,6 +31,7 @@ import {
 } from '../canvas/canvas-review-store'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 import {
+  canvasCwdForSession,
   installCanvasSessionLink,
   listReclaimableCanvases,
   reclaimCanvasForSession,
@@ -80,11 +81,13 @@ const listReclaimableSchema = z
   .object({ sessionId: sessionIdSchema, openTileSessionIds: openTileSessionIdsSchema })
   .strict()
 
-/** The library is a pure read over every canvas; it takes no session id because
- *  it is housekeeping, not an ownership question. openTileSessionIds only marks
- *  which rows are on screen right now so the UI can warn before deleting one. */
+/** The library is a pure read; listing never binds anything, so the session id
+ *  here is not an ownership question. It scopes the list to the PROJECT the
+ *  session is in, because a library mixing every project's mockups together is
+ *  unreadable. openTileSessionIds only marks which rows are on screen right now
+ *  so the UI can warn before deleting one. */
 const listAllSchema = z
-  .object({ openTileSessionIds: openTileSessionIdsSchema })
+  .object({ openTileSessionIds: openTileSessionIdsSchema, sessionId: sessionIdSchema.optional() })
   .strict()
 
 /** Delete takes an ID and nothing else — never a path. Same charset bound as
@@ -240,8 +243,12 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   // The library. Pure read over every canvas on disk; listing one never binds
   // it to anything.
   ipcMain.handle(IPC.CANVAS_LIST_ALL, async (_e, args: unknown) => {
-    const { openTileSessionIds } = listAllSchema.parse(args ?? {})
-    return listAllCanvases(openTileSessionIds ?? [])
+    const { openTileSessionIds, sessionId } = listAllSchema.parse(args ?? {})
+    // Scope to the asking session's project. Resolved HERE from main's own spawn
+    // record rather than accepted from the renderer, so the caller cannot ask to
+    // see another project's list by naming its path.
+    const cwd = sessionId ? canvasCwdForSession(sessionId) : undefined
+    return listAllCanvases(openTileSessionIds ?? [], cwd)
   })
 
   // The only destructive canvas operation, and it exists because the user

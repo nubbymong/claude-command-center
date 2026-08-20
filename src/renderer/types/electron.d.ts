@@ -360,7 +360,7 @@ export interface ElectronAPI {
      *  `openTileSessionIds` are the tiles the user has on screen; main uses
      *  them only to EXCLUDE candidates whose own tile is still live. */
     listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ReclaimableCanvas[]>
-    listAll: (args?: { openTileSessionIds?: string[] }) => Promise<CanvasLibraryEntry[]>
+    listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) => Promise<CanvasLibraryEntry[]>
     deleteCanvas: (args: { canvasId: string }) => Promise<{ ok: boolean }>
     /** The user reclaims a named canvas — the only path that moves ownership. */
     reclaim: (args: {

@@ -244,9 +244,10 @@ export interface ElectronAPI {
      *  `openTileSessionIds` are the tiles the user has on screen; main uses
      *  them only to EXCLUDE candidates whose own tile is still live. */
     listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ReclaimableCanvas[]>
-    /** Every canvas on this machine, for the library. Pure read: listing a
-     *  canvas never binds it to a session. */
-    listAll: (args?: { openTileSessionIds?: string[] }) => Promise<CanvasLibraryEntry[]>
+    /** The canvases for this session's PROJECT, for the library. Pure read:
+     *  listing a canvas never binds it to a session. sessionId scopes the
+     *  list to that project; main resolves the directory itself. */
+    listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) => Promise<CanvasLibraryEntry[]>
     /** The user deletes a canvas and its files. The only destructive canvas call. */
     deleteCanvas: (args: { canvasId: string }) => Promise<{ ok: boolean }>
     /** The user reclaims a named canvas — the only path that moves ownership. */
@@ -793,7 +794,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_LIST_RECLAIMABLE, args),
     reclaim: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_RECLAIM, args),
-    listAll: (args?: { openTileSessionIds?: string[] }) =>
+    listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_LIST_ALL, args ?? {}),
     deleteCanvas: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_DELETE, args),
     reviewGetState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_GET_STATE, args),

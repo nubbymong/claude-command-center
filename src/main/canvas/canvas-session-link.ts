@@ -219,6 +219,19 @@ export function reclaimCanvasForSession(
   return true
 }
 
+/**
+ * The project directory a session was spawned in, or undefined if we never saw
+ * it spawn (a session restored from a previous run, for example).
+ *
+ * Used to scope the canvas LIBRARY to the project you are in. Note this is a
+ * relevance filter and nothing more — the cwd is not an authorization key here
+ * any more than it is in `listReclaimableCanvases`, and a session we have no
+ * cwd for is shown everything rather than nothing.
+ */
+export function canvasCwdForSession(sessionId: string): string | undefined {
+  return spawnInfo.get(sessionId)?.cwd
+}
+
 /** Drop a session's link state when its PTY is gone for good. */
 export function forgetSessionForCanvas(sessionId: string): void {
   spawnInfo.delete(sessionId)

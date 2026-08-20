@@ -40,15 +40,19 @@ export function CanvasLibrary({
 
   const load = useCallback(async () => {
     try {
+      // sessionId scopes the list to THIS project. Main resolves the directory
+      // from its own spawn record, so this is a "which project am I in" hint,
+      // not a path the renderer gets to choose.
       const list = await window.electronAPI.canvas.listAll({
         openTileSessionIds: openSessionIds ? openSessionIds.split(',') : [],
+        sessionId,
       })
       setEntries(Array.isArray(list) ? list : [])
     } catch {
       setEntries([])
       setError('The library could not be read.')
     }
-  }, [openSessionIds])
+  }, [openSessionIds, sessionId])
 
   useEffect(() => { void load() }, [load])
 

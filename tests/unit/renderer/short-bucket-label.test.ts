@@ -25,29 +25,23 @@ describe('shortBucketLabel', () => {
     expect(shortBucketLabel(' 5h ')).toBe('5h')
   })
 
-  it('abbreviates the weekly window', () => {
-    expect(shortBucketLabel('Weekly')).toBe('wk')
-    expect(shortBucketLabel('weekly')).toBe('wk')
-    expect(shortBucketLabel('Week')).toBe('wk')
+  it('reduces the weekly window to a single letter', () => {
+    expect(shortBucketLabel('Weekly')).toBe('W')
+    expect(shortBucketLabel('weekly')).toBe('W')
+    expect(shortBucketLabel('Week')).toBe('W')
   })
 
-  it('keeps three characters of a model bucket, which stays recognisable', () => {
-    // Two letters would give "Fa"/"So"/"Ha" — ambiguous between Sonnet and
-    // something else the API adds later. Three is the floor.
-    expect(shortBucketLabel('Fable')).toBe('Fab')
-    expect(shortBucketLabel('Sonnet')).toBe('Son')
-    expect(shortBucketLabel('Opus')).toBe('Opu')
+  it('leaves a model bucket at its full name', () => {
+    // The model is the label you actually scan for, and it has to stay legible
+    // as new ones appear — truncating buys a few pixels and costs the meaning.
+    expect(shortBucketLabel('Fable')).toBe('Fable')
+    expect(shortBucketLabel('Sonnet')).toBe('Sonnet')
+    expect(shortBucketLabel('Opus')).toBe('Opus')
   })
 
-  it('never lengthens a label that is already short', () => {
-    for (const label of ['5h', 'wk', 'A', '']) {
-      expect(shortBucketLabel(label).length).toBeLessThanOrEqual(Math.max(label.trim().length, 2))
-    }
-  })
-
-  it('never returns more than three characters', () => {
-    for (const label of ['Weekly', 'Fable', 'Sonnet', 'A very long future bucket name']) {
-      expect(shortBucketLabel(label).length).toBeLessThanOrEqual(3)
+  it('only ever shortens; it never lengthens or rewrites a label', () => {
+    for (const label of ['5h', 'W', 'A', '', 'Fable', 'Some future bucket']) {
+      expect(shortBucketLabel(label).length).toBeLessThanOrEqual(label.trim().length || 0)
     }
   })
 })

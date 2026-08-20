@@ -12,14 +12,17 @@ import { formatResetTime } from '../../utils/terminalFormatting'
  * coloured bar. Labels come from the API and are open-ended (5h, Weekly, then a
  * bucket per model), so this is a rule rather than a fixed list.
  *
- * Three characters is the floor for staying recognisable: "Fab" still reads as
- * Fable, where a two-letter "fb" does not.
+ * Only the fixed TIME windows shorten. "5h" is already minimal and Weekly goes
+ * to a single "W" — both are positional and unambiguous once seen. Model
+ * buckets keep their full name: "Fable" is the label actually worth scanning
+ * for, and truncating it ("Fab") saves a few pixels at the cost of the one
+ * label that has to stay legible as new models are added.
  */
 export function shortBucketLabel(label: string): string {
   const l = label.trim()
   if (/^\d+\s*h$/i.test(l)) return l.replace(/\s+/g, '').toLowerCase()  // "5h", "5 H" -> 5h
-  if (/^week(ly)?$/i.test(l)) return 'wk'
-  return l.slice(0, 3)
+  if (/^week(ly)?$/i.test(l)) return 'W'
+  return l
 }
 
 export default function RateLimitBar({ label, pct, resets, showReset, compact }: { label: string; pct: number; resets?: string; showReset?: boolean; compact?: boolean }) {

@@ -1247,11 +1247,25 @@ export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdop
  * Nothing here binds a canvas to a session; only `adoptCanvasForSession` does,
  * and it is unchanged.
  */
-export function listAllCanvases(openTileSessionIds: readonly string[] = []): CanvasLibraryEntry[] {
+export function listAllCanvases(
+  openTileSessionIds: readonly string[] = [],
+  /**
+   * Show only canvases rendered in this project directory. The library is
+   * per-PROJECT because that is the unit the user thinks in: opening it from a
+   * session in one project and being shown every mockup from every other one
+   * makes the list unreadable and the interesting rows unfindable.
+   *
+   * Undefined = no filter (a session we have no cwd for still sees everything,
+   * which is the fail-open side). This is relevance, never authorization —
+   * ownership is decided by adoptCanvasForSession alone.
+   */
+  projectCwd?: string,
+): CanvasLibraryEntry[] {
   ensureDiskScanned()
   const open = new Set(openTileSessionIds.filter((id) => SESSION_ID_RE.test(id)))
   const out: CanvasLibraryEntry[] = []
   for (const record of canvases.values()) {
+    if (projectCwd && record.cwd && record.cwd !== projectCwd) continue
     const latest = record.versions[record.versions.length - 1]
     const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
     out.push({
@@ -1448,6 +1462,29 @@ export function adoptCanvasForSession(
   if (!SESSION_ID_RE.test(sessionId)) return null
   if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return null
   ensureDiskScanned()
+
+  // RE-OPENING YOUR OWN CANVAS IS NOT AN ADOPTION.
+  //
+  // A session owns one ACTIVE canvas (sessionIndex) but may have authored many:
+  // rendering a new subject files the previous one and points the index at the
+  // new record, leaving the earlier canvases still stamped with this session's
+  // id. Switching back to one of them transfers nothing — the record already
+  // says this session — so none of the ownership machinery below applies.
+  //
+  // The `sessionIndex.has(sessionId)` guard underneath is what stops a session
+  // that already holds a canvas from taking SOMEONE ELSE'S. It ran first, so it
+  // also refused every canvas the session had made itself, which made the
+  // library's "Open here" fail for any session that had ever rendered — i.e.
+  // every session that has a library to open. Reported as "it says I can't open
+  // it", with the list showing the user's own three canvases as belonging to
+  // another session.
+  const own = canvases.get(canvasId)
+  if (own && own.sessionId === sessionId) {
+    sessionIndex.set(sessionId, own.canvasId)
+    emitChanged(own)
+    return { canvasId: own.canvasId, activeVersionId: own.activeVersionId }
+  }
+
   if (sessionIndex.has(sessionId)) return null
 
   const best = canvases.get(canvasId)
