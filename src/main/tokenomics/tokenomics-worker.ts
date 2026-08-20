@@ -473,13 +473,20 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
    */
   function codexIdentityFrom(lines: string[], seed: CodexRolloutSeed): CodexRolloutSeed {
     let { sessionId, cwd, model } = seed
+    // #307: first session_meta is the file's identity; a subagent rollout's
+    // SECOND session_meta names its parent and must not steal the id (that
+    // collapsed subagent turns onto the parent and dropped ~half of them). The
+    // seed IS the header a prior read already learned, so a set seed id locks it.
+    // Model still tracks the last one named (turn_context updates continue).
+    let idLocked = !!sessionId
     for (const line of lines) {
       if (!line) continue
       let evt: { type?: string; payload?: Record<string, unknown> }
       try { evt = JSON.parse(line) } catch { continue }
       const p = evt?.payload ?? {}
       if (evt?.type === 'session_meta') {
-        if (p.id) sessionId = String(p.id)
+        if (idLocked) continue
+        if (p.id) { sessionId = String(p.id); idLocked = true }
         if (p.cwd) cwd = String(p.cwd)
         if (p.model) model = String(p.model)
       } else if (evt?.type === 'turn_context' && p.model) model = String(p.model)
