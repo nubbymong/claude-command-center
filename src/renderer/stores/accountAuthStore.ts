@@ -32,6 +32,18 @@ interface AccountAuthState {
    *  sessions must not re-probe every time. `force` (a manual pill refresh, or a
    *  refresh right after a sign-in/out) always probes. */
   refresh: (profileId: string, opts?: { force?: boolean }) => Promise<void>
+  /**
+   * Fetch ONLY the claude.ai web-session status.
+   *
+   * `refresh` cannot answer "does this account have a web session" without first
+   * awaiting the `claude auth status` subprocess, because the main-process
+   * handler resolves both together. Anything that needs just the web answer --
+   * the sidebar context menu deciding whether "Open artifacts" is live -- was
+   * therefore waiting seconds on a question that is a local JSON read, and
+   * rendering a disabled item in the meantime. Never gated by the TTL: it costs
+   * a file read, and the whole point is that it lands before the user clicks.
+   */
+  refreshWeb: (profileId: string) => Promise<void>
   /** Drop a profile's cached status (e.g. account deleted). */
   clear: (profileId: string) => void
 }
@@ -79,6 +91,28 @@ export const useAccountAuthStore = create<AccountAuthState>((set, get) => ({
       inFlight.delete(profileId)
     }
     void get
+  },
+
+  refreshWeb: async (profileId: string) => {
+    if (!profileId) return
+    try {
+      const r = await window.electronAPI.accountWeb.webStatus(profileId)
+      if (!r.ok) return
+      // Merge, never replace: `cliAuthed` and `fetchedAt` belong to the full
+      // probe and must survive this. Deliberately does NOT set `fetchedAt` --
+      // that stamp means "the CLI probe succeeded at this time" and drives the
+      // TTL, so stamping it here would suppress the next real refresh.
+      set((s) => ({
+        byProfile: {
+          ...s.byProfile,
+          [profileId]: { ...(s.byProfile[profileId] ?? { loading: false }), web: r.web?.status ?? 'none' },
+        },
+      }))
+    } catch {
+      // Leave whatever is cached. A failed cheap read is not evidence the
+      // session is gone, and downgrading it to 'none' here would disable the
+      // menu item on a working account.
+    }
   },
 
   clear: (profileId: string) => set((s) => {

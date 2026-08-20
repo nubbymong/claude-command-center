@@ -43,6 +43,25 @@ const profileIdSchema = z.string().regex(PROFILE_ID_RE)
 
 export function registerAccountWebHandlers(): void {
   /** Both halves of an account's auth in one payload — the UI shows them together. */
+  // Web-session status on its own.
+  //
+  // ACCOUNT_WEB_STATUS awaits readClaudeCliAuth() -- a `claude auth status`
+  // subprocess that can take seconds -- before it returns anything, including
+  // the web view, which is a synchronous local JSON read. Anything that only
+  // needs "does this account have a claude.ai session" was therefore paying for
+  // the CLI probe: the sidebar context menu renders "Open artifacts" disabled
+  // until the answer arrives, so on an account whose status was not already
+  // cached the item was dead at the moment the user clicked it, with no window
+  // and no log line. Split so the cheap question gets a cheap answer.
+  ipcMain.handle(IPC.ACCOUNT_WEB_WEB_STATUS, async (_e, profileId: unknown) => {
+    try {
+      const id = profileIdSchema.parse(profileId)
+      return { ok: true, web: viewFor(id) }
+    } catch (err) {
+      return fail('webStatus', err)
+    }
+  })
+
   ipcMain.handle(IPC.ACCOUNT_WEB_STATUS, async (_e, profileId: unknown) => {
     try {
       const id = profileIdSchema.parse(profileId)
