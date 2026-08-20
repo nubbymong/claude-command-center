@@ -54,6 +54,10 @@ const SKETCH_ELEMENT_ID_MAX = 128
 /** One exported sketch PNG. Far beyond any real annotation sketch; small
  *  enough that a submit can't be turned into a disk-filling primitive. */
 export const MAX_SKETCH_PNG_BYTES = 2 * 1024 * 1024
+/** Ceiling on a reviews.json the COUNT path will read (see readRecordNoRebind).
+ *  Generous next to any real record — a few hundred notes of prose — and well
+ *  under what the per-field maxima would permit if every one were at its bound. */
+const MAX_REVIEW_FILE_BYTES = 8 * 1024 * 1024
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** The one shape a stored pngPath may have — minted here, revalidated on load
@@ -449,7 +453,15 @@ export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts |
 function readRecordNoRebind(canvasId: string): ReviewFileRecord | null {
   let raw: string
   try {
-    raw = fs.readFileSync(reviewsJsonPath(canvasId), 'utf8')
+    const file = reviewsJsonPath(canvasId)
+    // Size first, because this runs on the main thread once PER CANVAS every
+    // time the library opens, and a session's own canvases are swept without
+    // the MAX_REVIEW_SWEEP bound. A legal record is kilobytes; the format's own
+    // maxima (200 reviews × 100 notes × 4000 chars) allow tens of megabytes, and
+    // whatever else happens to be sitting at that path allows anything at all.
+    // Refusing to read it is the same outcome as failing to parse it: no counts.
+    if (fs.statSync(file).size > MAX_REVIEW_FILE_BYTES) return null
+    raw = fs.readFileSync(file, 'utf8')
   } catch {
     return null
   }

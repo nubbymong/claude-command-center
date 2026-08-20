@@ -50,8 +50,8 @@ const allCurrent = () => true
 // title files the current canvas and starts a fresh one. That is exactly how a
 // session ends up with several, which is what the library is for — so every
 // render here names its own subject.
-function renderAs(sessionId: string, cwd: string | undefined, title: string) {
-  store.setCanvasSessionInfoResolver(() => ({ cwd, conversationUuid: undefined, profileId: undefined }))
+function renderAs(sessionId: string, cwd: string | undefined, title: string, profileId?: string) {
+  store.setCanvasSessionInfoResolver(() => ({ cwd, conversationUuid: undefined, profileId }))
   return store.renderVersion(sessionId, { mode: 'design', title, html: `<!doctype html><p>${title}</p>` })
 }
 
@@ -116,6 +116,54 @@ describe('opening a canvas this session already owns', () => {
       fs.readFileSync(path.join(getResourcesDirectory(), 'canvas', theirs.canvasId, 'canvas.json'), 'utf8'),
     )
     expect(record.sessionId).toBe(THEIRS)
+  })
+})
+
+describe('the account floor survives the "already mine" fast path', () => {
+  // "A canvas must never cross accounts" (adversarial review 2026-08-14) is
+  // enforced by isReclaimCandidate, which the own-canvas branch above runs
+  // BEFORE. That matters because a session id outlives an account switch — the
+  // tile is re-added with the same id — while the record's profileId is stamped
+  // once, at birth. So after switching accounts in a tile, every canvas that
+  // tile authored still says "mine" and would be one click from binding to a
+  // session now running as somebody else.
+  const P1 = 'profile-one'
+  const P2 = 'profile-two'
+
+  it('refuses a canvas stamped with a DIFFERENT account, even to its own session', () => {
+    // Two subjects under account one, so the SECOND is what the session points
+    // at and switching back to the first is a real re-point, not a no-op.
+    const first = renderAs(MINE, PROJECT, 'under account one', P1)
+    const second = renderAs(MINE, PROJECT, 'also under account one', P1)
+
+    const crossed = store.adoptCanvasForSession(MINE, first.canvasId, {
+      profileId: P2,
+      isSessionCurrent: allCurrent,
+    })
+    expect(crossed).toBeNull()
+    // ...and the refusal actually held: the session still points where it did.
+    expect(store.getCanvasStateForSession(MINE)?.canvasId).toBe(second.canvasId)
+  })
+
+  it('refuses in the other direction too: an UNSTAMPED record into a profiled session', () => {
+    const legacy = renderAs(MINE, PROJECT, 'no account stamp')
+    expect(store.adoptCanvasForSession(MINE, legacy.canvasId, {
+      profileId: P1,
+      isSessionCurrent: allCurrent,
+    })).toBeNull()
+  })
+
+  it('still opens the session\'s own canvas when the account MATCHES', () => {
+    // The floor must not cost the fix it sits inside: same session, same
+    // account, an earlier canvas that a new subject filed.
+    const first = renderAs(MINE, PROJECT, 'one', P1)
+    renderAs(MINE, PROJECT, 'two', P1)
+    const reopened = store.adoptCanvasForSession(MINE, first.canvasId, {
+      profileId: P1,
+      isSessionCurrent: allCurrent,
+    })
+    expect(reopened?.canvasId).toBe(first.canvasId)
+    expect(store.getCanvasStateForSession(MINE)?.canvasId).toBe(first.canvasId)
   })
 })
 

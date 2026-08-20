@@ -326,8 +326,12 @@ function isAbsolutePathShape(value: string): boolean {
  * anything but operator text" literally true rather than nearly true.
  */
 function safeRootLabel(p: string): string {
-  // eslint-disable-next-line no-control-regex
-  const cleaned = p.replace(/[\u0000-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, '')
+  // By Unicode property, not by hex range. The hand-written range missed C1
+  // (U+0085 NEL, U+009B CSI, U+009D OSC — a terminal acts on those in 8-bit
+  // mode), U+061C ARABIC LETTER MARK, U+00AD, U+FEFF and U+2060, and a range
+  // list goes stale every time Unicode adds a format character. Same class the
+  // store strips from a title (canvas-store.ts FORMAT_CONTROLS_RE).
+  const cleaned = p.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '')
   return cleaned.length > 200 ? `${cleaned.slice(0, 200)}…` : cleaned
 }
 
@@ -491,7 +495,11 @@ export async function runCanvasRender(
     }
   }
 
-  let rendered: { canvasId: string; versionId: string }
+  // Derived, not restated: written out by hand, this annotation silently
+  // narrowed away `filed` when renderVersion started reporting it, leaving the
+  // "you filed the canvas the user was mid-review on" warning invisible to the
+  // type system at its only call site.
+  let rendered: ReturnType<CanvasToolDeps['renderVersion']>
   try {
     // The session comes from the TRANSPORT and nowhere else — the #188
     // precedent. A canvas is per-session, and a render is a WRITE: honouring a

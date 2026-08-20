@@ -1558,8 +1558,18 @@ export function adoptCanvasForSession(
   // every session that has a library to open. Reported as "it says I can't open
   // it", with the list showing the user's own three canvases as belonging to
   // another session.
+  // The account floor still applies, though — it is the one part of the key
+  // that is NOT about who holds the index. A session id survives an in-tile
+  // account switch (useRestartSession re-adds the tile with the same id) while
+  // the record's profileId is stamped once, at birth, so after a switch every
+  // canvas this tile authored under the previous account still says "mine" and
+  // would otherwise be one click from binding to a session now running as
+  // someone else. Exact, `undefined` included, matching isReclaimCandidate:
+  // "a canvas must never cross accounts" (adversarial review 2026-08-14).
+  // A mismatch falls through rather than returning, so the machinery below gets
+  // its ordinary refusal.
   const own = canvases.get(canvasId)
-  if (own && own.sessionId === sessionId) {
+  if (own && own.sessionId === sessionId && own.profileId === normalizedProfile(query)) {
     sessionIndex.set(sessionId, own.canvasId)
     emitChanged(own)
     return { canvasId: own.canvasId, activeVersionId: own.activeVersionId }

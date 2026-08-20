@@ -204,6 +204,23 @@ describe('canvas_render — a refusal names the folders', () => {
     expect(r.text).toContain('F:/proj')
   })
 
+  it('strips the C1 and format characters a hex-range denylist missed', async () => {
+    // This line rides OUTSIDE the untrusted envelope, in the app's own voice.
+    // The original range list covered C0 and a hand-picked set of bidi marks and
+    // stopped there, so U+0085/U+009B/U+009D (NEL/CSI/OSC — a terminal acts on
+    // those in 8-bit mode), U+061C, U+00AD, U+FEFF and U+2060 all went through.
+    const sneaky = 'F:/pr\u0085o\u009bj\u009d\u061c\u00ad\ufeff\u2060'
+    const r = await render(
+      deps({
+        readDesignFile: outside,
+        canvasRootsForSession: () => ({ project: sneaky, worktree: null, worktreePending: false }),
+      }),
+      { mode: 'design', htmlPath: 'F:/tmp/mock.html', title: 'x' },
+    )
+    expect(r.text).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u)
+    expect(r.text).toContain('F:/proj')
+  })
+
   it('still refuses when the roots read itself throws', async () => {
     const r = await render(
       deps({
