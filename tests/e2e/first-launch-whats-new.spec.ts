@@ -16,6 +16,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { STEPS, ONBOARDING_VERSION } from '../../src/renderer/onboarding/steps'
+import { emptyGitHubConfig } from '../../src/shared/github-constants'
 
 const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
 const APP_VERSION = JSON.parse(
@@ -52,6 +53,14 @@ test.beforeAll(async () => {
   fs.writeFileSync(
     path.join(config, 'settings.json'),
     JSON.stringify({ loggingConsentSeen: true, localMachineName: 'e2e-host', updateChannel: 'beta' }),
+  )
+  // Retire the legacy GitHub onboarding modal. It sits BETWEEN the harness and
+  // resume in the priority chain, so leaving it armed means the notes hand over
+  // to it rather than to resume — which is the chain working correctly, and
+  // which is exactly what the first run of this spec caught.
+  fs.writeFileSync(
+    path.join(config, 'github-config.json'),
+    JSON.stringify({ ...emptyGitHubConfig(), seenOnboardingVersion: 'permanent' }),
   )
   // Saved sessions, so the resume prompt is genuinely pending at the same
   // moment the notes are due. Without this the stacking cannot be reproduced
