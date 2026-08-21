@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { CustomCommand, CommandSection, useCommandStore } from '../stores/commandStore'
 import { COLOR_SWATCHES } from './SessionDialog'
 import { generateId } from '../utils/id'
+import { buildCommandLine, commandSecretRef, COMMAND_SECRET_TOKEN } from '../../shared/command-secret'
 
 /**
  * What a command button DOES. This is the first question the dialog asks,
@@ -19,7 +20,11 @@ import { generateId } from '../utils/id'
 export type CommandKind = 'prompt' | 'shell'
 
 interface Props {
-  onConfirm: (command: Omit<CustomCommand, 'id'>) => void
+  /** `argSecret` is a NEW secret value to store for this command, handed to
+   *  the caller so it can be written to the OS keychain under the command's
+   *  id. It is never part of the command record. Undefined on edit means
+   *  "keep whatever is stored"; `command.hasSecretArg` false means delete it. */
+  onConfirm: (command: Omit<CustomCommand, 'id'>, argSecret?: string) => void
   onCancel: () => void
   initial?: CustomCommand
   configId?: string
@@ -53,10 +58,8 @@ export function targetFor(kind: CommandKind, mainPaneIsShell: boolean, shellWher
  * bar cannot drift: a preview that showed one thing while the bar typed
  * another would be worse than no preview.
  */
-export function previewLine(prompt: string, args: readonly string[]): string {
-  const p = prompt.trim()
-  if (!p) return ''
-  return args.length > 0 ? `${p} ${args.join(' ')}` : p
+export function previewLine(prompt: string, args: readonly string[], secretRef?: string | null): string {
+  return buildCommandLine(prompt, args, secretRef)
 }
 
 export default function CommandDialog({ onConfirm, onCancel, initial, configId, mainPaneIsShell = false }: Props) {
@@ -78,6 +81,13 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   const [webViewEnabled, setWebViewEnabled] = useState<boolean>(!!initial?.webView?.enabled)
   const [webViewUrl, setWebViewUrl] = useState(initial?.webView?.url || '')
   const [webViewUrlError, setWebViewUrlError] = useState<string | null>(null)
+  // Secret argument (shell kind only). `storedSecret` is whether the keychain
+  // holds one already; `secretValue` is a NEW value typed now. On edit with a
+  // stored secret and nothing typed, the stored one is kept.
+  const storedSecret = !!initial?.hasSecretArg
+  const [hasSecret, setHasSecret] = useState<boolean>(storedSecret)
+  const [secretValue, setSecretValue] = useState('')
+  const isWin = typeof window !== 'undefined' && (window as unknown as { electronPlatform?: string }).electronPlatform === 'win32'
 
   const { sections, addSection } = useCommandStore()
   const visibleSections = sections.filter(
@@ -139,7 +149,10 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
     return null
   }
 
-  const canSubmit = !!kind && !!label.trim() && !!prompt.trim()
+  const secretOn = kind === 'shell' && hasSecret
+  // A secret that is switched on must HAVE a value: stored already, or typed now.
+  const secretReady = !secretOn || storedSecret || secretValue.length > 0
+  const canSubmit = !!kind && !!label.trim() && !!prompt.trim() && secretReady
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -161,10 +174,11 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
       target,
       defaultArgs: defaultArgs.length > 0 ? defaultArgs : undefined,
       sectionId,
+      hasSecretArg: secretOn ? true : undefined,
       webView: webViewEnabled
         ? { enabled: true, url: webViewUrl.trim() }
         : undefined,
-    })
+    }, secretOn && secretValue.length > 0 ? secretValue : undefined)
   }
 
   // Copy that follows the kind. One field, two very different things typed
@@ -183,7 +197,12 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
         mono: false,
       }
 
-  const line = previewLine(prompt, defaultArgs)
+  // The preview shows the REFERENCE the shell will see, never a value. On
+  // create the id does not exist yet, so the name is shown with a placeholder.
+  const previewRef = secretOn
+    ? (initial?.id ? commandSecretRef(initial.id, isWin) : (isWin ? '$env:CCC_CMD_SECRET_<id>' : '"$CCC_CMD_SECRET_<id>"'))
+    : undefined
+  const line = previewLine(prompt, defaultArgs, previewRef)
 
   const kindCard = (value: CommandKind, title: string, sub: string) => {
     const active = kind === value
@@ -312,6 +331,47 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                 <p className="mt-1 text-[10px] text-overlay0">
                   <span className="text-subtext0">Ctrl+click the button</span> to change these for one run without editing the command.
                 </p>
+                {kind === 'shell' && (
+                  <div className="mt-2 rounded border border-surface1 bg-surface0/50 px-2.5 py-2">
+                    <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={hasSecret}
+                        onChange={(e) => setHasSecret(e.target.checked)}
+                        className="accent-blue"
+                        data-testid="command-secret-toggle"
+                      />
+                      One of the arguments is a secret
+                    </label>
+                    {hasSecret && (
+                      <div className="mt-1.5">
+                        <input
+                          type="password"
+                          value={secretValue}
+                          onChange={(e) => setSecretValue(e.target.value)}
+                          className="w-full px-3 py-1.5 bg-surface0 text-text text-sm rounded border border-surface1 outline-none focus:border-blue font-mono"
+                          placeholder={storedSecret ? 'Stored -- type here to replace it' : 'The secret value'}
+                          autoComplete="off"
+                          data-testid="command-secret-value"
+                        />
+                        {/* Same mechanism a terminal config's secret argument already
+                            uses, and for the same reason: the shell writes every
+                            submitted line to disk (PSReadLine), so the value must
+                            never be in the line. It rides the shell's ENVIRONMENT
+                            from the keychain, and the button types the reference. */}
+                        <p className="mt-1 text-[10px] text-overlay0">
+                          Write <span className="font-mono text-subtext0">{COMMAND_SECRET_TOKEN}</span> where the value goes, e.g.{' '}
+                          <span className="font-mono text-subtext0">-Token {COMMAND_SECRET_TOKEN}</span>. The value is kept in the OS
+                          keychain and handed to the shell as an environment variable when the shell starts; the button types a
+                          reference to it, so the value never reaches the command line or your shell history.
+                        </p>
+                        <p className="mt-1 text-[10px] text-overlay0">
+                          A shell that is already open does not have it yet -- restart the shell after saving.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -356,6 +416,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                     checked={webViewEnabled}
                     onChange={(e) => setWebViewEnabled(e.target.checked)}
                     className="accent-blue"
+                    data-testid="command-watch-toggle"
                   />
                   Watch for a page and open the browser when it responds
                 </label>

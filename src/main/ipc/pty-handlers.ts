@@ -6,6 +6,8 @@ import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
 import { isValidLegacyVersion } from '../../shared/legacy-version'
 import { loadCredential } from '../credential-store'
+import { readConfig } from '../config-manager'
+import { collectCommandSecrets } from '../command-secrets'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
@@ -239,6 +241,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     /** Main-process only — resolved from the OS keychain below and explicitly
      *  cleared from whatever the renderer sent. Never accepted from outside. */
     terminalSecret?: string
+    /** Main-process only, like terminalSecret: command-button secrets for a
+     *  SHELL spawn, keyed by command id. Stripped from whatever the renderer
+     *  sent and rebuilt from the keychain below. */
+    commandSecrets?: Record<string, string>
     configId?: string
     configLabel?: string
     /** Ask Conductor's opening question (see spawnOptionsSchema.askPrompt). */
@@ -289,7 +295,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // verbatim (the zod parse result is intentionally discarded), so a field the
     // schema doesn't declare would otherwise flow straight through from the
     // renderer. Only the keychain lookup below may set it.
-    let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined } : options
+    let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
     if (options?.ssh && options.configId) {
       const password = loadCredential(options.configId) ?? undefined
       const sudoPassword = loadCredential(options.configId + '_sudo') ?? undefined
@@ -307,6 +313,18 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     if (options?.shellOnly && options.configId && options.terminalOptions?.hasSecretArg) {
       const argSecret = loadCredential(options.configId + '_argsecret') ?? undefined
       if (argSecret) resolvedOptions = { ...resolvedOptions, terminalSecret: argSecret }
+    }
+
+    // Command-button secrets: every SHELL spawn (the partner pane, or the main
+    // pane of a terminal-only config) gets the secrets of the commands visible
+    // to its config, as env vars, so a button can type a reference instead of
+    // the value. Resolved HERE from the commands file on disk and the keychain;
+    // the renderer's copy of the commands list is never consulted, because it
+    // could name any id it liked. No secrets for a Claude spawn: a reference
+    // typed into the TUI is just text to Claude.
+    if (options?.shellOnly && options.configId) {
+      const secrets = collectCommandSecrets(readConfig('commands'), options.configId, loadCredential)
+      if (Object.keys(secrets).length > 0) resolvedOptions = { ...resolvedOptions, commandSecrets: secrets }
     }
 
     // Agent Canvas UAT roots are NOT registered here any more (adversarial

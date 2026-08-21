@@ -14,6 +14,11 @@ export interface SpawnOptions {
    *  in the spawn ENV (never interpolated into the command text) so it cannot land
    *  in the shell's on-disk history. See buildSpawnCommand + the shell-only write. */
   terminalSecret?: string
+  /** Secret arguments of command BUTTONS visible to this config, keyed by
+   *  command id, resolved from the keychain in main (collectCommandSecrets).
+   *  Each becomes CCC_CMD_SECRET_<id> in a SHELL spawn's env; the button types
+   *  the reference. Never accepted from the renderer. */
+  commandSecrets?: Record<string, string>
   configLabel?: string
   useResumePicker?: boolean
   legacyVersion?: LegacyVersion

@@ -16,6 +16,11 @@ export interface CustomCommand {
   target?: 'claude' | 'partner'
   sectionId?: string       // Which section this button belongs to
   defaultArgs?: string[]   // Default arguments (run on normal click)
+  /** One of the arguments is a secret: its VALUE is in the OS keychain under
+   *  commandSecretKey(id), and `{secret}` in the arguments is typed as a
+   *  reference to the env var main sets when a SHELL starts. The value is never
+   *  in this record and never in the command line. See shared/command-secret. */
+  hasSecretArg?: boolean
   lastCustomArgs?: string[] // Last custom arguments used (remembered)
   // When enabled, the command write triggers a 30 s URL poll against
   // `webView.url`. First successful response sets the Web button to

@@ -958,6 +958,8 @@ export function spawnPty(
     terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
     /** Secret argument resolved from the OS keychain in the IPC handler (main only). */
     terminalSecret?: string
+    /** Command-button secrets for this shell, keyed by command id (main only). */
+    commandSecrets?: Record<string, string>
     /** Ask Conductor's opening question. Travels in the spawn ENV; the launch
      *  line carries only a reference to it (see askPromptRef). */
     askPrompt?: string
@@ -2725,6 +2727,7 @@ export function spawnPty(
       shellOnly: options?.shellOnly,
       elevated: options?.elevated ?? options?.terminalOptions?.elevated,
       terminalSecret: options?.terminalSecret,
+      commandSecrets: options?.commandSecrets,
       legacyVersion: options?.legacyVersion,
       effortLevel: options?.effortLevel,
       disableAutoMemory: options?.disableAutoMemory,
