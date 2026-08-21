@@ -3,6 +3,7 @@ import { CustomCommand, CommandSection, useCommandStore } from '../stores/comman
 import { COLOR_SWATCHES } from './SessionDialog'
 import { generateId } from '../utils/id'
 import { buildCommandLine, commandSecretRef, COMMAND_SECRET_TOKEN } from '../../shared/command-secret'
+import { normaliseBrowserInput } from '../../shared/browser-url'
 
 /**
  * What a command button DOES. This is the first question the dialog asks,
@@ -11,13 +12,17 @@ import { buildCommandLine, commandSecretRef, COMMAND_SECRET_TOKEN } from '../../
  * the other, and the old dialog showed one "Prompt" box with a placeholder that
  * only fitted one of them.
  *
- * Kind is NOT a stored field. It is the same axis as `target`: a prompt can
- * only go to Claude, and a shell line can only go to a shell. Storing it twice
- * would be two fields that must never disagree. The dialog derives it from the
- * target (and from whether this session's main pane is itself a shell) and
- * writes the target back on save.
+ * For the two TYPING kinds, kind is NOT a stored field. It is the same axis as
+ * `target`: a prompt can only go to Claude, and a shell line can only go to a
+ * shell. Storing it twice would be two fields that must never disagree. The
+ * dialog derives it from the target (and from whether this session's main
+ * pane is itself a shell) and writes the target back on save.
+ *
+ * The third kind, 'page', types nothing: it opens a URL in the session's
+ * browser pane (item 26). It has no target to read it off, so it is the one
+ * kind that IS stored (`CustomCommand.kind === 'page'`).
  */
-export type CommandKind = 'prompt' | 'shell'
+export type CommandKind = 'prompt' | 'shell' | 'page'
 
 interface Props {
   /** `argSecret` is a NEW secret value to store for this command, handed to
@@ -39,15 +44,17 @@ interface Props {
 /** Where a shell command runs when the main pane is itself a shell. */
 type ShellWhere = 'main' | 'partner'
 
-/** The kind a stored command has, read off its target. */
-export function kindOf(cmd: Pick<CustomCommand, 'target'> | undefined, mainPaneIsShell: boolean): CommandKind {
+/** The kind a stored command has: its own mark for a page button, otherwise read off its target. */
+export function kindOf(cmd: Pick<CustomCommand, 'target' | 'kind'> | undefined, mainPaneIsShell: boolean): CommandKind {
+  if (cmd?.kind === 'page') return 'page'
   if (mainPaneIsShell) return 'shell'
   return cmd?.target === 'partner' ? 'shell' : 'prompt'
 }
 
-/** The target a (kind, where) pair resolves to. The row IS the target. */
+/** The target a (kind, where) pair resolves to. The row IS the target. A page
+ *  button runs in the browser, not a terminal; it is FILED in the main row. */
 export function targetFor(kind: CommandKind, mainPaneIsShell: boolean, shellWhere: ShellWhere): 'claude' | 'partner' {
-  if (kind === 'prompt') return 'claude'
+  if (kind === 'prompt' || kind === 'page') return 'claude'
   if (!mainPaneIsShell) return 'partner'
   return shellWhere === 'partner' ? 'partner' : 'claude'
 }
@@ -81,6 +88,10 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   const [webViewEnabled, setWebViewEnabled] = useState<boolean>(!!initial?.webView?.enabled)
   const [webViewUrl, setWebViewUrl] = useState(initial?.webView?.url || '')
   const [webViewUrlError, setWebViewUrlError] = useState<string | null>(null)
+  // The page an "Open a page" button goes to. Normalised on save by the same
+  // rule as the address bar (scheme-less localhost:5173 becomes http://...).
+  const [pageUrl, setPageUrl] = useState(initial?.pageUrl || '')
+  const [pageUrlError, setPageUrlError] = useState<string | null>(null)
   // Secret argument (shell kind only). `storedSecret` is whether the keychain
   // holds one already; `secretValue` is a NEW value typed now. On edit with a
   // stored secret and nothing typed, the stored one is kept.
@@ -98,8 +109,9 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   // Where the text goes, in words the preview and the run-location line share.
   const destination =
     kind === 'prompt' ? 'Claude'
-      : mainPaneIsShell ? (shellWhere === 'partner' ? 'the partner shell' : 'this shell')
-        : 'the partner shell'
+      : kind === 'page' ? 'the browser pane'
+        : mainPaneIsShell ? (shellWhere === 'partner' ? 'the partner shell' : 'this shell')
+          : 'the partner shell'
 
   const handleAddArg = () => {
     const arg = argInput.trim()
@@ -152,11 +164,31 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   const secretOn = kind === 'shell' && hasSecret
   // A secret that is switched on must HAVE a value: stored already, or typed now.
   const secretReady = !secretOn || storedSecret || secretValue.length > 0
-  const canSubmit = !!kind && !!label.trim() && !!prompt.trim() && secretReady
+  const canSubmit = !!kind && !!label.trim() && secretReady
+    && (kind === 'page' ? !!pageUrl.trim() : !!prompt.trim())
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!canSubmit) return
+    if (kind === 'page') {
+      // The one kind that types nothing. No prompt, no args, no secret, no
+      // watch -- a label, a page, and where it is filed.
+      const result = normaliseBrowserInput(pageUrl)
+      if (!result.ok) { setPageUrlError(result.error); return }
+      setPageUrlError(null)
+      onConfirm({
+        label: label.trim(),
+        prompt: '',
+        scope,
+        configId: scope === 'config' ? configId : undefined,
+        color,
+        target: 'claude',
+        sectionId,
+        kind: 'page',
+        pageUrl: result.url,
+      })
+      return
+    }
     if (webViewEnabled) {
       const urlError = validateWebviewUrl(webViewUrl)
       if (urlError) {
@@ -242,10 +274,11 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                   card would be offering a button that cannot work. */}
               {!mainPaneIsShell && kindCard('prompt', 'Send a prompt', 'to Claude')}
               {kindCard('shell', 'Run a command', 'in a shell')}
+              {kindCard('page', 'Open a page', 'in the browser')}
             </div>
             {!kind && (
               <p className="mt-1 text-[10px] text-overlay0">
-                Changes what the fields below ask for: a shell line is not a sentence, and the other way round.
+                Changes what the fields below ask for: a shell line is not a sentence, and a page is neither.
               </p>
             )}
           </div>
@@ -265,6 +298,33 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                 />
               </div>
 
+              {kind === 'page' ? (
+                <div>
+                  <label className="block text-xs text-subtext0 mb-1">Page to open</label>
+                  <input
+                    type="text"
+                    value={pageUrl}
+                    onChange={(e) => { setPageUrl(e.target.value); if (pageUrlError) setPageUrlError(null) }}
+                    className={`w-full px-3 py-1.5 bg-surface0 text-text text-sm rounded border outline-none font-mono ${
+                      pageUrlError ? 'border-red focus:border-red' : 'border-surface1 focus:border-blue'
+                    }`}
+                    placeholder="localhost:5173, or https://docs.example.com"
+                    spellCheck={false}
+                    autoComplete="off"
+                    aria-invalid={!!pageUrlError}
+                    aria-describedby={pageUrlError ? 'page-url-error' : undefined}
+                    data-testid="command-page-url"
+                  />
+                  {pageUrlError ? (
+                    <p id="page-url-error" className="mt-1 text-[10px] text-red" role="alert">{pageUrlError}</p>
+                  ) : (
+                    <p className="mt-1 text-[10px] text-overlay0">
+                      http and https only. Nothing is typed into any terminal: the button sends this session's browser pane to the page.
+                    </p>
+                  )}
+                </div>
+              ) : (
+              <>
               <div>
                 <label className="block text-xs text-subtext0 mb-1">{textField.label}</label>
                 <textarea
@@ -448,6 +508,8 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                   </div>
                 )}
               </div>
+              </>
+              )}
 
               {/* Item 18: the button, and the exact text it will type. Built by
                   the same rule the command bar uses, so it cannot drift. */}
@@ -466,14 +528,21 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                     <span data-testid="command-preview-label">{label.trim() || 'Button'}</span>
                   </span>
                   <span className="text-[11px] text-overlay1">
-                    {kind === 'prompt' ? 'sends to' : 'types into'} <span className="text-subtext0">{destination}</span>:
+                    {kind === 'page' ? 'opens in' : kind === 'prompt' ? 'sends to' : 'types into'} <span className="text-subtext0">{destination}</span>:
                   </span>
                 </div>
                 <div
                   className="mt-1.5 font-mono text-xs text-text whitespace-pre-wrap break-words"
                   data-testid="command-preview-line"
                 >
-                  {line ? <>{line} <span className="text-overlay0">{String.fromCodePoint(0x23ce)}</span></> : <span className="text-overlay0">(nothing yet)</span>}
+                  {kind === 'page'
+                    ? (() => {
+                        const r = normaliseBrowserInput(pageUrl)
+                        return r.ok
+                          ? <>{r.url} <span className="text-overlay0">(types nothing)</span></>
+                          : <span className="text-overlay0">(no page yet)</span>
+                      })()
+                    : line ? <>{line} <span className="text-overlay0">{String.fromCodePoint(0x23ce)}</span></> : <span className="text-overlay0">(nothing yet)</span>}
                 </div>
                 {webViewEnabled && webViewUrl.trim() && (
                   <div className="mt-1 text-[11px] text-overlay1" data-testid="command-preview-watch">
