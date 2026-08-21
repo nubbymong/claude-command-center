@@ -9,6 +9,7 @@ import { useAgentLibraryStore } from '../stores/agentLibraryStore'
 import { useTeamStore } from '../stores/teamStore'
 import { useCommandBarStore } from '../stores/commandBarStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
+import { useBrowserStore } from '../stores/browserStore'
 import { ASK_LABEL, ASK_LEGACY_LABEL } from '../lib/askConductor'
 import { migrateColorRecords } from './migrateIdentityColors'
 import { configWritesLocked } from '../stores/configWriteLockStore'
@@ -443,6 +444,13 @@ export function hydrateStores(configData: Record<string, unknown>): void {
     ? { bySessionId: {} }
     : coerceObject(configData.excalidraw, 'excalidraw', warnings)
   useExcalidrawStore.getState().hydrate(excalidraw as never)
+
+  // browser (favourites + per-config home) keeps its empty default when
+  // absent; its hydrate re-validates every URL against the http/https rule.
+  const browser = configData.browser == null
+    ? {}
+    : coerceObject(configData.browser, 'browser', warnings)
+  useBrowserStore.getState().hydrate(browser)
 
   if (warnings.length > 0) {
     for (const w of warnings) console.warn('[configHydration] ' + w)

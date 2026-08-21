@@ -23,7 +23,7 @@ import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemote
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
-import { resolveClaudeBinary, resolveHostColorScheme } from './providers/claude/spawn'
+import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
@@ -1425,15 +1425,23 @@ export function spawnPty(
     // Clickable question options (CC >= 2.1.195) default OFF in CCC -- the
     // clickable layer misfires inside xterm.js. Read fresh per spawn so the
     // Settings toggle applies to the next session without a restart.
-    const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean }>('settings')
+    const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean; theme?: string }>('settings')
     const clickableQuestions = spawnCfg?.clickableQuestions === true
     // item 3: PROTOTYPE Windows remote. Isolated behind this flag; every branch
     // below falls back to the unchanged POSIX path for auto/unix/undefined.
     const isWindowsRemote = ssh.remoteOs === 'windows'
+    // The host's light/dark scheme rides the REMOTE launch line as COLORFGBG
+    // (book item 34). The local spawn puts it in the shell's env; over SSH the
+    // local env never reaches the remote, so it is a prefix on the command that
+    // starts claude -- quoted for POSIX (the value carries a `;`), bare inside
+    // the Windows `set "..."` wrapper. The tmux wrap single-quotes the whole
+    // inner command and escapes embedded quotes, so it survives that too.
+    const sshHostColorScheme = resolveHostColorScheme(spawnCfg?.theme, nativeTheme.shouldUseDarkColors)
     const claudeEnvVars = [
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
       clickableQuestions ? '' : 'CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1',
       spawnCfg?.disableBackgroundTasks !== false ? 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1' : '',
+      colorFgBgEnvToken(sshHostColorScheme, isWindowsRemote ? 'windows-cmd' : 'posix'),
     ].filter(Boolean)
     const claudeEnvPrefix = claudeEnvVars.join(' ')
     // Flags common to POSIX + Windows (everything EXCEPT --settings/--mcp-config,
@@ -2657,6 +2665,11 @@ export function spawnPty(
         rows,
         useResumePicker: options?.useResumePicker,
         codexOptions: options?.codexOptions,
+        // Same light/dark signal the local Claude spawn gets (book item 34).
+        hostColorScheme: resolveHostColorScheme(
+          readConfig<{ theme?: string }>('settings')?.theme,
+          nativeTheme.shouldUseDarkColors,
+        ),
       })
       logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
       // Codex sessions never designate a canvas worktree; drop any inherited hint.
