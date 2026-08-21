@@ -15,6 +15,24 @@ import { migrateColorRecords } from './migrateIdentityColors'
 import { configWritesLocked } from '../stores/configWriteLockStore'
 
 /**
+ * The reason to latch writes off after a `config:loadAll` that RESOLVED, or
+ * null when the read was clean. Two failures never reject: the CONFIG dir was
+ * unreachable (`readFailed`: nothing read, not a fresh install), or one or
+ * more files exist but could not be read or parsed (`failedKeys`). Both used
+ * to look like "absent", and absent is what every boot migration and store
+ * treats as "free to write defaults". (ADR-009 pass, beta.16.)
+ */
+export function readFailureLockReason(
+  result: { readFailed?: boolean; failedKeys?: string[] } | null | undefined,
+): string | null {
+  if (!result) return null
+  if (result.readFailed) return 'the app could not reach your configuration folder this launch'
+  const failed = Array.isArray(result.failedKeys) ? result.failedKeys.filter((k) => typeof k === 'string' && k) : []
+  if (failed.length === 0) return null
+  return `the app could not read ${failed.length === 1 ? 'one of your configuration files' : `${failed.length} of your configuration files`} this launch (${failed.join(', ')})`
+}
+
+/**
  * Ids of built-in commands that have been retired and must be removed from any
  * persisted command list on hydrate. `builtin-setup-statusline` was the old
  * "Setup Statusline" command; CCC now auto-configures the statusline on install.
@@ -110,6 +128,11 @@ export function isRetiredAskConfig(config: unknown, helpDir: string): boolean {
 export async function retireAskConfig(
   configData: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  // Never under the write latch: this migration WRITES (configs, app-meta). A
+  // read that failed leaves these sections looking absent, and absent is what
+  // it treats as "free to write". It is idempotent and runs on the next healthy
+  // boot. (ADR-009 pass, beta.16.)
+  if (configWritesLocked()) return configData
   // ABSENT is not CORRUPT, and the difference is the common case: `readConfig`
   // returns NULL for a config file that does not exist, so every install that
   // has never written app-meta.json arrives here with `appMeta: null`. Treating
@@ -176,27 +199,41 @@ export async function retireAskConfig(
 /**
  * Gather all relevant localStorage keys for migration to CONFIG/.
  */
+export const MIGRATED_LOCAL_STORAGE_KEYS: readonly string[] = [
+  'claude-multi-commands',
+  'claude-multi-commands-seeded-v2',
+  'claude-multi-configs',
+  'claude-multi-config-groups',
+  'claude-multi-config-sections',
+  'claude-multi-settings',
+  'claude-multi-magic-buttons',
+  'claude-multi-color-migration-v2',
+  'claude-conductor-setup-version',
+  'claude-conductor-last-seen-version',
+]
+
 export function gatherLocalStorageData(): Record<string, string> {
-  const keys = [
-    'claude-multi-commands',
-    'claude-multi-commands-seeded-v2',
-    'claude-multi-configs',
-    'claude-multi-config-groups',
-    'claude-multi-config-sections',
-    'claude-multi-settings',
-    'claude-multi-magic-buttons',
-    'claude-multi-color-migration-v2',
-    'claude-conductor-setup-version',
-    'claude-conductor-last-seen-version',
-  ]
   const data: Record<string, string> = {}
-  for (const key of keys) {
+  for (const key of MIGRATED_LOCAL_STORAGE_KEYS) {
     const value = localStorage.getItem(key)
     if (value != null) {
       data[key] = value
     }
   }
   return data
+}
+
+/**
+ * Forget the v1 localStorage snapshot once it has been migrated into CONFIG/.
+ * It used to be kept forever, so any later launch that (wrongly or rightly)
+ * decided CONFIG/ was empty would re-migrate it and roll commands, configs and
+ * settings back to the v1 state. The migration is one-way; the snapshot has no
+ * job after it.
+ */
+export function clearMigratedLocalStorage(): void {
+  for (const key of MIGRATED_LOCAL_STORAGE_KEYS) {
+    try { localStorage.removeItem(key) } catch { /* storage unavailable: nothing to forget */ }
+  }
 }
 
 /**
@@ -473,6 +510,10 @@ export function hydrateStores(configData: Record<string, unknown>): void {
 export async function applyConfigColourMigration(
   configData: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  // Never under the write latch (see retireAskConfig): a failed read makes
+  // `settings` look absent, and absent is exactly what this migration writes
+  // over. Idempotent; it runs on the next healthy boot.
+  if (configWritesLocked()) return configData
   // A settings section that is present but NOT a plain object is left exactly
   // as it is, the same way the configs section below is. `|| {}` rejects only
   // FALSY values, so a string or an array is truthy and spreads into

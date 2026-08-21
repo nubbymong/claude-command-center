@@ -63,7 +63,7 @@ import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { flushPendingConfigSaves } from './utils/config-saver'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
-import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration, retireAskConfig } from './utils/configHydration'
+import { gatherLocalStorageData, clearMigratedLocalStorage, hydrateStores, applyConfigColourMigration, retireAskConfig, readFailureLockReason } from './utils/configHydration'
 import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupInsightsListener } from './stores/insightsStore'
@@ -346,6 +346,18 @@ export default function App() {
       console.log('[App] Loading config from CONFIG/...')
       const result = await window.electronAPI.config.loadAll()
 
+      // A read that failed WITHOUT rejecting: the CONFIG dir was unreachable
+      // (`readFailed`), or one or more files exist but could not be read or
+      // parsed (`failedKeys`). Either used to look like "absent" and let the
+      // migrations and the stores write defaults over files that were fine.
+      // Same latch as the catch below, BEFORE anything runs that writes; the
+      // notice offers "start fresh anyway". (ADR-009 pass, beta.16.)
+      const readFailure = readFailureLockReason(result)
+      if (readFailure) {
+        console.error('[App] Config read failed without rejecting:', readFailure)
+        useConfigWriteLockStore.getState().lock(readFailure)
+      }
+
       // Both one-time config migrations run BEFORE the stores hydrate, so a
       // retired record never renders even once.
       const prepare = async (data: Record<string, unknown>) =>
@@ -355,7 +367,10 @@ export default function App() {
         console.log('[App] CONFIG/ is empty, migrating from localStorage...')
         const lsData = gatherLocalStorageData()
         if (Object.keys(lsData).length > 0) {
-          await window.electronAPI.config.migrateFromLocalStorage(lsData)
+          const migrated = await window.electronAPI.config.migrateFromLocalStorage(lsData)
+          // One-way: once the snapshot is in CONFIG/ it must not be re-applied
+          // by a later launch that thinks CONFIG/ is empty.
+          if (migrated) clearMigratedLocalStorage()
           console.log('[App] Migration complete, reloading...')
           const reloaded = await window.electronAPI.config.loadAll()
           hydrateStores(await prepare(reloaded.data))

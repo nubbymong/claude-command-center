@@ -53,6 +53,18 @@ const EMPTY_TRACKING: UsageTracking = {
   tipsActed: {},
 }
 
+/** A UsageTracking whose four maps all exist, whatever shape arrived. */
+export function normaliseTracking(raw: unknown): UsageTracking {
+  const obj = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  const map = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, never>) : {})
+  return {
+    features: map(obj.features),
+    tipsShown: map(obj.tipsShown),
+    tipsDismissed: map(obj.tipsDismissed),
+    tipsActed: map(obj.tipsActed),
+  } as UsageTracking
+}
+
 /**
  * Every feature id THIS BUILD can still write, as one list.
  *
@@ -142,11 +154,11 @@ export function pruneRetiredFeatures(tracking: UsageTracking): UsageTracking {
 /** Decide which content variant to show for a tip given usage state */
 function resolveContent(tip: Tip, tracking: UsageTracking): TipContent | null {
   // Check excludes — if the user has done something that makes this tip irrelevant
-  if (tip.excludes && tip.excludes.some((f) => tracking.features[f])) {
+  if (tip.excludes && tip.excludes.some((f) => (tracking.features ?? {})[f])) {
     return tip.variants.postUse ?? null
   }
   // Check requires — user must have done prerequisite
-  if (tip.requires && !tip.requires.every((f) => tracking.features[f])) {
+  if (tip.requires && !tip.requires.every((f) => (tracking.features ?? {})[f])) {
     return null
   }
   return tip.variants.primary
@@ -165,8 +177,8 @@ function resolveContent(tip: Tip, tracking: UsageTracking): TipContent | null {
  */
 export function countUnseenTips(tracking: UsageTracking): number {
   return TIPS_LIBRARY.filter((tip) => {
-    if (tracking.tipsDismissed[tip.id]) return false
-    if (tracking.tipsShown[tip.id]) return false
+    if ((tracking.tipsDismissed ?? {})[tip.id]) return false
+    if ((tracking.tipsShown ?? {})[tip.id]) return false
     return resolveContent(tip, tracking) !== null
   }).length
 }
@@ -178,9 +190,9 @@ function selectNextTip(tracking: UsageTracking, excludeId?: string): Tip | null 
   const candidates = TIPS_LIBRARY.filter((tip) => {
     if (excludeId && tip.id === excludeId) return false
     // Skip permanently dismissed
-    if (tracking.tipsDismissed[tip.id]) return false
+    if ((tracking.tipsDismissed ?? {})[tip.id]) return false
     // Skip recently shown unless it's been 7+ days
-    const shownAt = tracking.tipsShown[tip.id]
+    const shownAt = (tracking.tipsShown ?? {})[tip.id]
     if (shownAt && Date.now() - shownAt < MIN_REPEAT_MS) return false
     // Must have resolvable content (passes requires/excludes)
     const content = resolveContent(tip, tracking)
@@ -208,8 +220,14 @@ export const useTipsStore = create<TipsState>((set, get) => ({
   currentTipId: null,
   silencedUntilRestart: false,
 
+  // Whatever arrives becomes a VALID UsageTracking: a corrupt or partial
+  // usage-tracking.json is coerced to a plain object (or {}) by hydration, and
+  // an object with no maps used to pass straight through -- then the dock's
+  // render called countUnseenTips on it, threw, and the app-wide ErrorBoundary
+  // took the whole window down on every launch (ADR-009 pass, beta.16). Each
+  // missing map is filled; a non-object map is dropped.
   hydrate: (tracking) =>
-    set({ tracking: pruneRetiredFeatures(tracking || EMPTY_TRACKING), isLoaded: true }),
+    set({ tracking: pruneRetiredFeatures(normaliseTracking(tracking)), isLoaded: true }),
 
   recordUsage: (featureId) => {
     set((state) => {

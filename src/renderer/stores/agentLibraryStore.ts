@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { AgentTemplate, AgentModelOverride } from '../types/electron'
 import { generateId } from '../utils/id'
+import { saveConfigNow } from '../utils/config-saver'
 
 // ── Built-in Templates ──
 
@@ -69,8 +70,15 @@ interface AgentLibraryState {
   getAllTemplates: () => AgentTemplate[]
 }
 
+// Through config-saver, never straight to the IPC: config-saver is where the
+// write latch lives (a failed config READ must never become a WRITE), plus the
+// retry and the health marking. A direct `config.save` here bypassed all
+// three -- one Agent Library action under "your configuration could not be
+// loaded" replaced agent-templates.json with the single new entry (ADR-009
+// pass, beta.16). A test now bans direct `config.save` calls outside the two
+// places that own the latch.
 function saveTemplates(templates: AgentTemplate[]): void {
-  window.electronAPI.config.save('agentTemplates', templates)
+  saveConfigNow('agentTemplates', templates)
 }
 
 export const useAgentLibraryStore = create<AgentLibraryState>((set, get) => ({
