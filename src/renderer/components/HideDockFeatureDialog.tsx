@@ -20,6 +20,12 @@ interface Props {
  *
  * No `onClick` on the backdrop (house rule): Ctrl+C fires click events, so a
  * dismiss-on-backdrop modal gets closed spuriously. Escape cancels.
+ *
+ * The backdrop is `fixed`, not `absolute`, like every other modal here. It is
+ * rendered from inside the sidebar dock, and the sidebar root is `relative`, so
+ * an absolutely-positioned backdrop covers the 256px rail instead of the window
+ * -- the dialog then renders as a squeezed column with its title wrapped. jsdom
+ * has no layout, so only a desktop run shows it.
  */
 const COPY: Record<DockFeature, { title: string; body: string; note: string; confirm: string }> = {
   tips: {
@@ -54,7 +60,7 @@ export default function HideDockFeatureDialog({ feature, onConfirm, onCancel }: 
 
   return (
     <div
-      className="absolute inset-0 z-50 flex items-center justify-center"
+      className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'color-mix(in srgb, var(--color-base) 80%, transparent)' }}
       data-ux-id="hide-dock-feature-backdrop"
     >

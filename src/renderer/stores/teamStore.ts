@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { TeamTemplate, TeamRun, TeamRunStatus } from '../types/electron'
+import { trackUsage } from './tipsStore'
 
 interface TeamState {
   teams: TeamTemplate[]
@@ -72,6 +73,11 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   runTeam: async (teamId, projectPath) => {
     const run = await window.electronAPI.team.run(teamId, projectPath)
     if (run) {
+      // Recorded on a run that actually STARTED, not on save: the tip this
+      // retires says "you can run several agents as a team", and building one
+      // you never ran is not that. Nothing recorded this before, so the tip kept
+      // suggesting teams to people already using them.
+      trackUsage('agents.agent-teams')
       set(state => ({
         runs: [run, ...state.runs],
         selectedRunId: run.id,

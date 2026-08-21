@@ -6,6 +6,7 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { modelsFromRegistry, effortsFromRegistry, PERMISSION_MODES } from '../lib/claude-cli-options'
+import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 
 export type SessionType = 'local' | 'ssh'
@@ -289,6 +290,14 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
     const provider: ProviderId = uiProvider === 'codex' ? 'codex' : 'claude'
     const shellOnly = uiProvider === 'terminal'
+
+    // Both of these gate a tip's "you have already found this" variant, and
+    // neither was ever recorded — so the tips kept explaining effort levels and
+    // SSH sessions to people who had configured both. Recorded on save, not on
+    // every keystroke: choosing a value in a form you then abandon is not using
+    // the feature.
+    if (uiProvider === 'claude' && effortLevel !== '') trackUsage('sessions.effort-level')
+    if (sessionType === 'ssh') trackUsage('sessions.session-type')
 
     // No '.' fallback: the empty-directory default is how the transcript
     // misfiling incident happened; validation above requires a real path.

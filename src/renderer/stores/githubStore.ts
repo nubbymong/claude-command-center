@@ -14,6 +14,7 @@ import type {
 import { DEFAULT_AUTH_FEATURE_TOGGLES, emptyGitHubConfig } from '../../shared/github-constants'
 import { effectiveToggleMap, resolveAiUsageTargetId } from '../../shared/github-features'
 import { useSettingsStore } from './settingsStore'
+import { trackUsage } from './tipsStore'
 
 export interface SessionPanelState {
   panelWidth: number
@@ -172,6 +173,10 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
         profileId === resolveAiUsageTargetId(Object.values(cfg.authProfiles))
       ) {
         await useSettingsStore.getState().updateSettings({ githubAiUsageEnabled: on })
+        // Only on ENABLE: the tip this gates offers to show you the meter, and
+        // someone who has turned it off has answered that offer just as clearly
+        // as someone who turned it on.
+        if (on) trackUsage('github.ai-usage-enabled')
         // Populate (or clear) the meter immediately, mirroring the old
         // AiUsageSettings enable — otherwise the relocated statusline chip would
         // sit on its placeholder until the ~60-min scheduler tick.

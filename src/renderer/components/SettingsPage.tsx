@@ -18,6 +18,7 @@ import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import { SectionLabel } from './ui/SectionLabel'
 import { Kbd } from './ui/Kbd'
+import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
 declare const __BUILD_TIME__: string
@@ -135,6 +136,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
   const sl = settings.statusLine || DEFAULT_STATUS_LINE
 
   const toggleStatusLine = (key: keyof StatusLineSettings) => {
+    // Someone editing what the status line shows has plainly found the feature
+    // the "you can customise your status line" tip exists to point at.
+    trackUsage('productivity.statusline-config')
     save({ statusLine: { ...sl, [key]: !sl[key] } })
   }
 

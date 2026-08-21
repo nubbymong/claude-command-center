@@ -160,6 +160,21 @@ describe('sidebar dock -- hiding a feature', () => {
     expect(useTipsStore.getState().currentTipId).toBeNull()
   })
 
+  it('covers the window, not the sidebar rail', () => {
+    // The dialog is rendered from inside the dock and the sidebar root is
+    // `relative`, so an `absolute` backdrop is scoped to the 256px rail --
+    // which on a real desktop renders the dialog as a squeezed column with a
+    // wrapped title. jsdom has no layout, so the positioning scheme is the
+    // only thing a unit test can hold onto.
+    armTip()
+    render()
+    act(() => { q('sidebar-tip-pill')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })) })
+    act(() => { (q('dock-row-menu-hide') as HTMLButtonElement).click() })
+    const backdrop = q('hide-dock-feature-backdrop')!
+    expect(backdrop.className).toContain('fixed')
+    expect(backdrop.className).not.toContain('absolute')
+  })
+
   it('hides Ask Conductor from its own row, independently of tips', () => {
     armTip()
     render()

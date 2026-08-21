@@ -40,6 +40,9 @@ export interface TipsState {
   markTipActed: (tipId: string) => void
   silenceUntilRestart: () => void
   pickNextTip: () => void
+  /** Record that a tip actually REACHED THE SCREEN. Called by whatever draws it,
+   *  never by whatever chooses it -- see pickNextTip. */
+  markTipShown: (tipId: string) => void
   getCurrentTip: () => { tip: Tip; content: TipContent } | null
 }
 
@@ -48,6 +51,89 @@ const EMPTY_TRACKING: UsageTracking = {
   tipsShown: {},
   tipsDismissed: {},
   tipsActed: {},
+}
+
+/**
+ * Every feature id THIS BUILD can still write, as one list.
+ *
+ * `VIEW_FEATURE_IDS` is imported by App.tsx and is the only place the view →
+ * feature mapping lives. The rest are recorded from literal call sites; they are
+ * repeated here because the prune below needs to know what is still live, and a
+ * grep is not something the code can do at runtime.
+ *
+ * ADD AN ID HERE WHEN YOU ADD A trackUsage CALL. Forgetting is not silent: the
+ * prune drops rows nothing can write and no tip refers to, so an id missing from
+ * this list would have its row deleted on the next launch, and the round-trip
+ * test below fails on any literal call site that is not represented.
+ */
+export const VIEW_FEATURE_IDS: Readonly<Record<string, string>> = {
+  memory: 'memory.memory-page',
+  tokenomics: 'tokenomics.dashboard',
+  vision: 'vision.toggle-vision',
+  insights: 'advanced.insights',
+  logs: 'advanced.log-viewer',
+  'cloud-agents': 'agents.cloud-agent-dispatch',
+}
+
+const DIRECT_FEATURE_IDS: readonly string[] = [
+  'sessions.create-config',
+  'sessions.pin-config',
+  'sessions.duplicate-config',
+  'sessions.effort-level',
+  'sessions.session-type',
+  'commands.create-command',
+  'commands.command-sections',
+  'commands.ctrl-click-args',
+  'security.encrypted-notes',
+  'webview.opened',
+  'productivity.statusline-config',
+  'github.signed-in',
+  'github.panel-toggled',
+  'github.rate-limit-seen',
+  'github.session-enabled',
+  'github.session-context-seen',
+  'github.ai-usage-enabled',
+  'agents.agent-teams',
+]
+
+/**
+ * Every id this build can actually RECORD. Anything else in a user's file is a
+ * row for a feature that no longer exists.
+ *
+ * Deliberately does NOT fold in the ids the tips library gates on. Doing that
+ * was the first cut and it quietly destroyed the one test worth having: if the
+ * set contains every id the library mentions, then "is every id the library
+ * mentions in the set" is true by construction, and a tip gated on something
+ * nothing writes sails through. The library is CHECKED against this set, so it
+ * must not be a member of it.
+ */
+export function knownFeatureIds(): Set<string> {
+  return new Set<string>([...Object.values(VIEW_FEATURE_IDS), ...DIRECT_FEATURE_IDS])
+}
+
+/**
+ * Drop usage rows for features that no longer exist.
+ *
+ * By RULE rather than by a hand-written list of retired ids. A list would have to
+ * be guessed from memory of what the app used to have -- and a guessed id that
+ * never existed makes a prune that cannot fire, which is worse than no prune at
+ * all because it reads as if it were doing something. The rule is checkable
+ * against a real file: on this machine it drops `hooks.gateway-seen`, a row from
+ * the removed hooks gateway, and leaves all thirteen live ones alone.
+ *
+ * Returns the SAME object when there is nothing to drop, so hydrate does not
+ * write a file on every launch for no reason. The write-back is deliberate:
+ * pruning in memory but not on disk would resurrect the rows on the next load.
+ */
+export function pruneRetiredFeatures(tracking: UsageTracking): UsageTracking {
+  const known = knownFeatureIds()
+  const dead = Object.keys(tracking.features ?? {}).filter((id) => !known.has(id))
+  if (dead.length === 0) return tracking
+  const features = { ...tracking.features }
+  for (const id of dead) delete features[id]
+  const next = { ...tracking, features }
+  saveConfigNow('usageTracking', next)
+  return next
 }
 
 /** Decide which content variant to show for a tip given usage state */
@@ -120,7 +206,8 @@ export const useTipsStore = create<TipsState>((set, get) => ({
   currentTipId: null,
   silencedUntilRestart: false,
 
-  hydrate: (tracking) => set({ tracking: tracking || EMPTY_TRACKING, isLoaded: true }),
+  hydrate: (tracking) =>
+    set({ tracking: pruneRetiredFeatures(tracking || EMPTY_TRACKING), isLoaded: true }),
 
   recordUsage: (featureId) => {
     set((state) => {
@@ -172,18 +259,29 @@ export const useTipsStore = create<TipsState>((set, get) => ({
     if (state.silencedUntilRestart) return
     const excludeId = state.currentTipId || undefined
     const tip = selectNextTip(state.tracking, excludeId)
-    if (tip) {
-      set((s) => {
-        const tracking = {
-          ...s.tracking,
-          tipsShown: { ...s.tracking.tipsShown, [tip.id]: Date.now() },
-        }
-        saveConfigNow('usageTracking', tracking)
-        return { tracking, currentTipId: tip.id }
-      })
-    } else {
-      set({ currentTipId: null })
-    }
+    // Picking is NOT showing. This used to stamp tipsShown right here, about two
+    // seconds after launch, whether or not anything ever rendered -- and a
+    // stamped tip does not come back for seven days. Launch onto a page tab
+    // instead of a session, or with the sidebar collapsed and the pane closed,
+    // and the tip was burnt without a single pixel of it reaching the screen.
+    // The stamp now belongs to whoever actually draws it: markTipShown.
+    set({ currentTipId: tip ? tip.id : null })
+  },
+
+  markTipShown: (tipId) => {
+    set((state) => {
+      // Idempotent, and deliberately keeps the FIRST timestamp: this runs from a
+      // render effect, so it fires again on every remount, and refreshing the
+      // stamp would keep pushing the seven-day window out and stop the tip ever
+      // rotating away.
+      if (state.tracking.tipsShown[tipId]) return state
+      const tracking = {
+        ...state.tracking,
+        tipsShown: { ...state.tracking.tipsShown, [tipId]: Date.now() },
+      }
+      saveConfigNow('usageTracking', tracking)
+      return { tracking }
+    })
   },
 
   getCurrentTip: () => {
