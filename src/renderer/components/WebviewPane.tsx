@@ -443,9 +443,12 @@ function StartPage(props: {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center px-6 py-8" data-testid="browser-start">
       <div className="w-full max-w-[520px]">
-        <div className="flex items-center gap-2 mb-1 text-text">
-          <span className="text-overlay1">{Icon.globe}</span>
-          <h2 className="text-base font-semibold">Browser</h2>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-blue">{Icon.globe}</span>
+          {/* Colour ON the heading: an element-level h2 rule somewhere in the
+              imported stylesheets beat the inherited text colour on the VM
+              (the heading came out near-black on the dark start page). */}
+          <h2 className="text-base font-semibold text-text">Browser</h2>
         </div>
         <p className="text-xs text-overlay1 mb-4">A page of your own, beside the terminal. Type an address, or pick a favourite.</p>
         <form
