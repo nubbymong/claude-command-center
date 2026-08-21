@@ -111,6 +111,8 @@ describe('validation — bad args REJECT before the store is ever called', () =>
     [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'plan' } }],
     [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: '' } }],
     [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: 'x', sneak: true } }],
+    [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: 'x', title: 't'.repeat(201) } }],
+    [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: 'x', title: 42 } }],
     [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'uat' } }],
     [IPC.CANVAS_SET_ACTIVE_VERSION, { sessionId: SID, versionId: 'nope' }],
     [IPC.CANVAS_SET_ACTIVE_VERSION, { sessionId: SID, versionId: 'v1x' }],
@@ -135,6 +137,14 @@ describe('happy paths delegate to the store', () => {
     expect(storeMock.renderVersion).toHaveBeenCalledWith(SID, { mode: 'design', html: '<p>x</p>' })
     await invoke(IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'uat', distRoot: 'F:/x/dist', entry: 'index.html' } })
     expect(storeMock.renderVersion).toHaveBeenCalledWith(SID, { mode: 'uat', distRoot: 'F:/x/dist', entry: 'index.html' })
+  })
+
+  it('render carries the SUBJECT through -- the store decides new-version vs new-canvas from it', async () => {
+    storeMock.renderVersion.mockReturnValue({ canvasId: 'c', versionId: 'v1' })
+    await invoke(IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'design', html: '<p>x</p>', title: 'Checkout flow' } })
+    expect(storeMock.renderVersion).toHaveBeenCalledWith(SID, { mode: 'design', html: '<p>x</p>', title: 'Checkout flow' })
+    await invoke(IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'uat', distRoot: 'F:/x/dist', title: 'Live site' } })
+    expect(storeMock.renderVersion).toHaveBeenCalledWith(SID, { mode: 'uat', distRoot: 'F:/x/dist', title: 'Live site' })
   })
 
   it('setActiveVersion', async () => {
