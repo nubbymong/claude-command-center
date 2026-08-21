@@ -209,3 +209,136 @@ describe('atlasCoordinator', () => {
     expect(b).toBe(0)                  // B is this frame's source
   })
 })
+
+/**
+ * The generation counter — the backstop that turns "usually repaired" into
+ * "repaired".
+ *
+ * The frame pass only reaches terminals registered and alive in that frame. A
+ * terminal that registers a frame later, or whose resync throws mid-teardown,
+ * would otherwise stay corrupted with no way to discover it. Every clear bumps
+ * a generation; each terminal records the one it last resynced against; and
+ * `resyncIfBehind` lets it catch up on activation.
+ */
+describe('atlasCoordinator — generation backstop (#311)', () => {
+  it('does nothing for a terminal that is already current', () => {
+    const { raf } = makeRaf()
+    const coord = createAtlasCoordinator(raf)
+    let a = 0
+    const rA = () => { a++ }
+    coord.register(rA)
+    expect(coord.resyncIfBehind(rA)).toBe(false)
+    expect(a).toBe(0)
+  })
+
+  it('bumps the generation the moment the atlas is cleared, not when the frame runs', () => {
+    // The bump must not wait for the frame: everything registered is behind the
+    // instant the shared texture is emptied, whether or not a frame ever fires.
+    const { raf, flush } = makeRaf()
+    const coord = createAtlasCoordinator(raf)
+    const rA = () => {}
+    coord.register(rA)
+    expect(coord.generation()).toBe(0)
+    coord.notifyCleared(rA)
+    expect(coord.generation()).toBe(1)
+    flush()
+    expect(coord.generation()).toBe(1)
+  })
+
+  it('catches up a terminal the frame pass never reached', () => {
+    const { raf, flush } = makeRaf()
+    const coord = createAtlasCoordinator(raf)
+    let a = 0, late = 0
+    const rA = () => { a++ }
+    const rLate = () => { late++ }
+    coord.register(rA)
+
+    coord.notifyCleared(rA)
+    flush()
+    expect(a).toBe(0) // the source; already current
+
+    // A terminal registering NOW starts current — its model was built against
+    // the atlas as it stands, so it owes nothing.
+    coord.register(rLate)
+    expect(coord.resyncIfBehind(rLate)).toBe(false)
+    expect(late).toBe(0)
+
+    // But the next clear leaves it behind, and if it is not visible in that
+    // frame the pass is the only thing that would have reached it.
+    coord.notifyCleared(rA)
+    flush()
+    expect(late).toBe(1)
+    // Having been reached, it is current again.
+    expect(coord.resyncIfBehind(rLate)).toBe(false)
+    expect(late).toBe(1)
+  })
+
+  it('retries a terminal whose resync THREW, rather than assuming it landed', () => {
+    // A resync that throws did not repair anything. Marking it current would
+    // strand that terminal blank for the rest of the session — the exact class
+    // of miss the counter exists to close.
+    const { raf, flush } = makeRaf()
+    const coord = createAtlasCoordinator(raf)
+    let attempts = 0
+    let failing = true
+    const rFlaky = () => { attempts++; if (failing) throw new Error('mid-teardown') }
+    const rOther = () => {}
+    coord.register(rFlaky)
+    coord.register(rOther)
+
+    coord.notifyCleared(rOther)
+    flush()
+    expect(attempts).toBe(1)          // tried
+    failing = false
+    expect(coord.resyncIfBehind(rFlaky)).toBe(true)  // and still owed
+    expect(attempts).toBe(2)
+    expect(coord.resyncIfBehind(rFlaky)).toBe(false) // now current
+  })
+
+  it('still reports terminals as behind when scheduling the frame failed', () => {
+    // raf throwing means no pass will EVER run for that clear. The atlas was
+    // still emptied, so the generation must reflect it and activation must
+    // repair — otherwise one bad frame silently gives up on every terminal.
+    const coord = createAtlasCoordinator(() => { throw new Error('no raf') })
+    let b = 0
+    const rA = () => {}
+    const rB = () => { b++ }
+    coord.register(rA)
+    coord.register(rB)
+
+    coord.notifyCleared(rA)
+    expect(coord.generation()).toBe(1)
+    expect(coord.resyncIfBehind(rB)).toBe(true)
+    expect(b).toBe(1)
+  })
+
+  it('ignores an unregistered callback', () => {
+    const { raf } = makeRaf()
+    const coord = createAtlasCoordinator(raf)
+    let ghost = 0
+    const rGhost = () => { ghost++ }
+    const rA = () => {}
+    coord.register(rA)
+    coord.notifyCleared(rA)
+    // A torn-down terminal has no model here to reason about; repainting it
+    // would be a repaint with no owner.
+    expect(coord.resyncIfBehind(rGhost)).toBe(false)
+    expect(ghost).toBe(0)
+  })
+
+  it('does not accumulate debt: two clears then one catch-up is one resync', () => {
+    const coord = createAtlasCoordinator(() => { throw new Error('no raf') })
+    let b = 0
+    const rA = () => {}
+    const rB = () => { b++ }
+    coord.register(rA)
+    coord.register(rB)
+
+    coord.notifyCleared(rA)
+    coord.notifyCleared(rA)
+    expect(coord.generation()).toBe(2)
+    coord.resyncIfBehind(rB)
+    expect(b).toBe(1)                 // one repaint, not one per clear
+    expect(coord.resyncIfBehind(rB)).toBe(false)
+  })
+})

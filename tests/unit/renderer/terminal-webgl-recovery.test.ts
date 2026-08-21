@@ -4,7 +4,7 @@
  * without needing a real GPU or DOM.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { installWebglWithRecovery, createAtlasRefresh, DEFAULT_MAX_RECREATES, DEFAULT_STABLE_PERIOD_MS } from '../../../src/renderer/components/terminal/terminalWebgl'
+import { installWebglWithRecovery, createAtlasResync, DEFAULT_MAX_RECREATES, DEFAULT_STABLE_PERIOD_MS } from '../../../src/renderer/components/terminal/terminalWebgl'
 
 describe('installWebglWithRecovery', () => {
   let contextLossCallback: (() => void) | null
@@ -361,48 +361,53 @@ describe('installWebglWithRecovery', () => {
 })
 
 // ---------------------------------------------------------------------------
-// createAtlasRefresh: the coordinator callback is inert without live WebGL
+// createAtlasResync: clear this terminal's OWN model, THEN repaint — and only
+// while WebGL is live here.
 // ---------------------------------------------------------------------------
 
-describe('createAtlasRefresh', () => {
-  it('repaints while WebGL is live on this terminal', () => {
-    let refreshes = 0
+describe('createAtlasResync', () => {
+  it('clears this terminal\'s own model BEFORE repainting', () => {
+    // The order is the fix. Refreshing a victim whose model still says "nothing
+    // changed" is what paints it blank: _updateModel keeps the stale vertices
+    // and draws them against the atlas the other terminal just emptied.
+    const calls: string[] = []
     const handle = { isActive: () => true, clearTextureAtlas: () => true }
-    createAtlasRefresh(() => handle as any, () => { refreshes++ })()
-    expect(refreshes).toBe(1)
+    createAtlasResync(() => handle as any, () => calls.push('clear'), () => calls.push('refresh'))()
+    expect(calls).toEqual(['clear', 'refresh'])
   })
 
-  it('does not repaint a terminal whose WebGL never loaded', () => {
-    let refreshes = 0
+  it('does nothing at all for a terminal whose WebGL never loaded', () => {
     // installWebglWithRecovery swallows an initial load failure and hands back a
-    // handle that is simply never active — the DOM renderer is doing the work
-    // and its viewport is already correct.
+    // handle that is simply never active — the DOM renderer is doing the work,
+    // holds no shared atlas, and its viewport is already correct. Clearing its
+    // model would be a visible repaint for no reason.
+    const calls: string[] = []
     const handle = { isActive: () => false, clearTextureAtlas: () => false }
-    createAtlasRefresh(() => handle as any, () => { refreshes++ })()
-    expect(refreshes).toBe(0)
+    createAtlasResync(() => handle as any, () => calls.push('clear'), () => calls.push('refresh'))()
+    expect(calls).toEqual([])
   })
 
-  it('stops repainting once a terminal falls back to the DOM renderer for good', () => {
-    let refreshes = 0
+  it('stops once a terminal falls back to the DOM renderer for good', () => {
+    const calls: string[] = []
     let live = true
     const handle = { isActive: () => live, clearTextureAtlas: () => live }
-    const cb = createAtlasRefresh(() => handle as any, () => { refreshes++ })
+    const cb = createAtlasResync(() => handle as any, () => calls.push('clear'), () => calls.push('refresh'))
 
     cb()
-    expect(refreshes).toBe(1)
+    expect(calls).toEqual(['clear', 'refresh'])
 
     // Context-loss storm hit the recreate cap: WebGL is gone for this terminal.
     // Registration happened at mount, so only a liveness check inside the
     // callback can notice.
     live = false
     cb()
-    expect(refreshes).toBe(1)
+    expect(calls).toEqual(['clear', 'refresh'])
   })
 
-  it('does not repaint before the handle exists', () => {
-    let refreshes = 0
-    createAtlasRefresh(() => null, () => { refreshes++ })()
-    expect(refreshes).toBe(0)
+  it('does nothing before the handle exists', () => {
+    const calls: string[] = []
+    createAtlasResync(() => null, () => calls.push('clear'), () => calls.push('refresh'))()
+    expect(calls).toEqual([])
   })
 })
 
