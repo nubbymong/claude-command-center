@@ -40,10 +40,14 @@ export default function AgentCanvasButton({ sessionId }: Props) {
   // you cannot see. The pill shows the total; the tooltip splits it.
   const totals = useCanvasTotalsStore((s) => s.bySessionId[sessionId])
   const refreshTotals = useCanvasTotalsStore((s) => s.refresh)
-  const totalOpen = totals?.loaded ? Math.max(totals.openReviews, openReviews) : openReviews
-  // Open on OTHER canvases. Derived from the sweep when it is loaded; the
-  // on-screen canvas's count comes from the live mirror, which is fresher.
+  // Open on OTHER canvases: the sweep's total minus the sweep's view of the
+  // on-screen canvas. The on-screen canvas itself comes from the live mirror,
+  // which is fresher in both directions -- a review sent here shows before the
+  // sweep catches up, and one closed here drops before it does. So the total
+  // is "the sweep's others + the mirror's here", never a max of the two (a max
+  // kept a stale high after a close, which a review pointed out).
   const elsewhere = totals?.loaded ? Math.max(0, totals.openReviews - totals.onActive) : 0
+  const totalOpen = elsewhere + openReviews
   const unknown = totals?.loaded ? totals.unknown : 0
   // From TWO on this canvas (the rule above) — OR from ONE when any of it is
   // on a canvas you are not looking at, because that one is invisible from

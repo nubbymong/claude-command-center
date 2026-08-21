@@ -91,12 +91,23 @@ describe('the pill spans canvases', () => {
     act(() => { seedMirror([review('R1', 'submitted'), review('R2', 'submitted')]); seedTotals({ canvases: 1, openReviews: 2, onActive: 2 }) })
     expect(pill()?.textContent).toBe('2')
   })
-  it('the live mirror wins for this canvas when it is fresher than the sweep', async () => {
+  it('the live mirror wins for this canvas when it is fresher than the sweep -- UP', async () => {
     // Sweep says 1 in total; the mirror already knows a second review was sent here.
     seedMirror([review('R1', 'submitted'), review('R2', 'submitted')])
     seedTotals({ canvases: 1, openReviews: 1, onActive: 1 })
     render()
     expect(pill()?.textContent).toBe('2')
+  })
+  it('the live mirror wins for this canvas when it is fresher than the sweep -- DOWN (a close here drops the pill before the sweep catches up)', async () => {
+    // Sweep still says 3 here + 1 elsewhere; the mirror knows all three here were just closed.
+    seedMirror([review('R1', 'resolved'), review('R2', 'resolved'), review('R3', 'resolved')])
+    seedTotals({ canvases: 2, openReviews: 4, onActive: 3 })
+    render()
+    expect(pill()?.textContent).toBe('1')          // only the one elsewhere
+    expect(pill()?.getAttribute('data-elsewhere')).toBe('1')
+    // And with nothing elsewhere either, the pill goes away entirely.
+    act(() => { seedTotals({ canvases: 1, openReviews: 3, onActive: 3 }) })
+    expect(pill()).toBeNull()
   })
   it('says when canvases could not be read instead of calling them clear', async () => {
     seedMirror([])
