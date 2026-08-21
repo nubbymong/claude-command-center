@@ -116,6 +116,28 @@ describe('CodexProvider', () => {
     expect(out.env.CLAUDE_MULTI_SESSION_ID).toBe('session-xyz')
   })
 
+  // Book item 34: the host's light/dark scheme reached only the local Claude
+  // spawn; Codex sessions never got COLORFGBG.
+  describe('COLORFGBG (host light/dark scheme)', () => {
+    const base = { sessionId: 'sid', codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' as const } }
+    beforeEach(() => { delete process.env.COLORFGBG })
+    afterEach(() => { delete process.env.COLORFGBG })
+    it('stamps the light value when the host is light', () => {
+      expect(new CodexProvider().buildSpawnCommand({ ...base, hostColorScheme: 'light' }).env.COLORFGBG).toBe('0;15')
+    })
+    it('stamps the dark value when the host is dark', () => {
+      expect(new CodexProvider().buildSpawnCommand({ ...base, hostColorScheme: 'dark' }).env.COLORFGBG).toBe('15;0')
+    })
+    it('leaves it alone when the host scheme is unspecified', () => {
+      expect(new CodexProvider().buildSpawnCommand(base).env.COLORFGBG).toBeUndefined()
+    })
+    it('is the SAME encoding the Claude spawn uses (one definition)', async () => {
+      const { buildClaudeLocalSpawn } = await import('../../../../src/main/providers/claude/spawn')
+      const claude = buildClaudeLocalSpawn({ sessionId: 'sid', cwd: '/w', cols: 80, rows: 24, hostColorScheme: 'light' }).env.COLORFGBG
+      expect(new CodexProvider().buildSpawnCommand({ ...base, hostColorScheme: 'light' }).env.COLORFGBG).toBe(claude)
+    })
+  })
+
   it('injects per-spawn conductor MCP -c flags + bearer-token env when the MCP port is live (U6)', () => {
     ;(globalThis as any).__mockMcpPort = 19333
     try {
