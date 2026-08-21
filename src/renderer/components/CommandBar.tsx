@@ -87,9 +87,16 @@ interface Props {
    * Defaults to `sessionId` so single-pane TerminalViews keep working.
    */
   parentSessionId?: string
+  /**
+   * True when the session's MAIN pane is a plain shell (terminal-only config)
+   * rather than Claude. Drives the row's name -- calling that row "Claude" on a
+   * session with no Claude in it would be exactly the lie the named rows exist
+   * to stop -- and tells the dialog not to offer "send a prompt to Claude".
+   */
+  mainPaneIsShell?: boolean
 }
 
-export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId }: Props) {
+export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, mainPaneIsShell = false }: Props) {
   const webviewKey = parentSessionId ?? sessionId
   const resolvedTheme = useResolvedTheme()
   const { commands, sections, addCommand, updateCommand, removeCommand, reorderCommands, updateSection, removeSection, reorderSections } = useCommandStore()
@@ -389,7 +396,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const isDragOver = dragOverId === cmd.id
     const hasArgs = (cmd.defaultArgs && cmd.defaultArgs.length > 0) || (cmd.lastCustomArgs && cmd.lastCustomArgs.length > 0)
     const isGlobal = cmd.scope === 'global'
-    const runsIn = cmd.target === 'partner' ? 'the partner shell' : 'the Claude terminal'
+    const runsIn = cmd.target === 'partner' ? 'the partner shell' : (mainPaneIsShell ? 'this shell' : 'the Claude terminal')
     const scopeLine = isGlobal
       ? 'Global: this button is in every config, and editing or deleting it changes all of them.'
       : 'This config only.'
@@ -665,13 +672,13 @@ ${scopeLine}`
           {(
             <div className="flex items-center gap-1 px-2 py-0.5 border-t overflow-x-auto" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }} onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
               {/* Section icon: Claude asterisk -- quiet leading label */}
-              <div className="shrink-0 flex items-center gap-1" title="Runs in the Claude terminal" style={{ color: 'var(--text-muted)' }}>
+              <div className="shrink-0 flex items-center gap-1" title={mainPaneIsShell ? 'Runs in this shell' : 'Runs in the Claude terminal'} style={{ color: 'var(--text-muted)' }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
                 </svg>
                 {/* Named, because an icon alone did not say WHERE a button runs
                     -- which is the whole point of splitting the rows. */}
-                <span className="text-[10px] uppercase tracking-wide">Claude</span>
+                <span className="text-[10px] uppercase tracking-wide">{mainPaneIsShell ? 'Shell' : 'Claude'}</span>
               </div>
               <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
               {renderGroupedCommands(claudeCommands, 'claude')}
@@ -688,7 +695,10 @@ ${scopeLine}`
                   <polyline points="17 8 21 12 17 16" />
                   <line x1="14" y1="4" x2="10" y2="20" />
                 </svg>
-                <span className="text-[10px] uppercase tracking-wide">Shell</span>
+                {/* "Shell" beside Claude; but when the MAIN pane is a shell too,
+                    two rows both called Shell say nothing, so this one becomes
+                    "Partner". */}
+                <span className="text-[10px] uppercase tracking-wide">{mainPaneIsShell ? 'Partner' : 'Shell'}</span>
               </div>
               <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
               {renderGroupedCommands(partnerCommands, 'partner')}
@@ -703,6 +713,7 @@ ${scopeLine}`
           onConfirm={handleAdd}
           onCancel={() => setShowDialog(false)}
           configId={configId}
+          mainPaneIsShell={mainPaneIsShell}
         />
       )}
       {editingCommand && (
@@ -711,6 +722,7 @@ ${scopeLine}`
           onCancel={() => setEditingCommand(null)}
           initial={editingCommand}
           configId={configId}
+          mainPaneIsShell={mainPaneIsShell}
         />
       )}
       {contextMenu && (
