@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest'
 import { decideUpgradeFlow, entriesSince, bootWhatsNewSurface } from '../../../src/renderer/onboarding/upgrade-flow'
 import { compareVersions, crossedReleaseLine, releaseLine } from '../../../src/shared/version-order'
-import { cardsFor } from '../../../src/renderer/onboarding/WhatsNewV2Step'
+import { sectionsFor } from '../../../src/renderer/onboarding/WhatsNewV2Step'
 
 describe('compareVersions', () => {
   it('orders the release tuple', () => {
@@ -178,41 +178,60 @@ describe('entriesSince', () => {
   })
 })
 
-describe('cardsFor — which highlights the upgrade page shows', () => {
+describe('sectionsFor — which highlights the upgrade page shows', () => {
+  // Was `cardsFor`, returning a flat list of paragraph cards. The page is now
+  // named sections with one line per item (user call 2026-08-21); the cohort
+  // rules underneath are unchanged, so these are the same assertions against
+  // the flattened item titles.
+  const titlesFor = (from: string | undefined, to: string) =>
+    sectionsFor(from, to).flatMap((s) => s.items.map((i) => i.title))
+
   it('shows the 2.1 story to someone coming from 2.0', () => {
-    const titles = cardsFor('2.0.4', '2.1.0').map((c) => c.title)
-    expect(titles).toContain('A new name')
-    expect(titles).toContain('The Agent Canvas')
+    const titles = titlesFor('2.0.4', '2.1.0')
+    expect(titles).toContain('New name.')
+    expect(titles).toContain('Agent Canvas.')
     // They lived through 2.0; re-announcing it is noise.
-    expect(titles).not.toContain('This guided setup')
+    expect(titles).not.toContain('Guided setup.')
   })
 
   it('shows both to someone arriving from 1.x', () => {
-    const titles = cardsFor('1.5.45', '2.1.0').map((c) => c.title)
-    expect(titles).toContain('This guided setup')
-    expect(titles).toContain('A new name')
+    const titles = titlesFor('1.5.45', '2.1.0')
+    expect(titles).toContain('Guided setup.')
+    expect(titles).toContain('New name.')
     // Oldest first: the order the app actually changed in.
-    expect(titles.indexOf('This guided setup')).toBeLessThan(titles.indexOf('A new name'))
+    expect(titles.indexOf('Guided setup.')).toBeLessThan(titles.indexOf('New name.'))
   })
 
   it('shows both when the stored version cannot be read', () => {
-    expect(cardsFor(undefined, '2.1.0').map((c) => c.title)).toContain('This guided setup')
-    expect(cardsFor('garbage', '2.1.0').map((c) => c.title)).toContain('A new name')
+    expect(titlesFor(undefined, '2.1.0')).toContain('Guided setup.')
+    expect(titlesFor('garbage', '2.1.0')).toContain('New name.')
   })
 
   it('keeps a beta tester on the 2.1 set', () => {
-    const titles = cardsFor('2.1.0-beta.13', '2.1.0-beta.14').map((c) => c.title)
-    expect(titles).toContain('A new name')
-    expect(titles).not.toContain('This guided setup')
+    const titles = titlesFor('2.1.0-beta.13', '2.1.0-beta.14')
+    expect(titles).toContain('New name.')
+    expect(titles).not.toContain('Guided setup.')
   })
 
   it('falls back to the NEWEST set on a future line, never the oldest', () => {
-    // 2.2 has no card set yet. Showing 2.0 content under a "What's new in 2.2"
+    // 2.2 has no set yet. Showing 2.0 content under a "What's new in 2.2"
     // heading is the bug this page already had once; the newest known set is
     // the least wrong thing to show.
-    const titles = cardsFor('2.1.0', '2.2.0').map((c) => c.title)
-    expect(titles).toContain('A new name')
-    expect(titles).not.toContain('This guided setup')
+    const titles = titlesFor('2.1.0', '2.2.0')
+    expect(titles).toContain('New name.')
+    expect(titles).not.toContain('Guided setup.')
+  })
+
+  it('every line stays ONE line — the whole point of the rewrite', () => {
+    // The rejected version had 3-4 sentence descriptions per card. A cap that
+    // no input can trip is worse than none, so this is deliberately tight
+    // enough to fail if someone pastes a paragraph back in.
+    for (const s of [...sectionsFor('2.0.0', '2.1.0'), ...sectionsFor('1.0.0', '2.1.0')]) {
+      for (const it of s.items) {
+        expect(it.desc.length, `${it.title} is too long for one line`).toBeLessThanOrEqual(110)
+        expect(it.title.length, `${it.title} is not a short lead-in`).toBeLessThanOrEqual(32)
+      }
+    }
   })
 })
 
