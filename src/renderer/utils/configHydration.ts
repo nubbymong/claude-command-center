@@ -7,7 +7,8 @@ import { useTipsStore, UsageTracking } from '../stores/tipsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useAgentLibraryStore } from '../stores/agentLibraryStore'
 import { useTeamStore } from '../stores/teamStore'
-import { useCommandBarStore } from '../stores/commandBarStore'
+import { useCommandBarStore, coerceCommandBarUi } from '../stores/commandBarStore'
+import { assignCommandOrder, dissolveGlobalSections, reviewCommandsForUpgrade, COMMAND_UPGRADE_VERSION } from '../lib/command-upgrade'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { useBrowserStore } from '../stores/browserStore'
 import { ASK_LABEL, ASK_LEGACY_LABEL } from '../lib/askConductor'
@@ -439,10 +440,55 @@ export function hydrateStores(configData: Record<string, unknown>): void {
     commands = retargeted
     saveCommands(commands, "Migrated commands off the retired 'any' target")
   }
-  const commandSections = coerceArray(configData.commandSections, 'commandSections', warnings) as unknown as CommandSection[]
-  useCommandStore.getState().hydrate(commands, commandSections)
-
+  let commandSections = coerceArray(configData.commandSections, 'commandSections', warnings) as unknown as CommandSection[]
   const configs = coerceArray(configData.configs, 'configs', warnings)
+
+  // ---- The one-row command bar's upgrade path (ADR-018 M1, M2, D13) ----------
+  // Same write latch as the migrations above: computed every launch, persisted
+  // only when the config was read cleanly.
+  const saveSections = (value: CommandSection[], why: string): void => {
+    const locked = configWritesLocked()
+    if (locked) { console.warn(`[configHydration] ${why} computed but NOT saved: ${locked}`); return }
+    window.electronAPI.config.save('commandSections', value)
+    console.log(`[configHydration] ${why}`)
+  }
+  // M2: a user section literally named "Global" whose buttons are all global
+  // merges into the fixed Global band; a mixed one is renamed and kept.
+  const dissolved = dissolveGlobalSections(commands, commandSections)
+  if (dissolved.sections !== commandSections) {
+    commandSections = dissolved.sections
+    saveSections(commandSections, 'Dissolved/renamed user section(s) named "Global"')
+  }
+  if (dissolved.commands !== commands) {
+    commands = dissolved.commands
+    saveCommands(commands, 'Cleared the section of commands whose "Global" section was dissolved')
+  }
+  // M1: every command gets an order within its band, from the position it has.
+  const ordered = assignCommandOrder(commands)
+  if (ordered !== commands) {
+    commands = ordered
+    saveCommands(commands, 'Assigned per-band order to commands')
+  }
+  // D13: ONE review of existing commands against the new model -- tags only,
+  // never a behaviour change. Runs once per version; skipped entirely while
+  // writes are locked so dismissals and the "done" marker can never go missing.
+  const commandBarUi = coerceCommandBarUi(coerceObject(configData.commandBarUi, 'commandBarUi', warnings))
+  if (commandBarUi.upgradeReviewVersion < COMMAND_UPGRADE_VERSION && !configWritesLocked()) {
+    const facts = (configs as Array<Record<string, unknown>>).map((c) => ({
+      id: String(c.id ?? ''),
+      shellOnly: c.shellOnly === true,
+      sessionType: c.sessionType === 'ssh' ? 'ssh' as const : 'local' as const,
+    }))
+    const reviewed = reviewCommandsForUpgrade(commands, { configs: facts, dissolvedCommandIds: dissolved.dissolvedCommandIds })
+    if (reviewed !== commands) {
+      commands = reviewed
+      saveCommands(commands, `Tagged ${reviewed.filter((c) => c.needsReview).length} command(s) for upgrade review`)
+    }
+    commandBarUi.upgradeReviewVersion = COMMAND_UPGRADE_VERSION
+    window.electronAPI.config.save('commandBarUi', commandBarUi)
+  }
+  useCommandStore.getState().hydrate(commands, commandSections)
+  useCommandBarStore.getState().hydrate(commandBarUi)
   const groups = coerceArray(configData.configGroups, 'configGroups', warnings)
   const sections = coerceArray(configData.configSections, 'configSections', warnings)
   useConfigStore.getState().hydrate(configs as any, groups as any, sections as any)
@@ -473,8 +519,7 @@ export function hydrateStores(configData: Record<string, unknown>): void {
     : (coerceObject(configData.usageTracking, 'usageTracking', warnings) as unknown as UsageTracking)
   useTipsStore.getState().hydrate(usageTracking as UsageTracking)
 
-  const commandBarUi = coerceObject(configData.commandBarUi, 'commandBarUi', warnings) as { collapsedSectionIds?: string[]; barCollapsed?: boolean }
-  useCommandBarStore.getState().hydrate(commandBarUi)
+  // (commandBarUi is hydrated above, beside the commands it governs.)
 
   // excalidraw keeps its { bySessionId: {} } default when absent.
   const excalidraw = configData.excalidraw == null
