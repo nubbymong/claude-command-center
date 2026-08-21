@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { saveConfigNow } from '../utils/config-saver'
 import { generateId } from '../utils/id'
-import { isAllowedBrowserUrl } from '../../shared/browser-url'
+import { isAllowedBrowserUrl, cleanDisplayText } from '../../shared/browser-url'
 
 /**
  * What the browser pane REMEMBERS across restarts: saved favourites (one list,
@@ -16,7 +16,10 @@ import { isAllowedBrowserUrl } from '../../shared/browser-url'
  * is per SESSION and volatile -- that stays in webviewStore.
  *
  * Every URL that enters this store is re-checked against the one shared rule
- * (http/https); a hand-edited browser.json cannot plant a file:// favourite.
+ * (http/https, no credentials, bounded); a hand-edited browser.json cannot
+ * plant a file:// favourite. Every record field is bounded on the way in --
+ * ids, titles, config ids -- and titles are cleaned of control/bidi
+ * characters, because the favourites bar RENDERS them.
  */
 export interface BrowserFavourite {
   id: string
@@ -49,22 +52,38 @@ interface Actions {
 
 const MAX_FAVOURITES = 200
 const MAX_TITLE = 200
+const MAX_ID = 64
+const MAX_CONFIG_ID = 200
+
+/** A favourite id as stored: the app's own ids are 24 hex, but a hand-edited
+ *  file could hold anything, and an id is a React key and a delete handle --
+ *  it must be bounded, plain, and unique within the list. */
+function cleanId(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw || raw.length > MAX_ID) return null
+  return /^[A-Za-z0-9_-]+$/.test(raw) ? raw : null
+}
 
 function sanitiseFavourites(raw: unknown): BrowserFavourite[] {
   if (!Array.isArray(raw)) return []
   const out: BrowserFavourite[] = []
-  const seen = new Set<string>()
+  const seenUrl = new Set<string>()
+  const seenId = new Set<string>()
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue
     const f = item as Partial<BrowserFavourite>
     if (!isAllowedBrowserUrl(f.url)) continue
     const url = f.url
-    if (seen.has(url)) continue
-    seen.add(url)
+    if (seenUrl.has(url)) continue
+    seenUrl.add(url)
+    let id = cleanId(f.id) ?? generateId()
+    // Two records with one id would both vanish on a single remove and
+    // collide as React keys; the second gets a fresh id.
+    while (seenId.has(id)) id = generateId()
+    seenId.add(id)
     out.push({
-      id: typeof f.id === 'string' && f.id ? f.id : generateId(),
+      id,
       url,
-      title: typeof f.title === 'string' ? f.title.slice(0, MAX_TITLE) : '',
+      title: cleanDisplayText(f.title, MAX_TITLE),
       addedAt: typeof f.addedAt === 'number' && Number.isFinite(f.addedAt) ? f.addedAt : 0,
     })
     if (out.length >= MAX_FAVOURITES) break
@@ -76,12 +95,18 @@ function sanitiseFavourites(raw: unknown): BrowserFavourite[] {
  *  object: assigning them does something other than store a value. */
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
+/** The one rule for a config id as a home-page key: the app's own ids, bounded,
+ *  never a prototype key. Applied on hydrate AND on setHome so a key that
+ *  would be dropped at the next start is never accepted now. */
+function isUsableConfigId(configId: unknown): configId is string {
+  return typeof configId === 'string' && configId.length > 0 && configId.length <= MAX_CONFIG_ID && !FORBIDDEN_KEYS.has(configId)
+}
+
 function sanitiseHomes(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
   const out: Record<string, string> = {}
   for (const [configId, url] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof configId !== 'string' || !configId || configId.length > 200) continue
-    if (FORBIDDEN_KEYS.has(configId)) continue
+    if (!isUsableConfigId(configId)) continue
     if (!isAllowedBrowserUrl(url)) continue
     out[configId] = url
   }
@@ -117,7 +142,7 @@ export const useBrowserStore = create<State & Actions>((set, get) => ({
     const fav: BrowserFavourite = {
       id: generateId(),
       url,
-      title: (title ?? '').slice(0, MAX_TITLE),
+      title: cleanDisplayText(title ?? '', MAX_TITLE),
       addedAt: Date.now(),
     }
     const favourites = [...get().favourites, fav]
@@ -142,10 +167,10 @@ export const useBrowserStore = create<State & Actions>((set, get) => ({
   isFavourite: (url) => get().favourites.some((f) => f.url === url),
 
   setHome: (configId, url) => {
-    if (!configId || FORBIDDEN_KEYS.has(configId)) return
+    if (!isUsableConfigId(configId)) return
     const homeByConfig = { ...get().homeByConfig }
     if (url === null) {
-      if (!(configId in homeByConfig)) return
+      if (!Object.hasOwn(homeByConfig, configId)) return
       delete homeByConfig[configId]
     } else {
       if (!isAllowedBrowserUrl(url)) return
@@ -156,5 +181,11 @@ export const useBrowserStore = create<State & Actions>((set, get) => ({
     persist({ favourites: get().favourites, homeByConfig })
   },
 
-  homeFor: (configId) => (configId ? get().homeByConfig[configId] ?? null : null),
+  // Own-property read: `homeByConfig['constructor']` on a plain object is a
+  // function, not a URL.
+  homeFor: (configId) => {
+    if (!configId) return null
+    const homes = get().homeByConfig
+    return Object.hasOwn(homes, configId) ? homes[configId] : null
+  },
 }))

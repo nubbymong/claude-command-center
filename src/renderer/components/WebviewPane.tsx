@@ -61,7 +61,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
 
   const configId = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.configId)
   const favourites = useBrowserStore((s) => s.favourites)
-  const persistedHome = useBrowserStore((s) => (configId ? s.homeByConfig[configId] ?? null : null))
+  const persistedHome = useBrowserStore((s) => s.homeFor(configId))
   const toggleFavourite = useBrowserStore((s) => s.toggleFavourite)
   const removeFavourite = useBrowserStore((s) => s.removeFavourite)
   const setConfigHome = useBrowserStore((s) => s.setHome)

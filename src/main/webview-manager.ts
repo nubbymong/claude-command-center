@@ -1,8 +1,8 @@
-import { BrowserWindow, WebContentsView, net, session, shell } from 'electron'
+import { BrowserWindow, WebContentsView, net, session } from 'electron'
 import type { Session as ElectronSession } from 'electron'
 import { logInfo, logError } from './debug-logger'
 import { IPC } from '../shared/ipc-channels'
-import { isAllowedBrowserUrl, type WebviewNavState } from '../shared/browser-url'
+import { isAllowedBrowserUrl, isAllowedBrowserScheme, type WebviewNavState } from '../shared/browser-url'
 
 interface ManagedView {
   view: WebContentsView
@@ -91,6 +91,20 @@ function hardenPartitionSession(ses: ElectronSession): void {
     ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
     ses.setPermissionCheckHandler(() => false)
     ses.setDevicePermissionHandler(() => false)
+    // No downloads from the pane. Electron's default for an unhandled
+    // will-download is the OS Save-As dialog from the main window, with no
+    // download UI, no Safe Browsing and the file landing wherever the user
+    // clicks -- a `Content-Disposition: attachment` or an `<a download>` must
+    // not get that. Guarded: fromPartition hands back the same Session each
+    // time and `on` would stack a listener per open.
+    const sesWithFlag = ses as ElectronSession & { __cccDownloadsBlocked?: boolean }
+    if (!sesWithFlag.__cccDownloadsBlocked) {
+      sesWithFlag.__cccDownloadsBlocked = true
+      ses.on('will-download', (event, item) => {
+        event.preventDefault()
+        logError(`[webview] blocked download: ${String(item?.getURL?.() ?? '').slice(0, 200)}`)
+      })
+    }
   } catch (err) {
     logError(`[webview] could not harden partition session: ${(err as Error)?.message ?? err}`)
   }
@@ -155,6 +169,14 @@ export async function openWebview(
         nodeIntegration: false,
         sandbox: true,
         partition,
+        // Browser-style consecutive-dialog protection. Electron's default is
+        // OFF, and every alert()/confirm()/prompt() from the page is a native
+        // dialog parented to the MAIN window: a page that loops alert() blocks
+        // the whole app, the pane's Close button and Esc included. With this
+        // on, the second dialog in a row carries "stop this page opening more
+        // dialogs", exactly as Chrome does.
+        safeDialogs: true,
+        safeDialogsMessage: 'Stop this page from opening more dialogs',
       },
     })
 
@@ -163,8 +185,11 @@ export async function openWebview(
     // The toolbar's Back/Forward/Reload/Home all stay inside http(s)
     // because those calls go through `view.webContents.*` directly,
     // not through the page; this guard catches in-page nav only.
+    // SCHEME only on this path (isAllowedBrowserScheme, not isAllowedBrowserUrl):
+    // the app-side length cap must not cancel an OAuth/SAML hop whose URL
+    // runs past it -- a cancelled will-redirect aborts the whole navigation.
     const guardScheme = (label: string) => (event: { preventDefault: () => void }, target: string) => {
-      if (!isAllowedBrowserUrl(target)) {
+      if (!isAllowedBrowserScheme(target)) {
         event.preventDefault()
         logError(`[webview] blocked ${label} to disallowed scheme: ${String(target).slice(0, 200)}`)
       }
@@ -173,6 +198,12 @@ export async function openWebview(
     // A server can answer an http(s) request with a redirect to any scheme
     // it likes; will-navigate does not see that hop. Same allowlist.
     view.webContents.on('will-redirect', guardScheme('will-redirect'))
+    // A page's beforeunload handler would otherwise make every toolbar
+    // navigation (address bar, favourites, Home, Back, Reload) fail silently:
+    // loadURL reports did-fail-load when the page prevents unload and nothing
+    // asks the user. The pane is a preview surface, not where unsaved forms
+    // live -- the user's navigation wins.
+    view.webContents.on('will-prevent-unload', (event) => { event.preventDefault() })
     // Forward Escape to the host renderer when focus is inside the
     // embedded page. Without this hook, key events go to the
     // WebContentsView's own webContents and never reach the App-level
@@ -190,11 +221,16 @@ export async function openWebview(
       }
     })
     view.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-      // Open external links in the system browser via shell, not in
-      // the embedded view. Same allowlist — file://, javascript:,
-      // chrome:// are dropped on the floor.
-      if (isAllowedBrowserUrl(openUrl)) {
-        void shell.openExternal(new URL(openUrl).href)
+      // A popup (window.open, target=_blank) never becomes a new window and
+      // never reaches the user's real browser: the page would otherwise hold
+      // the "open in your real browser" primitive the toolbar reserves for a
+      // click -- Electron has no popup blocker and the handler carries no
+      // user-gesture flag, so a page could fire it in a loop, hidden pane or
+      // not. An http(s) popup loads in THIS pane instead (the user can still
+      // send the page to their real browser with the toolbar button);
+      // anything else is dropped.
+      if (isAllowedBrowserScheme(openUrl)) {
+        try { view.webContents.loadURL(new URL(openUrl).href) } catch { /* view gone */ }
       } else {
         logError(`[webview] blocked window.open to disallowed scheme: ${String(openUrl).slice(0, 200)}`)
       }

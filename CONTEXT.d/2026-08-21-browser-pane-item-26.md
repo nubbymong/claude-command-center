@@ -84,3 +84,36 @@ host-less (special schemes collapse the slashes).
 - `webview:goHome` IPC is kept (validated, harmless) but the pane no longer uses
   it — home is resolved in the renderer.
 - No per-session "history list" UI; Back/Forward carry it.
+
+
+## Re-attack round (the single ADR-009 pass, 2026-08-21) — what it found here
+
+The bounded re-attack on the merged beta.16 substrate put one attacker on the pane. Two
+MAJORs, both **pre-existing view behaviours** that the pane widened from "the command's
+watch URL" to "any URL you type":
+
+- **No dialog protection.** Electron's `safeDialogs` default is OFF and every
+  `alert()/confirm()/prompt()` from a page is a native dialog parented to the MAIN
+  window — a page looping `alert()` blocked the whole orchestrator, Close and Esc
+  included. Now `safeDialogs: true` with a message, exactly Chrome's behaviour.
+- **Gesture-free, unbounded popups into the real browser.** `setWindowOpenHandler`
+  handed every http(s) `window.open` to `shell.openExternal`; Electron has no popup
+  blocker and the handler carries no user-gesture flag, so a page could fire the
+  toolbar's "open in your real browser" primitive in a loop, visible pane or not. A
+  popup now loads in THIS pane; `openExternal` is reachable only from the toolbar.
+
+Minors fixed in the same commit: `will-navigate`/`will-redirect` are scheme-only
+(`isAllowedBrowserScheme`) so the app-side 4096 cap cannot cancel an OAuth/SAML hop
+(the cap is measured on the serialised href at the app doors instead);
+`will-prevent-unload` is overridden so a page cannot pin the pane; `will-download` is
+refused once per partition; the http/https decision for a scheme-less address is made
+on the host the URL parser RESOLVES (`127.1`, `0x7f000001`, `0177.0.0.1`,
+`[::ffff:127.0.0.1]` → http; `010.0.0.1` is 8.0.0.1 → https); embedded
+`user:password@` is refused by name; browserStore bounds ids/titles (titles are
+rendered, so control/bidi characters are stripped) and `homeFor` reads own properties
+only. Left as noted, not fixed: per-session `persist:webview-<id>` profiles are never
+cleared on session delete (disk/privacy creep, not a boundary).
+
+The guards are now asserted through a fake `WebContentsView`/session in
+`tests/unit/main/webview-manager-guards.test.ts` rather than read off the source — the
+round found two of them missing precisely because nothing exercised the view.

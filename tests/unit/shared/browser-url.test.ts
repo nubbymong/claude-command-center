@@ -130,3 +130,84 @@ describe('shortUrlLabel', () => {
     expect(shortUrlLabel('not a url')).toBe('not a url')
   })
 })
+
+// ── Re-attack round (beta.16 pass): canonical-host classification, credentials,
+// the href-measured cap, and the page-navigation gate that must stay scheme-only.
+import { isAllowedBrowserScheme, cleanDisplayText } from '../../../src/shared/browser-url'
+
+describe('isAllowedBrowserScheme -- the gate for navigations the PAGE starts', () => {
+  it('is scheme-only: an http(s) URL longer than the app cap passes (an OAuth hop must not be cancelled)', () => {
+    const long = 'https://login.example/authorize?state=' + 'x'.repeat(BROWSER_URL_MAX_LENGTH + 2000)
+    expect(isAllowedBrowserScheme(long)).toBe(true)
+    expect(isAllowedBrowserUrl(long)).toBe(false)
+  })
+  it('still refuses every other scheme', () => {
+    for (const bad of ['file:///x', 'javascript:1', 'JAVASCRIPT:1', 'data:,x', 'chrome://gpu', 'about:blank', '', 'not a url']) {
+      expect(isAllowedBrowserScheme(bad), bad).toBe(false)
+    }
+  })
+})
+
+describe('embedded credentials are refused by every app-side door', () => {
+  it('isAllowedBrowserUrl refuses user:pass@host', () => {
+    expect(isAllowedBrowserUrl('http://user:pw@example.com/')).toBe(false)
+    expect(isAllowedBrowserUrl('https://user@example.com/')).toBe(false)
+    expect(isAllowedBrowserUrl('https://example.com/?u=user:pw@x')).toBe(true)
+  })
+  it('normaliseBrowserInput says why', () => {
+    const r = normaliseBrowserInput('https://user:pw@example.com/')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/user name or password/)
+  })
+})
+
+describe('the http/https decision is made on the CANONICAL host, not the typed text', () => {
+  it('loopback spelt any way the URL parser accepts gets http', () => {
+    for (const [typed, want] of [
+      ['127.1:3000', 'http://127.0.0.1:3000/'],
+      ['0x7f000001', 'http://127.0.0.1/'],
+      ['0177.0.0.1', 'http://127.0.0.1/'],
+      ['2130706433', 'http://127.0.0.1/'],
+      ['localhost.', 'http://localhost./'],
+      ['[::ffff:127.0.0.1]:8080', 'http://[::ffff:7f00:1]:8080/'],
+    ] as const) {
+      const r = normaliseBrowserInput(typed)
+      expect(r, typed).toEqual({ ok: true, url: want })
+    }
+  })
+  it('a leading-zero octet that the parser reads as OCTAL is a public host and gets https', () => {
+    // 010.0.0.1 is 8.0.0.1 to the URL parser -- not a 10/8 address.
+    expect(normaliseBrowserInput('010.0.0.1')).toEqual({ ok: true, url: 'https://8.0.0.1/' })
+    expect(normaliseBrowserInput('010.010.010.010')).toEqual({ ok: true, url: 'https://8.8.8.8/' })
+  })
+  it('a private host keeps its port through the re-parse', () => {
+    expect(normaliseBrowserInput('192.168.1.20:443')).toEqual({ ok: true, url: 'http://192.168.1.20:443/' })
+    expect(normaliseBrowserInput('10.0.0.5')).toEqual({ ok: true, url: 'http://10.0.0.5/' })
+  })
+  it('isLocalNetworkHost handles the canonical forms', () => {
+    expect(isLocalNetworkHost('localhost.')).toBe(true)
+    expect(isLocalNetworkHost('[::ffff:127.0.0.1]')).toBe(true)
+    expect(isLocalNetworkHost('8.0.0.1')).toBe(false)
+    expect(isLocalNetworkHost('10.0.0.1.evil.com')).toBe(false)
+  })
+})
+
+describe('the length cap is measured on the serialised href', () => {
+  it('a short typed path of multibyte characters that serialises past the cap is refused, not silently dropped later', () => {
+    const typed = 'https://example.com/' + 'é'.repeat(2000) // 2020 chars typed, ~12k chars as href
+    const r = normaliseBrowserInput(typed)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/too long/)
+    expect(isAllowedBrowserUrl(new URL(typed).href)).toBe(false)
+  })
+})
+
+describe('cleanDisplayText -- what the favourites bar renders', () => {
+  it('strips controls, bidi overrides, zero-width and line breaks, and bounds the length', () => {
+    const dirty = 'Pay\u202Eelif.exe\u200B\nnow\uFEFF'
+    expect(cleanDisplayText(dirty, 200)).toBe('Payelif.exenow')
+    expect(cleanDisplayText('x'.repeat(500), 200)).toHaveLength(200)
+    expect(cleanDisplayText(42, 10)).toBe('')
+    expect(cleanDisplayText('café \u{1F511}', 10)).toBe('café \u{1F511}')
+  })
+})

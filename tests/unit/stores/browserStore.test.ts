@@ -156,3 +156,43 @@ describe('home per config', () => {
     })
   })
 })
+
+// ── Re-attack round (beta.16 pass): record hygiene.
+describe('hydrate bounds every field, not just the url', () => {
+  it('drops an oversized or odd id for a fresh one, and gives the second of two same-id records its own id', () => {
+    useBrowserStore.getState().hydrate({
+      favourites: [
+        { id: 'x'.repeat(100000), url: 'https://a.example/', title: 'a' },
+        { id: 'dup', url: 'https://b.example/', title: 'b' },
+        { id: 'dup', url: 'https://c.example/', title: 'c' },
+        { id: '../../etc', url: 'https://d.example/', title: 'd' },
+      ],
+    })
+    const favs = useBrowserStore.getState().favourites
+    expect(favs).toHaveLength(4)
+    expect(favs[0].id.length).toBeLessThanOrEqual(64)
+    expect(favs[1].id).toBe('dup')
+    expect(favs[2].id).not.toBe('dup')
+    expect(favs[3].id).toMatch(/^[A-Za-z0-9_-]+$/)
+    expect(new Set(favs.map((f) => f.id)).size).toBe(4)
+    useBrowserStore.getState().removeFavourite('dup')
+    expect(useBrowserStore.getState().favourites).toHaveLength(3)
+  })
+
+  it('cleans titles of control and bidi characters, on hydrate and on add', () => {
+    useBrowserStore.getState().hydrate({ favourites: [{ id: 'a', url: 'https://a.example/', title: 'Pay\u202Eelif.exe\nnow' }] })
+    expect(useBrowserStore.getState().favourites[0].title).toBe('Payelif.exenow')
+    useBrowserStore.getState().addFavourite('https://b.example/', 'ok\u200Btitle')
+    expect(useBrowserStore.getState().favourites[1].title).toBe('oktitle')
+  })
+
+  it('homeFor reads own properties only, and setHome applies the same id rule as hydrate', () => {
+    expect(useBrowserStore.getState().homeFor('constructor')).toBeNull()
+    expect(useBrowserStore.getState().homeFor('hasOwnProperty')).toBeNull()
+    useBrowserStore.getState().setHome('c'.repeat(5000), 'https://a.example/')
+    expect(useBrowserStore.getState().homeByConfig).toEqual({})
+    expect(saveConfigNow).not.toHaveBeenCalled()
+    useBrowserStore.getState().setHome('cfg1', 'https://a.example/')
+    expect(useBrowserStore.getState().homeFor('cfg1')).toBe('https://a.example/')
+  })
+})
