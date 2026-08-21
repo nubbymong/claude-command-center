@@ -217,30 +217,8 @@ export function openTkDb(dbPath: string): TkDb {
   const getMetaStmt = sqlite.prepare('SELECT value FROM tk_meta WHERE key = ?')
   const setMetaStmt = sqlite.prepare('INSERT INTO tk_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
 
-  // #307 one-off re-index. The Codex subagent-identity fix (tk-parse.ts /
-  // tokenomics-worker.ts) changes a subagent file's dedup keys from the parent's
-  // id to its own, so re-ingesting on top of rows stored under the OLD keys would
-  // count those turns a second time. The rollup tables (tk_daily, tk_sessions,
-  // tk_session_models, tk_heatmap) are maintained INCREMENTALLY on insert and
-  // hold Claude and Codex totals together with no per-provider column on all of
-  // them, so they cannot be unwound selectively. The honest fix is a rebuild from
-  // source: wipe events + rollups and rewind every file cursor, then let the
-  // normal ingest repopulate. Claude dedup keys (`c:...`) are unchanged, so Claude
-  // totals return identical; Codex keys (`x:...`) are corrected so subagent turns
-  // stop colliding. Guarded by a tk_meta marker so it runs exactly once; costs one
-  // full re-read of the sessions folder, which the next ingest tick performs.
-  if ((getMetaStmt.get('codexReindex307') as { value?: string } | undefined)?.value !== 'done') {
-    sqlite.exec(`
-      DELETE FROM tk_events;
-      DELETE FROM tk_daily;
-      DELETE FROM tk_session_models;
-      DELETE FROM tk_heatmap;
-      DELETE FROM tk_sessions;
-      UPDATE tk_files SET lastOffset = 0, scannedTo = 0, codexTurns = 0,
-        codexSessionId = '', codexModel = '', codexCwd = '';
-    `)
-    setMetaStmt.run('codexReindex307', 'done')
-  }
+  // The #307 one-off re-index runs further down, once the rollup upserts it
+  // rebuilds with have been prepared (see `reindex307`).
   const getCursorStmt = sqlite.prepare('SELECT path,size,mtime,lastOffset,lastIngestedAt,scannedTo,codexSessionId,codexModel,codexCwd,codexTurns FROM tk_files WHERE path = ?')
   const setCursorStmt = sqlite.prepare(`INSERT INTO tk_files(path,size,mtime,lastOffset,lastIngestedAt,scannedTo,codexSessionId,codexModel,codexCwd,codexTurns)
       VALUES(@path,@size,@mtime,@lastOffset,@lastIngestedAt,@scannedTo,@codexSessionId,@codexModel,@codexCwd,@codexTurns)
@@ -326,6 +304,75 @@ export function openTkDb(dbPath: string): TkDb {
     setCursorStmt.run(cursorRow(c))
     return n
   })
+
+  // #307 one-off re-index. The Codex subagent-identity fix (tk-parse.ts /
+  // tokenomics-worker.ts) changes a subagent rollout's dedup keys from the
+  // parent's id to its own, so re-ingesting on top of rows stored under the OLD
+  // keys would count those turns a second time. Codex rows therefore have to go
+  // and come back from source.
+  //
+  // CODEX ROWS ONLY. The first cut of this wiped every event and rewound every
+  // cursor "because the rollups are mixed" -- and anything whose source file was
+  // gone could never come back: Claude Code deletes transcripts past its
+  // retention window and people prune the Codex tree, so life-to-date Claude
+  // spend older than the window was silently lost on first launch (found by the
+  // ADR-009 pass before the build shipped). The rollups ARE pure aggregations of
+  // tk_events, so they are rebuilt HERE, in the same transaction, by replaying
+  // the surviving events through the very upserts the live ingest uses -- same
+  // day/bucket maths, same first-config / last-model rules -- rather than by
+  // hoping every source file still exists. Only Codex cursors are rewound (a
+  // rollout is identified by its parsed header or its filename; a Claude
+  // transcript that happens to sit under a directory called "rollout-…" merely
+  // gets re-read, and its unchanged dedup keys make that a no-op). One
+  // transaction: a crash mid-way leaves the old state intact. Guarded by a
+  // tk_meta marker so it runs exactly once.
+  // Pages by rowid: better-sqlite3 refuses other statements while an
+  // `iterate()` cursor is open on the connection, and rowid order IS the
+  // original ingest order, which is what the first-config / last-model upsert
+  // rules were computed in the first time.
+  const eventsPageStmt = sqlite.prepare('SELECT rowid AS rid,sessionId,provider,model,priceModel,ts,configId,projectDir,inTok,outTok,cacheReadTok,cacheCreateTok FROM tk_events WHERE rowid > ? ORDER BY rowid ASC LIMIT 5000')
+  const reindex307 = sqlite.transaction(() => {
+    sqlite.exec(`
+      DELETE FROM tk_events WHERE provider = 'codex';
+      DELETE FROM tk_daily;
+      DELETE FROM tk_session_models;
+      DELETE FROM tk_heatmap;
+      DELETE FROM tk_sessions;
+      UPDATE tk_files SET lastOffset = 0, scannedTo = 0, codexTurns = 0,
+        codexSessionId = '', codexModel = '', codexCwd = ''
+        WHERE codexSessionId <> '' OR path LIKE '%rollout-%';
+    `)
+    let lastRid = 0
+    for (;;) {
+      const page = eventsPageStmt.all(lastRid) as Array<Record<string, unknown>>
+      if (page.length === 0) break
+      lastRid = page[page.length - 1].rid as number
+      for (const row of page) {
+      const e = {
+        sessionId: row.sessionId as string,
+        provider: row.provider as string,
+        model: row.model as string,
+        priceModel: row.priceModel as string,
+        ts: row.ts as number,
+        configId: (row.configId as string | null) ?? '',
+        projectDir: (row.projectDir as string) ?? '',
+        cwd: (row.projectDir as string) ?? '',
+        inTok: row.inTok as number,
+        outTok: row.outTok as number,
+        cacheReadTok: row.cacheReadTok as number,
+        cacheCreateTok: row.cacheCreateTok as number,
+      }
+      upSession.run(e)
+      upSessionModel.run(e)
+      upDaily.run({ ...e, day: dayOf(e.ts) })
+      upHeat.run({ ...e, bucket: bucketOf(e.ts) })
+      }
+    }
+    setMetaStmt.run('codexReindex307', 'done')
+  })
+  if ((getMetaStmt.get('codexReindex307') as { value?: string } | undefined)?.value !== 'done') {
+    reindex307()
+  }
 
   return {
     raw: sqlite,
