@@ -8,6 +8,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { modelsFromRegistry, effortsFromRegistry, PERMISSION_MODES } from '../lib/claude-cli-options'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
+import { secretValueProblem } from '../../shared/command-secret'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -264,6 +265,14 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     // cards forbid; the disabled cards don't constrain saved state, so guard it
     // here or the config saves and then hard-throws at spawn.
     if (uiProvider === 'codex' && sessionType === 'ssh') return "Codex can't run over SSH — pick Claude Code or Terminal only"
+    // A terminal-only secret argument the shell cannot carry intact (a double
+    // quote, a trailing backslash, cmd metacharacters on Windows; a line break
+    // anywhere) is refused here, by the same rule the command-button dialog
+    // uses: the app cannot rewrite a secret. (ADR-009 pass, beta.16.)
+    if (uiProvider === 'terminal' && sessionType === 'local' && secretArg) {
+      const problem = secretValueProblem(secretArg, window.electronPlatform === 'win32')
+      if (problem) return problem
+    }
     // Required only where the folder is load-bearing: an agent session reads and
     // edits files there, and it's the folder transcripts get filed under. A
     // terminal-only launcher often just runs a command that connects somewhere

@@ -40,11 +40,39 @@ export function commandSecretKey(commandId: string): string {
 }
 
 /** Shell-appropriate reference to the variable. Quoted on POSIX so a value with
- *  spaces or globs stays one argument; PowerShell does not word-split `$env:X`. */
+ *  spaces or globs stays one argument.
+ *
+ *  On Windows the reference is `$env:X` and it is NOT a guarantee of one
+ *  argument: PowerShell 5.1 (the shell the app starts) re-serialises native
+ *  arguments into one command line and never escapes an embedded `"`, so a
+ *  value containing a quote flips the child's quote parity, a value ending in
+ *  `\` escapes the closing quote, and -- through an npm `.cmd` shim, where
+ *  cmd.exe re-parses the line -- `&|^<>%` in an unquoted token are live. The
+ *  app cannot rewrite a secret, so `secretValueProblem` REFUSES those values at
+ *  the dialog instead; what it accepts arrives intact. (ADR-009 pass, beta.16:
+ *  the earlier "stays one argument" claim here was measured false on 5.1.) */
 export function commandSecretRef(commandId: string, isWindows: boolean): string | null {
   const name = commandSecretEnvName(commandId)
   if (!name) return null
   return isWindows ? `$env:${name}` : `"$${name}"`
+}
+
+/**
+ * Why a secret VALUE cannot be carried intact, or null when it can. Shared by
+ * both dialogs that take one (the terminal config's secret argument and the
+ * command button's) so the rule cannot drift. Line breaks are refused on every
+ * platform (a reference expands to one line); the rest is the PowerShell 5.1
+ * re-serialisation described on `commandSecretRef`.
+ */
+export function secretValueProblem(value: string, isWindows: boolean): string | null {
+  if (typeof value !== 'string' || value.length === 0) return null
+  if (/[\r\n]/.test(value)) return 'A secret cannot contain a line break.'
+  if (!isWindows) return null
+  if (value.includes('"')) return 'On Windows a secret cannot contain a double quote ("): PowerShell cannot pass it to a command intact.'
+  if (value.endsWith('\\')) return 'On Windows a secret cannot end with a backslash (\\): PowerShell would swallow the quote after it.'
+  const meta = value.match(/[&|^<>%]/)
+  if (meta) return `On Windows a secret cannot contain ${meta[0]}: a .cmd-based tool would re-parse it as a command.`
+  return null
 }
 
 /**
