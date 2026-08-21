@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { installWebglWithRecovery, createAtlasRefresh, type WebglHandle } from './terminal/terminalWebgl'
+import { installWebglWithRecovery, createAtlasResync, type WebglHandle } from './terminal/terminalWebgl'
 import { atlasCoordinator } from './terminal/atlasCoordinator'
 import {
   createStaleGlyphRepainter,
@@ -122,6 +122,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   /** The live repainter, so effects outside the init effect can ask for a
    *  repaint — see the tab-activation repaint below. */
   const repainterRef = useRef<StaleGlyphRepainter | null>(null)
+  /** This terminal's atlas-resync callback, so the activation effect can ask the
+   *  coordinator whether it is behind. Null until the terminal is built. */
+  const atlasResyncRef = useRef<(() => void) | null>(null)
   // Mirror of the isActive prop for `document`-level listeners installed by the
   // init effect (which keys on session identity, not activation) — reading the
   // captured prop there would go stale on tab switches. See the paste handler.
@@ -161,6 +164,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // no-op. Every later activation is what this is for.
   useEffect(() => {
     if (!isActive) return
+    // Catch up with any atlas rebuild this terminal missed, BEFORE deciding to
+    // start another one. The frame-scheduled pass only reaches terminals that
+    // were registered and alive in that frame; this is the backstop for the
+    // ones it could not, and it is a no-op when already current (#311).
+    //
+    // Ordered first deliberately: strongIfStale may clear the shared atlas
+    // itself, and resyncing against the atlas we are about to replace would be
+    // one wasted repaint and a frame of the wrong pixels.
+    if (atlasResyncRef.current) atlasCoordinator.resyncIfBehind(atlasResyncRef.current)
     repainterRef.current?.strongIfStale(ACTIVATION_MAX_STALE_MS)
   }, [isActive])
   const updateSession = useSessionStore((s) => s.updateSession)
@@ -467,22 +479,31 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // repaints the viewport the dead WebGL canvas left garbled.
       // The GPU renderer is OPT-IN: only a literal `true` enables it (see
       // settingsStore.gpuRenderingEnabled). `@xterm/addon-webgl` keeps ONE glyph
-      // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal blanks the
-      // glyphs of every OTHER mounted terminal until it is
-      // resized/scrolled/activated. That is NOT fixed: the atlasCoordinator below
-      // is necessary but not sufficient, because a victim's render model is never
-      // cleared and refresh() alone therefore repaints it blank. The coordinator
-      // is kept as scaffolding and is inert while the renderer is off. Read once
-      // at mount — changing the setting applies to terminals opened afterwards,
+      // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal empties the
+      // texture every OTHER mounted terminal is drawing from. Read once at
+      // mount — changing the setting applies to terminals opened afterwards,
       // which keeps a live session from having its renderer swapped underneath it.
       // Repaint this terminal's viewport from the (shared) glyph atlas.
       const domRefresh = () => { try { term?.refresh(0, term.rows - 1) } catch { /* disposed */ } }
-      // The coordinator's view of this terminal: repaint, but only while WebGL
-      // is actually live here. The SAME reference must go to both register() and
-      // notifyCleared() below — the coordinator skips the terminal that cleared
-      // by callback identity, so two different closures would repaint the source
-      // twice (once via the repainter's clear-then-refresh, once via the frame).
-      const atlasRefresh = createAtlasRefresh(() => webglHandle, domRefresh)
+      // Drop THIS terminal's render model without touching the shared texture.
+      //
+      // A same-value theme reassignment is the only public API that does it: the
+      // options setter fires xterm's `_handleColorChange`, which calls
+      // `_clearModel(true)` on this terminal's renderer alone. Nothing about the
+      // theme actually changes — the spread is what makes the setter fire.
+      //
+      // It has to be this and not `clearTextureAtlas()`, which would re-empty the
+      // SHARED texture and hand the corruption to the next terminal; N terminals
+      // clearing in response to each other never settles.
+      const clearOwnModel = () => {
+        try { if (term) term.options.theme = { ...term.options.theme } } catch { /* disposed */ }
+      }
+      // The coordinator's view of this terminal: drop the stale model, then
+      // repaint — and only while WebGL is actually live here. The SAME reference
+      // must go to both register() and notifyCleared() below; the coordinator
+      // identifies the terminal that cleared by callback identity.
+      const atlasResync = createAtlasResync(() => webglHandle, clearOwnModel, domRefresh)
+      atlasResyncRef.current = atlasResync
       if (gpuRenderingEnabled(ts)) {
         webglHandle = installWebglWithRecovery(term, {
           WebglAddonCtor: WebglAddon,
@@ -490,8 +511,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           isDisposed: () => disposed,
         })
         // Register with the process-wide coordinator so a clearTextureAtlas()
-        // from ANY terminal repaints this one on the next frame (#311).
-        unregisterAtlas = atlasCoordinator.register(atlasRefresh)
+        // from ANY terminal resyncs this one on the next frame (#311).
+        unregisterAtlas = atlasCoordinator.register(atlasResync)
       }
       // #273 / #311: reproduces the window-resize repaint (clearTextureAtlas +
       // refresh) against whichever addon is currently live. The glyph atlas is
@@ -508,7 +529,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // context loss, so the repainter skips its own refresh too.
         clearAtlas: () => {
           const cleared = webglHandle?.clearTextureAtlas() ?? false
-          if (cleared) atlasCoordinator.notifyCleared(atlasRefresh)
+          if (cleared) atlasCoordinator.notifyCleared(atlasResync)
           return cleared
         },
         atlasActive: () => webglHandle?.isActive() ?? false,
