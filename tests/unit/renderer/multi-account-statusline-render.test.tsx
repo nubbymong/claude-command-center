@@ -103,6 +103,33 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     expect(toggle()).toBeNull()
   })
 
+  it('a footer pill carries NO identity dot — the rim and fill already say it', () => {
+    // User call 2026-08-21: "we dont need the account colour dot as well as the
+    // pill colour". Three statements of one fact, and the dot was the one
+    // costing width in the tightest bar in the app.
+    useAccounts(2)
+    render()
+    for (const pill of pills()) {
+      // The dot was the only 8x8 round element inside a pill.
+      expect(pill.querySelector('.w-2.h-2.rounded-full')).toBeNull()
+    }
+  })
+
+  it('but the overflow list KEEPS its dots — there they are the only identity marking', () => {
+    // Those rows carry no pill tint, so removing the dot there would leave
+    // nothing at all tying a row to its account.
+    // 8, not 6: six pills fit on the two rows, so the overflow control only
+    // appears from the seventh account.
+    useAccounts(8)
+    render()
+    act(() => { toggle()!.click() })
+    const overflowRows = Array.from(container.querySelectorAll('[data-testid="multi-account-overflow-row"]'))
+    expect(overflowRows.length).toBeGreaterThan(0)
+    for (const row of overflowRows) {
+      expect(row.querySelector('.w-2.h-2.rounded-full')).not.toBeNull()
+    }
+  })
+
   it('the one-row layout keeps the tighter gap and no extra vertical padding, no truncation', () => {
     useAccounts(3)
     render()
