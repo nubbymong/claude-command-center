@@ -8,6 +8,7 @@ import { create } from 'zustand'
 import type { CanvasState, CanvasVersion } from '../../shared/canvas'
 import { useExcalidrawStore } from './excalidrawStore'
 import { useCanvasReviewStore } from './canvasReviewStore'
+import { useCanvasTotalsStore } from './canvasTotalsStore'
 
 export type CanvasInteractionMode = 'draw' | 'browse'
 
@@ -283,5 +284,8 @@ export function setupCanvasListener(): void {
       })
     }
     void store.refresh(event.sessionId)
+    // A render, a filing or a switch can change what the session owns and
+    // what is owed across it — the cross-canvas total follows.
+    useCanvasTotalsStore.getState().scheduleRefresh(event.sessionId)
   })
 }

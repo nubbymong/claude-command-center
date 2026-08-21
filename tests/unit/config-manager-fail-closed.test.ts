@@ -9,7 +9,7 @@ import { join } from 'path'
 // config-saver plus the cloud-agent/team persisters that run from callbacks with
 // no try/catch -- depend on that; a thrown ensureConfigDir bricked a legit
 // symlinked-CONFIG layout and could crash the main process. These tests pin the
-// contract: fail CLOSED (false / empty), never throw. Refusing to write the
+// contract: fail CLOSED (false / empty-but-flagged), never throw. Refusing to write the
 // secret into the junction is preserved -- mkdirSecure still throws, we just
 // catch it.
 
@@ -51,10 +51,18 @@ describe('config-manager fails closed (never throws) when CONFIG is a reparse po
     expect(r).toBe(false)
   })
 
-  it('loadAllConfig hydrates empty instead of throwing', () => {
-    let res: { data: Record<string, unknown>; needsMigration: boolean } | undefined
+  // A planted CONFIG is a READ FAILURE, not a fresh install: loadAllConfig
+  // hydrates empty so the app still starts, but it says so (readFailed, every
+  // key listed) and does NOT claim needsMigration -- that would have handed the
+  // renderer a "fresh-install" picture of a directory it could not read, and
+  // the first save would have overwritten the real config (see #353 / the
+  // config-write latch). The renderer latches writes on readFailed.
+  it('loadAllConfig hydrates empty, flags the read failure, and never claims a migration', () => {
+    let res: ReturnType<typeof loadAllConfig> | undefined
     expect(() => { res = loadAllConfig() }).not.toThrow()
     expect(res!.data).toEqual({})
-    expect(res!.needsMigration).toBe(true)
+    expect(res!.readFailed).toBe(true)
+    expect(res!.needsMigration).toBe(false)
+    expect(res!.failedKeys.length).toBeGreaterThan(0)
   })
 })

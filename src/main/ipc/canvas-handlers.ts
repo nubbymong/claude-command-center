@@ -54,11 +54,20 @@ const sessionIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
  *  real one and small enough to move over IPC without a hiccup. */
 const DESIGN_HTML_MAX = 2 * 1024 * 1024
 
+/** The canvas's SUBJECT, as the shared `CanvasRenderSource` type already
+ *  declares it. Free text: the store re-cleans it (`sanitizeCanvasTitle` —
+ *  control/format/bidi stripped, 80 code points) and decides from it whether
+ *  a render is a new version or a new canvas. The MCP tool has always carried
+ *  it; this dev/test ingress silently dropped it, so a renderer-driven render
+ *  could never start a second subject. */
+const titleSchema = z.string().max(200).optional()
+
 const renderSourceSchema = z.discriminatedUnion('mode', [
   z
     .object({
       mode: z.literal('design'),
       html: z.string().min(1).max(DESIGN_HTML_MAX),
+      title: titleSchema,
     })
     .strict(),
   z
@@ -67,6 +76,7 @@ const renderSourceSchema = z.discriminatedUnion('mode', [
       distRoot: z.string().min(1).max(1024),
       entry: z.string().min(1).max(512).optional(),
       buildLabel: z.string().max(120).optional(),
+      title: titleSchema,
     })
     .strict(),
 ])

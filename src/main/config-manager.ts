@@ -34,6 +34,8 @@ const CONFIG_FILES = {
   usageSnapshots: 'usage-snapshots.json',
   commandBarUi: 'command-bar-ui.json',
   excalidraw: 'excalidraw.json',
+  // The browser pane's saved favourites and per-config home pages (item 26).
+  browser: 'browser.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES
@@ -260,15 +262,25 @@ export function writeConfig(key: ConfigKey, data: unknown): boolean {
 /**
  * Check if CONFIG/ directory has any config files (for migration detection).
  */
-export function configHasData(): boolean {
+/**
+ * Does CONFIG/ hold any known config file? `false` means genuinely empty (a
+ * fresh install, migrate from localStorage); `'unknown'` means the directory is
+ * there but could NOT be listed (EPERM/EACCES on the dir, a share that refuses
+ * enumeration). The two must stay distinct: an unlistable directory used to
+ * read as "empty", which told the renderer needsMigration and had it rewrite
+ * commands/configs/settings from the v1 localStorage snapshot over files that
+ * were readable by name all along.
+ */
+export function configHasData(): boolean | 'unknown' {
   const dir = getConfigDir()
   if (!existsSync(dir)) return false
   try {
     const files = readdirSync(dir)
     // Check if any of the known config files exist
     return files.some(f => Object.values(CONFIG_FILES).includes(f as any))
-  } catch {
-    return false
+  } catch (err) {
+    logError(`[config-manager] could not list ${dir}: ${(err as Error)?.message ?? err}`)
+    return 'unknown'
   }
 }
 
@@ -276,23 +288,66 @@ export function configHasData(): boolean {
  * Load all config files in one shot. Returns object keyed by config key.
  * Also returns needsMigration flag if CONFIG/ is empty.
  */
-export function loadAllConfig(): { data: Record<string, unknown>; needsMigration: boolean } {
+/**
+ * What the renderer gets from `config:loadAll`.
+ *
+ * `readFailed` and `failedKeys` are the READ-failure signal, made explicit.
+ * Until they existed the renderer inferred "the read failed" only from the
+ * invoke REJECTING, and two real failures never reject: a CONFIG dir that is
+ * unreachable at boot (network drive not mounted, USB gone) resolved as
+ * "empty, needs migration"; and a single file that cannot be opened or does
+ * not parse came back as null, indistinguishable from "never written". Both
+ * then let the boot migrations and the stores write defaults over files that
+ * were fine (ADR-009 pass, beta.16 -- pre-existing in every shipped build).
+ * A file that does not EXIST is absent, not failed; only those two are
+ * honest "start fresh" cases.
+ */
+export interface LoadAllResult {
+  data: Record<string, unknown>
+  needsMigration: boolean
+  /** The CONFIG directory itself could not be reached or created. Nothing was read. */
+  readFailed: boolean
+  /** Keys whose file EXISTS but could not be read or parsed. Their `data[key]` is null. */
+  failedKeys: ConfigKey[]
+}
+
+/** Like readConfig, but says WHY it returned null. */
+function readConfigDetailed(key: ConfigKey): { value: unknown; failed: boolean } {
+  const fileName = CONFIG_FILES[key]
+  if (!fileName) return { value: null, failed: false }
+  const filePath = join(getConfigDir(), fileName)
+  try {
+    if (!existsSync(filePath)) return { value: null, failed: false }
+    return { value: JSON.parse(readFileSync(filePath, 'utf-8')), failed: false }
+  } catch (err) {
+    logError(`[config-manager] Failed to read ${key}: ${err}`)
+    return { value: null, failed: true }
+  }
+}
+
+export function loadAllConfig(): LoadAllResult {
   try {
     ensureConfigDir()
   } catch (err) {
-    // CONFIG is a planted reparse point (mkdirSecure refuses it). Fail closed:
-    // hydrate empty rather than throwing (the renderer surfaces an uncaught
-    // throw as a hard load failure) and rather than reading THROUGH the junction
-    // (which would ingest attacker-controlled config). writeConfig likewise
-    // returns false, so any migration this triggers cannot persist into it.
-    logError(`[config-manager] ensureConfigDir failed during loadAll (${err}); hydrating empty`)
-    return { data: {}, needsMigration: true }
+    // CONFIG cannot be reached or created -- a planted reparse point (mkdirSecure
+    // refuses it), or just a resources dir that is not there this launch. Fail
+    // closed: hydrate empty rather than throwing (the renderer surfaces an
+    // uncaught throw as a hard load failure) and rather than reading THROUGH a
+    // junction (which would ingest attacker-controlled config). This is NOT a
+    // fresh install (needsMigration stays false) and it IS a read failure, so
+    // the renderer latches writes off instead of migrating defaults over the
+    // files it will find once the dir is back.
+    logError(`[config-manager] ensureConfigDir failed during loadAll (${err}); hydrating empty with writes latched`)
+    return { data: {}, needsMigration: false, readFailed: true, failedKeys: Object.keys(CONFIG_FILES) as ConfigKey[] }
   }
   const hasData = configHasData()
 
   const data: Record<string, unknown> = {}
+  const failedKeys: ConfigKey[] = []
   for (const key of Object.keys(CONFIG_FILES) as ConfigKey[]) {
-    data[key] = readConfig(key)
+    const r = readConfigDetailed(key)
+    data[key] = r.value
+    if (r.failed) failedKeys.push(key)
   }
 
   // Both migrations below are BEST EFFORT, and the try is the point: whatever
@@ -318,8 +373,11 @@ export function loadAllConfig(): { data: Record<string, unknown>; needsMigration
   // Strips top-level Claude fields; persists back to disk only if something actually changed.
   bestEffort('provider-shape migration', () => migrateConfigsToProviderShape(data))
 
-  logInfo(`[config-manager] Loaded all config from ${getConfigDir()}, needsMigration=${!hasData}`)
-  return { data, needsMigration: !hasData }
+  // An unlistable directory is a READ FAILURE (writes latch; never a
+  // migration), not an empty one -- see configHasData.
+  const unlistable = hasData === 'unknown'
+  logInfo(`[config-manager] Loaded all config from ${getConfigDir()}, needsMigration=${hasData === false}${unlistable ? ', dirUnlistable' : ''}${failedKeys.length ? `, failedKeys=${failedKeys.join(',')}` : ''}`)
+  return { data, needsMigration: hasData === false, readFailed: unlistable, failedKeys }
 }
 
 // v1.5: provider-shape migration constants
