@@ -99,6 +99,23 @@ export interface ServiceStatusPayload {
 export interface ElectronAPI {
   /** True for a dev build (npm run dev / ccc); drives DEV window labeling. */
   appIsDev: () => Promise<boolean>
+  // Desktop-chat import (#209).
+  desktopImport: {
+    parsePaste: (raw: string) => Promise<
+      | { ok: true; transcript: import('../../shared/desktop-import').ParsedTranscript }
+      | { ok: false; error: string }
+    >
+    fromShare: (url: string) => Promise<
+      | { ok: true; transcript: import('../../shared/desktop-import').ParsedTranscript }
+      | { ok: false; error: string }
+    >
+    buildBrief: (args: { transcript: import('../../shared/desktop-import').ParsedTranscript }) => Promise<
+      { ok: true; brief: import('../../shared/desktop-import').GeneratedBrief } | { ok: false; error: string }
+    >
+    writeBrief: (args: { workingDirectory: string; markdown: string }) => Promise<
+      { ok: true; written: import('../../shared/desktop-import').WrittenBrief } | { ok: false; error: string }
+    >
+  }
   config: {
     loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
     save: (key: string, data: unknown) => Promise<boolean>

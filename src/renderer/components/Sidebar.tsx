@@ -8,6 +8,7 @@ import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import { useAccountAuthStore } from '../stores/accountAuthStore'
 import SessionDialog from './SessionDialog'
+import DesktopImportDialog from './DesktopImportDialog'
 import { killSessionPty } from '../ptyTracker'
 import { requestCloseSession } from '../stores/sshCloseStore'
 import { ViewType } from '../types/views'
@@ -106,6 +107,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const serverRunning = useConductorMcpStore((s) => s.serverRunning)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingConfig, setEditingConfig] = useState<TerminalConfig | null>(null)
+  // #209: the running session an "Import Claude Desktop chat…" action targets.
+  const [importChatSession, setImportChatSession] = useState<Session | null>(null)
   const [contextMenuConfig, setContextMenuConfig] = useState<{ configId: string; x: number; y: number } | null>(null)
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -1192,6 +1195,15 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                   }
                 : undefined
             }
+            // #209: import a Claude desktop chat into this running session. Same
+            // gate as the account actions — a local Claude session (an SSH
+            // session's working dir is on another machine; a shell-only session
+            // has no agent to read the brief).
+            onImportDesktopChat={
+              !s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude'
+                ? () => setImportChatSession(s)
+                : undefined
+            }
           />
         ) : null
       })()}
@@ -1208,6 +1220,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           onConfirm={handleEditConfig}
           onCancel={() => setEditingConfig(null)}
           initial={editingConfig}
+        />
+      )}
+
+      {/* #209: import a Claude desktop chat into the chosen running session. */}
+      {importChatSession && (
+        <DesktopImportDialog
+          session={importChatSession}
+          onClose={() => setImportChatSession(null)}
         />
       )}
 

@@ -168,6 +168,14 @@ export const IPC = {
   SESSION_HAS_SAVED: 'session:hasSaved',
   SESSION_GRACEFUL_EXIT: 'session:gracefulExit',
 
+  // Desktop-chat import (#209): capture a Claude desktop conversation and turn it
+  // into a handoff brief. The renderer primes the session with the brief via the
+  // existing opening-prompt path (in-session: pty.write; new session: askPrompt).
+  DESKTOP_IMPORT_PARSE_PASTE: 'desktopImport:parsePaste',
+  DESKTOP_IMPORT_FROM_SHARE: 'desktopImport:fromShare',
+  DESKTOP_IMPORT_BUILD_BRIEF: 'desktopImport:buildBrief',
+  DESKTOP_IMPORT_WRITE_BRIEF: 'desktopImport:writeBrief',
+
   // Insights
   INSIGHTS_RUN: 'insights:run',
   INSIGHTS_RUN_ALL: 'insights:runAll',

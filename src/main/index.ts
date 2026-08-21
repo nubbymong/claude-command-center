@@ -6,6 +6,7 @@ import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
+import { registerDesktopImportHandlers } from './ipc/desktop-import-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
 import { killAllPty, gracefulExitAllPty, resolveClaudeForPty } from './pty-manager'
@@ -854,6 +855,7 @@ if (!gotTheLock) {
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
     registerDiscoveryHandlers()
+registerDesktopImportHandlers()
     registerAccountWebHandlers()
     // #216: a crash or forced quit can leave a sign-in browser profile behind, and
     // each one holds a live claude.ai session. Sweep them at boot.

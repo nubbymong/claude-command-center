@@ -34,12 +34,16 @@ interface SessionContextMenuProps {
   /** True when this account's Claude Code CLI is already signed in; disables the
    *  "Sign in to Claude Code" item so it isn't offered when it would be a no-op. */
   codeSignedIn?: boolean
+  /** #209: import a Claude desktop chat INTO this running session. Hidden when
+   *  undefined — the caller gates on session shape (local, not shell-only). */
+  onImportDesktopChat?: () => void
 }
 
 export default function SessionContextMenu({
   x, y, session, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss,
   canSwitchAccount, profiles, accountAliases, onSwitchAccount,
   onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn,
+  onImportDesktopChat,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
@@ -71,6 +75,25 @@ export default function SessionContextMenu({
           </svg>
           Remove from Group
         </button>
+      )}
+
+      {/* #209: import a Claude desktop chat into this running session. Writes a
+          handoff brief into the session's working dir and types a read-it prompt
+          into its live terminal (the operator presses Enter). */}
+      {onImportDesktopChat && (
+        <>
+          <div className="my-1 border-t border-surface1" />
+          <button
+            onClick={() => { onImportDesktopChat(); onDismiss() }}
+            className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+              <path d="M6 1.5v6M3.5 5.5L6 8l2.5-2.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M2 9.5h8" strokeLinecap="round"/>
+            </svg>
+            Import Claude Desktop chat…
+          </button>
+        </>
       )}
 
       {/* #216: account actions, reachable from the session itself. If artifacts
