@@ -1,22 +1,39 @@
 import React from 'react'
 import { useLogsStore } from '../stores/useLogsStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import type { LogsEmptyReason } from '../lib/session-capabilities'
 
 interface Props {
   sessionId: string
+  /**
+   * The structural reason this session can never have a transcript (from
+   * sessionCapabilities). The button stays on the row but DIMMED with the
+   * reason in its tooltip -- the pane already explains, and a Core tool that
+   * vanished per session type would change the bar's shape with no
+   * explanation (ADR-018 D3). Absent = live.
+   */
+  structuralReason?: LogsEmptyReason | null
+}
+
+const REASON_COPY: Record<LogsEmptyReason, string> = {
+  'shell-only': 'a shell has no transcript',
+  'ssh': 'the transcript lives on the remote host',
+  'codex': "Codex transcripts aren't indexed",
 }
 
 /**
- * CommandBar toggle for the per-session Logs pane (sibling of Draw/Web).
+ * CommandBar toggle for the per-session Logs pane (sibling of Canvas/Browser).
  * Hidden entirely when session logging is disabled (precedent: the tab is
- * hidden, only the global nav entry stays greyed-but-visible).
+ * hidden, only the global nav entry stays greyed-but-visible) -- the privacy
+ * setting wins over any hide/dim state.
  */
-export default function LogsButton({ sessionId }: Props) {
+export default function LogsButton({ sessionId, structuralReason = null }: Props) {
   const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
   const isOpen = useLogsStore((s) => !!s.bySessionId[sessionId]?.isOpen)
   const togglePane = useLogsStore((s) => s.togglePane)
 
   if (loggingEnabled === false) return null
+  const dim = !!structuralReason && !isOpen
 
   return (
     <button
@@ -26,7 +43,10 @@ export default function LogsButton({ sessionId }: Props) {
           ? 'bg-surface1 border-surface1 text-text'
           : 'bg-surface0/60 border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text'
       }`}
-      title={isOpen ? 'Hide session logs' : 'Open session logs'}
+      style={dim ? { opacity: 0.5 } : undefined}
+      title={isOpen ? 'Hide session logs' : dim ? `Logs — nothing to show here: ${REASON_COPY[structuralReason!]}` : 'Open session logs'}
+      data-testid="logs-toggle"
+      data-dimmed={dim ? 'true' : undefined}
     >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />

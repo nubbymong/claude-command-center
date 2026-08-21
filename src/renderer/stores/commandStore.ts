@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
+import { bandOf, bandMembers, type CommandBand } from '../lib/command-bands'
 
 /**
  * Why an existing command was tagged for the user's attention on the first
@@ -52,11 +53,14 @@ export interface CustomCommand {
     enabled: boolean
     url: string
   }
-  /** The third kind of button: it types NOTHING and opens `pageUrl` in the
-   *  session's browser pane (item 26). The other two kinds are not stored --
-   *  they are read off `target` -- but a page button has no target, so it
-   *  needs its own mark. Absent means "a typing command", as it always did. */
-  kind?: 'page'
+  /** What the button DOES. 'page' types NOTHING and opens `pageUrl` in the
+   *  session's browser pane (item 26). 'prompt' / 'shell' are stored from
+   *  2.1.0-beta.17 on (ADR-018): `target` alone could not tell a prompt from a
+   *  main-shell line once a Global button is seen from a terminal-only session.
+   *  Absent on old records: read off `target` (partner = shell) and, for a
+   *  claude-target button, off the session it is scoped to (a Session button of
+   *  a terminal-only config is that shell's line; a Global one is a prompt). */
+  kind?: 'prompt' | 'shell' | 'page'
   /** http/https only (shared/browser-url), validated in the dialog and again
    *  by main before anything loads. Only meaningful when `kind === 'page'`. */
   pageUrl?: string
@@ -89,21 +93,10 @@ export interface CommandSection {
   target?: 'claude' | 'partner'
 }
 
-/** The two bands a user command can live in. The band IS the scope. */
-export type CommandBand = 'global' | 'config'
-
-export function bandOf(cmd: Pick<CustomCommand, 'scope'>): CommandBand {
-  return cmd.scope === 'global' ? 'global' : 'config'
-}
-
-/** The commands of one band, in their ordinal order (array position breaks ties). */
-export function bandMembers(all: readonly CustomCommand[], band: CommandBand, configId?: string): CustomCommand[] {
-  const members = all.filter((c) => band === 'global' ? c.scope === 'global' : (c.scope === 'config' && c.configId === configId))
-  return members
-    .map((c, i) => ({ c, i }))
-    .sort((a, b) => (a.c.order ?? a.i) - (b.c.order ?? b.i) || a.i - b.i)
-    .map((x) => x.c)
-}
+// The band helpers live in lib/command-bands (pure, no store) so test code
+// that mocks this module still has them; re-exported here for convenience.
+export { bandOf, bandMembers } from '../lib/command-bands'
+export type { CommandBand } from '../lib/command-bands'
 
 interface CommandState {
   commands: CustomCommand[]

@@ -15,7 +15,7 @@
  * idempotent and cheap, so they run every launch.
  */
 import type { CustomCommand, CommandSection, CommandReviewReason } from '../stores/commandStore'
-import { bandMembers } from '../stores/commandStore'
+import { bandMembers } from './command-bands'
 import { COMMAND_SECRET_TOKEN } from '../../shared/command-secret'
 
 export const COMMAND_UPGRADE_VERSION = 1

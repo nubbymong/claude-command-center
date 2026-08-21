@@ -39,6 +39,9 @@ interface Props {
    * this session can do, and a shell command may run in EITHER pane.
    */
   mainPaneIsShell?: boolean
+  /** A NEW command opened from a band / section: start in that scope and section. */
+  presetScope?: 'global' | 'config'
+  presetSectionId?: string
 }
 
 /** Where a shell command runs when the main pane is itself a shell. */
@@ -69,7 +72,7 @@ export function previewLine(prompt: string, args: readonly string[], secretRef?:
   return buildCommandLine(prompt, args, secretRef)
 }
 
-export default function CommandDialog({ onConfirm, onCancel, initial, configId, mainPaneIsShell = false }: Props) {
+export default function CommandDialog({ onConfirm, onCancel, initial, configId, mainPaneIsShell = false, presetScope, presetSectionId }: Props) {
   const isEdit = !!initial
   // A NEW command starts with no kind chosen and the dialog reveals itself once
   // it is answered; EDIT opens fully revealed with the kind read off the target.
@@ -78,11 +81,11 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
 
   const [label, setLabel] = useState(initial?.label || '')
   const [prompt, setPrompt] = useState(initial?.prompt || '')
-  const [scope, setScope] = useState<'global' | 'config'>(initial?.scope || (configId ? 'config' : 'global'))
+  const [scope, setScope] = useState<'global' | 'config'>(initial?.scope || presetScope || (configId ? 'config' : 'global'))
   const [color, setColor] = useState(initial?.color || COLOR_SWATCHES[0])
   const [defaultArgs, setDefaultArgs] = useState<string[]>(initial?.defaultArgs || [])
   const [argInput, setArgInput] = useState('')
-  const [sectionId, setSectionId] = useState<string | undefined>(initial?.sectionId)
+  const [sectionId, setSectionId] = useState<string | undefined>(initial?.sectionId ?? presetSectionId)
   const [newSectionName, setNewSectionName] = useState('')
   const [showNewSection, setShowNewSection] = useState(false)
   const [webViewEnabled, setWebViewEnabled] = useState<boolean>(!!initial?.webView?.enabled)
