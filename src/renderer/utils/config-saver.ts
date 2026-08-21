@@ -11,10 +11,13 @@
  */
 
 import { useConfigHealthStore } from '../stores/configHealthStore'
+import { configWritesLocked } from '../stores/configWriteLockStore'
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 const pendingData = new Map<string, unknown>()
 const lastFailedData = new Map<string, unknown>()
+/** Keys already reported as refused, so a debounced storm logs once each. */
+const refusedOnce = new Set<string>()
 
 async function tryOnce(key: string, data: unknown): Promise<boolean> {
   try {
@@ -25,6 +28,20 @@ async function tryOnce(key: string, data: unknown): Promise<boolean> {
 }
 
 async function dispatchSave(key: string, data: unknown): Promise<boolean> {
+  // The config could not be READ this boot, so every store holds empty
+  // defaults. Writing now would put that emptiness on top of a file that is
+  // probably intact -- the read failed, the data did not. Refuse until the user
+  // chooses "start fresh anyway". Deliberately NOT marked failed in
+  // configHealthStore: that surface offers a Retry, and retrying is exactly
+  // what must not happen here.
+  const locked = configWritesLocked()
+  if (locked) {
+    if (!refusedOnce.has(key)) {
+      refusedOnce.add(key)
+      console.warn(`[config-saver] Refusing to save '${key}': ${locked}. Your config on disk is untouched.`)
+    }
+    return false
+  }
   const ok = (await tryOnce(key, data)) || (await tryOnce(key, data))
   const health = useConfigHealthStore.getState()
   if (ok) {

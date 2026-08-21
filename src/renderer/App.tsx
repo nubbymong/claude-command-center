@@ -47,6 +47,7 @@ import { useConfigStore } from './stores/configStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
+import { useConfigWriteLockStore } from './stores/configWriteLockStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
 import { deriveOnboarding, shouldReonboardForVersion } from './onboarding/gate'
@@ -368,6 +369,16 @@ export default function App() {
       setConfigLoaded(true)
     } catch (err) {
       console.error('[App] Failed to load config:', err)
+      // Hydrating from `{}` is how the window comes up at all, and it is also
+      // how the user's config used to be destroyed: the stores end up holding
+      // empty defaults, and the first ordinary action persists that over files
+      // that were never the problem. The READ failed; the data is still there.
+      // Latch writes off BEFORE hydrating -- hydrateStores itself writes -- and
+      // let the notice offer "start fresh anyway" to anyone who would rather
+      // have a working app than the config they cannot load.
+      useConfigWriteLockStore.getState().lock(
+        'the app could not read your configuration this launch',
+      )
       hydrateStores({})
       setConfigLoaded(true)
     }

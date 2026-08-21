@@ -11,6 +11,7 @@ import { useCommandBarStore } from '../stores/commandBarStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { ASK_LABEL, ASK_LEGACY_LABEL } from '../lib/askConductor'
 import { migrateColorRecords } from './migrateIdentityColors'
+import { configWritesLocked } from '../stores/configWriteLockStore'
 
 /**
  * Ids of built-in commands that have been retired and must be removed from any
@@ -180,7 +181,13 @@ function migrateCommandArgs(commands: CustomCommand[]): CustomCommand[] {
     return commands
   }
 
-  return commands.map((cmd) => {
+  // `map` always allocates, so returning it unconditionally made the caller's
+  // `migrated !== commands` identity check true on EVERY boot of every install
+  // whose commands carry no defaultArgs -- the empty list included. The caller
+  // reads that as "something changed" and writes commands.json, so rewriting on
+  // every launch was the normal path rather than an edge case. Return the
+  // original reference unless a command was actually rewritten.
+  const out = commands.map((cmd) => {
     const prompt = cmd.prompt
 
     // Skip plain text prompts (not script paths)
@@ -240,6 +247,10 @@ function migrateCommandArgs(commands: CustomCommand[]): CustomCommand[] {
 
     return cmd
   })
+  // Element-wise rather than a flag set at each of the three rewrite branches:
+  // one place cannot miss a branch, and every non-rewriting path above already
+  // returns the ORIGINAL cmd object, so identity is exactly the question.
+  return out.some((c, i) => c !== commands[i]) ? out : commands
 }
 
 /**
@@ -327,21 +338,34 @@ export function hydrateStores(configData: Record<string, unknown>): void {
   let commands: CustomCommand[] = configData.commands == null
     ? [...DEFAULT_COMMANDS]
     : (coerceArray(configData.commands, 'commands', warnings) as unknown as CustomCommand[])
+  // These two migrations are the only writes hydration performs, and they go
+  // straight to the IPC rather than through config-saver -- so the write latch
+  // has to be honoured HERE too. It matters most in the case that motivated the
+  // latch: when the config could not be read at all, `configData` is `{}`, the
+  // command list reads as absent, and persisting the default over it deletes
+  // every command the user had.
+  const saveCommands = (value: CustomCommand[], why: string): void => {
+    const locked = configWritesLocked()
+    if (locked) {
+      console.warn(`[configHydration] ${why} computed but NOT saved: ${locked}`)
+      return
+    }
+    window.electronAPI.config.save('commands', value)
+    console.log(`[configHydration] ${why}`)
+  }
+
   // Run one-time migration to split args out of prompt field
   const migrated = migrateCommandArgs(commands)
   if (migrated !== commands) {
     commands = migrated
-    // Save migrated commands back
-    window.electronAPI.config.save('commands', commands)
-    console.log('[configHydration] Migrated command args from prompt field')
+    saveCommands(commands, 'Migrated command args from prompt field')
   }
   // One-time cleanup: drop retired built-in commands (currently the legacy
   // "Setup Statusline") from existing persisted configs so they stop appearing.
   const cleaned = removeRetiredCommands(commands)
   if (cleaned !== commands) {
     commands = cleaned
-    window.electronAPI.config.save('commands', commands)
-    console.log('[configHydration] Removed retired built-in command(s)')
+    saveCommands(commands, 'Removed retired built-in command(s)')
   }
   const commandSections = coerceArray(configData.commandSections, 'commandSections', warnings) as unknown as CommandSection[]
   useCommandStore.getState().hydrate(commands, commandSections)

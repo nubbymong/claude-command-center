@@ -295,15 +295,28 @@ export function loadAllConfig(): { data: Record<string, unknown>; needsMigration
     data[key] = readConfig(key)
   }
 
+  // Both migrations below are BEST EFFORT, and the try is the point: whatever
+  // they throw, `data` is already read and is strictly better than nothing.
+  // Letting a throw escape rejects the `config:loadAll` invoke, and the
+  // renderer's boot catch answers a rejection by hydrating from `{}` -- which
+  // writes an empty commands.json and a full set of default settings over the
+  // user's own. So a migration bug here does not just skip a migration, it
+  // deletes configuration. Failing to migrate is recoverable; that is not.
+  const bestEffort = (what: string, fn: () => void) => {
+    try { fn() } catch (err) {
+      logWarn(`[config-manager] ${what} failed; continuing with the config as read: ${(err as Error)?.message ?? err}`)
+    }
+  }
+
   // v1.4: strip removed legacy SSH fields. shellOnly stays (it's a
   // user-meaningful "no claude" toggle for both local + ssh); the
   // others were redundant once manual flow + idle fallback became the
   // only flow.
-  stripLegacySshFields(data)
+  bestEffort('legacy SSH field strip', () => stripLegacySshFields(data))
 
   // v1.5: back-fill provider field + claudeOptions on TerminalConfig[].
   // Strips top-level Claude fields; persists back to disk only if something actually changed.
-  migrateConfigsToProviderShape(data)
+  bestEffort('provider-shape migration', () => migrateConfigsToProviderShape(data))
 
   logInfo(`[config-manager] Loaded all config from ${getConfigDir()}, needsMigration=${!hasData}`)
   return { data, needsMigration: !hasData }
@@ -357,6 +370,15 @@ function migrateConfigsToProviderShape(data: Record<string, unknown>): void {
   let dirty = false
   const migrated: any[] = []
   for (const c of configs) {
+    // A non-object entry -- a `null` left by a half-written file, or a stray
+    // primitive -- is passed through untouched. Dereferencing it threw
+    // `Cannot read properties of null`, which escaped `config:loadAll` and put
+    // the RENDERER into its boot catch, where it hydrated from `{}` and wrote
+    // defaults over the user's commands and settings: one bad element cost the
+    // whole config. Spreading a primitive is no better -- `{ ...'abc' }` is
+    // `{0:'a',1:'b',2:'c'}` and this function PERSISTS, so it would have
+    // written that back as if it were a config. Leave what we cannot read.
+    if (!c || typeof c !== 'object') { migrated.push(c); continue }
     const out = migrateConfigToProviderShape(c)
     // Dirty if provider was absent OR any legacy top-level field was present
     if (!c.provider || CLAUDE_FIELDS.some(f => f in c)) dirty = true
@@ -398,6 +420,9 @@ function stripLegacySshFields(data: Record<string, unknown>): void {
   if (Array.isArray(configs)) {
     let dirty = false
     for (const c of configs) {
+      // Same reason as migrateConfigsToProviderShape: `null.sshConfig` threw
+      // out of config:loadAll and cost the user their commands and settings.
+      if (!c || typeof c !== 'object') continue
       if (cleanSshConfig(c.sshConfig as Record<string, unknown> | undefined)) dirty = true
     }
     if (dirty) { writeConfig('configs', configs); cleaned.push('configs') }
@@ -408,6 +433,7 @@ function stripLegacySshFields(data: Record<string, unknown>): void {
   if (sessionState && Array.isArray(sessionState.sessions)) {
     let dirty = false
     for (const s of sessionState.sessions) {
+      if (!s || typeof s !== 'object') continue
       if (cleanSshConfig(s.sshConfig as Record<string, unknown> | undefined)) dirty = true
     }
     if (dirty) { writeConfig('sessionState', sessionState); cleaned.push('sessionState') }
