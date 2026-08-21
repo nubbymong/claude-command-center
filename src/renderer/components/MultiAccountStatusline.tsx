@@ -183,9 +183,15 @@ function AccountPill({
   /** Whether a payload is still expected -- see the gate in the parent. */
   showPending: boolean
 }) {
-  // The pill is tinted with the account's OWN identity colour — the same colour
-  // as its dot — so the rim ties the row to the account instead of drawing a
-  // neutral box around it.
+  // The pill is tinted with the account's OWN identity colour, so the rim ties
+  // the row to the account instead of drawing a neutral box around it.
+  //
+  // There is no dot any more (user call 2026-08-21: "we dont need the account
+  // colour dot as well as the pill colour"). The rim, the fill and the dot were
+  // three statements of one fact, and the dot was the one costing horizontal
+  // room in the tightest bar in the app. The overflow list KEEPS its dot —
+  // those rows carry no pill tint, so there the dot is the only identity signal
+  // rather than the third.
   //
   // It previously asked for `var(--surface1)`, which does not exist: the token
   // is `--color-surface1`. An undefined custom property makes `border-color`
@@ -204,18 +210,18 @@ function AccountPill({
     <span
       // Each account sits in its own subtle rounded pill so the boundary between
       // accounts reads at a glance, rather than relying on whitespace alone.
-      className={`flex items-center gap-2 rounded-full border px-2.5 py-0.5 ${compact ? 'min-w-0' : 'shrink-0'}`}
+      className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 ${compact ? 'min-w-0' : 'shrink-0'}`}
       style={{
-        borderColor: `color-mix(in srgb, ${accent} 38%, transparent)`,
-        background: `color-mix(in srgb, ${accent} 9%, transparent)`,
+        // Softer than it was (38/9): with the dot gone the rim is no longer
+        // competing with a saturated disc beside it, so it can do the job at
+        // lower intensity. The bar carries one of these per account and they
+        // were shouting over the meters they exist to frame.
+        borderColor: `color-mix(in srgb, ${accent} 26%, transparent)`,
+        background: `color-mix(in srgb, ${accent} 6%, transparent)`,
       }}
       title={tooltip(account)}
       data-testid="multi-account-pill"
     >
-      <span
-        className="w-2 h-2 rounded-full shrink-0"
-        style={{ background: accent }}
-      />
       <span
         className={`font-medium ${compact ? 'truncate' : ''}`}
         style={{ color: 'var(--text-on-chrome)' }}
