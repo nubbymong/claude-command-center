@@ -331,6 +331,56 @@ const SID_PREFIX_LEN = 8
 const SAMPLE_CAP = 3
 const UA_MAX_LEN = 64
 
+/**
+ * How often an idle SSE stream sends a comment frame to keep itself alive.
+ *
+ * 30 s is well inside every idle window that plausibly reaps a connection —
+ * the common proxy/loopback defaults sit at 60 s and above — while costing 8
+ * bytes a tick on a loopback socket, i.e. nothing. Exported so a test can
+ * assert the interval is armed without waiting for it.
+ */
+export const SSE_KEEPALIVE_MS = 30_000
+
+/** The bit of an SSE response the keepalive needs. Narrowed to what is used so
+ *  a test can supply a plain object instead of a real ServerResponse. */
+export interface SseWritable {
+  write(chunk: string): unknown
+  writableEnded: boolean
+  destroyed: boolean
+}
+
+/**
+ * Keep an idle SSE stream warm. Returns the stop function to call on close.
+ *
+ * Extracted from the /sse handler so the rules below are testable without
+ * standing up the whole server (which pulls in Electron and the vision
+ * manager). The rules:
+ *
+ *   - a COMMENT frame, not a data frame. Any line starting with `:` is ignored
+ *     by every SSE client, so this is invisible to the protocol; a data frame
+ *     with no message would be one the client has to parse and discard.
+ *   - never write to a stream that has ended or been destroyed. That window
+ *     exists between the socket going away and 'close' firing, and a throw
+ *     inside a timer has no caller to catch it.
+ *   - swallow a write that throws anyway. The peer can vanish mid-write, and a
+ *     heartbeat failing is never a reason to take anything else down.
+ *   - unref the timer. Electron's main process exits on its own lifecycle; a
+ *     heartbeat on a stream nobody is reading must not be a reason it does not.
+ */
+export function armSseKeepAlive(
+  res: SseWritable,
+  intervalMs: number = SSE_KEEPALIVE_MS,
+  setTimer: (cb: () => void, ms: number) => { unref?: () => void } = (cb, ms) => setInterval(cb, ms),
+  clearTimer: (h: unknown) => void = (h) => clearInterval(h as ReturnType<typeof setInterval>),
+): () => void {
+  const handle = setTimer(() => {
+    if (res.writableEnded || res.destroyed) return
+    try { res.write(': ping\n\n') } catch { /* peer vanished mid-write */ }
+  }, intervalMs)
+  handle.unref?.()
+  return () => clearTimer(handle)
+}
+
 export function buildSessionNotFoundResponse(
   requestedSessionId: string,
   transports: ReadonlyMap<string, unknown>,
@@ -911,7 +961,30 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         // GHSA-f3wv: record who owns this transport so a POST can be bound to it.
         transportOwners.set(transport.sessionId, boundSessionId)
 
+        // KEEPALIVE. An MCP client can go a long time without calling a tool —
+        // an agent doing a build, a test run, or anything that is not vision or
+        // canvas — and until this, the stream carried literally zero bytes for
+        // the whole of it. Observed 2026-08-21: 72 minutes of silence, then a
+        // canvas_render answered `404 transport session not found` while the app
+        // had never restarted and the client's own process was untouched. The
+        // connection had been reaped and silently re-established underneath the
+        // agent, so its next call arrived carrying the id of a stream that no
+        // longer existed (transports is keyed by SSE CONNECTION, and `close`
+        // below removes the entry).
+        //
+        // This is the same failure as the `requestTimeout = 0` fix further down
+        // and not a duplicate of it: that one stopped Node's own clock from
+        // destroying the response at 5:00; this one stops an idle connection
+        // being dropped by anything else in the path, which no server-side timer
+        // setting can prevent. A comment frame is the SSE no-op — clients ignore
+        // any line starting with `:` — so it costs a few bytes and is invisible
+        // to the protocol.
+        //
+        // See armSseKeepAlive for the rules it follows.
+        const stopKeepAlive = armSseKeepAlive(res)
+
         res.on('close', () => {
+          stopKeepAlive()
           transports.delete(transport.sessionId)
           transportOwners.delete(transport.sessionId)
           logInfo(`[vision-mcp] SSE connection closed (${transports.size} remaining)`)
