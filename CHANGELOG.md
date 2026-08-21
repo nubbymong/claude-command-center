@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
-## [2.1.0-beta.16] - 2026-08-20
+## [2.1.0-beta.16] - 2026-08-21
 
 > The terminal corruption is understood and the setting that causes it is off by default. GPU rendering shares one cache of character images across every open session, so one session rebuilding that cache wipes the text out of all the others, which is why it looked random, why it got worse the more sessions you had, and why resizing the window brought it back. Leave GPU rendering off and you will not see it.
 

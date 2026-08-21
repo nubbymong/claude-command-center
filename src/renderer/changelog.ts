@@ -22,7 +22,7 @@ export interface ChangelogEntry {
 export const changelog: ChangelogEntry[] = [
   {
     version: '2.1.0-beta.16',
-    date: '2026-08-20',
+    date: '2026-08-21',
     highlights: 'The terminal corruption is understood and the setting that causes it is off by default. GPU rendering shares one cache of character images across every open session, so one session rebuilding that cache wipes the text out of all the others, which is why it looked random, why it got worse the more sessions you had, and why resizing the window brought it back. Leave GPU rendering off and you will not see it.',
     changes: [
       { type: 'fix', description: 'On Windows, a secret argument — for a terminal config or a command button — that PowerShell cannot hand to a command intact is now refused when you type it, with the reason under the field, instead of being saved and then silently corrupting the command line. The app starts Windows PowerShell 5.1, which rebuilds a command\'s arguments into one line and never escapes a double quote inside a value; a value containing one, or ending in a backslash, or (for tools installed by npm) containing & | ^ < > %, would arrive split, truncated, or in the worst case re-parsed by cmd.exe. The app cannot rewrite a secret, so it says no up front. Secrets without those characters are unaffected; macOS and Linux are unaffected because the reference there is quoted.' },
