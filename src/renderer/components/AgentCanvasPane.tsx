@@ -24,6 +24,7 @@ import { askCanvasFrame } from '../canvas/canvas-frame-rpc'
 import { createCanvasInboundChannel } from '../canvas/canvas-inbound-channel'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
 import { openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
+import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 import { relativeTime } from '../utils/relativeTime'
 
 /** JetBrains Mono ships with the app (@font-face in styles.css) but Tailwind's
@@ -405,6 +406,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // version need no pass; regions and generals have nothing to re-anchor.
   const openNotes = useMemo(() => (reviewSession ? openSubmittedNotesOf(reviewSession) : []), [reviewSession])
   const openReviewCount = useMemo(() => (reviewSession ? openReviewsOf(reviewSession).length : 0), [reviewSession])
+  // Open reviews on the session's OTHER canvases (item 29): the count above is
+  // honest about this canvas and blind to the rest; this names the rest, and
+  // points at the subject picker where each is listed with its own count.
+  const elsewhereOpen = useCanvasTotalsStore((s) => {
+    const t = s.bySessionId[sessionId]
+    return t?.loaded ? Math.max(0, t.openReviews - t.onActive) : 0
+  })
   const openNotesKey = useMemo(() => openNotes.map((n) => n.id).join(','), [openNotes])
 
   useEffect(() => {
@@ -624,6 +632,18 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
             {openReviewCount} review{openReviewCount === 1 ? '' : 's'} open
+          </span>
+        )}
+        {/* ...and on the canvases you are NOT looking at. Muted, not peach: it
+            is a pointer to the picker, not a second alarm. */}
+        {elsewhereOpen > 0 && (
+          <span
+            className="shrink-0 text-[11px] rounded-full px-2 py-0.5 border"
+            style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+            title={`${elsewhereOpen} more review${elsewhereOpen === 1 ? '' : 's'} open on other canvases of this session — the subject picker lists each canvas with its count`}
+            data-testid="canvas-pane-open-reviews-elsewhere"
+          >
+            +{elsewhereOpen} elsewhere
           </span>
         )}
         <button

@@ -173,6 +173,9 @@ const mockElectronAPI = {
     render: vi.fn(() => Promise.resolve({ canvasId: 'c0ffee', versionId: 'v1' })),
     setActiveVersion: vi.fn(() => Promise.resolve(null)),
     onChanged: vi.fn(() => () => {}),
+    onReviewChanged: vi.fn(() => () => {}),
+    // The library listing: the cross-canvas totals store reads it on mount.
+    listAll: vi.fn(() => Promise.resolve([])),
   },
   webview: {
     check: vi.fn(() => Promise.resolve({ reachable: false })),
@@ -185,8 +188,11 @@ const mockElectronAPI = {
     navBack: vi.fn(() => Promise.resolve()),
     navForward: vi.fn(() => Promise.resolve()),
     goHome: vi.fn(() => Promise.resolve()),
+    navigate: vi.fn(() => Promise.resolve(true)),
+    openExternal: vi.fn(() => Promise.resolve(true)),
     closeAll: vi.fn(() => Promise.resolve(true)),
     onEscapePressed: vi.fn(() => () => {}),
+    onNavigated: vi.fn(() => () => {}),
   },
 }
 

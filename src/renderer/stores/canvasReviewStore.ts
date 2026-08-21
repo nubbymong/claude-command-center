@@ -13,6 +13,7 @@
 // persisted.
 
 import { create } from 'zustand'
+import { useCanvasTotalsStore } from './canvasTotalsStore'
 import type {
   Annotation,
   CanvasAnchorResolution,
@@ -292,6 +293,9 @@ export function setupCanvasReviewListener(): void {
   listenerArmed = true
   window.electronAPI.canvas.onReviewChanged((event) => {
     void useCanvasReviewStore.getState().refresh(event.sessionId)
+    // The cross-canvas total (Canvas button pill) counts every canvas the
+    // session owns; any review mutation can move it.
+    useCanvasTotalsStore.getState().scheduleRefresh(event.sessionId)
   })
 }
 

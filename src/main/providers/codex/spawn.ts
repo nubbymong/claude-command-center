@@ -7,6 +7,7 @@ import { getResourcesDirectory } from '../../ipc/setup-handlers'
 import type { SpawnOptions } from '../types'
 import { getConductorMcpPort, mcpSessionToken } from '../../conductor-mcp-server'
 import { readConfig } from '../../config-manager'
+import { colorFgBgValue } from '../host-color-scheme'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -176,6 +177,12 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   // HMAC, matched to the cccSessionId baked into the URL (GHSA-q83v-phcc-hgv4).
   if (mcpPort > 0) {
     env.CONDUCTOR_MCP_TOKEN = mcpSessionToken(opts.sessionId)
+  }
+  // The host's light/dark scheme, the same way the local Claude spawn gets it
+  // (book item 34: Codex sessions never did, so a light-mode Codex TUI came up
+  // dark). Harmless to a TUI that does not read it.
+  if (opts.hostColorScheme) {
+    env.COLORFGBG = colorFgBgValue(opts.hostColorScheme)
   }
 
   // Picker swap: when useResumePicker is true and the picker script is
