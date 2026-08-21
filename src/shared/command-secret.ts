@@ -66,10 +66,16 @@ export function commandSecretRef(commandId: string, isWindows: boolean): string 
  */
 export function secretValueProblem(value: string, isWindows: boolean): string | null {
   if (typeof value !== 'string' || value.length === 0) return null
-  if (/[\r\n]/.test(value)) return 'A secret cannot contain a line break.'
+  // NUL too: node-pty builds the env block as value + NUL, so a NUL inside a
+  // value would end it early and inject a further variable.
+  if (/[\r\n\0]/.test(value)) return 'A secret cannot contain a line break or NUL.'
   if (!isWindows) return null
   if (value.includes('"')) return 'On Windows a secret cannot contain a double quote ("): PowerShell cannot pass it to a command intact.'
   if (value.endsWith('\\')) return 'On Windows a secret cannot end with a backslash (\\): PowerShell would swallow the quote after it.'
+  // A !NAME! pair expands under cmd's delayed expansion (/V:ON, or the
+  // DelayedExpansion registry value) on the way through a .cmd shim; a lone
+  // ! is inert. Same class as %NAME%, which is refused below.
+  if (/!.+!/.test(value)) return 'On Windows a secret cannot contain a !name! pair: a .cmd-based tool may expand it as a variable.'
   const meta = value.match(/[&|^<>%]/)
   if (meta) return `On Windows a secret cannot contain ${meta[0]}: a .cmd-based tool would re-parse it as a command.`
   return null

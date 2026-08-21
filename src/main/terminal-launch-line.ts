@@ -18,8 +18,14 @@ export interface TerminalLaunchOptions {
 }
 
 /** Shell-appropriate reference to the secret env var. Quoted on POSIX so a
- *  secret containing spaces or globs stays a single argument; PowerShell does
- *  not word-split `$env:VAR`, so it needs no quoting. */
+ *  secret containing spaces or globs stays a single argument. On Windows the
+ *  reference is bare, and that alone does NOT make the value one argument:
+ *  PowerShell 5.1 re-serialises native-command arguments into one line and
+ *  never escapes an embedded `"`, so a value holding `"`, a trailing `\`, a
+ *  `!name!` pair or `&|^<>%` (through a .cmd shim) breaks the child's argv.
+ *  Those values are REFUSED at the dialog by shared/command-secret's
+ *  `secretValueProblem` (the same rule the command-button secret uses); what
+ *  passes arrives intact -- measured on 5.1, ADR-009 pass, beta.16. */
 export function secretRef(isWindows: boolean): string {
   return isWindows ? '$env:CCC_ARG_SECRET' : '"$CCC_ARG_SECRET"'
 }

@@ -40,3 +40,20 @@ describe('secretValueProblem', () => {
     expect(secretValueProblem('C:\\Users\\me\\key', true)).toBeNull()
   })
 })
+
+// ── Re-attack round (beta.16 ADR-009 pass). Measured on powershell.exe 5.1 +
+// an npm .cmd shim: every gate-accepted value arrived as one intact argument;
+// the two gaps it found in the refusal set are closed here.
+describe('secretValueProblem -- re-attack additions', () => {
+  it('refuses a NUL everywhere: node-pty builds the env block as value + \\0, so a NUL would inject a further variable', () => {
+    expect(secretValueProblem('a\u0000B=1', true)).toMatch(/line break or NUL/)
+    expect(secretValueProblem('a\u0000B=1', false)).toMatch(/line break or NUL/)
+  })
+  it('on Windows refuses a !NAME! pair (cmd delayed expansion through a .cmd shim expands it), but not a lone !', () => {
+    expect(secretValueProblem('!USERNAME!', true)).toMatch(/!/)
+    expect(secretValueProblem('pw!with!bangs', true)).toMatch(/!/)
+    expect(secretValueProblem('pass!word', true)).toBeNull()
+    expect(secretValueProblem('wow!', true)).toBeNull()
+    expect(secretValueProblem('!USERNAME!', false)).toBeNull()
+  })
+})
