@@ -25,6 +25,17 @@ describe('navigate', () => {
     S().navigate('s1', 'http://b/')
     expect(of('s1').currentUrl).toBe('http://b/')
   })
+  it('bumps navSeq on EVERY ask, including the same url again -- "go to X" after Back must still go to X', () => {
+    S().navigate('s1', 'http://a/')
+    const first = of('s1').navSeq
+    S().navigate('s1', 'http://a/')
+    expect(of('s1').navSeq).toBe(first + 1)
+    S().startActivation('s1', 'http://a/')
+    expect(of('s1').navSeq).toBe(first + 2)
+    // A watch RESULT is not an ask.
+    S().markAvailable('s1', 'http://a/')
+    expect(of('s1').navSeq).toBe(first + 2)
+  })
 })
 
 describe('the watch and the pane', () => {

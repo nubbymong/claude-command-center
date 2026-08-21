@@ -40,6 +40,15 @@ export interface WebviewSessionState {
   watchUrl: string | null
   /** The page the pane has been asked to show. Null = start page. */
   currentUrl: string | null
+  /**
+   * Bumped on every ASK (navigate / startActivation), even when the url is
+   * the same as last time. The page can have moved on since -- Back, a link
+   * -- so "go to X" must mean go to X now, not "X is already what I asked
+   * for". The pane reacts to (currentUrl, navSeq), not currentUrl alone.
+   * Found on the desktop: an "Open a page" button whose page was the last
+   * request did nothing after Back.
+   */
+  navSeq: number
   loadedAt: number | null
   isOpen: boolean
   /** What main reports the view is actually on. Null until the first navigation event. */
@@ -110,6 +119,7 @@ const defaultState = (): WebviewSessionState => ({
   status: 'idle',
   watchUrl: null,
   currentUrl: null,
+  navSeq: 0,
   loadedAt: null,
   isOpen: false,
   page: null,
@@ -130,6 +140,7 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
           status: 'pending',
           watchUrl: url,
           currentUrl: url,
+          navSeq: cur.navSeq + 1,
           loadedAt: null,
           activationId: nextToken,
         },
@@ -195,7 +206,7 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, currentUrl: url, isOpen: true },
+        [sessionId]: { ...cur, currentUrl: url, navSeq: cur.navSeq + 1, isOpen: true },
       },
     }))
   },

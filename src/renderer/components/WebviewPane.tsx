@@ -172,6 +172,9 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   }, [sessionId, measure, setOpen])
 
   // React to the requested URL: navigate the existing view, or create one.
+  // Keyed on navSeq as well as the url: asking for the SAME page again must
+  // still go there (the page may have moved on via Back or a link).
+  const navSeq = state?.navSeq ?? 0
   useEffect(() => {
     if (!currentUrl) return
     if (!viewReadyRef.current) { tryOpenRef.current?.(); return }
@@ -183,7 +186,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
         tryOpenRef.current?.()
       }
     }).catch(() => { /* noop */ })
-  }, [sessionId, currentUrl])
+  }, [sessionId, currentUrl, navSeq])
 
   // When isActive flips true after the lifecycle parked tryOpen (because the
   // session was inactive at mount), re-trigger the open.

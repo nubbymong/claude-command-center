@@ -125,6 +125,15 @@ describe('with a page loaded', () => {
     expect(api.open).toHaveBeenCalledTimes(1)
     expect(api.close).not.toHaveBeenCalled()
   })
+  it('asking for the SAME url again still navigates (the page may have moved on via Back)', async () => {
+    await loaded()
+    // The page went elsewhere on its own (Back / a link); the request is unchanged.
+    act(() => { navHandler!({ sessionId: 's1', url: 'http://localhost:5173/elsewhere', title: '', canGoBack: true, canGoForward: false, loading: false }) })
+    api.navigate.mockClear()
+    act(() => { useWebviewStore.getState().navigate('s1', 'http://localhost:5173/') })
+    await flush()
+    expect(api.navigate).toHaveBeenCalledWith('s1', 'http://localhost:5173/')
+  })
   it('the address bar shows where main says the page IS, and Back enables from the report', async () => {
     await loaded()
     expect(byTest<HTMLInputElement>('browser-address')!.value).toBe('http://localhost:5173/')
