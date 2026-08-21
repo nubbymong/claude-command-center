@@ -2,6 +2,7 @@ import React from 'react'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useCanvasReviewStore, openReviewsOf } from '../stores/canvasReviewStore'
+import { trackUsage } from '../stores/tipsStore'
 
 interface Props {
   sessionId: string
@@ -54,7 +55,13 @@ export default function AgentCanvasButton({ sessionId }: Props) {
   // the terminal is visible without hovering anything.
   return (
     <button
-      onClick={() => togglePane(sessionId)}
+      onClick={() => {
+        // Recorded on OPEN only: closing the pane is not discovering it, and a
+        // toggle that recorded both would make the count meaningless. This is
+        // what retires the canvas tip and unlocks the plan-mode one.
+        if (!isOpen) trackUsage('canvas.opened')
+        togglePane(sessionId)
+      }}
       className={`relative flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
         isOpen
           ? 'bg-mauve/20 border-mauve/70 text-mauve hover:bg-mauve/30'

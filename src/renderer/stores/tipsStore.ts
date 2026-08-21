@@ -94,6 +94,9 @@ const DIRECT_FEATURE_IDS: readonly string[] = [
   'github.session-context-seen',
   'github.ai-usage-enabled',
   'agents.agent-teams',
+  'canvas.opened',
+  'sessions.codex-config',
+  'accounts.switch-session-account',
 ]
 
 /**
@@ -154,12 +157,11 @@ function resolveContent(tip: Tip, tracking: UsageTracking): TipContent | null {
  * permanently dismissed, never yet shown, and currently relevant (their
  * requires/excludes resolve to real content).
  *
- * CAVEAT, and it is the honest reading of the number: `tipsShown` is stamped
- * when a tip is PICKED -- roughly two seconds after launch -- not when the user
- * actually reads it. So this counts "never put in front of you", which is the
- * best signal the store holds; it is not "unread" in the strict sense. Moving
- * the trigger into the dock does not change that, but it does make it visible,
- * which is why the count says "new" rather than "unread".
+ * `tipsShown` is now stamped by whoever DRAWS the tip (`markTipShown`, called
+ * from the dock row's render effect), not by whoever picks it -- so this counts
+ * tips that have never been put on screen. It still is not "unread" in the
+ * strict sense: a rendered row you never looked at is counted as shown, which is
+ * the closest the renderer can honestly get. Hence "new", not "unread".
  */
 export function countUnseenTips(tracking: UsageTracking): number {
   return TIPS_LIBRARY.filter((tip) => {

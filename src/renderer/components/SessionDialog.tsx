@@ -298,6 +298,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     // the feature.
     if (uiProvider === 'claude' && effortLevel !== '') trackUsage('sessions.effort-level')
     if (sessionType === 'ssh') trackUsage('sessions.session-type')
+    if (provider === 'codex') trackUsage('sessions.codex-config')
 
     // No '.' fallback: the empty-directory default is how the transcript
     // misfiling incident happened; validation above requires a real path.

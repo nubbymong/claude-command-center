@@ -14,6 +14,8 @@
  * than no prune at all because it reads as though it were doing something.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import * as fs from 'fs'
+import * as path from 'path'
 
 const saved: Array<[string, unknown]> = []
 vi.mock('../../../src/renderer/utils/config-saver', () => ({
@@ -136,6 +138,60 @@ describe('the gates the library depends on', () => {
       }
     }
     expect(orphans).toEqual([])
+  })
+
+  it('every literal trackUsage call site is an id the prune knows about', () => {
+    // tipsStore's comment promises this round trip, and until now nothing
+    // enforced it. It matters in the direction that is easy to get wrong: add a
+    // trackUsage call, forget DIRECT_FEATURE_IDS, and the prune deletes that
+    // row on the next launch -- so the feature records itself and then quietly
+    // un-records itself, forever.
+    const dir = path.resolve(__dirname, '../../../src/renderer')
+    const files: string[] = []
+    const walk = (d: string) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name)
+        if (e.isDirectory()) walk(p)
+        else if (/\.tsx?$/.test(e.name)) files.push(p)
+      }
+    }
+    walk(dir)
+    const known = knownFeatureIds()
+    const missing: string[] = []
+    let seen = 0
+    for (const f of files) {
+      const src = fs.readFileSync(f, 'utf8')
+      for (const m of src.matchAll(/trackUsage\(\s*'([^']+)'/g)) {
+        seen++
+        if (!known.has(m[1])) missing.push(`${path.basename(f)} -> ${m[1]}`)
+      }
+    }
+    // The scan itself must not be able to pass by finding nothing.
+    expect(seen).toBeGreaterThan(10)
+    expect(missing).toEqual([])
+  })
+
+  it('every actionTarget is a view the app can actually navigate to', () => {
+    // TipModal casts actionTarget straight to ViewType and hands it to
+    // onNavigate, so a plausible-looking name that is not a view -- the Feature
+    // Guide is `help`, not `feature-guide` -- gives the user a button that does
+    // nothing at all. TypeScript cannot catch it: the field is a string.
+    const VIEWS = new Set([
+      'cloud-agents', 'sessions', 'logs', 'settings', 'insights',
+      'tokenomics', 'vision', 'memory', 'account-usage', 'help',
+    ])
+    const bad: string[] = []
+    for (const tip of TIPS_LIBRARY) {
+      for (const v of [tip.variants.primary, tip.variants.postUse]) {
+        if (v?.actionTarget && !VIEWS.has(v.actionTarget)) bad.push(`${tip.id} -> ${v.actionTarget}`)
+      }
+    }
+    expect(bad).toEqual([])
+  })
+
+  it('no two tips share an id', () => {
+    const ids = TIPS_LIBRARY.map((t) => t.id)
+    expect(ids.length).toBe(new Set(ids).size)
   })
 
   it('the view map is the only copy of the view -> feature mapping', () => {
