@@ -128,6 +128,21 @@ export interface Session {
    *  in main and do NOT use these. */
   resumeUuid?: string
   resumeCwd?: string
+  /** True once this session's PTY has EXITED and nothing has respawned it.
+   *  Set by TerminalView's exit subscription; cleared by forceRemount.
+   *
+   *  It exists because a session object outlives its process: main deletes the
+   *  PTY and sends `pty:exit`, the renderer writes "[Process exited]" into the
+   *  terminal, and the session stays in the list looking exactly like a live
+   *  one. Anything that decides "there is already a session, write to it"
+   *  therefore has to consult liveness -- see findAskSession, where writing to
+   *  a dead PTY buffered the user's question into a pendingWrites map that only
+   *  a spawn drains, and a spawn clears it first.
+   *
+   *  Ephemeral, like effortLive/fastMode: NOT in session-persistence's field
+   *  allowlist, so a restored session starts unset (it has no PTY yet either
+   *  way, and the restore path spawns one). */
+  ptyExited?: boolean
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */
   needsLogin?: boolean

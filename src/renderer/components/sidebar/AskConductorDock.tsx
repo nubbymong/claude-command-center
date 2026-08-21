@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTipsStore, countUnseenTips } from '../../stores/tipsStore'
-import { launchAskConductor, useAskErrorStore, ASK_LABEL } from '../../lib/askConductor'
+import { launchAskConductor, useAskErrorStore, ASK_LABEL, askSessionIsLive } from '../../lib/askConductor'
 import { BrandMark } from '../BrandMark'
 import DockRowMenu from './DockRowMenu'
 import HideDockFeatureDialog, { type DockFeature } from '../HideDockFeatureDialog'
@@ -63,7 +63,10 @@ function LightbulbMark({ className, style }: { className?: string; style?: React
 export default function AskConductorDock({ collapsed, onOpened, isActive, onShowTip }: Props) {
   const askSession = useSessionStore((s) => s.sessions.find((sess) => sess.kind === 'ask'))
   const error = useAskErrorStore((s) => s.error)
-  const running = !!askSession
+  // Liveness, not existence: a session whose PTY has exited stays in the list,
+  // so `!!askSession` painted the dot and promised "go to the open session"
+  // for a tab showing nothing but [Process exited].
+  const running = askSessionIsLive(askSession)
 
   // Absent means shown: an install that predates the setting must not silently
   // lose either entry point on upgrade.

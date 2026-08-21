@@ -39,6 +39,11 @@ export function useRestartSession(
         // the bolt) until the new run's first statusline tick confirms them.
         effortLive: undefined,
         fastMode: undefined,
+        // The whole point of a remount is that a new PTY is about to exist.
+        // Leaving the previous run's exit flag set would make every liveness
+        // check (findAskSession's, the dock's dot) read the fresh session as
+        // dead.
+        ptyExited: undefined,
         // A restart re-runs the spawn effect. Ask Conductor's opening question
         // is one-shot: without this, restarting an Ask session would re-submit
         // whatever the user first typed. TerminalView also consumes it at spawn;

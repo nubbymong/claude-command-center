@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { generateId } from '../utils/id'
 import { useSessionStore, type Session } from '../stores/sessionStore'
+import { useAccountGateStore } from '../stores/accountGateStore'
+import { clearSpawned } from '../ptyTracker'
 
 /**
  * Ask Conductor — the in-app help session.
@@ -67,6 +69,25 @@ export function findAskSession(sessions: Session[]): Session | undefined {
 }
 
 /**
+ * Is this Ask session's process still there to talk to?
+ *
+ * A session object outlives its PTY: main deletes the PTY and sends
+ * `pty:exit`, the renderer prints "[Process exited]" into the terminal, and
+ * the session stays in the list looking exactly like a live one. Writing a
+ * question to that id does not fail -- `pty.write` is `ipcRenderer.send`, so it
+ * cannot report anything -- it lands in main's `pendingWrites` buffer, which
+ * only a spawn drains and which a spawn CLEARS before it fills. The question is
+ * not delayed, it is destroyed, and the box it was typed into is emptied as
+ * though it had been sent.
+ */
+// Plain boolean, NOT a `session is Session` type predicate: with a non-optional
+// argument the predicate narrows the false branch to `never`, which is exactly
+// the branch the revive lives in.
+export function askSessionIsLive(session: Session | undefined): boolean {
+  return !!session && !session.ptyExited
+}
+
+/**
  * Transient launch failure, surfaced in the sidebar dock (the one place that is
  * always on screen for every entry point). `help:workspace` fails closed to
  * `null` when the resources directory cannot be written; the old code returned
@@ -128,18 +149,58 @@ export function _resetAskLaunchForTest(): void {
   inFlightLaunch = null
 }
 
+/**
+ * Hand a question to the Ask session that already exists.
+ *
+ * Live: write it to the PTY, which is how a command button does it -- the env
+ * route is spawn-time only, so there is nothing else to use mid-session.
+ *
+ * Dead: REVIVE it rather than write into the void. Bumping `createdAt` changes
+ * the TerminalView key, so the pane remounts and respawns, and `askPrompt` then
+ * rides that spawn as CCC_ASK_PROMPT -- the same mechanism a first launch uses,
+ * so the question is delivered by the path that is already tested rather than
+ * by a second one. The id is deliberately KEPT: the tab, its place in the strip
+ * and anything holding a reference to it all survive, and the user gets their
+ * question answered in the tab they asked it from.
+ */
+function handOverTo(existing: Session, askPrompt: string | undefined): string {
+  const store = useSessionStore.getState()
+  if (askSessionIsLive(existing)) {
+    store.setActiveSession(existing.id)
+    if (askPrompt) window.electronAPI.pty.write(existing.id, askPrompt + '\r')
+    return existing.id
+  }
+
+  clearSpawned(existing.id)
+  store.removeSession(existing.id)
+  store.addSession({
+    ...existing,
+    id: existing.id,
+    askPrompt,
+    status: 'idle',
+    createdAt: Date.now(),
+    ptyExited: undefined,
+    // The same clearing a restart does: the previous run's indicators must not
+    // stay painted on a session that is starting again.
+    contextPercent: undefined,
+    costUsd: undefined,
+    needsAttention: false,
+    effortLive: undefined,
+    fastMode: undefined,
+  })
+  // The account was decided when this session was first opened; a revive must
+  // not re-pop the picker over it, which is what restart does too.
+  useAccountGateStore.getState().markPredetermined(existing.id)
+  store.setActiveSession(existing.id)
+  return existing.id
+}
+
 async function doLaunchAskConductor(question?: string): Promise<string> {
   const askPrompt = normaliseQuestion(question)
   const store = useSessionStore.getState()
 
   const existing = findAskSession(store.sessions)
-  if (existing) {
-    store.setActiveSession(existing.id)
-    // Already running: the env route is spawn-time only, so hand the question
-    // over the same way a command button does — write it to the PTY.
-    if (askPrompt) window.electronAPI.pty.write(existing.id, askPrompt + '\r')
-    return existing.id
-  }
+  if (existing) return handOverTo(existing, askPrompt)
 
   let dir: string | null = null
   try {
@@ -158,11 +219,7 @@ async function doLaunchAskConductor(question?: string): Promise<string> {
   // that can add a session while an mkdir is in flight. Cheap, and it makes the
   // "one ask session" claim true by construction rather than by timing.
   const raced = findAskSession(useSessionStore.getState().sessions)
-  if (raced) {
-    store.setActiveSession(raced.id)
-    if (askPrompt) window.electronAPI.pty.write(raced.id, askPrompt + '\r')
-    return raced.id
-  }
+  if (raced) return handOverTo(raced, askPrompt)
 
   const id = generateId()
   store.addSession({
