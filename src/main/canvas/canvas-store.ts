@@ -934,7 +934,7 @@ function findFiledCanvas(sessionId: string, title: string): CanvasRecord | undef
 export function renderVersion(
   sessionId: string,
   source: CanvasRenderSource,
-): { canvasId: string; versionId: string; filed?: { canvasId: string } } {
+): { canvasId: string; versionId: string; filed?: { canvasId: string; returnedToExisting: boolean } } {
   if (!SESSION_ID_RE.test(sessionId)) throw new Error('invalid session id')
 
   const held = getRecordForSession(sessionId)
@@ -1089,7 +1089,17 @@ export function renderVersion(
   // notes on it out of view. The ID only: the filed canvas's title is
   // agent-authored text, and the tool reply it feeds is operator voice.
   const filedId = subjectChanged && held && held.canvasId !== canvasId ? held.canvasId : undefined
-  return { canvasId, versionId, ...(filedId ? { filed: { canvasId: filedId } } : {}) }
+  // Whether the canvas now active is BRAND NEW or one this session filed
+  // earlier and has just come back to. The tool reply said "this is a new
+  // canvas" either way, which is false on the returnedTo path -- and that path
+  // is the one where it matters, because the canvas being returned to already
+  // has versions and notes of its own.
+  const returnedToExisting = !!(subjectChanged && returnedTo)
+  return {
+    canvasId,
+    versionId,
+    ...(filedId ? { filed: { canvasId: filedId, returnedToExisting } } : {}),
+  }
 }
 
 /** Windows reserved device basenames — a request for `CON`/`NUL`/`COM1`/… can

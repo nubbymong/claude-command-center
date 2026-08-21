@@ -130,6 +130,38 @@ describe('canvas_render — filing', () => {
     expect(r.text).toContain('canvas-old')
   })
 
+  it('never hands back review ids from the canvas it just filed', async () => {
+    // canvas_review resolves a review id against the session's ACTIVE canvas
+    // and rejects any canvasId the model supplies. Review ids also restart at
+    // R1 on every canvas. So an id from the FILED canvas either resolves to
+    // nothing -- "this canvas has no submitted reviews yet", contradicting the
+    // sentence the agent just read -- or, when the numbers collide, silently
+    // returns a DIFFERENT canvas's notes as a normal success, and a follow-up
+    // canvas_resolve closes notes the user never wrote about this work.
+    const r = await render(deps({
+      renderVersion: () => ({ canvasId: 'canvas-new', versionId: 'v1', filed: { canvasId: 'canvas-old', returnedToExisting: false } }),
+      getReviewCounts: (id) => (id === 'canvas-old' ? counts({ openReviewIds: ['R1', 'R2'] }) : counts()),
+    }))
+    // The fact survives; the unusable handles do not.
+    expect(r.text).toContain('canvas-old')
+    expect(r.text).toContain('2 review(s) with open notes')
+    expect(r.text).toContain('the user reopens it from the Canvas library')
+    expect(r.text).not.toMatch(/R[0-9]+/)
+  })
+
+  it('does not call a canvas NEW when the render returned to one this session had already started', async () => {
+    // "Login page" -> "Checkout" -> "Login page" re-activates the login canvas,
+    // with its versions and its notes. Calling that "a new canvas" told the
+    // agent the opposite of what had happened, on the one path where it matters.
+    const r = await render(deps({
+      renderVersion: () => ({ canvasId: 'canvas-old-login', versionId: 'v4', filed: { canvasId: 'canvas-checkout', returnedToExisting: true } }),
+    }))
+    expect(r.text).toContain('canvas-checkout was filed')
+    expect(r.text).toContain('the canvas you had already started on that subject')
+    expect(r.text).not.toContain('this is a new canvas')
+  })
+
+
   it('never fails a good render because the status read threw', async () => {
     const r = await render(deps({ getReviewCounts: () => { throw new Error('reviews.json is a directory') } }))
     expect(r.isError).toBe(false)
