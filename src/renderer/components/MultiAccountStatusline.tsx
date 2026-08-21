@@ -141,17 +141,158 @@ export function splitAccountRows<T>(accounts: T[]): FooterRowLayout<T> {
   return { rows, overflow }
 }
 
-function tooltip(a: LiveAccount): string {
+function tooltip(a: LiveAccount, opts?: { withPercent?: boolean }): string {
   const lines = [`${a.name} — ${a.count} live session${a.count === 1 ? '' : 's'}`]
   // The email can be ellipsised in the two-row layout, so keep it in the
   // tooltip -- the account is otherwise unidentifiable when it is clipped.
   if (a.name !== a.email) lines.push(a.email)
-  for (const b of a.buckets) if (b.resetsAt) lines.push(`${b.label} resets ${b.resetsAt}`)
+  for (const b of a.buckets) {
+    // In minimal mode the dots carry a BAND, not a figure, so the exact number
+    // has nowhere else to live and the tooltip is the whole readout rather than
+    // a supplement to a visible bar.
+    const parts = [b.label]
+    if (opts?.withPercent) parts.push(`${Math.round(b.percent)}%`)
+    if (b.resetsAt) parts.push(`resets ${b.resetsAt}`)
+    if (parts.length > 1) lines.push(parts.join(' — '))
+  }
   return lines.join('\n')
 }
 
 function shownBuckets(a: LiveAccount, hidden: string[]): UsageBucket[] {
   return a.buckets.filter((b) => !hidden.includes(b.label))
+}
+
+/**
+ * Whether a bucket is a PER-MODEL weekly (Fable, and whatever follows it) as
+ * opposed to a time window (5h, Weekly-all).
+ *
+ * Group alone cannot decide this: `usage-buckets.ts` gives a per-model weekly
+ * `group: 'weekly'`, the same as weekly-all. What it does do is encode the model
+ * into the key as `<kind>:<model display name>`, leaving that segment empty for
+ * the time windows -- so the key is the producer's own answer to the question.
+ * The legacy synthesis in this file uses bare keys with no colon at all, which
+ * lands on "not a model bucket", which is right.
+ */
+export function isModelBucket(b: UsageBucket): boolean {
+  const i = b.key.indexOf(':')
+  return i >= 0 && b.key.slice(i + 1).trim() !== ''
+}
+
+export type RagState = 'green' | 'amber' | 'red'
+
+/**
+ * Traffic-light state for a utilisation percentage.
+ *
+ * These are the boundaries RateLimitBar already paints at -- its fill turns
+ * peach at 70 and red at 90 -- deliberately, so a dot can never disagree with
+ * the bar the user sees when they switch the setting back, and so there is no
+ * second set of thresholds to keep in step.
+ */
+export function ragFor(percent: number): RagState {
+  if (percent >= 90) return 'red'
+  if (percent >= 70) return 'amber'
+  return 'green'
+}
+
+export interface AccountDotSummary {
+  /** Worst of the time-window buckets, plus the windows that fed it. Null when
+   *  the account has no time-window bucket to show (all hidden, or none yet). */
+  usage: { worst: UsageBucket; windows: UsageBucket[] } | null
+  /** One entry per per-model bucket, in the API's order. Usually just Fable. */
+  models: UsageBucket[]
+}
+
+/**
+ * Minimal mode's counterpart to RateLimitBarPending: an account whose statusline
+ * has not reported yet. Neutral and hollow, in none of the three traffic-light
+ * hues, because any of them would be a claim about usage nobody has measured.
+ */
+function PendingDot() {
+  return (
+    <span
+      role="img"
+      aria-label="waiting for the status line"
+      title="Waiting for the status line"
+      data-testid="account-usage-dot-pending"
+      className="statusline-pending-track"
+      style={{
+        width: 9,
+        height: 9,
+        borderRadius: 999,
+        border: '1.5px dashed var(--text-muted)',
+        background: 'transparent',
+        flex: 'none',
+        display: 'inline-block',
+      }}
+    />
+  )
+}
+
+/**
+ * Reduce an account's buckets to what minimal mode draws: one dot for usage and
+ * one per model. "Usage" is the WORST of the time windows rather than an
+ * average -- the question the strip answers is "is anything about to run out",
+ * and averaging 5h 10% with Weekly 95% would answer it wrongly.
+ *
+ * Honours the same footer denylist as the meters, so hiding Fable drops its dot
+ * and hiding Weekly leaves the usage dot tracking 5h alone. Pure + tested.
+ */
+export function summariseAccountDots(a: LiveAccount, hidden: string[]): AccountDotSummary {
+  const shown = shownBuckets(a, hidden)
+  const models = shown.filter(isModelBucket)
+  const windows = shown.filter((b) => !isModelBucket(b))
+  const worst = windows.reduce<UsageBucket | null>(
+    (acc, b) => (!acc || b.percent > acc.percent ? b : acc),
+    null,
+  )
+  return { usage: worst ? { worst, windows } : null, models }
+}
+
+const RAG_TOKEN: Record<RagState, string> = {
+  green: 'var(--color-green)',
+  amber: 'var(--color-yellow)',
+  red: 'var(--color-red)',
+}
+
+const RAG_WORD: Record<RagState, string> = {
+  green: 'fine',
+  amber: 'running low',
+  red: 'nearly exhausted',
+}
+
+/**
+ * One traffic-light dot.
+ *
+ * Shape carries the state as well as hue -- hollow ring, half-filled, solid with
+ * a halo -- because the pill's own tint is the ACCOUNT IDENTITY. A state told in
+ * colour alone would be a second colour language inside the same nine pixels,
+ * and would be unreadable to anyone who cannot separate the two hues.
+ */
+function UsageDot({ rag, title, label }: { rag: RagState; title: string; label: string }) {
+  const c = RAG_TOKEN[rag]
+  const base: React.CSSProperties = {
+    width: 9,
+    height: 9,
+    borderRadius: 999,
+    border: `1.5px solid ${c}`,
+    flex: 'none',
+  }
+  const shape: React.CSSProperties =
+    rag === 'green'
+      ? { background: 'transparent' }
+      : rag === 'amber'
+        ? { backgroundColor: 'transparent', backgroundImage: `linear-gradient(180deg, transparent 0 50%, ${c} 50% 100%)` }
+        : { background: c, boxShadow: `0 0 0 2.5px color-mix(in srgb, ${c} 22%, transparent)` }
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={title}
+      data-testid="account-usage-dot"
+      data-rag={rag}
+      style={{ ...base, ...shape, display: 'inline-block' }}
+    />
+  )
 }
 
 /**
@@ -175,6 +316,7 @@ function AccountPill({
   theme,
   compact,
   showPending,
+  minimal,
 }: {
   account: LiveAccount
   hidden: string[]
@@ -182,6 +324,10 @@ function AccountPill({
   compact: boolean
   /** Whether a payload is still expected -- see the gate in the parent. */
   showPending: boolean
+  /** Minimal mode: the meters collapse to traffic-light dots and the label
+   *  becomes the account's NAME, which is the friendly name when one is set and
+   *  the full email when it is not. */
+  minimal: boolean
 }) {
   // The pill is tinted with the account's OWN identity colour, so the rim ties
   // the row to the account instead of drawing a neutral box around it.
@@ -200,6 +346,7 @@ function AccountPill({
   // background silently dropped, leaving no fill at all.
   const accent = resolveIdentityColor(account.colourKey, theme)
   const shown = shownBuckets(account, hidden)
+  const dots = summariseAccountDots(account, hidden)
   // "Nothing to show" has two causes and they need opposite treatments:
   // nothing has been REPORTED yet (waiting -- shimmer), or the user has hidden
   // every bucket for the footer (their choice -- show nothing). Keying the
@@ -219,14 +366,16 @@ function AccountPill({
         borderColor: `color-mix(in srgb, ${accent} 26%, transparent)`,
         background: `color-mix(in srgb, ${accent} 6%, transparent)`,
       }}
-      title={tooltip(account)}
+      title={tooltip(account, { withPercent: minimal })}
       data-testid="multi-account-pill"
+      data-minimal={minimal ? 'true' : undefined}
     >
       <span
         className={`font-medium ${compact ? 'truncate' : ''}`}
         style={{ color: 'var(--text-on-chrome)' }}
+        data-testid="multi-account-pill-label"
       >
-        {account.email}
+        {minimal ? account.name : account.email}
       </span>
       {/* Meters never shrink -- the email is what gives way when space is tight.
           COMPACT here: short codes and no trailing percentage. With four accounts
@@ -234,8 +383,29 @@ function AccountPill({
           the bars, which are the part you actually read. The exact figure is in
           each bar's tooltip, and the "+N" popover below stays fully labelled --
           glanceable strip, detailed popover. */}
-      <span className="flex items-center gap-2 shrink-0">
-        {shown.length > 0
+      <span className={`flex items-center shrink-0 ${minimal ? 'gap-1.5' : 'gap-2'}`}>
+        {minimal && shown.length > 0
+          ? // Usage first, then a dot per model, matching the order the meters
+            // were in. B1: bare dots, no keys -- the labelled variant was measured
+            // wider than the meters saved and cost minimal mode its single row.
+            <>
+              {dots.usage && (
+                <UsageDot
+                  rag={ragFor(dots.usage.worst.percent)}
+                  title={dots.usage.windows.map((b) => `${b.label} ${Math.round(b.percent)}%`).join(' · ')}
+                  label={`Usage ${RAG_WORD[ragFor(dots.usage.worst.percent)]} — worst is ${dots.usage.worst.label} at ${Math.round(dots.usage.worst.percent)}%`}
+                />
+              )}
+              {dots.models.map((b) => (
+                <UsageDot
+                  key={b.key}
+                  rag={ragFor(b.percent)}
+                  title={`${b.label} ${Math.round(b.percent)}%`}
+                  label={`${b.label} ${RAG_WORD[ragFor(b.percent)]} at ${Math.round(b.percent)}%`}
+                />
+              ))}
+            </>
+          : shown.length > 0
           ? shown.map((b) => (
               <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} compact />
             ))
@@ -249,9 +419,15 @@ function AccountPill({
             // the shimmer -- and one that never resolves is worse than blank.
             reportedNothing &&
             showPending &&
-            PENDING_FOOTER_LABELS.filter((l) => !hidden.includes(l)).map((l) => (
-              <RateLimitBarPending key={l} label={l} compact />
-            ))}
+            (minimal
+              ? // One neutral placeholder, NOT a green dot. Green is a claim that
+                // the account has room; nothing has been reported, so the honest
+                // signal is "waiting" -- same reasoning as the pending meter,
+                // which shows no colour and no number until there is one.
+                <PendingDot />
+              : PENDING_FOOTER_LABELS.filter((l) => !hidden.includes(l)).map((l) => (
+                  <RateLimitBarPending key={l} label={l} compact />
+                )))}
       </span>
     </span>
   )
@@ -433,6 +609,8 @@ export default function MultiAccountStatusline() {
   // is on its way. With the switch off that promise is false. Absent
   // (pre-upgrade config) means on.
   const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
+  // Absent means the meters, so nobody's footer changes shape on upgrade.
+  const minimal = useSettingsStore((s) => s.settings.footerAccountDisplay === 'dots')
   const theme = useResolvedTheme()
 
   const accounts = React.useMemo(
@@ -470,7 +648,7 @@ export default function MultiAccountStatusline() {
           data-testid="multi-account-row"
         >
           {row.map((a) => (
-            <AccountPill key={a.email} account={a} hidden={hidden} theme={theme} compact={multiRow} showPending={statusLineEnabled} />
+            <AccountPill key={a.email} account={a} hidden={hidden} theme={theme} compact={multiRow} showPending={statusLineEnabled} minimal={minimal} />
           ))}
           {i === rows.length - 1 && overflow.length > 0 && (
             <AccountOverflow accounts={overflow} hidden={hidden} theme={theme} />

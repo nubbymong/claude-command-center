@@ -809,6 +809,37 @@ function UsageBucketToggles(): React.ReactElement | null {
         hidden={footerHidden}
         onToggle={(l) => toggle(footerHidden, 'footer', l)}
       />
+      <FooterDisplayCard />
+    </div>
+  )
+}
+
+/* Minimal mode for the multi-account footer. It sits under the footer bucket
+ * toggles because it reads the SAME denylist -- whichever bars you left on above
+ * are the dots you get here. */
+function FooterDisplayCard(): React.ReactElement {
+  const minimal = useSettingsStore((s) => s.settings.footerAccountDisplay === 'dots')
+  return (
+    <div className="settings-card overflow-hidden">
+      <div className="px-4 py-2.5 border-b settings-divider">
+        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Multi-account footer style</h3>
+        <p className="text-[11px] text-overlay0 mt-0.5">
+          Minimal replaces each account&apos;s bars with traffic-light dots -- one for usage (the worse of your
+          time windows) and one per model -- and shows the account&apos;s name instead of its email where you
+          have set one. Green under 70%, amber to 89%, red at 90% and above: the same points the bars change
+          colour. Exact figures move to the tooltip.
+        </p>
+      </div>
+      <div className="p-4 flex items-center gap-3">
+        <Toggle
+          on={minimal}
+          onClick={() => void useSettingsStore.getState().updateSettings({
+            footerAccountDisplay: minimal ? 'meters' : 'dots',
+          })}
+          label="Minimal dots"
+        />
+        <div className="text-sm text-text leading-tight">Minimal dots instead of bars</div>
+      </div>
     </div>
   )
 }
