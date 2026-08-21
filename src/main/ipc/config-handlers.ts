@@ -3,18 +3,27 @@
  */
 
 import { ipcMain } from 'electron'
-import { loadAllConfig, saveConfig, migrateFromLocalStorage, type ConfigKey } from '../config-manager'
-import { logInfo } from '../debug-logger'
+import { loadAllConfig, saveConfig, migrateFromLocalStorage, isRendererConfigKey } from '../config-manager'
+import { logInfo, logWarn } from '../debug-logger'
 import { refreshTokenomicsConfigs } from '../tokenomics/tokenomics-service'
 
 export function registerConfigHandlers(): void {
-  // Load all config in one round-trip
+  // Load all config in one round-trip. loadAllConfig returns the RENDERER keys
+  // only (RENDERER_CONFIG_KEYS) -- the secret configs never cross this boundary.
   ipcMain.handle('config:loadAll', async () => {
     return loadAllConfig()
   })
 
-  // Save a specific config key
-  ipcMain.handle('config:save', async (_event, key: ConfigKey, data: unknown) => {
+  // Save a specific config key. `key` is a string from the renderer, not a
+  // ConfigKey: the type annotation would be compile-time only, so it is checked
+  // here against the renderer allowlist. An unregistered key and a secret key
+  // are both refused (false, one warning) -- the renderer has no business
+  // writing conductor-secret.json or ssh-credentials.json.
+  ipcMain.handle('config:save', async (_event, key: unknown, data: unknown) => {
+    if (!isRendererConfigKey(key)) {
+      logWarn(`[config-handlers] config:save refused for key ${JSON.stringify(typeof key === 'string' ? key.slice(0, 64) : typeof key)}`)
+      return false
+    }
     const result = saveConfig(key, data)
     // Keep the tokenomics worker's cwd->config attribution dimension fresh when
     // the saved-configs list changes mid-run (otherwise a newly added/renamed

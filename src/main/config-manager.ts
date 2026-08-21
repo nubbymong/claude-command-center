@@ -58,6 +58,25 @@ export type ConfigKey = keyof typeof CONFIG_FILES
 const SECRET_CONFIG_KEYS = new Set<ConfigKey>(['conductorSecret', 'sshCredentials'])
 const SECRET_FILE_MODE = 0o600
 
+/**
+ * The config keys the RENDERER may read and write -- every key except the
+ * secret ones. The renderer is the less-trusted process (contextIsolation and
+ * the sandbox exist so a renderer compromise is not a main-process compromise),
+ * and it has no reader for either secret: `conductorSecret` is consumed by
+ * install-secret.ts in main, `sshCredentials` only by the legacy migration. So
+ * `config:loadAll` hands over these keys only, and `config:save` accepts these
+ * keys only; a secret never crosses the IPC boundary in either direction.
+ * Main-process code that needs a secret uses readConfig/saveConfig directly.
+ */
+export const RENDERER_CONFIG_KEYS: readonly ConfigKey[] = (Object.keys(CONFIG_FILES) as ConfigKey[])
+  .filter((k) => !SECRET_CONFIG_KEYS.has(k))
+
+/** True when `key` is a config key the renderer is allowed to touch. A string
+ *  from IPC is untrusted: unregistered keys AND the secret keys are both false. */
+export function isRendererConfigKey(key: unknown): key is ConfigKey {
+  return typeof key === 'string' && (RENDERER_CONFIG_KEYS as readonly string[]).includes(key)
+}
+
 function modeFor(key: ConfigKey): number | undefined {
   return SECRET_CONFIG_KEYS.has(key) ? SECRET_FILE_MODE : undefined
 }
@@ -338,13 +357,15 @@ export function loadAllConfig(): LoadAllResult {
     // the renderer latches writes off instead of migrating defaults over the
     // files it will find once the dir is back.
     logError(`[config-manager] ensureConfigDir failed during loadAll (${err}); hydrating empty with writes latched`)
-    return { data: {}, needsMigration: false, readFailed: true, failedKeys: Object.keys(CONFIG_FILES) as ConfigKey[] }
+    return { data: {}, needsMigration: false, readFailed: true, failedKeys: [...RENDERER_CONFIG_KEYS] }
   }
   const hasData = configHasData()
 
+  // Renderer keys only: this object goes straight over `config:loadAll`, and
+  // the secret configs (see RENDERER_CONFIG_KEYS) must never ride along.
   const data: Record<string, unknown> = {}
   const failedKeys: ConfigKey[] = []
-  for (const key of Object.keys(CONFIG_FILES) as ConfigKey[]) {
+  for (const key of RENDERER_CONFIG_KEYS) {
     const r = readConfigDetailed(key)
     data[key] = r.value
     if (r.failed) failedKeys.push(key)
