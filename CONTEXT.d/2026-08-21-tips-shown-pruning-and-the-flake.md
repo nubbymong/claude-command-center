@@ -99,6 +99,19 @@ passing test cannot meet on a busy machine does not measure correctness, it
 measures what else was running, and it costs someone an investigation every time
 it fires.
 
+## The hide dialog rendered inside the sidebar rail
+
+Found by driving the built app on the test VM, which is the whole argument for
+the desktop-test gate. `HideDockFeatureDialog`'s backdrop was `absolute inset-0`,
+and it is rendered from inside the dock — whose sidebar root is `relative`. So
+the "modal" covered the 256px rail instead of the window, and the dialog came out
+as a squeezed column with its title wrapped over two lines. Every other modal in
+this app uses `fixed inset-0`; now this one does too.
+
+jsdom has no layout, so no unit test could have seen the symptom. The regression
+guard asserts the positioning scheme instead, and it was mutation-checked
+(`fixed` → `absolute` fails it).
+
 ## Verification
 
 Full suite **6250 passed / 15 skipped**, typecheck clean, on a quiet run.
