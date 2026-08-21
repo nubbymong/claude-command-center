@@ -37,7 +37,7 @@ import GuidedTour from './components/GuidedTour'
 import FeatureGuidePage from './components/FeatureGuidePage'
 import AccountUsagePanel from './components/AccountUsagePanel'
 import TipModal from './components/TipModal'
-import { useTipsStore, trackUsage } from './stores/tipsStore'
+import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import SshCloseDialog from './components/SshCloseDialog'
@@ -103,16 +103,10 @@ export default function App() {
   const setView = (v: ViewType) => {
     setViewRaw(v)
     if (v !== 'sessions') setOpenPageTabs((prev) => (prev.includes(v) ? prev : [...prev, v]))
-    // Track view usage for the tips system
-    const map: Record<string, string> = {
-      'memory': 'memory.memory-page',
-      'tokenomics': 'tokenomics.dashboard',
-      'vision': 'vision.toggle-vision',
-      'insights': 'advanced.insights',
-      'logs': 'advanced.log-viewer',
-      'cloud-agents': 'agents.cloud-agent-dispatch',
-    }
-    const featureId = map[v]
+    // Track view usage for the tips system. The map lives in the tips store
+    // beside the prune that has to know which ids are still live -- a copy here
+    // would drift, and a drifted id gets its usage row deleted on next launch.
+    const featureId = VIEW_FEATURE_IDS[v]
     if (featureId) trackUsage(featureId)
   }
   // Close a page tab. If it was the active tab, fall back to the last remaining

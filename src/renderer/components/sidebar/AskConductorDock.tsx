@@ -115,6 +115,15 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
   const tipReady = !!onShowTip && showTips && !silenced && !!currentTipId && !!currentTip
   const unseen = showTips ? countUnseenTips(tracking) : 0
 
+  // THE stamp. A tip counts as shown when it reaches the screen, and this row is
+  // where that happens -- picking one two seconds after launch is not showing it
+  // (see pickNextTip). Rendering here means the sidebar is open, the dock is
+  // mounted and the row passed every gate above, which is as close to "the user
+  // could see it" as the renderer can honestly get.
+  React.useEffect(() => {
+    if (tipReady && currentTipId) useTipsStore.getState().markTipShown(currentTipId)
+  }, [tipReady, currentTipId])
+
   // Nothing left to dock: skip the divider and the padding too, rather than
   // leaving an empty bordered strip at the bottom of the rail.
   if (!showAsk && !tipReady) return null

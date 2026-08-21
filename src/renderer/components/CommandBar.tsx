@@ -231,6 +231,9 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     // Ctrl+click: show args popover if command has args
     if (e.ctrlKey && (cmd.defaultArgs?.length || cmd.lastCustomArgs?.length)) {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      // The tip that teaches this is the ONLY place it is taught, so until now
+      // it kept teaching it to people who had already found it.
+      trackUsage('commands.ctrl-click-args')
       setArgsPopover({ cmd, rect })
       return
     }
