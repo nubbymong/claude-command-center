@@ -22,18 +22,26 @@ export interface CustomCommand {
    *  in this record and never in the command line. See shared/command-secret. */
   hasSecretArg?: boolean
   lastCustomArgs?: string[] // Last custom arguments used (remembered)
-  // When enabled, the command write triggers a 30 s URL poll against
-  // `webView.url`. First successful response sets the Web button to
-  // green; a 30 s timeout flips it red. The command honours the
-  // user's chosen `target` (Claude / Partner / Any) — works for SSH
-  // shellOnly sessions where Claude isn't running. The CommandBar
-  // also re-probes this URL on any command-button press in the
-  // session, so a stopped server downgrades available → failed
-  // without a background interval.
+  // "Watch for a page": when enabled, the command write triggers a 30 s
+  // URL poll against `webView.url`. First successful response tints the
+  // Browser button green and points the pane at the page if it is showing
+  // nothing; a 30 s timeout flips it red. The command honours its `target`
+  // (Claude / Partner) — works for SSH shellOnly sessions where Claude
+  // isn't running. The CommandBar also re-probes this URL on any
+  // command-button press in the session, so a stopped server downgrades
+  // available → failed without a background interval.
   webView?: {
     enabled: boolean
     url: string
   }
+  /** The third kind of button: it types NOTHING and opens `pageUrl` in the
+   *  session's browser pane (item 26). The other two kinds are not stored --
+   *  they are read off `target` -- but a page button has no target, so it
+   *  needs its own mark. Absent means "a typing command", as it always did. */
+  kind?: 'page'
+  /** http/https only (shared/browser-url), validated in the dialog and again
+   *  by main before anything loads. Only meaningful when `kind === 'page'`. */
+  pageUrl?: string
 }
 
 export interface CommandSection {
