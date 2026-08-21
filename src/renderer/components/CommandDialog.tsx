@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { CustomCommand, CommandSection, useCommandStore } from '../stores/commandStore'
 import { COLOR_SWATCHES } from './SessionDialog'
 import { generateId } from '../utils/id'
-import { buildCommandLine, commandSecretRef, COMMAND_SECRET_TOKEN } from '../../shared/command-secret'
+import { buildCommandLine, commandSecretRef, COMMAND_SECRET_TOKEN, secretValueProblem } from '../../shared/command-secret'
 import { normaliseBrowserInput } from '../../shared/browser-url'
 
 /**
@@ -162,8 +162,14 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   }
 
   const secretOn = kind === 'shell' && hasSecret
-  // A secret that is switched on must HAVE a value: stored already, or typed now.
-  const secretReady = !secretOn || storedSecret || secretValue.length > 0
+  // A value PowerShell 5.1 cannot pass to a command intact (a double quote, a
+  // trailing backslash, cmd metacharacters for .cmd-based tools) is refused
+  // here, because the app cannot rewrite a secret. One rule, shared with the
+  // terminal config's secret argument: shared/command-secret.secretValueProblem.
+  const secretProblem = secretOn && secretValue.length > 0 ? secretValueProblem(secretValue, isWin) : null
+  // A secret that is switched on must HAVE a value: stored already, or typed now,
+  // and a typed value must be one the shell can carry.
+  const secretReady = !secretOn || ((storedSecret || secretValue.length > 0) && !secretProblem)
   const canSubmit = !!kind && !!label.trim() && secretReady
     && (kind === 'page' ? !!pageUrl.trim() : !!prompt.trim())
 
@@ -412,8 +418,12 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                           className="w-full px-3 py-1.5 bg-surface0 text-text text-sm rounded border border-surface1 outline-none focus:border-blue font-mono"
                           placeholder={storedSecret ? 'Stored -- type here to replace it' : 'The secret value'}
                           autoComplete="off"
+                          aria-invalid={!!secretProblem}
                           data-testid="command-secret-value"
                         />
+                        {secretProblem && (
+                          <p className="mt-1 text-[10px] text-red" role="alert" data-testid="command-secret-problem">{secretProblem}</p>
+                        )}
                         {/* Same mechanism a terminal config's secret argument already
                             uses, and for the same reason: the shell writes every
                             submitted line to disk (PSReadLine), so the value must
@@ -427,6 +437,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                         </p>
                         <p className="mt-1 text-[10px] text-overlay0">
                           A shell that is already open does not have it yet -- restart the shell after saving.
+                          {isWin && <> On Windows the value cannot contain a double quote or <span className="font-mono">&amp; | ^ &lt; &gt; %</span>, or end with a backslash -- PowerShell cannot pass those to a command intact.</>}
                         </p>
                       </div>
                     )}
