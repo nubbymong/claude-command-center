@@ -20,7 +20,7 @@ import { getResourcesDirectory } from '../ipc/setup-handlers'
 import { logWarn } from '../debug-logger'
 
 /** Bump when the manifest or skill content changes meaningfully. */
-const PLUGIN_VERSION = '1.0.0'
+const PLUGIN_VERSION = '1.1.0'
 
 const PLUGIN_MANIFEST = {
   name: 'agent-canvas',
@@ -163,6 +163,83 @@ version and THEY approve or re-annotate it by hand. Approval is theirs alone.
   render; they only ever review in the pane.
 `
 
+const PLAN_SKILL_MD = `---
+name: canvas-plan
+description: >
+  Put a PLAN of work on the session's Agent Canvas before you start it, so the
+  user can point at a step or a boundary and annotate it instead of reading
+  prose. Invoke when you are about to do something large enough to be worth
+  agreeing first — a migration, a refactor, a feature spanning several files —
+  or when the user says "plan", "plan mode", or asks what you intend to do.
+---
+
+# Canvas plan mode
+
+Nobody reads a markdown plan. They skim it, say "sounds good", and discover
+in the diff that you meant something else by step 3.
+
+A plan on the canvas is the same content with somewhere to point. The user
+selects a step and writes a note on THAT step; you get it back anchored, in one
+review, exactly like a design review. The whole loop is the one you already know
+from the \`agent-canvas\` skill — this skill only says what a plan PAGE contains.
+
+\`\`\`
+canvas_render { mode: "plan", htmlPath: "<absolute path>", title: "<what the work is>" }
+\`\`\`
+
+Everything else is unchanged: write the file inside the project (e.g.
+\`<project>/.ccc-canvas/plan-codex-ingest.html\`), render by path, then hand
+back. Re-rendering the same \`title\` adds a version, so a revised plan sits
+beside the one they annotated.
+
+## The six parts, all of them, every time
+
+Two plans are only comparable if they have the same shape. Write all six even
+when one is short — an empty section is information.
+
+1. **Goal** — one sentence on what will be true afterwards. Not a restatement
+   of the request; the OUTCOME.
+2. **Flow** — the steps, in order, as a visual flow rather than a list. Work
+   that genuinely runs in parallel is drawn as a branch. Give every step a
+   stable \`data-ux-id="step-1"\`, \`"step-4a"\` … — those ids are what the
+   user's notes re-anchor to when you revise the plan, so NEVER renumber an
+   existing step. A new step gets a new id.
+3. **Scope fence** — what you are NOT doing. The single most common review note
+   on any plan is "don't also change X", so commit to the boundary up front and
+   let them annotate the boundary itself.
+4. **Blast radius** — what this reaches. Subsystems touched, and the neighbouring
+   ones you are stating are NOT touched. Absence is information; reviewers do not
+   worry about your steps, they worry about what else moves.
+5. **Open questions** — with a count, at the TOP. Buried in prose these get
+   skipped and you end up guessing. Hoisted, they are the first thing the user
+   answers.
+6. **Verification** — how both of you will know it worked, decided BEFORE the
+   work rather than afterwards by whoever is tired. Name the actual command or
+   the actual test.
+
+## How it behaves
+
+- **The plan accompanies the conversation, it does not replace it.** Keep a
+  three-line summary in the terminal and point at the canvas. The terminal is
+  still where you are talking to them.
+- **Open questions do NOT block.** Start on the steps that are not waiting on an
+  answer and mark the rest as waiting. Idling while a question sits unanswered
+  wastes the user's time; guessing at it wastes yours.
+- **An approved plan is the record.** When they approve, start work and leave the
+  plan up — it is what you check yourself against, and what a later reviewer
+  reads to see what was agreed.
+- **A plan that changed is a new version, not an edit.** Render again with the
+  same title. Their notes re-anchor by step id.
+
+## Never
+
+- Never render a plan as a wall of paragraphs with a heading on top. If it has
+  no flow and no ids, it is markdown in a browser and it buys nothing.
+- Never renumber or rename a step id between versions.
+- Never start the work before rendering when the user asked for a plan — the
+  render IS the handover.
+`
+
 /**
  * Exactly what this tree may contain, relative to the plugin root — and, for
  * the files, exactly what they must CONTAIN, as the bytes themselves.
@@ -175,11 +252,36 @@ version and THEY approve or re-annotate it by hand. Approval is theirs alone.
 const OWNED_FILES: ReadonlyArray<readonly [rel: string, bytes: Buffer]> = [
   ['.claude-plugin/plugin.json', Buffer.from(JSON.stringify(PLUGIN_MANIFEST, null, 2), 'utf8')],
   ['skills/agent-canvas/SKILL.md', Buffer.from(SKILL_MD, 'utf8')],
+  ['skills/canvas-plan/SKILL.md', Buffer.from(PLAN_SKILL_MD, 'utf8')],
 ]
 /** Every directory we create, parents first. `''` is the plugin root itself —
  *  it is in the list so the ROOT is verified to be a real directory too; a
  *  symlink swapped in at the root passes a `readdir`-only check happily. */
-const OWNED_DIRS = ['', '.claude-plugin', 'skills', 'skills/agent-canvas']
+const OWNED_DIRS = ['', '.claude-plugin', 'skills', 'skills/agent-canvas', 'skills/canvas-plan']
+
+/**
+ * The exact directory listing each owned directory must have, DERIVED from the
+ * two tables above rather than written out a second time.
+ *
+ * It was a hand-maintained literal. That is one list too many: adding a skill
+ * meant editing three places, and forgetting the third would not fail loudly —
+ * either the tree would be judged impure on every single spawn (a wipe and
+ * rebuild before every session, for the life of the app), or, if the literal
+ * were the more permissive one, an unexpected entry would be tolerated in a
+ * directory whose whole purpose is that nothing unexpected lives there. Deriving
+ * it means the writer, the verifier and the listing cannot disagree.
+ */
+function expectedListing(): Array<[string, Set<string>]> {
+  const byDir = new Map<string, Set<string>>(OWNED_DIRS.map((d) => [d, new Set<string>()]))
+  const add = (rel: string) => {
+    const parent = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''
+    const name = rel.includes('/') ? rel.slice(rel.lastIndexOf('/') + 1) : rel
+    byDir.get(parent)?.add(name)
+  }
+  for (const dir of OWNED_DIRS) if (dir !== '') add(dir)
+  for (const [rel] of OWNED_FILES) add(rel)
+  return [...byDir.entries()]
+}
 
 /** `O_NOFOLLOW` where the platform has it (POSIX). Windows has no equivalent
  *  open flag — there the `lstat` below is what refuses a link, and the DACL
@@ -241,13 +343,7 @@ function fileHasExactly(file: string, expected: Buffer): boolean {
  *  rewritten SKILL.md steers every one of them. Any mismatch is treated
  *  identically — the tree is wiped and rebuilt from these constants. */
 function treeIsPristine(pluginDir: string): boolean {
-  const expected: Array<[string, Set<string>]> = [
-    ['', new Set(['.claude-plugin', 'skills'])],
-    ['.claude-plugin', new Set(['plugin.json'])],
-    ['skills', new Set(['agent-canvas'])],
-    ['skills/agent-canvas', new Set(['SKILL.md'])],
-  ]
-  for (const [rel, allowed] of expected) {
+  for (const [rel, allowed] of expectedListing()) {
     let entries: string[]
     try {
       entries = fs.readdirSync(path.join(pluginDir, rel))

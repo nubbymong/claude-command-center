@@ -519,12 +519,36 @@ describe('canvas_render', () => {
     expect(out.text).toContain('v3')
   })
 
+  it('renders a plan through the design ingress, stamping the mode but not the storage', async () => {
+    // Plan mode is a LABEL on the version, not a storage or serving mode: the
+    // document is admitted by the identical path check, reader and size cap that
+    // a design render uses, and lands as `source.mode: 'design'`. That is what
+    // keeps plan mode from adding any surface an attacker can reach -- see
+    // CanvasRenderSource. What the store receives is asserted, not assumed.
+    const reached: unknown[] = []
+    const out = await runCanvasRender(
+      { mode: 'plan', html: '<!doctype html><html><body><p data-ux-id="step-1">x</p></body></html>', title: 'Codex ingest' },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          reached.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v1' }
+        },
+      }),
+    )
+    expect(out.isError).toBe(false)
+    expect(reached).toHaveLength(1)
+    expect((reached[0] as { mode: string }).mode).toBe('plan')
+    expect((reached[0] as { title?: string }).title).toBe('Codex ingest')
+  })
+
   it('refuses a mode it does not have, without falling into another one', async () => {
     // The refusal is not enough on its own: with the gate gone an unknown mode
-    // falls into the UAT branch, and `plan` — a mode the spec has and the store
-    // does not — would quietly serve a directory instead. So the store must not
-    // be reached at all.
-    for (const mode of [undefined, 'plan', 'DESIGN', 1, ['design'], { mode: 'design' }]) {
+    // falls into the UAT branch and would quietly serve a directory instead. So
+    // the store must not be reached at all. ('plan' used to be in this list --
+    // it was reserved by the spec and unimplemented; it is a real mode now and
+    // has its own test above.)
+    for (const mode of [undefined, 'PLAN', 'DESIGN', 1, ['design'], { mode: 'design' }]) {
       const reached: unknown[] = []
       const out = await runCanvasRender(
         { mode, distRoot: '/d', html: '<p>hi</p>' },

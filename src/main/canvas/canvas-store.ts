@@ -599,6 +599,13 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   const ver = v as Partial<CanvasVersion> | undefined
   if (typeof ver?.id !== 'string' || !CANVAS_VERSION_ID_RE.test(ver.id)) return false
   if (ver.source?.mode !== 'uat' && ver.source?.mode !== 'design') return false
+  // `mode` is what the page IS (chip + authoring skill); `source.mode` is how it
+  // is stored. They are separate fields and only `source.mode` gates serving, so
+  // a bad `mode` cannot reach the serve path -- but it is rendered as a label, and
+  // this file's posture is that a hand-edited record is never repaired. A version
+  // whose mode is not one of the three is dropped rather than shown as a chip
+  // naming whatever the file said.
+  if (ver.mode !== 'uat' && ver.mode !== 'design' && ver.mode !== 'plan') return false
   // A hand-edited record must not smuggle a traversing/colon/device `entry`
   // past the live-render normalizer (the empty-path + SPA branches serve the
   // entry WITHOUT re-running the URL segment filter). distRoot containment is
@@ -984,13 +991,19 @@ export function renderVersion(
   const createdAt = nextRenderStamp()
   let version: CanvasVersion
 
-  if (source.mode === 'design') {
+  if (source.mode === 'design' || source.mode === 'plan') {
+    // One branch for both on purpose. A plan is an agent-authored standalone
+    // document exactly as a design is, so it is written, stored and later served
+    // through the identical path -- see CanvasRenderSource. Only the VERSION's mode
+    // differs, which is what the pane's chip and the authoring skill read. No
+    // serving or validation path gains a branch, so plan mode reaches no surface
+    // design mode did not already reach.
     if (typeof source.html !== 'string' || source.html.length === 0) throw new Error('design render requires html')
     if (Buffer.byteLength(source.html, 'utf8') > MAX_DESIGN_HTML_BYTES) throw new Error('design document too large')
     const dir = versionDir(canvasId, versionId)
     mkdirSecure(dir)
     atomicWriteSecure(path.join(dir, 'index.html'), source.html)
-    version = { id: versionId, mode: 'design', createdAt, source: { mode: 'design', entry: 'index.html' } }
+    version = { id: versionId, mode: source.mode, createdAt, source: { mode: 'design', entry: 'index.html' } }
   } else if (source.mode === 'uat') {
     const distRoot = path.resolve(source.distRoot)
     let stat: fs.Stats
