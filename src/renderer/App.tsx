@@ -1036,6 +1036,7 @@ export default function App() {
             onTogglePartner={() => togglePartner(activeSession.id)}
             partnerSessionId={activeSession.id + '-partner'}
             parentSessionId={activeSession.id}
+            mainPaneIsShell={!!activeSession.shellOnly}
           />
         )}
       </div>
