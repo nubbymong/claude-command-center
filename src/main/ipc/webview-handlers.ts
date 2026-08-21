@@ -30,7 +30,14 @@ const urlSchema = z
   .string()
   .max(BROWSER_URL_MAX_LENGTH)
   .refine((value) => isAllowedBrowserUrl(value), { message: 'Webview URLs must use http or https' })
-const sessionIdSchema = z.string().min(1).max(200)
+// Session ids are app-minted (24 hex) and this one becomes part of an ON-DISK
+// path: the view's partition is `persist:webview-<sessionId>`, which Chromium
+// turns into a profile directory under sessionData/Partitions. A loose schema
+// let `a/../../x` build a partition string that escaped that directory and
+// `webview-x/../claude-web-<id>` alias another session's cookie jar (ADR-009
+// pass, beta.16; a compromised renderer was required, but the renderer is the
+// boundary). Same strict charset pty-handlers and canvas-handlers use.
+const sessionIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
 const boundsSchema = z.object({
   x: z.number().int().min(0).max(20000),
   y: z.number().int().min(0).max(20000),
@@ -54,7 +61,12 @@ export function registerWebviewHandlers(getWindow: () => BrowserWindow | null): 
     const parsedBounds = boundsSchema.parse(bounds)
     const win = getWindow()
     if (!win) return false
-    return openWebview(win, sessionId, url, parsedBounds)
+    // The NORMALISED href, never the renderer's raw string: the WHATWG parser
+    // strips leading whitespace and ASCII tab/newline before it reads the
+    // scheme, so a raw string that passes the gate can still carry a CR/LF --
+    // harmless to Chromium, but it reached the log, the stored entry.url and
+    // the address bar verbatim (log-line forging from the renderer).
+    return openWebview(win, sessionId, new URL(url).href, parsedBounds)
   })
 
   // The address bar, favourites, home and the "open a page" command all come
@@ -63,7 +75,7 @@ export function registerWebviewHandlers(getWindow: () => BrowserWindow | null): 
   ipcMain.handle(IPC.WEBVIEW_NAVIGATE, async (_event, sessionId: string, url: string) => {
     sessionIdSchema.parse(sessionId)
     urlSchema.parse(url)
-    return navigateWebview(sessionId, url)
+    return navigateWebview(sessionId, new URL(url).href)
   })
 
   // "Open in your real browser". The OS is handed the NORMALISED href of a

@@ -67,13 +67,27 @@ describe('webview:navigate', () => {
     manager.navigateWebview.mockReturnValueOnce(false)
     expect(await call(IPC.WEBVIEW_NAVIGATE, SID, 'https://example.com/')).toBe(false)
   })
+  it('hands the manager the NORMALISED href, never the raw string (a CR/LF that the parser strips must not reach the log or the view)', async () => {
+    const forged = 'http://x/' + '\n' + '[webview] opened OTHER -> file:///C:/secret'
+    await call(IPC.WEBVIEW_NAVIGATE, SID, forged)
+    const passed = manager.navigateWebview.mock.calls.at(-1)![1] as string
+    expect(passed).not.toContain('\n')
+    expect(passed).toBe(new URL(forged).href)
+    await call(IPC.WEBVIEW_OPEN, SID, 'HTTP://LocalHost:5173', BOUNDS)
+    expect(manager.openWebview).toHaveBeenLastCalledWith(fakeWin, SID, 'http://localhost:5173/', BOUNDS)
+  })
   it('rejects every non-http(s) URL BEFORE the manager sees it', async () => {
     for (const bad of BAD_URLS) {
       await expect(call(IPC.WEBVIEW_NAVIGATE, SID, bad), String(bad)).rejects.toThrow()
     }
     expect(manager.navigateWebview).not.toHaveBeenCalled()
   })
-  it('rejects a bad session id', async () => {
+  it('rejects a bad session id -- including every path-unsafe one, since the id becomes a partition directory', async () => {
+    for (const bad of ['a/../../../../escaped', 'a/../claude-web-profile-abc', '..', 'a b', 'con.', 'x\\y', 'x%2F..', 'é']) {
+      await expect(call(IPC.WEBVIEW_OPEN, bad, 'https://x.y/', BOUNDS), bad).rejects.toThrow()
+      await expect(call(IPC.WEBVIEW_NAVIGATE, bad, 'https://x.y/'), bad).rejects.toThrow()
+    }
+    expect(manager.openWebview).not.toHaveBeenCalled()
     await expect(call(IPC.WEBVIEW_NAVIGATE, '', 'https://x.y/')).rejects.toThrow()
     await expect(call(IPC.WEBVIEW_NAVIGATE, 'x'.repeat(201), 'https://x.y/')).rejects.toThrow()
     expect(manager.navigateWebview).not.toHaveBeenCalled()

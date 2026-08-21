@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { WebviewNavState } from '../../shared/browser-url'
+import { isAllowedBrowserUrl, type WebviewNavState } from '../../shared/browser-url'
 
 /**
  * Per-session state for the browser pane (the "webview").
@@ -132,6 +132,14 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   startActivation: (sessionId, url) => {
     const cur = get().bySessionId[sessionId] || defaultState()
     const nextToken = cur.activationId + 1
+    // A watch URL comes from commands.json (user data, hand-editable). Main
+    // refuses anything but http(s) at every door, so a bad one could only
+    // make the pane open and close again; refuse it here so it fails visibly
+    // (status 'failed') instead.
+    if (!isAllowedBrowserUrl(url)) {
+      set((s) => ({ bySessionId: { ...s.bySessionId, [sessionId]: { ...cur, status: 'failed', watchUrl: url, activationId: nextToken } } }))
+      return nextToken
+    }
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
@@ -232,6 +240,8 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     }))
   },
   setHomeUrl: (sessionId, url) => {
+    // Same rule as every other door: only http(s) may become a home.
+    if (url !== null && !isAllowedBrowserUrl(url)) return
     const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {

@@ -11,6 +11,28 @@ const of = (id: string) => S().bySessionId[id]
 
 beforeEach(() => useWebviewStore.setState({ bySessionId: {} }))
 
+describe('the renderer gates the watch and home urls too (one rule, every door)', () => {
+  it('startActivation with a non-http(s) watch url (hand-edited commands.json) fails visibly and never points the pane at it', () => {
+    const token = S().startActivation('s1', 'file:///C:/secret')
+    expect(token).toBe(1)
+    expect(of('s1').status).toBe('failed')
+    expect(of('s1').currentUrl).toBeNull()
+    expect(of('s1').isOpen).toBe(false)
+    // A later GOOD activation still works.
+    S().startActivation('s1', 'http://localhost:3000/')
+    expect(of('s1').status).toBe('pending')
+    expect(of('s1').currentUrl).toBe('http://localhost:3000/')
+  })
+  it('setHomeUrl refuses a non-http(s) home; null still clears', () => {
+    S().setHomeUrl('s1', 'javascript:alert(1)')
+    expect(of('s1')?.homeUrl ?? null).toBeNull()
+    S().setHomeUrl('s1', 'https://home/')
+    expect(of('s1').homeUrl).toBe('https://home/')
+    S().setHomeUrl('s1', null)
+    expect(of('s1').homeUrl).toBeNull()
+  })
+})
+
 describe('navigate', () => {
   it('points the pane at the url AND opens it', () => {
     S().navigate('s1', 'http://localhost:5173/')

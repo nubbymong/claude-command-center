@@ -119,6 +119,14 @@ export async function openWebview(
   url: string,
   bounds: WebviewBounds,
 ): Promise<boolean> {
+  // Last gate before the id becomes part of an on-disk partition path
+  // (`persist:webview-<sessionId>` -> sessionData/Partitions/webview-<id>).
+  // The IPC schema already enforces this charset; this is the line that holds
+  // if a future caller does not go through it.
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) {
+    logError(`[webview] refused open: session id is not path-safe`)
+    return false
+  }
   // Idempotent: if already open, just nav to the new URL + reposition.
   const existing = views.get(sessionId)
   if (existing) {
