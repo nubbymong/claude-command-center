@@ -11,6 +11,7 @@ import PasteHint from './PasteHint'
 import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
 import { generateId } from '../utils/id'
 import { buildCommandLine, commandSecretRef, commandSecretKey } from '../../shared/command-secret'
+import { isAllowedBrowserUrl } from '../../shared/browser-url'
 import { trackUsage } from '../stores/tipsStore'
 import { CODEX_MODELS } from '../codex-models'
 import { useResolvedTheme } from '../hooks/useThemeController'
@@ -240,9 +241,20 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webviewKey, webviewUrlsKey])
 
-  const hasWebviewCommand = webviewUrls.length > 0
-
   const handleClick = (cmd: CustomCommand, e: React.MouseEvent) => {
+    // An "Open a page" button types nothing: it points this session's browser
+    // pane at its page and opens the pane. The URL was normalised by the
+    // dialog and is checked again by main; this is the renderer's own gate
+    // against a hand-edited commands.json.
+    if (cmd.kind === 'page') {
+      if (!isAllowedBrowserUrl(cmd.pageUrl)) {
+        console.warn('[CommandBar] page command has no usable URL:', cmd.label)
+        return
+      }
+      trackUsage('webview.opened')
+      useWebviewStore.getState().navigate(webviewKey, cmd.pageUrl)
+      return
+    }
     // Ctrl+click: show args popover if command has args
     if (e.ctrlKey && (cmd.defaultArgs?.length || cmd.lastCustomArgs?.length)) {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -407,11 +419,16 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const isDragOver = dragOverId === cmd.id
     const hasArgs = (cmd.defaultArgs && cmd.defaultArgs.length > 0) || (cmd.lastCustomArgs && cmd.lastCustomArgs.length > 0)
     const isGlobal = cmd.scope === 'global'
+    const isPage = cmd.kind === 'page'
     const runsIn = cmd.target === 'partner' ? 'the partner shell' : (mainPaneIsShell ? 'this shell' : 'the Claude terminal')
     const scopeLine = isGlobal
       ? 'Global: this button is in every config, and editing or deleting it changes all of them.'
       : 'This config only.'
-    const argsTitle = cmd.defaultArgs?.length
+    const argsTitle = isPage
+      ? `${cmd.label}
+Opens ${cmd.pageUrl ?? '(no page set)'} in the browser pane. Types nothing.
+${scopeLine}`
+      : cmd.defaultArgs?.length
       ? `${cmd.prompt}
 Args: ${cmd.defaultArgs.join(' ')}
 Runs in ${runsIn}. Ctrl+click to change the args for one run.
@@ -448,11 +465,21 @@ ${scopeLine}`
         onMouseLeave={(e) => { if (!isDragOver) { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' } }}
         title={argsTitle}
       >
-        <span
-          className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-          style={{ backgroundColor: color }}
-          aria-hidden
-        />
+        {isPage ? (
+          // A page button is drawn with a small globe in its colour instead of
+          // the dot, so a button that runs nothing cannot be mistaken for one
+          // that does.
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden data-testid="command-page-glyph">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+          </svg>
+        ) : (
+          <span
+            className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+            style={{ backgroundColor: color }}
+            aria-hidden
+          />
+        )}
         <span className="truncate">{cmd.label}</span>
         {/* Scope, made visible. A global button follows you into every config,
             so editing or deleting one reaches all of them -- and until now it
@@ -601,7 +628,7 @@ ${scopeLine}`
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
         <AgentCanvasButton sessionId={sessionId} />
         <LogsButton sessionId={sessionId} />
-        <WebviewButton sessionId={webviewKey} hasWebviewCommand={hasWebviewCommand} />
+        <WebviewButton sessionId={webviewKey} />
         {/* Back to Claude / Partner toggle - same monochrome tool-button shape as Snap */}
         {partnerEnabled && onTogglePartner && (
           <>

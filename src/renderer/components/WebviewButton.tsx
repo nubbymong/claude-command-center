@@ -5,47 +5,44 @@ import { trackUsage } from '../stores/tipsStore'
 interface Props {
   sessionId: string
   /**
-   * True when the current session/config has at least one webview-enabled
-   * custom command. Drives whether the button renders at all — without it
-   * the toolbar shouldn't surface a webview affordance the user can't use.
-   * Defaults to false so legacy call-sites stay hidden.
+   * Kept for call-site compatibility; no longer gates rendering. The browser
+   * is a pane of its own (item 26) and the button is always there, like
+   * Canvas. It drives nothing now -- a watch being configured shows through
+   * `status`, not through whether the button exists.
+   * @deprecated
    */
   hasWebviewCommand?: boolean
 }
 
 /**
- * Tool button that surfaces the webview state.
+ * Tool button for the session's browser pane. Sibling of Snap / Canvas /
+ * Logs; always rendered.
  *
- * Visibility:
- *   - Hidden entirely when `hasWebviewCommand` is false (no command is
- *     configured to drive this affordance for this session/scope).
- *   - Otherwise always rendered; status drives disabled/active styling.
+ * The tint reports a page WATCH when one is live (a command that watches
+ * for a page to respond):
+ *   idle      — plain; nothing is being watched
+ *   pending   — blue border, faint pulsing dot (polling)
+ *   available — GREEN border + pulsing dot (the page answered)
+ *   failed    — RED border + dot (no answer within 30 s)
  *
- * Status communicated as a subtle border tint + small dot:
- *   idle      — greyed out, disabled, tooltip explains how to activate
- *   pending   — neutral border, faint dot
- *   available — GREEN border + dot, gentle opacity pulse on the dot
- *   failed    — RED border + dot
- *
- * Click toggles the webview pane (only when status !== 'idle').
+ * Click toggles the pane. With nothing loaded yet the pane opens on its start
+ * page (address bar, favourites, home) -- clicking is never a dead end.
  */
-export default function WebviewButton({ sessionId, hasWebviewCommand = false }: Props) {
+export default function WebviewButton({ sessionId }: Props) {
   const state = useWebviewStore((s) => s.bySessionId[sessionId])
   const togglePane = useWebviewStore((s) => s.togglePane)
 
-  if (!hasWebviewCommand) return null
-
   const status = state?.status ?? 'idle'
   const isOpen = state?.isOpen ?? false
-  const isIdle = status === 'idle'
   const isPending = status === 'pending'
   const isAvailable = status === 'available'
   const isFailed = status === 'failed'
+  const watching = isPending || isAvailable || isFailed
 
   // Catppuccin-leaning accent palette — green for ready, red for
   // unreachable. Border colour does the heavy lifting; the dot is a
-  // small punctuation that animates only for the success case (so a
-  // failure isn't constantly nagging once acknowledged).
+  // small punctuation that animates only while something is happening
+  // (so a failure isn't constantly nagging once acknowledged).
   let borderClass = 'border-surface1/80'
   let dotClass = 'bg-overlay0/50'
   let dotPulseClass = ''
@@ -63,41 +60,33 @@ export default function WebviewButton({ sessionId, hasWebviewCommand = false }: 
   }
 
   const titleParts = [
-    isIdle
-      ? 'Run a webview-enabled command, or wait for auto-detect when the server starts.'
-      : isOpen
-        ? 'Back to the terminal (closes the webview pane)'
-        : 'Show webview pane',
-    state?.currentUrl ? `\nURL: ${state.currentUrl}` : '',
-    isPending ? '\nPolling for content…' : '',
-    isFailed ? '\nURL did not respond within 30 s' : '',
+    isOpen ? 'Back to the terminal (closes the browser pane)' : 'Open the browser pane',
+    state?.currentUrl ? `\n${state.currentUrl}` : '',
+    isPending && state?.watchUrl ? `\nWatching ${state.watchUrl}…` : '',
+    isAvailable && state?.watchUrl ? `\n${state.watchUrl} is responding` : '',
+    isFailed && state?.watchUrl ? `\n${state.watchUrl} did not respond within 30 s` : '',
   ]
 
-  // Idle = visually present but unactionable. Cursor + opacity signal
-  // "this is here, but there's nothing to click yet."
-  // Open = accent-tinted and labelled with the DESTINATION, matching the Partner
-  // toggle and the Agent Canvas button. The webview REPLACES the terminal, and
-  // a button that still read "Web" left new users with no visible way back —
-  // "Hide webview pane" was tooltip-only.
-  const baseInteractive = isOpen
+  // Open = accent-tinted and labelled with the DESTINATION, matching the
+  // Partner toggle and the Agent Canvas button. The browser REPLACES the
+  // terminal, and a button that still read "Browser" left new users with no
+  // visible way back.
+  const classes = isOpen
     ? 'bg-blue/20 border-blue/70 text-blue hover:bg-blue/30'
     : `bg-surface0/60 ${borderClass} hover:bg-surface1 text-overlay1 hover:text-text`
-  const idleClasses = 'bg-surface0/30 border-surface0 text-overlay0/60 cursor-not-allowed opacity-60'
 
   return (
     <button
       onClick={() => {
-        if (isIdle) return
         // tips-library gates the freeze/annotate tip on `webview.opened`.
-        // Nothing emitted this id, so that tip could never surface.
-        trackUsage('webview.opened')
+        // Recorded on open only: closing the pane is not discovering it.
+        if (!isOpen) trackUsage('webview.opened')
         togglePane(sessionId)
       }}
-      disabled={isIdle}
-      className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 ${
-        isIdle ? idleClasses : baseInteractive
-      }`}
+      className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${classes}`}
       title={titleParts.join('').trim()}
+      data-testid="browser-toggle"
+      data-watch-status={status}
     >
       {isOpen ? (
         <svg
@@ -120,11 +109,15 @@ export default function WebviewButton({ sessionId, hasWebviewCommand = false }: 
           <circle cx="5.5" cy="4.25" r="0.5" fill="currentColor" />
         </svg>
       )}
-      <span>{isOpen ? 'Terminal' : 'Web'}</span>
-      <span
-        className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${dotClass} ${dotPulseClass}`}
-        aria-hidden
-      />
+      <span>{isOpen ? 'Terminal' : 'Browser'}</span>
+      {/* The dot only appears while a watch has something to say. A plain
+          grey dot on an idle button was a status indicator for no status. */}
+      {watching && (
+        <span
+          className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${dotClass} ${dotPulseClass}`}
+          aria-hidden
+        />
+      )}
     </button>
   )
 }
