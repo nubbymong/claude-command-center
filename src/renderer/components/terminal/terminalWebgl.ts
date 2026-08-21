@@ -83,6 +83,21 @@ export interface WebglHandle {
    * adversarial review).
    */
   isActive(): boolean
+  /**
+   * Detach WebGL and hand this terminal back to the DOM renderer. Idempotent,
+   * and it also stops the context-loss recovery machinery -- without that, a
+   * recreate already scheduled for the next frame would resurrect the context
+   * after the caller believed it gone.
+   *
+   * Detaching matters for two reasons that are easy to forget while looking at
+   * one terminal. Chromium allows about 16 WebGL contexts per renderer and
+   * evicts the oldest beyond that -- eviction arrives as a context-loss storm,
+   * i.e. as the crash this module already fights. And the glyph atlas is shared
+   * per PROCESS, so every additional live context is another terminal that can
+   * be damaged by someone else's atlas rebuild. A context that is not on screen
+   * is buying neither speed nor anything else.
+   */
+  dispose(): void
 }
 
 /**
@@ -167,6 +182,9 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
   // (never loaded, or dropped to the DOM renderer after a context loss). Kept in
   // sync so the returned handle always targets the live addon.
   let currentAddon: WebglAddon | null = null
+  // Set by dispose(). Checked wherever a recreate could run, so a raf callback
+  // queued before disposal cannot bring the context back afterwards.
+  let detached = false
 
   /**
    * Attempt to create and load a WebGL addon.
@@ -178,6 +196,10 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
   const createAndLoad = () => {
     const addon = new WebglAddonCtor()          // may throw
     addon.onContextLoss(() => {
+      // Detached on purpose (the pane went off screen): this is not a loss to
+      // recover from, and recreating here is how a hidden terminal would take
+      // a context back.
+      if (detached) return
       // The atlas is gone the moment the context is lost — drop the reference
       // before disposing so a repaint racing the recovery no-ops instead of
       // touching a dead addon.
@@ -199,7 +221,7 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
       }
       recreateCount++
       raf(() => {
-        if (isDisposed()) return
+        if (isDisposed() || detached) return
         try {
           createAndLoad()                        // recreate — may throw
         } catch {
@@ -234,6 +256,16 @@ export function installWebglWithRecovery(term: Terminal, opts: WebglRecoveryOpti
     },
     isActive() {
       return currentAddon !== null
+    },
+    dispose() {
+      detached = true
+      const addon = currentAddon
+      currentAddon = null
+      // Disposing the addon is what returns xterm to its DOM renderer. The
+      // viewport it leaves behind is whatever WebGL last drew, so repaint --
+      // the same thing the context-loss path does.
+      try { addon?.dispose() } catch { /* already gone */ }
+      if (addon) forceDomRepaint()
     },
   }
 }

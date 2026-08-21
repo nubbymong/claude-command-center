@@ -125,6 +125,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   /** This terminal's atlas-resync callback, so the activation effect can ask the
    *  coordinator whether it is behind. Null until the terminal is built. */
   const atlasResyncRef = useRef<(() => void) | null>(null)
+  // The LIVE WebGL handle for this terminal, or null when it is drawing on the
+  // DOM renderer. A ref rather than a local in the mount effect because the
+  // addon is now attached and detached as the pane comes and goes, which is a
+  // different lifetime from the terminal's.
+  const webglHandleRef = useRef<WebglHandle | null>(null)
   // Mirror of the isActive prop for `document`-level listeners installed by the
   // init effect (which keys on session identity, not activation) — reading the
   // captured prop there would go stale on tab switches. See the paste handler.
@@ -268,6 +273,62 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // was still null. Without this gate, theme flips never repainted.
   const [terminalReady, setTerminalReady] = useState(false)
 
+  /**
+   * WebGL is attached only while this pane is ON SCREEN, and detached the moment
+   * it is not.
+   *
+   * Two separate limits make a hidden terminal's GPU context actively harmful,
+   * and neither is visible while you look at one terminal:
+   *
+   *  1. Chromium allows roughly SIXTEEN WebGL contexts per renderer and evicts
+   *     the oldest beyond that. Every session in this app keeps its TerminalView
+   *     mounted -- that is what makes switching tabs instant and what keeps
+   *     scrollback alive -- so a seventeenth session did not just fail to get a
+   *     context, it took one away from a terminal that was using it. Eviction
+   *     arrives as a context loss, i.e. as the storm the recovery code exists to
+   *     survive.
+   *  2. `@xterm/addon-webgl` keeps ONE glyph atlas per PROCESS. Every additional
+   *     live context is one more terminal that someone else's atlas rebuild can
+   *     blank. With a single live context there is no "someone else".
+   *
+   * A terminal that is not on screen renders nothing, so it is paying both of
+   * those for no benefit whatsoever.
+   *
+   * The detach costs a re-raster when you come back to the tab -- but that tab
+   * has to repaint on becoming visible anyway, so the work overlaps with a
+   * repaint that was already going to happen.
+   *
+   * The atlas coordinator registration lives here too, not in the mount effect:
+   * a terminal with no context has nothing to resync, and leaving it registered
+   * would have it doing model-clearing work on behalf of an atlas it is not
+   * drawing from.
+   */
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!terminalReady || !term) return
+    if (!isActive) return
+    if (!gpuRenderingEnabled(useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS)) return
+
+    const handle = installWebglWithRecovery(term, {
+      WebglAddonCtor: WebglAddon,
+      raf: requestAnimationFrame,
+      // The mount effect owns terminal teardown; this effect's own cleanup runs
+      // first on unmount, so by the time anything here could fire the handle is
+      // already detached.
+      isDisposed: () => terminalRef.current !== term,
+    })
+    webglHandleRef.current = handle
+    const resync = atlasResyncRef.current
+    const unregister = resync ? atlasCoordinator.register(resync) : null
+
+    return () => {
+      unregister?.()
+      webglHandleRef.current = null
+      handle.dispose()
+    }
+  }, [isActive, terminalReady])
+
+
   // Input diagnostics (#145), opt-in via CCC_INPUT_DEBUG=1. Active session only,
   // so one dictation run yields one readable trace rather than N interleaved
   // copies. Answers what an external tool ACTUALLY sends — see
@@ -358,8 +419,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     // #273 stale-glyph repaint: force a full WebGL repaint (clearTextureAtlas +
     // term.refresh) on the triggers that correlate with the ghosting — scroll and
     // streaming output — throttled so a firehose costs at most a few repaints/sec.
-    let webglHandle: WebglHandle | null = null
-    let unregisterAtlas: (() => void) | null = null
     let repainter: StaleGlyphRepainter | null = null
     let lastWheelAt = Number.NEGATIVE_INFINITY
 
@@ -480,9 +539,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // The GPU renderer is OPT-IN: only a literal `true` enables it (see
       // settingsStore.gpuRenderingEnabled). `@xterm/addon-webgl` keeps ONE glyph
       // atlas per PROCESS, so a clearTextureAtlas() from ANY terminal empties the
-      // texture every OTHER mounted terminal is drawing from. Read once at
-      // mount — changing the setting applies to terminals opened afterwards,
-      // which keeps a live session from having its renderer swapped underneath it.
+      // texture every OTHER terminal drawing from it. Only ONE terminal holds a
+      // context at a time now (see the attach effect above), so "every other" is
+      // currently nobody -- which is the point of doing it that way. The setting
+      // is read when a pane ATTACHES rather than once at mount, so switching it
+      // off takes effect on the next tab switch instead of needing a new session.
       // Repaint this terminal's viewport from the (shared) glyph atlas.
       const domRefresh = () => { try { term?.refresh(0, term.rows - 1) } catch { /* disposed */ } }
       // Drop THIS terminal's render model without touching the shared texture.
@@ -502,18 +563,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // repaint — and only while WebGL is actually live here. The SAME reference
       // must go to both register() and notifyCleared() below; the coordinator
       // identifies the terminal that cleared by callback identity.
-      const atlasResync = createAtlasResync(() => webglHandle, clearOwnModel, domRefresh)
+      const atlasResync = createAtlasResync(() => webglHandleRef.current, clearOwnModel, domRefresh)
       atlasResyncRef.current = atlasResync
-      if (gpuRenderingEnabled(ts)) {
-        webglHandle = installWebglWithRecovery(term, {
-          WebglAddonCtor: WebglAddon,
-          raf: requestAnimationFrame,
-          isDisposed: () => disposed,
-        })
-        // Register with the process-wide coordinator so a clearTextureAtlas()
-        // from ANY terminal resyncs this one on the next frame (#311).
-        unregisterAtlas = atlasCoordinator.register(atlasResync)
-      }
+      // WebGL is NOT attached here. Attaching lives in its own effect below,
+      // keyed on whether this pane is on screen: a hidden terminal holding a
+      // GPU context buys nothing and costs two things that both bite (the
+      // ~16-context-per-renderer ceiling, and one more terminal exposed to the
+      // process-wide glyph atlas). See the attach effect for the whole
+      // argument.
       // #273 / #311: reproduces the window-resize repaint (clearTextureAtlas +
       // refresh) against whichever addon is currently live. The glyph atlas is
       // shared across every terminal, so a clear here empties it for all of them.
@@ -528,11 +585,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // whether the atlas was cleared; false on the DOM fallback / unrecovered
         // context loss, so the repainter skips its own refresh too.
         clearAtlas: () => {
-          const cleared = webglHandle?.clearTextureAtlas() ?? false
+          const cleared = webglHandleRef.current?.clearTextureAtlas() ?? false
           if (cleared) atlasCoordinator.notifyCleared(atlasResync)
           return cleared
         },
-        atlasActive: () => webglHandle?.isActive() ?? false,
+        atlasActive: () => webglHandleRef.current?.isActive() ?? false,
         refresh: domRefresh,
         now: Date.now,
         setTimer: (cb, ms) => setTimeout(cb, ms),
@@ -1170,7 +1227,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
       repainter?.dispose()
-      unregisterAtlas?.()
       if (repainterRef.current === repainter) repainterRef.current = null
       resizeObserver?.disconnect()
       unsubData?.()
