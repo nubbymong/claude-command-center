@@ -198,27 +198,41 @@ export async function retireAskConfig(
 /**
  * Gather all relevant localStorage keys for migration to CONFIG/.
  */
+export const MIGRATED_LOCAL_STORAGE_KEYS: readonly string[] = [
+  'claude-multi-commands',
+  'claude-multi-commands-seeded-v2',
+  'claude-multi-configs',
+  'claude-multi-config-groups',
+  'claude-multi-config-sections',
+  'claude-multi-settings',
+  'claude-multi-magic-buttons',
+  'claude-multi-color-migration-v2',
+  'claude-conductor-setup-version',
+  'claude-conductor-last-seen-version',
+]
+
 export function gatherLocalStorageData(): Record<string, string> {
-  const keys = [
-    'claude-multi-commands',
-    'claude-multi-commands-seeded-v2',
-    'claude-multi-configs',
-    'claude-multi-config-groups',
-    'claude-multi-config-sections',
-    'claude-multi-settings',
-    'claude-multi-magic-buttons',
-    'claude-multi-color-migration-v2',
-    'claude-conductor-setup-version',
-    'claude-conductor-last-seen-version',
-  ]
   const data: Record<string, string> = {}
-  for (const key of keys) {
+  for (const key of MIGRATED_LOCAL_STORAGE_KEYS) {
     const value = localStorage.getItem(key)
     if (value != null) {
       data[key] = value
     }
   }
   return data
+}
+
+/**
+ * Forget the v1 localStorage snapshot once it has been migrated into CONFIG/.
+ * It used to be kept forever, so any later launch that (wrongly or rightly)
+ * decided CONFIG/ was empty would re-migrate it and roll commands, configs and
+ * settings back to the v1 state. The migration is one-way; the snapshot has no
+ * job after it.
+ */
+export function clearMigratedLocalStorage(): void {
+  for (const key of MIGRATED_LOCAL_STORAGE_KEYS) {
+    try { localStorage.removeItem(key) } catch { /* storage unavailable: nothing to forget */ }
+  }
 }
 
 /**

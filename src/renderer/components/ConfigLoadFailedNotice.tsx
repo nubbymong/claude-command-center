@@ -40,6 +40,10 @@ export default function ConfigLoadFailedNotice() {
             paused so it stays that way. Close the app and your configs, commands and settings are still
             on disk exactly as they were.
           </div>
+          {/* The WHY, in the words the lock was set with: which files failed,
+              so the fix (a locked file, a permissions change, a junction) is
+              nameable without opening the log. */}
+          <div className="mt-1 text-[10px] font-mono text-overlay1 break-words" data-ux-id="config-load-failed-reason">{reason}</div>
           <button
             type="button"
             onClick={() => useConfigWriteLockStore.getState().unlock()}

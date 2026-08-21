@@ -260,15 +260,25 @@ export function writeConfig(key: ConfigKey, data: unknown): boolean {
 /**
  * Check if CONFIG/ directory has any config files (for migration detection).
  */
-export function configHasData(): boolean {
+/**
+ * Does CONFIG/ hold any known config file? `false` means genuinely empty (a
+ * fresh install, migrate from localStorage); `'unknown'` means the directory is
+ * there but could NOT be listed (EPERM/EACCES on the dir, a share that refuses
+ * enumeration). The two must stay distinct: an unlistable directory used to
+ * read as "empty", which told the renderer needsMigration and had it rewrite
+ * commands/configs/settings from the v1 localStorage snapshot over files that
+ * were readable by name all along.
+ */
+export function configHasData(): boolean | 'unknown' {
   const dir = getConfigDir()
   if (!existsSync(dir)) return false
   try {
     const files = readdirSync(dir)
     // Check if any of the known config files exist
     return files.some(f => Object.values(CONFIG_FILES).includes(f as any))
-  } catch {
-    return false
+  } catch (err) {
+    logError(`[config-manager] could not list ${dir}: ${(err as Error)?.message ?? err}`)
+    return 'unknown'
   }
 }
 
@@ -361,8 +371,11 @@ export function loadAllConfig(): LoadAllResult {
   // Strips top-level Claude fields; persists back to disk only if something actually changed.
   bestEffort('provider-shape migration', () => migrateConfigsToProviderShape(data))
 
-  logInfo(`[config-manager] Loaded all config from ${getConfigDir()}, needsMigration=${!hasData}${failedKeys.length ? `, failedKeys=${failedKeys.join(',')}` : ''}`)
-  return { data, needsMigration: !hasData, readFailed: false, failedKeys }
+  // An unlistable directory is a READ FAILURE (writes latch; never a
+  // migration), not an empty one -- see configHasData.
+  const unlistable = hasData === 'unknown'
+  logInfo(`[config-manager] Loaded all config from ${getConfigDir()}, needsMigration=${hasData === false}${unlistable ? ', dirUnlistable' : ''}${failedKeys.length ? `, failedKeys=${failedKeys.join(',')}` : ''}`)
+  return { data, needsMigration: hasData === false, readFailed: unlistable, failedKeys }
 }
 
 // v1.5: provider-shape migration constants
