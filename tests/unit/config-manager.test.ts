@@ -251,6 +251,52 @@ describe('config-manager', () => {
       expect(data.excalidraw).toEqual(scene)
     })
 
+    it('survives a null entry in configs.json instead of rejecting the whole load', () => {
+      // The bug this pins: `for (const c of configs) c.sshConfig` threw
+      // `Cannot read properties of null`, the throw escaped config:loadAll, and
+      // the RENDERER's boot catch answered the rejection by hydrating from `{}`
+      // -- writing an empty commands.json and default settings over the user's.
+      // One bad array element cost the entire configuration.
+      mockedFs.existsSync.mockReturnValue(true)
+      mockedFs.readdirSync.mockReturnValue(['configs.json'] as any)
+      mockedFs.readFileSync.mockImplementation((p: any) => {
+        if (typeof p === 'string' && p.includes('configs')) {
+          return JSON.stringify([{ id: 'c1', provider: 'claude' }, null, { id: 'c2', provider: 'claude' }])
+        }
+        return 'null'
+      })
+      expect(() => loadAllConfig()).not.toThrow()
+      const { data } = loadAllConfig()
+      const configs = data.configs as unknown[]
+      // The good entries survive AND the unreadable one is passed through
+      // rather than being silently dropped -- we do not understand it, so we
+      // are not entitled to delete it.
+      expect(configs).toHaveLength(3)
+      expect((configs[0] as any).id).toBe('c1')
+      expect(configs[1]).toBeNull()
+      expect((configs[2] as any).id).toBe('c2')
+    })
+
+    it('survives a primitive entry, and never writes a spread of one back', () => {
+      // `{ ...'abc' }` is `{0:'a',1:'b',2:'c'}`, and this path PERSISTS, so the
+      // old code would have written that back as though it were a config.
+      mockedFs.existsSync.mockReturnValue(true)
+      mockedFs.readdirSync.mockReturnValue(['configs.json'] as any)
+      mockedFs.writeFileSync.mockClear()
+      mockedFs.readFileSync.mockImplementation((p: any) => {
+        if (typeof p === 'string' && p.includes('configs')) {
+          return JSON.stringify([{ id: 'c1', provider: 'claude', claudeOptions: {} }, 'abc'])
+        }
+        return 'null'
+      })
+      expect(() => loadAllConfig()).not.toThrow()
+      // JSON.stringify here is indented, so match without depending on spacing.
+      const written = mockedFs.writeFileSync.mock.calls
+        .map((c) => String(c[1]).replace(/\s+/g, ''))
+        .filter((body) => body.includes('"0":"a"'))
+      expect(written).toEqual([])
+    })
+
     it('returns needsMigration=true when no config files exist', () => {
       mockedFs.existsSync.mockImplementation((p: any) => {
         // CONFIG dir doesn't exist for configHasData check

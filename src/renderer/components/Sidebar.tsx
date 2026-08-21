@@ -33,6 +33,7 @@ import { resolveConfigPanelExpanded, toggleConfigPanel, overrideAfterPinChange, 
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
 import ConfigHydrationNotice from './ConfigHydrationNotice'
+import ConfigLoadFailedNotice from './ConfigLoadFailedNotice'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
@@ -1088,6 +1089,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         />
 
         {/* P2.4: warns when a corrupt config section was reset on hydrate. */}
+        <ConfigLoadFailedNotice />
         <ConfigHydrationNotice />
 
         {showFirstRunCard && onShowFirstRun && (
