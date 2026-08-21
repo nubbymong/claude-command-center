@@ -52,7 +52,7 @@ export interface CanvasToolDeps {
   renderVersion: (
     sessionId: string,
     source: CanvasRenderSource,
-  ) => { canvasId: string; versionId: string; filed?: { canvasId: string } }
+  ) => { canvasId: string; versionId: string; filed?: { canvasId: string; returnedToExisting?: boolean } }
   /**
    * What is outstanding on ONE canvas: counts, and ids the STORE minted.
    *
@@ -549,14 +549,16 @@ function listIds(ids: readonly string[]): string {
  * relays the raw message — paths included — unwrapped and outside any envelope.
  */
 function renderContextSuffix(
-  rendered: { canvasId: string; filed?: { canvasId: string } },
+  rendered: { canvasId: string; filed?: { canvasId: string; returnedToExisting?: boolean } },
   deps: CanvasToolDeps,
 ): string {
   try {
     const parts: string[] = []
     if (rendered.filed) {
       parts.push(
-        ` You named a different subject, so canvas ${rendered.filed.canvasId} was filed and this is a new canvas.`,
+        rendered.filed.returnedToExisting
+          ? ` You named a different subject, so canvas ${rendered.filed.canvasId} was filed and this is the canvas you had already started on that subject.`
+          : ` You named a different subject, so canvas ${rendered.filed.canvasId} was filed and this is a new canvas.`,
       )
       const filedCounts = deps.getReviewCounts(rendered.filed.canvasId)
       if (filedCounts && filedCounts.draftNotes > 0) {
@@ -566,8 +568,16 @@ function renderContextSuffix(
         return parts.join('')
       }
       if (filedCounts && filedCounts.openReviewIds.length > 0) {
+        // COUNT, never the ids. Review ids restart at R1 on every canvas, and
+        // canvas_review resolves an id against the session's ACTIVE canvas --
+        // it rejects any canvasId the model supplies, by design. So an id from
+        // the canvas we just FILED either resolves to nothing ("this canvas has
+        // no submitted reviews yet", contradicting the sentence the agent just
+        // read) or, when the numbers collide, silently returns a DIFFERENT
+        // canvas's notes as a normal success. Handing back an id no tool can
+        // address is worse than handing back none.
         parts.push(
-          ` It still has open notes on ${listIds(filedCounts.openReviewIds)}.`,
+          ` It still has ${filedCounts.openReviewIds.length} review(s) with open notes, on that filed canvas rather than this one — the user reopens it from the Canvas library.`,
         )
         return parts.join('')
       }

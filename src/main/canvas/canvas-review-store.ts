@@ -876,9 +876,19 @@ export function markAnnotationsAddressed(
   // the agent render and THEN resolve, so a title slip in that render pointed
   // this write at a different canvas whose a1/a2 happened to exist, marked
   // them addressed, and left the notes the agent actually handled open — the
-  // very bug the tool exists to fix (adversarial review, 2026-08-19). The
-  // review id names which canvas the agent means; if it is not on the current
-  // one, refuse rather than guess.
+  // very bug the tool exists to fix (adversarial review, 2026-08-19).
+  //
+  // What a review id does NOT do is name a canvas, which is what this comment
+  // used to claim. Review ids restart at R1 on every canvas as well, so `R1`
+  // is not a handle on one particular review -- it is a number resolved
+  // against whichever canvas is active RIGHT NOW. The guard below is therefore
+  // weaker than it reads: it refuses only when the number does not exist here,
+  // and says nothing when it exists on both. What actually bounds the damage is
+  // that the id can only ever resolve against the ACTIVE canvas, plus the
+  // membership check on annotationIds below -- a resolve aimed at the wrong
+  // canvas has to collide on the review number AND on the annotation ids to do
+  // anything at all. Do not rely on the id to identify a canvas; if that is
+  // ever needed, store the owning canvasId beside it.
   const review = base.reviews.find((r) => r.id === reviewId)
   if (!review) throw new Error('review not on this canvas')
   if (review.status === 'draft') throw new Error('review is still a draft')

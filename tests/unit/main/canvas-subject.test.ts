@@ -130,6 +130,21 @@ describe('coming back to a subject, and surviving a restart', () => {
     expect(store.getCanvasStateForSession(SID)?.canvasId).toBe(login.canvasId)
   })
 
+  it('reports whether the canvas it moved to is NEW or one already started', () => {
+    // The tool reply says "this is a new canvas", and on the comeback path that
+    // is false: the canvas being re-activated already has versions and notes.
+    // renderVersion is the only place that knows which happened.
+    const login = render('one', 'Login page')
+    const checkout = render('two', 'Checkout flow')
+    expect(checkout.filed?.canvasId).toBe(login.canvasId)
+    expect(checkout.filed?.returnedToExisting).toBe(false)
+
+    const back = render('three', 'Login page')
+    expect(back.filed?.canvasId).toBe(checkout.canvasId)
+    expect(back.filed?.returnedToExisting).toBe(true)
+  })
+
+
   it('reattaches to the MOST RECENTLY RENDERED canvas after a restart, not an arbitrary one', () => {
     // Several canvases share a session now. The disk scan used to take the first
     // one readdir returned — random by id on NTFS — so a relaunch reopened the
