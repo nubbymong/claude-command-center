@@ -26,6 +26,34 @@ const RETIRED_COMMAND_IDS = new Set(['builtin-setup-statusline'])
  * commands use generated ids). Returns the SAME array reference when nothing
  * changed, so callers can cheaply detect a no-op.
  */
+/**
+ * One-time migration of the retired `target: 'any'`.
+ *
+ * "Any" ran a button in whichever pane happened to be showing, while the button
+ * itself sat in the Claude row -- so the row could lie about where a command
+ * executed, and a button under the Claude mark could run a shell line. The
+ * owner's call was to drop it: a button lives in the row it runs in.
+ *
+ * Everything that was 'any' becomes 'claude', which is where those buttons were
+ * already filed and where they landed most of the time (the partner pane is
+ * opened deliberately, and rarely left open). Nothing is lost: a command that
+ * belongs in the shell is one drag away, and its row will then be telling the
+ * truth about it.
+ *
+ * Returns the SAME array reference when there is nothing to migrate, so a
+ * healthy launch writes nothing.
+ */
+export function migrateCommandTargets(commands: CustomCommand[]): CustomCommand[] {
+  let changed = false
+  const out = commands.map((c) => {
+    if ((c as { target?: string }).target !== 'any') return c
+    changed = true
+    return { ...c, target: 'claude' as const }
+  })
+  return changed ? out : commands
+}
+
+
 export function removeRetiredCommands(commands: CustomCommand[]): CustomCommand[] {
   const filtered = commands.filter((c) => !RETIRED_COMMAND_IDS.has(c.id))
   return filtered.length === commands.length ? commands : filtered
@@ -366,6 +394,12 @@ export function hydrateStores(configData: Record<string, unknown>): void {
   if (cleaned !== commands) {
     commands = cleaned
     saveCommands(commands, 'Removed retired built-in command(s)')
+  }
+  // The retired 'any' target (see migrateCommandTargets).
+  const retargeted = migrateCommandTargets(commands)
+  if (retargeted !== commands) {
+    commands = retargeted
+    saveCommands(commands, "Migrated commands off the retired 'any' target")
   }
   const commandSections = coerceArray(configData.commandSections, 'commandSections', warnings) as unknown as CommandSection[]
   useCommandStore.getState().hydrate(commands, commandSections)

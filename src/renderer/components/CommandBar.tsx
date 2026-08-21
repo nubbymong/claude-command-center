@@ -131,13 +131,21 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     }
   }
 
-  // Split commands by target — no 'any' concept, default is 'claude'
-  const claudeCommands = visibleCommands.filter((c) => !c.target || c.target === 'claude' || c.target === 'any')
+  // Split by the row a command lives in. `target` IS the row now -- the old
+  // 'any' is migrated away at hydrate (migrateCommandTargets), and absent has
+  // always meant Claude.
+  const claudeCommands = visibleCommands.filter((c) => !c.target || c.target === 'claude')
   const partnerCommands = visibleCommands.filter((c) => c.target === 'partner')
 
   // Count of command chips actually shown in the strip -- drives the collapse
   // toggle's badge. Partner commands only count when the partner row renders.
-  const showPartnerRow = !!partnerEnabled && partnerCommands.length > 0
+  // Both rows are present whenever a partner terminal exists, even when one is
+  // empty. The row used to appear the moment its first command was created and
+  // vanish when the last was deleted, so the bar's height changed under the
+  // pointer -- and an empty row is the only affordance saying "you can put
+  // buttons here", which is exactly what someone with no partner commands
+  // needs to see.
+  const showPartnerRow = !!partnerEnabled
   const visibleCommandCount = claudeCommands.length + (showPartnerRow ? partnerCommands.length : 0)
 
   /** Build the full command string (prompt + default args) */
@@ -175,7 +183,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
   /** Send a command to the appropriate PTY */
   const sendCommand = (cmd: CustomCommand, fullCommand: string) => {
-    const target = cmd.target || 'any'
+    const target = cmd.target || 'claude'
     const webViewUrl = cmd.webView?.enabled ? cmd.webView.url : null
 
     const writeTo = (ptyId: string) => {
@@ -203,10 +211,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
       setTimeout(() => writeTo(sessionId), 100)
       return
     }
-    // 'any' or already on the right terminal
-    const targetId = target === 'partner' && partnerSessionId ? partnerSessionId
-      : target === 'claude' ? sessionId
-      : (isPartnerActive && partnerSessionId ? partnerSessionId : sessionId)
+    // Already on the right terminal.
+    const targetId = target === 'partner' && partnerSessionId ? partnerSessionId : sessionId
     writeTo(targetId)
   }
 
@@ -382,9 +388,19 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const isDragging = dragId === cmd.id
     const isDragOver = dragOverId === cmd.id
     const hasArgs = (cmd.defaultArgs && cmd.defaultArgs.length > 0) || (cmd.lastCustomArgs && cmd.lastCustomArgs.length > 0)
+    const isGlobal = cmd.scope === 'global'
+    const runsIn = cmd.target === 'partner' ? 'the partner shell' : 'the Claude terminal'
+    const scopeLine = isGlobal
+      ? 'Global: this button is in every config, and editing or deleting it changes all of them.'
+      : 'This config only.'
     const argsTitle = cmd.defaultArgs?.length
-      ? `${cmd.prompt}\nArgs: ${cmd.defaultArgs.join(' ')}\nCtrl+click to customize args`
-      : (cmd.label || cmd.prompt)
+      ? `${cmd.prompt}
+Args: ${cmd.defaultArgs.join(' ')}
+Runs in ${runsIn}. Ctrl+click to change the args for one run.
+${scopeLine}`
+      : `${cmd.label || cmd.prompt}
+Runs in ${runsIn}.
+${scopeLine}`
     // Token-driven neutral pill (UAT R2 Task 4). The command's colour reads
     // as a small leading dot; the surface stays neutral so the strip is calm
     // and consistent with the SessionStatusStrip control cluster. Drag-over
@@ -420,6 +436,20 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           aria-hidden
         />
         <span className="truncate">{cmd.label}</span>
+        {/* Scope, made visible. A global button follows you into every config,
+            so editing or deleting one reaches all of them -- and until now it
+            looked identical to a button that belonged to this config alone.
+            Dashed rather than filled: it is a property of the button, not a
+            state, and it must not read as another status dot. */}
+        {isGlobal && (
+          <span
+            className="shrink-0 px-1 rounded text-[8.5px] uppercase tracking-wide border border-dashed"
+            style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
+            data-testid="command-global-chip"
+          >
+            global
+          </span>
+        )}
         {hasArgs && (
           <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 opacity-50" style={{ color: 'var(--text-muted)' }}>
             <path d="M2 3.5l3 3 3-3" />
@@ -632,13 +662,16 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
       {!barCollapsed && (
         <div className="flex flex-col overflow-hidden animate-[commandbar-expand_0.22s_ease-out]">
           {/* Row 2: Claude commands */}
-          {claudeCommands.length > 0 && (
+          {(
             <div className="flex items-center gap-1 px-2 py-0.5 border-t overflow-x-auto" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }} onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
               {/* Section icon: Claude asterisk -- quiet leading label */}
-              <div className="shrink-0" title="Claude Commands" style={{ color: 'var(--text-muted)' }}>
+              <div className="shrink-0 flex items-center gap-1" title="Runs in the Claude terminal" style={{ color: 'var(--text-muted)' }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
                 </svg>
+                {/* Named, because an icon alone did not say WHERE a button runs
+                    -- which is the whole point of splitting the rows. */}
+                <span className="text-[10px] uppercase tracking-wide">Claude</span>
               </div>
               <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
               {renderGroupedCommands(claudeCommands, 'claude')}
@@ -649,12 +682,13 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           {showPartnerRow && (
             <div className="flex items-center gap-1 px-2 py-0.5 border-t overflow-x-auto" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }} onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
               {/* Section icon: </> code -- quiet leading label */}
-              <div className="shrink-0" title="Partner Terminal Commands" style={{ color: 'var(--text-muted)' }}>
+              <div className="shrink-0 flex items-center gap-1" title="Runs in the partner shell" style={{ color: 'var(--text-muted)' }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="7 8 3 12 7 16" />
                   <polyline points="17 8 21 12 17 16" />
                   <line x1="14" y1="4" x2="10" y2="20" />
                 </svg>
+                <span className="text-[10px] uppercase tracking-wide">Shell</span>
               </div>
               <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
               {renderGroupedCommands(partnerCommands, 'partner')}

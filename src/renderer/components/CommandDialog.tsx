@@ -15,7 +15,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
   const [prompt, setPrompt] = useState(initial?.prompt || '')
   const [scope, setScope] = useState<'global' | 'config'>(initial?.scope || (configId ? 'config' : 'global'))
   const [color, setColor] = useState(initial?.color || COLOR_SWATCHES[0])
-  const [target, setTarget] = useState<'claude' | 'partner' | 'any'>(initial?.target || 'any')
+  const [target, setTarget] = useState<'claude' | 'partner'>(initial?.target === 'partner' ? 'partner' : 'claude')
   const [defaultArgs, setDefaultArgs] = useState<string[]>(initial?.defaultArgs || [])
   const [argInput, setArgInput] = useState('')
   const [sectionId, setSectionId] = useState<string | undefined>(initial?.sectionId)
@@ -95,7 +95,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
       scope,
       configId: scope === 'config' ? configId : undefined,
       color,
-      target: target === 'any' ? undefined : target,
+      target,
       defaultArgs: defaultArgs.length > 0 ? defaultArgs : undefined,
       sectionId,
       webView: webViewEnabled
@@ -165,9 +165,9 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
             </div>
           </div>
           <div>
-            <label className="block text-xs text-subtext0 mb-1">Target Terminal</label>
+            <label className="block text-xs text-subtext0 mb-1">Where it runs</label>
             <div className="flex gap-2">
-              {([['any', 'Any'], ['claude', 'Claude'], ['partner', 'Partner']] as const).map(([val, lbl]) => {
+              {([['claude', 'Claude'], ['partner', 'Partner shell']] as const).map(([val, lbl]) => {
                 const isActive = target === val
                 return (
                   <button
@@ -185,6 +185,13 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
                 )
               })}
             </div>
+            {/* The retired third option, "Any", ran the button in whichever pane
+                happened to be showing while filing it in the Claude row -- so the
+                row could lie about where a command executed. It is gone; the row
+                a button sits in is the row it runs in. */}
+            <p className="mt-1 text-[10px] text-overlay0">
+              This is also the row the button appears in, so the bar always says where it runs.
+            </p>
           </div>
           <div>
             <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer select-none">
@@ -194,7 +201,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
                 onChange={(e) => setWebViewEnabled(e.target.checked)}
                 className="accent-blue"
               />
-              Launch webview on completion
+              Watch for a page and open the browser when it responds
             </label>
             {webViewEnabled && (
               <div className="mt-1.5">
@@ -216,14 +223,14 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
                   <p id="webview-url-error" className="mt-1 text-[10px] text-red">{webViewUrlError}</p>
                 ) : (
                   <p className="mt-1 text-[10px] text-overlay0">
-                    After the command is sent, the app polls this URL every second for up to 30 s. The webview button pulses green once content is reachable, red on timeout. The button also auto-detects if the server is already up when the app launches.
+                    The poll starts when the command is SENT, not when it finishes -- which is the point: it is watching for a server that is still starting up. Every second for up to 30 s; the browser button turns green as soon as the page answers, red on timeout. It also checks on launch, so a server that was already running is picked up.
                   </p>
                 )}
               </div>
             )}
           </div>
           <div>
-            <label className="block text-xs text-subtext0 mb-1">Arguments (for script commands)</label>
+            <label className="block text-xs text-subtext0 mb-1">Arguments <span className="text-overlay0">-- optional</span></label>
             <div className="flex flex-wrap gap-1 mb-1.5">
               {defaultArgs.map((arg, idx) => (
                 <span
@@ -260,6 +267,19 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
               </button>
             </div>
           </div>
+            {/* Two things nobody could have known from this dialog. The first is
+                a correctness trap: arguments are concatenated onto the command
+                with single spaces and NOTHING is quoted, so a value containing a
+                space becomes two arguments. The chip UI implies structure that
+                does not exist. The second is a real feature that was taught only
+                by a tip -- which may never have fired for this user. */}
+            <p className="mt-1 text-[10px] text-overlay0">
+              Appended after the command, separated by spaces. Nothing is quoted for you, so an argument
+              containing a space arrives as two.
+            </p>
+            <p className="mt-1 text-[10px] text-overlay0">
+              <span className="text-subtext0">Ctrl+click the button</span> to change these for one run without editing the command.
+            </p>
           <div>
             <label className="block text-xs text-subtext0 mb-1">Section</label>
             {!showNewSection ? (
