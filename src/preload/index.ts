@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData } from '../shared/types'
+import type { WebviewNavState } from '../shared/browser-url'
 import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
 import type {
@@ -315,6 +316,11 @@ export interface ElectronAPI {
     navBack: (sessionId: string) => Promise<void>
     navForward: (sessionId: string) => Promise<void>
     goHome: (sessionId: string) => Promise<void>
+    /** Load an http/https URL in the session's EXISTING view (the address bar, favourites, home).
+     *  Resolves false when there is no view yet -- the pane then opens one instead. */
+    navigate: (sessionId: string, url: string) => Promise<boolean>
+    /** Hand an http/https URL to the OS default browser. Main re-validates and passes only the normalised href. */
+    openExternal: (url: string) => Promise<boolean>
     /** Emergency: destroy every WebContentsView. Used by the global Esc / "Close webview" pill. */
     closeAll: () => Promise<boolean>
     /**
@@ -324,6 +330,9 @@ export interface ElectronAPI {
      * be dismissed by keyboard. Returns an unsubscribe fn.
      */
     onEscapePressed: (handler: (sessionId: string) => void) => () => void
+    /** Subscribe to navigation state from the session's view: the page it is
+     *  actually on, its title, whether back/forward are possible, loading. */
+    onNavigated: (handler: (state: WebviewNavState) => void) => () => void
   }
   session: {
     save: (state: unknown) => Promise<boolean>
@@ -879,11 +888,18 @@ const electronAPI: ElectronAPI = {
     navBack: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_BACK, sessionId),
     navForward: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_FORWARD, sessionId),
     goHome: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_GO_HOME, sessionId),
+    navigate: (sessionId: string, url: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAVIGATE, sessionId, url),
+    openExternal: (url: string) => ipcRenderer.invoke(IPC.WEBVIEW_OPEN_EXTERNAL, url),
     closeAll: () => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE_ALL),
     onEscapePressed: (handler: (sessionId: string) => void) => {
       const fn = (_e: unknown, sessionId: string) => handler(sessionId)
       ipcRenderer.on(IPC.WEBVIEW_ESCAPE_PRESSED, fn)
       return () => ipcRenderer.removeListener(IPC.WEBVIEW_ESCAPE_PRESSED, fn)
+    },
+    onNavigated: (handler: (state: WebviewNavState) => void) => {
+      const fn = (_e: unknown, state: WebviewNavState) => handler(state)
+      ipcRenderer.on(IPC.WEBVIEW_NAVIGATED, fn)
+      return () => ipcRenderer.removeListener(IPC.WEBVIEW_NAVIGATED, fn)
     },
   },
   session: {

@@ -224,10 +224,11 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.4.0',
     section: 'productivity',
     summary:
-      'Embed any URL right next to your terminal. Custom commands open dev servers, dashboards, or docs in-app -- and freezing the pane drops you straight into Excalidraw to annotate over what you are seeing.',
+      'A browser of your own, right next to your terminal. Every session has a Browser button: type an address, keep favourites, set a home page, or let a command open a dev server, dashboard or docs for you -- and freezing the pane drops you straight into Excalidraw to annotate over what you are seeing.',
     highlights: [
       'Pinned to the same session -- pane state survives tab switches',
-      'Custom commands declare URLs so the toolbar surfaces a Web button automatically',
+      'Address bar, back/forward, favourites, a home page per config, and open-in-your-real-browser',
+      'A command can "watch for a page" or simply "open a page" -- the one button that types nothing',
       'Status pulse: green when reachable, red when the URL fails to load',
       'Freeze + Excalidraw -- capture a frame and draw over it without leaving the session',
       'Esc closes the pane back to terminal-only view',
@@ -264,7 +265,7 @@ export const trainingSteps: TrainingStep[] = [
       'Per-session sketchpad -- switching sessions swaps the drawing in place',
       'Full Excalidraw toolset: shapes, arrows, text, freehand, libraries',
       'Drawings auto-save to the session config -- closing and reopening the app restores them',
-      'Freeze the webview pane to import a snapshot and draw straight over it',
+      'Freeze the browser pane to import a snapshot and draw straight over it',
       'Replaces the terminal in place -- no fullscreen modal eating the toolbar',
     ],
     howToTrigger: [
@@ -524,7 +525,7 @@ export const trainingSteps: TrainingStep[] = [
       'Ctrl+Tab / Ctrl+Shift+Tab -- cycle between sessions',
       'Ctrl+1–9 -- jump directly to session N',
       'Alt+V -- paste image-from-clipboard as a file path into Claude\'s prompt',
-      'Esc -- close webview pane / dismiss tour / cancel context menu',
+      'Esc -- close browser pane / dismiss tour / cancel context menu',
       'Status bar -- live tokens, cost, rate limits',
     ],
     howToTrigger: [
