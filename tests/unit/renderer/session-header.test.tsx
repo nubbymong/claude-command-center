@@ -16,7 +16,6 @@ vi.mock('../../../src/renderer/hooks/useThemeController', () => ({ useResolvedTh
 vi.mock('../../../src/renderer/hooks/useTypography', () => ({ useRegionTypography: () => ({}) }))
 // Peripheral children — not under test here.
 vi.mock('../../../src/renderer/components/NotesBar', () => ({ default: () => null }))
-vi.mock('../../../src/renderer/components/TipPill', () => ({ default: () => null }))
 
 const { default: SessionHeader } = await import('../../../src/renderer/components/SessionHeader')
 import type { Session } from '../../../src/renderer/stores/sessionStore'

@@ -63,6 +63,26 @@ function resolveContent(tip: Tip, tracking: UsageTracking): TipContent | null {
   return tip.variants.primary
 }
 
+/**
+ * How many tips this user has never had surfaced, and could still see: not
+ * permanently dismissed, never yet shown, and currently relevant (their
+ * requires/excludes resolve to real content).
+ *
+ * CAVEAT, and it is the honest reading of the number: `tipsShown` is stamped
+ * when a tip is PICKED -- roughly two seconds after launch -- not when the user
+ * actually reads it. So this counts "never put in front of you", which is the
+ * best signal the store holds; it is not "unread" in the strict sense. Moving
+ * the trigger into the dock does not change that, but it does make it visible,
+ * which is why the count says "new" rather than "unread".
+ */
+export function countUnseenTips(tracking: UsageTracking): number {
+  return TIPS_LIBRARY.filter((tip) => {
+    if (tracking.tipsDismissed[tip.id]) return false
+    if (tracking.tipsShown[tip.id]) return false
+    return resolveContent(tip, tracking) !== null
+  }).length
+}
+
 /** Pick the best tip to show given current state */
 function selectNextTip(tracking: UsageTracking, excludeId?: string): Tip | null {
   const MIN_REPEAT_MS = 7 * 24 * 60 * 60 * 1000 // 7 days

@@ -1,7 +1,6 @@
 import React from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import NotesBar from './NotesBar'
-import TipPill from './TipPill'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
@@ -17,7 +16,6 @@ declare const __APP_VERSION__: string
 
 interface Props {
   session: Session
-  onShowTip?: () => void
 }
 
 /**
@@ -294,7 +292,7 @@ function SessionAuthPills({ session }: { session: Session }) {
   )
 }
 
-export default function SessionHeader({ session, onShowTip }: Props) {
+export default function SessionHeader({ session }: Props) {
   const theme = useResolvedTheme()
   const headerType = useRegionTypography('header')
   // Resolve identity per-theme (like every other migrated surface) so the accent
@@ -396,8 +394,6 @@ export default function SessionHeader({ session, onShowTip }: Props) {
 
       {/* Secret notes */}
       <NotesBar configId={session.configId} />
-
-      {onShowTip && <TipPill onClick={onShowTip} />}
     </div>
   )
 }

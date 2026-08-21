@@ -201,6 +201,13 @@ export interface AppSettings {
    *  overriding a real choice. */
   updateChannelChosen?: boolean
   showTips: boolean
+  /** Ask Conductor's entry point in the sidebar dock. Hidden from the dock's own
+   *  right-click menu, restored in Settings -> General. Absent (pre-upgrade
+   *  config) means shown, so an existing install never loses the entry point on
+   *  upgrade. Turning it off removes the way IN; it deliberately does not close
+   *  an Ask session that is already open, because a display toggle must not
+   *  destroy a running session. */
+  showAskConductor: boolean
   // Agent Hub first-run "How it works" banner: true once the user dismisses it.
   // Optional/absent = not yet dismissed (banner shows).
   agentHubExplainerDismissed?: boolean
@@ -328,6 +335,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   localMachineName: '',
   updateChannel: 'stable' as const,
   showTips: true,
+  showAskConductor: true,
   hooksEnabled: true,
   hooksPort: 19334,
   theme: 'dark',

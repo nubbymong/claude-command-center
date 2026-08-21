@@ -491,8 +491,12 @@ export default function App() {
       // ALREADY-onboarded users. Machine-name / training-due state is no longer
       // armed here.
 
-      // Pick a tip for this session (one per app launch)
+      // Pick a tip for this session (one per app launch). Gated on the setting:
+      // hiding tips switches the FEATURE off, so with it off nothing is picked
+      // and nothing is stamped shown -- otherwise the library would quietly
+      // burn down behind a hidden row and the count be wrong on re-enable.
       setTimeout(() => {
+        if (!useSettingsStore.getState().settings.showTips) return
         useTipsStore.getState().pickNextTip()
       }, 2000)
     }
@@ -795,7 +799,7 @@ export default function App() {
 
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
-        <SessionHeader session={activeSession} onShowTip={() => setShowTipModal(true)} />
+        <SessionHeader session={activeSession} />
         {(() => {
           const gi = activeSession.githubIntegration
           const shouldShow =
@@ -1262,7 +1266,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} onShowTip={() => setShowTipModal(true)} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             {/* One tab strip for the whole main window: session tabs + any open
                 page tabs (Tokenomics, Logs, Feature Guide, …). Always visible so
