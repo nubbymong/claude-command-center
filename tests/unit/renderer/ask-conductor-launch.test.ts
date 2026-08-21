@@ -32,6 +32,7 @@ import {
   launchAskConductor,
   normaliseQuestion,
   findAskSession,
+  askSessionIsLive,
   useAskErrorStore,
   ASK_LABEL,
   _resetAskLaunchForTest,
@@ -115,6 +116,45 @@ describe('launchAskConductor', () => {
     expect(useSessionStore.getState().sessions).toHaveLength(1)
     expect(ptyWrite).not.toHaveBeenCalled()
     expect(first).toBeTruthy()
+  })
+
+  it('revives an Ask session whose process has exited, instead of writing into the void', async () => {
+    const first = await launchAskConductor()
+    const createdAt = useSessionStore.getState().sessions[0].createdAt
+    useSessionStore.getState().updateSession(first, { ptyExited: true })
+    ptyWrite.mockClear()
+
+    const second = await launchAskConductor('my question')
+
+    // Same tab, not a second one.
+    expect(second).toBe(first)
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
+    // THE BUG: this used to fire at a dead PTY. main buffers the bytes into a
+    // pendingWrites map that only a spawn drains -- and a spawn clears it first
+    // -- so the question was destroyed while the input box was emptied as
+    // though it had been sent.
+    expect(ptyWrite).not.toHaveBeenCalled()
+
+    const s = useSessionStore.getState().sessions[0]
+    // The question rides the respawn as CCC_ASK_PROMPT, the same route a first
+    // launch uses, and the bumped createdAt is what remounts the pane.
+    expect(s.askPrompt).toBe('my question')
+    expect(s.ptyExited).toBeUndefined()
+    expect(s.createdAt).toBeGreaterThanOrEqual(createdAt)
+    expect(useSessionStore.getState().activeSessionId).toBe(first)
+  })
+
+  it('revives a dead Ask session even with no question, and does not duplicate it', async () => {
+    const first = await launchAskConductor()
+    useSessionStore.getState().updateSession(first, { ptyExited: true })
+    ptyWrite.mockClear()
+
+    const second = await launchAskConductor()
+
+    expect(second).toBe(first)
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
+    expect(ptyWrite).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].ptyExited).toBeUndefined()
   })
 
   it('surfaces a failure to stage the help workspace instead of doing nothing (property 4)', async () => {
@@ -283,5 +323,20 @@ describe('findAskSession', () => {
     const ask = { ...base, id: 'ask', kind: 'ask' as const }
     expect(findAskSession([loginShell])).toBeUndefined()
     expect(findAskSession([loginShell, ask])?.id).toBe('ask')
+  })
+
+  it('still finds a session whose PTY has exited -- existence and liveness are different questions', () => {
+    const base = {
+      id: 'a', label: 'x', workingDirectory: '', model: '', color: '#fff',
+      status: 'idle' as const, createdAt: 0, sessionType: 'local' as const,
+    }
+    const dead = { ...base, id: 'ask', kind: 'ask' as const, ptyExited: true }
+    // findAskSession answers "is there an Ask tab", which is still yes -- it is
+    // what stops a second one being opened. Whether it can be TYPED at is a
+    // different question, and the one the launch path got wrong.
+    expect(findAskSession([dead])?.id).toBe('ask')
+    expect(askSessionIsLive(dead)).toBe(false)
+    expect(askSessionIsLive({ ...base, kind: 'ask' as const })).toBe(true)
+    expect(askSessionIsLive(undefined)).toBe(false)
   })
 })

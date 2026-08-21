@@ -20,7 +20,7 @@ import { useRestartSession } from '../hooks/useRestartSession'
 import { persistLastUsedAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountGateStore, GATE_CANCELLED } from '../stores/accountGateStore'
-import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
+import { hasSpawned, markSpawned, clearSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice, formatSpawnError } from '../utils/sessionLaunch'
@@ -1009,6 +1009,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       unsubExit = window.electronAPI.pty.onExit(sessionId, (exitCode) => {
         term?.writeln(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`)
+        // The session object outlives the process, and until now nothing in the
+        // renderer recorded that. A caller that finds the session and writes to
+        // it -- Ask Conductor did exactly this -- has its bytes buffered into a
+        // pendingWrites map that only a spawn drains, and a spawn CLEARS that
+        // buffer before it fills it. So the write is not delayed, it is lost.
+        // clearSpawned too, so a remount is allowed to respawn this id.
+        useSessionStore.getState().updateSession(sessionId, { ptyExited: true })
+        clearSpawned(sessionId)
       })
 
       // Handle resize
