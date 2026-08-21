@@ -8,7 +8,12 @@ export interface CustomCommand {
   scope: 'global' | 'config'
   configId?: string
   color?: string
-  target?: 'claude' | 'partner' | 'any'
+  /** Which pane this button runs in. The row it sits in IS this value -- there
+   *  is deliberately no 'any': a button that ran in whichever pane happened to
+   *  be showing meant the Claude row could execute a shell line, with nothing
+   *  on screen saying so. Absent means 'claude', which is what it always meant.
+   *  Commands stored with the old 'any' are migrated on load. */
+  target?: 'claude' | 'partner'
   sectionId?: string       // Which section this button belongs to
   defaultArgs?: string[]   // Default arguments (run on normal click)
   lastCustomArgs?: string[] // Last custom arguments used (remembered)
