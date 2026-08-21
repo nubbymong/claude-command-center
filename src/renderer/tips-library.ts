@@ -361,9 +361,9 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 55,
     variants: {
       primary: {
-        shortText: '🌐 Open a webview when a command finishes',
-        title: 'Webview on Command Completion',
-        body: 'Building a dev server, generating a docs site, or anything that ends with "now look at this URL"? Tick **Launch webview on completion** when editing a command and enter the URL.\n\nWhat happens:\n• Command runs in whichever target you pick -- Claude, Partner, or Any (works with **Terminal-only** sessions too).\n• The app polls the URL every second for up to 30s after the command write. The button pulses **blue** while polling, goes **green** the moment the URL responds, **red** on timeout.\n• A **Web** button sits in the toolbar whenever a webview command exists for this session. Greyed when idle.\n• If a server is already running when the app launches, the mount-time auto-probe picks it up.\n• Stop your server later? The next time you press any command button in the session the URL gets re-checked, downgrading to red -- no constant background polling.\n• Click the button to swap the active pane to a real Chrome view of the page.\n\nThe pane has back/forward/hard-refresh/home, plus a **Freeze** button that snapshots the page and opens it in Excalidraw for annotation.',
+        shortText: '🌐 A browser pane beside every session',
+        title: 'The Browser Pane',
+        body: 'Every session has a **Browser** button next to Snap, Canvas and Logs. It opens a real Chrome view in place of the terminal, with an address bar, back/forward, a home page, saved **favourites** (the star) and **open in your real browser** for anything that needs more than a sandbox.\n\nA command button can point it at a page too:\n• Tick **Watch for a page** on a command that starts a server and give it the URL. The poll starts the moment the command is sent and runs for up to 30 s -- the Browser button pulses **blue** while waiting, turns **green** the moment the page answers, **red** on timeout. Any other command press re-checks the URL, so a stopped server goes red without background polling.\n• Make an **Open a page** button -- the one kind that types nothing. Click it and the browser goes there.\n\nPages load in a sandbox with every permission off (no camera, microphone, location or notifications). The **Freeze** button snapshots the page into Excalidraw for annotation.',
       },
     },
   },
@@ -376,9 +376,9 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['webview.opened'],
     variants: {
       primary: {
-        shortText: '❄️ Freeze + annotate webviews for screenshots',
-        title: 'Freeze Webview + Annotate',
-        body: 'Inside a webview pane, the **Freeze** button captures the current page as an image and opens it in Excalidraw. Draw arrows, circle bugs, redact PII -- then **Copy to clipboard** and paste into Claude with **Alt+V**.\n\nFaster than a separate screenshot tool because the snapshot bypasses the OS clipboard until you\'re ready.',
+        shortText: '❄️ Freeze + annotate a browser page for screenshots',
+        title: 'Freeze the Browser + Annotate',
+        body: 'Inside the browser pane, the **Freeze** button captures the current page as an image and opens it in Excalidraw. Draw arrows, circle bugs, redact PII -- then **Copy to clipboard** and paste into Claude with **Alt+V**.\n\nFaster than a separate screenshot tool because the snapshot bypasses the OS clipboard until you\'re ready.',
       },
     },
   },

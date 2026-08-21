@@ -307,6 +307,9 @@ export const IPC = {
   WEBVIEW_GO_HOME: 'webview:goHome',              // re-load original URL
   WEBVIEW_CLOSE_ALL: 'webview:closeAll',          // emergency: destroy every view (escape hatch)
   WEBVIEW_ESCAPE_PRESSED: 'webview:escapePressed', // main → renderer: user pressed Esc inside a WebContentsView
+  WEBVIEW_NAVIGATE: 'webview:navigate',           // load a (validated http/https) URL in an EXISTING view -- the address bar
+  WEBVIEW_OPEN_EXTERNAL: 'webview:openExternal',  // hand a (validated http/https) URL to the OS browser
+  WEBVIEW_NAVIGATED: 'webview:navigated',         // main → renderer: { sessionId, url, title, canGoBack, canGoForward, loading }
 
   // Per-account claude.ai web session (#216): sign in via the system browser,
   // hold the cookies in a per-account partition, open artifacts as that account.

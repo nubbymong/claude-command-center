@@ -432,8 +432,14 @@ export interface ElectronAPI {
     navBack: (sessionId: string) => Promise<void>
     navForward: (sessionId: string) => Promise<void>
     goHome: (sessionId: string) => Promise<void>
+    /** Load an http/https URL in the session's EXISTING view; false when there is no view yet. */
+    navigate: (sessionId: string, url: string) => Promise<boolean>
+    /** Hand an http/https URL to the OS browser (main re-validates). */
+    openExternal: (url: string) => Promise<boolean>
     closeAll: () => Promise<boolean>
     onEscapePressed: (handler: (sessionId: string) => void) => () => void
+    /** Navigation state from the session's view: real URL, title, history flags, loading. */
+    onNavigated: (handler: (state: { sessionId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean }) => void) => () => void
   }
   session: {
     save: (state: SessionState) => Promise<boolean>

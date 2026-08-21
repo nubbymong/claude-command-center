@@ -6,21 +6,13 @@ import { resolveVersionBinary } from '../../legacy-version-manager'
 import { logInfo } from '../../debug-logger'
 import type { LegacyVersion } from '../../../shared/types'
 import type { SpawnOptions } from '../types'
+import { colorFgBgValue } from '../host-color-scheme'
 
-/**
- * Resolves the host's effective light/dark scheme from the CCC theme setting.
- * 'light'/'dark' are explicit; 'system' (or absent, but absent defaults to the
- * app's dark default) follows the OS preference. Pure so it is table-testable;
- * the caller supplies the OS preference (Electron nativeTheme.shouldUseDarkColors).
- */
-export function resolveHostColorScheme(
-  themePref: string | undefined,
-  systemPrefersDark: boolean,
-): 'light' | 'dark' {
-  if (themePref === 'light') return 'light'
-  if (themePref === 'system') return systemPrefersDark ? 'dark' : 'light'
-  return 'dark'
-}
+// The host light/dark scheme and its COLORFGBG encoding live in
+// ../host-color-scheme (shared by the local Claude env, the Codex env and the
+// SSH remote launch line -- book item 34). Re-exported here because callers
+// and tests import them from the Claude provider.
+export { resolveHostColorScheme, colorFgBgValue, colorFgBgEnvToken } from '../host-color-scheme'
 
 export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } {
   if (legacyVersion?.enabled && legacyVersion.version) {
@@ -71,7 +63,7 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // behavior, so dark mode is unchanged; only theme detection runs at startup, so
   // this affects newly launched sessions, not ones already running.
   if (opts.hostColorScheme) {
-    env.COLORFGBG = opts.hostColorScheme === 'light' ? '0;15' : '15;0'
+    env.COLORFGBG = colorFgBgValue(opts.hostColorScheme)
   }
 
   // Ask Conductor's opening question. The launch line references this variable

@@ -249,6 +249,10 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     const written = claudeWrite![0] as string
     expect(written).toContain(`${ON_PATH_TMUX_BIN_EXPR} new-session -s ccc-s-tmux-hit`)
     expect(written).toContain('claude ')
+    // Item 34: inside the tmux wrap the whole inner command is single-quoted
+    // and embedded quotes are escaped, so the COLORFGBG token survives as
+    // COLORFGBG='\''15;0'\'' -- which the remote sh unwraps back to '15;0'.
+    expect(written).toContain(`COLORFGBG='\\''15;0'\\'' `)
   })
 
   // #242 round-3 correction (I3): tier 2 (a pre-existing ~/.claude/bin/tmux)
@@ -272,10 +276,19 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     // (s-tmux-miss) legitimately appears inside --settings/--mcp-config
     // paths regardless of wrapping. Assert the WRAPPER shape is absent and
     // the claude invocation is not embedded inside a single-quoted argument
-    // (which is how the tmux wrap would present it).
+    // (which is how the tmux wrap would present it). "No single quote at
+    // all" was the old proxy for that; it is no longer true of a bare line,
+    // because the COLORFGBG prefix is legitimately quoted (its value carries
+    // a `;`) -- so the check is the wrap's own marks: a line that STARTS with
+    // a quote, or carries the '\'' escape the wrap produces.
     expect(written).not.toMatch(/new-session\s+-s\s+ccc-/)
-    expect(written).not.toContain(`'`)
+    expect(written.trimStart().startsWith(`'`)).toBe(false)
+    expect(written).not.toContain(`'\\''`)
     expect(written).toContain('claude ')
+    // Item 34: the remote line carries the host scheme. nativeTheme is mocked
+    // light-preferring but the theme setting is unset, so the app default
+    // (dark) wins -> "15;0", quoted for POSIX sh.
+    expect(written).toContain(`COLORFGBG='15;0' `)
   })
 
   // #242 round-3 correction (I3): the tmux= field is now a fixed 3-way enum

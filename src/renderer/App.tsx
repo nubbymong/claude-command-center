@@ -1025,8 +1025,13 @@ export default function App() {
           {/* BUG-7: the GitHub FAB (absolute top-2 right-2) is a later sibling
               than the session content, so it painted over the draw pane's Close
               button. The FAB is irrelevant while drawing — suppress the whole
-              panel when the active session is in draw mode. */}
-          {activeSession && !excalidrawBySession[activeSession.id]?.isOpen && (
+              panel when the active session is in draw mode. The browser pane
+              has the same Close button in the same corner (the desktop proof
+              for item 26 found the FAB intercepting its clicks), so it is
+              suppressed there too. */}
+          {activeSession
+            && !excalidrawBySession[activeSession.id]?.isOpen
+            && !webviewBySession[activeSession.id]?.isOpen && (
             <GitHubPanel sessionId={activeSession.id} />
           )}
         </div>

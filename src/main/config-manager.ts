@@ -34,6 +34,8 @@ const CONFIG_FILES = {
   usageSnapshots: 'usage-snapshots.json',
   commandBarUi: 'command-bar-ui.json',
   excalidraw: 'excalidraw.json',
+  // The browser pane's saved favourites and per-config home pages (item 26).
+  browser: 'browser.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES
