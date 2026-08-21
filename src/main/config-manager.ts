@@ -31,6 +31,7 @@ const CONFIG_FILES = {
   conductorSecret: 'conductor-secret.json',
   commandSections: 'command-sections.json',
   usageTracking: 'usage-tracking.json',
+  usageSnapshots: 'usage-snapshots.json',
   commandBarUi: 'command-bar-ui.json',
   excalidraw: 'excalidraw.json',
 } as const

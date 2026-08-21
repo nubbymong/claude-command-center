@@ -193,6 +193,13 @@ export interface AppSettings {
    *  the per-session strip -- e.g. keep only Fable there to narrow the cluster.
    *  Same denylist model (by label); absent/empty = show every discovered bucket. */
   footerHiddenUsageBuckets?: string[]
+  /** How the multi-account footer draws each account. 'meters' (absent/default)
+   *  is the labelled progress bars; 'dots' is minimal mode -- the account's NAME
+   *  plus one traffic-light dot for usage and one per model bucket, with the
+   *  figures in the tooltip. Absent means meters, so no existing footer changes
+   *  shape on upgrade. Minimal mode reads the SAME footerHiddenUsageBuckets
+   *  denylist, so hiding Fable there drops its dot here. */
+  footerAccountDisplay?: 'meters' | 'dots'
   updateChannel: UpdateChannel
   /** True once the user has explicitly picked an update channel (onboarding
    *  Transparency recap, or Settings -> General). Absent/false means

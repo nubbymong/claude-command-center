@@ -47,7 +47,10 @@ function versionClock(iso: string): string | null {
  *  most useful thing we can say about it. */
 function versionKind(version: CanvasVersion): string {
   if (version.source.mode === 'uat') return version.source.buildLabel?.trim() || 'Live site'
-  return 'Mockup'
+  // `version.mode`, not `source.mode`: a plan is STORED as a design document and
+  // its source says so, which is exactly what keeps plan mode off every serving
+  // path. What kind of thing it is lives on the version. See CanvasRenderSource.
+  return version.mode === 'plan' ? 'Plan' : 'Mockup'
 }
 
 /**
@@ -62,10 +65,17 @@ function versionKind(version: CanvasVersion): string {
  * using the same words as the library so they name the same concept in both
  * places.
  */
-function canvasModeBadge(version: CanvasVersion): { label: string; title: string } {
-  return version.source.mode === 'uat'
-    ? { label: 'Live site', title: 'A built site, served for UI testing' }
-    : { label: 'Mockup', title: 'A standalone mockup document' }
+function canvasModeBadge(version: CanvasVersion): { label: string; title: string; tone: string } {
+  if (version.source.mode === 'uat') {
+    return { label: 'Live site', title: 'A built site, served for UI testing', tone: 'var(--color-green)' }
+  }
+  // Plan gets its own tone as well as its own word. The badge is how you tell,
+  // at a glance and from across the pane, whether the thing you are annotating
+  // is a picture of a screen or a commitment about work -- and the notes you
+  // write on each are different in kind.
+  return version.mode === 'plan'
+    ? { label: 'Plan', title: 'A plan of work, for review before it starts', tone: 'var(--color-mauve)' }
+    : { label: 'Mockup', title: 'A standalone mockup document', tone: 'var(--border-subtle)' }
 }
 
 /** Full stamp for the label's tooltip — the human line is deliberately short. */
@@ -564,9 +574,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             because a version EXISTS — the empty state's own chrome carries no
             version label and no picker, because there is nothing to version. */}
         <span
-          className="shrink-0 text-[10px] rounded px-1.5 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)]"
+          className="shrink-0 text-[10px] rounded px-1.5 py-0.5 border text-[var(--text-secondary)]"
+          style={{ borderColor: `color-mix(in srgb, ${canvasModeBadge(version).tone} 55%, transparent)` }}
           title={canvasModeBadge(version).title}
           data-testid="canvas-mode-badge"
+          data-canvas-mode={version.mode}
         >
           {canvasModeBadge(version).label}
         </span>

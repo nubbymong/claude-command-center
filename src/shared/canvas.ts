@@ -73,7 +73,27 @@ export interface CanvasChangedEvent {
  *  its unresolved review notes. See renderVersion. */
 export type CanvasRenderSource =
   | { mode: 'design'; html: string; title?: string }
+  | { mode: 'plan'; html: string; title?: string }
   | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string; title?: string }
+
+/**
+ * A plan version is STORED AND SERVED exactly as a design version: an
+ * agent-authored standalone document in the version's own directory, read-only,
+ * same traversal checks, same bridge. Its `source` therefore says `'design'`
+ * and only `CanvasVersion.mode` says `'plan'`.
+ *
+ * That split is the whole of plan mode, and it is deliberate. `mode` is WHAT THE
+ * PAGE IS -- it drives the chip in the pane header and tells the agent which
+ * authoring skill wrote it. `source` is HOW IT IS STORED AND SERVED. Keeping
+ * them apart means plan mode adds no branch to any serving or validation path,
+ * so the surface an attacker can reach is byte-for-byte the one design mode
+ * already had. A third mode later (a migration, an incident timeline) costs a
+ * skill and a chip and nothing else.
+ *
+ * The invariant, in one line: `version.source.mode` is 'design' | 'uat' and is
+ * the ONLY thing serving looks at; `version.mode` is 'design' | 'plan' | 'uat'
+ * and is only ever a label.
+ */
 
 // ── Anchoring (P3, spec §4) ─────────────────────────────────────────────────
 

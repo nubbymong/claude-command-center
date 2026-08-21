@@ -18,6 +18,7 @@ import { listProfiles, getProfileConfigDir, readProfileAccountEmail, atomicWrite
 import { isAccountActive } from '../../shared/account-types'
 import { isProfileInUseByLiveSession } from '../claude-account-identity'
 import { parseUsage } from './usage-buckets'
+import { loadSnapshots, saveSnapshots, type UsageSnapshot } from './usage-snapshots'
 import type { AccountUsage, UsageBucket, CreditsInfo } from '../../shared/usage-types'
 import { logWarn, logInfo } from '../debug-logger'
 
@@ -285,11 +286,27 @@ async function refreshProfileToken(profileId: string, refreshToken: string, cred
   try { return await run } finally { refreshInFlight.delete(profileId) }
 }
 
-/** Last successful usage per profile, in-memory for the app's lifetime. When a
- *  later fetch can't complete but the account is still signed in (lapsed token,
- *  429 burst, network blip), we show these last-known figures flagged stale
- *  instead of blanking the card. Cleared naturally on app restart. */
-const lastGoodUsage = new Map<string, { buckets: UsageBucket[]; credits?: CreditsInfo; fetchedAt: number }>()
+/** Last successful usage per profile. When a later fetch can't complete but the
+ *  account is still signed in (lapsed token, 429 burst, network blip), we show
+ *  these last-known figures flagged stale instead of blanking the card.
+ *
+ *  This used to be memory-only and was cleared on restart, which meant the one
+ *  case it was most wanted in -- reopening the app and picking an account before
+ *  any session has run -- was the one case it could not serve. It is now backed
+ *  by usage-snapshots.json (see usage-snapshots.ts): the same map, rehydrated
+ *  once per process and written through on every success. Nothing about the
+ *  DECISION changes -- `resolveUsageOutcome` already models "stale figures with
+ *  an age" and the UI already renders `stale` + `fetchedAt`. */
+const lastGoodUsage = new Map<string, UsageSnapshot>()
+
+let snapshotsLoaded = false
+
+/** Rehydrate from disk once per process, on first use. */
+function hydrateSnapshots(): void {
+  if (snapshotsLoaded) return
+  snapshotsLoaded = true
+  for (const [id, snap] of loadSnapshots()) lastGoodUsage.set(id, snap)
+}
 
 /** Pure decision: given the account's signed-in state, whether its token was
  *  usable, the fetch result (if we made one), and any cached usage, produce the
@@ -328,6 +345,7 @@ export function resolveUsageOutcome(
  *  fetchable -> last-known (stale) or a soft refresh hint; success -> fresh.
  *  Auto-refreshes a lapsed token (guarded) so idle accounts still show live usage. */
 export async function fetchAccountUsage(profileId: string): Promise<AccountUsage> {
+  hydrateSnapshots()
   const profiles = listProfiles()
   const profile = profiles.find((p) => p.id === profileId)
   const isPrimary = !!profile?.isPrimary
@@ -394,6 +412,7 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
   const result = resolveUsageOutcome(base, { signedIn: creds.signedIn, tokenUsable, fetch: fetched }, lastGoodUsage.get(profileId))
   if (result.status === 'ok' && !result.stale) {
     lastGoodUsage.set(profileId, { buckets: result.buckets, credits: result.credits, fetchedAt: result.fetchedAt })
+    saveSnapshots(lastGoodUsage)
   }
   return result
 }

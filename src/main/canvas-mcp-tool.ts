@@ -423,12 +423,12 @@ export async function runCanvasRender(
   deps: CanvasToolDeps,
 ): Promise<{ text: string; isError: boolean }> {
   const mode = rawArgs.mode
-  if (mode !== 'design' && mode !== 'uat') {
-    return { text: "Render needs a mode of 'design' (an html document) or 'uat' (a built directory).", isError: true }
+  if (mode !== 'design' && mode !== 'uat' && mode !== 'plan') {
+    return { text: "Render needs a mode of 'design' (an html document), 'plan' (a plan document) or 'uat' (a built directory).", isError: true }
   }
 
   let source: CanvasRenderSource
-  if (mode === 'design') {
+  if (mode === 'design' || mode === 'plan') {
     const hasInline = rawArgs.html != null
     const hasPath = rawArgs.htmlPath != null
     if (hasInline && hasPath) {
@@ -472,7 +472,10 @@ export async function runCanvasRender(
       }
       html = rawArgs.html
     }
-    source = { mode: 'design', html, ...titleOf(rawArgs) }
+    // The two share every byte of the ingress above -- same path check, same
+    // reader, same size cap. `mode` is carried through only so the store can
+    // stamp the version; it changes nothing about how the document is admitted.
+    source = { mode, html, ...titleOf(rawArgs) }
   } else {
     if (typeof rawArgs.distRoot !== 'string' || rawArgs.distRoot.length === 0) {
       return { text: 'A uat render needs the built directory in `distRoot`.', isError: true }
@@ -966,17 +969,17 @@ export function registerCanvasTools(
 
   server.tool(
     'canvas_render',
-    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Two modes. \'design\': write a complete HTML document to a file INSIDE this session\'s project folder, then pass its absolute path as htmlPath — use this to show a proposed screen. \'uat\': you supply the path of a built directory, also inside the project folder, and the app in it is served — use this to review the real product. Both modes read only from this session\'s own project folder; a path outside it is refused. Name what you are showing with `title` on every call: a canvas holds ONE subject, so the same title adds a version to it and a different title files the current canvas and starts a fresh one. Nothing is ever overwritten. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
+    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Three modes. \'design\': write a complete HTML document to a file INSIDE this session\'s project folder, then pass its absolute path as htmlPath — use this to show a proposed screen. \'plan\': the same, for a PLAN of work you are about to do — goal, flow, scope fence, blast radius, open questions, verification — so the user can annotate a step or a boundary instead of reading prose; follow the canvas-plan skill for its shape. \'uat\': you supply the path of a built directory, also inside the project folder, and the app in it is served — use this to review the real product. Every mode reads only from this session\'s own project folder; a path outside it is refused. Name what you are showing with `title` on every call: a canvas holds ONE subject, so the same title adds a version to it and a different title files the current canvas and starts a fresh one. Nothing is ever overwritten. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
     {
-      mode: zMod.enum(['design', 'uat']).describe("'design' renders the html document you wrote; 'uat' serves a built directory."),
+      mode: zMod.enum(['design', 'plan', 'uat']).describe("'design' renders the html document you wrote; 'plan' renders it as a plan for review before you start work; 'uat' serves a built directory."),
       htmlPath: zMod
         .string()
         .optional()
-        .describe('design mode, preferred. Absolute path of the complete HTML file you wrote, inside this session’s project folder. Put a data-ux-id on anything you will want to ask about later.'),
+        .describe('design and plan modes, preferred. Absolute path of the complete HTML file you wrote, inside this session’s project folder. Put a data-ux-id on anything you will want to ask about later — for a plan, one per step.'),
       html: zMod
         .string()
         .optional()
-        .describe('design mode, fallback when you cannot write files. The complete HTML document inline — this floods the user\'s tool-approval prompt, so prefer htmlPath.'),
+        .describe('design and plan modes, fallback when you cannot write files. The complete HTML document inline — this floods the user\'s tool-approval prompt, so prefer htmlPath.'),
       distRoot: zMod
         .string()
         .optional()
