@@ -24,7 +24,14 @@
   --color-surface1: #2a2a2a;
   --color-surface2: #333333;
   --color-overlay0: #555555;
-  --color-overlay1: #777777;
+  /* Was #777777, which measured 3.2-4.3:1 against every surface it is drawn on
+     — below the 4.5:1 minimum on ALL of them, not just the marginal ones. It
+     carries real secondary copy, not decoration: session status ("working",
+     "idle"), group headings, config counts, the tip subtitle. Measured by
+     canvas_snapshot on the sidebar, 2026-08-21; #949494 is the first value that
+     clears 4.5:1 on base, mantle, surface0 AND surface1. Pinned in
+     tests/unit/renderer/token-contrast.test.ts. */
+  --color-overlay1: #949494;
   --color-overlay2: #999999;
   --color-subtext0: #aaaaaa;
   --color-subtext1: #cccccc;
@@ -147,7 +154,9 @@
   --color-surface1: #ebe9e4;
   --color-surface2: #f1efea;
   --color-overlay0: #8c8780;
-  --color-overlay1: #6c685f;
+  /* Light-mode twin of the dark fix above. #6c685f measured 3.75:1 on base;
+     #5a574f clears 4.5:1 on base, surface0 and surface1. */
+  --color-overlay1: #5a574f;
   --color-overlay2: #56524a;
   --color-subtext0: #44413b;
   --color-subtext1: #322f29;

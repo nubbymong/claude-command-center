@@ -760,12 +760,44 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           </div>
         </div>
 
+      {/* The notch, floating-card only. A card inset from both walls has nothing
+          tying it to the header it came from; this points back at it.
+
+          A SIBLING of the panel, not a child: the panel is overflow-hidden (for
+          its rounded corners and the max-height animation), so a notch inside it
+          would be clipped away to nothing. It is a rotated square rather than a
+          border triangle so it can carry the card's own 1px border on two sides
+          and its fill on the other two, and so vanish into the card's top edge.
+
+          z-[51] puts it over the panel's own z-50: its lower half must sit ON
+          the card, or the card's top border would draw straight through it. */}
+      {!configPanelPinned && configPanelExpanded && (
+        <span
+          aria-hidden
+          data-ux-id="config-panel-notch"
+          className="absolute w-[9px] h-[9px] rotate-45 z-[51] pointer-events-none"
+          style={{
+            top: 'calc(100% + 2px)',
+            left: 22,
+            backgroundColor: 'color-mix(in srgb, var(--color-surface0) 55%, var(--color-base))',
+            borderLeft: '1px solid var(--color-surface2)',
+            borderTop: '1px solid var(--color-surface2)',
+            transition: 'opacity 180ms ease',
+          }}
+        />
+      )}
+
       {/* Config panel — elevated popover when not pinned, inline raised panel when pinned */}
       <div
         ref={configPanelRef}
         className={configPanelPinned
           ? 'border-t border-b border-surface1 overflow-hidden flex flex-col'
-          : 'absolute left-0 right-0 z-50 rounded-lg border border-surface1 overflow-hidden flex flex-col'
+          // FLOATING CARD (user call 2026-08-21, option B on the canvas).
+          // Inset from BOTH sidebar walls — `left-2 right-2`, not `left-0
+          // right-0` — so the sidebar shows down each side and the panel reads
+          // as something laid on top rather than a slab wedged into the column.
+          // That squared, wall-to-wall edge was the "jarring" part.
+          : 'absolute left-2 right-2 z-50 rounded-xl border overflow-hidden flex flex-col'
         }
         style={configPanelPinned
           ? {
@@ -775,9 +807,24 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             }
           : {
               top: '100%',
-              marginTop: 2,
-              backgroundColor: 'var(--color-surface0)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)',
+              // 6, not 2: the gap is what lets the sidebar show THROUGH between
+              // the header and the card, which is most of what makes it float.
+              marginTop: 6,
+              // Between --color-base and --color-surface0 rather than surface0
+              // flat. The old #222 on a #1a1a1a sidebar was a lighter grey
+              // rectangle over near-black, and reading as "lighter grey" is
+              // exactly the complaint. A mix keeps that relationship correct in
+              // light mode too, where surface0 is LIGHTER than base and a
+              // hard-coded hex would invert the intent.
+              backgroundColor: 'color-mix(in srgb, var(--color-surface0) 55%, var(--color-base))',
+              // A brighter hairline than the panel fill, so the edge is drawn
+              // by the border rather than by the fill's contrast with the
+              // sidebar — which is what let it read as a slab.
+              borderColor: 'var(--color-surface2)',
+              // Depth, plus a faint brand rim. The rim is 1px of colour at low
+              // alpha: enough to lift the card off near-black, not enough to
+              // read as a selection state.
+              boxShadow: '0 18px 44px rgba(0,0,0,0.72), 0 0 0 1px color-mix(in srgb, var(--brand) 16%, transparent)',
               maxHeight: configPanelExpanded ? configPanelMax : 0,
               opacity: configPanelExpanded ? 1 : 0,
               transform: configPanelExpanded ? 'translateY(0) scaleY(1)' : 'translateY(-4px) scaleY(0.98)',
