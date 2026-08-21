@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { changelog, ChangelogEntry } from '../changelog'
 import { useAppMetaStore } from '../stores/appMetaStore'
-import { decideUpgradeFlow, entriesSince } from '../onboarding/upgrade-flow'
-import { useSettingsStore } from '../stores/settingsStore'
+import { entriesSince } from '../onboarding/upgrade-flow'
 import { WhatsNewEntries } from './WhatsNewEntries'
 
 declare const __BUILD_TIME__: string
@@ -134,37 +133,13 @@ export default function WhatsNewModal({ onClose, showAllVersions = false, sinceV
   )
 }
 
-/**
- * Should this launch show What's New?
- *
- * Now one branch of a single decision (see `decideUpgradeFlow`) rather than its
- * own rule. The old one was `lastSeen !== changelog[0].version`, which treated
- * a FIRST INSTALL as "everything is new to you" and opened a wall of release
- * notes in front of someone who had not seen the app yet — they get the tour
- * instead. It also compared strings, so a stored `v2.1.0` re-fired the modal on
- * every single launch.
- */
-export function shouldShowWhatsNew(): boolean {
-  try {
-    const currentVersion = changelog[0]?.version
-    if (!currentVersion) return false
-    return decideUpgradeFlow({
-      lastSeenVersion: useAppMetaStore.getState().meta.lastSeenVersion,
-      currentVersion,
-      channel: useSettingsStore.getState().settings.updateChannel,
-    }).showWhatsNew
-  } catch {
-    return false
-  }
-}
-
-export function markWhatsNewSeen(): void {
-  try {
-    const currentVersion = changelog[0]?.version
-    if (currentVersion) {
-      useAppMetaStore.getState().update({ lastSeenVersion: currentVersion })
-    }
-  } catch {
-    // Ignore storage errors
-  }
-}
+// `shouldShowWhatsNew` / `markWhatsNewSeen` used to live here, which made
+// `settle.ts` import a React component in order to stamp a version. They now
+// sit in `onboarding/whats-new-gate.ts`, keyed on the version the build
+// actually IS rather than on the newest changelog entry authored — see the
+// header there.
+//
+// This component is no longer a boot surface. The full-screen harness is the
+// single delivery for release notes (user call 2026-08-21); what is left here
+// is the on-demand reader reachable from Settings, where the user asked for it
+// and a scrollable list is the right shape.

@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import './onboarding.css'
 import { OnboardingShell } from './OnboardingShell'
+import { stepsNewSince } from './gate'
 import { WhatsNewV2Step } from './WhatsNewV2Step'
 import { WelcomeStep } from './WelcomeStep'
 import { FindClaudeStep } from './FindClaudeStep'
@@ -14,7 +15,7 @@ import { CodexStep } from './CodexStep'
 import { CodexSignInStep } from './CodexSignInStep'
 import { TransparencyStep } from './TransparencyStep'
 import { FinishStep } from './FinishStep'
-import { settleOnboardingFinish } from './settle'
+import { settleOnboardingFinish, settleWhatsNewOnly } from './settle'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 
@@ -42,7 +43,16 @@ interface BuiltStep {
   /** Applicability gate, evaluated at navigation time (mirrors the registry's
    *  when()); a false step is skipped in both directions. */
   when?: () => boolean
-  render: (nav: StepNav, ctx: OnboardingCtx, done: StepDone) => ReactNode
+  render: (nav: StepNav, ctx: OnboardingCtx, done: StepDone, run: RunShape) => ReactNode
+}
+
+/** What kind of run the page is being rendered inside, so a page can adapt its
+ *  own copy without knowing how the harness picked its page list. */
+interface RunShape {
+  /** True when the harness opened purely to deliver release notes. */
+  whatsNewOnly: boolean
+  /** True when nothing follows this page — its CTA ends the run. */
+  isLast: boolean
 }
 
 // The built onboarding pages in flow order. Grows as each page lands; the full
@@ -56,7 +66,21 @@ const PAGES: BuiltStep[] = [
     // dismissal since 1.2.x, so it exists exactly when there is a "before" to
     // compare against. Fresh installs have nothing "new" and start at welcome.
     when: () => !!useAppMetaStore.getState().meta.lastSeenVersion,
-    render: (nav) => <WhatsNewV2Step onNext={nav.onNext} />,
+    render: (nav, _ctx, _done, run) => (
+      <WhatsNewV2Step
+        onNext={nav.onNext}
+        // The page's own footer promised "the next pages set these up", which
+        // is a lie on the common upgrade where nothing new needs setting up.
+        ctaLabel={run.isLast ? 'Continue' : 'Set it up →'}
+        hint={
+          run.isLast
+            ? 'Nothing to set up — your settings carried over.'
+            : run.whatsNewOnly
+              ? "Next: the settings this release added, and nothing else."
+              : 'The next pages set these up, one at a time.'
+        }
+      />
+    ),
   },
   { id: 'welcome', phase: 0, render: (nav) => <WelcomeStep onNext={nav.onNext} /> },
   {
@@ -106,35 +130,83 @@ const PAGES: BuiltStep[] = [
   },
 ]
 
-export function OnboardingHarness({ onComplete }: { onComplete: (startTour: boolean) => void }) {
-  // Start at the first APPLICABLE page — PAGES[0] (whatsNewV2) is upgrader-only,
+/**
+ * @param whatsNewOnly The harness is delivering release notes to someone who
+ *   has already completed the flow. It shows the notes page plus ONLY the
+ *   pages whose `sinceVersion` is newer than the build they last ran — never
+ *   the whole flow again. This is the ordinary upgrade path since 2026-08-21;
+ *   before it, an upgrade either re-walked all twelve pages or fell back to a
+ *   wall-of-text modal.
+ */
+export function OnboardingHarness({
+  onComplete,
+  whatsNewOnly = false,
+}: {
+  onComplete: (startTour: boolean) => void
+  whatsNewOnly?: boolean
+}) {
+  // The page list for THIS run, fixed at mount. Not recomputed per render: the
+  // pages write the very settings their when() reads (codexSignIn follows the
+  // codex toggle), so a live list would reshuffle underneath the user
+  // mid-flow. The full flow keeps evaluating when() at navigation time, which
+  // is where that reshuffle is wanted.
+  const [pages] = useState<BuiltStep[]>(() => {
+    if (!whatsNewOnly) return PAGES
+    const lastSeen = useAppMetaStore.getState().meta.lastSeenVersion
+    const settings = { codexEnabled: useSettingsStore.getState().settings.codexEnabled }
+    const newIds = new Set(stepsNewSince(lastSeen, settings).map((s) => s.id))
+    return PAGES.filter((p) => p.id === 'whatsNewV2' || newIds.has(p.id))
+  })
+  // Which pages carry the "New" badge: in a notes run, everything except the
+  // notes page itself is there BECAUSE it is new in this build.
+  const newIds = useMemo(
+    () => new Set(whatsNewOnly ? pages.filter((p) => p.id !== 'whatsNewV2').map((p) => p.id) : []),
+    [whatsNewOnly, pages],
+  )
+  // Start at the first APPLICABLE page — pages[0] (whatsNewV2) is upgrader-only,
   // so a fresh install must open on welcome, not render a when():false page.
-  const [cursor, setCursor] = useState(() => (PAGES.find((p) => !p.when || p.when()) ?? PAGES[0]).id)
+  const [cursor, setCursor] = useState(() => (pages.find((p) => !p.when || p.when()) ?? pages[0]).id)
   const [version, setVersion] = useState<string | null>(null)
-  const idx = Math.max(0, PAGES.findIndex((p) => p.id === cursor))
-  const step = PAGES[idx]
+  const idx = Math.max(0, pages.findIndex((p) => p.id === cursor))
+  const step = pages[idx]
   const applicable = (p: BuiltStep | undefined) => !!p && (!p.when || p.when())
-  const nav: StepNav = {
-    onNext: () => {
-      for (let i = idx + 1; i < PAGES.length; i++) {
-        if (applicable(PAGES[i])) return setCursor(PAGES[i].id)
-      }
-    },
-    onBack: () => {
-      for (let i = idx - 1; i >= 0; i--) {
-        if (applicable(PAGES[i])) return setCursor(PAGES[i].id)
-      }
-    },
-  }
+  const isLast = !pages.slice(idx + 1).some(applicable)
   const done: StepDone = {
     finish: (startTour) => {
       // Stamp completion + retire legacy popups, THEN hand control back to App.
       // The appMeta write flips deriveOnboarding to due:false; App's reactive
       // gate unmounts this harness on the next render.
-      settleOnboardingFinish()
+      //
+      // A notes run settles NARROWLY: it must not claim the setup pages it
+      // never showed were completed. See settleWhatsNewOnly.
+      if (whatsNewOnly) settleWhatsNewOnly()
+      else settleOnboardingFinish()
       onComplete(startTour)
     },
   }
+  const nav: StepNav = {
+    onNext: () => {
+      for (let i = idx + 1; i < pages.length; i++) {
+        if (applicable(pages[i])) return setCursor(pages[i].id)
+      }
+      // Nothing applicable after this one. In the full flow the last page is
+      // always `finish`, which ends the run through done.finish and never
+      // calls onNext — so this arm belongs to the notes run, where the last
+      // page is the notes themselves (or the last new setting) and its CTA has
+      // to be what ends the run. Without it that button is simply dead.
+      done.finish(false)
+    },
+    onBack: () => {
+      for (let i = idx - 1; i >= 0; i--) {
+        if (applicable(pages[i])) return setCursor(pages[i].id)
+      }
+    },
+  }
   const ctx: OnboardingCtx = { version, setVersion }
-  return <OnboardingShell phase={step.phase}>{step.render(nav, ctx, done)}</OnboardingShell>
+  const run: RunShape = { whatsNewOnly, isLast }
+  return (
+    <OnboardingShell phase={step.phase} isNew={newIds.has(step.id)} showPhases={!whatsNewOnly}>
+      {step.render(nav, ctx, done, run)}
+    </OnboardingShell>
+  )
 }

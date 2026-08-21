@@ -28,6 +28,12 @@
 .ob-root .blogo { width: 22px; height: 22px; }
 .ob-root .blogo line { stroke: var(--ob); stroke-width: 4; stroke-linecap: round; }
 .ob-root .bname { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+/* "New in this release" badge — only on a page an upgrader is being shown
+   BECAUSE the setting it covers is new in this build (OnboardingShell isNew).
+   Tokens are the existing --ob azure family; nothing new is introduced here,
+   because an undefined custom property fails silently to transparent. */
+.ob-root .ob-new { font-size: 10px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); }
 .ob-root .crumbs { margin-left: auto; display: flex; gap: 8px; font-size: 11px; }
 .ob-root .crumb { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border-subtle); color: var(--text-muted); }
 .ob-root .crumb.on { color: var(--text-primary); border-color: var(--ob-line); background: var(--ob-soft); }
@@ -85,7 +91,9 @@
 
 /* shared footer */
 .ob-root .foot { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 20px 34px 28px; }
-.ob-root .hint { font-size: 12px; color: var(--text-muted); }
+/* --text-secondary, not --text-muted: the footer hint is body copy and measured
+   3.9:1 against the 4.5:1 minimum (canvas_snapshot, 2026-08-21). */
+.ob-root .hint { font-size: 12px; color: var(--text-secondary); }
 .ob-root .back { border: 1px solid var(--border-strong); background: transparent; color: var(--text-secondary); border-radius: 10px; padding: 11px 18px; font-size: 14px; cursor: pointer; }
 .ob-root .cta { margin-left: auto; border: 0; border-radius: 11px; padding: 12px 28px; font-size: 15px; font-weight: 680; cursor: pointer; background: linear-gradient(135deg, var(--ob-bright), var(--ob-deep)); color: var(--ob-on, #04121f); box-shadow: 0 8px 24px var(--ob-soft); }
 
@@ -238,8 +246,28 @@
 .ob-root .gh-cbtn:hover:not(.on) { color: var(--text-primary); }
 .ob-root .gh-cbtn.on { background: var(--ob); color: var(--ob-on, #04121f); }
 .ob-root .gh-tag { display: inline-block; font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
-.ob-root .gh-freebie { font-size: 12px; color: var(--text-muted); text-align: center; margin: 0 0 16px; }
-.ob-root .gh-freebie b { color: var(--text-secondary); }
+/* --text-muted (#6a7480) measures 3.9:1 on --surface-base, below the 4.5:1
+   minimum — measured by canvas_snapshot on the What's New mockup, 2026-08-21.
+   Both of these are body copy, not decoration, so they take --text-secondary. */
+.ob-root .gh-freebie { font-size: 12px; color: var(--text-secondary); text-align: center; margin: 0 0 16px; }
+.ob-root .gh-freebie b { color: var(--text-primary); }
+
+/* WHAT'S NEW — named sections, one line per item (user call 2026-08-21).
+   Replaces the seven equal paragraph cards, which read as a wall of text. The
+   grid is two columns so four sections fit without scrolling at the sizes the
+   harness actually opens at; it collapses to one on a narrow window. */
+.ob-root .wn-sections { display: grid; grid-template-columns: 1fr 1fr; gap: 26px 44px; margin-bottom: 8px; }
+.ob-root .wn-sec-h { display: flex; align-items: center; gap: 9px; font-size: 11px; font-weight: 700;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--ob-bright); margin: 0 0 10px; }
+/* The rule that runs out to the column edge: it is what makes a "section" read
+   as a section rather than as one more bold line among many. */
+.ob-root .wn-sec-h::after { content: ''; flex: 1; height: 1px; background: var(--border-subtle); }
+.ob-root .wn-item { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; }
+.ob-root .wn-item + .wn-item { border-top: 1px solid color-mix(in srgb, var(--border-subtle) 60%, transparent); }
+.ob-root .wn-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ob); flex: none; transform: translateY(-2px); }
+.ob-root .wn-t { font-size: 13.5px; font-weight: 650; color: var(--text-primary); }
+.ob-root .wn-d { font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
+@media (max-width: 820px) { .ob-root .wn-sections { grid-template-columns: 1fr; } }
 .ob-root .connect-l { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 9px; }
 .ob-root .opt { display: flex; align-items: flex-start; gap: 13px; padding: 13px 15px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-raised); cursor: pointer; text-align: left; position: relative; transition: .14s; width: 100%; font: inherit; color: inherit; margin-bottom: 9px; }
 .ob-root .opt.sel { border-color: var(--ob); box-shadow: 0 0 0 3px var(--ob-soft); }

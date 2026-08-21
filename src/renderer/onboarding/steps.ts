@@ -1,13 +1,35 @@
 import type { FC } from 'react'
 
 /**
- * Bump ONLY to force every user through the full flow again (rare). NOT __APP_VERSION__.
+ * Bump ONLY to force EVERY user through the WHOLE flow again (rare). NOT __APP_VERSION__.
+ *
+ * ─── ADDING A PAGE? READ THIS FIRST ───────────────────────────────────────────
+ *
+ * Give the new step a `sinceVersion` of **the release it ships in** and stop
+ * there. That is the whole mechanism: an upgrader gets the What's New page plus
+ * every step whose `sinceVersion` is newer than the build they last ran, badged
+ * "New in this release" (see `stepsNewSince` in gate.ts). A fresh install gets
+ * the full flow regardless. Neither needs this constant touched.
+ *
+ * The trap is copying a neighbouring line and inheriting its `sinceVersion`.
+ * A step stamped `2.0.0` is new to nobody who has already onboarded, so it is
+ * invisible to every existing user — silently, with no error. The frozen
+ * id→sinceVersion table in `onboarding-registry.test.ts` exists to make that a
+ * deliberate act: adding or renumbering a step fails that test until you update
+ * the table, which is where you will read this rule again.
+ *
+ * A page whose CONTENT materially changes bumps its own `sinceVersion` and
+ * re-surfaces by the same rule. One field, both cases.
+ *
+ * Bump THIS constant only for "everyone walks the whole thing again", and take
+ * the cost seriously: it is twelve pages in front of someone who came for the
+ * release notes. Before 2026-08-21 every beta build did exactly that, which is
+ * what made the first-launch experience a wall.
  *
  * '3' for the 2.1 line. A release that renamed the app, made remote sessions
  * survive a dropped link, and added the Agent Canvas is worth walking someone
- * through again rather than announcing in a modal nobody reads — and the
- * upgrade page's own content changed for the 2.1 cohort, which is the case this
- * constant exists for.
+ * through again — and the upgrade page's own content changed for the 2.1
+ * cohort, which is the case this constant exists for.
  */
 export const ONBOARDING_VERSION = '3'
 
@@ -39,13 +61,20 @@ export interface OnboardingStep {
   settle?: (ctx: OnboardingSettleCtx) => void | Promise<void>
 }
 
-// NOTE (v2 contract): the harness (OnboardingHarness PAGES) is FULL-FLOW-ONLY.
-// It does not consult completedSteps, so deriveOnboarding's incremental path
-// (adding a step without bumping ONBOARDING_VERSION -> due:true for just that
-// step) would re-run the whole flow from the top. Adding a page in a later
-// release therefore REQUIRES an ONBOARDING_VERSION bump. Also: whatsNewV2's
-// upgraders-only gate lives in the harness (when(): !!appMeta.lastSeenVersion,
-// meta-based) and can't be expressed in the settings-view when() below.
+// NOTE (contract, revised 2026-08-21): the harness runs in one of two shapes.
+// The FULL flow (fresh install, or a forced re-onboard) walks every applicable
+// page and does not consult completedSteps. The WHAT'S-NEW-ONLY run — the
+// ordinary upgrade — shows the notes page plus `stepsNewSince(lastSeenVersion)`
+// and nothing else.
+//
+// So adding a page no longer REQUIRES an ONBOARDING_VERSION bump, which is what
+// this note used to say: give it the `sinceVersion` of its release and
+// upgraders get it on its own. Bump the constant only when everyone should
+// re-walk the whole flow. See the constant's own comment above.
+//
+// Unchanged: whatsNewV2's upgraders-only gate lives in the harness (when():
+// !!appMeta.lastSeenVersion, meta-based) and can't be expressed in the
+// settings-view when() below.
 export const STEPS: OnboardingStep[] = [
   { id: 'whatsNewV2',    sinceVersion: '2.0.0', requiresSetup: false },
   { id: 'welcome',       sinceVersion: '2.0.0', requiresSetup: false },

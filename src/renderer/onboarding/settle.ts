@@ -1,7 +1,7 @@
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useGitHubStore } from '../stores/githubStore'
 import { STEPS, ONBOARDING_VERSION } from './steps'
-import { markWhatsNewSeen } from '../components/WhatsNewModal'
+import { markWhatsNewSeen } from './whats-new-gate'
 import { currentTrainingVersion } from '../training-steps'
 
 declare const __APP_VERSION__: string
@@ -29,4 +29,30 @@ export function settleOnboardingFinish(): void {
   markWhatsNewSeen()
   // Retire the legacy GitHub onboarding modal (same field its own dismiss uses).
   void useGitHubStore.getState().updateConfig({ seenOnboardingVersion: appVersion }).catch(() => {})
+}
+
+/**
+ * Finish for the WHAT'S-NEW-ONLY run: the harness opened purely to deliver the
+ * release notes to someone who has already completed the flow.
+ *
+ * Deliberately narrower than `settleOnboardingFinish`. That one stamps EVERY
+ * step in `STEPS` as complete, which is correct after a full walk and wrong
+ * here: a user who skipped Codex sign-in has still not done it, and marking it
+ * done because they read the release notes would silently retire a setup step
+ * they never saw.
+ *
+ * `lastTrainingVersion` IS stamped, for the same reason the full finish stamps
+ * it: the legacy guided tour's auto-trigger has to be retired by whichever
+ * surface delivered this release, or it stays armed forever. That matters more
+ * than it looks — `trainingDue` holds the boot chain open (bootGates), so an
+ * un-retired trigger with nothing left to auto-open it would sit above the
+ * resume prompt and stop it from ever appearing. The tour itself stays
+ * available on demand from the Feature Guide.
+ */
+export function settleWhatsNewOnly(): void {
+  useAppMetaStore.getState().update({
+    onboardingAppVersion: __APP_VERSION__,
+    lastTrainingVersion: currentTrainingVersion(),
+  })
+  markWhatsNewSeen()
 }

@@ -16,7 +16,6 @@ import { _electron as electron, ElectronApplication, Page } from '@playwright/te
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { changelog } from '../../../src/renderer/changelog'
 import { emptyGitHubConfig } from '../../../src/shared/github-constants'
 import { currentTrainingVersion } from '../../../src/renderer/training-steps'
 import { STEPS, ONBOARDING_VERSION } from '../../../src/renderer/onboarding/steps'
@@ -46,10 +45,16 @@ function seedCleanConfig(dataDir: string): void {
   // setupVersion MUST exactly equal the build's __APP_VERSION__ (= package
   // version): App.tsx gates the Claude CLI-setup wizard on
   // `setupVersion !== __APP_VERSION__`, and a fresh dir would otherwise spawn a
-  // real `claude` to set up. lastSeenVersion is compared against
-  // changelog[0].version (which can lag the package version), so seed it from
-  // the changelog to suppress What's New. lastTrainingVersion suppresses the
-  // first-run tour.
+  // real `claude` to set up.
+  //
+  // lastSeenVersion is now compared against __APP_VERSION__ TOO (2026-08-21 —
+  // it used to be compared against changelog[0].version, which is exactly the
+  // bug that shipped a wall-of-text modal on every unreleased build; see
+  // onboarding/whats-new-gate.ts). So it must be seeded from the package
+  // version, not the changelog: the changelog head is AHEAD of the running
+  // version on any build between two releases, which would read as an upgrade,
+  // open the harness in what's-new-only mode, and block every test behind a
+  // full-screen page. lastTrainingVersion suppresses the first-run tour.
   const appVersion = JSON.parse(
     fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf-8'),
   ).version as string
@@ -58,7 +63,7 @@ function seedCleanConfig(dataDir: string): void {
     JSON.stringify(
       {
         setupVersion: appVersion,
-        lastSeenVersion: changelog[0]?.version ?? appVersion,
+        lastSeenVersion: appVersion,
         lastTrainingVersion: currentTrainingVersion(),
         hasCreatedFirstConfig: true,
         accountGateDecided: true,

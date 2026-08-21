@@ -10,7 +10,22 @@ function crumbClass(i: number, phase: number): string {
   return 'crumb'
 }
 
-export function OnboardingShell({ phase, children }: { phase: number; children: ReactNode }) {
+export function OnboardingShell({
+  phase,
+  isNew = false,
+  showPhases = true,
+  children,
+}: {
+  phase: number
+  /** This page is here because the setting it covers is NEW in this build —
+   *  badge it, so an upgrader can see why they are being shown it at all. */
+  isNew?: boolean
+  /** False on a release-notes run: the four-phase breadcrumb describes a setup
+   *  flow that is not happening, and would light one phase the user can never
+   *  navigate away from. */
+  showPhases?: boolean
+  children: ReactNode
+}) {
   return (
     <div className="ob-root">
       <div className="field-bg">
@@ -22,14 +37,17 @@ export function OnboardingShell({ phase, children }: { phase: number; children: 
       <div className="top">
         <BrandMark className="blogo" />
         <span className="bname">AI Code Conductor</span>
-        <div className="crumbs">
-          {PHASES.map((n, i) => (
-            <span key={n} className={crumbClass(i, phase)}>
-              {i < phase ? String.fromCodePoint(0x2713) + ' ' : ''}
-              {n}
-            </span>
-          ))}
-        </div>
+        {isNew && <span className="ob-new">New in this release</span>}
+        {showPhases && (
+          <div className="crumbs">
+            {PHASES.map((n, i) => (
+              <span key={n} className={crumbClass(i, phase)}>
+                {i < phase ? String.fromCodePoint(0x2713) + ' ' : ''}
+                {n}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="pages">
         <section className="page active">{children}</section>

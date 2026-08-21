@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
+import WhatsNewModal from './WhatsNewModal'
+import { markWhatsNewSeen } from '../onboarding/whats-new-gate'
 import TrainingWalkthrough from './TrainingWalkthrough'
 import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, DEFAULT_TYPOGRAPHY, gpuRenderingEnabled, UpdateChannel } from '../stores/settingsStore'
 import type { AppSettings, StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode, UiFontFamily, TypographyRegionKey, TypographySettings, RegionTypography } from '../stores/settingsStore'

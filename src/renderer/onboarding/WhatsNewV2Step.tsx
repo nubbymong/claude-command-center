@@ -8,104 +8,88 @@ declare const __APP_VERSION__: string
 const LINE_SOURCE = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : ''
 const LINE = releaseLine(LINE_SOURCE)
 
-const SPARKLES = String.fromCodePoint(0x2728)
-const LOCK = String.fromCodePoint(0x1f512)
-const GEAR = String.fromCodePoint(0x2699)
-const MAG = String.fromCodePoint(0x1f50d)
-const BOLT = String.fromCodePoint(0x26a1)
-const ROCKET = String.fromCodePoint(0x1f680)
-const BADGE = String.fromCodePoint(0x1f3f7)
-const PLUG = String.fromCodePoint(0x1f50c)
-const PALETTE = String.fromCodePoint(0x1f3a8)
-const PEOPLE = String.fromCodePoint(0x1f465)
-const CHART = String.fromCodePoint(0x1f4c8)
-const SHIELD = String.fromCodePoint(0x1f6e1)
-
-interface Card {
-  icon: string
+export interface WhatsNewItem {
+  /** Three or four words, ending in a full stop — it runs inline with `desc`. */
   title: string
+  /** ONE line. If it needs two sentences, it belongs in the Feature Guide. */
   desc: string
   beta?: boolean
 }
 
+export interface WhatsNewSection {
+  heading: string
+  items: WhatsNewItem[]
+}
+
 // Upgrade-cohort opener (registry step 0, when(): lastSeenVersion exists).
 // Curated highlights only — the flow's own pages do the actual setup, and the
-// full changelog stays reachable in Settings → About. Fresh installs skip this
-// page entirely (nothing is "new" to them).
+// full history stays in the Feature Guide. Fresh installs skip this page
+// entirely (nothing is "new" to them).
 //
-// WHICH set a user sees depends on where they came from; see cardsFor. The
-// heading has been derived from the build since the day it greeted 2.1 testers
-// with "What's new in 2.0" — but the cards under it stayed 2.0 content, so the
-// page announced 2.1 and then described the release before it.
-const CARDS_20: Card[] = [
+// SHAPE (user call 2026-08-21, replacing seven equal paragraph cards): named
+// sections, one line per item. The card grid was rejected as "a horrible wall
+// of text — people wont read that"; the fix is not smaller type but less of it,
+// grouped so the eye can pick the part it cares about. If a line needs a second
+// sentence to make sense, the line is wrong — link the Feature Guide instead.
+//
+// WHICH set a user sees depends on where they came from; see sectionsFor.
+const SECTIONS_20: WhatsNewSection[] = [
   {
-    icon: SPARKLES,
-    title: 'This guided setup',
-    desc: 'Every feature now asks before it turns on. What you pick here is yours, and yours to change later in Settings.',
+    heading: 'Setup & privacy',
+    items: [
+      { title: 'Guided setup.', desc: 'Every feature asks before it turns on, and stays yours to change in Settings.' },
+      { title: 'A privacy pass.', desc: 'The status line and built-in tools are delivered per session; your global Claude config is never written.' },
+    ],
   },
   {
-    icon: LOCK,
-    title: 'A privacy pass',
-    desc: 'The status line and built-in tools are delivered per session. Your global Claude config is never written, and old global entries are cleaned up.',
+    heading: 'Tools',
+    items: [
+      { title: 'Built-in tools, your call.', desc: 'Vision, code review, host screenshots and the Agent Canvas each get a real switch.' },
+      { title: 'Codex support.', desc: "Run OpenAI's Codex CLI beside Claude, with its own switch and sign-in.", beta: true },
+    ],
   },
   {
-    icon: GEAR,
-    title: 'Built-in tools, your call',
-    desc: 'Vision, code review, host screenshots and the Agent Canvas each get a real switch, enforced for local, SSH and Codex sessions.',
+    heading: 'Help',
+    items: [
+      { title: 'A guide that answers back.', desc: 'The ? button opens a searchable guide, and a session that has read the docs.' },
+    ],
   },
   {
-    icon: ROCKET,
-    title: 'Codex support',
-    beta: true,
-    desc: "Run OpenAI's Codex CLI beside Claude, with its own master switch and sign-in.",
-  },
-  {
-    icon: MAG,
-    title: 'A guide that answers back',
-    desc: 'The ? button opens a searchable guide of every feature, and a Claude session that has read the app documentation.',
-  },
-  {
-    icon: BOLT,
-    title: 'A newer engine',
-    desc: 'Electron 43, React 19 and xterm.js 6 under the hood: a faster renderer on a current security baseline.',
+    heading: 'Under the hood',
+    items: [
+      { title: 'A newer engine.', desc: 'Electron 43, React 19 and xterm.js 6 — faster, on a current security baseline.' },
+    ],
   },
 ]
 
-const CARDS_21: Card[] = [
+const SECTIONS_21: WhatsNewSection[] = [
   {
-    icon: BADGE,
-    title: 'A new name',
-    desc: 'Claude Command Center is now AI Code Conductor. Same app, same data, same settings — updates carry across on their own.',
+    heading: 'Sessions',
+    items: [
+      { title: 'Detachable SSH.', desc: 'Runs under tmux, so a dropped VPN no longer kills the work.' },
+      { title: 'Partner terminal.', desc: 'A plain shell beside Claude, now labelled so you know which is which.' },
+    ],
   },
   {
-    icon: PLUG,
-    title: 'Remote sessions that survive the link',
-    desc: 'Mark an SSH config Detachable and it runs under tmux, so a dropped VPN or a closed lid no longer kills the work. Reconnecting puts you back where you were.',
+    heading: 'Working with Claude',
+    items: [
+      { title: 'Agent Canvas.', desc: "Claude draws a mockup in the app. Mark up what's wrong; it picks the notes up." },
+      { title: 'Ask Conductor.', desc: 'A session that has read the docs. Docked at the bottom of the sidebar.' },
+    ],
   },
   {
-    icon: PALETTE,
-    title: 'The Agent Canvas',
-    desc: 'Claude renders a mockup, or your real built site, into the app. Mark it up where it is wrong and it picks the notes up anchored to the elements you pointed at.',
+    heading: 'Accounts & usage',
+    items: [
+      { title: 'Switch mid-session.', desc: 'Sign in to claude.ai in-app, change account without losing the session.' },
+      { title: 'Insights.', desc: 'Usage reports across every account at once, not one at a time.' },
+    ],
   },
   {
-    icon: PEOPLE,
-    title: 'Accounts, properly',
-    desc: 'Sign in to claude.ai inside the app, switch account mid-session without losing it, and park the ones you are not using.',
-  },
-  {
-    icon: CHART,
-    title: 'Insights across every account',
-    desc: 'Reports over your own usage that run across all of your accounts at once, rather than one at a time.',
-  },
-  {
-    icon: SHIELD,
-    title: 'Signed, notarised, verified',
-    desc: 'Windows installers are code-signed and macOS builds are notarised, and the updater checks the SHA-256 of everything it installs.',
-  },
-  {
-    icon: MAG,
-    title: 'Ask Conductor, in its own place',
-    desc: 'Ask about the app, or about Claude Code, and get an answer instead of a search. It docks at the bottom of the sidebar, opens as a real session you can come back to, and no longer leaves a config behind in your sidebar.',
+    heading: 'The app itself',
+    items: [
+      { title: 'New name.', desc: 'Claude Command Center is now AI Code Conductor. Same data, same settings.' },
+      { title: 'Signed and notarised.', desc: 'Windows signed, macOS notarised, every update SHA-256 checked.' },
+    ],
   },
 ]
 
@@ -117,52 +101,66 @@ const CARDS_21: Card[] = [
  * both, and gets both, oldest first, because that is the order the app changed
  * in. Fresh installs never reach this page at all.
  */
-export function cardsFor(lastSeenVersion: string | undefined, currentVersion: string): Card[] {
+export function sectionsFor(lastSeenVersion: string | undefined, currentVersion: string): WhatsNewSection[] {
   const line = releaseLine(currentVersion)
-  // A line with no card set of its own — 2.2 before anyone writes one — falls
-  // back to the NEWEST set, not the oldest: greeting a 2.2 user with 2.0
-  // content under a "What's new in 2.2" heading is the exact bug this page
-  // already had once. When a 2.2 set is written, add it here.
-  if (line === '2.0') return CARDS_20
+  // A line with no set of its own — 2.2 before anyone writes one — falls back to
+  // the NEWEST set, not the oldest: greeting a 2.2 user with 2.0 content under a
+  // "What's new in 2.2" heading is the exact bug this page already had once.
+  // When a 2.2 set is written, add it here.
+  if (line === '2.0') return SECTIONS_20
   const from = releaseLine(lastSeenVersion ?? '')
-  return from === '2.0' || from === '2.1' ? CARDS_21 : [...CARDS_20, ...CARDS_21]
+  return from === '2.0' || from === '2.1' ? SECTIONS_21 : [...SECTIONS_20, ...SECTIONS_21]
 }
 
-export function WhatsNewV2Step({ onNext }: { onNext: () => void }) {
-  const cards = cardsFor(useAppMetaStore.getState().meta.lastSeenVersion, LINE_SOURCE)
+export function WhatsNewV2Step({
+  onNext,
+  ctaLabel = 'Set it up →',
+  hint = 'The next pages set these up, one at a time.',
+}: {
+  onNext: () => void
+  /** Footer CTA. The harness passes "Continue" when this page ends the run —
+   *  on an ordinary upgrade there is usually nothing left to set up. */
+  ctaLabel?: string
+  hint?: string
+}) {
+  const sections = sectionsFor(useAppMetaStore.getState().meta.lastSeenVersion, LINE_SOURCE)
+  const count = sections.reduce((n, s) => n + s.items.length, 0)
   return (
     <>
       <div className="p2">
-        <div className="p2-inner" style={{ width: 'min(880px, 95vw)' }}>
-          <h2 className="h2">What's new in {LINE}</h2>
-          <p className="p2-sub">
-            AI Code Conductor {LINE} is a big release. The short version, before we set it up together:
+        <div className="p2-inner" style={{ width: 'min(920px, 95vw)' }}>
+          <h2 className="h2" data-ux-id="whatsnew-heading">What&apos;s new in {LINE}</h2>
+          <p className="p2-sub" data-ux-id="whatsnew-sub">
+            {count} things worth knowing, in one line each.
           </p>
 
-          <div className="gh-grid">
-            {cards.map((c) => (
-              <div className="gh-card" key={c.title}>
-                <div className="gh-ic">{c.icon}</div>
-                <div>
-                  <div className="gh-t">
-                    {c.title}
-                    {c.beta && <span className="gh-tag">Beta</span>}
+          <div className="wn-sections" data-ux-id="whatsnew-sections">
+            {sections.map((s) => (
+              <section key={s.heading} data-ux-id={`section-${s.heading.toLowerCase().replace(/[^a-z]+/g, '-')}`}>
+                <h3 className="wn-sec-h">{s.heading}</h3>
+                {s.items.map((it) => (
+                  <div className="wn-item" key={it.title}>
+                    <span className="wn-dot" />
+                    <div>
+                      <span className="wn-t">{it.title}</span>{' '}
+                      <span className="wn-d">{it.desc}</span>
+                      {it.beta && <span className="gh-tag">Beta</span>}
+                    </div>
                   </div>
-                  <div className="gh-d">{c.desc}</div>
-                </div>
-              </div>
+                ))}
+              </section>
             ))}
           </div>
 
-          <p className="gh-freebie">
-            The full changelog is always in <b>Settings → About</b>.
+          <p className="gh-freebie" data-ux-id="whatsnew-pointer">
+            The detail for any of these lives in <b>Feature Guide &rarr; What&apos;s New</b>, any time.
           </p>
         </div>
       </div>
       <div className="foot">
-        <span className="hint">The next pages set these up, one at a time.</span>
-        <button className="cta" onClick={onNext} type="button">
-          Set it up →
+        <span className="hint">{hint}</span>
+        <button className="cta" onClick={onNext} type="button" data-ux-id="whatsnew-cta">
+          {ctaLabel}
         </button>
       </div>
     </>
