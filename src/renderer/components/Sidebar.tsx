@@ -1195,7 +1195,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             canSwitchAccount={canSwitchAccount}
             profiles={accountProfiles}
             accountAliases={accountAliases}
-            onSwitchAccount={(profileId) => switchMenuAccount(s.id, profileId)}
+            onSwitchAccount={(profileId) => {
+              // Gates the multi-account tip's "you already do this" variant.
+              trackUsage('accounts.switch-session-account')
+              switchMenuAccount(s.id, profileId)
+            }}
             // #216: account actions on the session itself. Gated to a local
             // session with a resolved account — an SSH session's browser and
             // credentials live on another machine, and a shell-only session has

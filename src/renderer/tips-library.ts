@@ -650,6 +650,193 @@ export const TIPS_LIBRARY: Tip[] = [
     },
   },
 
+  // ── 2.1: the surfaces the library had nothing for ───────────────────────
+  // Everything below covers work that shipped after the last content refresh
+  // (2026-06-12): the Agent Canvas and its plan mode, Ask Conductor, the sidebar
+  // dock, pages-as-tabs, detachable SSH sessions, Codex, multi-account and the
+  // Feature Guide. A tip here gates only on ids this build can actually record
+  // (see DIRECT_FEATURE_IDS) -- a gate nothing writes is a tip nobody sees.
+
+  {
+    id: 'tip.agent-canvas',
+    category: 'agents',
+    complexity: 'simple',
+    priority: 86,
+    excludes: ['canvas.opened'],
+    variants: {
+      primary: {
+        shortText: '🎨 Have your agent SHOW you the work',
+        title: 'Agent Canvas',
+        body: 'The **Canvas** button in the session toolbar -- next to Snap and Web -- opens a pane your agent can draw into. Ask for a mockup, a design or a look at the site it just built and it arrives as something you can see, instead of a wall of markdown describing it.\n\nIt is a two-way surface. Click anywhere on the render to leave a **note**, then send the round back as a **review**. The agent reads the notes, changes the work and renders the next version.\n\nThe button **pulses** when the agent has rendered something you have not opened yet -- that is the hand-back moment -- and carries a count once two or more of your reviews are still open.',
+        focusHint: 'Session toolbar -- the Canvas button, beside Snap and Web',
+      },
+      postUse: {
+        shortText: '🎨 Every canvas version is kept -- walk back through them',
+        title: 'Canvas: Versions, Reviews and the Library',
+        body: 'You already use the canvas. A few things it does that are easy to miss:\n\n• **Nothing is overwritten.** Each render is a new version; the version picker walks back through every one of them.\n• **A review closes only when every note in it has a verdict**, which is why the button counts open reviews from two rather than one -- a single outstanding note would sit there forever and stop meaning anything.\n• **Library** lists the canvases for this project, so a mockup from last week is two clicks away rather than lost with the session.\n• The pane **replaces the terminal** while it is open -- the button is tinted so you can see you have left the terminal without hovering anything.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.canvas-plan-mode',
+    category: 'agents',
+    complexity: 'intermediate',
+    priority: 76,
+    requires: ['canvas.opened'],
+    variants: {
+      primary: {
+        shortText: '🗺 Ask for the plan as a flow, not a document',
+        title: 'Plan Mode on the Canvas',
+        body: 'Nobody reads a long markdown plan. Ask your agent to **put the plan on the canvas** and it comes back as a visual flow with a summary: the steps, what each one touches, and what has to happen before what.\n\nA plan is stored and served exactly like a design, so everything you already know still works on it -- click a step to leave a **note**, send the round as a **review**, and walk the versions as the plan changes.\n\nUse it before a big change rather than after: correcting a step on the canvas costs a click, correcting it in the code costs an afternoon.',
+        focusHint: 'Session toolbar -- the Canvas button, once your agent has rendered a plan',
+      },
+    },
+  },
+
+  {
+    id: 'tip.ask-conductor',
+    category: 'ui-navigation',
+    complexity: 'simple',
+    priority: 84,
+    variants: {
+      primary: {
+        shortText: '💬 Ask the Conductor how this app works',
+        title: 'Ask Conductor',
+        body: '**Ask Conductor** sits at the foot of the sidebar. It opens a real session -- its own tab, its own history, resumable like any other -- whose subject is this app rather than your code.\n\nIt is the right place for "how do I...", "what does this button do" and "why did that happen". It is not a saved config and it does not clutter your project list: it is docked below the divider, apart from your work.\n\nThe same session is what **Discuss** opens from any tip, and what the Feature Guide links to -- one conversation, not three.',
+        focusHint: 'Bottom of the sidebar -- the Ask Conductor pill, under the session list',
+      },
+    },
+  },
+
+  {
+    id: 'tip.dock-right-click',
+    category: 'ui-navigation',
+    complexity: 'simple',
+    priority: 44,
+    variants: {
+      primary: {
+        shortText: '🙈 Right-click the dock to hide tips or Ask Conductor',
+        title: 'Hiding a Dock Row',
+        body: 'The two rows at the foot of the sidebar -- **Ask Conductor** and the **tip of the day** -- can each be sent away. Right-click either one and choose **Hide**.\n\nIt is worth knowing what that does: it switches the FEATURE off, not just its row. With tips hidden nothing is picked at launch and no tip is raised anywhere; with Ask Conductor hidden there is no way to start one. A dialog says so before anything happens.\n\nBoth come back in **Settings > General** -- "Show intelligent tips" and "Show Ask Conductor".',
+        focusHint: 'Bottom of the sidebar -- right-click either dock row',
+      },
+    },
+  },
+
+  {
+    id: 'tip.pages-as-tabs',
+    category: 'ui-navigation',
+    complexity: 'simple',
+    priority: 66,
+    variants: {
+      primary: {
+        shortText: '🗂 Tokenomics, Logs and Settings open as tabs',
+        title: 'Pages Are Tabs',
+        body: 'Opening Tokenomics, Logs, Memory or Settings does not take the window away from your sessions -- each opens as a **tab in the same strip**, beside them.\n\nSo you can leave Tokenomics open while you work, keep Logs a click away, and have several pages open at once.\n\n**Ctrl+Tab** cycles the whole strip -- sessions and pages together -- and **Ctrl+W** closes whichever tab is in front (a session tab routes through the usual close question first).',
+      },
+    },
+  },
+
+  {
+    id: 'tip.ssh-persistence',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 74,
+    requires: ['sessions.session-type'],
+    variants: {
+      primary: {
+        shortText: '🔌 Keep a remote session alive when the link drops',
+        title: 'Detachable SSH Sessions',
+        body: 'You run sessions over SSH -- so you have met the failure: the laptop sleeps, the VPN blinks, and the work on the other end dies with the connection.\n\nTurn on **Detachable** in the SSH config and the remote Claude runs inside a tmux session instead. The link dropping no longer kills it: reconnect and the session is reattached where it was, output and all.\n\nClosing a persistent session asks what you actually meant -- **End it** on the host, or **Leave it running** and come back later. The sidebar marks which of your sessions are persistent.',
+        focusHint: 'Session config -- SSH section, the "Detachable" toggle',
+      },
+    },
+  },
+
+  {
+    id: 'tip.codex-sessions',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 64,
+    excludes: ['sessions.codex-config'],
+    variants: {
+      primary: {
+        shortText: '🔷 Run OpenAI Codex sessions beside Claude',
+        title: 'Codex Sessions',
+        body: 'A saved config does not have to run Claude Code. Switch **Settings > Codex** on, and the session dialog grows a provider choice: **Claude** or **Codex**, with its own account and its own sign-in.\n\nEverything else is the same session model you already use -- tabs, notes, commands, logs -- so a Codex session sits in the sidebar next to a Claude one and behaves like it.\n\n**Tokenomics counts Codex too**, so the spend comparison is in one place rather than two. Local sessions only for now: SSH configs stay on Claude.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+      },
+    },
+  },
+
+  {
+    id: 'tip.multi-account',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 68,
+    excludes: ['accounts.switch-session-account'],
+    variants: {
+      primary: {
+        shortText: '👥 Run more than one Claude account, session by session',
+        title: 'Multi-Account',
+        body: 'Each session runs as **one account**, and different sessions can run as different ones -- work on one, personal on another, a spare for when the first hits its weekly limit.\n\n**Right-click a session** and pick an account to move it. The footer strip shows every live account with its usage, so you can see which one has room before you choose.\n\nEach account keeps its own credentials, its own browser session and its own limits -- switching a session is not switching your whole app.',
+        focusHint: 'Right-click a session in the sidebar -- the account list is in the menu',
+      },
+    },
+  },
+
+  {
+    id: 'tip.account-strip-minimal',
+    category: 'ui-navigation',
+    complexity: 'simple',
+    priority: 46,
+    requires: ['accounts.switch-session-account'],
+    variants: {
+      primary: {
+        shortText: '🚦 Turn the account strip into traffic lights',
+        title: 'A Minimal Account Strip',
+        body: 'With several accounts live the footer strip gets busy. **Settings > Status Line > "Multi-account footer style"** turns the bars into dots: one for usage -- the worse of your time windows -- and one per model.\n\nGreen under 70%, amber to 89%, red at 90% and above: the same points at which the bars change colour, so a dot can never disagree with the meter it replaced. The exact figures move into the tooltip.\n\nWhichever buckets you switched off above stay off here -- it is the same list, drawn smaller.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+      },
+    },
+  },
+
+  {
+    id: 'tip.feature-guide',
+    category: 'ui-navigation',
+    complexity: 'simple',
+    priority: 62,
+    variants: {
+      primary: {
+        shortText: '📚 The Feature Guide is the map of this app',
+        title: 'Feature Guide',
+        body: 'Tips arrive one at a time and in no particular order. The **Feature Guide** is the same material laid out properly: Getting started, Integrations, Admin & data and Productivity, each with what the feature is for rather than only where it lives.\n\nIt also carries **What\'s New** -- the full release history, the same notes you are shown after an update, browsable any time rather than only in the moment they appear.\n\nWorth ten minutes on a quiet afternoon; most of what people ask Ask Conductor is answered there.',
+        actionLabel: 'Open Feature Guide',
+        actionTarget: 'help',
+      },
+    },
+  },
+
+  {
+    id: 'tip.logs-page',
+    category: 'advanced',
+    complexity: 'simple',
+    priority: 58,
+    excludes: ['advanced.log-viewer'],
+    variants: {
+      primary: {
+        shortText: '📜 Every session\'s output is kept -- read it in Logs',
+        title: 'Logs',
+        body: 'Terminal scrollback is finite and a closed session takes its history with it. **Logs** keeps the output anyway: what ran, in which session, and when.\n\nUse it for the thing you saw twenty minutes ago and cannot scroll back to, for what a session did while you were in another tab, and for handing an exact error to someone else.\n\nIt stays on your machine -- the log files live in your resources folder and nothing is uploaded.',
+        actionLabel: 'Open Logs',
+        actionTarget: 'logs',
+      },
+    },
+  },
+
   {
     id: 'tip.transparency.network-activity',
     category: 'transparency',
