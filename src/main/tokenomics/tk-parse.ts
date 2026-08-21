@@ -60,6 +60,14 @@ export function codexEventsFromRollout(text: string, priceKeys: string[], startO
   let cwd = seed?.cwd ?? ''
   let model = seed?.model ?? ''
   let baseTs = 0
+  // #307: the FIRST session_meta is the file's own identity. A SUBAGENT rollout
+  // carries a SECOND session_meta naming its parent (thread_source 'subagent',
+  // forked_from_id) — and taking the last id seen re-labelled the subagent's
+  // turns with the parent's session, collapsing their per-file ordinals onto the
+  // parent's so INSERT OR IGNORE dropped ~half of all Codex turns (measured
+  // 49.3%). Lock the identity on the first real id (or the seed, which is the
+  // header a mid-file reader already learned) and ignore later session_meta.
+  let identityLocked = !!seed?.sessionId
   // The model is captured PER TURN, at the point the turn is read. Carrying one
   // mutable `model` and stamping the final value on every turn priced a whole
   // slice at whichever model it happened to end on: a session that switched
@@ -71,6 +79,11 @@ export function codexEventsFromRollout(text: string, priceKeys: string[], startO
     let evt: any
     try { evt = JSON.parse(line) } catch { continue }
     if (evt.type === 'session_meta') {
+      // Once the identity is locked, a later session_meta is parent metadata
+      // (#307) — skip it entirely so it cannot steal the id, cwd or base ts.
+      // A per-turn model change still arrives via `turn_context` below, so
+      // pricing is unaffected.
+      if (identityLocked) continue
       const p = evt.payload ?? {}
       // Only overwrite with something real: a malformed header must not wipe a
       // seed and leave us with no session id, which discards the whole slice.
@@ -78,6 +91,9 @@ export function codexEventsFromRollout(text: string, priceKeys: string[], startO
       if (p.cwd) cwd = String(p.cwd)
       if (p.model) model = String(p.model)
       baseTs = evt.timestamp ? Date.parse(evt.timestamp) : 0
+      // Lock on the first session_meta that actually names a session; a
+      // malformed first header (no id) still lets a real later one supply it.
+      if (p.id) identityLocked = true
       continue
     }
     if (evt.type === 'turn_context' && evt.payload?.model) { model = String(evt.payload.model); continue }

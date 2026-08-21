@@ -4,8 +4,6 @@ import { useConfigHealthStore } from '../stores/configHealthStore'
 import { retryFailedConfigSaves } from '../utils/config-saver'
 import { ViewType } from '../types/views'
 import MultiAccountStatusline from './MultiAccountStatusline'
-import { BrandMark } from './BrandMark'
-import { launchAskConductor, ASK_LABEL } from '../lib/askConductor'
 import { useRegionTypography } from '../hooks/useTypography'
 import { formatInstalledVersion } from '../utils/versionLabel'
 
@@ -112,18 +110,13 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
             Beta
           </button>
         )}
-        {/* Ask Conductor. A real session, so this switches to the sessions view
-            and lets its tab take focus. */}
-        <button
-          data-ux-id="bottombar-ask-conductor"
-          onClick={() => { void launchAskConductor().then((id) => { if (id) onViewChange('sessions') }) }}
-          className="flex items-center gap-1.5 pl-1.5 pr-2 py-px rounded-full text-[10px] font-medium focus-ring shrink-0"
-          style={{ color: 'var(--brand)', background: 'color-mix(in srgb, var(--brand) 15%, transparent)' }}
-          title={`${ASK_LABEL} -- ask about this app`}
-        >
-          <BrandMark className="w-3 h-3 shrink-0" />
-          {ASK_LABEL}
-        </button>
+        {/* Ask Conductor deliberately has NO button here (user call 2026-08-21:
+            "why do we have two ask conductor buttons — we dont need the one on
+            the bottom bar"). The docked pill at the foot of the sidebar is the
+            entry point: it is the one that shows whether a session is already
+            open, and two controls for one thing in the same corner of the
+            window read as two different things. The Feature Guide and Discuss
+            on a tip still route to the same place. */}
         {updateAvailable && (
           <button
             onClick={() => { if (onUpdateRequested) onUpdateRequested(); else void Promise.resolve(window.electronAPI.update.installAndRestart()).catch((e: unknown) => console.error('[update] install failed:', e)) }}
