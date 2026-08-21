@@ -216,6 +216,31 @@ export function openTkDb(dbPath: string): TkDb {
 
   const getMetaStmt = sqlite.prepare('SELECT value FROM tk_meta WHERE key = ?')
   const setMetaStmt = sqlite.prepare('INSERT INTO tk_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+
+  // #307 one-off re-index. The Codex subagent-identity fix (tk-parse.ts /
+  // tokenomics-worker.ts) changes a subagent file's dedup keys from the parent's
+  // id to its own, so re-ingesting on top of rows stored under the OLD keys would
+  // count those turns a second time. The rollup tables (tk_daily, tk_sessions,
+  // tk_session_models, tk_heatmap) are maintained INCREMENTALLY on insert and
+  // hold Claude and Codex totals together with no per-provider column on all of
+  // them, so they cannot be unwound selectively. The honest fix is a rebuild from
+  // source: wipe events + rollups and rewind every file cursor, then let the
+  // normal ingest repopulate. Claude dedup keys (`c:...`) are unchanged, so Claude
+  // totals return identical; Codex keys (`x:...`) are corrected so subagent turns
+  // stop colliding. Guarded by a tk_meta marker so it runs exactly once; costs one
+  // full re-read of the sessions folder, which the next ingest tick performs.
+  if ((getMetaStmt.get('codexReindex307') as { value?: string } | undefined)?.value !== 'done') {
+    sqlite.exec(`
+      DELETE FROM tk_events;
+      DELETE FROM tk_daily;
+      DELETE FROM tk_session_models;
+      DELETE FROM tk_heatmap;
+      DELETE FROM tk_sessions;
+      UPDATE tk_files SET lastOffset = 0, scannedTo = 0, codexTurns = 0,
+        codexSessionId = '', codexModel = '', codexCwd = '';
+    `)
+    setMetaStmt.run('codexReindex307', 'done')
+  }
   const getCursorStmt = sqlite.prepare('SELECT path,size,mtime,lastOffset,lastIngestedAt,scannedTo,codexSessionId,codexModel,codexCwd,codexTurns FROM tk_files WHERE path = ?')
   const setCursorStmt = sqlite.prepare(`INSERT INTO tk_files(path,size,mtime,lastOffset,lastIngestedAt,scannedTo,codexSessionId,codexModel,codexCwd,codexTurns)
       VALUES(@path,@size,@mtime,@lastOffset,@lastIngestedAt,@scannedTo,@codexSessionId,@codexModel,@codexCwd,@codexTurns)
