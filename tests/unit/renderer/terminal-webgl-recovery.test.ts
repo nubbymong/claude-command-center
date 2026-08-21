@@ -4,7 +4,7 @@
  * without needing a real GPU or DOM.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { installWebglWithRecovery, createAtlasRefresh, DEFAULT_MAX_RECREATES } from '../../../src/renderer/components/terminal/terminalWebgl'
+import { installWebglWithRecovery, createAtlasResync, DEFAULT_MAX_RECREATES, DEFAULT_STABLE_PERIOD_MS } from '../../../src/renderer/components/terminal/terminalWebgl'
 
 describe('installWebglWithRecovery', () => {
   let contextLossCallback: (() => void) | null
@@ -315,50 +315,124 @@ describe('installWebglWithRecovery', () => {
     // stopped at 1 + DEFAULT_MAX_RECREATES.
     expect(constructCallCount).toBe(7)
   })
+  it('bounds a frame-paced storm, counting losses as they arrive', () => {
+    // A real storm: losses ~one frame apart, and the browser runs the queued
+    // frames later. Counting inside the frame instead of at loss time would let
+    // N losses queue N recreates before the cap is ever consulted.
+    const queue: Array<() => void> = []
+    const queuedRaf = (cb: () => void) => { queue.push(cb); return queue.length }
+    let clock = 0
+
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: queuedRaf,
+      isDisposed: () => false,
+      now: () => clock,
+    })
+
+    for (let i = 0; i < 10; i++) {
+      clock += 16
+      contextLossCallback!()
+    }
+
+    // At most one queued recreate per permitted recovery -- never one per loss.
+    expect(queue.length).toBeLessThanOrEqual(DEFAULT_MAX_RECREATES)
+
+    queue.splice(0).forEach((fn) => fn())
+    expect(constructCallCount).toBeLessThanOrEqual(1 + DEFAULT_MAX_RECREATES)
+  })
+
+  it('caps a storm paced just under the stable period', () => {
+    // The case the stable-period reset must NOT rescue: losses seconds apart is
+    // still a storm, not a series of unrelated blips.
+    let clock = 0
+    installWebglWithRecovery(fakeTerm as any, {
+      WebglAddonCtor: FakeWebglAddon as any,
+      raf: syncRaf,
+      isDisposed: () => false,
+      now: () => clock,
+    })
+    for (let i = 0; i < 20; i++) {
+      clock += DEFAULT_STABLE_PERIOD_MS - 1
+      contextLossCallback!()
+    }
+    expect(constructCallCount).toBe(1 + DEFAULT_MAX_RECREATES)
+  })
 })
 
 // ---------------------------------------------------------------------------
-// createAtlasRefresh: the coordinator callback is inert without live WebGL
+// createAtlasResync: clear this terminal's OWN model, THEN repaint — and only
+// while WebGL is live here.
 // ---------------------------------------------------------------------------
 
-describe('createAtlasRefresh', () => {
-  it('repaints while WebGL is live on this terminal', () => {
-    let refreshes = 0
+describe('createAtlasResync', () => {
+  it('clears this terminal\'s own model BEFORE repainting', () => {
+    // The order is the fix. Refreshing a victim whose model still says "nothing
+    // changed" is what paints it blank: _updateModel keeps the stale vertices
+    // and draws them against the atlas the other terminal just emptied.
+    const calls: string[] = []
     const handle = { isActive: () => true, clearTextureAtlas: () => true }
-    createAtlasRefresh(() => handle as any, () => { refreshes++ })()
-    expect(refreshes).toBe(1)
+    createAtlasResync(() => handle as any, () => calls.push('clear'), () => calls.push('refresh'))()
+    expect(calls).toEqual(['clear', 'refresh'])
   })
 
-  it('does not repaint a terminal whose WebGL never loaded', () => {
-    let refreshes = 0
+  it('does nothing at all for a terminal whose WebGL never loaded', () => {
     // installWebglWithRecovery swallows an initial load failure and hands back a
-    // handle that is simply never active — the DOM renderer is doing the work
-    // and its viewport is already correct.
+    // handle that is simply never active — the DOM renderer is doing the work,
+    // holds no shared atlas, and its viewport is already correct. Clearing its
+    // model would be a visible repaint for no reason.
+    const calls: string[] = []
     const handle = { isActive: () => false, clearTextureAtlas: () => false }
-    createAtlasRefresh(() => handle as any, () => { refreshes++ })()
-    expect(refreshes).toBe(0)
+    createAtlasResync(() => handle as any, () => calls.push('clear'), () => calls.push('refresh'))()
+    expect(calls).toEqual([])
   })
 
-  it('stops repainting once a terminal falls back to the DOM renderer for good', () => {
-    let refreshes = 0
+  it('stops once a terminal falls back to the DOM renderer for good', () => {
+    const calls: string[] = []
     let live = true
     const handle = { isActive: () => live, clearTextureAtlas: () => live }
-    const cb = createAtlasRefresh(() => handle as any, () => { refreshes++ })
+    const cb = createAtlasResync(() => handle as any, () => calls.push('clear'), () => calls.push('refresh'))
 
     cb()
-    expect(refreshes).toBe(1)
+    expect(calls).toEqual(['clear', 'refresh'])
 
     // Context-loss storm hit the recreate cap: WebGL is gone for this terminal.
     // Registration happened at mount, so only a liveness check inside the
     // callback can notice.
     live = false
     cb()
-    expect(refreshes).toBe(1)
+    expect(calls).toEqual(['clear', 'refresh'])
   })
 
-  it('does not repaint before the handle exists', () => {
-    let refreshes = 0
-    createAtlasRefresh(() => null, () => { refreshes++ })()
-    expect(refreshes).toBe(0)
+  it('does nothing before the handle exists', () => {
+    const calls: string[] = []
+    createAtlasResync(() => null, () => calls.push('clear'), () => calls.push('refresh'))()
+    expect(calls).toEqual([])
   })
 })
+
+// ---------------------------------------------------------------------------
+// The cap's own numbers, and its behaviour under a REAL (async) rAF.
+//
+// Three mutations survived the whole suite before these existed:
+//   - DEFAULT_STABLE_PERIOD_MS 30_000 -> 1. A flapping context re-fires about a
+//     frame apart, so a stable period under the storm cadence resets the counter
+//     on every loss and the cap NEVER engages.
+//   - DEFAULT_MAX_RECREATES 3 -> 25. The storm test asserted
+//     `toBe(1 + DEFAULT_MAX_RECREATES)`, comparing the constant to itself.
+//   - moving `recreateCount++` into the raf() callback. Every other test in this
+//     file uses a SYNCHRONOUS rAF, which makes "counted at loss time" and
+//     "counted at frame time" indistinguishable -- so no ordering bug in this
+//     function was detectable at all.
+// ---------------------------------------------------------------------------
+
+describe('the recreate cap constants', () => {
+  it('pins the numbers, because the storm test compares the constant to itself', () => {
+    expect(DEFAULT_MAX_RECREATES).toBe(3)
+    // Must stay well ABOVE the frame cadence of a real flapping context (~16ms),
+    // or the stable-period reset cancels the cap it is meant to qualify.
+    expect(DEFAULT_STABLE_PERIOD_MS).toBe(30_000)
+    expect(DEFAULT_STABLE_PERIOD_MS).toBeGreaterThan(1_000)
+  })
+})
+

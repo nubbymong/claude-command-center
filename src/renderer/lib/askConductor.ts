@@ -92,7 +92,43 @@ const WORKSPACE_FAILED =
  * is typed into that running session instead. Returns the session id, or '' if
  * the help workspace could not be staged (the reason lands in useAskErrorStore).
  */
-export async function launchAskConductor(question?: string): Promise<string> {
+/**
+ * In-flight launch, so a second click while the first is still staging the help
+ * workspace joins it instead of starting a second session.
+ *
+ * The guard below reads the session list BEFORE `await help.workspace()`, which
+ * does an mkdir and two file writes in the main process -- comfortably wider
+ * than a double-click. Two clicks therefore both saw "no ask session" and both
+ * called addSession. That is not a cosmetic duplicate: `Sidebar` filters
+ * `kind !== 'ask'` out of the session list and `AskConductorDock` binds to the
+ * FIRST ask session, so the second is unreachable from either -- while still
+ * being persisted by `buildSessionState` and restored on every launch. The only
+ * way to reach it was the tab bar.
+ */
+let inFlightLaunch: Promise<string> | null = null
+
+export function launchAskConductor(question?: string): Promise<string> {
+  if (inFlightLaunch) {
+    // Join the launch already running. A question typed on the second click
+    // still has to land, and the session it belongs to is the one being staged,
+    // so hand it over once that resolves -- the same PTY write the
+    // already-running branch does.
+    const askPrompt = normaliseQuestion(question)
+    return inFlightLaunch.then((id) => {
+      if (id && askPrompt) window.electronAPI.pty.write(id, askPrompt + '\r')
+      return id
+    })
+  }
+  inFlightLaunch = doLaunchAskConductor(question).finally(() => { inFlightLaunch = null })
+  return inFlightLaunch
+}
+
+/** Reset the in-flight latch. Tests only. */
+export function _resetAskLaunchForTest(): void {
+  inFlightLaunch = null
+}
+
+async function doLaunchAskConductor(question?: string): Promise<string> {
   const askPrompt = normaliseQuestion(question)
   const store = useSessionStore.getState()
 
@@ -116,6 +152,17 @@ export async function launchAskConductor(question?: string): Promise<string> {
     return ''
   }
   useAskErrorStore.getState().setError(null)
+
+  // Re-read AFTER the await. The latch above covers the ordinary double-click,
+  // but the store is a live singleton and this function is not the only thing
+  // that can add a session while an mkdir is in flight. Cheap, and it makes the
+  // "one ask session" claim true by construction rather than by timing.
+  const raced = findAskSession(useSessionStore.getState().sessions)
+  if (raced) {
+    store.setActiveSession(raced.id)
+    if (askPrompt) window.electronAPI.pty.write(raced.id, askPrompt + '\r')
+    return raced.id
+  }
 
   const id = generateId()
   store.addSession({

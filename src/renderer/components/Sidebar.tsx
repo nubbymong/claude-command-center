@@ -123,6 +123,20 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     if (!profileId) return
     await useAccountAuthStore.getState().refresh(profileId, { force })
   }, [])
+  /**
+   * Web-session status for the menu about to open.
+   *
+   * The full `refresh` cannot answer this without first awaiting the
+   * `claude auth status` subprocess, so on an account whose status was not
+   * already cached "Open artifacts" rendered disabled and a click did nothing at
+   * all — no window, no error, no log line. This is a local read, so the answer
+   * lands before the menu is even painted. The heavy refresh still runs
+   * alongside for the CLI half.
+   */
+  const refreshWebOnly = React.useCallback((profileId?: string) => {
+    if (!profileId) return
+    void useAccountAuthStore.getState().refreshWeb(profileId)
+  }, [])
 
   /** Acquire this account's claude.ai web session, then refresh the menu state. */
   const authenticateWebForSession = React.useCallback(async (profileId: string) => {
@@ -646,7 +660,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onRenameFinish={handleFinishSessionRename}
         onRenameCancel={() => { setRenamingSessionId(null); setSessionRenameValue('') }}
         onClick={(e) => handleSessionClick(session.id, e)}
-        onContextMenu={(e) => { e.preventDefault(); void refreshWebSessions(session.profileId ?? primaryProfileId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
+        onContextMenu={(e) => { e.preventDefault(); refreshWebOnly(session.profileId ?? primaryProfileId); void refreshWebSessions(session.profileId ?? primaryProfileId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
       />
@@ -1139,7 +1153,26 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             codeSignedIn={!s.shellOnly && s.sessionType === 'local' && (s.provider ?? 'claude') === 'claude' && authByProfile[(s.profileId ?? primaryProfileId)!]?.cliAuthed === true}
             onOpenArtifacts={
               !s.shellOnly && (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
-                ? () => { void window.electronAPI.accountWeb.openArtifacts((s.profileId ?? primaryProfileId)!) }
+                ? () => {
+                    // Surface the outcome. This used to discard the result, so a
+                    // main-process refusal (an unresolvable partition, a profile
+                    // that no longer exists) produced no window and no message —
+                    // indistinguishable from the menu item simply not working.
+                    const pid = (s.profileId ?? primaryProfileId)!
+                    void window.electronAPI.accountWeb.openArtifacts(pid)
+                      .then((r) => {
+                        if (!r.ok) alert(`Could not open artifacts for this account: ${r.error}`)
+                      })
+                      // A rejected invoke -- IPC transport gone, or the handler dying
+                      // before it can build its envelope -- lands here, not in the
+                      // ok:false branch. Without this it is silent again, which is the
+                      // whole bug: no window and no message are indistinguishable from
+                      // a menu item that does not work.
+                      .catch((err: unknown) => {
+                        const why = (err as Error)?.message ?? String(err)
+                        alert(`Could not open artifacts for this account: ${why}`)
+                      })
+                  }
                 : undefined
             }
             onAuthenticateWeb={

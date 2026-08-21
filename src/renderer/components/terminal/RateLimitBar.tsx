@@ -25,6 +25,43 @@ export function shortBucketLabel(label: string): string {
   return l
 }
 
+/**
+ * Placeholder meter for a statusline that has not reported yet.
+ *
+ * Geometry is IDENTICAL to the live bar (same label form, same track width and
+ * height, same gaps), so the strip does not reflow when the first payload
+ * arrives -- the fill simply appears. That matters more than it sounds: the
+ * footer centres its cluster, so a width change on first tick would visibly
+ * shove every other account sideways.
+ *
+ * No colour and no number: the live bar's colour ramp and percentage both carry
+ * meaning, and a placeholder that borrowed either would read as a real value.
+ */
+export function RateLimitBarPending({ label, compact }: { label: string; compact?: boolean }) {
+  return (
+    <span
+      className="flex items-center gap-1.5"
+      title={`${label} window — waiting for the status line`}
+      data-testid="rate-limit-pending"
+    >
+      <span className="text-subtext0 opacity-60">{compact ? shortBucketLabel(label) : `${label}:`}</span>
+      <span
+        className="statusline-pending-track inline-block bg-surface1 rounded-sm"
+        style={{ width: compact ? '46px' : '64px', height: '6px' }}
+        role="progressbar"
+        // Indeterminate: aria-valuenow is deliberately ABSENT (there is no
+        // value yet), but min/max stay so the bar matches the live one and
+        // validators that expect a bounded range are satisfied.
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuetext="waiting for the status line"
+        aria-label={`${label} rate limit utilisation, not yet reported`}
+      />
+      {!compact && <span className="text-subtext0 tabular-nums opacity-60">--%</span>}
+    </span>
+  )
+}
+
 export default function RateLimitBar({ label, pct, resets, showReset, compact }: { label: string; pct: number; resets?: string; showReset?: boolean; compact?: boolean }) {
   const clamped = Math.min(100, Math.max(0, pct))
   // Drive from theme tokens so the bar adapts to light/dark — hard-

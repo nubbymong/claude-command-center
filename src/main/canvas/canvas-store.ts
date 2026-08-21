@@ -1255,6 +1255,36 @@ function clampToNow(iso: string): string {
   return Number.isFinite(ms) && ms <= now ? iso : new Date(now).toISOString()
 }
 
+/**
+ * Do two recorded working directories name the same project?
+ *
+ * The library's project scope compares a canvas record's stamped `cwd` against
+ * the cwd of the session ASKING, and those two strings come from different
+ * places at different times: the record is stamped once at first render and
+ * never drifts, while the asking side is whatever the latest spawn recorded.
+ * On the app-relaunch path that is a different SOURCE entirely -- `pty-handlers`
+ * records `options?.resume?.cwd ?? options?.cwd`, and `resume.cwd` is the first
+ * cwd string in the conversation JSONL, trimmed verbatim. So one tile's key can
+ * alternate between two independent spellings across its life.
+ *
+ * A raw `!==` therefore fails on differences that are not differences: a
+ * trailing separator, a case difference on a case-insensitive filesystem,
+ * forward vs back slashes on Windows. Normalise the way the filesystem itself
+ * would, matching `sameFsPath`. Deliberately LEXICAL: realpath would be
+ * stronger but throws on a directory that no longer exists, which is exactly
+ * the case where someone most needs to find their old canvases.
+ */
+function sameProjectDir(a: string, b: string): boolean {
+  const clean = (p: string) => {
+    const stripped = p.replace(FORMAT_CONTROLS_RE, '')
+    // path.resolve normalises separators and `.` segments, but only makes sense
+    // on an absolute path -- a relative one would be resolved against the main
+    // process's cwd, which has nothing to do with either session.
+    return path.isAbsolute(stripped) ? path.resolve(stripped) : stripped
+  }
+  return sameFsPath(clean(a), clean(b))
+}
+
 /** Canvases this session could reclaim, for the user to choose from. Pure read
  *  — nothing moves until the user names one. */
 export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdoptionQuery): ReclaimableCanvas[] {
@@ -1335,12 +1365,25 @@ export function listAllCanvases(
   const activeForAsking = asking ? sessionIndex.get(asking) : undefined
   const out: CanvasLibraryEntry[] = []
   for (const record of canvases.values()) {
-    if (projectCwd && record.cwd && record.cwd !== projectCwd) continue
-    const latest = record.versions[record.versions.length - 1]
-    const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
     // The same question adoptCanvasForSession answers, so the badge and the
     // action can never disagree: did THIS session author it.
     const mine = asking !== undefined && record.sessionId === asking
+    // Project scope NEVER hides a session's own canvas.
+    //
+    // ADR-017 scopes the library to the project, and justifies it by saying the
+    // reclaim list stays unfiltered so a canvas whose project you never open
+    // again still has a route back. It does not: listOrphanCandidateCanvases
+    // returns [] the moment the asking session owns a canvas, and excludes the
+    // session's own regardless. So for any session that has ever rendered, the
+    // scoped library is the ONLY route to its own work -- and a project key that
+    // merely RESPELLS (a trailing separator, a relaunch reading cwd from the
+    // transcript instead of the config) would strand every canvas it authored,
+    // including the one currently active. Filtering by relevance is right;
+    // foreclosing is not, so own rows are always kept and the picker sorts them
+    // to the top.
+    if (!mine && projectCwd && record.cwd && !sameProjectDir(record.cwd, projectCwd)) continue
+    const latest = record.versions[record.versions.length - 1]
+    const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
     out.push({
       canvasId: record.canvasId,
       versionCount: record.versions.length,

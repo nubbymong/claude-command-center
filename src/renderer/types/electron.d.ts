@@ -342,6 +342,8 @@ export interface ElectronAPI {
         }
       | { ok: false; error: string }
     >
+    /** Web-session status only — a local read, no CLI subprocess. */
+    webStatus: (profileId: string) => Promise<{ ok: true; web: any } | { ok: false; error: string }>
     signIn: (profileId: string) => Promise<{ ok: true; state: any } | { ok: false; error: string }>
     signInState: () => Promise<{ ok: true; state: any } | { ok: false; error: string }>
     cancel: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>

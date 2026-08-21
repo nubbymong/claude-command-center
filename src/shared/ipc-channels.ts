@@ -311,6 +311,10 @@ export const IPC = {
   // Per-account claude.ai web session (#216): sign in via the system browser,
   // hold the cookies in a per-account partition, open artifacts as that account.
   ACCOUNT_WEB_STATUS: 'accountWeb:status',
+  /** Web-session status ONLY. A local JSON read, so it answers in microseconds —
+   *  unlike ACCOUNT_WEB_STATUS, which awaits the `claude auth status` subprocess
+   *  before it can report anything at all. */
+  ACCOUNT_WEB_WEB_STATUS: 'accountWeb:webStatus',
   ACCOUNT_WEB_SIGN_IN: 'accountWeb:signIn',
   ACCOUNT_WEB_SIGN_IN_STATE: 'accountWeb:signInState',
   ACCOUNT_WEB_CANCEL: 'accountWeb:cancel',

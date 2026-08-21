@@ -88,29 +88,44 @@ export interface WebglHandle {
 /**
  * Build the callback a terminal registers with the shared atlas coordinator.
  *
- * The coordinator repaints every OTHER terminal when one rebuilds the shared
- * glyph atlas — but only a terminal actually rendering through WebGL has
- * anything to repaint. Two ways a terminal ends up registered without WebGL:
- * `installWebglWithRecovery` swallows an initial load failure (WebGL
- * unavailable in the environment), and a context-loss storm can drop a terminal
- * to the DOM renderer permanently once the recreate cap is reached. Either way
- * the viewport is correct already, so the refresh is pure waste.
+ * ORDER IS THE WHOLE THING. When another terminal rebuilds the shared atlas,
+ * this terminal's render model still describes glyphs that no longer exist in
+ * the texture. `refresh()` alone therefore repaints it BLANK — `_updateModel`
+ * sees an unchanged model, keeps the stale vertices, and draws them against an
+ * emptied texture. That is why the previous coordinator, which refreshed and
+ * nothing more, did not fix the corruption and was worse than leaving the
+ * terminal alone: an untouched background terminal at least kept its last good
+ * frame.
  *
- * Gating here rather than at the registration site covers BOTH cases with one
- * check — registration happens once at mount, when the second case has not
- * happened yet.
+ * So: drop this terminal's OWN model first (`clearOwnModel`), THEN repaint.
+ * `clearOwnModel` must not touch the shared texture — a victim that re-clears
+ * the atlas moves the corruption to the next terminal, and N terminals clearing
+ * in response to one another never settles.
+ *
+ * Only a terminal actually rendering through WebGL has anything to do here.
+ * Two ways one ends up registered without it: `installWebglWithRecovery`
+ * swallows an initial load failure (WebGL unavailable), and a context-loss
+ * storm drops a terminal to the DOM renderer permanently at the recreate cap.
+ * The DOM renderer holds no shared atlas, so its viewport is already correct
+ * and both the clear and the repaint would be pure waste. Gating HERE rather
+ * than at the registration site covers both with one check — registration
+ * happens once at mount, before the second case can have happened.
  *
  * Note for callers: register THIS function with the coordinator and pass the
- * SAME reference to `notifyCleared`. The coordinator skips the terminal that
- * cleared by callback identity, so passing a different function for the two
- * would repaint the source twice — once from the repainter's own
- * clear-then-refresh, once from the coordinator.
+ * SAME reference to `notifyCleared`. The coordinator identifies the terminal
+ * that cleared by callback identity, so two different closures would make the
+ * source resync itself needlessly.
  */
-export function createAtlasRefresh(
+export function createAtlasResync(
   getHandle: () => WebglHandle | null,
+  clearOwnModel: () => void,
   refresh: () => void,
 ): () => void {
-  return () => { if (getHandle()?.isActive()) refresh() }
+  return () => {
+    if (!getHandle()?.isActive()) return
+    clearOwnModel()
+    refresh()
+  }
 }
 
 /**

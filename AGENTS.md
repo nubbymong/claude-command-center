@@ -24,6 +24,36 @@ uncommitted work. A `PreToolUse` hook denies writes and mutating git outside the
 worktree you own; `CCC_SESSION_GUARD=off` is the escape hatch. See
 `docs/session-isolation.md` and ADR-012.
 
+## Ticket creation & premise review — policy
+
+**Every repo change starts from a GitHub issue, and every issue carries a premise
+review.** Two standing gates bracket a change: a *premise* review at creation, and
+an *adversarial* review before merge (ADR-009). This is the first one.
+
+Before you file an issue — whether you are a human or an agent — state its
+**premise** and check it holds:
+
+- **The problem, and the evidence it is real.** Not "X would be nice" but "X is
+  broken/absent, here is where (`file:line`), here is what happens." Ground it in
+  the code as it is now, not as you remember it.
+- **Why it is still open.** This repo moves fast; a surprising amount of proposed
+  work is already shipped or half-shipped. Check recent merges before asserting a
+  problem exists — a STALE premise is the most common and most wasteful defect.
+- **Why now / what it blocks.** Enough for triage to place it on a release line.
+
+An agent that files an issue **must** include a short premise-assessment section in
+the body (problem · evidence · still-open · why-now). An issue without one is
+incomplete and should be sent back, exactly as a security-sensitive PR without an
+adversarial pass would be.
+
+For the existing backlog that predates this policy, the `/LoopReady` skill runs the
+premise review in bulk (a cheap Fable fan-out) and labels each ticket
+`loop-ready` / `loop-needs-human`; `/StartLoop` re-checks the premise once more
+before spending real model budget executing it. See
+`.claude/skills/LoopReady/SKILL.md` and `.claude/skills/StartLoop/SKILL.md`. These
+are AI Code Conductor-only; they encode this repo's `beta` / session-guard /
+ADR-009 / label conventions and are not the aai-core loop skills.
+
 ## Build & Run
 
 ```bash
@@ -159,6 +189,7 @@ Two traps worth knowing before you hit them:
 ## Deeper references
 
 - `.claude/skills/adversarial-review/SKILL.md` — the adversarial review pass required for security-sensitive changes (ADR-009), plus the path table that decides when it applies.
+- `.claude/skills/LoopReady/SKILL.md`, `.claude/skills/StartLoop/SKILL.md` — the model-tiered autonomous-backlog pair (premise-review fan-out → labelled plan → autonomous run to PRs), and `docs/loop-autonomy.md` for the contract a "don't ask" run must respect and the blockers it cannot cross.
 - `docs/security-embargo-runbook.md` — the executable procedure for an unfixed vulnerability: who can do what, the `gh` recipes, the private-fork workflow, and the traps (ADR-011).
 - `docs/agent-conventions.md` — the detailed agent/contributor conventions (hard constraints, IPC channel rules, branching & review).
 - `CONTRIBUTING.md` — contributor mechanics, commit-message format, changelog workflow.

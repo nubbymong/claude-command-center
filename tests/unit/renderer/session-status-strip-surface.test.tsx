@@ -59,6 +59,51 @@ describe('SessionStatusStrip surface tier (U1.2)', () => {
   })
 })
 
+describe('SessionStatusStrip -- meters awaiting the first statusline payload', () => {
+  const pending = () => container.querySelectorAll('[data-testid="rate-limit-pending"]')
+
+  /** A live local Claude session with the rate-limit meters switched on. */
+  const liveClaude = (extra: Record<string, unknown> = {}) => {
+    sessionState.sessions = [{ id: 's1', provider: 'claude', contextPercent: 10, status: 'working', ...extra }]
+    settingsState.settings.statusLine = { font: 'sans', fontSize: 11, showRateLimits: true }
+  }
+
+  it('shows waiting meters instead of nothing before the first payload', () => {
+    // The statusline comes from a detached child process and can trail the
+    // terminal by seconds. Rendering nothing there reads as "broken".
+    liveClaude()
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+    expect(pending().length).toBe(2) // 5h + 7d
+    // Never a value: no colour ramp, no percentage.
+    for (const p of pending()) expect(p.textContent ?? '').not.toMatch(/\d+%/)
+  })
+
+  it('stops shimmering once a real payload arrives', () => {
+    liveClaude({ rateLimitCurrent: 42, rateLimitWeekly: 8 })
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+    expect(pending().length).toBe(0)
+    expect(container.querySelectorAll('[role="progressbar"]').length).toBeGreaterThan(0)
+  })
+
+  it('does NOT shimmer where a payload will never come', () => {
+    // Each of these would otherwise shimmer forever, which is a worse lie than
+    // the blank it replaces.
+    liveClaude()
+    settingsState.settings.statusLineEnabled = false
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+    expect(pending().length).toBe(0)
+
+    settingsState.settings.statusLineEnabled = true
+    liveClaude({ shellOnly: true })
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+    expect(pending().length).toBe(0)
+
+    liveClaude({ status: 'disconnected' })
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+    expect(pending().length).toBe(0)
+  })
+})
+
 describe('SessionStatusStrip account/model de-duplication (Bug 6)', () => {
   it('multi-account: shows the account ONCE (interactive switch pill), not also as a read-only chip', () => {
     sessionState.sessions = [{ id: 's1', provider: 'claude', contextPercent: 10, accountEmail: 'a@x.com', profileId: 'p1', modelName: 'Opus 4.8' }]

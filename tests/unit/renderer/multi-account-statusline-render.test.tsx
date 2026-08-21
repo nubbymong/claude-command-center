@@ -109,14 +109,102 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     const strip = container.querySelector<HTMLElement>('[data-testid="multi-account-statusline"]')!
     expect(strip.className).not.toContain('py-1') // the bar does not grow
     // The boxed-pill design carries the visual boundary, so the inter-pill gap
-    // tightened from gap-6 to gap-3.
-    expect(rows()[0].className).toContain('gap-3')
+    // tightened from gap-6 to gap-3. Split into gap-x/gap-y once rows could
+    // wrap: the horizontal gap is unchanged, the row gap is the new part.
+    expect(rows()[0].className).toContain('gap-x-3')
     expect(rows()[0].className).not.toContain('gap-6')
     // Pills keep their full width (email un-truncated) exactly as before.
     for (const p of pills()) {
       expect(p.className).toContain('shrink-0')
       expect(p.innerHTML).not.toContain('truncate')
     }
+  })
+
+  it('wraps a row that does not fit rather than overflowing its zone', () => {
+    // The occlusion bug: the count-split caps a row at 3 pills, but 3 pills
+    // still exceed a narrow footer. The cluster is centred, so an over-wide row
+    // spilled out of BOTH sides and the footer's overflow-hidden clipped the
+    // leading pill against the CLI band. Wrapping is what makes the extra
+    // accounts move to another line instead of being cut in half.
+    useAccounts(3)
+    render()
+    for (const r of rows()) {
+      expect(r.className).toContain('flex-wrap')
+      // A row gap, so wrapped lines do not collide.
+      expect(r.className).toContain('gap-y-1')
+    }
+  })
+
+  it('shows waiting meters for an account whose statusline has not reported yet', () => {
+    // A live account with no buckets is not an account with no usage -- it is
+    // one whose detached statusline process has not written yet. Rendering no
+    // meters at all reads as the former.
+    sessionState.sessions = [
+      { id: '1', label: 'x', status: 'working', accountEmail: 'a@x.com', rateLimitCurrent: 30, rateLimitWeekly: 12 },
+      { id: '2', label: 'y', status: 'working', accountEmail: 'jane.doe@example.com' },
+    ]
+    render()
+
+    const pending = container.querySelectorAll('[data-testid="rate-limit-pending"]')
+    expect(pending.length).toBe(2) // 5h + Weekly for the un-reported account
+    for (const p of pending) {
+      expect(p.querySelector('.statusline-pending-track')).not.toBeNull()
+      // Never a number: a placeholder must not read as a measurement.
+      expect(p.textContent ?? '').not.toMatch(/\d+%/)
+    }
+    // The reporting account still shows real bars.
+    expect(container.querySelectorAll('[role="progressbar"]').length).toBe(4)
+  })
+
+  it('shows NO waiting meters for an account that reported, but whose buckets the user hid', () => {
+    // "Nothing shown" has two causes: nothing reported yet (wait), or the user
+    // hid what was reported (their choice). Shimmering over the second
+    // overrides the setting with an animation that can never resolve.
+    //
+    // The case has to be built carefully: hiding BOTH pending labels empties
+    // the placeholder list anyway, so it would pass with or without the guard.
+    // Here the account reports ONLY Fable and the user hides Fable, so `shown`
+    // is empty while 5h/Weekly survive the placeholder filter -- which is
+    // exactly when the two causes diverge.
+    settingsState.settings = { ...settingsState.settings, footerHiddenUsageBuckets: ['Fable'] }
+    sessionState.sessions = [
+      { id: '1', label: 'x', status: 'working', accountEmail: 'a@x.com', rateLimitCurrent: 30, rateLimitWeekly: 12 },
+      {
+        id: '2',
+        label: 'y',
+        status: 'working',
+        accountEmail: 'jane.doe@example.com',
+        usageBuckets: [{ key: 'fable', label: 'Fable', group: 'model', percent: 61, resetsAt: '', severity: 'normal' }],
+      },
+    ]
+    render()
+    // It DID report. Hidden is a choice, not a wait.
+    expect(container.querySelectorAll('[data-testid="rate-limit-pending"]').length).toBe(0)
+  })
+
+  it('the waiting meter is a bounded, indeterminate progressbar', () => {
+    sessionState.sessions = [
+      { id: '1', label: 'x', status: 'working', accountEmail: 'a@x.com', rateLimitCurrent: 30 },
+      { id: '2', label: 'y', status: 'working', accountEmail: 'jane.doe@example.com' },
+    ]
+    render()
+    const bar = container.querySelector('[data-testid="rate-limit-pending"] [role="progressbar"]')!
+    expect(bar.getAttribute('aria-valuemin')).toBe('0')
+    expect(bar.getAttribute('aria-valuemax')).toBe('100')
+    // Indeterminate: no current value until one is reported.
+    expect(bar.getAttribute('aria-valuenow')).toBeNull()
+  })
+
+  it('shows NO waiting meters when the status line is switched off', () => {
+    // Nothing will ever arrive with the master switch off, so a shimmer there
+    // never resolves -- worse than the blank it replaced.
+    settingsState.settings = { ...settingsState.settings, statusLineEnabled: false }
+    sessionState.sessions = [
+      { id: '1', label: 'x', status: 'working', accountEmail: 'a@x.com', rateLimitCurrent: 30, rateLimitWeekly: 12 },
+      { id: '2', label: 'y', status: 'working', accountEmail: 'jane.doe@example.com' },
+    ]
+    render()
+    expect(container.querySelectorAll('[data-testid="rate-limit-pending"]').length).toBe(0)
   })
 
   it('every account sits in its own bounded pill (border + rounded), separating them structurally', () => {
@@ -135,7 +223,7 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     render()
     const strip = container.querySelector<HTMLElement>('[data-testid="multi-account-statusline"]')!
     expect(strip.className).toContain('py-1')
-    expect(rows()[0].className).toContain('gap-2')
+    expect(rows()[0].className).toContain('gap-x-2')
     // Pills may shrink and the email ellipsises so three fit at the 1280px
     // minimum window width; the full address stays in the pill's title.
     for (const p of pills()) {
