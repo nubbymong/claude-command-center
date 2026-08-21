@@ -170,7 +170,9 @@ describe('the preview shows the button and the exact text it will type', () => {
     render({})
     act(() => { byTest('command-kind-shell')!.click() })
     expect(byTest('command-preview-watch')).toBeNull()
-    const cb = q<HTMLInputElement>('input[type="checkbox"]')!
+    // By testid, not "the first checkbox": the secret toggle now comes first
+    // in DOM order, and that is exactly what this assertion tripped over.
+    const cb = byTest<HTMLInputElement>('command-watch-toggle')!
     act(() => { cb.click() })
     act(() => { type(q<HTMLInputElement>('input[type="url"]')!, 'http://localhost:5173') })
     expect(byTest('command-preview-watch')!.textContent).toContain('http://localhost:5173')
@@ -197,5 +199,75 @@ describe('the pure rules the preview and the bar share', () => {
     expect(targetFor('shell', false, 'main')).toBe('partner')
     expect(targetFor('shell', true, 'main')).toBe('claude')
     expect(targetFor('shell', true, 'partner')).toBe('partner')
+  })
+})
+
+describe('a secret argument (shell kind only)', () => {
+  const armShell = () => {
+    render({ configId: 'cfg' })
+    act(() => { byTest('command-kind-shell')!.click() })
+    act(() => { type(labelInput(), 'Deploy'); type(byTest<HTMLTextAreaElement>('command-text')!, './deploy.ps1') })
+  }
+
+  it('is offered for a shell command and NOT for a prompt', () => {
+    render({})
+    act(() => { byTest('command-kind-prompt')!.click() })
+    expect(byTest('command-secret-toggle')).toBeNull()
+    act(() => { byTest('command-kind-shell')!.click() })
+    expect(byTest('command-secret-toggle')).not.toBeNull()
+  })
+
+  it('switched on with no value, the button cannot be created', () => {
+    armShell()
+    act(() => { byTest<HTMLInputElement>('command-secret-toggle')!.click() })
+    expect(byTest<HTMLButtonElement>('command-submit')!.disabled).toBe(true)
+  })
+
+  it('hands the VALUE to the caller separately, and marks the command -- the value is never in the record', () => {
+    const onConfirm = vi.fn()
+    act(() => { root.render(React.createElement(CommandDialog, { onConfirm, onCancel: vi.fn(), configId: 'cfg' } as never)) })
+    act(() => { byTest('command-kind-shell')!.click() })
+    act(() => { type(labelInput(), 'Deploy'); type(byTest<HTMLTextAreaElement>('command-text')!, './deploy.ps1') })
+    act(() => { byTest<HTMLInputElement>('command-secret-toggle')!.click() })
+    act(() => { type(byTest<HTMLInputElement>('command-secret-value')!, 'sk-verysecret') })
+    act(() => { byTest('command-submit')!.click() })
+    const [record, secret] = onConfirm.mock.calls[0]
+    expect(record.hasSecretArg).toBe(true)
+    expect(secret).toBe('sk-verysecret')
+    expect(JSON.stringify(record)).not.toContain('sk-verysecret')
+  })
+
+  it('the preview shows the REFERENCE where {secret} is, never the value', () => {
+    ;(globalThis as any).window.electronPlatform = 'win32'
+    armShell()
+    const argInput = q<HTMLInputElement>('input[placeholder^="e.g. -Port"]')!
+    act(() => { type(argInput, '-Token {secret}') })
+    act(() => { argInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    act(() => { byTest<HTMLInputElement>('command-secret-toggle')!.click() })
+    act(() => { type(byTest<HTMLInputElement>('command-secret-value')!, 'sk-verysecret') })
+    const line = byTest('command-preview-line')!.textContent!
+    expect(line).toContain('-Token $env:CCC_CMD_SECRET_')
+    expect(line).not.toContain('sk-verysecret')
+    expect(line).not.toContain('{secret}')
+  })
+
+  it('on edit, a stored secret is kept unless replaced, and switching it off reports that', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(React.createElement(CommandDialog, {
+        onConfirm, onCancel: vi.fn(), configId: 'cfg',
+        initial: { id: 'abc123', label: 'Deploy', prompt: './deploy.ps1', scope: 'global', target: 'partner', hasSecretArg: true, defaultArgs: ['-T {secret}'] },
+      } as never))
+    })
+    expect(byTest<HTMLInputElement>('command-secret-toggle')!.checked).toBe(true)
+    // Nothing typed: submit is allowed (stored value stays), and no value is handed over.
+    expect(byTest<HTMLButtonElement>('command-submit')!.disabled).toBe(false)
+    act(() => { byTest('command-submit')!.click() })
+    expect(onConfirm.mock.calls[0][0].hasSecretArg).toBe(true)
+    expect(onConfirm.mock.calls[0][1]).toBeUndefined()
+    // Switch it off: the record says so, which is the caller's cue to delete.
+    act(() => { byTest<HTMLInputElement>('command-secret-toggle')!.click() })
+    act(() => { byTest('command-submit')!.click() })
+    expect(onConfirm.mock.calls[1][0].hasSecretArg).toBeUndefined()
   })
 })

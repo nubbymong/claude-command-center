@@ -10,6 +10,7 @@ import WebviewButton from './WebviewButton'
 import PasteHint from './PasteHint'
 import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
 import { generateId } from '../utils/id'
+import { buildCommandLine, commandSecretRef, commandSecretKey } from '../../shared/command-secret'
 import { trackUsage } from '../stores/tipsStore'
 import { CODEX_MODELS } from '../codex-models'
 import { useResolvedTheme } from '../hooks/useThemeController'
@@ -157,11 +158,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
   /** Build the full command string (prompt + default args) */
   const buildFullCommand = (cmd: CustomCommand, args?: string[]): string => {
-    const useArgs = args || cmd.defaultArgs
-    if (useArgs && useArgs.length > 0) {
-      return cmd.prompt + ' ' + useArgs.join(' ')
-    }
-    return cmd.prompt
+    // ONE rule, shared with the dialog's preview (shared/command-secret). A
+    // secret argument is typed as a reference to the env var main set when the
+    // shell started -- never as the value, which would land in shell history.
+    const isWin = (window as unknown as { electronPlatform?: string }).electronPlatform === 'win32'
+    const ref = cmd.hasSecretArg ? commandSecretRef(cmd.id, isWin) : undefined
+    return buildCommandLine(cmd.prompt, args || cmd.defaultArgs, ref)
   }
 
   const startActivation = useWebviewStore((s) => s.startActivation)
@@ -258,15 +260,24 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     setContextMenu({ x: e.clientX, y: e.clientY, commandId, rowTarget })
   }
 
-  const handleAdd = (data: Omit<CustomCommand, 'id'>) => {
-    addCommand({ ...data, id: generateId() })
+  const handleAdd = (data: Omit<CustomCommand, 'id'>, argSecret?: string) => {
+    const id = generateId()
+    addCommand({ ...data, id })
+    // The value goes to the keychain under the command's id, and ONLY there.
+    if (data.hasSecretArg && argSecret) void window.electronAPI.credentials.save(commandSecretKey(id), argSecret)
     trackUsage('commands.create-command')
     setShowDialog(false)
   }
 
-  const handleEdit = (data: Omit<CustomCommand, 'id'>) => {
+  const handleEdit = (data: Omit<CustomCommand, 'id'>, argSecret?: string) => {
     if (editingCommand) {
       updateCommand(editingCommand.id, data)
+      const key = commandSecretKey(editingCommand.id)
+      // A typed value replaces; switching the secret off deletes; edit with
+      // nothing typed keeps what is stored. credentials.delete is idempotent,
+      // so a command that never had one is unaffected.
+      if (data.hasSecretArg && argSecret) void window.electronAPI.credentials.save(key, argSecret)
+      else if (!data.hasSecretArg) void window.electronAPI.credentials.delete(key)
       setEditingCommand(null)
     }
   }
@@ -741,6 +752,9 @@ ${scopeLine}`
             if (cmd) { setEditingCommand(cmd); setContextMenu(null) }
           } : undefined}
           onDelete={contextMenu.commandId ? () => {
+            // Sweep the keychain too, so a deleted button does not strand its
+            // secret. Idempotent for the ordinary command that never had one.
+            void window.electronAPI.credentials.delete(commandSecretKey(contextMenu.commandId!))
             removeCommand(contextMenu.commandId!)
             setContextMenu(null)
           } : undefined}
