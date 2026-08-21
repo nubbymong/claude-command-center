@@ -23,7 +23,10 @@ export interface ElectronAPI {
    *  prod install. Drives DEV window labeling (title + badge + accent). */
   appIsDev: () => Promise<boolean>
   config: {
-    loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
+    /** `readFailed` = the CONFIG dir could not be reached (nothing read);
+     *  `failedKeys` = files that exist but could not be read or parsed. Either
+     *  means "latch writes off", never "fresh install". */
+    loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean; readFailed?: boolean; failedKeys?: string[] }>
     save: (key: string, data: unknown) => Promise<boolean>
     migrateFromLocalStorage: (data: Record<string, unknown>) => Promise<boolean>
   }

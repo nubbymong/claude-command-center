@@ -63,7 +63,7 @@ import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { flushPendingConfigSaves } from './utils/config-saver'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
-import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration, retireAskConfig } from './utils/configHydration'
+import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration, retireAskConfig, readFailureLockReason } from './utils/configHydration'
 import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupInsightsListener } from './stores/insightsStore'
@@ -345,6 +345,18 @@ export default function App() {
     try {
       console.log('[App] Loading config from CONFIG/...')
       const result = await window.electronAPI.config.loadAll()
+
+      // A read that failed WITHOUT rejecting: the CONFIG dir was unreachable
+      // (`readFailed`), or one or more files exist but could not be read or
+      // parsed (`failedKeys`). Either used to look like "absent" and let the
+      // migrations and the stores write defaults over files that were fine.
+      // Same latch as the catch below, BEFORE anything runs that writes; the
+      // notice offers "start fresh anyway". (ADR-009 pass, beta.16.)
+      const readFailure = readFailureLockReason(result)
+      if (readFailure) {
+        console.error('[App] Config read failed without rejecting:', readFailure)
+        useConfigWriteLockStore.getState().lock(readFailure)
+      }
 
       // Both one-time config migrations run BEFORE the stores hydrate, so a
       // retired record never renders even once.

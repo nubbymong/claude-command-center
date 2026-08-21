@@ -100,7 +100,7 @@ export interface ElectronAPI {
   /** True for a dev build (npm run dev / ccc); drives DEV window labeling. */
   appIsDev: () => Promise<boolean>
   config: {
-    loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
+    loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean; readFailed?: boolean; failedKeys?: string[] }>
     save: (key: string, data: unknown) => Promise<boolean>
     migrateFromLocalStorage: (data: Record<string, unknown>) => Promise<boolean>
   }
