@@ -435,4 +435,112 @@ describe('the recreate cap constants', () => {
     expect(DEFAULT_STABLE_PERIOD_MS).toBeGreaterThan(1_000)
   })
 })
-
+
+// ---------------------------------------------------------------------------
+// Detaching: what makes "only the visible terminal holds a GPU context" possible
+// ---------------------------------------------------------------------------
+
+describe('dispose (detaching a hidden pane)', () => {
+  let contextLoss: (() => void) | null
+  let disposeCount: number
+  let constructCount: number
+  let refreshCount: number
+  let Fake: new () => { onContextLoss: (cb: () => void) => void; dispose: () => void }
+  let term: { loadAddon: (a: unknown) => void; refresh: (s: number, e: number) => void; rows: number }
+  const syncRaf = (cb: () => void) => { cb(); return 0 }
+
+  beforeEach(() => {
+    contextLoss = null
+    disposeCount = 0
+    constructCount = 0
+    refreshCount = 0
+    Fake = class {
+      constructor() { constructCount++ }
+      onContextLoss(cb: () => void) { contextLoss = cb }
+      dispose() { disposeCount++ }
+    }
+    term = { rows: 24, loadAddon: vi.fn(), refresh: vi.fn(() => { refreshCount++ }) }
+  })
+
+  const install = () => installWebglWithRecovery(term as never, {
+    WebglAddonCtor: Fake as never,
+    raf: syncRaf,
+    isDisposed: () => false,
+  })
+
+  it('disposes the live addon and reports itself inactive', () => {
+    const h = install()
+    expect(h.isActive()).toBe(true)
+    h.dispose()
+    expect(disposeCount).toBe(1)
+    expect(h.isActive()).toBe(false)
+  })
+
+  it('repaints on the way out, so the viewport WebGL last drew is not left behind', () => {
+    const h = install()
+    h.dispose()
+    expect(refreshCount).toBe(1)
+  })
+
+  it('is idempotent -- a second dispose is not a second addon teardown', () => {
+    const h = install()
+    h.dispose()
+    h.dispose()
+    h.dispose()
+    expect(disposeCount).toBe(1)
+  })
+
+  it('a context loss AFTER detaching does not take a context back', () => {
+    // The whole point of detaching is that this terminal stops holding one of
+    // the ~16 contexts the renderer allows. A recovery that fires afterwards
+    // would quietly re-acquire it -- and a hidden pane would be holding a
+    // context again with nothing on screen to show for it.
+    const h = install()
+    expect(constructCount).toBe(1)
+    h.dispose()
+    contextLoss?.()
+    expect(constructCount).toBe(1)
+    expect(h.isActive()).toBe(false)
+    // …and the detached addon is not torn down a second time by the handler
+    // that is no longer its business. Two guards stand between a detached
+    // terminal and a live context -- the early-out here and the one in the
+    // recreate callback -- and this assertion is what keeps the first of them
+    // from silently becoming decoration.
+    expect(disposeCount).toBe(1)
+  })
+
+  it('a recreate already QUEUED when the pane is hidden does not land', () => {
+    // The real race, and the only thing the second guard covers: a context loss
+    // schedules the recreate for the next frame, the user switches tab before
+    // that frame arrives, and the callback then runs against a handle that has
+    // already let go of its context. rAF is deferred here rather than
+    // synchronous precisely so this ordering is reachable.
+    let queued: (() => void) | null = null
+    const h = installWebglWithRecovery(term as never, {
+      WebglAddonCtor: Fake as never,
+      raf: (cb) => { queued = cb; return 1 },
+      isDisposed: () => false,
+    })
+    contextLoss?.()          // loss -> recreate scheduled, not yet run
+    expect(queued).not.toBeNull()
+    h.dispose()              // the tab goes away first
+    queued!()                // …and only then does the frame arrive
+    expect(constructCount).toBe(1)
+    expect(h.isActive()).toBe(false)
+  })
+
+  it('clearTextureAtlas after detaching is a no-op that reports false', () => {
+    const h = install()
+    h.dispose()
+    expect(h.clearTextureAtlas()).toBe(false)
+  })
+
+  it('re-installing after a detach gives a fresh, live handle', () => {
+    // Coming back to the tab has to work, or the pane returns blank.
+    const first = install()
+    first.dispose()
+    const second = install()
+    expect(second.isActive()).toBe(true)
+    expect(constructCount).toBe(2)
+  })
+})
