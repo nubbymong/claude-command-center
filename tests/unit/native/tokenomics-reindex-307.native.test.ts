@@ -7,6 +7,7 @@
  * same transaction; only Codex cursors are rewound.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import Database from 'better-sqlite3'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -113,6 +114,76 @@ describe('#307 re-index is Codex-scoped', () => {
     // a live file being re-read cannot double count.
     const n = db.insertEventsWithCursor([claudeEvent(1), claudeEvent(2)], cursor('C:/gone/claude-old.jsonl'))
     expect(n).toBe(0)
+    expect(db.eventCount()).toBe(3)
+    db.close()
+  })
+})
+
+// ── Re-attack round (beta.16 ADR-009 pass): the three minors it found here.
+describe('#307 re-index -- re-attack findings', () => {
+  let tmp: string
+  let dbPath: string
+  let opened: ReturnType<typeof openTkDbRaw>[] = []
+  const openTkDb = (p: string) => { const db = openTkDbRaw(p); opened.push(db); return db }
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tk307b-')); dbPath = path.join(tmp, 'tk.db'); opened = [] })
+  afterEach(() => {
+    for (const db of opened) { try { db.close() } catch { /* already closed */ } }
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+
+  function seed() {
+    const db = openTkDb(dbPath)
+    db.raw.prepare('DELETE FROM tk_meta WHERE key = ?').run('codexReindex307')
+    db.insertEventsWithCursor([claudeEvent(1), claudeEvent(2)], cursor('C:/gone/claude-old.jsonl'))
+    db.insertEventsWithCursor([claudeEvent(3, 's-claude-2', 'cfgB')], cursor('C:/live/claude-new.jsonl'))
+    db.insertEventsWithCursor([codexEvent(1), codexEvent(2)], cursor('C:/codex/sessions/2026/rollout-2026-06-01T10-00-00-abc.jsonl', { codexSessionId: 'x-codex', codexTurns: 2 }))
+    db.setMeta('firstIndexComplete', '1')
+    return db
+  }
+
+  it('clears firstIndexComplete: the index is not complete with every Codex row gone and its files queued', () => {
+    seed().close()
+    const db = openTkDb(dbPath)
+    expect(db.getMeta('codexReindex307')).toBe('done')
+    expect(db.getMeta('firstIndexComplete')).toBeNull()
+    db.close()
+  })
+
+  it('rebuilds tk_daily from the STORED day, not from ts in the re-index-time zone', () => {
+    const db0 = seed()
+    // Simulate an ingest-time zone that put this event on the next day.
+    db0.raw.prepare("UPDATE tk_events SET day = '2026-06-02' WHERE sessionId = 's-claude-2'").run()
+    db0.close()
+    const db = openTkDb(dbPath)
+    const daily = db.raw.prepare('SELECT day, configId FROM tk_daily ORDER BY configId').all() as { day: string; configId: string }[]
+    expect(daily).toEqual([{ day: '2026-06-01', configId: 'cfgA' }, { day: '2026-06-02', configId: 'cfgB' }])
+    db.close()
+  })
+
+  it('a failure mid-replay rolls back, leaves the marker unset, and does NOT leak the handle', () => {
+    seed().close()
+    // Arm a trigger that aborts the first rollup insert of the replay.
+    const arm = new Database(dbPath)
+    arm.exec("CREATE TRIGGER boom BEFORE INSERT ON tk_daily BEGIN SELECT RAISE(ABORT, 'boom'); END;")
+    arm.close()
+
+    expect(() => openTkDbRaw(dbPath)).toThrow(/boom/)
+
+    // Handle closed: the file can be renamed (Windows refuses while it is open).
+    const moved = dbPath + '.moved'
+    expect(() => fs.renameSync(dbPath, moved)).not.toThrow()
+    fs.renameSync(moved, dbPath)
+
+    // Rolled back: every row still there, marker still unset.
+    const check = new Database(dbPath)
+    expect((check.prepare('SELECT COUNT(*) n FROM tk_events').get() as { n: number }).n).toBe(5)
+    expect(check.prepare("SELECT value FROM tk_meta WHERE key='codexReindex307'").get()).toBeUndefined()
+    check.exec('DROP TRIGGER boom')
+    check.close()
+
+    // Disarmed, the next open completes the re-index.
+    const db = openTkDb(dbPath)
+    expect(db.getMeta('codexReindex307')).toBe('done')
     expect(db.eventCount()).toBe(3)
     db.close()
   })

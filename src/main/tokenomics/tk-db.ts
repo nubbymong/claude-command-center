@@ -330,7 +330,12 @@ export function openTkDb(dbPath: string): TkDb {
   // `iterate()` cursor is open on the connection, and rowid order IS the
   // original ingest order, which is what the first-config / last-model upsert
   // rules were computed in the first time.
-  const eventsPageStmt = sqlite.prepare('SELECT rowid AS rid,sessionId,provider,model,priceModel,ts,configId,projectDir,inTok,outTok,cacheReadTok,cacheCreateTok FROM tk_events WHERE rowid > ? ORDER BY rowid ASC LIMIT 5000')
+  // `day` is the STORED day (computed at ingest, in the ingest-time zone), not
+  // re-derived from ts here: re-deriving would make the rebuilt rollups depend
+  // on the machine's zone at re-index time and disagree with tk_events.day.
+  // (`bucket` is not stored, so the heatmap is recomputed -- same maths the
+  // live ingest uses, and the only value that exists for it.)
+  const eventsPageStmt = sqlite.prepare('SELECT rowid AS rid,sessionId,provider,model,priceModel,ts,day,configId,projectDir,inTok,outTok,cacheReadTok,cacheCreateTok FROM tk_events WHERE rowid > ? ORDER BY rowid ASC LIMIT 5000')
   const reindex307 = sqlite.transaction(() => {
     sqlite.exec(`
       DELETE FROM tk_events WHERE provider = 'codex';
@@ -341,7 +346,13 @@ export function openTkDb(dbPath: string): TkDb {
       UPDATE tk_files SET lastOffset = 0, scannedTo = 0, codexTurns = 0,
         codexSessionId = '', codexModel = '', codexCwd = ''
         WHERE codexSessionId <> '' OR path LIKE '%rollout-%';
+      DELETE FROM tk_meta WHERE key = 'firstIndexComplete';
     `)
+    // ^ The index is NOT complete once every Codex row is gone and its files
+    // are queued for re-read: leaving the flag would have the worker's first
+    // `ready` report a complete total that is missing all Codex spend until the
+    // re-ingest sweeps drain. Cleared, the worker takes its honest first-index
+    // path and the UI says "indexing" until `drained`.
     let lastRid = 0
     for (;;) {
       const page = eventsPageStmt.all(lastRid) as Array<Record<string, unknown>>
@@ -364,14 +375,23 @@ export function openTkDb(dbPath: string): TkDb {
       }
       upSession.run(e)
       upSessionModel.run(e)
-      upDaily.run({ ...e, day: dayOf(e.ts) })
+      upDaily.run({ ...e, day: (row.day as string | null) || dayOf(e.ts) })
       upHeat.run({ ...e, bucket: bucketOf(e.ts) })
       }
     }
     setMetaStmt.run('codexReindex307', 'done')
   })
   if ((getMetaStmt.get('codexReindex307') as { value?: string } | undefined)?.value !== 'done') {
-    reindex307()
+    try {
+      reindex307()
+    } catch (err) {
+      // The transaction has rolled back (the DB is exactly as it was and the
+      // marker is unset, so the next open retries). Do not leak the handle on
+      // the way out: a failed open that kept the file open left a worker
+      // alive-but-never-ready with the database held until the next launch.
+      try { sqlite.close() } catch { /* already closed */ }
+      throw err
+    }
   }
 
   return {
