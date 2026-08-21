@@ -2,6 +2,7 @@ import React from 'react'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useCanvasReviewStore, openReviewsOf } from '../stores/canvasReviewStore'
+import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 import { trackUsage } from '../stores/tipsStore'
 
 interface Props {
@@ -32,7 +33,28 @@ export default function AgentCanvasButton({ sessionId }: Props) {
   })
   const reviewsLoaded = useCanvasReviewStore((s) => !!s.bySessionId[sessionId]?.loaded)
   const refreshReviews = useCanvasReviewStore((s) => s.refresh)
-  const showCount = openReviews >= 2
+  // The number that spans canvases (item 29, the deferred half of the
+  // 2026-08-20 dimensions pass): open reviews across EVERY canvas this
+  // session owns. The pane's own count is honest about the canvas on screen
+  // and blind to the others; from the terminal, "the others" is exactly what
+  // you cannot see. The pill shows the total; the tooltip splits it.
+  const totals = useCanvasTotalsStore((s) => s.bySessionId[sessionId])
+  const refreshTotals = useCanvasTotalsStore((s) => s.refresh)
+  const totalOpen = totals?.loaded ? Math.max(totals.openReviews, openReviews) : openReviews
+  // Open on OTHER canvases. Derived from the sweep when it is loaded; the
+  // on-screen canvas's count comes from the live mirror, which is fresher.
+  const elsewhere = totals?.loaded ? Math.max(0, totals.openReviews - totals.onActive) : 0
+  const unknown = totals?.loaded ? totals.unknown : 0
+  // From TWO on this canvas (the rule above) — OR from ONE when any of it is
+  // on a canvas you are not looking at, because that one is invisible from
+  // here and a pill is the only way to learn it exists.
+  const showCount = totalOpen >= 2 || elsewhere >= 1
+
+  // Hydrate the sweep the first time this session's button mounts; the push
+  // listeners keep it live after that.
+  React.useEffect(() => {
+    if (!totals?.loaded) void refreshTotals(sessionId)
+  }, [sessionId, totals?.loaded, refreshTotals])
 
   // The review mirror was only ever filled when the notes panel mounted, so
   // this button would have read zero for any session whose pane had not been
@@ -91,10 +113,16 @@ export default function AgentCanvasButton({ sessionId }: Props) {
         <span
           className="inline-flex items-center justify-center min-w-[15px] h-[15px] px-1 rounded-full text-[9.5px] font-bold tabular-nums"
           style={{ background: 'var(--color-peach)', color: 'var(--color-crust)' }}
-          title={`${openReviews} reviews on this canvas are still open — every note needs your verdict before one closes`}
+          title={[
+            `${totalOpen} review${totalOpen === 1 ? '' : 's'} still open across ${totals?.loaded ? `${totals.canvases} canvas${totals.canvases === 1 ? '' : 'es'}` : 'your canvases'}`,
+            totals?.loaded && totals.canvases > 1 ? ` — ${openReviews} on this one, ${elsewhere} elsewhere (open the subject picker to see which)` : '',
+            unknown > 0 ? `; ${unknown} canvas${unknown === 1 ? '' : 'es'} could not be read` : '',
+            '. A review closes when every note in it has your verdict.',
+          ].join('')}
           data-testid="canvas-open-reviews-count"
+          data-elsewhere={elsewhere}
         >
-          {openReviews}
+          {totalOpen}
         </span>
       )}
       {attention && (
