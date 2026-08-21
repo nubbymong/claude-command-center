@@ -70,6 +70,8 @@ interface Props {
   collapsed?: boolean
   onShowAccountUsage?: () => void
   onShowFirstRun?: () => void
+  /** Raise the tip modal. The trigger lives in the dock, under Ask Conductor. */
+  onShowTip?: () => void
   // Suppresses the FirstRunCard while the training/walkthrough is
   // open — clicking "Create Config" otherwise opens the first-config dialog
   // behind the tour, which the user can't see and which doesn't
@@ -77,7 +79,7 @@ interface Props {
   tourActive?: boolean
 }
 
-export default function Sidebar({ currentView, onViewChange, collapsed, onShowAccountUsage, onShowFirstRun, tourActive }: Props) {
+export default function Sidebar({ currentView, onViewChange, collapsed, onShowAccountUsage, onShowFirstRun, onShowTip, tourActive }: Props) {
   const launchConfig = useLaunchConfig()
   const sideType = useRegionTypography('sidebar')
   const { sessions: allSessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
@@ -613,6 +615,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           collapsed
           onOpened={() => onViewChange('sessions')}
           isActive={currentView === 'sessions' && !!askSession && activeSessionId === askSession.id}
+          onShowTip={onShowTip}
         />
       </aside>
     )
@@ -1165,6 +1168,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       <AskConductorDock
         onOpened={() => onViewChange('sessions')}
         isActive={currentView === 'sessions' && !!askSession && activeSessionId === askSession.id}
+        onShowTip={onShowTip}
       />
 
       {/* Session context menu */}

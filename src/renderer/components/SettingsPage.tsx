@@ -203,6 +203,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   </select>
                 </Field>
                 <CheckForUpdatesField onUpdateRequested={onUpdateRequested} />
+                {/* Both of these are also switchable from the sidebar dock's own
+                    right-click menu, which is how most people will turn them off.
+                    This is the only way back, so the hide dialog names it. */}
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-3">
                   <input
                     type="checkbox"
@@ -211,7 +214,17 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Show intelligent tips
-                  <span className="text-[10px] text-overlay0">(Contextual feature discovery in session header)</span>
+                  <span className="text-[10px] text-overlay0">(Tip of the day, in the sidebar under Ask Conductor)</span>
+                </label>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
+                    checked={settings.showAskConductor ?? true}
+                    onChange={(e) => save({ showAskConductor: e.target.checked })}
+                    className="rounded border-surface1"
+                  />
+                  Show Ask Conductor
+                  <span className="text-[10px] text-overlay0">(The button at the bottom of the sidebar)</span>
                 </label>
               </Section>
 
