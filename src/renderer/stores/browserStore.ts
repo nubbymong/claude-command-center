@@ -72,11 +72,16 @@ function sanitiseFavourites(raw: unknown): BrowserFavourite[] {
   return out
 }
 
+/** Keys a hand-edited browser.json must not be allowed to plant on a plain
+ *  object: assigning them does something other than store a value. */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
 function sanitiseHomes(raw: unknown): Record<string, string> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
   const out: Record<string, string> = {}
   for (const [configId, url] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof configId !== 'string' || !configId || configId.length > 200) continue
+    if (FORBIDDEN_KEYS.has(configId)) continue
     if (!isAllowedBrowserUrl(url)) continue
     out[configId] = url
   }
@@ -137,7 +142,7 @@ export const useBrowserStore = create<State & Actions>((set, get) => ({
   isFavourite: (url) => get().favourites.some((f) => f.url === url),
 
   setHome: (configId, url) => {
-    if (!configId) return
+    if (!configId || FORBIDDEN_KEYS.has(configId)) return
     const homeByConfig = { ...get().homeByConfig }
     if (url === null) {
       if (!(configId in homeByConfig)) return

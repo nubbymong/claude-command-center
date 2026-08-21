@@ -74,6 +74,11 @@ describe('normaliseBrowserInput -- what someone types in the address bar', () =>
     expect(ok('app.localhost:4000')).toBe('http://app.localhost:4000/')
     expect(ok('[::1]:5173')).toBe('http://[::1]:5173/')
   })
+  it('repairs the dropped-colon typo instead of inventing a host called "http"', () => {
+    expect(ok('http//example.com')).toBe('http://example.com/')
+    expect(ok('HTTPS//example.com/x')).toBe('https://example.com/x')
+    expect(ok('http//localhost:5173')).toBe('http://localhost:5173/')
+  })
   it('gives a scheme-less PUBLIC address https', () => {
     expect(ok('example.com')).toBe('https://example.com/')
     expect(ok('docs.example.com/guide?x=1')).toBe('https://docs.example.com/guide?x=1')

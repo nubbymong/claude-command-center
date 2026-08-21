@@ -291,14 +291,17 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     <div className="flex-1 flex flex-col min-h-0 bg-mantle relative" data-testid="browser-pane">
       {/* Nav row: history, address, watch state, open-externally, favourites, freeze, close. */}
       <div className="flex items-center gap-1 px-2 py-1 border-b border-surface0 bg-crust shrink-0 z-10" data-testid="browser-nav">
-        <button onClick={() => window.electronAPI.webview.navBack(sessionId)} disabled={!page?.canGoBack} className={`${toolBtn} ${toolBtnIdle}`} title="Back" data-testid="browser-back">{Icon.back}</button>
-        <button onClick={() => window.electronAPI.webview.navForward(sessionId)} disabled={!page?.canGoForward} className={`${toolBtn} ${toolBtnIdle}`} title="Forward" data-testid="browser-forward">{Icon.forward}</button>
-        <button onClick={handleReload} disabled={!currentUrl} className={`${toolBtn} ${toolBtnIdle}`} title="Hard refresh" data-testid="browser-reload">{Icon.reload}</button>
+        {/* Icon-only controls carry aria-labels: `title` alone is not a
+            reliable accessible name. */}
+        <button onClick={() => window.electronAPI.webview.navBack(sessionId)} disabled={!page?.canGoBack} className={`${toolBtn} ${toolBtnIdle}`} title="Back" aria-label="Back" data-testid="browser-back">{Icon.back}</button>
+        <button onClick={() => window.electronAPI.webview.navForward(sessionId)} disabled={!page?.canGoForward} className={`${toolBtn} ${toolBtnIdle}`} title="Forward" aria-label="Forward" data-testid="browser-forward">{Icon.forward}</button>
+        <button onClick={handleReload} disabled={!currentUrl} className={`${toolBtn} ${toolBtnIdle}`} title="Hard refresh" aria-label="Hard refresh" data-testid="browser-reload">{Icon.reload}</button>
         <button
           onClick={handleHome}
           disabled={!home}
           className={`${toolBtn} ${atHome ? 'text-blue' : toolBtnIdle}`}
           title={home ? `Home: ${home}` : 'No home page yet — open the favourites bar to set one'}
+          aria-label={home ? `Home: ${home}` : 'Home (none set yet)'}
           data-testid="browser-home"
         >
           {Icon.home}
@@ -339,7 +342,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
           </span>
         )}
 
-        <button onClick={handleStar} disabled={!shownUrl} className={`${toolBtn} ${isFav ? 'text-yellow' : toolBtnIdle}`} title={isFav ? 'Remove from favourites' : 'Save to favourites'} aria-pressed={isFav} data-testid="browser-star">{Icon.star(isFav)}</button>
+        <button onClick={handleStar} disabled={!shownUrl} className={`${toolBtn} ${isFav ? 'text-yellow' : toolBtnIdle}`} title={isFav ? 'Remove from favourites' : 'Save to favourites'} aria-label={isFav ? 'Remove from favourites' : 'Save to favourites'} aria-pressed={isFav} data-testid="browser-star">{Icon.star(isFav)}</button>
         <button
           onClick={() => setShowFavourites((v) => !v)}
           className={`${toolBtn} ${showFavourites ? 'text-text bg-surface0' : toolBtnIdle} text-[11px]`}
@@ -349,7 +352,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
         >
           Favourites{favourites.length > 0 ? ` ${favourites.length}` : ''}
         </button>
-        <button onClick={handleOpenExternal} disabled={!shownUrl} className={`${toolBtn} ${toolBtnIdle}`} title="Open in your real browser" data-testid="browser-open-external">{Icon.external}</button>
+        <button onClick={handleOpenExternal} disabled={!shownUrl} className={`${toolBtn} ${toolBtnIdle}`} title="Open in your real browser" aria-label="Open in your real browser" data-testid="browser-open-external">{Icon.external}</button>
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <button onClick={handleFreeze} disabled={!currentUrl} className="px-2 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text transition-colors disabled:opacity-35" title="Freeze + annotate with Excalidraw">Freeze</button>
         <button onClick={handleClose} className="px-2 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text transition-colors" title="Back to the terminal" data-testid="browser-close">Close</button>

@@ -49,6 +49,17 @@ describe('hydrate defends the file', () => {
     expect(s.favourites.map((f) => f.url)).toEqual(['http://localhost:3000/'])
     expect(s.homeByConfig).toEqual({ cfg2: 'https://good.example/' })
   })
+  it('refuses prototype-pollution keys as config ids, on hydrate and on setHome', () => {
+    useBrowserStore.getState().hydrate({
+      homeByConfig: JSON.parse('{"__proto__": "https://x.y/", "constructor": "https://x.y/", "prototype": "https://x.y/", "ok": "https://ok.example/"}'),
+    })
+    expect(Object.keys(useBrowserStore.getState().homeByConfig)).toEqual(['ok'])
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+    useBrowserStore.getState().setHome('__proto__', 'https://x.y/')
+    useBrowserStore.getState().setHome('constructor', 'https://x.y/')
+    expect(Object.keys(useBrowserStore.getState().homeByConfig)).toEqual(['ok'])
+    expect(saveConfigNow).not.toHaveBeenCalled()
+  })
   it('survives wrong shapes (string, array, null) with empty defaults', () => {
     for (const raw of [null, undefined, 'nope', 42, [], { favourites: 'x', homeByConfig: [] }, { favourites: {}, homeByConfig: 'y' }]) {
       fresh()

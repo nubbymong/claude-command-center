@@ -62,9 +62,12 @@ export type BrowserInputResult = { ok: true; url: string } | { ok: false; error:
  *   normalised string
  */
 export function normaliseBrowserInput(raw: string): BrowserInputResult {
-  const trimmed = (raw ?? '').trim()
+  let trimmed = (raw ?? '').trim()
   if (!trimmed) return { ok: false, error: 'Type an address' }
   if (trimmed.length > BROWSER_URL_MAX_LENGTH) return { ok: false, error: 'That address is too long' }
+  // The common typo `http//host` (colon dropped) would otherwise read as a
+  // scheme-less host called "http" and come out as https://http//host.
+  trimmed = trimmed.replace(/^(https?)\/\//i, '$1://')
 
   // A scheme is `letters[letters/digits/+/-/.]*:`. `localhost:5173` matches
   // that shape (scheme "localhost"), so treat a scheme whose "path" starts
