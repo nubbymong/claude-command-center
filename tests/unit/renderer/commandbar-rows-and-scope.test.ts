@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 /**
- * The command bar says where a button runs, and whose it is.
+ * The command bar says where a button runs, and whose it is (ADR-018 D1, D4).
  *
- * Three things it used to get wrong, all of them invisible state:
- *   - a button targeted "Any" sat in the Claude row and ran in whichever pane
- *     happened to be open, so the row could lie (fixed by dropping "Any");
- *   - the partner row appeared when its first command was created and vanished
- *     when the last was deleted, so the bar changed height under the pointer and
- *     nothing told you the row could exist at all;
- *   - a global command and a this-config command looked identical, while
- *     editing or deleting the global reached every config you own.
+ * The one-row bar has no CLAUDE / SHELL row labels and no dashed "global"
+ * chip. Instead:
+ *   - two fixed SCOPE bands, Global and Session, each labelled, each present
+ *     whenever it can exist (a band is never created by its first button or
+ *     removed by its last -- the empty band is the affordance, and the bar's
+ *     height never changes under the pointer);
+ *   - inside a band, a muted target mark opens each cluster and says where
+ *     those buttons run (the agent / the partner shell / the browser pane);
+ *   - the chip's tooltip carries the scope in words ("Global — every config" /
+ *     "Session — this config only") and the pane it runs in.
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -86,8 +88,10 @@ const render = (props: Record<string, unknown>) => {
   })
 }
 
-const buttonNamed = (label: string) =>
-  Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes(label))
+const byTestId = (id: string, within: ParentNode = container) => within.querySelector<HTMLElement>(`[data-testid="${id}"]`)
+const allByTestId = (id: string, within: ParentNode = container) => Array.from(within.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`))
+const chipNamed = (label: string, within: ParentNode = container) =>
+  allByTestId('command-chip', within).find((b) => b.textContent?.includes(label))
 
 beforeEach(() => {
   container = document.createElement('div')
@@ -100,61 +104,85 @@ afterEach(() => {
   container.remove()
 })
 
-describe('both rows are present whenever a partner terminal exists', () => {
-  it('renders a named Claude row and a named Shell row', () => {
+describe('both scope bands are present whenever the session has a config', () => {
+  it('renders a labelled Global band and a labelled Session band -- no CLAUDE / SHELL row labels', () => {
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
-    const text = container.textContent || ''
-    expect(text).toContain('Claude')
-    expect(text).toContain('Shell')
+    expect(byTestId('command-band-label-global')?.textContent).toBe('Global')
+    expect(byTestId('command-band-label-config')?.textContent).toBe('Session')
+    // The old row model is gone: nothing on the bar reads as a pane row.
+    const spans = Array.from(container.querySelectorAll('span')).map((s) => s.textContent?.trim())
+    expect(spans).not.toContain('Claude')
+    expect(spans).not.toContain('Shell')
+    expect(spans).not.toContain('Commands')
   })
 
-  it('keeps the Shell row when NOTHING targets it -- the empty row is the affordance', () => {
-    // The case that used to make the bar's height change under the pointer: no
-    // partner commands meant no row, so creating the first one materialised a
+  it('keeps the Session band when NOTHING is scoped to it -- the empty band is the affordance', () => {
+    // The case that used to make the bar's height change under the pointer:
+    // no config buttons meant no row, so creating the first one materialised a
     // row nobody knew was possible, and deleting the last took it away again.
-    COMMANDS = ALL.filter((c) => c.target !== 'partner')
+    COMMANDS = ALL.filter((c) => c.scope !== 'config')
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
-    const labels = Array.from(container.querySelectorAll('span'))
-      .map((s) => s.textContent?.trim())
-    expect(labels).toContain('Shell')
-    // …and it really is empty: no partner button rendered.
-    expect(buttonNamed('Shell one')).toBeUndefined()
+    const band = byTestId('command-band-config')
+    expect(band).not.toBeNull()
+    expect(byTestId('command-band-label-config', band!)?.textContent).toBe('Session')
+    // …and it really is empty: no chip in it, and no target mark opening a cluster.
+    expect(allByTestId('command-chip', band!)).toHaveLength(0)
+    expect(band!.querySelector('[data-testid^="command-cluster-"]')).toBeNull()
   })
 
-  it('keeps the Claude row when nothing targets THAT either', () => {
-    COMMANDS = ALL.filter((c) => c.target === 'partner')
+  it('keeps the Global band when nothing is global either', () => {
+    COMMANDS = ALL.filter((c) => c.scope !== 'global')
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
-    const labels = Array.from(container.querySelectorAll('span'))
-      .map((s) => s.textContent?.trim())
-    expect(labels).toContain('Claude')
+    const band = byTestId('command-band-global')
+    expect(band).not.toBeNull()
+    expect(byTestId('command-band-label-global', band!)?.textContent).toBe('Global')
+    expect(allByTestId('command-chip', band!)).toHaveLength(0)
   })
 
-  it('renders no Shell row at all when the session has no partner terminal', () => {
-    render({ partnerEnabled: false })
-    // The Claude row still names itself; "Shell" belongs to a pane that does
-    // not exist here.
-    const rowLabels = Array.from(container.querySelectorAll('span'))
-      .map((s) => s.textContent?.trim())
-      .filter((t) => t === 'Shell')
-    expect(rowLabels).toEqual([])
+  it('draws no Session band at all when the session has no saved config', () => {
+    // Ask Conductor, a resumed folder: there is no "this config" to scope to,
+    // so the band does not exist -- the Global band still does.
+    render({ configId: undefined, partnerEnabled: true, partnerSessionId: 's-1-partner' })
+    expect(byTestId('command-band-global')).not.toBeNull()
+    expect(byTestId('command-band-config')).toBeNull()
+    expect(byTestId('command-band-label-config')).toBeNull()
   })
 })
 
-describe('scope is visible on the button', () => {
-  it('marks a global command and leaves a config-scoped one unmarked', () => {
+describe('scope and target are visible on the chip', () => {
+  it('files each button in the band that IS its scope', () => {
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
-    const chips = container.querySelectorAll('[data-testid="command-global-chip"]')
-    // Exactly one of the three fixtures is global.
-    expect(chips).toHaveLength(1)
-    const globalBtn = buttonNamed('Prompt one')
-    expect(globalBtn?.textContent).toContain('global')
-    expect(buttonNamed('Claude one')?.textContent).not.toContain('global')
+    const global = byTestId('command-band-global')!
+    const session = byTestId('command-band-config')!
+    expect(chipNamed('Prompt one', global)).toBeDefined()
+    expect(chipNamed('Prompt one', session)).toBeUndefined()
+    expect(chipNamed('Shell one', session)).toBeDefined()
+    expect(chipNamed('Claude one', session)).toBeDefined()
+    expect(chipNamed('Shell one', global)).toBeUndefined()
   })
 
-  it('says in the tooltip which pane a button runs in, and what global costs', () => {
+  it('opens each cluster with a target mark that says where those buttons run', () => {
     render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
-    expect(buttonNamed('Shell one')?.getAttribute('title')).toContain('partner shell')
-    expect(buttonNamed('Claude one')?.getAttribute('title')).toContain('Claude terminal')
-    expect(buttonNamed('Prompt one')?.getAttribute('title')).toContain('every config')
+    const session = byTestId('command-band-config')!
+    // Session band holds one agent button and one partner button: two marks.
+    const agentMark = byTestId('command-cluster-agent', session)
+    const partnerMark = byTestId('command-cluster-partner', session)
+    expect(agentMark?.getAttribute('title')).toBe('These run in Claude')
+    expect(partnerMark?.getAttribute('title')).toBe('These run in the partner shell')
+    // The Global band holds only a prompt: an agent mark, no partner mark.
+    const global = byTestId('command-band-global')!
+    expect(byTestId('command-cluster-agent', global)).not.toBeNull()
+    expect(byTestId('command-cluster-partner', global)).toBeNull()
+  })
+
+  it('says in the tooltip which pane a button runs in, and what Global costs -- there is no dashed "global" chip', () => {
+    render({ partnerEnabled: true, partnerSessionId: 's-1-partner' })
+    expect(chipNamed('Shell one')?.getAttribute('title')).toContain('runs in the partner shell')
+    expect(chipNamed('Claude one')?.getAttribute('title')).toContain('runs in the Claude terminal')
+    expect(chipNamed('Prompt one')?.getAttribute('title')).toContain('Global — every config')
+    expect(chipNamed('Claude one')?.getAttribute('title')).toContain('Session — this config only')
+    // Scope is words in the tooltip, not a badge on the chip surface.
+    expect(allByTestId('command-global-chip')).toHaveLength(0)
+    expect(chipNamed('Prompt one')?.textContent).not.toContain('global')
   })
 })
