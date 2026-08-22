@@ -17,6 +17,7 @@ import fs from 'fs'
 import os from 'os'
 import { STEPS, ONBOARDING_VERSION } from '../../src/renderer/onboarding/steps'
 import { emptyGitHubConfig } from '../../src/shared/github-constants'
+import { currentTrainingVersion } from '../../src/renderer/training-steps'
 
 const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
 const APP_VERSION = JSON.parse(
@@ -42,7 +43,11 @@ test.beforeAll(async () => {
     JSON.stringify({
       setupVersion: APP_VERSION,
       lastSeenVersion: PREV_VERSION,
-      lastTrainingVersion: '2.1.0',
+      // Derived, not hardcoded: this spec is about the What's-New / resume
+      // priority chain, so the training walkthrough must stay suppressed. A
+      // literal goes stale the moment any card is added above it (#372), which
+      // would arm the tour and change what this spec is actually testing.
+      lastTrainingVersion: currentTrainingVersion(),
       hasCreatedFirstConfig: true,
       accountGateDecided: true,
       completedSteps: Object.fromEntries(STEPS.map((s) => [s.id, PREV_VERSION])),
