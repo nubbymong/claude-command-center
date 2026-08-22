@@ -121,7 +121,7 @@ export const trainingSteps: TrainingStep[] = [
       'Covers **both** the Conductor and **Claude Code** itself, and says which one it is answering',
       'Type your question into the Feature Guide first and the session opens with it **already asked**',
       'Gets its **own tab** and behaves like any other session -- leave it open and come back to it',
-      '**Past discussions** in its header reopens an earlier conversation',
+      'Use **Past discussions** in its header to reopen an earlier conversation',
       'It reads the **documentation, not your data** -- it cannot see your code, and will say so',
     ],
     howToTrigger: [

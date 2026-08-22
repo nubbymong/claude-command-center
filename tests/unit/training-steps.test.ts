@@ -63,13 +63,15 @@ describe('training-steps', () => {
       expect(copy).not.toContain('Command Center')
     })
 
-    it('uses the hero layout and resolves a real screenshot', () => {
+    it('uses the hero layout and names a screenshot asset', () => {
       const step = ask()!
       // `summary` is what switches FeatureGuidePage to the hero layout; without
       // it the card silently falls back to the flat bullet list.
       expect(step.summary).toBeTruthy()
       expect(step.highlights?.length).toBeGreaterThan(0)
       expect(step.howToTrigger?.length).toBeGreaterThan(0)
+      // Only the shape is asserted here; that the file actually exists on disk
+      // is covered for every step by training-screenshots-exist.test.ts.
       expect(step.screenshotFilename).toMatch(/\.jpg$/)
     })
 
