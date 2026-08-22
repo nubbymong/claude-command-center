@@ -173,14 +173,20 @@ describe('design serving', () => {
 // ---------------------------------------------------------------------------
 
 function makeDist(): string {
-  const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-dist-'))
+  // The dist gets its OWN parent to be registered as the base. It used to be
+  // `path.dirname(mkdtemp(tmpdir))`, i.e. the whole system temp directory —
+  // which also contains this suite's mocked resources directory, and the floor
+  // now refuses any root that contains it (#371).
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-base-'))
+  const dist = path.join(base, 'dist')
+  fs.mkdirSync(dist)
   fs.writeFileSync(path.join(dist, 'index.html'), '<html><head></head><body>app</body></html>')
   fs.mkdirSync(path.join(dist, 'assets'))
   fs.writeFileSync(path.join(dist, 'assets', 'app.js'), 'console.log(1)')
   fs.writeFileSync(path.join(dist, 'secret-sibling.txt'), 'inside-ok')
   // UAT roots are default-deny: the base the dist sits under must be registered
   // before renderVersion will accept it (serving still stays inside `dist`).
-  registerCanvasUatRoot(SID, path.dirname(dist))
+  registerCanvasUatRoot(SID, base)
   return dist
 }
 

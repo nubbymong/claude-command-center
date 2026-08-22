@@ -84,6 +84,10 @@ export interface CanvasToolDeps {
     worktree: string | null
     worktreePending: boolean
   }
+  /** Why this session has NO project root, when a floor refused it (#371).
+   *  Optional so existing wirings keep working; without it a refusal falls back
+   *  to the generic message, which is the pre-#371 behaviour. */
+  canvasRootRefusalFor?: (sessionId: string) => string | null
   /**
    * Read a design document the agent wrote to disk (`htmlPath`). Injected so
    * this module touches no filesystem; the caller confines the path to the
@@ -279,6 +283,7 @@ function captureFailureReason(err: unknown): string {
 function renderFailureReason(
   err: unknown,
   roots?: { project: string | null; worktree: string | null; worktreePending: boolean },
+  refusal?: string | null,
 ): string {
   const message = err instanceof Error ? err.message : ''
   if (/version cap/i.test(message)) {
@@ -294,6 +299,10 @@ function renderFailureReason(
     if (advice) {
       return `that directory is not inside the folders this session serves from: ${advice} Build into one of them (for example <that folder>/dist) and render that path.`
     }
+    // Same half-closed gap the design path had (#371): when a FLOOR emptied the
+    // root list, `rootAdvice` is null and "build inside the project" is advice
+    // the agent has already followed. Name the actual reason.
+    if (refusal) return `${refusal} Nothing can be served for this session until that is changed.`
     return 'that directory is not inside this session’s project folder, which is the only place the canvas serves from. Build inside the project you are working in and render that path.'
   }
   if (/distRoot does not exist|not a directory/i.test(message)) return 'that build directory does not exist.'
@@ -397,6 +406,7 @@ function rootAdvice(
 function designFileFailureReason(
   err: unknown,
   roots?: { project: string | null; worktree: string | null; worktreePending: boolean },
+  refusal?: string | null,
 ): string {
   const message = err instanceof Error ? err.message : ''
   if (/too large/i.test(message)) return 'that html file is too large to render.'
@@ -414,6 +424,14 @@ function designFileFailureReason(
     // happens to run in (that value comes out of a transcript the model can
     // write), and nothing at all when the configured directory is the home
     // directory.
+    // #371: when the root list is EMPTY because a floor refused it, say which
+    // floor. Telling the agent to "write it inside the project folder" is
+    // useless there — that is exactly where it already wrote it — and the
+    // branch above that names the folders which WOULD have worked is
+    // unreachable, because the refusal is what emptied the list.
+    if (refusal) {
+      return `${refusal} Nothing can be rendered by path for this session until that is changed.`
+    }
     return 'that file is outside this session’s project folder, which is the only place the canvas reads from. Write the html inside the project folder configured for this session, then render that path. (A session configured on your home folder has no project folder and cannot render by path.)'
   }
   return 'that html file could not be read. Check the path you wrote it to.'
@@ -466,7 +484,14 @@ export async function runCanvasRender(
         // one the render itself is keyed to — never rawArgs.cccSessionId.
         bytes = deps.readDesignFile(rawArgs.htmlPath, sessionId)
       } catch (err) {
-        return { text: `Could not render the canvas: ${designFileFailureReason(err, safeRoots(deps, sessionId))}`, isError: true }
+        return {
+          text: `Could not render the canvas: ${designFileFailureReason(
+            err,
+            safeRoots(deps, sessionId),
+            (() => { try { return deps.canvasRootRefusalFor?.(sessionId) ?? null } catch { return null } })(),
+          )}`,
+          isError: true,
+        }
       }
       // Re-measured here even though the reader guards too: this is the
       // untrusted ingress and the cap must hold in THIS file's logic.
@@ -529,7 +554,14 @@ export async function runCanvasRender(
     // their own agent's work.
     rendered = deps.renderVersion(sessionId, source)
   } catch (err) {
-    return { text: `Could not render the canvas: ${renderFailureReason(err, safeRoots(deps, sessionId))}`, isError: true }
+    return {
+      text: `Could not render the canvas: ${renderFailureReason(
+        err,
+        safeRoots(deps, sessionId),
+        (() => { try { return deps.canvasRootRefusalFor?.(sessionId) ?? null } catch { return null } })(),
+      )}`,
+      isError: true,
+    }
   }
 
   // Both ids are ours: one minted by the store, one a `v<n>` counter. Nothing

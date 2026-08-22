@@ -135,6 +135,57 @@ function isDotDirUnderHome(p: string): boolean {
   return segments.some((s) => s.startsWith('.'))
 }
 
+/** True when `a` contains `b` (b lives somewhere under a). Case-insensitive on
+ *  win32, because `path.relative` is. */
+function contains(a: string, b: string): boolean {
+  const rel = path.relative(a, b)
+  if (rel === '' || path.isAbsolute(rel)) return false
+  const first = rel.split(/[\\/]/).filter((s) => s.length > 0)[0]
+  return first !== undefined && first !== '..'
+}
+
+/**
+ * True when `p` is the app's own RESOURCES directory, anything under it, or any
+ * ancestor of it (#371).
+ *
+ * The existing floor refuses the home directory, a volume root and the dot
+ * directories under home — the places a user's credentials live. It did not
+ * refuse the place THIS APP keeps credentials. The resources directory holds
+ * `CONFIG/` (`ssh-credentials.json`, the DPAPI-encrypted SSH and sudo passwords
+ * and secret arguments; `conductor-secret.json`, the MCP HMAC key),
+ * `account-profiles/` and `account-homes/` (Claude OAuth tokens), plus the
+ * canvas store itself. Served as a canvas root, all of it becomes readable over
+ * the canvas HTTP surface.
+ *
+ * All three directions are refused, matching what `isHomeOrAncestor` already
+ * does for home:
+ *   - the directory itself,
+ *   - anything UNDER it (`<resources>/CONFIG` named directly),
+ *   - anything that CONTAINS it — serving a parent serves the resources dir,
+ *     which is the case that bites when someone points their resources
+ *     directory inside a project they actually work in.
+ *
+ * Same-user hardening, not a privilege boundary: the agent already runs as the
+ * user. What it removes is the canvas turning "read a file" into "serve a
+ * credential store over HTTP" without anyone deciding to.
+ */
+function isResourcesDirOrAround(p: string): boolean {
+  let configured: string
+  try {
+    configured = getResourcesDirectory()
+  } catch {
+    return false // not resolvable this run — the other floors still apply
+  }
+  if (typeof configured !== 'string' || configured.length === 0) return false
+  let res: string
+  try {
+    res = fs.realpathSync.native(configured)
+  } catch {
+    res = path.resolve(configured) // not on disk yet; the lexical answer still holds
+  }
+  return sameFsPath(res, p) || contains(res, p) || contains(p, res)
+}
+
 /**
  * Register a directory under which one session's canvas paths may live.
  *
@@ -166,23 +217,120 @@ function isDotDirUnderHome(p: string): boolean {
  * Over-denial is the intended direction: a refused root costs a canvas render,
  * an accepted one costs a credential.
  */
-export function registerCanvasUatRoot(sessionId: string, baseDir: string): boolean {
-  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return false
-  if (typeof baseDir !== 'string' || !path.isAbsolute(baseDir)) return false
+/**
+ * WHY a directory cannot be a canvas root, or null when it can.
+ *
+ * Split out so a refusal can SAY which floor it hit (#371). The floor is
+ * correct, but a refusal that reaches the user as nothing at all — and reaches
+ * the agent as "write the html inside the project folder", which is where it
+ * already wrote it — is an undiagnosable dead end. ADR-017's own words: being
+ * locked out of your own canvas is a bug this app has already shipped once.
+ */
+export type CanvasRootRefusal =
+  | 'bad-session-id'
+  | 'not-absolute'
+  | 'unresolvable'
+  | 'not-a-directory'
+  | 'home-or-ancestor'
+  | 'volume-root'
+  | 'dot-dir-under-home'
+  | 'resources-dir'
+
+/**
+ * The refusal, plus the RESOLVED path when there is none.
+ *
+ * Returning the resolution is what closes a TOCTOU (#371, ADR-009 pass):
+ * `registerCanvasUatRoot` used to realpath once to CHECK and again to ADD, so a
+ * directory swapped for a symlink between the two calls was checked as itself
+ * and added as its target. Check and use are now one resolution.
+ */
+export function canvasRootCheck(
+  sessionId: string,
+  baseDir: string,
+): { refusal: CanvasRootRefusal; real?: undefined } | { refusal: null; real: string } {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return { refusal: 'bad-session-id' }
+  if (typeof baseDir !== 'string' || !path.isAbsolute(baseDir)) return { refusal: 'not-absolute' }
   let real: string
   try {
     real = fs.realpathSync.native(path.resolve(baseDir))
   } catch {
-    return false // an unresolvable base is simply not added
+    return { refusal: 'unresolvable' }
   }
   try {
-    if (!fs.statSync(real).isDirectory()) return false
+    if (!fs.statSync(real).isDirectory()) return { refusal: 'not-a-directory' }
   } catch {
-    return false
+    return { refusal: 'not-a-directory' }
   }
-  if (isHomeOrAncestor(real)) return false
-  if (isVolumeRoot(real)) return false
-  if (isDotDirUnderHome(real)) return false
+  if (isHomeOrAncestor(real)) return { refusal: 'home-or-ancestor' }
+  if (isVolumeRoot(real)) return { refusal: 'volume-root' }
+  if (isDotDirUnderHome(real)) return { refusal: 'dot-dir-under-home' }
+  if (isResourcesDirOrAround(real)) return { refusal: 'resources-dir' }
+  return { refusal: null, real }
+}
+
+/** Just the reason, for callers that only have to explain themselves. */
+export function canvasRootRefusalReason(sessionId: string, baseDir: string): CanvasRootRefusal | null {
+  return canvasRootCheck(sessionId, baseDir).refusal
+}
+
+/**
+ * One sentence a user or an agent can act on, for each refusal.
+ *
+ * `dir` is SANITISED before it is interpolated (#371, ADR-009 pass). The path
+ * is CCC's own, but a folder NAME inside it is user-authored and this string is
+ * relayed to a model — so control, format and bidi characters go, and the
+ * length is capped. Same rule, and the same reason, as `safeRootLabel` in
+ * canvas-mcp-tool: nothing outside the envelope is anything but operator text.
+ */
+export function describeCanvasRootRefusal(reason: CanvasRootRefusal, rawDir: string): string {
+  const cleaned = String(rawDir ?? '').replace(FORMAT_CONTROLS_RE, '')
+  const dir = cleaned.length > 200 ? `${cleaned.slice(0, 200)}…` : cleaned
+  switch (reason) {
+    case 'resources-dir':
+      return `the canvas cannot serve ${dir} because the app's own resources directory (which holds your saved credentials and accounts) is inside it, or is it. Point this session at a project folder that does not contain the resources directory, or move the resources directory somewhere else in Settings.`
+    case 'home-or-ancestor':
+      return `the canvas cannot serve ${dir} because it is your home directory or a folder above it. Set this session's working directory to the specific project folder.`
+    case 'volume-root':
+      return `the canvas cannot serve ${dir} because it is a whole drive. Set this session's working directory to the specific project folder.`
+    case 'dot-dir-under-home':
+      return `the canvas cannot serve ${dir} because it is inside a hidden folder in your home directory (where credentials live).`
+    case 'not-a-directory':
+      return `the canvas cannot serve ${dir} because it is not a directory.`
+    case 'unresolvable':
+      return `the canvas cannot serve ${dir} because that path could not be resolved on disk.`
+    case 'not-absolute':
+      return `the canvas cannot serve ${dir} because it is not an absolute path.`
+    case 'bad-session-id':
+      return 'the canvas cannot serve this session (its id is not usable).'
+  }
+}
+
+/**
+ * Why this session has no project root, in words, for the surfaces that have to
+ * tell somebody (#371). Without it the refusal reaches the agent as the generic
+ * "write the html inside the project folder" — which is where it already wrote
+ * it — and reaches the user as nothing at all.
+ */
+const rootRefusalBySession = new Map<string, string>()
+
+export function setCanvasRootRefusal(sessionId: string, explanation: string): void {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return
+  rootRefusalBySession.set(sessionId, explanation)
+}
+
+export function canvasRootRefusalFor(sessionId: string): string | null {
+  return rootRefusalBySession.get(sessionId) ?? null
+}
+
+export function registerCanvasUatRoot(sessionId: string, baseDir: string): boolean {
+  // ONE resolution, used for both the check and the add. Resolving twice let a
+  // directory swapped for a symlink between the two calls be checked as itself
+  // and added as its target (#371, ADR-009 pass). `canvasRootCheck` never
+  // throws, so a mid-call ENOENT cannot escape into spawnPty either.
+  const checked = canvasRootCheck(sessionId, baseDir)
+  if (checked.refusal !== null) return false
+  rootRefusalBySession.delete(sessionId) // it registered; there is nothing to explain
+  const real = checked.real
   let roots = uatRootsBySession.get(sessionId)
   if (!roots) {
     roots = new Set<string>()
@@ -208,6 +356,7 @@ export function designateCanvasWorktreeRoot(sessionId: string, dir: string): boo
   if (isHomeOrAncestor(lexical)) return false
   if (isVolumeRoot(lexical)) return false
   if (isDotDirUnderHome(lexical)) return false
+  if (isResourcesDirOrAround(lexical)) return false
   // Refuse a path already designated for a DIFFERENT session. Distinct tiles
   // derive distinct segments, so this only fires on a segment collision — and
   // there the FIRST tile owns the directory it populated; serving it to a second
@@ -258,6 +407,7 @@ function liveDesignatedRoot(lexical: string): string | null {
   if (isHomeOrAncestor(real)) return null
   if (isVolumeRoot(real)) return null
   if (isDotDirUnderHome(real)) return null
+  if (isResourcesDirOrAround(real)) return null
   return real
 }
 
@@ -300,6 +450,7 @@ export function canvasRootsForSession(
 export function revokeCanvasUatRoots(sessionId: string): void {
   uatRootsBySession.delete(sessionId)
   designatedRootsBySession.delete(sessionId)
+  rootRefusalBySession.delete(sessionId)
 }
 
 /** True iff `candidate` physically resolves at/under a base registered for

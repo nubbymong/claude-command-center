@@ -47,7 +47,13 @@ afterAll(() => {
 
 // The attacker's crown-jewel repro: point distRoot at a dir full of secrets.
 function makeSecretDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-secret-'))
+  // Its own parent, so a test can register the level ABOVE it without that
+  // being the whole system temp directory — which also contains this suite's
+  // mocked resources directory, and the floor now refuses any root that
+  // contains it (#371).
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-ux-secretbase-'))
+  const dir = path.join(base, 'secrets')
+  fs.mkdirSync(dir)
   fs.writeFileSync(path.join(dir, 'id_rsa'), 'PRIVATE-KEY-BYTES')
   fs.writeFileSync(path.join(dir, 'index.html'), '<html><body>x</body></html>')
   return dir

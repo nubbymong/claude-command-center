@@ -42,7 +42,7 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
-import { canvasRootsForSession, getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
+import { canvasRootsForSession, canvasRootRefusalFor, getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
 import {
   closeAnnotationsByAgent,
   getReviewCountsForCanvas,
@@ -872,6 +872,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         getReviewCounts: (canvasId) => getReviewCountsForCanvas(canvasId),
         // So a refused render can NAME the folders it would have accepted.
         canvasRootsForSession: (sessionId) => canvasRootsForSession(sessionId),
+        canvasRootRefusalFor: (sessionId) => canvasRootRefusalFor(sessionId),
         /**
          * Read a design document the agent wrote to disk (`htmlPath`).
          *
