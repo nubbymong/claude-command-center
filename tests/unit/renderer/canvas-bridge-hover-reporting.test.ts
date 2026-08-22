@@ -13,7 +13,8 @@
 // would be a broken pane, not a quiet one.
 
 import { describe, it, expect, beforeAll, afterEach } from 'vitest'
-import { bridgeRequest, collectEvents, installBridge, stubLayout } from './canvas-bridge-harness'
+import { bridgeRequest, installBridge, stubLayout } from './canvas-bridge-harness'
+import { CANVAS_BRIDGE_NS } from '../../../src/shared/canvas'
 
 /** jsdom has no hit testing; the fixture decides what is "under" the pointer. */
 function pointAt(el: Element | null): void {
@@ -26,6 +27,48 @@ function moveMouse(times = 3): void {
 
 async function setHoverReporting(enabled: unknown): Promise<{ ok: boolean; result?: unknown }> {
   return bridgeRequest('hoverReporting', { enabled })
+}
+
+/** How long a NEGATIVE assertion watches for an event that must not come. */
+const SILENCE_WINDOW_MS = 300
+/** How long a POSITIVE assertion will wait for one that must. Generous because
+ *  it is only ever paid when something is wrong: the wait resolves the moment
+ *  the event lands. A fixed window here is what made the first version of this
+ *  file fail on a loaded CI box while passing everywhere else — the bridge
+ *  reports on a rAF, and 300ms is a claim about the machine, not about the
+ *  bridge. */
+const ARRIVAL_TIMEOUT_MS = 5000
+
+/**
+ * Events of `kind` seen in a window — resolving EARLY once `min` have arrived.
+ * `min: 0` (the default) is the negative form: watch the whole window and
+ * report what came, which must be nothing.
+ */
+function watchEvents(kind: string, { min = 0, ms }: { min?: number; ms: number }): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve) => {
+    const seen: Record<string, unknown>[] = []
+    const done = () => {
+      window.removeEventListener('message', onMessage)
+      clearTimeout(timer)
+      resolve(seen)
+    }
+    const onMessage = (event: MessageEvent) => {
+      const msg = event.data as { ns?: string; type?: string } | undefined
+      if (msg?.ns !== CANVAS_BRIDGE_NS || msg.type !== kind) return
+      seen.push(msg as Record<string, unknown>)
+      if (min > 0 && seen.length >= min) done()
+    }
+    const timer = setTimeout(done, ms)
+    window.addEventListener('message', onMessage)
+  })
+}
+
+/** The bridge is reporting again — the control every silence assertion is
+ *  paired with, so "nothing arrived" can never pass for "the bridge is dead". */
+async function expectStillReports(): Promise<void> {
+  const events = watchEvents('pointer', { min: 1, ms: ARRIVAL_TIMEOUT_MS })
+  moveMouse(5)
+  expect((await events).length, 'the bridge reports once it is switched back on').toBeGreaterThanOrEqual(1)
 }
 
 beforeAll(() => {
@@ -42,15 +85,15 @@ afterEach(async () => {
 
 describe('the hover surface is live by default', () => {
   it('reports pointer moves before the host has said anything', async () => {
-    const events = collectEvents('pointer', 300)
+    const events = watchEvents('pointer', { min: 1, ms: ARRIVAL_TIMEOUT_MS })
     moveMouse(5)
     expect((await events).length).toBeGreaterThanOrEqual(1)
   })
 
   it('reports clicks before the host has said anything', async () => {
-    const events = collectEvents('contentClick', 300)
+    const events = watchEvents('contentClick', { min: 1, ms: ARRIVAL_TIMEOUT_MS })
     document.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    expect((await events).length).toBe(1)
+    expect((await events).length).toBeGreaterThanOrEqual(1)
   })
 })
 
@@ -63,29 +106,39 @@ describe('switched off, the page does no hover work at all', () => {
 
   it('emits no pointer events however much the mouse moves', async () => {
     await setHoverReporting(false)
-    const events = collectEvents('pointer', 300)
+    const events = watchEvents('pointer', { ms: SILENCE_WINDOW_MS })
     moveMouse(25)
     expect(await events).toEqual([])
+    // The control: that silence was the switch, not a dead bridge, a dead
+    // fixture or a window nobody is listening on. Without this, deleting the
+    // whole hover surface would pass every assertion above.
+    await setHoverReporting(true)
+    await expectStillReports()
   })
 
   it('emits nothing on mouseleave either — the same gate covers the clear', async () => {
     await setHoverReporting(false)
-    const events = collectEvents('pointer', 300)
+    const events = watchEvents('pointer', { ms: SILENCE_WINDOW_MS })
     document.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))
     expect(await events).toEqual([])
   })
 
   it('emits no contentClick — in Off a click selects nothing, so there is nothing to report', async () => {
     await setHoverReporting(false)
-    const events = collectEvents('contentClick', 300)
+    const events = watchEvents('contentClick', { ms: SILENCE_WINDOW_MS })
     for (let i = 0; i < 5; i++) document.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(await events).toEqual([])
+
+    await setHoverReporting(true)
+    const loud = watchEvents('contentClick', { min: 1, ms: ARRIVAL_TIMEOUT_MS })
+    document.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect((await loud).length, 'clicks are reported again once switched on').toBeGreaterThanOrEqual(1)
   })
 
   it('drops a move that was queued a frame before the switch', async () => {
     // The rAF the move scheduled is still pending when the host switches off;
     // without the re-check on the frame it would land after Off took effect.
-    const events = collectEvents('pointer', 300)
+    const events = watchEvents('pointer', { ms: SILENCE_WINDOW_MS })
     moveMouse(1)
     await setHoverReporting(false)
     expect(await events).toEqual([])
@@ -95,7 +148,7 @@ describe('switched off, the page does no hover work at all', () => {
 describe('switching off silences the hover surface and nothing else', () => {
   it('keeps reporting the viewport — a pane that stopped tracking scroll is broken, not quiet', async () => {
     await setHoverReporting(false)
-    const events = collectEvents('viewport', 300)
+    const events = watchEvents('viewport', { min: 1, ms: ARRIVAL_TIMEOUT_MS })
     window.dispatchEvent(new Event('scroll'))
     expect((await events).length).toBeGreaterThanOrEqual(1)
   })
@@ -112,9 +165,7 @@ describe('the switch is reversible and fails live', () => {
   it('resumes reporting when asked to', async () => {
     await setHoverReporting(false)
     await setHoverReporting(true)
-    const events = collectEvents('pointer', 300)
-    moveMouse(5)
-    expect((await events).length).toBeGreaterThanOrEqual(1)
+    await expectStillReports()
   })
 
   it('takes only a literal false for an answer — a malformed request cannot blind the pane', async () => {
@@ -122,8 +173,6 @@ describe('the switch is reversible and fails live', () => {
       const reply = await setHoverReporting(value)
       expect(reply.result, String(value)).toEqual({ enabled: true })
     }
-    const events = collectEvents('pointer', 300)
-    moveMouse(5)
-    expect((await events).length).toBeGreaterThanOrEqual(1)
+    await expectStillReports()
   })
 })
