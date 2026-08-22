@@ -1,11 +1,24 @@
-// Shared Claude Code CLI options — kept in sync with `claude --help` rather
-// than hardcoded to specific model versions. Claude Code's `--model` flag and
-// `/model` slash command both accept aliases (`opus`, `sonnet`, `haiku`,
-// `opus[1m]`), and those aliases always resolve to the latest model in each
-// family. Using aliases here means the dropdown never goes stale when
-// Anthropic ships a new model.
+// Shared Claude Code CLI options — kept in sync with `claude --help` and with
+// Anthropic's Claude Code model configuration support article (the reference
+// for which models/efforts we offer, per the owner on #385):
+//   https://support.claude.com/en/articles/11940350-claude-code-model-configuration
+//
+// Claude Code's `--model` flag and `/model` slash command accept both family
+// ALIASES (`opus`, `sonnet`, `haiku`, `opus[1m]`) — which always resolve to the
+// newest model in each family — and PINNED versioned ids (`claude-opus-4-6`).
+// The picker offers both: alias rows first, then the pinned versions grouped
+// under their family. The pinned rows are derived from the registry's `models`,
+// so a Sentinel/user overlay entry shows up with no code change.
 
-import type { ModelRegistry, EffortLevelSpec, DropdownOptionSpec } from '../../shared/model-registry'
+import {
+  buildModelPickerRows,
+  buildEffortRows,
+  groupPickerRows,
+  resolveModelInfo,
+  type ModelRegistry,
+  type EffortLevelSpec,
+  type ModelPickerRow,
+} from '../../shared/model-registry'
 
 export interface OptionItem {
   label: string
@@ -13,14 +26,46 @@ export interface OptionItem {
   hint?: string
 }
 
+/** A picker section: the group heading plus its rows. */
+export interface ModelOptionGroup {
+  title: string
+  items: OptionItem[]
+}
+
 // Registry-derived model and effort lists. Components should derive these via
 // useRegistryStore((s) => s.registry) so dropdowns hot-reload on registry updates.
+
+/** Flat ordered rows (alias rows first, then pinned versions). */
 export function modelsFromRegistry(reg: ModelRegistry): OptionItem[] {
-  return reg.dropdown.map((d: DropdownOptionSpec) => ({ label: d.label, value: d.value, hint: d.hint }))
+  return buildModelPickerRows(reg).map((r) => ({ label: r.label, value: r.value, hint: r.hint }))
+}
+
+/** The same rows, grouped for a popover or a <select> with <optgroup>s. */
+export function modelGroupsFromRegistry(reg: ModelRegistry): ModelOptionGroup[] {
+  return groupPickerRows(buildModelPickerRows(reg)).map((g) => ({
+    title: g.title,
+    items: g.rows.map((r: ModelPickerRow) => ({ label: r.label, value: r.value, hint: r.hint })),
+  }))
 }
 
 export function effortsFromRegistry(reg: ModelRegistry): OptionItem[] {
   return reg.effortLevels.map((e: EffortLevelSpec) => ({ label: e.label, value: e.value, hint: e.hint }))
+}
+
+/**
+ * Effort rows for a specific model, each carrying `disabled` for a level that
+ * model does not support. Levels are disabled rather than dropped so the list
+ * keeps a stable shape; an unknown or fuzzily-matched model enables everything
+ * (see buildEffortRows).
+ */
+export function effortsForModel(
+  reg: ModelRegistry,
+  modelId: string | undefined | null,
+): (OptionItem & { disabled?: boolean })[] {
+  return buildEffortRows(reg, modelId).map((e) => ({
+    label: e.label, value: e.value, hint: e.hint,
+    ...(e.supported ? {} : { disabled: true }),
+  }))
 }
 
 export const PERMISSION_MODES: OptionItem[] = [
@@ -41,8 +86,19 @@ export const PERMISSION_MODE_LABELS: Record<string, string> = Object.fromEntries
 // Claude Code already computes a pretty label like "Opus 4.7 (1M context)".
 // Falls back to a regex that strips `claude-` and reshapes versioned IDs,
 // so new families don't require a code change.
-export function shortModelName(name?: string): string {
+//
+// When a registry is supplied and it matched the id VERSION-faithfully (exact
+// id / alias / id-prefix), the registry's curated label wins: that is what puts
+// the pinned name on the footer pill ("Opus 4.8 Fast", which the regex below
+// would flatten to "Opus 4.8"). A fuzzy `pattern` hit is never trusted for a
+// label — it would claim the wrong version (#385).
+export function shortModelName(name?: string, registry?: ModelRegistry): string {
   if (!name) return 'default'
+
+  if (registry) {
+    const info = resolveModelInfo(registry, name)
+    if (info.known && info.matchKind !== 'pattern') return info.label
+  }
 
   // Statusline's display_name comes capitalised and space-separated. Pass
   // through untouched so we don't mangle a label Claude Code already picked.
@@ -62,15 +118,51 @@ export function shortModelName(name?: string): string {
   return [familyCap, version, contextHint].filter(Boolean).join(' ')
 }
 
-// Match a model alias or display name against the active statusline reading
-// so the dropdown can mark the currently-running model. Family match on its
-// own is enough for the non-1M variants; `opus[1m]` needs explicit `1m`/`1M`
-// detection to not false-match plain `opus`.
-export function isModelActive(optionValue: string, activeModel: string): boolean {
+/** Family + version a model string describes, for comparing two spellings of it. */
+function familyAndVersion(s: string): { family: string | null; version: string | null } {
+  const lower = s.toLowerCase()
+  const fam = lower.match(/(opus|sonnet|haiku|fable)/)
+  // "4.6" / "4-6" / " 5" / "-5" all reduce to the same canonical form.
+  const ver = lower.match(/(\d+)[.-](\d+)/) ?? lower.match(/[\s-](\d+)(?![\d.-])/)
+  const version = ver ? (ver[2] ? `${ver[1]}.${ver[2]}` : ver[1]) : null
+  return { family: fam ? fam[1] : null, version }
+}
+
+/**
+ * Match a picker row against the active statusline reading so the dropdown can
+ * mark the currently-running model.
+ *
+ * The 1M variant discriminates first: `opus[1m]` and `opus` resolve to the same
+ * id, so only the context reading separates them.
+ *
+ * Beyond that, a PINNED row must not be marked active just because the family
+ * matches — "Opus 4.6" running should not tick "Opus 4.8". Passing the registry
+ * enables that version-faithful comparison; without it the original family-level
+ * behaviour is kept for the alias rows.
+ */
+export function isModelActive(optionValue: string, activeModel: string, registry?: ModelRegistry): boolean {
   if (!activeModel) return false
   const active = activeModel.toLowerCase()
   const wantsOneM = optionValue.includes('[1m]')
   const isOneM = /\[1m\]|1m context|\b1m\b/.test(active)
+
+  if (registry) {
+    const opt = resolveModelInfo(registry, optionValue)
+    if (opt.known) {
+      if (opt.family && !active.includes(opt.family)) return false
+      if (wantsOneM !== isOneM) return false
+      const act = resolveModelInfo(registry, activeModel)
+      // Both sides pinned to a real entry: compare canonical ids.
+      if (act.known && act.matchKind !== 'pattern') return opt.id === act.id
+      // The active reading is a display name we can only fuzzily place
+      // ("Opus 4.6"): compare the version each side describes.
+      const a = familyAndVersion(opt.label)
+      const b = familyAndVersion(activeModel)
+      if (b.version === null) return opt.matchKind === 'alias'   // "Opus" alone only ticks the alias row
+      return a.version === b.version
+    }
+  }
+
   if (optionValue.startsWith('opus')) {
     if (!active.includes('opus')) return false
     return wantsOneM ? isOneM : !isOneM

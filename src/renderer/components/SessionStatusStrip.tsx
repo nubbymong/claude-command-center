@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
 import RateLimitBar, { RateLimitBarPending } from './terminal/RateLimitBar'
@@ -15,8 +15,8 @@ import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey,
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
-  modelsFromRegistry,
-  effortsFromRegistry,
+  modelGroupsFromRegistry,
+  effortsForModel,
   shortModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
@@ -89,11 +89,17 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const [lastEffort, setLastEffort] = useState<string | null>(null)
   const isClaude = (session?.provider ?? 'claude') === 'claude'
 
+  // Model rows are grouped now (alias rows, then the pinned versions under each
+  // family, #385), so the popover has N model sections instead of one. The
+  // Effort section is whatever follows them — onModel dispatches on that
+  // boundary, never on a hardcoded index.
+  const modelGroups = useMemo(() => modelGroupsFromRegistry(registry), [registry])
+
   const write = (cmd: string) => {
     window.electronAPI.pty.write(sessionId, cmd)
   }
   const onModel = (si: number, v: string) => {
-    if (si === 0) {
+    if (si < modelGroups.length) {
       write(`/model ${v}\n`)
     } else {
       setLastEffort(v)
@@ -169,9 +175,14 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
 
   // Model pill label: the real short model name, never a bare confusing
   // "default". Falls back to a muted "model" placeholder when unknown.
-  const rawModelLabel = shortModelName(session.modelName)
+  // The registry is passed so a PINNED selection shows its curated name
+  // ("Opus 4.8 Fast", not a regex-flattened "Opus 4.8") — #385.
+  const rawModelLabel = shortModelName(session.modelName, registry)
   const hasModelLabel = !!session.modelName && rawModelLabel !== 'default'
   const modelLabel = hasModelLabel ? rawModelLabel : 'model'
+  // What the picker compares rows against: the live statusline reading, else
+  // the id the session was spawned with.
+  const activeModelReading = session.modelName || session.model || ''
 
   // Account chip (always-on when the session has a resolved account). Name
   // and colour are resolved by live email: a mid-session /login that updates
@@ -429,13 +440,15 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
               <ToolbarPopup
                 alignRight
                 sections={[
+                  ...modelGroups.map((g) => ({
+                    title: g.title,
+                    items: g.items.map((m) => ({ ...m, active: isModelActive(m.value, activeModelReading, registry) })),
+                  })),
                   {
-                    title: 'Models',
-                    items: modelsFromRegistry(registry).map((m) => ({ ...m, active: isModelActive(m.value, session.modelName || session.model || '') })),
-                  },
-                  {
+                    // Levels the running model does not support come back
+                    // `disabled` — greyed and unselectable rather than hidden.
                     title: 'Effort',
-                    items: effortsFromRegistry(registry).map((e) => ({ ...e, active: e.value === lastEffort })),
+                    items: effortsForModel(registry, activeModelReading).map((e) => ({ ...e, active: e.value === lastEffort })),
                   },
                 ]}
                 onSelect={onModel}

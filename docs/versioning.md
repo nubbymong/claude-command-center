@@ -86,17 +86,42 @@ no bypass. Two checks, both must pass:
    `excluded` (owner-excluded from the current milestone gate).
 2. **Model registry (#385).** `resources/model-registry.json` must cover every
    model in Anthropic's [Claude Code model configuration](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
-   article. The expected set is hard-coded in
-   `scripts/fixtures/claude-code-model-configuration.json` with its fetch date
-   and refresh instructions; a dated article id (`claude-opus-4-5-20251101`) is
-   covered by the undated registry entry (`claude-opus-4-5`). A missing model
+   article. The expected set is a snapshot of that article's *Supported models*
+   table in `resources/claude-code-model-configuration.json`, carrying its fetch
+   date and refresh instructions; a dated article id (`claude-opus-4-5-20251101`)
+   is covered by the undated registry entry (`claude-opus-4-5`). A missing model
    **fails** with a diff; a registry Claude model the article no longer lists is
-   a **warning** (flagged for the owner, not fatal). That article is the
-   reference whenever the model/effort options are set for a release: registry
-   `dropdown` rows, aliases, `--model` values, 1M variants, effort levels.
+   a **warning** (flagged for the owner, not fatal) unless the entry is marked
+   `"articleExempt": true`, which is how a model we carry deliberately (a `-fast`
+   variant, say) stays quiet.
 
 Run it by hand at any time: `node scripts/release-gate.mjs [--version X]`
 (exit 0 pass, 1 refused, 2 could not evaluate — also a refusal).
+
+### The model configuration article is the reference
+
+**That article is the reference whenever the model/effort options are set for a
+release** — aliases, `--model` values, 1M variants, effort levels, and which
+versions the picker offers. Before cutting, re-read it and refresh the snapshot
+if it has moved:
+
+1. Open <https://support.claude.com/en/articles/11940350-claude-code-model-configuration>.
+2. Rewrite `models` in `resources/claude-code-model-configuration.json` from its
+   *Supported models* table, in the article's order, and set `fetchedAt` to today.
+3. Add any new model to `resources/model-registry.json` `models`. **The picker
+   rows are derived from it** — alias rows first, then a pinned row per version
+   grouped under its family — so no `dropdown` edit is needed for a new version.
+   `dropdown` holds only the family *alias* rows ("Opus" = the newest Opus).
+4. Run `node scripts/release-gate.mjs` until the model check passes.
+
+The same comparison runs at **runtime** as a Sentinel check
+(`src/main/sentinel/sentinel-models.ts`) against the same snapshot, so an
+installed build whose registry has fallen behind tells the user: a model the
+article added but we do not offer, or one we still offer that the article has
+dropped (possibly retired). It needs no network and no working `claude` binary,
+and it reports the snapshot itself as stale after 90 days.
+`tests/unit/model-coverage-parity.test.ts` holds the gate's standalone copy of
+the comparison and the app's shared one to identical verdicts.
 
 ## End-to-end flow
 

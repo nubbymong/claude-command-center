@@ -5,7 +5,7 @@ import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { modelsFromRegistry, effortsFromRegistry, PERMISSION_MODES } from '../lib/claude-cli-options'
+import { modelGroupsFromRegistry, effortsForModel, PERMISSION_MODES } from '../lib/claude-cli-options'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { secretValueProblem } from '../../shared/command-secret'
@@ -797,13 +797,18 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         className={inputCls}
                       >
                         <option value="">Default — follows your Claude plan</option>
-                        {modelsFromRegistry(registry).map((m) => (
-                          <option key={m.value} value={m.value}>{m.label}</option>
+                        {modelGroupsFromRegistry(registry).map((g) => (
+                          <optgroup key={g.title} label={g.title}>
+                            {g.items.map((m) => (
+                              <option key={m.value} value={m.value}>{m.label}</option>
+                            ))}
+                          </optgroup>
                         ))}
                       </select>
                       <Hint k="model">
-                        Which model sessions start on — change it anytime with /model. Names always point at
-                        the newest model in each family.
+                        Which model sessions start on — change it anytime with /model. The names under
+                        “Latest” always point at the newest model in each family; the versions under each
+                        family pin that exact model.
                       </Hint>
                     </div>
                     <div>
@@ -812,11 +817,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         <HelpBtn k="effort" label="About the starting effort" />
                       </div>
                       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Starting effort">
-                        {[{ value: '', label: 'Default' }, ...effortsFromRegistry(registry)].map((ef) => (
+                        {[{ value: '', label: 'Default', disabled: false }, ...effortsForModel(registry, model)].map((ef) => (
                           <label
                             key={ef.value || 'default'}
-                            className={`px-2.5 py-1 rounded-full border text-xs cursor-pointer transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-[var(--brand)] ${
-                              effortLevel === ef.value ? 'border-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_14%,transparent)] text-[var(--text-primary)]' : 'border-[var(--border-subtle)] bg-[var(--surface-base)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                            title={ef.disabled ? `Not offered on ${model}` : undefined}
+                            className={`px-2.5 py-1 rounded-full border text-xs transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-[var(--brand)] ${
+                              ef.disabled
+                                ? 'border-[var(--border-subtle)] bg-[var(--surface-base)] text-[var(--text-muted)] cursor-not-allowed'
+                                : effortLevel === ef.value
+                                  ? 'border-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_14%,transparent)] text-[var(--text-primary)] cursor-pointer'
+                                  : 'border-[var(--border-subtle)] bg-[var(--surface-base)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] cursor-pointer'
                             }`}
                           >
                             <input
@@ -824,6 +834,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                               name="ccc-effort"
                               className="sr-only"
                               value={ef.value}
+                              disabled={ef.disabled}
                               checked={effortLevel === ef.value}
                               onChange={() => setEffortLevel(ef.value as EffortValue | '')}
                             />

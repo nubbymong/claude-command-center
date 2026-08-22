@@ -1,0 +1,30 @@
+{
+  "$comment": [
+    "Expected model set for the MODEL REGISTRY guards (#385). This is the 'Supported models' table of",
+    "Anthropic's Claude Code model configuration support article, copied verbatim (label, id) on fetchedAt.",
+    "resources/model-registry.json must cover every id here or a release is refused.",
+    "Read by BOTH guards, which is why it lives in resources/ (packaged) and not scripts/fixtures/:",
+    "  - scripts/release-gate.mjs   refuses the cut when the registry disagrees",
+    "  - src/main/sentinel/sentinel-models.ts   tells the user at runtime, offline, no claude binary needed",
+    "How to refresh: open `source` in a browser (or `curl -sL <source> | grep -o 'claude-[a-z0-9-]*' | sort -u`),",
+    "rewrite `models` from the Supported models table in the article's order, set fetchedAt to today,",
+    "then run `node scripts/release-gate.mjs` and add any new model to resources/model-registry.json `models`",
+    "until the check passes. The picker rows are DERIVED from `models` (alias rows first, then a pinned row",
+    "per version under its family), so a new version needs no `dropdown` edit — `dropdown` is alias rows only.",
+    "Sentinel reports a stale snapshot after 90 days; keep fetchedAt honest."
+  ],
+  "source": "https://support.claude.com/en/articles/11940350-claude-code-model-configuration",
+  "fetchedAt": "2026-08-22",
+  "models": [
+    { "label": "Opus 5", "id": "claude-opus-5" },
+    { "label": "Sonnet 5", "id": "claude-sonnet-5" },
+    { "label": "Fable 5", "id": "claude-fable-5" },
+    { "label": "Opus 4.8", "id": "claude-opus-4-8" },
+    { "label": "Opus 4.7", "id": "claude-opus-4-7" },
+    { "label": "Sonnet 4.6", "id": "claude-sonnet-4-6" },
+    { "label": "Opus 4.6", "id": "claude-opus-4-6" },
+    { "label": "Opus 4.5", "id": "claude-opus-4-5-20251101" },
+    { "label": "Haiku 4.5", "id": "claude-haiku-4-5-20251001" },
+    { "label": "Sonnet 4.5", "id": "claude-sonnet-4-5-20250929" }
+  ]
+}

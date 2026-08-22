@@ -26,7 +26,11 @@ describe('resolveModelInfo — behaviour-identity snapshots (pin today)', () => 
     expect(resolveModelInfo(reg, 'claude-fable-5-20260603').chartLabel).toBe('fable')
   })
   it('alias matches resolve exactly, including opus[1m]', () => {
-    expect(resolveModelInfo(reg, 'opus[1m]').id).toBe('claude-opus-4-8')
+    // The family aliases always point at the NEWEST model in the family, so
+    // this target moves with each new Opus (#385 added claude-opus-5).
+    expect(resolveModelInfo(reg, 'opus[1m]').id).toBe('claude-opus-5')
+    expect(resolveModelInfo(reg, 'opus').id).toBe('claude-opus-5')
+    expect(resolveModelInfo(reg, 'sonnet').id).toBe('claude-sonnet-5')
     expect(resolveModelInfo(reg, 'fable').family).toBe('fable')
   })
   it('exact + longest-prefix id matching picks the specific entry', () => {
@@ -34,7 +38,10 @@ describe('resolveModelInfo — behaviour-identity snapshots (pin today)', () => 
     expect(resolveModelInfo(reg, 'claude-opus-4-7-20260101').label).toBe('Opus 4.7')
   })
   it('substring pattern order is load-bearing: generic opus text lands on the first opus entry', () => {
-    expect(resolveModelInfo(reg, 'foo-opus-bar').id).toBe('claude-opus-4-8')
+    // Unchanged invariant (first opus entry wins); the registry is ordered
+    // newest-first per family, so that entry is now claude-opus-5.
+    expect(resolveModelInfo(reg, 'foo-opus-bar').id).toBe('claude-opus-5')
+    expect(resolveModelInfo(reg, 'foo-opus-bar').matchKind).toBe('pattern')
   })
   it('codex family groups under the "codex" chart label (intended change vs old verbatim labels)', () => {
     expect(resolveModelInfo(reg, 'gpt-5.5').chartLabel).toBe('codex')

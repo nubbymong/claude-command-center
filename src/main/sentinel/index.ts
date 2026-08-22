@@ -6,6 +6,7 @@ import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './se
 import { fetchChangelog, sliceChangelog } from './sentinel-changelog'
 import { runAnalysis } from './sentinel-analysis'
 import { validateProposal } from './sentinel-apply'
+import { modelCoverageFindings, EXPECTED_MODEL_SET } from './sentinel-models'
 import { getRegistry, getBaseline, applyOverlayEntry, removeOverlayEntry, loadOverlay, setOverlay } from '../model-registry-service'
 import { reconcileOverlay } from '../../shared/model-registry'
 import manifestJson from '../../../resources/sentinel-assumption-manifest.json'
@@ -65,6 +66,14 @@ async function analysisHome(): Promise<string | null> {
 /** Trigger B startup check (spec §5). Non-blocking — call fire-and-forget from bootstrap. */
 export async function sentinelStartupCheck(): Promise<void> {
   if (!state) return
+  // Model-registry coverage (#385) runs FIRST and unconditionally: it needs
+  // neither the network nor a working `claude` binary, so it must not sit
+  // behind the --version probe's fail-open return below.
+  try {
+    for (const f of modelCoverageFindings(getRegistry(), EXPECTED_MODEL_SET)) state.upsertFinding(f)
+  } catch (err) {
+    logInfo(`[sentinel] model coverage check skipped: ${(err as Error).message}`)
+  }
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
     const res = await spawnClaudeHeadless(['--version'], 15000, undefined, await analysisHome())
