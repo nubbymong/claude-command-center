@@ -22,6 +22,7 @@ import {
   useDialogEscape,
   dialogButtonStyle,
   dialogSegStyle,
+  scrim,
   ON_BRAND,
 } from '../../../src/renderer/components/ui/Dialog'
 import { paletteSurvivors, expectRaisedPanel, expectNoBackdropClose, pressEscape } from './dialog-tokens-harness'
@@ -68,11 +69,22 @@ describe('DialogOverlay', () => {
     expect(overlay.hasAttribute('data-dialog-overlay')).toBe(true)
   })
 
-  it('paints the scrim from rgba, not a palette class, and honours dim', () => {
+  it('paints the scrim from the theme-aware token, honouring dim', () => {
+    // NOT rgba(0,0,0,…): dialogs used to dim with `bg-base/80`, so the light
+    // theme faded to a soft near-white. Hardcoding black here made the light
+    // theme flash to 90% black when closing the app.
     const c = render(<DialogOverlay testId="ov" dim={0.42}><span /></DialogOverlay>)
     const overlay = c.querySelector('[data-testid="ov"]') as HTMLElement
-    expect(overlay.style.background).toContain('0.42')
+    expect(overlay.style.background).toBe('color-mix(in srgb, var(--scrim) 42%, transparent)')
+    expect(overlay.style.background).not.toContain('rgba')
     expect(paletteSurvivors(overlay)).toEqual([])
+  })
+
+  it('scrim() does not leak binary floating point into the CSS', () => {
+    // 0.6 * 100 is 60.00000000000001.
+    expect(scrim(0.6)).toBe('color-mix(in srgb, var(--scrim) 60%, transparent)')
+    expect(scrim(0.35)).toBe('color-mix(in srgb, var(--scrim) 35%, transparent)')
+    expect(scrim(0.9)).toBe('color-mix(in srgb, var(--scrim) 90%, transparent)')
   })
 })
 

@@ -43,10 +43,21 @@ export default function SshCloseDialog() {
             reattach later{pending.remoteAccount ? <> — signed in as <span className="font-mono">{pending.remoteAccount}</span></> : null}.
           </p>
         </DialogBody>
-        <DialogFooter>
+        {/* "End remote session" kills the remote tmux session, so it leads on
+            the left with a solid danger fill and is deliberately NOT in the
+            rightmost slot -- that is where every other confirm in the app puts
+            its SAFE default, and muscle memory would otherwise end the remote
+            instead of leaving it running. "Leave running" is the safe default
+            and takes the focus. */}
+        <DialogFooter
+          left={
+            <DialogButton variant="danger-solid" onClick={end} disabled={busy} testId="ssh-close-end">
+              {busy ? 'Ending…' : 'End remote session'}
+            </DialogButton>
+          }
+        >
           <DialogButton variant="ghost" onClick={clear} disabled={busy} testId="ssh-close-cancel">Cancel</DialogButton>
-          <DialogButton variant="secondary" onClick={leave} disabled={busy} testId="ssh-close-leave">Leave running (reattach later)</DialogButton>
-          <DialogButton variant="danger" onClick={end} disabled={busy} testId="ssh-close-end">{busy ? 'Ending…' : 'End remote session'}</DialogButton>
+          <DialogButton variant="secondary" onClick={leave} disabled={busy} autoFocus testId="ssh-close-leave">Leave running (reattach later)</DialogButton>
         </DialogFooter>
       </DialogPanel>
     </DialogOverlay>

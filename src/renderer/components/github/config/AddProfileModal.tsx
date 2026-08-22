@@ -57,7 +57,11 @@ export default function AddProfileModal({ onClose }: Props) {
     window.electronAPI.github.ghcliDetect().then((r) => setGhUsers(r.users))
   }, [])
 
-  // Escape closes the dialog (the trap's onEscape), so no useDialogEscape here.
+  // Escape closes the dialog through the trap's onEscape, so no
+  // useDialogEscape here. One caveat: the trap listens on `document` in the
+  // bubble phase, so while the device flow below is up -- it calls
+  // useDialogEscape, which is window-capture -- Escape cancels the OAuth poll
+  // and leaves this dialog open. Innermost wins, deliberately.
   useFocusTrap(dialogRef, true, onClose)
 
   const startOAuth = async () => {

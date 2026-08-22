@@ -10,7 +10,6 @@ import {
   DialogBody,
   DialogFooter,
   DialogButton,
-  useDialogEscape,
   DIALOG_INPUT_CLASS,
   DIALOG_INPUT_STYLE,
   DIALOG_LABEL_CLASS,
@@ -44,9 +43,11 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
   const [steps, setSteps] = useState<TeamStep[]>(editingTeam?.steps || [])
   const [saving, setSaving] = useState(false)
 
-  // Escape is the keyboard exit; it stays inert mid-save so the pipeline can't
-  // be abandoned half-written. The backdrop deliberately does NOT close.
-  useDialogEscape(onClose, !saving)
+  // Deliberately NO useDialogEscape: this is a multi-step pipeline with a
+  // per-step prompt in each field, and Escape is a reflex when leaving a
+  // textarea. Losing a whole draft team to one keypress, with no confirm and
+  // no undo, is worse than not having the shortcut. The backdrop deliberately
+  // does not close either; Cancel is the way out.
 
   const handleAddStep = () => {
     const defaultTemplate = allTemplates[0]

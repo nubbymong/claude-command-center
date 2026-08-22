@@ -77,6 +77,25 @@ describe('contrast — sidebar secondary text', () => {
     }
   })
 
+  // #360 introduced --text-on-brand for text sitting ON a --brand fill (the
+  // primary dialog buttons). It exists to FIX a contrast bug -- `bg-blue
+  // text-base` resolved to a font size, so those labels inherited their colour
+  // -- so the pair it was created for needs real coverage in both themes.
+  it('--text-on-brand clears 4.5:1 on --brand in both themes', () => {
+    for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
+      const fg = token('text-on-brand', mode)
+      const bg = token('brand', mode)
+      const r = contrast(fg, bg)
+      expect(r, `${name}: ${fg} on --brand (${bg}) = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+    }
+  })
+
+  it('--text-on-brand actually flips between the themes', () => {
+    // One hardcoded value would clear the ratio in whichever theme it suits and
+    // quietly fail the other, which is the whole reason this is a token.
+    expect(token('text-on-brand', 0)).not.toBe(token('text-on-brand', 1))
+  })
+
   it('the maths is right — known WCAG anchors', () => {
     // A ratio function that always returned 21 would pass everything above.
     expect(contrast('#ffffff', '#000000')).toBeCloseTo(21, 1)

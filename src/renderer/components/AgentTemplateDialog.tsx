@@ -9,7 +9,6 @@ import {
   DialogBody,
   DialogFooter,
   DialogButton,
-  useDialogEscape,
   DIALOG_INPUT_CLASS,
   DIALOG_INPUT_STYLE,
   DIALOG_TEXTAREA_CLASS,
@@ -45,7 +44,10 @@ export default function AgentTemplateDialog({ initial, onSave, onCancel }: Props
   const [nameError, setNameError] = useState('')
   const nameRef = useRef<HTMLInputElement>(null)
 
-  useDialogEscape(onCancel)
+  // Deliberately NO useDialogEscape: this form holds an unsaved template
+  // (name, prompt, tools). Escape is a reflex when leaving a textarea, and
+  // discarding the draft on one keypress with no confirm is worse than not
+  // having the shortcut. Cancel is the way out.
 
   useEffect(() => {
     nameRef.current?.focus()

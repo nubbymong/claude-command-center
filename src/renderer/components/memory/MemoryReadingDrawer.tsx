@@ -3,7 +3,7 @@ import type { MemoryFile } from '../../../shared/types'
 import { TypeBadge, fmt, fmtRel, renderMarkdown } from './memory-ui'
 import { SanitizedMarkdown } from '../github/SanitizedMarkdown'
 import { sanitizeMemoryHtml } from '../../utils/markdownSanitizer'
-import { useDialogEscape } from '../ui/Dialog'
+import { useDialogEscape, scrim } from '../ui/Dialog'
 
 interface Props {
   memory: MemoryFile
@@ -36,7 +36,7 @@ export default function MemoryReadingDrawer({ memory, content, onClose, onDelete
   return (
     <div
       className="fixed inset-0 z-50"
-      style={{ background: 'rgba(0,0,0,0.4)' }}
+      style={{ background: scrim(0.4) }}
     >
       <div
         className="absolute right-0 top-0 bottom-0 w-[440px] flex flex-col"

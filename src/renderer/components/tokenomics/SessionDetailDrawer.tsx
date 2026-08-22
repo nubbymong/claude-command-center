@@ -2,6 +2,8 @@ import React from 'react'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import type { TkSessionDetail } from '../../../shared/types'
 import { getModelColor, getModelShort } from './modelColors'
+import { isContextMenuGesture } from '../../lib/pointer'
+import { scrim } from '../ui/Dialog'
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
 
@@ -217,11 +219,24 @@ export function SessionDetailDrawer() {
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop. Dismisses on mousedown, never on click: Ctrl+C in a
+          terminal behind the drawer fires a synthetic click, and a
+          click-dismissed scrim made the drawer vanish mid-read. A context-menu
+          gesture dismisses inertly via onContextMenu instead of letting the
+          right-click fall through to xterm's paste. Same rule as
+          MemoryReadingDrawer, its sibling. */}
       <div
         className="fixed inset-0 z-40"
-        style={{ background: 'rgba(0,0,0,0.35)' }}
-        onClick={clearSelected}
+        style={{ background: scrim(0.35) }}
+        onMouseDown={(e) => {
+          if (isContextMenuGesture(e)) return
+          clearSelected()
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          clearSelected()
+        }}
         aria-hidden="true"
       />
       {/* Panel */}

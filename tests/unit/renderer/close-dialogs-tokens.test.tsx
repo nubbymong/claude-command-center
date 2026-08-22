@@ -90,7 +90,14 @@ describe('SshCloseDialog', () => {
     render()
     expectRaisedPanel(container.querySelector('[role="dialog"]'))
     const end = byTest('ssh-close-end')!
-    expect(end.style.color).toBe('var(--status-danger)')
+    // A SOLID danger fill, not a tint -- it kills the remote tmux session.
+    expect(end.style.background).toBe('var(--status-danger)')
+    // …and it must not sit in the rightmost (confirm/default) slot, which is
+    // where every other confirm puts its SAFE action. "Leave running" is last
+    // and holds the focus, so Enter and muscle memory cannot end the remote.
+    const buttons = Array.from(byTest('ssh-close-dialog')!.querySelectorAll('button'))
+    expect(buttons.indexOf(end)).toBeLessThan(buttons.indexOf(byTest('ssh-close-leave')!))
+    expect(buttons[buttons.length - 1]).toBe(byTest('ssh-close-leave'))
     expect(paletteSurvivors(byTest('ssh-close-dialog')!)).toEqual([])
     expect(container.textContent).toContain('h.example')
     expect(container.textContent).toContain('nick')

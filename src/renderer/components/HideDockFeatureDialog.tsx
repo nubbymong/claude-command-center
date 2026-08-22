@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react'
-import { dialogButtonStyle } from './ui/Dialog'
+import { dialogButtonStyle, scrim } from './ui/Dialog'
 
 export type DockFeature = 'tips' | 'ask'
 
@@ -69,7 +69,7 @@ export default function HideDockFeatureDialog({ feature, onConfirm, onCancel }: 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.6)' }}
+      style={{ background: scrim(0.6) }}
       data-ux-id="hide-dock-feature-backdrop"
     >
       <div

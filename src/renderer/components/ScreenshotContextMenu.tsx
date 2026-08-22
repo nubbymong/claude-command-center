@@ -105,6 +105,9 @@ export default function ScreenshotContextMenu({ x, y, sessionId, sessionType: _s
         className="rounded-lg shadow-xl w-[360px] max-h-[400px] flex flex-col"
         style={{ ...menuStyle, opacity: positioned ? 1 : 0, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
         onMouseDown={(e) => e.stopPropagation()}
+        // Right-clicking a thumbnail inside the menu must not reach the
+        // backdrop's contextmenu dismiss and close the menu under the pointer.
+        onContextMenu={(e) => e.stopPropagation()}
       >
         <div className="px-3 py-2 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Screenshots</span>

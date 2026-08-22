@@ -60,6 +60,16 @@ export interface DialogOverlayProps {
 }
 
 /**
+ * The backdrop wash at `dim` strength, from the theme-aware `--scrim` token.
+ * Hardcoding `rgba(0,0,0,…)` here regressed the light theme, whose dialogs
+ * used to fade to a soft near-white (`bg-base/80`) rather than flash to black.
+ */
+export function scrim(dim: number): string {
+  // Rounded because 0.6 * 100 is 60.00000000000001 in binary floating point.
+  return `color-mix(in srgb, var(--scrim) ${Math.round(dim * 1000) / 10}%, transparent)`
+}
+
+/**
  * The dimmed full-window backdrop. It centres its child and does NOT close on
  * click — deliberately no `onClick`/`onMouseDown` prop exists on it.
  */
@@ -68,7 +78,7 @@ export function DialogOverlay({ children, position = 'fixed', z = 'z-50', dim = 
     <div
       id={id}
       className={`${position} inset-0 ${z} flex items-center justify-center p-4 ${className}`}
-      style={{ background: `rgba(0,0,0,${dim})`, ...style }}
+      style={{ background: scrim(dim), ...style }}
       data-testid={testId}
       data-dialog-overlay=""
       onKeyDown={onKeyDown}
@@ -274,16 +284,35 @@ export function DialogCallout({ tone = 'neutral', children, testId, className = 
 
 /**
  * Escape closes the dialog. Registered on `window` in the capture phase so it
- * wins over the terminal's own key handling; stops propagation so the key
- * does not also reach the xterm underneath. `enabled=false` while a dialog is
- * mid-work (busy) keeps the user from abandoning it half-way.
+ * wins over the terminal's own key handling, and so the key does not also
+ * reach the xterm underneath. `enabled=false` while a dialog is mid-work
+ * (busy) keeps the user from abandoning it half-way.
+ *
+ * Two couplings worth knowing before you add this to a dialog:
+ *
+ *  - **It pre-empts `useFocusTrap`.** The trap listens on `document` in the
+ *    BUBBLE phase (`hooks/useFocusTrap.ts`), and window-capture runs first, so
+ *    a dialog using this hook swallows Escape before an enclosing trap sees
+ *    it. When a trapped dialog renders a child that calls this hook, Escape
+ *    closes the CHILD only. That is the behaviour we want (innermost wins),
+ *    but it is a coupling, not an accident — see `AddProfileModal`, which is
+ *    trapped and renders `OAuthDeviceFlow`.
+ *  - **`stopImmediatePropagation`, not `stopPropagation`.** Both of these
+ *    listeners sit on the same target (`window`), and `stopPropagation` does
+ *    not stop other listeners on the same target — so two mounted dialogs
+ *    would both close on one Escape. Effects run child-before-parent, so the
+ *    innermost dialog registers first and wins.
+ *
+ * Do NOT add this to a dialog that holds unsaved user input unless the caller
+ * gates it: a form that discards a half-typed config on one keypress, with no
+ * confirm and no undo, is a worse bug than the missing shortcut.
  */
 export function useDialogEscape(onClose: (() => void) | undefined, enabled = true) {
   React.useEffect(() => {
     if (!enabled || !onClose) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      e.stopPropagation()
+      e.stopImmediatePropagation()
       e.preventDefault()
       onClose()
     }

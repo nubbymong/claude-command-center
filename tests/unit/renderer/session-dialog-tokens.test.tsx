@@ -64,13 +64,16 @@ describe('the frame', () => {
     expect(byTest('session-dialog-validation')!.style.color).toBe('var(--status-warning)')
   })
 
-  it('the overlay has no click-to-close; Escape and the close glyph cancel', () => {
+  it('the overlay has no click-to-close, and Escape does NOT discard the form', () => {
     const { onCancel } = render()
     expectNoBackdropClose(byTest('session-dialog'), () => onCancel.mock.calls.length === 0)
+    // This dialog holds unsaved input (name, working dir, args, env), so
+    // Escape is deliberately inert: a reflex keypress on the way out of a
+    // field must not discard a half-filled config with no confirm and no undo.
     pressEscape()
-    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(onCancel).not.toHaveBeenCalled()
     act(() => { container.querySelector<HTMLElement>('button[aria-label="Cancel"]')!.click() })
-    expect(onCancel).toHaveBeenCalledTimes(2)
+    expect(onCancel).toHaveBeenCalledTimes(1)
   })
 })
 

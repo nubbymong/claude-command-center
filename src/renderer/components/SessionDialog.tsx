@@ -9,7 +9,7 @@ import { modelsFromRegistry, effortsFromRegistry, PERMISSION_MODES } from '../li
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { secretValueProblem } from '../../shared/command-secret'
-import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, ON_BRAND, useDialogEscape } from './ui/Dialog'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, ON_BRAND } from './ui/Dialog'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -77,7 +77,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const theme = useResolvedTheme()
   const initialClaude = initial?.claudeOptions
   const isEdit = !!initial
-  useDialogEscape(onCancel)
+  // Deliberately NO useDialogEscape: this form holds unsaved input (name,
+  // working dir, args, env, provider), and Escape is a reflex when leaving a
+  // field. Discarding a half-filled config on one keypress with no confirm and
+  // no undo is worse than not having the shortcut. Cancel is the way out.
 
   // Codex master ("Do you use Codex?"): with it off, Codex configs can't launch,
   // so the card renders disabled with a pointer to Settings → Codex.

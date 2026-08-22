@@ -5,7 +5,6 @@ import { buildLogTheme } from '../lib/terminal-theme'
 import {
   DialogOverlay,
   DialogPanel,
-  DialogHeader,
   DialogBody,
   DialogFooter,
   DialogButton,
@@ -24,9 +23,42 @@ interface Props {
  *  app base rather than the usual scrim — there is nothing behind it to dim. */
 const OPAQUE_BACKDROP: React.CSSProperties = { background: 'var(--surface-base)' }
 
-/** The `>_` mark that has always identified the setup flow, in the header's
- *  glyph tile. */
-const PROMPT_GLYPH = <span className="font-mono text-sm font-bold">&gt;_</span>
+/**
+ * The setup flow's hero, kept deliberately OUT of the shared `DialogHeader`.
+ *
+ * This is a first-run full-screen takeover, not a settings dialog: at this
+ * moment it is the entire app, so it keeps its centred layout, its large `>_`
+ * mark and a real `<h1>` (the page would otherwise have no h1 at all). #360
+ * migrated its colours to the semantic tokens and nothing else.
+ */
+function SetupHero({ titleId, mark, title, subtitle, big }: {
+  titleId: string
+  mark: string
+  title: string
+  subtitle: React.ReactNode
+  /** Step 1 is the welcome and runs a size larger than the CLI step. */
+  big?: boolean
+}) {
+  return (
+    <div className={`text-center ${big ? 'mb-6' : 'mb-4'}`}>
+      <div
+        className={`${big ? 'text-4xl mb-3' : 'text-3xl mb-2'} font-mono`}
+        style={{ color: 'var(--brand)' }}
+        aria-hidden
+      >
+        {mark}
+      </div>
+      <h1
+        id={titleId}
+        className={`${big ? 'text-2xl mb-2' : 'text-xl mb-1'} font-bold`}
+        style={{ color: 'var(--text-primary)' }}
+      >
+        {title}
+      </h1>
+      <p className={big ? '' : 'text-sm'} style={{ color: 'var(--text-muted)' }}>{subtitle}</p>
+    </div>
+  )
+}
 
 export default function SetupDialog({ onComplete, initialStep }: Props) {
   const [step, setStep] = useState(initialStep || 1)
@@ -162,17 +194,16 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     return (
       <DialogOverlay style={OPAQUE_BACKDROP}>
         <DialogPanel width="w-[672px]" labelledBy="setup-cli-title">
-          <DialogHeader
-            titleId="setup-cli-title"
-            title="Claude CLI Setup"
-            glyph={PROMPT_GLYPH}
-            subtitle={<>
-              Claude needs to trust this directory and authenticate.
-              Complete the prompts below, then type <code style={{ color: 'var(--brand)' }}>/exit</code> when done.
-            </>}
-          />
-
           <DialogBody>
+            <SetupHero
+              titleId="setup-cli-title"
+              mark=">_"
+              title="Claude CLI Setup"
+              subtitle={<>
+                Claude needs to trust this directory and authenticate.
+                Complete the prompts below, then type <code style={{ color: 'var(--brand)' }}>/exit</code> when done.
+              </>}
+            />
             <div
               ref={termContainerRef}
               className="rounded-lg overflow-hidden border"
@@ -215,14 +246,14 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   return (
     <DialogOverlay style={OPAQUE_BACKDROP}>
       <DialogPanel width="w-[576px]" labelledBy="setup-welcome-title">
-        <DialogHeader
-          titleId="setup-welcome-title"
-          title="Welcome to AI Code Conductor"
-          glyph={PROMPT_GLYPH}
-          subtitle="Configure your storage directories"
-        />
-
         <DialogBody className="space-y-5">
+          <SetupHero
+            titleId="setup-welcome-title"
+            mark=">_"
+            title="Welcome to AI Code Conductor"
+            subtitle="Configure your storage directories"
+            big
+          />
           {/* Data Directory */}
           <div>
             <label className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE}>
