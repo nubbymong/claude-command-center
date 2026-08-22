@@ -657,6 +657,10 @@ export default function App() {
           disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
           enableCodexReview: claude?.enableCodexReview,
           loggingEnabled: claude?.loggingEnabled,
+          // #397 Group 4: these were dropped on save+restore, so a restored session
+          // came back with the wrong permission mode / without its extra CLI args.
+          permissionMode: claude?.permissionMode,
+          extraArgs: claude?.extraArgs,
           machineName: saved.machineName,
           githubIntegration: saved.githubIntegration,
           status: 'idle' as const,
@@ -696,7 +700,17 @@ export default function App() {
       // Per-session "hide this tool" entries key on session ids, which persist
       // across restarts; drop the ones whose session did not come back (ADR-018 M3).
       useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
-      await window.electronAPI.session.clear()
+      // #397 Group 4: previously session.clear() unlinked the file here and relied on
+      // the ~1s debounced autosave to rewrite it -- a crash in that window lost every
+      // session. Instead persist the restored (live) set immediately so the on-disk
+      // copy is always current, with no empty gap. main enriches on save, and the
+      // restored resumeUuid/resumeCwd are still on the records (TerminalView clears
+      // them only at spawn), so the exact-resume targets are preserved.
+      try {
+        await window.electronAPI.session.save(buildSessionState())
+      } catch {
+        /* best-effort: the debounced autosave rewrites on the next session-set change */
+      }
 
       if (sessionSummary.changed > 0) {
         const s = useSettingsStore.getState()

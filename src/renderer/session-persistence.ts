@@ -62,6 +62,10 @@ export function buildSessionState(): SessionState {
       effortLevel: s.effortLevel,
       disableAutoMemory: s.disableAutoMemory,
       enableCodexReview: s.enableCodexReview ? true : undefined,
+      // #397 Group 4: round-trip these so a restored session keeps its permission
+      // mode and extra CLI args (previously dropped on save, so relaunch lost them).
+      permissionMode: s.permissionMode,
+      extraArgs: s.extraArgs,
     } : undefined,
     codexOptions: s.codexOptions,
   }))
