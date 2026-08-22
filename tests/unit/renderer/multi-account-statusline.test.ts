@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
   liveAccountUsage,
-  splitAccountRows,
-  FOOTER_MAX_PER_ROW,
+  layoutFooterRows,
+  reconcileFooterMetrics,
   FOOTER_MAX_ROWS,
-  FOOTER_MAX_VISIBLE,
+  FOOTER_PILL_GAP_PX,
+  FOOTER_OVERFLOW_RESERVE_PX,
   type LiveAccount,
 } from '../../../src/renderer/components/MultiAccountStatusline'
 import type { Session } from '../../../src/renderer/stores/sessionStore'
@@ -140,69 +141,147 @@ describe('liveAccountUsage', () => {
   })
 })
 
-// Footer row splitting (owner request): <=3 accounts stay on ONE row exactly as
-// before; 4-6 stretch the footer to two rows of at most 3; past 6 the tail goes
-// behind a "+N" overflow control. Generic + pure, so the boundaries are tested
-// here without a DOM (the rendered counterpart lives in
-// multi-account-statusline-render.test.tsx).
-describe('splitAccountRows -- footer row/overflow boundaries', () => {
+// Footer row layout (#378). The old split was by COUNT (<=3 one row, 4..6 two
+// rows, >6 overflow) and put four accounts on two rows at 1900px with empty
+// footer either side. Rows now come from MEASURED widths: one row whenever
+// everything fits the free width; wrap only when it truly does not, filling
+// each row before the next; at most FOOTER_MAX_ROWS rows, the rest behind "+N".
+// Generic + pure, so the fit boundaries are tested here without a DOM (the
+// rendered counterpart lives in multi-account-statusline-render.test.tsx).
+describe('layoutFooterRows -- measured footer rows (#378)', () => {
   const list = (n: number) => Array.from({ length: n }, (_, i) => `a${i + 1}`)
+  const same = (n: number, w: number) => Array.from({ length: n }, () => w)
+  const gap = FOOTER_PILL_GAP_PX
 
-  it('exposes the layout caps the footer is built around', () => {
-    expect(FOOTER_MAX_PER_ROW).toBe(3)
+  it('exposes the layout constants the footer is built around', () => {
     expect(FOOTER_MAX_ROWS).toBe(2)
-    expect(FOOTER_MAX_VISIBLE).toBe(6)
+    expect(FOOTER_PILL_GAP_PX).toBe(12)
+    expect(FOOTER_OVERFLOW_RESERVE_PX).toBe(40)
   })
 
-  it('keeps 1-3 accounts on a single row (no layout change from before)', () => {
-    expect(splitAccountRows(list(1))).toEqual({ rows: [['a1']], overflow: [] })
-    expect(splitAccountRows(list(2))).toEqual({ rows: [['a1', 'a2']], overflow: [] })
-    expect(splitAccountRows(list(3))).toEqual({ rows: [['a1', 'a2', 'a3']], overflow: [] })
+  it('four pills of known width in a 1400px free span render on ONE row (the owner\'s case)', () => {
+    // 4 x 300 + 3 gaps of 12 = 1236 <= 1400. The count-based split said 2+2.
+    const out = layoutFooterRows(list(4), same(4, 300), { available: 1400 })
+    expect(out).toEqual({ rows: [['a1', 'a2', 'a3', 'a4']], overflow: [] })
   })
 
-  it('stretches to TWO rows at 4 accounts, balanced 2+2', () => {
-    const out = splitAccountRows(list(4))
-    expect(out.rows).toHaveLength(2)
-    expect(out.rows.map((r) => r.length)).toEqual([2, 2])
-    expect(out.rows).toEqual([['a1', 'a2'], ['a3', 'a4']])
+  it('keeps everything on one row right up to the exact free width', () => {
+    const exact = 4 * 300 + 3 * gap
+    expect(layoutFooterRows(list(4), same(4, 300), { available: exact }).rows).toHaveLength(1)
+    // Half a pixel of measurement noise does not wrap a row.
+    expect(layoutFooterRows(list(4), same(4, 300), { available: exact - 0.4 }).rows).toHaveLength(1)
+    // A whole pixel short does.
+    expect(layoutFooterRows(list(4), same(4, 300), { available: exact - 1 }).rows).toHaveLength(2)
+  })
+
+  it('wraps FILL-FIRST, not balanced: 4 pills that do not fit go 3+1, never 2+2', () => {
+    // 3 x 300 + 2 x 12 = 924 fits in 1200; the fourth (1236) does not.
+    const out = layoutFooterRows(list(4), same(4, 300), { available: 1200 })
+    expect(out.rows).toEqual([['a1', 'a2', 'a3'], ['a4']])
     expect(out.overflow).toEqual([])
   })
 
-  it('splits 5 accounts 3+2 (never more than 3 on a row)', () => {
-    const out = splitAccountRows(list(5))
-    expect(out.rows.map((r) => r.length)).toEqual([3, 2])
-    expect(out.overflow).toEqual([])
+  it('more than three fit on a row when the width is there (no per-row cap)', () => {
+    const out = layoutFooterRows(list(6), same(6, 200), { available: 1400 })
+    // 6 x 200 + 5 x 12 = 1260 <= 1400: six on one row.
+    expect(out.rows).toEqual([list(6)])
   })
 
-  it('fills two rows of 3 at 6 accounts with NO overflow', () => {
-    const out = splitAccountRows(list(6))
-    expect(out.rows).toEqual([['a1', 'a2', 'a3'], ['a4', 'a5', 'a6']])
-    expect(out.overflow).toEqual([])
+  it('uses the real per-pill widths, not an average', () => {
+    // 500 + 12 + 500 = 1012 > 1000, so a2 wraps; then 500 + 12 + 100 fits.
+    const out = layoutFooterRows(list(3), [500, 500, 100], { available: 1000 })
+    expect(out.rows).toEqual([['a1'], ['a2', 'a3']])
   })
 
-  it('shows 6 and overflows the rest at 7 accounts', () => {
-    const out = splitAccountRows(list(7))
+  it('never renders more than FOOTER_MAX_ROWS rows: the tail goes to the overflow', () => {
+    // 3 per row at 1000px (924); 7 pills -> 3 + 3 + 1, and the third row is
+    // not allowed, so a7 overflows. The last row then has to make room for
+    // the "+N" control: 924 + 12 + 40 = 976 <= 1000, so it keeps all three.
+    const out = layoutFooterRows(list(7), same(7, 300), { available: 1000 })
     expect(out.rows).toEqual([['a1', 'a2', 'a3'], ['a4', 'a5', 'a6']])
     expect(out.overflow).toEqual(['a7'])
   })
 
-  it('overflows everything past 6, preserving order', () => {
-    const out = splitAccountRows(list(10))
-    expect(out.rows.flat()).toEqual(['a1', 'a2', 'a3', 'a4', 'a5', 'a6'])
-    expect(out.overflow).toEqual(['a7', 'a8', 'a9', 'a10'])
+  it('makes room for the "+N" control on the last row, moving pills into the overflow if it must', () => {
+    // 3 x 300 + 2 x 12 = 924 fits in 940, but 924 + 12 + 40 = 976 does not:
+    // the last row gives up a pill so the control fits beside the rest.
+    const out = layoutFooterRows(list(7), same(7, 300), { available: 940 })
+    expect(out.rows).toEqual([['a1', 'a2', 'a3'], ['a4', 'a5']])
+    expect(out.overflow).toEqual(['a6', 'a7'])
   })
 
-  it('never puts more than 3 on a row and never renders more than 2 rows', () => {
+  it('never empties the last row to fit the control', () => {
+    // One pill per row; the control does not fit beside it either, but the
+    // row keeps its pill -- a row of nothing but "+N" would be worse.
+    const out = layoutFooterRows(list(4), same(4, 300), { available: 310 })
+    expect(out.rows).toEqual([['a1'], ['a2']])
+    expect(out.overflow).toEqual(['a3', 'a4'])
+  })
+
+  it('a pill wider than the whole zone sits alone on a row rather than vanishing', () => {
+    const out = layoutFooterRows(list(2), [900, 100], { available: 500 })
+    expect(out.rows).toEqual([['a1'], ['a2']])
+    expect(out.overflow).toEqual([])
+  })
+
+  it('estimates an unmeasured pill at the WIDEST measured one (wraps early, never spills)', () => {
+    // a3 has never been painted. Estimated at 400: 400 + 12 + 400 = 812 fits
+    // 1000, + 12 + 400 = 1224 does not -> 2 + 1, NOT 3 on one row.
+    const out = layoutFooterRows(list(3), [400, 200, undefined], { available: 1000 })
+    expect(out.rows).toEqual([['a1', 'a2'], ['a3']])
+  })
+
+  it('with no measured free width, everything is one row (first paint / jsdom) and nothing overflows', () => {
+    expect(layoutFooterRows(list(9), same(9, 300), { available: 0 })).toEqual({ rows: [list(9)], overflow: [] })
+    expect(layoutFooterRows(list(9), same(9, 300), { available: NaN })).toEqual({ rows: [list(9)], overflow: [] })
+    // ...and likewise when not a single pill has been measured yet.
+    expect(layoutFooterRows(list(9), same(9, undefined as unknown as number), { available: 1400 })).toEqual({ rows: [list(9)], overflow: [] })
+  })
+
+  it('drops nothing and duplicates nothing: rows + overflow is the input, in order, never more than 2 rows', () => {
     for (let n = 1; n <= 25; n++) {
-      const out = splitAccountRows(list(n))
-      expect(out.rows.length).toBeLessThanOrEqual(FOOTER_MAX_ROWS)
-      for (const row of out.rows) expect(row.length).toBeLessThanOrEqual(FOOTER_MAX_PER_ROW)
-      // Nothing is dropped or duplicated: rows + overflow == the input, in order.
-      expect([...out.rows.flat(), ...out.overflow]).toEqual(list(n))
+      for (const available of [310, 700, 1000, 1400, 3000]) {
+        const out = layoutFooterRows(list(n), same(n, 300), { available })
+        expect(out.rows.length).toBeLessThanOrEqual(FOOTER_MAX_ROWS)
+        expect([...out.rows.flat(), ...out.overflow]).toEqual(list(n))
+        for (const row of out.rows) expect(row.length).toBeGreaterThan(0)
+      }
     }
   })
 
   it('returns no rows for an empty list', () => {
-    expect(splitAccountRows([])).toEqual({ rows: [], overflow: [] })
+    expect(layoutFooterRows([], [], { available: 1400 })).toEqual({ rows: [], overflow: [] })
+  })
+})
+
+// The measurement cache behind the layout: the same object back when nothing
+// moved is what ends the measure -> set -> render -> measure cycle.
+describe('reconcileFooterMetrics -- measurement cache', () => {
+  const live = (...k: string[]) => new Set(k)
+
+  it('returns the SAME object when nothing moved by more than the fit epsilon', () => {
+    const prev = { available: 1400, widths: { a: 300, b: 301 } }
+    expect(reconcileFooterMetrics(prev, 1400.3, { a: 300.2, b: 300.8 }, live('a', 'b'))).toBe(prev)
+  })
+
+  it('returns a new object when the free width or a pill width changes', () => {
+    const prev = { available: 1400, widths: { a: 300 } }
+    expect(reconcileFooterMetrics(prev, 1200, { a: 300 }, live('a'))).toEqual({ available: 1200, widths: { a: 300 } })
+    expect(reconcileFooterMetrics(prev, 1400, { a: 320 }, live('a'))).toEqual({ available: 1400, widths: { a: 320 } })
+  })
+
+  it('keeps the last width of a live pill that is not painted right now (behind "+N")', () => {
+    const prev = { available: 1400, widths: { a: 300, b: 280 } }
+    // b is live but not in the fresh sweep: its cached width survives.
+    const out = reconcileFooterMetrics(prev, 1400, { a: 300 }, live('a', 'b'))
+    expect(out).toBe(prev)
+    expect(out.widths.b).toBe(280)
+  })
+
+  it('forgets an account that is no longer live', () => {
+    const prev = { available: 1400, widths: { a: 300, gone: 280 } }
+    const out = reconcileFooterMetrics(prev, 1400, { a: 300 }, live('a'))
+    expect(out).not.toBe(prev)
+    expect(out.widths).toEqual({ a: 300 })
   })
 })

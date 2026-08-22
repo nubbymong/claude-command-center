@@ -103,42 +103,223 @@ export function liveAccountUsage(
   })
 }
 
-/** Never more than 3 account pills side by side -- three full pills (dot + email
- *  + two meters) is already the most that fits to the right of the runtime band
- *  at the 1280px minimum window width (src/main/index.ts minWidth). */
-export const FOOTER_MAX_PER_ROW = 3
 /** The footer grows to at most two rows; past that the tail goes behind the
- *  overflow control rather than eating more of the terminal's height. */
+ *  "+N" overflow control rather than eating more of the terminal's height. */
 export const FOOTER_MAX_ROWS = 2
-export const FOOTER_MAX_VISIBLE = FOOTER_MAX_PER_ROW * FOOTER_MAX_ROWS
+/** Horizontal gap between pills, in px. Applied as an INLINE style (not a
+ *  Tailwind `gap-x-*` class) so the number the layout is computed with and the
+ *  number the browser lays out with are the same one -- rem-based utilities
+ *  scale with the global UI font size, a px constant does not. */
+export const FOOTER_PILL_GAP_PX = 12
+/** Room held back on the last row for the "+N" control when anything
+ *  overflows, so the control never pushes the row past the zone. Generous for
+ *  a two-digit count at 10px text; the popover itself is position: fixed. */
+export const FOOTER_OVERFLOW_RESERVE_PX = 40
+/** Sub-pixel slack on the fit test: getBoundingClientRect() returns fractional
+ *  widths and a pill that is 0.3px "too wide" still paints on the row. */
+const FIT_EPSILON_PX = 0.5
 
 export interface FooterRowLayout<T> {
-  /** Rendered rows, in order. 1 row for <=3 accounts, else 2. */
+  /** Rendered rows, in order, each filled before the next starts. */
   rows: T[][]
-  /** Everything past FOOTER_MAX_VISIBLE -- shown via the "+N" overflow control. */
+  /** Everything that does not fit in FOOTER_MAX_ROWS rows -- shown via the
+   *  "+N" overflow control on the last row. */
   overflow: T[]
 }
 
+export interface FooterLayoutOptions {
+  /** Free width of the footer's centre zone, in px. <= 0 means "not measured
+   *  yet" and yields one row of everything (CSS flex-wrap then wraps it). */
+  available: number
+  gap?: number
+  maxRows?: number
+  overflowReserve?: number
+}
+
 /**
- * Split the live accounts into footer rows.
+ * Lay the account pills out in rows by MEASURED width (#378).
  *
- *   <=3  -> a single row (byte-identical layout to the pre-two-row footer)
- *   4..6 -> two rows, BALANCED (4 -> 2+2, 5 -> 3+2, 6 -> 3+3). Balanced rather
- *           than fill-first (3+1) so the centred cluster stays symmetric; both
- *           satisfy the "max 3 per row" rule.
- *   >6   -> the first 6 in two rows of 3, the rest returned as `overflow`.
+ * The previous split was by count (<=3 one row, 4..6 two rows balanced 2+2 /
+ * 3+2 / 3+3, >6 overflow) and so put four accounts on two rows at 1900px with
+ * empty footer either side of them. This one answers the owner's actual rule:
+ * one row whenever everything fits in the free width; wrap only when it truly
+ * does not, filling each row before starting the next; never more than
+ * FOOTER_MAX_ROWS rows, the rest behind "+N".
  *
- * Pure and generic so the boundaries are unit-testable without a DOM.
+ *   - `widths[i]` is item i's measured width. An item with no measurement yet
+ *     (never painted -- e.g. it appeared straight into the overflow) is
+ *     estimated at the WIDEST measured pill, which errs towards wrapping
+ *     earlier rather than spilling out of the zone; it is corrected the first
+ *     time the pill is painted and measured.
+ *   - With no `available` width, or no measurement at all, the answer is a
+ *     single row: the first frame before the layout effect has run, and jsdom.
+ *   - A pill wider than the whole zone sits alone on a row (it can ellipsise).
+ *   - When anything overflows, the last row keeps `overflowReserve` px free for
+ *     the control, moving pills into the overflow until it fits.
+ *
+ * Pure and generic so the fit boundaries are unit-testable without a DOM.
  */
-export function splitAccountRows<T>(accounts: T[]): FooterRowLayout<T> {
-  const visible = accounts.slice(0, FOOTER_MAX_VISIBLE)
-  const overflow = accounts.slice(FOOTER_MAX_VISIBLE)
-  if (visible.length === 0) return { rows: [], overflow }
-  if (visible.length <= FOOTER_MAX_PER_ROW) return { rows: [visible], overflow }
-  const perRow = Math.min(FOOTER_MAX_PER_ROW, Math.ceil(visible.length / FOOTER_MAX_ROWS))
+export function layoutFooterRows<T>(
+  items: T[],
+  widths: ReadonlyArray<number | undefined>,
+  opts: FooterLayoutOptions,
+): FooterRowLayout<T> {
+  if (items.length === 0) return { rows: [], overflow: [] }
+  const gap = opts.gap ?? FOOTER_PILL_GAP_PX
+  const maxRows = Math.max(1, opts.maxRows ?? FOOTER_MAX_ROWS)
+  const reserve = opts.overflowReserve ?? FOOTER_OVERFLOW_RESERVE_PX
+  const available = opts.available
+  const isWidth = (w: number | undefined): w is number => typeof w === 'number' && Number.isFinite(w) && w > 0
+  const measured = widths.filter(isWidth)
+  if (!(available > 0) || measured.length === 0) return { rows: [items], overflow: [] }
+  const estimate = Math.max(...measured)
+  const widthOf = (i: number): number => {
+    const w = widths[i]
+    return isWidth(w) ? w : estimate
+  }
+  const fits = (w: number) => w <= available + FIT_EPSILON_PX
+
   const rows: T[][] = []
-  for (let i = 0; i < visible.length; i += perRow) rows.push(visible.slice(i, i + perRow))
+  let cur: T[] = []
+  let curW = 0
+  let overflowFrom = -1
+  for (let i = 0; i < items.length; i++) {
+    const w = widthOf(i)
+    if (cur.length > 0 && !fits(curW + gap + w)) {
+      if (rows.length === maxRows - 1) {
+        overflowFrom = i
+        break
+      }
+      rows.push(cur)
+      cur = []
+      curW = 0
+    }
+    cur.push(items[i])
+    curW = cur.length === 1 ? w : curW + gap + w
+  }
+  if (cur.length > 0) rows.push(cur)
+  const overflow = overflowFrom >= 0 ? items.slice(overflowFrom) : []
+
+  // The "+N" control lives on the last row: make room for it, pulling pills
+  // into the overflow from the end until it fits (never emptying the row).
+  if (overflow.length > 0) {
+    const last = rows[rows.length - 1]
+    const lastStart = items.length - overflow.length - last.length
+    let lastW = curW
+    while (last.length > 1 && !fits(lastW + gap + reserve)) {
+      overflow.unshift(last.pop() as T)
+      lastW -= gap + widthOf(lastStart + last.length)
+    }
+  }
   return { rows, overflow }
+}
+
+/** Measured geometry the row layout is computed from: the centre zone's free
+ *  width and each painted pill's width, keyed by account. */
+interface FooterMetrics {
+  available: number
+  widths: Record<string, number>
+}
+
+const EMPTY_METRICS: FooterMetrics = { available: 0, widths: {} }
+
+/**
+ * Fold a fresh measurement into the previous one. Returns `prev` itself when
+ * nothing moved by more than the fit epsilon, so the state update is a no-op
+ * and the measure -> set -> render -> measure cycle terminates. Keys no longer
+ * live are dropped; keys live but not currently painted (behind "+N") keep
+ * their last measurement.
+ */
+export function reconcileFooterMetrics(
+  prev: FooterMetrics,
+  available: number,
+  fresh: Record<string, number>,
+  liveKeys: ReadonlySet<string>,
+): FooterMetrics {
+  let changed = Math.abs(prev.available - available) > FIT_EPSILON_PX
+  const widths: Record<string, number> = {}
+  for (const k of liveKeys) {
+    const w = fresh[k] ?? prev.widths[k]
+    if (w === undefined) continue
+    widths[k] = w
+    const before = prev.widths[k]
+    if (before === undefined || Math.abs(before - w) > FIT_EPSILON_PX) changed = true
+  }
+  for (const k of Object.keys(prev.widths)) if (!liveKeys.has(k)) changed = true
+  return changed ? { available, widths } : prev
+}
+
+/**
+ * Rows for the footer from REAL widths. Measures the strip's free width and
+ * every painted pill synchronously in a layout effect when the set of accounts
+ * or what the pills show changes (so the first paint is already laid out), and
+ * via a ResizeObserver on the strip and the pills for everything else --
+ * window resize, font scale, a meter appearing. Widths are cached by account
+ * so a pill currently behind the "+N" control keeps the width it had when it
+ * was last painted.
+ */
+function useMeasuredFooterRows(
+  accounts: LiveAccount[],
+  contentSignature: string,
+): {
+  layout: FooterRowLayout<LiveAccount>
+  rootRef: React.RefObject<HTMLDivElement | null>
+  pillRef: (key: string) => (el: HTMLElement | null) => void
+} {
+  const rootRef = React.useRef<HTMLDivElement | null>(null)
+  const pillEls = React.useRef(new Map<string, HTMLElement>())
+  const [metrics, setMetrics] = React.useState<FooterMetrics>(EMPTY_METRICS)
+  const liveKeys = React.useMemo(() => new Set(accounts.map((a) => a.email)), [accounts])
+  const liveKeysRef = React.useRef(liveKeys)
+  liveKeysRef.current = liveKeys
+
+  const measure = React.useCallback(() => {
+    const root = rootRef.current
+    if (!root) return
+    const available = root.getBoundingClientRect().width
+    const fresh: Record<string, number> = {}
+    for (const [k, el] of pillEls.current) fresh[k] = el.getBoundingClientRect().width
+    setMetrics((prev) => reconcileFooterMetrics(prev, available, fresh, liveKeysRef.current))
+  }, [])
+
+  // Callback refs keep a live key -> element map without a querySelectorAll
+  // sweep per render. One stable function per key, so React does not detach
+  // and re-attach every pill on every render.
+  const refCache = React.useRef(new Map<string, (el: HTMLElement | null) => void>())
+  const pillRef = React.useCallback((key: string) => {
+    let fn = refCache.current.get(key)
+    if (!fn) {
+      fn = (el) => {
+        if (el) pillEls.current.set(key, el)
+        else pillEls.current.delete(key)
+      }
+      refCache.current.set(key, fn)
+    }
+    return fn
+  }, [])
+
+  const layout = React.useMemo(
+    () => layoutFooterRows(accounts, accounts.map((a) => metrics.widths[a.email]), { available: metrics.available }),
+    [accounts, metrics],
+  )
+
+  // Re-run when the set of accounts, what a pill shows, or the row assignment
+  // changes: each can mount/unmount pill ELEMENTS (a pill that moves to another
+  // row is a new node under a new parent) that the observer must (un)watch.
+  // Bounded: a re-measure that changes nothing returns the same metrics object,
+  // so no re-render follows and the cycle ends.
+  const keysSignature = accounts.map((a) => a.email).join(' ')
+  const rowsSignature = layout.rows.map((r) => r.length).join('/') + ':' + layout.overflow.length
+  React.useLayoutEffect(() => {
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => measure())
+    if (rootRef.current) ro.observe(rootRef.current)
+    for (const el of pillEls.current.values()) ro.observe(el)
+    return () => ro.disconnect()
+  }, [measure, keysSignature, contentSignature, rowsSignature])
+
+  return { layout, rootRef, pillRef }
 }
 
 function tooltip(a: LiveAccount, opts?: { withPercent?: boolean }): string {
@@ -317,11 +498,15 @@ function AccountPill({
   compact,
   showPending,
   minimal,
+  pillRef,
 }: {
   account: LiveAccount
   hidden: string[]
   theme: 'dark' | 'light'
   compact: boolean
+  /** Measurement hook-up: the row layout is computed from this element's
+   *  rendered width (#378). */
+  pillRef?: (el: HTMLElement | null) => void
   /** Whether a payload is still expected -- see the gate in the parent. */
   showPending: boolean
   /** Minimal mode: the meters collapse to traffic-light dots and the label
@@ -355,6 +540,7 @@ function AccountPill({
   const reportedNothing = account.buckets.length === 0
   return (
     <span
+      ref={pillRef}
       // Each account sits in its own subtle rounded pill so the boundary between
       // accounts reads at a glance, rather than relying on whitespace alone.
       className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 ${compact ? 'min-w-0' : 'shrink-0'}`}
@@ -591,11 +777,13 @@ function AccountOverflow({
  * bars appear is curated INDEPENDENTLY of the per-session strip via
  * footerHiddenUsageBuckets (a footer-scoped denylist by bucket label).
  *
- * Layout (owner request): <=3 accounts stay on one row exactly as before; 4-6
- * stretch the footer to two rows of at most 3; past 6 the tail collapses into a
- * "+N" overflow control. The footer is `min-h-7` (a MINIMUM) inside a flex
- * column whose terminal pane re-fits from a ResizeObserver, so growing it is
- * safe -- nothing measures the bar's height.
+ * Layout (owner request, #378): one row whenever every pill fits in the free
+ * footer width; wrap only when they truly do not, filling each row before the
+ * next; at most two rows, the tail behind a "+N" overflow control. The rows are
+ * computed from MEASURED widths (useMeasuredFooterRows), not from a count. The
+ * footer is `min-h-7` (a MINIMUM) inside a flex column whose terminal pane
+ * re-fits from a ResizeObserver, so growing it is safe -- nothing measures the
+ * bar's height.
  */
 export default function MultiAccountStatusline() {
   const sessions = useSessionStore((s) => s.sessions)
@@ -618,7 +806,12 @@ export default function MultiAccountStatusline() {
     [sessions, profiles, aliases, overrides],
   )
 
-  const { rows, overflow } = React.useMemo(() => splitAccountRows(accounts), [accounts])
+  // What a pill SHOWS decides its width: the denylist, minimal mode and the
+  // pending placeholder all change it without changing the set of accounts.
+  // The hook re-measures when this signature changes.
+  const contentSignature = `${hidden.join(',')}|${minimal ? 'dots' : 'meters'}|${statusLineEnabled ? 'p' : '-'}`
+  const { layout, rootRef, pillRef } = useMeasuredFooterRows(accounts, contentSignature)
+  const { rows, overflow } = layout
 
   if (accounts.length < 2) return null
 
@@ -630,25 +823,41 @@ export default function MultiAccountStatusline() {
 
   return (
     <div
-      className={`flex flex-col items-center min-w-0 ${multiRow ? 'gap-1 py-1' : ''}`}
+      ref={rootRef}
+      // w-full: the strip spans its centre zone so its measured width IS the
+      // free width between the runtime band and the disclaimer -- the number
+      // the row layout is computed against. Shrink-to-fit (the old behaviour)
+      // measured the cluster's own width, which is useless for deciding how
+      // much room there is. Rows centre their pills inside it.
+      className={`flex flex-col items-center w-full min-w-0 ${multiRow ? 'gap-1 py-1' : ''}`}
       data-testid="multi-account-statusline"
       data-account-rows={rows.length}
     >
       {rows.map((row, i) => (
         <div
           key={i}
-          // flex-wrap is the occlusion fix. The count-based split above caps a
-          // row at 3 accounts, but 3 pills still overflow a narrow window --
-          // and the centred cluster then spilled equally out of BOTH sides of
-          // its zone and was clipped by the footer's overflow-hidden, cutting
-          // the first pill in half against the CLI band. Wrapping turns that
-          // horizontal overflow into an extra line, which the footer can absorb
-          // because its height is a MINIMUM (min-h-7), not a fixed size.
-          className={`flex flex-wrap items-center justify-center min-w-0 ${multiRow ? 'gap-x-2 gap-y-1' : 'gap-x-3 gap-y-1'}`}
+          // The rows are sized by measurement, so a row never exceeds the zone
+          // once the layout effect has run. flex-wrap stays as the safety net
+          // for the frames before it has (first paint, a resize in flight):
+          // an over-wide row wraps onto an extra line the footer can absorb
+          // (its height is a MINIMUM, min-h-7), instead of spilling out of
+          // BOTH sides of its centred zone and being clipped.
+          className="flex flex-wrap items-center justify-center min-w-0 gap-y-1"
+          // Inline px gap, the same constant the layout was computed with.
+          style={{ columnGap: FOOTER_PILL_GAP_PX }}
           data-testid="multi-account-row"
         >
           {row.map((a) => (
-            <AccountPill key={a.email} account={a} hidden={hidden} theme={theme} compact={multiRow} showPending={statusLineEnabled} minimal={minimal} />
+            <AccountPill
+              key={a.email}
+              account={a}
+              hidden={hidden}
+              theme={theme}
+              compact={multiRow}
+              showPending={statusLineEnabled}
+              minimal={minimal}
+              pillRef={pillRef(a.email)}
+            />
           ))}
           {i === rows.length - 1 && overflow.length > 0 && (
             <AccountOverflow accounts={overflow} hidden={hidden} theme={theme} />

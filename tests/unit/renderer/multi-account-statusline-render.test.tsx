@@ -18,7 +18,7 @@ vi.mock('../../../src/renderer/stores/accountProfilesStore', () => ({ useAccount
 vi.mock('../../../src/renderer/stores/settingsStore', () => ({ useSettingsStore: (sel: any) => sel(settingsState) }))
 vi.mock('../../../src/renderer/hooks/useThemeController', () => ({ useResolvedTheme: () => 'dark' }))
 
-const { default: MultiAccountStatusline } = await import('../../../src/renderer/components/MultiAccountStatusline')
+const { default: MultiAccountStatusline, FOOTER_PILL_GAP_PX } = await import('../../../src/renderer/components/MultiAccountStatusline')
 
 let container: HTMLDivElement
 let root: Root
@@ -35,7 +35,45 @@ beforeEach(() => {
 afterEach(() => {
   act(() => { root.unmount() })
   container.remove()
+  vi.restoreAllMocks()
+  delete (globalThis as any).ResizeObserver
 })
+
+/**
+ * jsdom does no layout: every getBoundingClientRect() is 0 x 0, which the
+ * strip reads as "not measured yet" (one row, CSS wraps it). These tests
+ * give it numbers instead -- a free width for the strip and a width per pill
+ * -- so the row layout has something real to compute from (#378).
+ */
+let measured: { available: number; pill: number | ((email: string) => number) } | null = null
+function measure(available: number, pill: number | ((email: string) => number)) {
+  measured = { available, pill }
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    let width = 0
+    if (measured) {
+      const tid = this.getAttribute('data-testid')
+      if (tid === 'multi-account-statusline') width = measured.available
+      else if (tid === 'multi-account-pill') {
+        const email = this.querySelector('[data-testid="multi-account-pill-label"]')?.textContent ?? ''
+        width = typeof measured.pill === 'function' ? measured.pill(email) : measured.pill
+      }
+    }
+    return { width, height: 0, top: 0, left: 0, right: width, bottom: 0, x: 0, y: 0, toJSON() { return {} } } as DOMRect
+  })
+}
+
+/** A ResizeObserver stand-in that lets a test fire the observer by hand. */
+const roCallbacks: Array<() => void> = []
+function installResizeObserver() {
+  roCallbacks.length = 0
+  ;(globalThis as any).ResizeObserver = class {
+    private cb: () => void
+    constructor(cb: () => void) { this.cb = cb; roCallbacks.push(cb) }
+    observe() {}
+    unobserve() {}
+    disconnect() { const i = roCallbacks.indexOf(this.cb); if (i >= 0) roCallbacks.splice(i, 1) }
+  }
+}
 
 describe('MultiAccountStatusline render (Bug 3)', () => {
   it('renders a 5h and 7d progress BAR per account (not percentage text)', () => {
@@ -74,10 +112,11 @@ describe('MultiAccountStatusline render (Bug 3)', () => {
   })
 })
 
-// Two-row footer (owner request): "if there are more than 3 open accounts the
-// bottom bar stretches to two rows with a max of 3 accounts on each row - if the
-// user has more than 6 then an overflow button they can click for their status".
-describe('MultiAccountStatusline -- two-row footer + overflow', () => {
+// Wrapping footer (owner request, #378): one row whenever every account pill
+// fits in the free footer width; wrap only when they truly do not, filling
+// each row before the next; at most two rows, the tail behind a "+N" overflow
+// control. Rows come from MEASURED widths (see `measure` above), not a count.
+describe('MultiAccountStatusline -- wrapping footer + overflow', () => {
   // n accounts, each with one live session and a 5h tick. Emails sort in the
   // order generated (name falls back to the email), so row contents are stable.
   function useAccounts(n: number): string[] {
@@ -94,13 +133,83 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
   const toggle = () => container.querySelector<HTMLButtonElement>('[data-testid="multi-account-overflow-toggle"]')
   const popover = () => container.querySelector<HTMLElement>('[data-testid="multi-account-overflow-popover"]')
 
+  const rowCounts = () => rows().map((x) => x.querySelectorAll('[data-testid="multi-account-pill"]').length)
+
   it('3 accounts stay on ONE row', () => {
+    measure(1400, 300)
     useAccounts(3)
     render()
     expect(rows()).toHaveLength(1)
     expect(pills()).toHaveLength(3)
-    expect(rows()[0].querySelectorAll('[data-testid="multi-account-pill"]')).toHaveLength(3)
+    expect(rowCounts()).toEqual([3])
     expect(toggle()).toBeNull()
+  })
+
+  it('#378: four pills of known width in a 1400px free span render on ONE row', () => {
+    // The owner's case: four accounts, a 1900px window, the strip 2 x 2 with
+    // empty footer either side. 4 x 300 + 3 x 12 = 1236 fits in 1400.
+    measure(1400, 300)
+    useAccounts(4)
+    render()
+    expect(rows()).toHaveLength(1)
+    expect(rowCounts()).toEqual([4])
+    expect(toggle()).toBeNull()
+    const strip = container.querySelector<HTMLElement>('[data-testid="multi-account-statusline"]')!
+    expect(strip.getAttribute('data-account-rows')).toBe('1')
+  })
+
+  it('#378: four pills that do NOT fit wrap fill-first (3 + 1), not balanced (2 + 2)', () => {
+    // 3 x 300 + 2 x 12 = 924 fits in 1200; the fourth would make it 1236.
+    measure(1200, 300)
+    useAccounts(4)
+    render()
+    expect(rowCounts()).toEqual([3, 1])
+    expect(toggle()).toBeNull()
+  })
+
+  it('#378: more than three fit on a row when the width is there', () => {
+    measure(1400, 200) // 6 x 200 + 5 x 12 = 1260
+    useAccounts(6)
+    render()
+    expect(rowCounts()).toEqual([6])
+  })
+
+  it('#378: the strip spans its centre zone so it measures the FREE width, not its own content', () => {
+    // Shrink-to-fit (the old `flex flex-col items-center` with no width) would
+    // measure the cluster itself -- useless for deciding how much room there is.
+    useAccounts(2)
+    render()
+    const strip = container.querySelector<HTMLElement>('[data-testid="multi-account-statusline"]')!
+    expect(strip.className).toContain('w-full')
+    // Rows centre their pills inside it.
+    expect(rows()[0].className).toContain('justify-center')
+  })
+
+  it('#378: re-lays out when the free width changes (ResizeObserver), without a remount', () => {
+    installResizeObserver()
+    measure(1400, 300)
+    useAccounts(4)
+    render()
+    expect(rowCounts()).toEqual([4])
+    expect(roCallbacks.length).toBeGreaterThan(0)
+    // The window narrows: the same four pills no longer fit on one line.
+    measured!.available = 1200
+    act(() => { for (const cb of [...roCallbacks]) cb() })
+    expect(rowCounts()).toEqual([3, 1])
+    // ...and widens again: back to one row.
+    measured!.available = 1400
+    act(() => { for (const cb of [...roCallbacks]) cb() })
+    expect(rowCounts()).toEqual([4])
+  })
+
+  it('#378: with nothing measured yet (first paint) everything is ONE row and nothing overflows', () => {
+    // No `measure(...)`: jsdom's 0 x 0 rects are the pre-layout state. The
+    // row is flex-wrap, so the browser wraps it until the effect has run.
+    useAccounts(9)
+    render()
+    expect(rowCounts()).toEqual([9])
+    expect(toggle()).toBeNull()
+    expect(rows()[0].className).toContain('flex-wrap')
   })
 
   it('a footer pill carries NO identity dot — the rim and fill already say it', () => {
@@ -118,8 +227,9 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
   it('but the overflow list KEEPS its dots — there they are the only identity marking', () => {
     // Those rows carry no pill tint, so removing the dot there would leave
     // nothing at all tying a row to its account.
-    // 8, not 6: six pills fit on the two rows, so the overflow control only
-    // appears from the seventh account.
+    // 1000px free, 300px pills: three per row, six on the two rows, so the
+    // overflow control appears from the seventh account.
+    measure(1000, 300)
     useAccounts(8)
     render()
     act(() => { toggle()!.click() })
@@ -130,20 +240,29 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     }
   })
 
-  it('the one-row layout keeps the tighter gap and no extra vertical padding, no truncation', () => {
+  it('the one-row layout adds no vertical padding and no truncation', () => {
+    measure(1400, 300)
     useAccounts(3)
     render()
     const strip = container.querySelector<HTMLElement>('[data-testid="multi-account-statusline"]')!
     expect(strip.className).not.toContain('py-1') // the bar does not grow
-    // The boxed-pill design carries the visual boundary, so the inter-pill gap
-    // tightened from gap-6 to gap-3. Split into gap-x/gap-y once rows could
-    // wrap: the horizontal gap is unchanged, the row gap is the new part.
-    expect(rows()[0].className).toContain('gap-x-3')
-    expect(rows()[0].className).not.toContain('gap-6')
     // Pills keep their full width (email un-truncated) exactly as before.
     for (const p of pills()) {
       expect(p.className).toContain('shrink-0')
       expect(p.innerHTML).not.toContain('truncate')
+    }
+  })
+
+  it('#378: the pill gap is an inline px value equal to the layout constant, not a rem utility', () => {
+    // The layout is computed with FOOTER_PILL_GAP_PX; the browser must lay
+    // out with the same number. A `gap-x-*` class is rem-based and scales
+    // with the global UI font size, so the two would drift apart.
+    measure(1400, 300)
+    useAccounts(4)
+    render()
+    for (const r of rows()) {
+      expect(r.style.columnGap).toBe(`${FOOTER_PILL_GAP_PX}px`)
+      expect(r.className).not.toMatch(/\bgap-x-/)
     }
   })
 
@@ -245,14 +364,14 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     }
   })
 
-  it('the two-row layout tightens the gap, pads the taller bar, and lets the email ellipsise', () => {
+  it('the two-row layout pads the taller bar and lets the email ellipsise', () => {
+    measure(1200, 300) // 3 + 1
     useAccounts(4)
     render()
     const strip = container.querySelector<HTMLElement>('[data-testid="multi-account-statusline"]')!
     expect(strip.className).toContain('py-1')
-    expect(rows()[0].className).toContain('gap-x-2')
-    // Pills may shrink and the email ellipsises so three fit at the 1280px
-    // minimum window width; the full address stays in the pill's title.
+    // Pills may shrink and the email ellipsises; the full address stays in
+    // the pill's title.
     for (const p of pills()) {
       expect(p.className).toContain('min-w-0')
       expect(p.innerHTML).toContain('truncate')
@@ -260,27 +379,26 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     }
   })
 
-  it('4 accounts stretch the strip to TWO rows', () => {
+  it('4 accounts that do not fit stretch the strip to TWO rows', () => {
+    measure(1200, 300)
     useAccounts(4)
     render()
-    const r = rows()
-    expect(r).toHaveLength(2)
+    expect(rows()).toHaveLength(2)
     expect(pills()).toHaveLength(4)
-    expect(r.map((x) => x.querySelectorAll('[data-testid="multi-account-pill"]').length)).toEqual([2, 2])
     expect(toggle()).toBeNull()
   })
 
-  it('6 accounts fill two rows of 3 with no overflow control', () => {
+  it('6 accounts at three per row fill two rows of 3 with no overflow control', () => {
+    measure(1000, 300)
     useAccounts(6)
     render()
-    const r = rows()
-    expect(r).toHaveLength(2)
-    expect(r.map((x) => x.querySelectorAll('[data-testid="multi-account-pill"]').length)).toEqual([3, 3])
+    expect(rowCounts()).toEqual([3, 3])
     expect(pills()).toHaveLength(6)
     expect(toggle()).toBeNull()
   })
 
-  it('7 accounts show SIX pills plus a "+1" overflow control', () => {
+  it('7 accounts at three per row show SIX pills plus a "+1" overflow control', () => {
+    measure(1000, 300)
     const emails = useAccounts(7)
     render()
     expect(rows()).toHaveLength(2)
@@ -296,14 +414,27 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
     expect(rows()[1].contains(btn!)).toBe(true)
   })
 
-  it('9 accounts collapse three into the overflow control', () => {
+  it('9 accounts at three per row collapse three into the overflow control', () => {
+    measure(1000, 300)
     useAccounts(9)
     render()
     expect(pills()).toHaveLength(6)
     expect(toggle()!.textContent).toBe('+3')
   })
 
+  it('#378: the last row gives up a pill when the "+N" control would not fit beside it', () => {
+    // 3 x 300 + 2 x 12 = 924 fits in 940, but + 12 + 40 for the control does
+    // not: the second row keeps two pills and the control, the sixth account
+    // joins the seventh behind it.
+    measure(940, 300)
+    useAccounts(7)
+    render()
+    expect(rowCounts()).toEqual([3, 2])
+    expect(toggle()!.textContent).toBe('+2')
+  })
+
   it('clicking the overflow control reveals the hidden accounts, Escape dismisses it', () => {
+    measure(1000, 300)
     const emails = useAccounts(8)
     render()
     expect(popover()).toBeNull()
@@ -324,6 +455,7 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
   })
 
   it('a mousedown outside the overflow popover dismisses it', () => {
+    measure(1000, 300)
     useAccounts(7)
     render()
     act(() => { toggle()!.click() })
@@ -333,6 +465,7 @@ describe('MultiAccountStatusline -- two-row footer + overflow', () => {
   })
 
   it('a mousedown INSIDE the overflow popover keeps it open', () => {
+    measure(1000, 300)
     useAccounts(7)
     render()
     act(() => { toggle()!.click() })
