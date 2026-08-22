@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import type { AgentTemplate, AgentModelOverride } from '../types/electron'
 import { useRegistryStore } from '../stores/registryStore'
-import { modelsFromRegistry } from '../lib/claude-cli-options'
+import { modelGroupsFromRegistry } from '../lib/claude-cli-options'
 import {
   DialogOverlay,
   DialogPanel,
@@ -154,8 +154,12 @@ export default function AgentTemplateDialog({ initial, onSave, onCancel }: Props
                 style={DIALOG_INPUT_STYLE}
               >
                 <option value="inherit">Inherit (use session model)</option>
-                {modelsFromRegistry(registry).map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
+                {modelGroupsFromRegistry(registry).map((g) => (
+                  <optgroup key={g.title} label={g.title}>
+                    {g.items.map((m) => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>

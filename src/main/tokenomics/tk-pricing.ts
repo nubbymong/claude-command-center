@@ -127,10 +127,20 @@ export function getPricingWithSource(model: string): { pricing: ModelPricing; so
     livePricing ? [[livePricing, 'live'], [fallback, 'fallback']] : [[fallback, 'fallback']]
   for (const [db, src] of sources) {
     if (db[model]) return { pricing: db[model], source: src }
+    // LONGEST base wins, not the first one that happens to match. Keys collapse
+    // to a base by dropping the trailing version (`claude-opus-4-8` ->
+    // `claude-opus`), so a short generic base can shadow a specific one purely
+    // by sitting earlier in the registry: `claude-opus-5` collapses to
+    // `claude-opus`, which prefixes `claude-opus-4-8-fast-20260601` and would
+    // have priced a Fast model at standard Opus rates. Registry order is a UI
+    // concern now (#385) and must not move prices.
+    let bestKey: string | null = null
+    let bestBase = ''
     for (const key of Object.keys(db)) {
       const base = key.replace(/-\d+[-\d]*$/, '')
-      if (model.startsWith(base)) return { pricing: db[key], source: 'prefix' }
+      if (model.startsWith(base) && base.length > bestBase.length) { bestBase = base; bestKey = key }
     }
+    if (bestKey) return { pricing: db[bestKey], source: 'prefix' }
   }
   // Novel family: WARN + guess (spec §4) — same terminal numbers as before
   // (sonnet rates) so totals don't shift, but tagged + logged, never silent.

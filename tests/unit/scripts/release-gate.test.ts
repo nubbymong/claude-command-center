@@ -290,6 +290,8 @@ describe('release-gate shipped fixture', () => {
 
   it('resolves DEFAULT paths to files that exist in the repo', () => {
     expect(resolve(DEFAULT_REGISTRY_PATH)).toMatch(/resources[\\/]model-registry\.json$/)
-    expect(resolve(DEFAULT_EXPECTED_PATH)).toMatch(/scripts[\\/]fixtures[\\/]claude-code-model-configuration\.json$/)
+    // Under resources/ (not scripts/fixtures/) so the packaged app's Sentinel
+    // check reads the same snapshot the gate does (#385).
+    expect(resolve(DEFAULT_EXPECTED_PATH)).toMatch(/resources[\\/]claude-code-model-configuration\.json$/)
   })
 })

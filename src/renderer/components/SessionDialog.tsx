@@ -5,7 +5,7 @@ import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { modelsFromRegistry, effortsFromRegistry, PERMISSION_MODES } from '../lib/claude-cli-options'
+import { modelGroupsFromRegistry, effortsForModel, PERMISSION_MODES } from '../lib/claude-cli-options'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { secretValueProblem } from '../../shared/command-secret'
@@ -51,6 +51,26 @@ type UiProvider = 'claude' | 'codex' | 'terminal'
 
 /** The config's own effort union, derived so it can't drift from ClaudeOptions. */
 type EffortValue = NonNullable<NonNullable<TerminalConfig['claudeOptions']>['effortLevel']>
+
+/**
+ * Can `model` actually run effort level `ef`? '' is "Default", always valid.
+ *
+ * Module-level so the effortLevel state can clamp in its lazy initialiser — a
+ * helper defined in the component body would still be in its TDZ when React
+ * calls that initialiser on the first render.
+ *
+ * Uses the SAME per-model gating the chips use (effortsForModel -> disabled), so
+ * an unknown model or an un-hydrated registry enables everything and clamping
+ * fails OPEN — it can never silently drop an effort it merely failed to verify.
+ */
+function effortSupportedFor(
+  registry: Parameters<typeof effortsForModel>[0],
+  model: string,
+  ef: EffortValue | '',
+): boolean {
+  if (ef === '') return true
+  return effortsForModel(registry, model).some((r) => r.value === ef && !r.disabled)
+}
 
 /** Stronger consequence copy for the two modes that disable safety prompts.
  *  Falls back to the shared PERMISSION_MODES hint for everything else. */
@@ -127,10 +147,21 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // reopens as "Default", not the new-config 'opus' default (the old dialog
   // silently upgraded Default → opus on every save; same family as the
   // effortLevel wipe).
-  const [model, setModel] = useState(initial ? (initialClaude?.model ?? initial?.model ?? '') : 'opus')
+  const initialModel = initial ? (initialClaude?.model ?? initial?.model ?? '') : 'opus'
+  const [model, setModel] = useState(initialModel)
   // Typed against the config's own effort union (not widened to string) so the
   // saved claudeOptions.effortLevel stays assignable — '' is the "Default" chip.
-  const [effortLevel, setEffortLevel] = useState<EffortValue | ''>(initialClaude?.effortLevel ?? '')
+  //
+  // Clamped on LOAD, not just on model change: handleModelChange only fires when
+  // the user touches the model select, so a config saved before a model dropped
+  // an effort level (claude-opus-4-6 + xhigh) reopened with that effort still
+  // selected and re-submitted it on Save without the model being touched at all
+  // (ADR-009 MINOR on #404). handleSubmit clamps again, for the case where the
+  // registry had not hydrated yet when this ran.
+  const [effortLevel, setEffortLevel] = useState<EffortValue | ''>(() => {
+    const saved = initialClaude?.effortLevel ?? ''
+    return effortSupportedFor(registry, initialModel, saved) ? saved : ''
+  })
   const [permissionMode, setPermissionMode] = useState(initialClaude?.permissionMode ?? 'default')
   const [extraArgs, setExtraArgs] = useState(initialClaude?.extraArgs ?? '')
   const [loggingEnabled, setLoggingEnabled] = useState(initialClaude?.loggingEnabled !== false)
@@ -189,6 +220,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     openHelp.has(k) ? <p className="text-[11px] text-[var(--text-muted)] mt-1 leading-snug">{children}</p> : null
 
   const bothChosen = uiProvider !== null && sessionType !== null
+
+  // Changing the model must not leave an effort the new model can't run selected:
+  // the chip greys out (disabled) but its value stays in state and still submits
+  // (--effort xhigh --model claude-opus-4-6). Reset to '' (Default, always valid)
+  // when the current effort is no longer supported, using the SAME per-model
+  // gating the chips use (effortsForModel → disabled). '' needs no check.
+  const handleModelChange = (nextModel: string) => {
+    setModel(nextModel)
+    if (!effortSupportedFor(registry, nextModel, effortLevel)) setEffortLevel('')
+  }
 
   const handleBrowse = async () => {
     const path = await window.electronAPI.dialog.openFolder()
@@ -305,12 +346,18 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     const provider: ProviderId = uiProvider === 'codex' ? 'codex' : 'claude'
     const shellOnly = uiProvider === 'terminal'
 
+    // Last clamp before the value is persisted: the load-time one runs before
+    // the registry may have hydrated, and nothing re-checks in between if the
+    // user never touches the model select (ADR-009 MINOR on #404).
+    const effectiveEffort: EffortValue | '' =
+      effortSupportedFor(registry, model, effortLevel) ? effortLevel : ''
+
     // Both of these gate a tip's "you have already found this" variant, and
     // neither was ever recorded — so the tips kept explaining effort levels and
     // SSH sessions to people who had configured both. Recorded on save, not on
     // every keystroke: choosing a value in a form you then abandon is not using
     // the feature.
-    if (uiProvider === 'claude' && effortLevel !== '') trackUsage('sessions.effort-level')
+    if (uiProvider === 'claude' && effectiveEffort !== '') trackUsage('sessions.effort-level')
     if (sessionType === 'ssh') trackUsage('sessions.session-type')
     if (provider === 'codex') trackUsage('sessions.codex-config')
 
@@ -324,7 +371,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     const claudeOptions = uiProvider === 'claude' ? {
       ...initialClaude,
       model: model || undefined,
-      effortLevel: effortLevel === '' ? undefined : effortLevel,
+      effortLevel: effectiveEffort === '' ? undefined : effectiveEffort,
       // 'default' is the no-op sentinel; persist only a real override.
       permissionMode: permissionMode && permissionMode !== 'default' ? permissionMode : undefined,
       extraArgs: extraArgs.trim() || undefined,
@@ -793,17 +840,22 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       </div>
                       <select
                         value={model}
-                        onChange={(e) => setModel(e.target.value)}
+                        onChange={(e) => handleModelChange(e.target.value)}
                         className={inputCls}
                       >
                         <option value="">Default — follows your Claude plan</option>
-                        {modelsFromRegistry(registry).map((m) => (
-                          <option key={m.value} value={m.value}>{m.label}</option>
+                        {modelGroupsFromRegistry(registry).map((g) => (
+                          <optgroup key={g.title} label={g.title}>
+                            {g.items.map((m) => (
+                              <option key={m.value} value={m.value}>{m.label}</option>
+                            ))}
+                          </optgroup>
                         ))}
                       </select>
                       <Hint k="model">
-                        Which model sessions start on — change it anytime with /model. Names always point at
-                        the newest model in each family.
+                        Which model sessions start on — change it anytime with /model. The names under
+                        “Latest” always point at the newest model in each family; the versions under each
+                        family pin that exact model.
                       </Hint>
                     </div>
                     <div>
@@ -812,11 +864,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         <HelpBtn k="effort" label="About the starting effort" />
                       </div>
                       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Starting effort">
-                        {[{ value: '', label: 'Default' }, ...effortsFromRegistry(registry)].map((ef) => (
+                        {[{ value: '', label: 'Default', disabled: false }, ...effortsForModel(registry, model)].map((ef) => (
                           <label
                             key={ef.value || 'default'}
-                            className={`px-2.5 py-1 rounded-full border text-xs cursor-pointer transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-[var(--brand)] ${
-                              effortLevel === ef.value ? 'border-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_14%,transparent)] text-[var(--text-primary)]' : 'border-[var(--border-subtle)] bg-[var(--surface-base)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
+                            title={ef.disabled ? `Not offered on ${model}` : undefined}
+                            className={`px-2.5 py-1 rounded-full border text-xs transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-[var(--brand)] ${
+                              ef.disabled
+                                ? 'border-[var(--border-subtle)] bg-[var(--surface-base)] text-[var(--text-muted)] cursor-not-allowed'
+                                : effortLevel === ef.value
+                                  ? 'border-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_14%,transparent)] text-[var(--text-primary)] cursor-pointer'
+                                  : 'border-[var(--border-subtle)] bg-[var(--surface-base)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] cursor-pointer'
                             }`}
                           >
                             <input
@@ -824,6 +881,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                               name="ccc-effort"
                               className="sr-only"
                               value={ef.value}
+                              disabled={ef.disabled}
                               checked={effortLevel === ef.value}
                               onChange={() => setEffortLevel(ef.value as EffortValue | '')}
                             />

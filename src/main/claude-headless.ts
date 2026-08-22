@@ -45,7 +45,13 @@ function killHeadlessTree(proc: ReturnType<typeof spawn>): void {
 // swallows every argument after it — the same drop-and-shift failure as the empty
 // string, just via a different mechanism. Verified: `sh -c 'echo a #b; echo X'`
 // prints only `a`.
-const UNSAFE_ARGV = /[\s&|^<>%$`;()*?~'"\\#]/
+// `[` and `]` are in the class for the #144 reason: they open a POSIX glob
+// CHARACTER CLASS, so a model id like `opus[1m]` or `claude-opus-4-6[1m]` is
+// glob-expanded by the shell and, under zsh, aborts the whole command with
+// "no matches found". Every other path that puts a model on a command line
+// quotes it (modelFlag/quoteArgForShell); this one cannot quote, because the
+// argv goes through `shell: true` unquoted — so it fails loudly instead (#385).
+const UNSAFE_ARGV = /[\s&|^<>%$`;()*?~'"\\#[\]]/
 
 /** Throws on an argv element the shell would re-parse or silently drop. */
 export function assertSafeArgv(args: string[]): void {

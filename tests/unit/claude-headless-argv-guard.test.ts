@@ -57,4 +57,25 @@ describe('assertSafeArgv', () => {
   it('names the offending value so the error is actionable', () => {
     expect(() => assertSafeArgv(['-p', 'a&b'])).toThrow(/"a&b"/)
   })
+
+  it('rejects the glob CHARACTER CLASS brackets — the 1M model id (#144/#385)', () => {
+    // `[1m]` is a POSIX glob character class. This path spawns with shell:true
+    // and cannot quote its argv, so a bracketed model id must be refused here
+    // rather than silently glob-expanded (under zsh: "no matches found",
+    // aborting the whole command). Every other --model emitter quotes instead.
+    for (const payload of ['opus[1m]', 'claude-opus-4-6[1m]', 'claude-opus-5[1m]']) {
+      expect(() => assertSafeArgv(['-p', '--model', payload]), payload).toThrow(/unsafe argv element/)
+    }
+    // Either bracket alone is enough to make the shell treat it as a pattern.
+    expect(() => assertSafeArgv(['-p', 'a[b'])).toThrow(/unsafe argv element/)
+    expect(() => assertSafeArgv(['-p', 'a]b'])).toThrow(/unsafe argv element/)
+  })
+
+  it('still accepts the plain model ids this path actually passes', () => {
+    // Guards the inverse mistake: widening the class until legitimate argv
+    // stops working. These are the values the Sentinel analysis pass sends.
+    expect(() => assertSafeArgv(['-p', '--model', 'sonnet', '--output-format', 'json'])).not.toThrow()
+    expect(() => assertSafeArgv(['--version'])).not.toThrow()
+    expect(() => assertSafeArgv(['-p', '--model', 'claude-opus-4-6'])).not.toThrow()
+  })
 })

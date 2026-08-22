@@ -19,8 +19,11 @@
 //      not book-of-work items). A MISSING milestone fails closed: the gate
 //      cannot tell "nothing outstanding" from "nobody made the list".
 //   2. MODELS  Every id in the support article's "Supported models" table
-//      (scripts/fixtures/claude-code-model-configuration.json, refreshed by
-//      hand — the fixture says how) must be covered by resources/model-registry.json.
+//      (resources/claude-code-model-configuration.json, refreshed by hand — the
+//      fixture says how) must be covered by resources/model-registry.json. The
+//      same comparison runs at runtime as a Sentinel check over the same file
+//      (src/main/sentinel/sentinel-models.ts, #385); tests/unit/model-coverage-
+//      parity.test.ts holds the two implementations to identical verdicts.
 //      A registry id covers an article id when it is equal, or when the article
 //      id is that id plus a `-YYYYMMDD` date suffix (the app resolves dated ids
 //      to the undated entry by prefix; the CLI accepts both). Missing = FAIL,
@@ -54,7 +57,9 @@ export const EXIT_CANNOT_EVALUATE = 2
 
 export const EXCLUDED_LABEL = 'excluded'
 export const DEFAULT_REGISTRY_PATH = path.join(ROOT, 'resources', 'model-registry.json')
-export const DEFAULT_EXPECTED_PATH = path.join(ROOT, 'scripts', 'fixtures', 'claude-code-model-configuration.json')
+// Lives under resources/ (not scripts/fixtures/) so the packaged app can read
+// the SAME snapshot: the Sentinel model check imports it at runtime (#385).
+export const DEFAULT_EXPECTED_PATH = path.join(ROOT, 'resources', 'claude-code-model-configuration.json')
 
 // ── pure helpers (unit-tested) ──────────────────────────────────────
 
@@ -140,9 +145,15 @@ export function evaluateModels({ registry, expected }) {
     else missing.push({ id: exp.id, label: exp.label })
   }
   // Claude models we carry that the article no longer names — flagged, not fatal.
-  // Non-Claude entries (the codex family) are not the article's business.
+  // Excluded: non-Claude entries (the codex family, not the article's business),
+  // `articleExempt` entries (carried deliberately), and overlay entries carrying
+  // `provenance` (Sentinel/user additions, necessarily absent from a snapshot
+  // frozen before them). Mirrors evaluateModelCoverage in
+  // src/shared/model-registry.ts — tests/unit/model-coverage-parity.test.ts
+  // holds the two to identical verdicts (#385).
   const extra = registryModels
-    .filter((m) => typeof m.id === 'string' && m.id.startsWith('claude-') && !usedRegistryIds.has(m.id))
+    .filter((m) => typeof m.id === 'string' && m.id.startsWith('claude-')
+      && !usedRegistryIds.has(m.id) && m.articleExempt !== true && !m.provenance)
     .map((m) => ({ id: m.id, label: m.label }))
   return {
     ok: missing.length === 0,
@@ -178,7 +189,9 @@ export function formatReport({ version, repo, milestoneResult, modelsResult, exp
     else {
       out.push(`  FAIL  model registry: ${r.reason}${src}${at}`)
       for (const m of r.missing) out.push(`          - ${m.id}${m.label ? `  (${m.label})` : ''}   article lists it, resources/model-registry.json does not`)
-      out.push('          Add the missing entries to resources/model-registry.json (models + dropdown) or refresh the fixture if the article changed.')
+      out.push('          Add the missing entries to resources/model-registry.json `models` (the pinned picker rows are derived')
+      out.push('          from it, so no `dropdown` edit is needed) or refresh resources/claude-code-model-configuration.json')
+      out.push('          if the article changed — that file says how.')
     }
     for (const m of r.extra) out.push(`  WARN  ${m.id}${m.label ? ` (${m.label})` : ''} is in the registry but the article no longer lists it — retired? (not fatal)`)
   }
