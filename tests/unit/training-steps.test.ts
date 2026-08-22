@@ -47,24 +47,39 @@ describe('training-steps', () => {
   })
 
   describe('the Ask Conductor entry (#372)', () => {
-    const ask = () => trainingSteps.find((s) => s.id === 'ask-conductor')
+    // Fail loudly on a missing step rather than letting a non-null assertion
+    // throw an opaque TypeError three lines later.
+    const ask = (): TrainingStep => {
+      const step = trainingSteps.find((s) => s.id === 'ask-conductor')
+      if (!step) throw new Error('no trainingSteps entry with id "ask-conductor" (#372)')
+      return step
+    }
 
     it('exists, so the Feature Guide covers the help surface itself', () => {
-      expect(ask()).toBeDefined()
+      expect(ask().id).toBe('ask-conductor')
     })
 
     it('is filed under its current name, never the retired 2.0 one', () => {
-      const step = ask()!
+      const step = ask()
       expect(step.title).toBe('Ask Conductor')
       // It shipped as "Ask Command Center". The card is user-facing copy about
       // what the feature is TODAY, so the old name must not leak into it.
-      const copy = [step.title, step.summary ?? '', step.proTip ?? '', ...step.bullets, ...(step.highlights ?? [])].join(' ')
+      // Every user-facing string on the card, howToTrigger labels and values
+      // included -- those render in the card's right column.
+      const copy = [
+        step.title,
+        step.summary ?? '',
+        step.proTip ?? '',
+        ...step.bullets,
+        ...(step.highlights ?? []),
+        ...(step.howToTrigger ?? []).flatMap((t) => [t.label, t.value]),
+      ].join(' ')
       expect(copy).not.toContain('Ask Command Center')
       expect(copy).not.toContain('Command Center')
     })
 
     it('uses the hero layout and names a screenshot asset', () => {
-      const step = ask()!
+      const step = ask()
       // `summary` is what switches FeatureGuidePage to the hero layout; without
       // it the card silently falls back to the flat bullet list.
       expect(step.summary).toBeTruthy()
@@ -76,7 +91,7 @@ describe('training-steps', () => {
     })
 
     it('does not move the training version (rides with the 2.1 cards)', () => {
-      expect(ask()!.sinceVersion).toBe('2.1.0')
+      expect(ask().sinceVersion).toBe('2.1.0')
       expect(currentTrainingVersion()).toBe('2.1.0')
     })
   })
