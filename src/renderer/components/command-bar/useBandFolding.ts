@@ -4,16 +4,18 @@ import React from 'react'
  * Decides which chips of each band fold into the "N more" pill (ADR-018 D8).
  *
  * How: the bar renders every chip once with nothing folded; this hook measures
- * the row (in a layout effect, before paint) and folds from the END of the
- * lowest-priority band until the row fits. With `wrap2` the row may take a
- * second line first, and folding starts only when a third line would appear.
- * Re-measure only on container resize and when the chip set changes -- never
- * on hover/focus/drag-over -- because every height change re-fits the
- * terminal. While a drag is in progress the result is frozen.
+ * the row (in a layout effect, before paint) and folds chips until the row
+ * fits. With `wrap2` the row may take a second line first, and folding starts
+ * only when a third line would appear. Re-measure only on container resize and
+ * when the chip set changes -- never on hover/focus/drag-over -- because every
+ * height change re-fits the terminal. While a drag is in progress the result
+ * is frozen.
  *
- * The caller gives the hook, per band in FOLD PRIORITY order (first folds
- * first), the ids of its chips in row order with pinned chips FIRST; pinned
- * never fold. The hook returns, per band, the set of folded ids.
+ * PRIORITY (D8): the caller gives the bands in FOLD ORDER -- Global first,
+ * Session last. When the row overflows, the room is found by folding the
+ * FIRST band's chips from its end, even when those chips themselves fit; only
+ * when that band has nothing left to fold does the next band give way. Pinned
+ * chips never fold. The hook returns, per band, the set of folded ids.
  */
 export interface FoldBand {
   key: string
@@ -28,8 +30,39 @@ export interface FoldResult {
   settled: boolean
 }
 
-const PILL_WIDTH = 72       // "N more" pill incl. gap, reserved when a band folds
+const PILL_WIDTH = 72       // "N more" pill incl. gap, reserved the first time a band folds
+const CHIP_GAP = 4          // the row's gap-1
 const ROW_HEIGHT_SLACK = 6  // px of tolerance before a line counts as a new row
+const MAX_PASSES = 8        // layout passes per chip set before we accept the result
+
+/**
+ * Fold `needed` px worth of chips, taking from the first band's END first,
+ * then the next band's, skipping pinned chips. Pure, so the rule is testable.
+ * `widths` gives each chip's width; `alreadyFolded` says which bands already
+ * show a pill (no room to reserve for it).
+ */
+export function foldForWidth(
+  bands: readonly FoldBand[],
+  needed: number,
+  widths: (id: string) => number,
+  alreadyFolded: (bandKey: string) => boolean,
+): Record<string, Set<string>> {
+  const next: Record<string, Set<string>> = {}
+  for (const b of bands) next[b.key] = new Set()
+  let remaining = needed
+  for (const b of bands) {
+    if (remaining <= 0) break
+    let pillReserved = alreadyFolded(b.key)
+    for (let i = b.ids.length - 1; i >= 0 && remaining > 0; i--) {
+      const id = b.ids[i]
+      if (b.pinned.has(id)) continue
+      next[b.key].add(id)
+      remaining -= widths(id) + CHIP_GAP
+      if (!pillReserved) { remaining += PILL_WIDTH; pillReserved = true }
+    }
+  }
+  return next
+}
 
 export function useBandFolding(
   rowRef: React.RefObject<HTMLDivElement | null>,
@@ -42,10 +75,12 @@ export function useBandFolding(
   const [settled, setSettled] = React.useState(false)
   const lastSig = React.useRef('')
   const lastWidth = React.useRef(0)
+  const passes = React.useRef(0)
 
   // A new chip set or mode: unfold everything and measure again.
   if (lastSig.current !== signature) {
     lastSig.current = signature
+    passes.current = 0
     if (Object.keys(folded).length) setFolded({})
     if (settled) setSettled(false)
   }
@@ -57,72 +92,49 @@ export function useBandFolding(
     lastWidth.current = rowRect.width
     // No layout yet (hidden, or a non-layout DOM such as jsdom): nothing to fold.
     if (rowRect.width <= 0) { if (!settled) setSettled(true); return }
+    if (passes.current >= MAX_PASSES) { if (!settled) setSettled(true); return }
+    // Only the chips still ON the row are in the DOM; the folded set is `folded`.
     const chipEls = Array.from(row.querySelectorAll<HTMLElement>('[data-fold-band][data-command-id]'))
-    const next: Record<string, Set<string>> = {}
-    for (const b of bands) next[b.key] = new Set()
+    const rectOf = new Map<string, DOMRect>()
+    for (const el of chipEls) rectOf.set(el.dataset.commandId!, el.getBoundingClientRect())
+    const onRow: FoldBand[] = bands.map((b) => ({ ...b, ids: b.ids.filter((id) => rectOf.has(id)) }))
+    const widths = (id: string) => rectOf.get(id)?.width ?? 0
+    const alreadyFolded = (key: string) => (folded[key]?.size ?? 0) > 0
 
+    let needed = 0
     if (mode === 'fold') {
-      // Single line: a chip that ends past the row's right edge (minus room for
-      // the pill) folds, and so does everything after it in its band.
+      // Single line: everything must end before the row's right edge.
       const limit = rowRect.right - row.clientLeft - 6
-      for (const b of bands) {
-        const els = chipEls.filter((el) => el.dataset.foldBand === b.key)
-        let overflowAt = -1
-        for (let i = 0; i < els.length; i++) {
-          const el = els[i]
-          const r = el.getBoundingClientRect()
-          const reserve = i < els.length - 1 || bands.some((o) => o !== b && next[o.key].size) ? PILL_WIDTH : 0
-          if (r.right > limit - (overflowAt === -1 ? reserve : 0)) { overflowAt = i; break }
-        }
-        if (overflowAt === -1) continue
-        for (let i = overflowAt; i < els.length; i++) {
-          const id = els[i].dataset.commandId!
-          if (!b.pinned.has(id)) next[b.key].add(id)
-        }
-      }
-      // Folding one band frees room, so a later (higher-priority) band that
-      // overflowed only because of it is re-checked by the next layout pass.
+      let lastRight = 0
+      for (const r of rectOf.values()) lastRight = Math.max(lastRight, r.right)
+      needed = lastRight - limit
     } else {
-      // wrap2: allow two lines. Fold from the lowest-priority band's end while
-      // any chip sits on a third line.
-      const rowTop = rowRect.top
+      // wrap2: two lines allowed. Anything on a third line must go, and the
+      // room it takes is the width of those chips.
       const lineHeight = (chipEls[0]?.getBoundingClientRect().height ?? 22) + 6
-      const thirdLineTop = rowTop + 2 * lineHeight + ROW_HEIGHT_SLACK
-      const onThirdLine = chipEls.filter((el) => el.getBoundingClientRect().top >= thirdLineTop)
-      if (onThirdLine.length) {
-        // Fold everything from the first third-line chip onward in ITS band,
-        // lowest-priority band first; the next layout pass re-checks.
-        for (const b of bands) {
-          const els = chipEls.filter((el) => el.dataset.foldBand === b.key)
-          const firstBad = els.findIndex((el) => el.getBoundingClientRect().top >= thirdLineTop)
-          if (firstBad === -1) continue
-          // Fold one more than strictly needed so the pill itself fits.
-          for (let i = Math.max(0, firstBad - 1); i < els.length; i++) {
-            const id = els[i].dataset.commandId!
-            if (!b.pinned.has(id)) next[b.key].add(id)
-          }
-          break
-        }
-      }
+      const thirdLineTop = rowRect.top + 2 * lineHeight + ROW_HEIGHT_SLACK
+      for (const r of rectOf.values()) if (r.top >= thirdLineTop) needed += r.width + CHIP_GAP
     }
+    if (needed <= 0) { if (!settled) setSettled(true); return }
 
-    // Only GROWTH counts as a change: a pass never unfolds (that happens on a
-    // new chip set or a wider container), so a stable result must not re-set
-    // state -- the layout effect runs after every render and would loop.
+    const next = foldForWidth(onRow, needed, widths, alreadyFolded)
+    // Growth only: a pass never unfolds (that happens on a new chip set or a
+    // wider container), so a stable result must not re-set state -- the layout
+    // effect runs after every render and would loop.
     const changed = bands.some((b) => {
       const a = folded[b.key] ?? new Set<string>()
       for (const id of next[b.key]) if (!a.has(id)) return true
       return false
     })
-    if (changed) setFolded((prev) => {
-      // Accumulate: never unfold inside a pass (unfolding happens only when the
-      // signature changes or the container grows).
-      const merged: Record<string, Set<string>> = {}
-      for (const b of bands) merged[b.key] = new Set([...(prev[b.key] ?? []), ...next[b.key]])
-      return merged
-    })
-    else setSettled(true)
-  }, [bands, folded, mode, rowRef])
+    if (changed) {
+      passes.current += 1
+      setFolded((prev) => {
+        const merged: Record<string, Set<string>> = {}
+        for (const b of bands) merged[b.key] = new Set([...(prev[b.key] ?? []), ...next[b.key]])
+        return merged
+      })
+    } else if (!settled) setSettled(true)
+  }, [bands, folded, mode, rowRef, settled])
 
   React.useLayoutEffect(() => {
     if (frozen) return
@@ -137,6 +149,7 @@ export function useBandFolding(
       if (Math.abs(w - lastWidth.current) < 2) return
       // Width changed: start over (unfold) and let the layout effect re-measure.
       lastSig.current = ''
+      passes.current = 0
       setFolded({})
       setSettled(false)
     })

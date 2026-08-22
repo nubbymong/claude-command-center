@@ -26,6 +26,7 @@ import ArgsPopover from './command-bar/ArgsPopover'
 import SectionNameInput from './command-bar/SectionNameInput'
 import { UserButtonMenu, CoreToolMenu, SectionMenu, BarMenu, BandMenu, AddMenu, ConfirmCard } from './command-bar/menus'
 import { useBandFolding, type FoldBand } from './command-bar/useBandFolding'
+import NotesTool, { type NotesToolHandle } from './command-bar/NotesTool'
 import { CommandIcon } from './command-icons'
 import { DEFAULT_COMMAND_COLOR } from '../lib/command-swatches'
 
@@ -37,9 +38,10 @@ function legibleSectionColor(color: string | null | undefined, theme: 'dark' | '
   return theme === 'light' ? `color-mix(in srgb, ${color} 55%, var(--text-primary))` : color
 }
 
-/** Ask the app to open Settings on a tab. App listens (Custom Commands tab, ADR-018 D11). */
+/** Ask the app to open Settings on a tab -- the same `app:openSettings` event the
+ *  Codex form links use; App validates the tab and switches view (ADR-018 D11). */
 export function openSettingsTab(tab: string): void {
-  window.dispatchEvent(new CustomEvent('ccc:open-settings', { detail: { tab } }))
+  window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab } }))
 }
 
 // -- Codex toolbar sub-components --
@@ -100,6 +102,8 @@ interface Props {
    *  Kept as a fallback when the session record is not in the store; the bar's
    *  truth is `sessionCapabilities` (ADR-018 D2). */
   mainPaneIsShell?: boolean
+  /** How many saved configs exist, so "Keep it only here" can say how many it leaves (D7). */
+  configCount?: number
 }
 
 type MenuState =
@@ -120,12 +124,14 @@ type MenuSeed =
   | { kind: 'add' }
 
 type ConfirmState =
-  | { kind: 'scope'; commandId: string; band: CommandBand; beforeId: string | null }
+  /** `sectionId`: the drop was onto a section of the other band -- membership is
+   *  written only once the scope change is confirmed (D7: nothing changes on Cancel). */
+  | { kind: 'scope'; commandId: string; band: CommandBand; beforeId: string | null; sectionId?: string }
   | { kind: 'delete'; commandId: string }
   | { kind: 'hide'; tool: CoreToolId }
   | { kind: 'section-band'; sectionId: string; band: CommandBand }
 
-export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, mainPaneIsShell = false }: Props) {
+export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, mainPaneIsShell = false, configCount }: Props) {
   const webviewKey = parentSessionId ?? sessionId
   const resolvedTheme = useResolvedTheme()
   const store = useCommandStore()
@@ -144,6 +150,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [dragOverSectionId, setDragOverSectionId] = useState<string | null>(null)
   const [dragSectionId, setDragSectionId] = useState<string | null>(null)
   const rowRef = useRef<HTMLDivElement>(null)
+  const notesRef = useRef<NotesToolHandle>(null)
 
   // Bar-wide UI state (shared by the Claude and Partner bars; persisted).
   const barState = useCommandBarStore((s) => s.state)
@@ -324,18 +331,27 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   }
   const onSectionDrop = (e: React.DragEvent, section: CommandSection) => {
     e.preventDefault(); e.stopPropagation()
+    const sectionBand: CommandBand = section.scope === 'global' ? 'global' : 'config'
     if (dragId) {
       // Membership: the ONLY drop that writes sectionId (D7). Across bands the
-      // section's band wins: confirm the scope change, then file it.
+      // section's band wins: the scope change is confirmed FIRST and the
+      // section is written with it -- Cancel leaves the chip exactly where it was.
       const moved = commands.find((c) => c.id === dragId)
-      const band: CommandBand = section.scope === 'global' ? 'global' : 'config'
-      if (moved && bandOfCmd(moved) !== band) { setConfirm({ kind: 'scope', commandId: dragId, band, beforeId: null }) }
-      store.setCommandSection(dragId, section.id)
+      if (moved && bandOfCmd(moved) !== sectionBand) setConfirm({ kind: 'scope', commandId: dragId, band: sectionBand, beforeId: null, sectionId: section.id })
+      else store.setCommandSection(dragId, section.id)
     } else if (dragSectionId && dragSectionId !== section.id) {
-      const next = [...sections]
-      const from = next.findIndex((s) => s.id === dragSectionId)
-      const to = next.findIndex((s) => s.id === section.id)
-      if (from !== -1 && to !== -1) { const [m] = next.splice(from, 1); next.splice(to, 0, m); reorderSections(next) }
+      const dragged = sections.find((s) => s.id === dragSectionId)
+      const draggedBand: CommandBand = dragged?.scope === 'global' ? 'global' : 'config'
+      if (dragged && draggedBand !== sectionBand) {
+        // A section label dropped in the OTHER band is a scope change for the
+        // section and every button in it -- confirmed, never silent.
+        setConfirm({ kind: 'section-band', sectionId: dragged.id, band: sectionBand })
+      } else {
+        const next = [...sections]
+        const from = next.findIndex((s) => s.id === dragSectionId)
+        const to = next.findIndex((s) => s.id === section.id)
+        if (from !== -1 && to !== -1) { const [m] = next.splice(from, 1); next.splice(to, 0, m); reorderSections(next) }
+      }
     }
     endDrag()
   }
@@ -348,6 +364,14 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const i = chips.indexOf(el)
     const ordered = plan.chips
     const idx = ordered.findIndex((c) => c.id === cmd.id)
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.altKey && e.shiftKey) {
+      // Across bands: the same scope change as a cross-band drop, same confirm (D7).
+      e.preventDefault()
+      const other: CommandBand = plan.band === 'global' ? 'config' : 'global'
+      if (other === 'config' && !configId) return
+      setConfirm({ kind: 'scope', commandId: cmd.id, band: other, beforeId: null })
+      return
+    }
     if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && e.altKey) {
       e.preventDefault()
       const dir = e.key === 'ArrowLeft' ? -1 : 1
@@ -577,7 +601,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
         {/* Core — the fixed tools. Components, never data, never drop targets. */}
         <div role="toolbar" aria-label="Session tools" className="flex items-center gap-1 shrink-0" data-testid="command-band-core" onDragOver={(e) => { if (dragId) { e.dataTransfer.dropEffect = 'none' } }}>
-          {!hiddenHere.has('snap') && caps.canSendImageToAgent && <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />}
+          {!hiddenHere.has('snap') && caps.canSendImageToAgent && coreWrap('snap', <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />)}
           {!hiddenHere.has('canvas') && coreWrap('canvas', <AgentCanvasButton sessionId={sessionId} />)}
           {!hiddenHere.has('logs') && coreWrap('logs', <LogsButton sessionId={sessionId} structuralReason={caps.logsEmptyReason} />)}
           {!hiddenHere.has('browser') && coreWrap('browser', <WebviewButton sessionId={webviewKey} />)}
@@ -603,6 +627,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               )}
             </button>
           ))}
+          {/* The encrypted notes, moved here from the session header (D10): one lock, a quiet count. */}
+          {!hiddenHere.has('notes') && coreWrap('notes', <NotesTool ref={notesRef} configId={configId} configName={configName} />)}
         </div>
 
         {/* Codex keeps its two session pills -- session controls, not commands. */}
@@ -630,7 +656,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           onConfirm={handleAdd}
           onCancel={() => setShowDialog(null)}
           configId={configId}
-          mainPaneIsShell={caps.mainPaneIsShell}
+          configName={configName}
+          capabilities={caps}
           presetScope={showDialog.scope}
           presetSectionId={showDialog.sectionId}
         />
@@ -641,7 +668,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           onCancel={() => setEditingCommand(null)}
           initial={editingCommand}
           configId={configId}
-          mainPaneIsShell={caps.mainPaneIsShell}
+          configName={configName}
+          capabilities={caps}
         />
       )}
 
@@ -687,8 +715,20 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <CoreToolMenu
           x={menu.x} y={menu.y} tool={menu.tool}
           title={TOOL_LABEL[menu.tool]}
-          sub={menu.tool === 'partner' ? (caps.panesOnDifferentMachines ? 'the partner shell · on this PC' : 'the partner shell') : menu.tool === 'logs' ? (caps.logsEmptyReason ? 'nothing to show in this kind of session' : 'this session\'s transcript') : menu.tool === 'canvas' ? 'Agent Canvas · reviews and mock-ups' : 'the browser pane'}
-          ownActions={menu.tool === 'partner' && onTogglePartner ? [{ label: isPartnerActive ? 'Back to the main terminal' : 'Open partner shell', onClick: () => { setMenu(null); onTogglePartner() } }] : undefined}
+          sub={menu.tool === 'partner' ? (caps.panesOnDifferentMachines ? 'the partner shell · on this PC' : 'the partner shell')
+            : menu.tool === 'logs' ? (caps.logsEmptyReason ? 'nothing to show in this kind of session' : 'this session\'s transcript')
+            : menu.tool === 'canvas' ? 'Agent Canvas · reviews and mock-ups'
+            : menu.tool === 'snap' ? `a screenshot, sent to ${caps.agentName || 'the agent'}`
+            : menu.tool === 'notes' ? 'encrypted notes · Global and this config'
+            : 'the browser pane'}
+          ownActions={
+            menu.tool === 'partner' && onTogglePartner ? [{ label: isPartnerActive ? 'Back to the main terminal' : 'Open partner shell', onClick: () => { setMenu(null); onTogglePartner() }, testId: 'menu-partner-toggle' }]
+            : menu.tool === 'snap' ? [{ label: 'Screenshot settings…', onClick: () => { setMenu(null); openSettingsTab('commands') }, testId: 'menu-snap-settings' }]
+            : menu.tool === 'notes' ? [
+                { label: 'Add note…', onClick: () => { setMenu(null); notesRef.current?.addNote() }, testId: 'menu-notes-add' },
+                { label: 'Open notes', onClick: () => { setMenu(null); notesRef.current?.openList() }, testId: 'menu-notes-open' },
+              ]
+            : undefined}
           onHide={(where) => requestHide(menu.tool, where)}
           onClose={() => setMenu(null)}
           returnFocusTo={menu.el}
@@ -736,7 +776,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
       )}
       {menu?.kind === 'add' && (
         <AddMenu
-          x={menu.x} y={menu.y} reviewCount={reviewCount} notesEnabled={false}
+          x={menu.x} y={menu.y} reviewCount={reviewCount} notesEnabled={!hiddenHere.has('notes')}
+          onAddNote={() => { setMenu(null); notesRef.current?.addNote() }}
           onAddCommand={() => { setMenu(null); setShowDialog({ scope: configId ? 'config' : 'global' }) }}
           onAddSection={() => { setSectionInput({ x: menu.x, y: menu.y, band: configId ? 'config' : 'global' }); setMenu(null) }}
           onReview={() => { setMenu(null); const first = visibleCommands.find((c) => c.needsReview?.length); if (first) setEditingCommand(first) }}
@@ -807,8 +848,13 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           title={confirm.band === 'global' ? `Show "${confirmCmd.label}" in every config?` : `Keep "${confirmCmd.label}" only in this config?`}
           body={confirm.band === 'global'
             ? <>It becomes <b>Global</b>: it appears in every config, and editing or deleting it reaches all of them.</>
-            : <>It becomes <b>Session</b>-only: it leaves your other configs and shows only here{configName ? ` (${configName})` : ''}.</>}
-          actions={[{ label: confirm.band === 'global' ? 'Make Global' : 'Keep it here only', primary: true, testId: 'confirm-scope-ok', onClick: () => { store.moveCommand(confirm.commandId, confirm.beforeId, confirm.band, configId); setConfirm(null) } }]}
+            : <>It becomes <b>Session</b>-only: it leaves your other {configCount && configCount > 1 ? `${configCount - 1} config${configCount - 1 === 1 ? '' : 's'}` : 'configs'} and shows only here{configName ? ` (${configName})` : ''}.</>}
+          actions={[{ label: confirm.band === 'global' ? 'Make Global' : 'Keep it here only', primary: true, testId: 'confirm-scope-ok', onClick: () => {
+            store.moveCommand(confirm.commandId, confirm.beforeId, confirm.band, configId)
+            // A drop onto a section of the other band files it there only now (D7).
+            if (confirm.sectionId) store.setCommandSection(confirm.commandId, confirm.sectionId)
+            setConfirm(null)
+          } }]}
           onCancel={() => setConfirm(null)}
         />
       )}

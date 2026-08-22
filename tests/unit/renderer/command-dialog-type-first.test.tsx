@@ -28,6 +28,11 @@ vi.mock('../../../src/renderer/utils/id', () => ({ generateId: () => 'test-id' }
 
 const { default: CommandDialog, previewLine, kindOf, targetFor } =
   await import('../../../src/renderer/components/CommandDialog')
+const { sessionCapabilities } = await import('../../../src/renderer/lib/session-capabilities')
+// The two sessions these tests speak of: a local Claude session, and a
+// terminal-only one whose main pane is itself a shell (ADR-018 D2).
+const claudeCaps = sessionCapabilities({ provider: 'claude', sessionType: 'local', configId: 'cfg' } as never)
+const shellCaps = sessionCapabilities({ provider: 'claude', sessionType: 'local', configId: 'cfg', shellOnly: true } as never)
 
 let container: HTMLDivElement
 let root: Root
@@ -71,22 +76,24 @@ describe('the dialog asks what the button does FIRST', () => {
     expect(byTest<HTMLButtonElement>('command-submit')!.disabled).toBe(true)
   })
 
-  it('"Run a command" produces a button that lives in the shell row', () => {
+  it('"Run a command" produces a shell-kind button aimed at the partner shell', () => {
     const { onConfirm } = render({ configId: 'cfg' })
     act(() => { byTest('command-kind-shell')!.click() })
     act(() => { type(labelInput(), 'Tests'); type(byTest<HTMLTextAreaElement>('command-text')!, 'npm test') })
     act(() => { byTest('command-submit')!.click() })
     expect(onConfirm).toHaveBeenCalledTimes(1)
     expect(onConfirm.mock.calls[0][0].target).toBe('partner')
+    expect(onConfirm.mock.calls[0][0].kind).toBe('shell')
     expect(onConfirm.mock.calls[0][0].prompt).toBe('npm test')
   })
 
-  it('"Send a prompt" produces a button that lives in the Claude row', () => {
+  it('"Send a prompt" produces a prompt-kind button aimed at the agent', () => {
     const { onConfirm } = render({ configId: 'cfg' })
     act(() => { byTest('command-kind-prompt')!.click() })
     act(() => { type(labelInput(), 'Fix'); type(byTest<HTMLTextAreaElement>('command-text')!, 'fix the lint') })
     act(() => { byTest('command-submit')!.click() })
     expect(onConfirm.mock.calls[0][0].target).toBe('claude')
+    expect(onConfirm.mock.calls[0][0].kind).toBe('prompt')
   })
 
   it('the text field says which kind of thing it is', () => {
@@ -111,41 +118,68 @@ describe('the dialog asks what the button does FIRST', () => {
 })
 
 describe('a terminal-only session has no Claude to prompt', () => {
-  it('offers only the shell kind, and asks WHICH shell', () => {
-    render({ mainPaneIsShell: true })
+  it('offers only the shell kind, and asks WHICH shell -- both on this PC, both enabled', () => {
+    render({ capabilities: shellCaps })
     expect(byTest('command-kind-prompt')).toBeNull()
     expect(byTest('command-kind-shell')).not.toBeNull()
     act(() => { byTest('command-kind-shell')!.click() })
-    expect(q('[role="radiogroup"][aria-label="Which shell"]')).not.toBeNull()
+    expect(q('[role="radiogroup"][aria-label="Where it runs"]')).not.toBeNull()
+    const main = byTest<HTMLButtonElement>('command-where-main')!
+    const partner = byTest<HTMLButtonElement>('command-where-partner')!
+    expect(main.disabled).toBe(false)
+    expect(partner.disabled).toBe(false)
+    expect(main.textContent).toContain('this shell')
+    expect(partner.textContent).toContain('partner shell')
   })
 
-  it('"This shell" means the main pane, so the target is claude -- the row the main pane IS', () => {
-    const { onConfirm } = render({ mainPaneIsShell: true })
+  it('the legacy prop still works: mainPaneIsShell alone describes a terminal-only session', () => {
+    render({ mainPaneIsShell: true })
+    expect(byTest('command-kind-prompt')).toBeNull()
     act(() => { byTest('command-kind-shell')!.click() })
+    expect(byTest<HTMLButtonElement>('command-where-main')!.disabled).toBe(false)
+  })
+
+  it('"This shell" means the main pane, so the target is claude -- the pane the main shell IS', () => {
+    const { onConfirm } = render({ capabilities: shellCaps })
+    act(() => { byTest('command-kind-shell')!.click() })
+    expect(byTest('command-where-main')!.getAttribute('aria-checked')).toBe('true')
     act(() => { type(labelInput(), 'L'); type(byTest<HTMLTextAreaElement>('command-text')!, 'ls') })
     act(() => { byTest('command-submit')!.click() })
     expect(onConfirm.mock.calls[0][0].target).toBe('claude')
+    expect(onConfirm.mock.calls[0][0].kind).toBe('shell')
   })
 
   it('"Partner shell" targets partner', () => {
-    const { onConfirm } = render({ mainPaneIsShell: true })
+    const { onConfirm } = render({ capabilities: shellCaps })
     act(() => { byTest('command-kind-shell')!.click() })
-    const partnerRadio = Array.from(container.querySelectorAll('[role="radio"]'))
-      .find((b) => b.textContent === 'Partner shell') as HTMLButtonElement
-    act(() => { partnerRadio.click() })
+    act(() => { byTest('command-where-partner')!.click() })
     act(() => { type(labelInput(), 'L'); type(byTest<HTMLTextAreaElement>('command-text')!, 'ls') })
     act(() => { byTest('command-submit')!.click() })
     expect(onConfirm.mock.calls[0][0].target).toBe('partner')
   })
+
+  it('on an agent session the main pane is offered but disabled, with the reason', () => {
+    render({ capabilities: claudeCaps })
+    act(() => { byTest('command-kind-shell')!.click() })
+    const main = byTest<HTMLButtonElement>('command-where-main')!
+    expect(main.disabled).toBe(true)
+    expect(main.textContent).toContain('not a shell')
+    expect(byTest('command-where-partner')!.getAttribute('aria-checked')).toBe('true')
+  })
 })
 
 describe('the preview shows the button and the exact text it will type', () => {
+  // The preview draws the REAL chip (the bar's own component), so the label is
+  // read off that chip -- its monogram tile precedes the text.
+  const previewChip = () => byTest('command-preview')!.querySelector('[data-testid="command-chip"]')!
+
   it('tracks label, text and arguments live, and ends the line with an Enter mark', () => {
     render({})
     act(() => { byTest('command-kind-shell')!.click() })
-    expect(byTest('command-preview-label')!.textContent).toBe('Button')
+    expect(previewChip().textContent).toContain('Button')
     act(() => { type(labelInput(), 'Start'); type(byTest<HTMLTextAreaElement>('command-text')!, './start.ps1') })
-    expect(byTest('command-preview-label')!.textContent).toBe('Start')
+    expect(previewChip().textContent).toContain('Start')
+    expect(previewChip().textContent).not.toContain('Button')
     expect(byTest('command-preview-line')!.textContent).toContain('./start.ps1')
     // Add two arguments the way a user does.
     const argInput = q<HTMLInputElement>('input[placeholder^="e.g. -Port"]')!
@@ -163,7 +197,7 @@ describe('the preview shows the button and the exact text it will type', () => {
     act(() => { byTest('command-kind-shell')!.click() })
     expect(byTest('command-preview')!.textContent).toContain('types into the partner shell')
     act(() => { byTest('command-kind-prompt')!.click() })
-    expect(byTest('command-preview')!.textContent).toContain('sends to Claude')
+    expect(byTest('command-preview')!.textContent).toContain('sends to the Claude terminal')
   })
 
   it('shows the page it will watch once the watch is on', () => {
@@ -187,18 +221,24 @@ describe('the pure rules the preview and the bar share', () => {
     expect(previewLine('   ', ['a'])).toBe('')
   })
 
-  it('kind is read off the target, and the main pane being a shell wins', () => {
-    expect(kindOf({ target: 'partner' }, false)).toBe('shell')
-    expect(kindOf({ target: 'claude' }, false)).toBe('prompt')
-    expect(kindOf({}, false)).toBe('prompt')
-    expect(kindOf({ target: 'claude' }, true)).toBe('shell')
+  it('kind is the stored kind when there is one; a legacy record is read off target and scope', () => {
+    expect(kindOf({ kind: 'shell', target: 'claude', scope: 'global' }, claudeCaps)).toBe('shell')
+    expect(kindOf({ target: 'partner', scope: 'global' }, claudeCaps)).toBe('shell')
+    expect(kindOf({ target: 'claude', scope: 'global' }, claudeCaps)).toBe('prompt')
+    expect(kindOf({ scope: 'global' }, claudeCaps)).toBe('prompt')
+    // Terminal-only: a Session button of that config is the shell's own line;
+    // a Global claude-target button is still a prompt (it cannot run here).
+    expect(kindOf({ target: 'claude', scope: 'config' }, shellCaps)).toBe('shell')
+    expect(kindOf({ target: 'claude', scope: 'global' }, shellCaps)).toBe('prompt')
+    expect(kindOf(undefined, shellCaps)).toBe('prompt')
   })
 
-  it('targetFor: a prompt can only go to Claude; a shell line only to a shell', () => {
-    expect(targetFor('prompt', false, 'main')).toBe('claude')
-    expect(targetFor('shell', false, 'main')).toBe('partner')
-    expect(targetFor('shell', true, 'main')).toBe('claude')
-    expect(targetFor('shell', true, 'partner')).toBe('partner')
+  it('targetFor: a prompt can only go to the agent; a shell line only to a shell', () => {
+    expect(targetFor('prompt', claudeCaps, 'main')).toBe('claude')
+    expect(targetFor('page', claudeCaps, 'partner')).toBe('claude')
+    expect(targetFor('shell', claudeCaps, 'main')).toBe('partner')
+    expect(targetFor('shell', shellCaps, 'main')).toBe('claude')
+    expect(targetFor('shell', shellCaps, 'partner')).toBe('partner')
   })
 })
 

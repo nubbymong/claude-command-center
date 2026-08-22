@@ -21,6 +21,9 @@ vi.mock('../../../src/renderer/stores/commandStore', () => ({
 vi.mock('../../../src/renderer/utils/id', () => ({ generateId: () => 'test-id' }))
 
 const { default: CommandDialog, kindOf, targetFor } = await import('../../../src/renderer/components/CommandDialog')
+const { sessionCapabilities } = await import('../../../src/renderer/lib/session-capabilities')
+const claudeCaps = sessionCapabilities({ provider: 'claude', sessionType: 'local', configId: 'cfg' } as never)
+const shellCaps = sessionCapabilities({ provider: 'claude', sessionType: 'local', configId: 'cfg', shellOnly: true } as never)
 
 let container: HTMLDivElement
 let root: Root
@@ -56,7 +59,7 @@ describe('the page card', () => {
     expect(byTest('command-kind-page')).not.toBeNull()
     act(() => { root.unmount() })
     root = createRoot(container)
-    render({ mainPaneIsShell: true })
+    render({ capabilities: shellCaps })
     expect(byTest('command-kind-prompt')).toBeNull()
     expect(byTest('command-kind-page')).not.toBeNull()
   })
@@ -67,12 +70,16 @@ describe('the page card', () => {
     expect(byTest('command-text')).toBeNull()
     expect(byTest('command-watch-toggle')).toBeNull()
     expect(byTest('command-secret-toggle')).toBeNull()
-    expect(byTest('command-runs-in')).toBeNull()
     expect(container.textContent).not.toContain('Arguments')
-    // Scope, section and colour are still there: a page button is filed like any other.
-    expect(container.textContent).toContain('Scope')
+    // "Where it runs" is answered for a page too -- the browser pane, fetched
+    // from this PC -- so no kind is silent about the machine (ADR-018 D12).
+    expect(byTest('command-runs-in')!.textContent).toContain('From this PC')
+    expect(byTest('command-runs-in')!.textContent).toContain('browser pane')
+    // Where it shows, section, icon and colour are still there: a page button is filed like any other.
+    expect(container.textContent).toContain('Where it shows')
     expect(container.textContent).toContain('Section')
     expect(container.textContent).toContain('Colour')
+    expect(container.textContent).toContain('Icon')
   })
 })
 
@@ -117,8 +124,11 @@ describe('saving a page button', () => {
     pickPage()
     act(() => { type(labelInput(), 'Docs') })
     act(() => { type(byTest<HTMLInputElement>('command-page-url')!, 'docs.example.com/guide') })
-    expect(byTest('command-preview-label')!.textContent).toBe('Docs')
-    expect(byTest('command-preview')!.textContent).toContain('opens in the browser pane')
+    // The preview draws the bar's real chip: a page button wears the globe glyph.
+    const chip = byTest('command-preview')!.querySelector('[data-testid="command-chip"]')!
+    expect(chip.textContent).toContain('Docs')
+    expect(chip.querySelector('[data-testid="command-page-glyph"]')).not.toBeNull()
+    expect(byTest('command-preview')!.textContent).toContain('opens in the browser pane (from this PC)')
     expect(byTest('command-preview-line')!.textContent).toContain('https://docs.example.com/guide')
     expect(byTest('command-preview-line')!.textContent).toContain('types nothing')
   })
@@ -135,13 +145,13 @@ describe('editing one', () => {
 
 describe('kindOf / targetFor know the third kind', () => {
   it('kindOf reads the stored mark first', () => {
-    expect(kindOf({ kind: 'page', target: 'partner' }, false)).toBe('page')
-    expect(kindOf({ kind: 'page' }, true)).toBe('page')
-    expect(kindOf({ target: 'partner' }, false)).toBe('shell')
-    expect(kindOf({}, false)).toBe('prompt')
+    expect(kindOf({ kind: 'page', target: 'partner', scope: 'global' }, claudeCaps)).toBe('page')
+    expect(kindOf({ kind: 'page', scope: 'config' }, shellCaps)).toBe('page')
+    expect(kindOf({ target: 'partner', scope: 'global' }, claudeCaps)).toBe('shell')
+    expect(kindOf({ scope: 'global' }, claudeCaps)).toBe('prompt')
   })
-  it('a page button is filed in the main row', () => {
-    expect(targetFor('page', false, 'main')).toBe('claude')
-    expect(targetFor('page', true, 'partner')).toBe('claude')
+  it('a page button is filed with the main pane\'s buttons', () => {
+    expect(targetFor('page', claudeCaps, 'main')).toBe('claude')
+    expect(targetFor('page', shellCaps, 'partner')).toBe('claude')
   })
 })

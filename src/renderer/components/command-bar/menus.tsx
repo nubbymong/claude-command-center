@@ -72,8 +72,8 @@ export function Menu({ x, y, onClose, children, ariaLabel, returnFocusTo, testId
 export function MenuHeader({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="px-3 pt-1.5 pb-2 mb-1" style={{ borderBottom: '1px solid var(--border-strong)' }}>
-      <div className="font-semibold truncate max-w-[320px]" style={{ color: 'var(--text-primary)' }}>{title}</div>
-      {sub && <div className="text-[11px] mt-0.5 truncate max-w-[320px]" style={{ color: 'var(--text-muted)' }}>{sub}</div>}
+      <div className="font-semibold truncate max-w-[320px]" style={{ color: 'var(--text-primary)' }} data-testid="menu-title">{title}</div>
+      {sub && <div className="text-[11px] mt-0.5 truncate max-w-[320px]" style={{ color: 'var(--text-muted)' }} data-testid="menu-sub">{sub}</div>}
     </div>
   )
 }
@@ -144,9 +144,11 @@ export const MenuIcons = I
 /* Icon + colour quick picker (shared with the dialog)                        */
 /* ------------------------------------------------------------------------ */
 
-export function IconColourPicker({ icon, color, label, onIcon, onColor, compact }: {
+export function IconColourPicker({ icon, color, label, onIcon, onColor, compact, showColours = true }: {
   icon?: string; color: string; label: string
   onIcon: (key: string | undefined) => void; onColor: (hex: string) => void; compact?: boolean
+  /** The dialog draws its own Colour field; the right-click picker shows both. */
+  showColours?: boolean
 }) {
   const keys = compact ? COMMAND_ICON_KEYS.slice(0, 11) : COMMAND_ICON_KEYS
   const [expanded, setExpanded] = React.useState(!compact)
@@ -187,7 +189,7 @@ export function IconColourPicker({ icon, color, label, onIcon, onColor, compact 
           </button>
         )}
       </div>
-      <div className="flex flex-wrap gap-1.5" data-testid="colour-picks">
+      {showColours && <div className="flex flex-wrap gap-1.5" data-testid="colour-picks">
         {swatchesFor(color).map((c) => (
           <button
             key={c}
@@ -199,7 +201,7 @@ export function IconColourPicker({ icon, color, label, onIcon, onColor, compact 
             style={{ backgroundColor: c, borderColor: c.toUpperCase() === color.toUpperCase() ? '#fff' : 'transparent' }}
           />
         ))}
-      </div>
+      </div>}
     </div>
   )
 }
@@ -263,10 +265,11 @@ export function UserButtonMenu(p: UserButtonMenuProps) {
       }>Move to section</MenuItem>
       <MenuItem icon={I.arrows} testId="menu-move" submenu={
         <>
-          <MenuItem onClick={() => p.onMove('left')} hint="Alt+←">Left</MenuItem>
-          <MenuItem onClick={() => p.onMove('right')} hint="Alt+→">Right</MenuItem>
-          <MenuItem onClick={() => p.onMove('start')}>To the start of the band</MenuItem>
-          <MenuItem onClick={() => p.onMove('end')}>To the end of the band</MenuItem>
+          <MenuItem onClick={() => p.onMove('left')} hint="Alt+←" testId="menu-move-left">Left</MenuItem>
+          <MenuItem onClick={() => p.onMove('right')} hint="Alt+→" testId="menu-move-right">Right</MenuItem>
+          <MenuItem onClick={() => p.onMove('start')} testId="menu-move-start">To the start of the band</MenuItem>
+          <MenuItem onClick={() => p.onMove('end')} testId="menu-move-end">To the end of the band</MenuItem>
+          <MenuFoot>Alt+Shift+←/→ moves it to the other band</MenuFoot>
         </>
       }>Move</MenuItem>
       <MenuRule />
@@ -424,11 +427,11 @@ export function ConfirmCard({ title, body, actions, onCancel, testId }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" data-testid={testId ?? 'command-confirm'}>
       <div className="rounded-xl shadow-2xl w-[440px] max-w-[92vw]" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }} role="dialog" aria-modal="true" aria-labelledby="cmd-confirm-title">
         <div className="px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-          <h3 id="cmd-confirm-title" className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h3>
+          <h3 id="cmd-confirm-title" className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }} data-testid={`${testId ?? 'command-confirm'}-title`}>{title}</h3>
         </div>
-        <div className="px-4 py-3 text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{body}</div>
+        <div className="px-4 py-3 text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }} data-testid={`${testId ?? 'command-confirm'}-body`}>{body}</div>
         <div className="px-4 pb-4 pt-1 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="h-7 px-3 rounded-md text-xs" style={{ background: 'var(--surface-overlay)', color: 'var(--text-secondary)' }}>Cancel</button>
+          <button type="button" onClick={onCancel} className="h-7 px-3 rounded-md text-xs" style={{ background: 'var(--surface-overlay)', color: 'var(--text-secondary)' }} data-testid={`${testId ?? 'command-confirm'}-cancel`}>Cancel</button>
           {actions.map((a) => (
             <button
               key={a.label}

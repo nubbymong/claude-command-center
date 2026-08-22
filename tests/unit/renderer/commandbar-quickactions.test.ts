@@ -209,7 +209,11 @@ describe('CommandBar session controls and chip look', () => {
     renderBar(root)
     expect(byTestId(container, 'command-row')).not.toBeNull()
     expect(chipNamed(container, 'Deploy')).toBeDefined()
-    expect(container.querySelector('[aria-expanded]')).toBeNull()
+    // The only disclosure on the row is the Notes tool's own popover; nothing
+    // named for the command bar / "Commands" collapses the row any more.
+    const disclosures = Array.from(container.querySelectorAll<HTMLElement>('[aria-expanded]'))
+    expect(disclosures.filter((el) => el.getAttribute('data-testid') !== 'notes-tool')).toHaveLength(0)
+    expect(disclosures.some((el) => /command/i.test(el.getAttribute('aria-label') ?? el.getAttribute('title') ?? ''))).toBe(false)
     expect(byTestId(container, 'command-bar-hidden')).toBeNull()
 
     // Hidden (the bar's right-click "Hide the command bar"; Settings restores):

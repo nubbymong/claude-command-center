@@ -166,7 +166,7 @@ export function CommandChip(p: CommandChipProps) {
       ) : (
         <CommandIcon icon={cmd.icon} color={color} label={cmd.label} size={13} />
       )}
-      <span className="truncate max-w-[160px]">{cmd.label}</span>
+      <span className="truncate max-w-[160px]" data-testid="command-chip-label">{cmd.label}</span>
       {cmd.hasSecretArg && <Mark d={Paths.lock} size={9} style={{ color: 'var(--color-yellow)' }} />}
       {cmd.webView?.enabled && <Mark d={Paths.browser} size={9} style={{ color: 'var(--color-blue)' }} />}
       {hasArgs && (

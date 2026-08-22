@@ -101,7 +101,7 @@ export default function BandOverflow({ plan, folded, caps, anchor, onRun, onCont
           {rows.map((row) => (
             <div key={row.section?.id ?? '__none'}>
               {(rows.length > 1 || row.section) && (
-                <div className="px-1.5 pt-1.5 pb-1 text-[9.5px] font-semibold uppercase tracking-[.09em]" style={{ color: row.section?.color || 'var(--text-muted)' }}>
+                <div className="px-1.5 pt-1.5 pb-1 text-[9.5px] font-semibold uppercase tracking-[.09em]" style={{ color: row.section?.color || 'var(--text-muted)' }} data-testid="command-overflow-group">
                   {row.section ? row.section.name : 'No section'}
                 </div>
               )}
@@ -146,7 +146,7 @@ export default function BandOverflow({ plan, folded, caps, anchor, onRun, onCont
         </div>
         <div className="flex items-center gap-2 mt-1 pt-2 text-[10.5px]" style={{ borderTop: '1px solid var(--border-strong)', color: 'var(--text-muted)' }}>
           <span>Right-click any → <span style={{ color: 'var(--text-secondary)' }}>Pin to bar</span></span>
-          <button type="button" className="ml-auto hover:underline" style={{ color: 'var(--text-secondary)' }} onClick={() => { onManage(); onClose() }}>Manage all…</button>
+          <button type="button" className="ml-auto hover:underline" style={{ color: 'var(--text-secondary)' }} onClick={() => { onManage(); onClose() }} data-testid="command-overflow-manage">Manage all…</button>
         </div>
       </div>
     </div>
