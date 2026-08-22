@@ -9,6 +9,7 @@ import { modelsFromRegistry, effortsFromRegistry, PERMISSION_MODES } from '../li
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { secretValueProblem } from '../../shared/command-secret'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, ON_BRAND, useDialogEscape } from './ui/Dialog'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -76,6 +77,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const theme = useResolvedTheme()
   const initialClaude = initial?.claudeOptions
   const isEdit = !!initial
+  useDialogEscape(onCancel)
 
   // Codex master ("Do you use Codex?"): with it off, Codex configs can't launch,
   // so the card renders disabled with a pointer to Settings → Codex.
@@ -174,14 +176,14 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       aria-expanded={openHelp.has(k)}
       onClick={() => toggleHelp(k)}
       className={`inline-flex items-center justify-center w-4 h-4 rounded-full border text-[10px] font-semibold leading-none shrink-0 transition-colors ${
-        openHelp.has(k) ? 'border-blue text-blue bg-blue/10' : 'border-surface2 text-overlay0 hover:text-subtext0 hover:border-overlay0'
+        openHelp.has(k) ? 'border-[var(--brand)] text-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_12%,transparent)]' : 'border-[var(--border-strong)] text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-[var(--text-muted)]'
       }`}
     >
       ?
     </button>
   )
   const Hint = ({ k, children }: { k: string; children: React.ReactNode }) =>
-    openHelp.has(k) ? <p className="text-[11px] text-overlay0 mt-1 leading-snug">{children}</p> : null
+    openHelp.has(k) ? <p className="text-[11px] text-[var(--text-muted)] mt-1 leading-snug">{children}</p> : null
 
   const bothChosen = uiProvider !== null && sessionType !== null
 
@@ -438,9 +440,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
   // ── Small shared bits
   const sectionHead = (title: string, chip: string, helpKey?: string, helpLabel?: string) => (
-    <div className="flex items-center gap-2 border-t border-surface1 pt-3 mt-4 mb-2">
-      <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">{title}</span>
-      <span className="text-[9px] uppercase tracking-wide text-overlay0 border border-surface2 rounded-full px-1.5 py-px">{chip}</span>
+    <div className="flex items-center gap-2 border-t border-[var(--border-subtle)] pt-3 mt-4 mb-2">
+      <span className="text-[10px] uppercase tracking-wider text-[var(--text-secondary)] font-medium">{title}</span>
+      <span className="text-[9px] uppercase tracking-wide text-[var(--text-muted)] border border-[var(--border-strong)] rounded-full px-1.5 py-px">{chip}</span>
       {helpKey && helpLabel && <HelpBtn k={helpKey} label={helpLabel} />}
     </div>
   )
@@ -450,12 +452,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // skip-disabled) instead of the hand-rolled role="radio" buttons that claimed
   // radio semantics but only responded to Tab/Enter (Copilot review, #188).
   const cardCls = (selected: boolean, disabled: boolean) =>
-    `flex-1 text-left rounded-md border px-3 py-2 transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-blue ${
+    `flex-1 text-left rounded-[10px] border px-3 py-2 transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-[var(--brand)] ${
       disabled
-        ? 'border-surface1 opacity-50 cursor-not-allowed'
+        ? 'border-[var(--border-subtle)] bg-[var(--surface-base)] opacity-50 cursor-not-allowed'
         : selected
-          ? 'border-blue bg-blue/10 cursor-pointer'
-          : 'border-surface1 bg-base hover:border-overlay0 cursor-pointer'
+          ? 'border-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_14%,var(--surface-base))] cursor-pointer'
+          : 'border-[var(--border-subtle)] bg-[var(--surface-base)] hover:border-[var(--border-strong)] cursor-pointer'
     }`
 
   const providerCard = (id: UiProvider, title: string, sub: string, disabled: boolean) => (
@@ -469,8 +471,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         disabled={disabled}
         onChange={() => setUiProvider(id)}
       />
-      <span className={`block text-sm font-medium ${disabled ? 'text-overlay0' : 'text-text'}`}>{title}</span>
-      <span className="block text-[10px] text-overlay0 mt-0.5">{sub}</span>
+      <span className={`block text-sm font-medium ${disabled ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'}`}>{title}</span>
+      <span className="block text-[10px] text-[var(--text-muted)] mt-0.5">{sub}</span>
     </label>
   )
 
@@ -485,12 +487,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         disabled={disabled}
         onChange={() => setSessionType(id)}
       />
-      <span className={`block text-sm font-medium ${disabled ? 'text-overlay0' : 'text-text'}`}>{title}</span>
-      <span className="block text-[10px] text-overlay0 mt-0.5">{sub}</span>
+      <span className={`block text-sm font-medium ${disabled ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'}`}>{title}</span>
+      <span className="block text-[10px] text-[var(--text-muted)] mt-0.5">{sub}</span>
     </label>
   )
 
-  const inputCls = 'w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue'
+  const inputCls = 'w-full bg-[var(--surface-base)] border border-[var(--border-strong)] rounded-lg px-2.5 py-1.5 text-[12.5px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus-ring'
 
   const permHint = DANGEROUS_MODE_COPY[permissionMode]
     ?? PERMISSION_MODES.find((m) => m.value === permissionMode)?.hint
@@ -498,26 +500,27 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const permDangerous = permissionMode in DANGEROUS_MODE_COPY
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <DialogOverlay testId="session-dialog">
+      <DialogPanel width="w-[680px]" className="max-h-[90vh]" labelledBy="session-dialog-title">
       <form
         onSubmit={handleSubmit}
-        className="bg-surface0 rounded-lg w-[680px] max-h-[90vh] flex flex-col shadow-2xl border border-surface1"
+        className="flex flex-col min-h-0"
+        data-testid="session-dialog-form"
       >
-        <div className="px-6 pt-5 pb-3 border-b border-surface1">
-          <h3 className="text-base font-semibold text-text mb-1">
-            {isEdit ? 'Edit config' : 'New saved config'}
-          </h3>
-          <p className="text-[11px] text-overlay0 leading-snug">
-            Every click on this launcher starts a fresh session with these settings.
-          </p>
-        </div>
+        <DialogHeader
+          titleId="session-dialog-title"
+          title={isEdit ? 'Edit config' : 'New saved config'}
+          subtitle="Every click on this launcher starts a fresh session with these settings."
+          onClose={onCancel}
+          closeLabel="Cancel"
+        />
 
-        <div className="px-6 pb-4 overflow-y-auto flex-1">
+        <div className="px-[18px] pb-4 overflow-y-auto flex-1 min-h-0">
 
           {/* ── 1 · WHAT THIS LAUNCHER RUNS ── */}
           <div className="flex items-center gap-2 pt-4 mb-2">
-            <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">What this launcher runs</span>
-            <span className="text-[9px] uppercase tracking-wide text-overlay0 border border-surface2 rounded-full px-1.5 py-px">Any provider</span>
+            <span className="text-[10px] uppercase tracking-wider text-[var(--text-secondary)] font-medium">What this launcher runs</span>
+            <span className="text-[9px] uppercase tracking-wide text-[var(--text-muted)] border border-[var(--border-strong)] rounded-full px-1.5 py-px">Any provider</span>
             <HelpBtn k="runs" label="About this section" />
           </div>
           <Hint k="runs">
@@ -530,10 +533,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             {providerCard('terminal', 'Terminal only', 'A plain terminal — no AI', false)}
           </div>
           {sessionType === 'ssh' && (
-            <p className="text-[11px] text-red mt-1.5">Codex can't run over SSH yet — choose Claude Code or Terminal only.</p>
+            <p className="text-[11px] text-[var(--status-danger)] mt-1.5">Codex can't run over SSH yet — choose Claude Code or Terminal only.</p>
           )}
           {codexDisabled && sessionType !== 'ssh' && (
-            <p className="text-[11px] text-overlay0 mt-1.5">Codex is off — enable it in Settings → Codex to use it here.</p>
+            <p className="text-[11px] text-[var(--text-muted)] mt-1.5">Codex is off — enable it in Settings → Codex to use it here.</p>
           )}
           {uiProvider !== null && (
             <>
@@ -542,7 +545,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 {transportCard('ssh', 'SSH', 'Runs on another machine', uiProvider === 'codex')}
               </div>
               {uiProvider === 'codex' && (
-                <p className="text-[11px] text-overlay0 mt-1.5">Codex runs on this PC only — SSH isn't available.</p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-1.5">Codex runs on this PC only — SSH isn't available.</p>
               )}
             </>
           )}
@@ -561,11 +564,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
               {sessionType === 'local' ? (
                 <div className="mt-1">
-                  <label className="block text-xs text-subtext0 mb-1">
+                  <label className="block text-xs text-[var(--text-secondary)] mb-1">
                     Working directory{' '}
                     {uiProvider === 'terminal'
-                      ? <span className="text-overlay0">(optional)</span>
-                      : <span className="text-peach">*</span>}
+                      ? <span className="text-[var(--text-muted)]">(optional)</span>
+                      : <span className="text-[var(--status-warning)]">*</span>}
                   </label>
                   <div className="flex gap-2">
                     <input
@@ -578,20 +581,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       }
                       className={inputCls.replace('w-full', 'flex-1')}
                     />
-                    <button
-                      type="button"
-                      onClick={handleBrowse}
-                      className="px-3 py-2 rounded text-sm bg-surface1 text-subtext1 hover:bg-surface2 hover:text-text transition-colors shrink-0"
-                    >
+                    <DialogButton variant="secondary" onClick={handleBrowse} className="shrink-0" style={{ height: 'auto', alignSelf: 'stretch' }}>
                       Browse
-                    </button>
+                    </DialogButton>
                   </div>
                   {/* Grandfathered bad value: an existing config keeps saving (we only
                       block a CHANGED non-absolute path), but say what it actually does
                       — '.' and friends resolve to the home folder at spawn, which is
                       what mis-filed transcripts before. */}
                   {workingDir.trim() && !looksAbsolute(workingDir) && (
-                    <p className="text-[11px] text-yellow mt-1.5">
+                    <p className="text-[11px] text-[var(--status-warning)] mt-1.5">
                       {uiProvider === 'terminal'
                         ? 'Not a full path — this session will start in your home folder. Clear the field if that’s what you want.'
                         : 'Not a full path — sessions will start in your home folder. Pick a real project folder.'}
@@ -603,7 +602,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   <div className="grid grid-cols-[1fr_90px] gap-2">
                     <div>
                       <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-subtext0">Host <span className="text-peach">*</span></label>
+                        <label className="text-xs text-[var(--text-secondary)]">Host <span className="text-[var(--status-warning)]">*</span></label>
                         <HelpBtn k="host" label="About host" />
                       </div>
                       <input
@@ -615,7 +614,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       <Hint k="host">IP address or hostname of the machine to connect to.</Hint>
                     </div>
                     <div>
-                      <label className="block text-xs text-subtext0 mb-1">Port <span className="text-peach">*</span></label>
+                      <label className="block text-xs text-[var(--text-secondary)] mb-1">Port <span className="text-[var(--status-warning)]">*</span></label>
                       <input
                         type="number"
                         value={sshPort}
@@ -626,7 +625,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-xs text-subtext0 mb-1">User</label>
+                      <label className="block text-xs text-[var(--text-secondary)] mb-1">User</label>
                       <input
                         value={sshUser}
                         onChange={(e) => setSshUser(e.target.value)}
@@ -635,7 +634,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-subtext0 mb-1">Password</label>
+                      <label className="block text-xs text-[var(--text-secondary)] mb-1">Password</label>
                       <input
                         type="password"
                         value={sshPassword}
@@ -645,12 +644,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       />
                       {(sshPassword.length > 0 || storedPassword) && (
                         <div className="flex items-center gap-3 mt-1.5">
-                          <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer">
+                          <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
                             <input
                               type="checkbox"
                               checked={savePassword}
                               onChange={(e) => setSavePassword(e.target.checked)}
-                              className="rounded border-surface1"
+                              className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
                             />
                             Save password
                           </label>
@@ -658,7 +657,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                             <button
                               type="button"
                               onClick={() => { setStoredPassword(false); setSavePassword(false); setSshPassword('') }}
-                              className="text-[11px] text-blue underline underline-offset-2"
+                              className="text-[11px] text-[var(--brand)] underline underline-offset-2"
                             >
                               Remove stored password
                             </button>
@@ -670,7 +669,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-subtext0">Remote directory</label>
+                        <label className="text-xs text-[var(--text-secondary)]">Remote directory</label>
                         <HelpBtn k="rdir" label="About the remote directory" />
                       </div>
                       <input
@@ -683,7 +682,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-subtext0">Machine name</label>
+                        <label className="text-xs text-[var(--text-secondary)]">Machine name</label>
                         <HelpBtn k="mname" label="About machine name" />
                       </div>
                       <input
@@ -697,7 +696,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <label className="text-xs text-subtext0">After connecting, run</label>
+                      <label className="text-xs text-[var(--text-secondary)]">After connecting, run</label>
                       <HelpBtn k="postcmd" label="About the post-connect command" />
                     </div>
                     <input
@@ -713,7 +712,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   </div>
                   {postCommand.trim() && (
                     <div>
-                      <label className="block text-xs text-subtext0 mb-1">Sudo password</label>
+                      <label className="block text-xs text-[var(--text-secondary)] mb-1">Sudo password</label>
                       <input
                         type="password"
                         value={sudoPassword}
@@ -723,12 +722,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       />
                       {(sudoPassword.length > 0 || storedSudo) && (
                         <div className="flex items-center gap-3 mt-1.5">
-                          <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer">
+                          <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer">
                             <input
                               type="checkbox"
                               checked={saveSudo}
                               onChange={(e) => setSaveSudo(e.target.checked)}
-                              className="rounded border-surface1"
+                              className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
                             />
                             Save password
                           </label>
@@ -736,7 +735,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                             <button
                               type="button"
                               onClick={() => { setStoredSudo(false); setSaveSudo(false); setSudoPassword('') }}
-                              className="text-[11px] text-blue underline underline-offset-2"
+                              className="text-[11px] text-[var(--brand)] underline underline-offset-2"
                             >
                               Remove stored password
                             </button>
@@ -751,18 +750,18 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       reattach; if the host lacks tmux it installs a small static
                       build (surfaced in the connect overlay, never silent). Off
                       = a bare claude that resumes via --continue on reconnect. */}
-                  <div className="rounded-md border border-surface1 bg-surface0/40 px-3 py-2">
+                  <div className="rounded-[9px] border border-[var(--border-subtle)] bg-[var(--surface-base)] px-3 py-2">
                     <label className="flex items-start gap-2 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={detachable}
                         onChange={(e) => setDetachable(e.target.checked)}
-                        className="mt-0.5 rounded border-surface1"
+                        className="mt-0.5 rounded border-[var(--border-subtle)] accent-[var(--brand)]"
                         data-testid="ssh-detachable"
                       />
                       <span className="min-w-0">
-                        <span className="block text-xs text-text font-medium">Detachable (persistent remote session)</span>
-                        <span className="block text-[11px] text-subtext0 leading-snug">
+                        <span className="block text-xs text-[var(--text-primary)] font-medium">Detachable (persistent remote session)</span>
+                        <span className="block text-[11px] text-[var(--text-secondary)] leading-snug">
                           Keeps the remote session alive if the connection drops, so reconnecting
                           resumes it in place. Needs tmux on the host — CCC installs a lightweight
                           copy if it's missing (you'll see it happen). Turn off to run a plain
@@ -786,7 +785,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   <div className="space-y-3 mt-1">
                     <div>
                       <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-subtext0">Starting model</label>
+                        <label className="text-xs text-[var(--text-secondary)]">Starting model</label>
                         <HelpBtn k="model" label="About the starting model" />
                       </div>
                       <select
@@ -806,15 +805,15 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-subtext0">Starting effort</label>
+                        <label className="text-xs text-[var(--text-secondary)]">Starting effort</label>
                         <HelpBtn k="effort" label="About the starting effort" />
                       </div>
                       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Starting effort">
                         {[{ value: '', label: 'Default' }, ...effortsFromRegistry(registry)].map((ef) => (
                           <label
                             key={ef.value || 'default'}
-                            className={`px-2.5 py-1 rounded-full border text-xs cursor-pointer transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-blue ${
-                              effortLevel === ef.value ? 'border-blue bg-blue/10 text-text' : 'border-surface1 bg-base text-subtext0 hover:border-overlay0'
+                            className={`px-2.5 py-1 rounded-full border text-xs cursor-pointer transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-[var(--brand)] ${
+                              effortLevel === ef.value ? 'border-[var(--brand)] bg-[color-mix(in_srgb,var(--brand)_14%,transparent)] text-[var(--text-primary)]' : 'border-[var(--border-subtle)] bg-[var(--surface-base)] text-[var(--text-secondary)] hover:border-[var(--border-strong)]'
                             }`}
                           >
                             <input
@@ -835,7 +834,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       </Hint>
                     </div>
                     <div>
-                      <label className="block text-xs text-subtext0 mb-1">Permission mode</label>
+                      <label className="block text-xs text-[var(--text-secondary)] mb-1">Permission mode</label>
                       <select
                         value={permissionMode}
                         onChange={(e) => setPermissionMode(e.target.value)}
@@ -846,12 +845,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         ))}
                       </select>
                       {permHint && (
-                        <p className={`text-[11px] mt-1 ${permDangerous ? 'text-red' : 'text-overlay0'}`}>{permHint}</p>
+                        <p className={`text-[11px] mt-1 ${permDangerous ? 'text-[var(--status-danger)]' : 'text-[var(--text-muted)]'}`}>{permHint}</p>
                       )}
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-subtext0">Extra CLI arguments</label>
+                        <label className="text-xs text-[var(--text-secondary)]">Extra CLI arguments</label>
                         <HelpBtn k="xargs" label="About extra CLI arguments" />
                       </div>
                       <input
@@ -871,12 +870,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                     {sessionType === 'local' && (
                       <div>
                         <div className="flex items-center gap-1.5">
-                          <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
                             <input
                               type="checkbox"
                               checked={loggingEnabled}
                               onChange={(e) => setLoggingEnabled(e.target.checked)}
-                              className="rounded border-surface1"
+                              className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
                             />
                             Index conversation logs
                           </label>
@@ -925,7 +924,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   <div className="space-y-3 mt-1">
                     <div>
                       <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-subtext0">First-run command</label>
+                        <label className="text-xs text-[var(--text-secondary)]">First-run command</label>
                         <HelpBtn k="termcmd" label="About the first-run command" />
                       </div>
                       <input
@@ -939,7 +938,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5 mb-1">
-                        <label className="text-xs text-subtext0">Arguments</label>
+                        <label className="text-xs text-[var(--text-secondary)]">Arguments</label>
                         <HelpBtn k="termargs" label="About arguments" />
                       </div>
                       <input
@@ -955,7 +954,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       </Hint>
                     </div>
                     <div>
-                      <label className="block text-xs text-subtext0 mb-1">Secret argument</label>
+                      <label className="block text-xs text-[var(--text-secondary)] mb-1">Secret argument</label>
                       <input
                         type="password"
                         value={secretArg}
@@ -964,28 +963,28 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         className={inputCls}
                       />
                       <div className="flex items-center gap-3 mt-1.5">
-                        <p className="text-[11px] text-overlay0">
-                          <span className="text-green">🔒</span> Kept in your OS keychain, never written to the
-                          config file. Type <span className="font-mono text-subtext0">{'{secret}'}</span> in
+                        <p className="text-[11px] text-[var(--text-muted)]">
+                          <span className="text-[var(--status-success)]">🔒</span> Kept in your OS keychain, never written to the
+                          config file. Type <span className="font-mono text-[var(--text-secondary)]">{'{secret}'}</span> in
                           Arguments to use it.
                         </p>
                         {storedSecret && (
                           <button
                             type="button"
                             onClick={() => { setStoredSecret(false); setSecretArg('') }}
-                            className="text-[11px] text-blue underline underline-offset-2 shrink-0"
+                            className="text-[11px] text-[var(--brand)] underline underline-offset-2 shrink-0"
                           >
                             Remove
                           </button>
                         )}
                       </div>
                     </div>
-                    <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                    <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
                       <input
                         type="checkbox"
                         checked={termElevated}
                         onChange={(e) => setTermElevated(e.target.checked)}
-                        className="rounded border-surface1"
+                        className="rounded border-[var(--border-subtle)] accent-[var(--brand)]"
                       />
                       {window.electronPlatform === 'win32'
                         ? 'Run as Administrator (requires gsudo)'
@@ -998,8 +997,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               {uiProvider === 'terminal' && sessionType === 'ssh' && (
                 <>
                   {sectionHead('Terminal startup', 'Terminal only')}
-                  <p className="text-[11px] text-overlay0 leading-snug">
-                    Over SSH, set the startup command in Workspace above — <span className="text-subtext0 font-medium">"After connecting, run"</span>.
+                  <p className="text-[11px] text-[var(--text-muted)] leading-snug">
+                    Over SSH, set the startup command in Workspace above — <span className="text-[var(--text-secondary)] font-medium">"After connecting, run"</span>.
                   </p>
                 </>
               )}
@@ -1010,17 +1009,17 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   only") — that made a clickable row look identical to decoration.
                   A leading chevron that rotates when open, a hover state and a
                   plain "(optional)" read as a control instead. */}
-              <details className="group border-t border-surface1 pt-3 mt-4" open={isEdit && (!!groupId || !!sectionId)}>
-                <summary className="flex items-center gap-2 cursor-pointer select-none list-none rounded px-1 -mx-1 py-1 hover:bg-surface1/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue [&::-webkit-details-marker]:hidden">
-                  <span className="text-[10px] text-overlay1 transition-transform group-open:rotate-90">▶</span>
-                  <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium group-hover:text-subtext0">Organise</span>
-                  <span className="text-[11px] text-overlay0 normal-case">(optional — group &amp; section)</span>
+              <details className="group border-t border-[var(--border-subtle)] pt-3 mt-4" open={isEdit && (!!groupId || !!sectionId)}>
+                <summary className="flex items-center gap-2 cursor-pointer select-none list-none rounded px-1 -mx-1 py-1 hover:bg-[var(--surface-overlay)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--brand)] [&::-webkit-details-marker]:hidden">
+                  <span className="text-[10px] text-[var(--text-secondary)] transition-transform group-open:rotate-90">▶</span>
+                  <span className="text-[10px] uppercase tracking-wider text-[var(--text-secondary)] font-medium group-hover:text-[var(--text-primary)]">Organise</span>
+                  <span className="text-[11px] text-[var(--text-muted)] normal-case">(optional — group &amp; section)</span>
                 </summary>
-                <p className="text-[11px] text-overlay0 mt-2">Optional — only tidies the sidebar.</p>
+                <p className="text-[11px] text-[var(--text-muted)] mt-2">Optional — only tidies the sidebar.</p>
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <label className="text-xs text-subtext0" htmlFor="ccc-group">Group</label>
+                      <label className="text-xs text-[var(--text-secondary)]" htmlFor="ccc-group">Group</label>
                       <HelpBtn k="group" label="About groups" />
                     </div>
                     <select
@@ -1049,7 +1048,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         <button
                           type="button"
                           onClick={handleCreateGroup}
-                          className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors focus-ring"
+                          style={{ background: 'var(--brand)', color: ON_BRAND }}
                         >
                           Create
                         </button>
@@ -1058,7 +1058,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <label className="text-xs text-subtext0" htmlFor="ccc-section">Section</label>
+                      <label className="text-xs text-[var(--text-secondary)]" htmlFor="ccc-section">Section</label>
                       <HelpBtn k="section" label="About sections" />
                     </div>
                     <select
@@ -1088,7 +1088,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         <button
                           type="button"
                           onClick={handleCreateSection}
-                          className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors focus-ring"
+                          style={{ background: 'var(--brand)', color: ON_BRAND }}
                         >
                           Create
                         </button>
@@ -1097,7 +1098,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   </div>
                 </div>
                 {groupId && (
-                  <p className="text-[11px] text-yellow mt-2">Grouped configs can't also sit under a section — clear the group to pick one.</p>
+                  <p className="text-[11px] text-[var(--status-warning)] mt-2">Grouped configs can't also sit under a section — clear the group to pick one.</p>
                 )}
               </details>
 
@@ -1109,7 +1110,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               </Hint>
               <div className="grid grid-cols-2 gap-4 mt-1">
                 <div>
-                  <label className="block text-xs text-subtext0 mb-1">Label <span className="text-peach">*</span></label>
+                  <label className="block text-xs text-[var(--text-secondary)] mb-1">Label <span className="text-[var(--status-warning)]">*</span></label>
                   <input
                     value={label}
                     onChange={(e) => setLabel(e.target.value)}
@@ -1118,7 +1119,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-subtext0 mb-1">Colour</label>
+                  <label className="block text-xs text-[var(--text-secondary)] mb-1">Colour</label>
                   <div className="flex flex-wrap gap-1.5">
                     {IDENTITY_SWATCHES.map((k) => (
                       <button
@@ -1126,7 +1127,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         type="button"
                         onClick={() => setColorKey(k)}
                         className={`w-6 h-6 rounded-md border-2 transition-all ${
-                          colorKey === k ? 'border-text scale-110' : 'border-transparent hover:border-overlay0'
+                          colorKey === k ? 'border-[var(--text-primary)] scale-110' : 'border-transparent hover:border-[var(--border-strong)]'
                         }`}
                         style={{ backgroundColor: resolveIdentityColor(k, theme) }}
                         title={k}
@@ -1141,26 +1142,14 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
         {/* Footer: the validation slot names the next step; Save can never
             silently no-op again. */}
-        <div className="flex items-center gap-2 px-6 py-3 border-t border-surface1 bg-base/40">
-          <span className="text-xs text-yellow mr-auto">{validationMsg}</span>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-4 py-1.5 rounded text-sm text-subtext0 hover:text-text hover:bg-surface1 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={!!validationMsg}
-            className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
-              validationMsg ? 'bg-surface1 text-overlay0 cursor-not-allowed' : 'bg-blue text-crust hover:bg-blue/90'
-            }`}
-          >
+        <DialogFooter left={<span className="text-xs" style={{ color: 'var(--status-warning)' }} role="status" data-testid="session-dialog-validation">{validationMsg}</span>}>
+          <DialogButton variant="ghost" onClick={onCancel} testId="session-dialog-cancel">Cancel</DialogButton>
+          <DialogButton type="submit" variant="primary" disabled={!!validationMsg} testId="session-dialog-submit">
             {isEdit ? 'Save changes' : 'Create config'}
-          </button>
-        </div>
+          </DialogButton>
+        </DialogFooter>
       </form>
-    </div>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }

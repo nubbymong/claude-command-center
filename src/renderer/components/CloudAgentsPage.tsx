@@ -162,10 +162,10 @@ function ContextMenu({ x, y, agent, onClose }: {
           disabled={item.disabled}
           className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 transition-colors ${
             item.disabled
-              ? 'text-overlay0 cursor-not-allowed'
+              ? 'text-[var(--text-muted)] cursor-not-allowed'
               : item.danger
-              ? 'text-red hover:bg-red/10'
-              : 'text-text hover:bg-surface1'
+              ? 'text-[var(--status-danger)] hover:bg-[color-mix(in_srgb,var(--status-danger)_10%,transparent)]'
+              : 'text-[var(--text-primary)] hover:bg-[var(--surface-raised)]'
           }`}
         >
           <span className="w-4 text-center text-[11px]">{item.icon}</span>

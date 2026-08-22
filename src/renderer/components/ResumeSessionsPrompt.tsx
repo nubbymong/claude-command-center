@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { DialogButton } from './ui/Dialog'
 
 /**
  * Startup gate for restoring saved sessions: previously every boot force-resumed
@@ -62,12 +63,12 @@ export default function ResumeSessionsPrompt({
       tabIndex={-1}
     >
       <div className="mb-1.5 flex items-center gap-2">
-        <h2 id="resume-sessions-heading" className="min-w-0 flex-1 truncate text-sm font-semibold text-text">
+        <h2 id="resume-sessions-heading" className="min-w-0 flex-1 truncate text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           Resume previous sessions?
         </h2>
         <span
           className="shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-medium tabular-nums"
-          style={{ background: 'var(--surface-overlay, var(--color-surface1))', color: 'var(--text-secondary)' }}
+          style={{ background: 'var(--surface-overlay)', color: 'var(--text-secondary)' }}
         >
           {count.toLocaleString()}
         </span>
@@ -77,7 +78,7 @@ export default function ResumeSessionsPrompt({
             disabled={refreshing}
             title="Refresh — pick up sessions restarted since launch"
             aria-label="Refresh sessions"
-            className="shrink-0 rounded-md p-1 transition-colors hover:text-text disabled:opacity-60"
+            className="shrink-0 rounded-md p-1 transition-colors hover:text-[var(--text-primary)] disabled:opacity-60"
             style={{ color: 'var(--text-secondary)' }}
           >
             <svg
@@ -106,7 +107,7 @@ export default function ResumeSessionsPrompt({
       {/* Named list so the user recognizes which windows will reopen. */}
       <ul
         className="mb-3 max-h-44 overflow-y-auto rounded-lg"
-        style={{ background: 'var(--surface-overlay, var(--color-surface1))' }}
+        style={{ background: 'var(--surface-overlay)' }}
       >
         {sessions.map((s) => {
           const name = s.customName?.trim() || s.label
@@ -131,20 +132,12 @@ export default function ResumeSessionsPrompt({
       </ul>
 
       <div className="flex items-center justify-end gap-2">
-        <button
-          onClick={onDontOpen}
-          className="rounded-lg px-3 py-1.5 text-sm text-subtext0 transition-colors hover:text-text"
-          style={{ background: 'var(--surface-overlay, var(--color-surface1))' }}
-        >
+        <DialogButton size="md" onClick={onDontOpen}>
           Don&apos;t open
-        </button>
-        <button
-          onClick={onResume}
-          className="rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
-          style={{ background: 'var(--color-blue)', color: 'var(--color-crust)' }}
-        >
+        </DialogButton>
+        <DialogButton size="md" variant="primary" onClick={onResume}>
           Resume
-        </button>
+        </DialogButton>
       </div>
     </div>
   )

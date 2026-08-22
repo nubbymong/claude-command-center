@@ -3,6 +3,7 @@ import { changelog, ChangelogEntry } from '../changelog'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { entriesSince } from '../onboarding/upgrade-flow'
 import { WhatsNewEntries } from './WhatsNewEntries'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton } from './ui/Dialog'
 
 declare const __BUILD_TIME__: string
 
@@ -83,53 +84,47 @@ export default function WhatsNewModal({ onClose, showAllVersions = false, sinceV
   }
 
   const visible = entering && !closing
-  const backdropClass = `fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 transition-opacity duration-200 ease-out ${visible ? 'opacity-100' : 'opacity-0'}`
-  const dialogClass = `bg-mantle rounded-lg shadow-2xl border border-surface0 w-full max-w-lg max-h-[80vh] flex flex-col transition-all duration-200 ease-out ${visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`
 
   return (
-    <div className={backdropClass}>
-      <div className={dialogClass}>
-        {/* Header */}
-        <div className="p-4 border-b border-surface0">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-text">What's New</h2>
-            <button
-              onClick={dismiss}
-              className="text-overlay0 hover:text-text transition-colors text-xl leading-none"
-            >
-              &times;
-            </button>
-          </div>
-          <p className="text-xs text-overlay0 mt-1">
-            Build: {formatBuildTime(__BUILD_TIME__)}
-          </p>
-        </div>
+    <DialogOverlay className={`transition-opacity duration-200 ease-out ${visible ? 'opacity-100' : 'opacity-0'}`}>
+      <DialogPanel
+        labelledBy="whats-new-title"
+        width="w-full"
+        style={{ maxWidth: '32rem', maxHeight: '80vh' }}
+        className={`transition-all duration-200 ease-out ${visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`}
+      >
+        <DialogHeader
+          titleId="whats-new-title"
+          title="What's New"
+          subtitle={<span style={{ color: 'var(--text-muted)' }}>Build: {formatBuildTime(__BUILD_TIME__)}</span>}
+          onClose={dismiss}
+        />
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <DialogBody className="flex-1">
           <WhatsNewEntries entries={versionsToShow} />
-        </div>
+        </DialogBody>
 
         {/* Footer */}
-        <div className="p-4 border-t border-surface0 flex justify-between items-center">
-          {!showAllVersions && changelog.length > 1 && (
-            <button
-              onClick={() => {/* Could expand to show all */}}
-              className="text-xs text-overlay0 hover:text-subtext0 transition-colors"
-            >
-              {changelog.length - 1} previous version{changelog.length > 2 ? 's' : ''}
-            </button>
-          )}
-          <div className="flex-1" />
-          <button
-            onClick={dismiss}
-            className="px-4 py-2 bg-blue text-base rounded font-medium hover:bg-blue/80 transition-colors"
-          >
+        <DialogFooter
+          left={
+            !showAllVersions && changelog.length > 1 ? (
+              <DialogButton
+                variant="ghost"
+                onClick={() => {/* Could expand to show all */}}
+                style={{ color: 'var(--text-muted)' }}
+              >
+                {changelog.length - 1} previous version{changelog.length > 2 ? 's' : ''}
+              </DialogButton>
+            ) : undefined
+          }
+        >
+          <DialogButton variant="primary" onClick={dismiss}>
             Got it
-          </button>
-        </div>
-      </div>
-    </div>
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }
 

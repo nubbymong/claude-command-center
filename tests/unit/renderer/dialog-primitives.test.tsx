@@ -1,0 +1,254 @@
+// @vitest-environment jsdom
+/**
+ * The E5 dialog primitives themselves (#360).
+ *
+ * The per-dialog suites prove each migrated surface is token-driven. This one
+ * pins the primitives they all sit on, so a change to `ui/Dialog.tsx` cannot
+ * quietly re-introduce a palette colour, a click-to-close backdrop, or an
+ * unreadable button, across every dialog at once.
+ */
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import React from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { act } from 'react'
+import {
+  DialogOverlay,
+  DialogPanel,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogButton,
+  DialogCallout,
+  useDialogEscape,
+  dialogButtonStyle,
+  dialogSegStyle,
+  ON_BRAND,
+} from '../../../src/renderer/components/ui/Dialog'
+import { paletteSurvivors, expectRaisedPanel, expectNoBackdropClose, pressEscape } from './dialog-tokens-harness'
+
+let root: Root | null = null
+let host: HTMLDivElement | null = null
+
+function render(ui: React.ReactElement) {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  act(() => { root!.render(ui) })
+  return host
+}
+
+afterEach(() => {
+  if (root) act(() => { root!.unmount() })
+  if (host) host.remove()
+  root = null
+  host = null
+})
+
+describe('DialogOverlay', () => {
+  it('has no click-to-close — Ctrl+C in a terminal fires click events', () => {
+    // The house rule this encodes: a backdrop that closed on click ate the
+    // user's dialog when they hit Ctrl+C in a terminal underneath.
+    const onClose = vi.fn()
+    const c = render(
+      <DialogOverlay testId="ov">
+        <DialogPanel ariaLabel="x" testId="panel"><button onClick={onClose}>x</button></DialogPanel>
+      </DialogOverlay>,
+    )
+    const overlay = c.querySelector('[data-testid="ov"]') as HTMLElement
+    expectNoBackdropClose(overlay, () => !!c.querySelector('[data-testid="panel"]'))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('exposes no onClick/onMouseDown prop at the type level (structural guard)', () => {
+    // If someone adds one, this render would start forwarding it.
+    const c = render(<DialogOverlay testId="ov"><span /></DialogOverlay>)
+    const overlay = c.querySelector('[data-testid="ov"]') as HTMLElement
+    expect(overlay.onclick).toBeNull()
+    expect(overlay.onmousedown).toBeNull()
+    expect(overlay.hasAttribute('data-dialog-overlay')).toBe(true)
+  })
+
+  it('paints the scrim from rgba, not a palette class, and honours dim', () => {
+    const c = render(<DialogOverlay testId="ov" dim={0.42}><span /></DialogOverlay>)
+    const overlay = c.querySelector('[data-testid="ov"]') as HTMLElement
+    expect(overlay.style.background).toContain('0.42')
+    expect(paletteSurvivors(overlay)).toEqual([])
+  })
+})
+
+describe('DialogPanel', () => {
+  it('is the raised surface with the subtle border, by token', () => {
+    const c = render(<DialogPanel ariaLabel="t" testId="p">body</DialogPanel>)
+    expectRaisedPanel(c.querySelector('[data-testid="p"]') as HTMLElement)
+  })
+
+  it('is a modal dialog and carries its accessible name', () => {
+    const c = render(<DialogPanel labelledBy="h" testId="p">body</DialogPanel>)
+    const panel = c.querySelector('[data-testid="p"]') as HTMLElement
+    expect(panel.getAttribute('role')).toBe('dialog')
+    expect(panel.getAttribute('aria-modal')).toBe('true')
+    expect(panel.getAttribute('aria-labelledby')).toBe('h')
+  })
+
+  it('can be an alertdialog for destructive confirms', () => {
+    const c = render(<DialogPanel role="alertdialog" ariaLabel="t" testId="p">b</DialogPanel>)
+    expect((c.querySelector('[data-testid="p"]') as HTMLElement).getAttribute('role')).toBe('alertdialog')
+  })
+})
+
+describe('DialogHeader', () => {
+  it('renders the title with the id the panel points at, plus subtitle and glyph', () => {
+    const c = render(
+      <DialogHeader title="Title" titleId="h" subtitle="Sub" glyph={<svg />} />,
+    )
+    const h = c.querySelector('#h') as HTMLElement
+    expect(h.tagName).toBe('H2')
+    expect(h.textContent).toBe('Title')
+    expect(c.textContent).toContain('Sub')
+    expect(paletteSurvivors(c)).toEqual([])
+  })
+
+  it('renders a close glyph only when onClose is given, with a real label', () => {
+    const onClose = vi.fn()
+    const c = render(<DialogHeader title="T" onClose={onClose} closeLabel="Close it" closeTestId="x" />)
+    const btn = c.querySelector('[data-testid="x"]') as HTMLButtonElement
+    expect(btn.getAttribute('aria-label')).toBe('Close it')
+    act(() => { btn.click() })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('omits the close glyph when there is no onClose', () => {
+    const c = render(<DialogHeader title="T" />)
+    expect(c.querySelector('button')).toBeNull()
+  })
+})
+
+describe('DialogButton', () => {
+  it('primary is the brand fill with text that flips by token, not a hardcoded colour', () => {
+    // The `text-base` trap this replaces: `bg-blue text-base` resolved to a
+    // FONT SIZE, so those buttons inherited their text colour.
+    const s = dialogButtonStyle('primary')
+    expect(s.background).toBe('var(--brand)')
+    expect(s.color).toBe(ON_BRAND)
+    expect(ON_BRAND).toContain('--text-on-brand')
+  })
+
+  it('maps every variant to a token, never a palette literal', () => {
+    for (const v of ['primary', 'secondary', 'ghost', 'danger', 'danger-solid'] as const) {
+      const s = dialogButtonStyle(v)
+      const all = `${s.background ?? ''} ${s.color ?? ''} ${s.border ?? ''}`
+      expect(all, `${v} paints from a var()`).toMatch(/var\(--|transparent/)
+      expect(all, `${v} must not use a palette hex`).not.toMatch(/#(?!0a0e13)[0-9a-f]{6}/i)
+    }
+    expect(dialogButtonStyle('danger').color).toBe('var(--status-danger)')
+    expect(dialogButtonStyle('secondary').background).toBe('var(--surface-overlay)')
+    expect(dialogButtonStyle('ghost').background).toBe('transparent')
+  })
+
+  it('renders a real button, forwards handlers and disabled, and keeps its test id', () => {
+    const onClick = vi.fn()
+    const c = render(<DialogButton variant="primary" testId="b" onClick={onClick}>Go</DialogButton>)
+    const b = c.querySelector('[data-testid="b"]') as HTMLButtonElement
+    expect(b.tagName).toBe('BUTTON')
+    expect(b.getAttribute('type')).toBe('button')
+    act(() => { b.click() })
+    expect(onClick).toHaveBeenCalledTimes(1)
+    expect(paletteSurvivors(c)).toEqual([])
+  })
+
+  it('does not fire when disabled', () => {
+    const onClick = vi.fn()
+    const c = render(<DialogButton testId="b" disabled onClick={onClick}>Go</DialogButton>)
+    const b = c.querySelector('[data-testid="b"]') as HTMLButtonElement
+    act(() => { b.click() })
+    expect(onClick).not.toHaveBeenCalled()
+  })
+})
+
+describe('DialogCallout', () => {
+  it('tints from the matching status token per tone', () => {
+    const cases = [
+      ['warning', '--status-warning'],
+      ['danger', '--status-danger'],
+      ['info', '--status-info'],
+      ['success', '--status-success'],
+    ] as const
+    for (const [tone, token] of cases) {
+      const c = render(<DialogCallout tone={tone} testId="c">msg</DialogCallout>)
+      const el = c.querySelector('[data-testid="c"]') as HTMLElement
+      expect(el.getAttribute('data-tone')).toBe(tone)
+      expect(`${el.style.background} ${el.style.borderColor}`).toContain(token)
+      expect(paletteSurvivors(el)).toEqual([])
+      act(() => { root!.unmount() }); host!.remove(); root = null; host = null
+    }
+  })
+})
+
+describe('useDialogEscape', () => {
+  function Probe({ onClose, enabled }: { onClose: () => void; enabled?: boolean }) {
+    useDialogEscape(onClose, enabled)
+    return <span>probe</span>
+  }
+
+  it('closes on Escape from anywhere (capture phase, so the terminal does not win)', () => {
+    const onClose = vi.fn()
+    render(<Probe onClose={onClose} />)
+    pressEscape()
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores other keys', () => {
+    const onClose = vi.fn()
+    render(<Probe onClose={onClose} />)
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true })) })
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('is inert when disabled — a dialog mid-work cannot be abandoned', () => {
+    const onClose = vi.fn()
+    render(<Probe onClose={onClose} enabled={false} />)
+    pressEscape()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('unsubscribes on unmount', () => {
+    const onClose = vi.fn()
+    render(<Probe onClose={onClose} />)
+    act(() => { root!.unmount() })
+    root = null
+    pressEscape()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+})
+
+describe('dialogSegStyle', () => {
+  it('paints selected and unselected from tokens, and marks disabled', () => {
+    const on = dialogSegStyle(true)
+    const off = dialogSegStyle(false)
+    expect(`${on.background} ${on.color}`).toContain('--brand')
+    expect(off.background).toBe('var(--surface-raised)')
+    expect(off.color).toBe('var(--text-secondary)')
+    expect(dialogSegStyle(false, true).cursor).toBe('not-allowed')
+    expect(dialogSegStyle(false, true).opacity).toBe(0.5)
+  })
+})
+
+describe('a whole dialog assembled from the primitives', () => {
+  it('renders with zero palette classes end to end', () => {
+    const c = render(
+      <DialogOverlay testId="ov">
+        <DialogPanel labelledBy="t" testId="p">
+          <DialogHeader title="Confirm" titleId="t" subtitle="Sure?" onClose={() => {}} />
+          <DialogBody>
+            <DialogCallout tone="warning">Careful.</DialogCallout>
+          </DialogBody>
+          <DialogFooter left={<span>hint</span>}>
+            <DialogButton variant="ghost">Cancel</DialogButton>
+            <DialogButton variant="primary">OK</DialogButton>
+          </DialogFooter>
+        </DialogPanel>
+      </DialogOverlay>,
+    )
+    expect(paletteSurvivors(c)).toEqual([])
+  })
+})

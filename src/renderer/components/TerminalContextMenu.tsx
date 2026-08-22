@@ -51,8 +51,8 @@ export default function TerminalContextMenu({ x, y, hasSelection, onCopy, onPast
   }, [onClose])
 
   const itemClass =
-    'w-full flex items-center justify-between gap-6 px-3 py-1.5 text-xs text-text text-left ' +
-    'hover:bg-surface0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent'
+    'w-full flex items-center justify-between gap-6 px-3 py-1.5 text-xs text-[var(--text-primary)] text-left ' +
+    'hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent'
 
   return (
     // mousedown (not click) so the dismiss cannot be triggered by a synthetic
@@ -68,23 +68,23 @@ export default function TerminalContextMenu({ x, y, hasSelection, onCopy, onPast
     >
       <div
         ref={menuRef}
-        className="fixed bg-mantle border border-surface0 rounded-lg shadow-xl py-1 w-56"
-        style={{ left: x, top: y, opacity: 0 }}
+        className="fixed rounded-lg shadow-xl py-1 w-56"
+        style={{ left: x, top: y, opacity: 0, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <button type="button" className={itemClass} onClick={onCopy} disabled={!hasSelection}>
           <span>Copy</span>
-          <span className="text-overlay0">Ctrl+Shift+C</span>
+          <span style={{ color: 'var(--text-muted)' }}>Ctrl+Shift+C</span>
         </button>
         {!hasSelection && (
-          <div className="px-3 pb-1.5 pt-0.5 text-[10px] leading-snug text-overlay0">
+          <div className="px-3 pb-1.5 pt-0.5 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
             To copy, select text first — hold Shift while dragging if the app is
             tracking the mouse (full-screen apps like Claude Code&apos;s login).
           </div>
         )}
         <button type="button" className={itemClass} onClick={onPaste}>
           <span>Paste</span>
-          <span className="text-overlay0">Ctrl+V</span>
+          <span style={{ color: 'var(--text-muted)' }}>Ctrl+V</span>
         </button>
       </div>
     </div>

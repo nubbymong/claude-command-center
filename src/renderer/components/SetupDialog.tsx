@@ -2,11 +2,31 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { buildLogTheme } from '../lib/terminal-theme'
+import {
+  DialogOverlay,
+  DialogPanel,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogButton,
+  DIALOG_INPUT_CLASS,
+  DIALOG_INPUT_STYLE,
+  DIALOG_LABEL_CLASS,
+  DIALOG_LABEL_STYLE,
+} from './ui/Dialog'
 
 interface Props {
   onComplete: () => void
   initialStep?: number
 }
+
+/** The first-run screen replaces the whole app, so its backdrop is the opaque
+ *  app base rather than the usual scrim — there is nothing behind it to dim. */
+const OPAQUE_BACKDROP: React.CSSProperties = { background: 'var(--surface-base)' }
+
+/** The `>_` mark that has always identified the setup flow, in the header's
+ *  glyph tile. */
+const PROMPT_GLYPH = <span className="font-mono text-sm font-bold">&gt;_</span>
 
 export default function SetupDialog({ onComplete, initialStep }: Props) {
   const [step, setStep] = useState(initialStep || 1)
@@ -131,8 +151,8 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
 
   if (loading) {
     return (
-      <div className="fixed inset-0 bg-base flex items-center justify-center z-50">
-        <div className="text-overlay1">Loading...</div>
+      <div className="fixed inset-0 flex items-center justify-center z-50" style={OPAQUE_BACKDROP}>
+        <div style={{ color: 'var(--text-muted)' }}>Loading...</div>
       </div>
     )
   }
@@ -140,64 +160,75 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   // Step 2: Claude CLI Setup
   if (step === 2) {
     return (
-      <div className="fixed inset-0 bg-base flex items-center justify-center z-50">
-        <div className="bg-surface0 rounded-lg p-8 max-w-2xl w-full mx-4 shadow-2xl">
-          <div className="text-center mb-4">
-            <div className="text-3xl mb-2 font-mono text-blue">&gt;_</div>
-            <h1 className="text-xl font-bold text-text mb-1">Claude CLI Setup</h1>
-            <p className="text-sm text-overlay1">
+      <DialogOverlay style={OPAQUE_BACKDROP}>
+        <DialogPanel width="w-[672px]" labelledBy="setup-cli-title">
+          <DialogHeader
+            titleId="setup-cli-title"
+            title="Claude CLI Setup"
+            glyph={PROMPT_GLYPH}
+            subtitle={<>
               Claude needs to trust this directory and authenticate.
-              Complete the prompts below, then type <code className="text-blue">/exit</code> when done.
-            </p>
-          </div>
-
-          <div
-            ref={termContainerRef}
-            className="rounded-lg overflow-hidden border border-surface2"
-            style={{ height: '400px', backgroundColor: 'var(--surface-stage)' }}
+              Complete the prompts below, then type <code style={{ color: 'var(--brand)' }}>/exit</code> when done.
+            </>}
           />
 
-          <div className="mt-4 flex items-center justify-between">
-            <button
-              onClick={handleSkip}
-              className="text-xs text-overlay0 hover:text-overlay1 transition-colors underline"
-            >
-              Skip for now
-            </button>
-            <button
+          <DialogBody>
+            <div
+              ref={termContainerRef}
+              className="rounded-lg overflow-hidden border"
+              style={{ height: '400px', backgroundColor: 'var(--surface-stage)', borderColor: 'var(--border-subtle)' }}
+            />
+          </DialogBody>
+
+          <DialogFooter
+            left={
+              <button
+                onClick={handleSkip}
+                className="text-xs underline transition-colors hover:text-[var(--text-secondary)]"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                Skip for now
+              </button>
+            }
+          >
+            {/* The old green / purple fills each carried a `text-base` class
+                meaning "dark text on the fill" — but that name is a FONT SIZE in
+                Tailwind, so the label just inherited its colour and sat
+                unreadable on the fill. --text-on-brand (what DialogButton's
+                primary variant sets) is the colour that was intended. */}
+            <DialogButton
+              variant="primary"
+              size="md"
               onClick={handleFinish}
               disabled={!ptySpawned}
-              className={`px-6 py-2 font-medium rounded transition-colors ${
-                ptyExited
-                  ? 'bg-green hover:bg-green/90 text-base'
-                  : 'bg-mauve hover:bg-pink text-base'
-              }`}
+              style={ptyExited ? { background: 'var(--status-success)' } : undefined}
             >
               {ptyExited ? 'Done' : 'Skip & Continue'}
-            </button>
-          </div>
-        </div>
-      </div>
+            </DialogButton>
+          </DialogFooter>
+        </DialogPanel>
+      </DialogOverlay>
     )
   }
 
   // Step 1: Directory selection
   return (
-    <div className="fixed inset-0 bg-base flex items-center justify-center z-50">
-      <div className="bg-surface0 rounded-lg p-8 max-w-xl w-full mx-4 shadow-2xl">
-        <div className="text-center mb-6">
-          <div className="text-4xl mb-3 font-mono text-mauve">&gt;_</div>
-          <h1 className="text-2xl font-bold text-text mb-2">Welcome to AI Code Conductor</h1>
-          <p className="text-overlay1">Configure your storage directories</p>
-        </div>
+    <DialogOverlay style={OPAQUE_BACKDROP}>
+      <DialogPanel width="w-[576px]" labelledBy="setup-welcome-title">
+        <DialogHeader
+          titleId="setup-welcome-title"
+          title="Welcome to AI Code Conductor"
+          glyph={PROMPT_GLYPH}
+          subtitle="Configure your storage directories"
+        />
 
-        <div className="space-y-5">
+        <DialogBody className="space-y-5">
           {/* Data Directory */}
           <div>
-            <label className="block text-sm font-medium text-subtext1 mb-1">
+            <label className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE}>
               Data Directory
             </label>
-            <p className="text-xs text-overlay0 mb-2">
+            <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
               Internal app data: session configs, logs, debug captures
             </p>
             <div className="flex gap-2">
@@ -205,23 +236,21 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                 type="text"
                 value={dataDir}
                 onChange={(e) => setDataDir(e.target.value)}
-                className="flex-1 px-3 py-2 bg-surface1 border border-surface2 rounded text-text text-sm focus:outline-none focus:border-mauve"
+                className={DIALOG_INPUT_CLASS.replace('w-full', 'flex-1')}
+                style={DIALOG_INPUT_STYLE}
               />
-              <button
-                onClick={handleBrowseData}
-                className="px-4 py-2 bg-surface1 hover:bg-surface2 text-text rounded transition-colors"
-              >
+              <DialogButton variant="secondary" onClick={handleBrowseData} className="shrink-0" style={{ height: 'auto', alignSelf: 'stretch' }}>
                 Browse
-              </button>
+              </DialogButton>
             </div>
           </div>
 
           {/* Resources Directory */}
           <div>
-            <label className="block text-sm font-medium text-subtext1 mb-1">
+            <label className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE}>
               Resources Directory
             </label>
-            <p className="text-xs text-overlay0 mb-2">
+            <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
               Shared resources: insights, screenshots, skills, scripts
             </p>
             <div className="flex gap-2">
@@ -229,24 +258,25 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                 type="text"
                 value={resourcesDir}
                 onChange={(e) => setResourcesDir(e.target.value)}
-                className="flex-1 px-3 py-2 bg-surface1 border border-surface2 rounded text-text text-sm focus:outline-none focus:border-mauve"
+                className={DIALOG_INPUT_CLASS.replace('w-full', 'flex-1')}
+                style={DIALOG_INPUT_STYLE}
               />
-              <button
-                onClick={handleBrowseResources}
-                className="px-4 py-2 bg-surface1 hover:bg-surface2 text-text rounded transition-colors"
-              >
+              <DialogButton variant="secondary" onClick={handleBrowseResources} className="shrink-0" style={{ height: 'auto', alignSelf: 'stretch' }}>
                 Browse
-              </button>
+              </DialogButton>
             </div>
-            <p className="text-[11px] text-blue/70 mt-1.5">
+            <p className="text-[11px] mt-1.5" style={{ color: 'var(--brand)' }}>
               Tip: Use a network-mountable path to share resources across SSH sessions
             </p>
           </div>
 
-          <div className="text-xs text-overlay0 bg-mantle p-3 rounded">
+          <div
+            className="text-xs p-3 rounded-lg border"
+            style={{ background: 'var(--surface-base)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}
+          >
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <p className="font-medium text-subtext0 mb-1">Data contains:</p>
+                <p className="font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Data contains:</p>
                 <ul className="list-disc list-inside space-y-0.5">
                   <li>Session configs</li>
                   <li>Terminal logs</li>
@@ -254,7 +284,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                 </ul>
               </div>
               <div>
-                <p className="font-medium text-subtext0 mb-1">Resources contains:</p>
+                <p className="font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>Resources contains:</p>
                 <ul className="list-disc list-inside space-y-0.5">
                   <li>Insights reports</li>
                   <li>Screenshots</li>
@@ -263,17 +293,16 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
               </div>
             </div>
           </div>
-        </div>
+        </DialogBody>
 
-        <div className="mt-6 flex justify-end">
-          <button
-            onClick={handleContinue}
-            className="px-6 py-2 bg-mauve hover:bg-pink text-base font-medium rounded transition-colors"
-          >
+        <DialogFooter>
+          {/* Was a purple fill with the same font-size-not-a-colour trap as
+              step 2's Finish button. */}
+          <DialogButton variant="primary" size="md" onClick={handleContinue}>
             Continue
-          </button>
-        </div>
-      </div>
-    </div>
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }

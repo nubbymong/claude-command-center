@@ -126,7 +126,7 @@ function DrawerContent({
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
             <span style={{ color: 'var(--text-muted)' }}>Cost</span>
-            <span className="font-mono" style={{ color: 'var(--color-peach)' }}>{formatCost(detail.costUsd)}</span>
+            <span className="font-mono" style={{ color: 'var(--status-warning)' }}>{formatCost(detail.costUsd)}</span>
             <span style={{ color: 'var(--text-muted)' }}>Input</span>
             <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{formatTokensCompact(detail.inTok)}</span>
             <span style={{ color: 'var(--text-muted)' }}>Output</span>
@@ -181,7 +181,7 @@ function DrawerContent({
                             {getModelShort(m.model)}
                           </span>
                         </td>
-                        <td className="px-2 py-1.5 font-mono" style={{ color: 'var(--color-peach)' }}>
+                        <td className="px-2 py-1.5 font-mono" style={{ color: 'var(--status-warning)' }}>
                           {formatCost(m.costUsd)}
                         </td>
                         <td className="px-2 py-1.5 font-mono" style={{ color: 'var(--text-secondary)' }}>

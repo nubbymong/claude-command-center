@@ -1,5 +1,6 @@
 import { useRef, type KeyboardEvent } from 'react'
 import type { ProviderId } from '../../stores/configStore'
+import { DIALOG_SEG_CHIP, dialogSegStyle } from '../ui/Dialog'
 
 interface Props {
   value: ProviderId
@@ -26,10 +27,16 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
     target?.focus()
   }
 
+  // The Beta pill tracks the chip it sits in: muted when Codex can't be picked,
+  // the brand when the chip is selected, otherwise the warning tone it always had.
+  const betaTone = codexDisabled
+    ? 'var(--text-muted)'
+    : value === 'codex' ? 'var(--brand)' : 'var(--status-warning)'
+
   return (
     <div className="flex flex-col gap-1 mb-4">
-      <label className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Provider</label>
-      <div className="flex bg-crust rounded-md p-0.5" role="radiogroup" aria-label="Provider">
+      <label className="text-[10px] uppercase tracking-wider font-medium" style={{ color: 'var(--text-secondary)' }}>Provider</label>
+      <div className="flex gap-1.5" role="radiogroup" aria-label="Provider">
         <button
           ref={claudeBtnRef}
           type="button"
@@ -38,10 +45,8 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
           tabIndex={value === 'claude' ? 0 : -1}
           onClick={() => onChange('claude')}
           onKeyDown={(e) => onKeyDown(e, 'claude')}
-          className={
-            'flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ' +
-            (value === 'claude' ? 'bg-blue text-crust' : 'text-overlay1 hover:text-text')
-          }
+          className={`${DIALOG_SEG_CHIP} flex-1 justify-center font-medium`}
+          style={dialogSegStyle(value === 'claude')}
         >
           Claude
         </button>
@@ -55,27 +60,19 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
           onClick={() => !codexDisabled && onChange('codex')}
           onKeyDown={(e) => onKeyDown(e, 'codex')}
           disabled={codexDisabled}
-          className={
-            'flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ' +
-            (codexDisabled
-              ? 'cursor-not-allowed text-overlay0'
-              : (value === 'codex' ? 'bg-blue text-crust' : 'text-overlay1 hover:text-text'))
-          }
+          className={`${DIALOG_SEG_CHIP} flex-1 justify-center font-medium`}
+          style={dialogSegStyle(value === 'codex', codexDisabled)}
         >
           Codex{' '}
           <span
-            className={
-              'text-[9px] uppercase tracking-wider border rounded-full px-1.5 py-px align-middle ' +
-              (codexDisabled
-                ? 'text-overlay0 border-overlay0/40'
-                : (value === 'codex' ? 'text-crust border-crust/40' : 'text-peach border-peach/40'))
-            }
+            className="text-[9px] uppercase tracking-wider border rounded-full px-1.5 py-px align-middle"
+            style={{ color: betaTone, borderColor: `color-mix(in srgb, ${betaTone} 40%, transparent)` }}
           >
             Beta
           </span>
         </button>
       </div>
-      <p className="text-[10px] text-overlay0 mt-1">
+      <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
         {sessionType === 'ssh'
           ? 'Codex is not available for SSH sessions yet.'
           : codexMasterOff

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { isSshPersistenceFailureReason, formatPersistenceUnavailableMessage } from '../../shared/ssh-tmux-persistence'
 import { useSessionStore } from '../stores/sessionStore'
+import { DialogButton } from './ui/Dialog'
 
 interface Props {
   sessionId: string
@@ -37,6 +38,11 @@ type FlowState =
  * Auto-hides once Claude is running, or on `skipped`. The terminal
  * remains fully interactive at all times — the overlay sits in a
  * top-right corner of the pane, not over the whole pane.
+ *
+ * NOT a modal: there is no backdrop and the terminal underneath stays live,
+ * so this keeps its own positioned card (and its z-30) rather than taking
+ * DialogOverlay/DialogPanel. Only the colours move onto the tokens, and the
+ * real buttons become DialogButtons (#360).
  */
 export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, enabled, onRetry }: Props) {
   const [state, setState] = useState<FlowState>('connecting')
@@ -141,20 +147,29 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
     state === 'failed' ? (info === 'connection' ? 'Couldn’t reach the host' : 'Setup failed') :
     ''
 
+  const mutedStyle: React.CSSProperties = { color: 'var(--text-muted)' }
+
   return (
-    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-[460px] max-w-[80%] bg-mantle/95 border border-surface1 rounded-lg shadow-xl backdrop-blur-sm px-4 py-3 text-xs">
+    <div
+      className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-[460px] max-w-[80%] rounded-lg shadow-xl backdrop-blur-sm px-4 py-3 text-xs"
+      style={{
+        background: 'color-mix(in srgb, var(--surface-raised) 95%, transparent)',
+        border: '1px solid var(--border-subtle)',
+        color: 'var(--text-primary)',
+      }}
+    >
       <div className="flex items-center gap-2 mb-1.5">
-        <span className="font-medium text-text">{headline}</span>
+        <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{headline}</span>
         {isRunning && (
-          <span className="inline-block w-2 h-2 rounded-full bg-blue animate-pulse" aria-hidden />
+          <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: 'var(--brand)' }} aria-hidden />
         )}
       </div>
       {state === 'connecting' && (
-        <div className="text-overlay0 text-[11px]">Waiting for SSH login.</div>
+        <div className="text-[11px]" style={mutedStyle}>Waiting for SSH login.</div>
       )}
       {isAwaitingPostCommand && (
         <div className="space-y-1.5">
-          <p className="text-overlay1 text-[11px] leading-snug">
+          <p className="text-[11px] leading-snug" style={mutedStyle}>
             {hasPostCommand
               ? 'Pre-commands you want to run by hand? Do them in the terminal first, then click below.'
               : (shellOnly
@@ -164,76 +179,76 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
           <div className="flex gap-1.5">
             {hasPostCommand ? (
               <>
-                <button
+                <DialogButton
+                  variant="primary"
                   onClick={runPostCommand}
                   disabled={busy}
-                  className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 disabled:opacity-50 font-medium"
                 >
                   Run post-connect command
-                </button>
+                </DialogButton>
                 {!shellOnly && (
-                  <button
+                  <DialogButton
+                    variant="secondary"
                     onClick={launchClaude}
                     disabled={busy}
-                    className="px-2.5 py-1 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text disabled:opacity-50"
                     title="Skip the post-connect command and launch Claude on the host"
                   >
                     Launch Claude on host
-                  </button>
+                  </DialogButton>
                 )}
               </>
             ) : (
-              <button
+              <DialogButton
+                variant="primary"
                 onClick={launchClaude}
                 disabled={busy}
-                className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 disabled:opacity-50 font-medium"
               >
                 Launch Claude
-              </button>
+              </DialogButton>
             )}
-            <button
+            <DialogButton
+              variant="ghost"
               onClick={skip}
-              className="px-2 py-1 text-xs rounded text-overlay0 hover:text-text hover:bg-surface0"
               title="Manage manually — no auto writes"
             >
               Skip
-            </button>
+            </DialogButton>
           </div>
         </div>
       )}
       {isAwaitingClaude && (
         <div className="space-y-1.5">
-          <p className="text-overlay1 text-[11px] leading-snug">
+          <p className="text-[11px] leading-snug" style={mutedStyle}>
             {info === 'inner'
               ? 'You\'re inside the post-connect shell (e.g. docker container). Clicking will re-run setup here so Claude finds its settings, then launch Claude.'
               : 'Inject statusline shim and launch Claude.'}
           </p>
           <div className="flex gap-1.5">
-            <button
+            <DialogButton
+              variant="primary"
               onClick={launchClaude}
               disabled={busy}
-              className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 disabled:opacity-50 font-medium"
             >
               Launch Claude
-            </button>
-            <button
+            </DialogButton>
+            <DialogButton
+              variant="ghost"
               onClick={skip}
-              className="px-2 py-1 text-xs rounded text-overlay0 hover:text-text hover:bg-surface0"
               title="Manage manually — no auto writes"
             >
               Skip
-            </button>
+            </DialogButton>
           </div>
         </div>
       )}
       {state === 'running-claude' && info === 'reattach' && (
-        <div className="text-overlay1 text-[11px] leading-snug mb-1">
+        <div className="text-[11px] leading-snug mb-1" style={mutedStyle}>
           Your remote session was still alive — reattaching. If it had ended, we resume your
           conversation automatically.
         </div>
       )}
       {isTmuxInstall && (
-        <div className="text-overlay1 text-[11px] leading-snug mb-1">
+        <div className="text-[11px] leading-snug mb-1" style={mutedStyle}>
           The host doesn’t have tmux, so we’re installing a small static copy under
           <span className="font-mono"> ~/.claude/bin</span> to keep this session alive if the
           connection drops. Nothing is installed system-wide.
@@ -248,12 +263,12 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
           claude-running and the whole overlay unmounts (see the hide check
           above) -- brief, but the alternative was never showing it at all. */}
       {state === 'running-claude' && isSshPersistenceFailureReason(info) && (
-        <div className="text-yellow text-[11px] leading-snug mb-1">
+        <div className="text-[11px] leading-snug mb-1" style={{ color: 'var(--status-warning)' }}>
           {formatPersistenceUnavailableMessage(info!)}
         </div>
       )}
       {isRunning && (
-        <div className="text-overlay0 text-[11px]">
+        <div className="text-[11px]" style={mutedStyle}>
           Watching for completion sentinel. App.log has step-by-step trace.
         </div>
       )}
@@ -264,39 +279,39 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
               remote. On a first connect that never got that far, or one that
               died before tmux started, there is nothing on the far side to pick
               back up, and promising otherwise is worse than saying nothing. */}
-          <p className="text-red text-[11px] leading-snug">
+          <p className="text-[11px] leading-snug" style={{ color: 'var(--status-danger)' }}>
             {isPersistent
               ? 'Couldn’t reach the host — it may be offline or asleep. Nothing was lost: your remote session is still running there, and reconnecting will pick it back up.'
               : 'Couldn’t reach the host — it may be offline or asleep. Check the address and that the machine is awake, then retry.'}
           </p>
           <div className="flex gap-1.5">
-            <button
+            <DialogButton
+              variant="primary"
               onClick={() => onRetry?.()}
               disabled={!onRetry}
-              className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 font-medium disabled:opacity-50"
-              data-testid="ssh-retry-connection"
+              testId="ssh-retry-connection"
             >
               Retry connection
-            </button>
+            </DialogButton>
           </div>
         </div>
       )}
       {state === 'failed' && info !== 'connection' && (
         <div className="space-y-1.5">
-          <p className="text-red text-[11px]">{errorText || 'Step did not complete.'}</p>
+          <p className="text-[11px]" style={{ color: 'var(--status-danger)' }}>{errorText || 'Step did not complete.'}</p>
           <div className="flex gap-1.5">
-            <button
+            <DialogButton
+              variant="primary"
               onClick={launchClaude}
-              className="px-3 py-1 text-xs rounded bg-blue text-crust hover:bg-blue/85 font-medium"
             >
               Retry Launch
-            </button>
-            <button
+            </DialogButton>
+            <DialogButton
+              variant="ghost"
               onClick={skip}
-              className="px-2 py-1 text-xs rounded text-overlay0 hover:text-text hover:bg-surface0"
             >
               Skip
-            </button>
+            </DialogButton>
           </div>
         </div>
       )}

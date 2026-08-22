@@ -173,7 +173,7 @@ export default function CanvasSubjectPicker({ sessionId, canvasId, title, onOpen
           <div className="px-3 py-1.5 text-[9.5px] font-semibold uppercase tracking-[0.09em]" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--border-subtle)' }}>
             In this session
           </div>
-          {error && <div className="px-3 py-1.5 text-[11px] text-red">{error}</div>}
+          {error && <div className="px-3 py-1.5 text-[11px]" style={{ color: 'var(--status-danger)' }}>{error}</div>}
           {entries === null && <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>Reading…</div>}
           {entries !== null && mine.length === 0 && (
             <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>Nothing else here yet.</div>
