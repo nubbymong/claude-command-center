@@ -18,6 +18,7 @@ import { CustomCommandsTab } from './settings/CustomCommandsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import { SectionLabel } from './ui/SectionLabel'
+import { SAVED_CONFIGS_VIEW_OPTIONS, resolveSavedConfigsView, type SavedConfigsView } from './sidebar/savedConfigsView'
 import { Kbd } from './ui/Kbd'
 import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
@@ -235,6 +236,20 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   Show Ask Conductor
                   <span className="text-[10px] text-overlay0">(The button at the bottom of the sidebar)</span>
                 </label>
+                {/* #362: the Saved Configs panel's layout. One choice, next to
+                    the other sidebar settings; the list stays the default. */}
+                <Field label="Saved Configs layout">
+                  <select
+                    value={resolveSavedConfigsView(settings.savedConfigsView)}
+                    onChange={(e) => save({ savedConfigsView: e.target.value as SavedConfigsView })}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    data-ux-id="settings-saved-configs-view"
+                  >
+                    {SAVED_CONFIGS_VIEW_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </Field>
               </Section>
 
               <Section title="Security" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>

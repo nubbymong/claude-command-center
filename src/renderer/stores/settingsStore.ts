@@ -215,6 +215,12 @@ export interface AppSettings {
    *  an Ask session that is already open, because a display toggle must not
    *  destroy a running session. */
   showAskConductor: boolean
+  /** #362: how the sidebar's Saved Configs panel lays configs out. 'list' is
+   *  the sections-and-groups list that shipped first; 'cards' and 'find' are
+   *  the two views from the design pass (both search with auto-complete, both
+   *  hide running configs). Absent = 'list', so no existing install changes
+   *  shape on upgrade. */
+  savedConfigsView?: 'list' | 'cards' | 'find'
   // Agent Hub first-run "How it works" banner: true once the user dismisses it.
   // Optional/absent = not yet dismissed (banner shows).
   agentHubExplainerDismissed?: boolean
