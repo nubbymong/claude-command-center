@@ -20,7 +20,7 @@
 // Nothing is shown on a fresh install until one fetch has succeeded and been
 // persisted, so a new user sees this from their second run onward. That is
 // inherent: there is no honest figure to show before there is a figure.
-import { readConfig, writeConfig } from '../config-manager'
+import { createReadFailureLatch, loadConfigLatched, saveConfigLatched } from '../persist-latch'
 import type { UsageBucket, CreditsInfo } from '../../shared/usage-types'
 
 export interface UsageSnapshot {
@@ -66,11 +66,19 @@ export function parseSnapshots(raw: unknown): Map<string, UsageSnapshot> {
   return out
 }
 
-/** Read the persisted snapshots. Never throws: an unreadable file is simply no
- *  snapshots, which is the state every install starts in anyway. */
+/** #371: the old comment here said "an unreadable file is simply no snapshots",
+ *  which is true for an ABSENT file and false for an unreadable one. Every
+ *  caller rebuilds the whole map and saves it back, so one EBUSY read at the
+ *  wrong moment dropped every other profile's snapshot. */
+const snapshotsLatch = createReadFailureLatch('usage-snapshots')
+
+/** Read the persisted snapshots. Never throws: an ABSENT file is no snapshots,
+ *  which is the state every install starts in. A file that could not be READ is
+ *  also no snapshots to show, but it latches saving off until a load succeeds —
+ *  a blank card costs a fetch, an overwritten file costs the history. */
 export function loadSnapshots(): Map<string, UsageSnapshot> {
   try {
-    return parseSnapshots(readConfig<unknown>('usageSnapshots'))
+    return parseSnapshots(loadConfigLatched<unknown>('usageSnapshots', snapshotsLatch))
   } catch {
     return new Map()
   }
@@ -80,8 +88,13 @@ export function loadSnapshots(): Map<string, UsageSnapshot> {
  *  not worth failing a usage fetch over, so this never throws. */
 export function saveSnapshots(snapshots: Map<string, UsageSnapshot>): boolean {
   try {
-    return writeConfig('usageSnapshots', Object.fromEntries(snapshots))
+    return saveConfigLatched('usageSnapshots', Object.fromEntries(snapshots), snapshotsLatch)
   } catch {
     return false
   }
+}
+
+/** Test seam — the latch is module state and outlives a test file otherwise. */
+export function _resetSnapshotsLatchForTest(): void {
+  snapshotsLatch.reset()
 }

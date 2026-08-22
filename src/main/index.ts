@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
+import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { splashBuildQuery } from './splash-info'
@@ -89,10 +89,11 @@ import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
-import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
+import { getConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
+import { loadWindowState, saveWindowState, type WindowState } from './window-state'
 import { saveCredential, deleteCredential } from './credential-store'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
@@ -187,46 +188,17 @@ migrateRegistryKeys()
 // protocol handler is installed inside whenReady, before any window exists.
 registerCccUxSchemePrivileges()
 
-// Lazy getter — can't call getConfigDir() at module load time
-function getWindowStateFile(): string {
-  return join(getConfigDir(), 'window-state.json')
-}
-
-interface WindowState {
-  x?: number
-  y?: number
-  width: number
-  height: number
-  isMaximized: boolean
-}
-
-function loadWindowState(): WindowState {
-  try {
-    const file = getWindowStateFile()
-    if (existsSync(file)) {
-      return JSON.parse(readFileSync(file, 'utf-8'))
-    }
-  } catch {
-    // ignore
-  }
-  return { width: 3200, height: 1800, isMaximized: false }
-}
-
-function saveWindowState(win: BrowserWindow): void {
+/** Geometry lives in `window-state.ts` (#371) — it is a persister like the
+ *  others and needed the same read-failure latch, plus a unit test. */
+function saveWindowStateFor(win: BrowserWindow): void {
   const bounds = win.getBounds()
-  const state: WindowState = {
+  saveWindowState({
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
     isMaximized: win.isMaximized()
-  }
-  try {
-    ensureConfigDir()
-    writeFileSync(getWindowStateFile(), JSON.stringify(state))
-  } catch {
-    // ignore
-  }
+  })
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -471,7 +443,7 @@ function createWindow(): void {
   let closeRequestedOnce = false
 
   mainWindow.on('close', (e) => {
-    if (mainWindow) saveWindowState(mainWindow)
+    if (mainWindow) saveWindowStateFor(mainWindow)
 
     // If not yet allowed to close, prevent and notify renderer
     if (!allowClose) {

@@ -7,7 +7,7 @@ import { BrowserWindow } from 'electron'
 import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
-import { readConfig, writeConfig } from './config-manager'
+import { createReadFailureLatch, loadConfigLatched, saveConfigLatched } from './persist-latch'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveVersionBinary, isVersionInstalled, installVersion } from './legacy-version-manager'
 import { isValidLegacyVersion } from '../shared/legacy-version'
@@ -92,8 +92,12 @@ function generateId(): string {
   return randomId('ca-')
 }
 
+/** #371: a failed read of cloud-agents.json must not become an empty list that
+ *  the very next `cleanupStuckAgents()` writes back over the file. */
+const cloudAgentsLatch = createReadFailureLatch('cloud-agent')
+
 function persist(): void {
-  writeConfig('cloudAgents', agents)
+  saveConfigLatched('cloudAgents', agents, cloudAgentsLatch)
 }
 
 function broadcastStatus(agent: CloudAgentData): void {
@@ -112,9 +116,15 @@ function broadcastOutputChunk(id: string, chunk: string): void {
 
 export function initCloudAgentManager(windowGetter: () => BrowserWindow | null): void {
   getWindow = windowGetter
-  // Load persisted agents
-  const saved = readConfig<CloudAgentData[]>('cloudAgents')
-  agents = saved || []
+  // Load persisted agents. A read FAILURE latches writes off (see persist-latch)
+  // so the empty list below is never saved over a file we could not read.
+  const saved = loadConfigLatched<CloudAgentData[]>('cloudAgents', cloudAgentsLatch)
+  agents = Array.isArray(saved) ? saved : []
+}
+
+/** Test seam — the latch is module state and outlives a test file otherwise. */
+export function _resetCloudAgentLatchForTest(): void {
+  cloudAgentsLatch.reset()
 }
 
 export function cleanupStuckAgents(): void {

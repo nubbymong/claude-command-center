@@ -5,7 +5,7 @@
  */
 
 import { join } from 'path'
-import { readFileSync, existsSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, copyFileSync, rmSync, statSync, renameSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError, logWarn } from './debug-logger'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir, hardenCredentialFile } from './account-profiles'
@@ -228,6 +228,73 @@ export function readConfig<T = unknown>(key: ConfigKey): T | null {
 }
 
 /**
+ * Why a config read returned what it did.
+ *
+ * `readConfig` collapses all four of these into `null`, which is the shape the
+ * main-side persisters were built on and the reason they could overwrite a file
+ * they had failed to read (#371). See `persist-latch.ts` for the pattern that
+ * consumes this.
+ */
+export type ConfigReadOutcome = 'ok' | 'absent' | 'unparseable' | 'failed'
+
+export interface CheckedRead<T> {
+  value: T | null
+  outcome: ConfigReadOutcome
+}
+
+/**
+ * Read a config file and say WHY, distinguishing the three ways to get nothing.
+ *
+ * `quarantineUnparseable` (default true) moves a file whose CONTENT does not
+ * parse aside to `<name>.corrupt-<ts>` rather than leaving it to be silently
+ * overwritten by the next save. It is off for the renderer's bulk load, which
+ * latches on unparseable instead of quarantining — that path is a separate
+ * contract (#353) and is deliberately left exactly as it was.
+ *
+ * An unregistered key is `failed`, not `absent`: `writeConfig` already refuses
+ * one, so answering "absent" would invite a caller to build an empty store for
+ * a key it can never persist.
+ */
+export function readConfigChecked<T = unknown>(
+  key: ConfigKey,
+  opts: { quarantineUnparseable?: boolean } = {},
+): CheckedRead<T> {
+  const quarantine = opts.quarantineUnparseable !== false
+  const fileName = CONFIG_FILES[key]
+  if (!fileName) {
+    logError(`[config-manager] Refusing to read unknown config key: ${String(key)}`)
+    return { value: null, outcome: 'failed' }
+  }
+  const filePath = join(getConfigDir(), fileName)
+  let data: string
+  try {
+    if (!existsSync(filePath)) return { value: null, outcome: 'absent' }
+    data = readFileSync(filePath, 'utf-8')
+  } catch (err) {
+    // The file is (probably) there and could not be read: EBUSY, EACCES,
+    // EPERM, EIO, a junction refusal. This is the case the latch exists for.
+    logError(`[config-manager] Failed to read ${key} (read failure, NOT an absence): ${err}`)
+    return { value: null, outcome: 'failed' }
+  }
+  try {
+    return { value: JSON.parse(data) as T, outcome: 'ok' }
+  } catch (parseErr) {
+    // Unreadable CONTENT, not an unreadable FILE: keep it for forensics, start
+    // clean. Nothing is left to protect, so writes stay allowed.
+    if (quarantine) {
+      const aside = `${filePath}.corrupt-${Date.now()}`
+      try {
+        renameSync(filePath, aside)
+        logError(`[config-manager] ${key} did not parse (${(parseErr as Error)?.message ?? parseErr}); moved aside to ${aside}`)
+      } catch {
+        logError(`[config-manager] ${key} did not parse and could not be moved aside; the next save overwrites it`)
+      }
+    }
+    return { value: null, outcome: 'unparseable' }
+  }
+}
+
+/**
  * Write a config file atomically via the shared helper (#233) — staging,
  * exclusive create, the rename retry and cleanup all live in atomic-write.ts.
  *
@@ -330,18 +397,20 @@ export interface LoadAllResult {
   failedKeys: ConfigKey[]
 }
 
-/** Like readConfig, but says WHY it returned null. */
+/**
+ * Like readConfig, but says WHY it returned null.
+ *
+ * The renderer's bulk load has its own contract (#353): a file that EXISTS and
+ * cannot be read OR parsed latches renderer writes off, and nothing is moved
+ * aside — an unparseable renderer config is recoverable by hand and the latch
+ * is what stops defaults being written over it. So unparseable maps to
+ * `failed: true` here, and quarantine is off. An unregistered key stays
+ * `failed: false` (it is not one of RENDERER_CONFIG_KEYS anyway).
+ */
 function readConfigDetailed(key: ConfigKey): { value: unknown; failed: boolean } {
-  const fileName = CONFIG_FILES[key]
-  if (!fileName) return { value: null, failed: false }
-  const filePath = join(getConfigDir(), fileName)
-  try {
-    if (!existsSync(filePath)) return { value: null, failed: false }
-    return { value: JSON.parse(readFileSync(filePath, 'utf-8')), failed: false }
-  } catch (err) {
-    logError(`[config-manager] Failed to read ${key}: ${err}`)
-    return { value: null, failed: true }
-  }
+  if (!CONFIG_FILES[key]) return { value: null, failed: false }
+  const read = readConfigChecked<unknown>(key, { quarantineUnparseable: false })
+  return { value: read.value, failed: read.outcome === 'failed' || read.outcome === 'unparseable' }
 }
 
 export function loadAllConfig(): LoadAllResult {

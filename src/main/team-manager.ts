@@ -5,7 +5,7 @@
  */
 
 import { BrowserWindow } from 'electron'
-import { readConfig, writeConfig } from './config-manager'
+import { createReadFailureLatch, loadConfigLatched, saveConfigLatched } from './persist-latch'
 import { dispatchAgent, cancelAgent, getAgentOutput, onAgentCompletion, CloudAgentData } from './cloud-agent-manager'
 import { logInfo, logError } from './debug-logger'
 import type { TeamTemplate, TeamRun, TeamRunStep, TeamRunStatus, TeamStep } from '../shared/types'
@@ -29,12 +29,25 @@ function generateRunId(): string {
   return randomId('tr-')
 }
 
+// #371: two files, so two latches — a team library that failed to read must not
+// be overwritten by the one team the user saves next, and a failed read of the
+// run history must not be overwritten by the boot-time stuck-run sweep. One
+// file's read failure says nothing about the other's, so they never share.
+const teamsLatch = createReadFailureLatch('team-manager:teams')
+const runsLatch = createReadFailureLatch('team-manager:runs')
+
 function persistTeams(): void {
-  writeConfig('agentTeams', teams)
+  saveConfigLatched('agentTeams', teams, teamsLatch)
 }
 
 function persistRuns(): void {
-  writeConfig('agentTeamRuns', runs)
+  saveConfigLatched('agentTeamRuns', runs, runsLatch)
+}
+
+/** Test seam — the latches are module state and outlive a test file otherwise. */
+export function _resetTeamLatchesForTest(): void {
+  teamsLatch.reset()
+  runsLatch.reset()
 }
 
 function broadcastRunStatus(run: TeamRun): void {
@@ -46,8 +59,10 @@ function broadcastRunStatus(run: TeamRun): void {
 
 export function initTeamManager(windowGetter: () => BrowserWindow | null): void {
   getWindow = windowGetter
-  teams = readConfig<TeamTemplate[]>('agentTeams') || []
-  runs = readConfig<TeamRun[]>('agentTeamRuns') || []
+  const savedTeams = loadConfigLatched<TeamTemplate[]>('agentTeams', teamsLatch)
+  const savedRuns = loadConfigLatched<TeamRun[]>('agentTeamRuns', runsLatch)
+  teams = Array.isArray(savedTeams) ? savedTeams : []
+  runs = Array.isArray(savedRuns) ? savedRuns : []
 
   // Clean up stuck runs from previous app session
   let changed = false

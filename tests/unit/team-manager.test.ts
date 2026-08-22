@@ -3,8 +3,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // Mock config-manager
 const mockReadConfig = vi.fn()
 const mockWriteConfig = vi.fn()
+/** #371: names the keys whose file EXISTS and cannot be read. The two files are
+ *  independent, so one failing must not latch the other. */
+const cfg = { readFails: new Set<string>() }
 vi.mock('../../src/main/config-manager', () => ({
   readConfig: (...args: any[]) => mockReadConfig(...args),
+  readConfigChecked: (key: string) => {
+    if (cfg.readFails.has(key)) return { value: null, outcome: 'failed' }
+    const v = mockReadConfig(key)
+    return v == null ? { value: null, outcome: 'absent' } : { value: v, outcome: 'ok' }
+  },
   writeConfig: (...args: any[]) => mockWriteConfig(...args),
 }))
 
@@ -29,6 +37,7 @@ import {
   runTeam,
   cancelRun,
   waitForBatch,
+  _resetTeamLatchesForTest,
 } from '../../src/main/team-manager'
 import type { TeamTemplate, TeamRun } from '../../src/shared/types'
 
@@ -70,6 +79,8 @@ describe('team-manager', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    cfg.readFails.clear()
+    _resetTeamLatchesForTest()
     mockReadConfig.mockReturnValue(null)
     mockWindow = {
       isDestroyed: vi.fn(() => false),
@@ -381,6 +392,65 @@ describe('team-manager', () => {
       const run = oneStepRun('completed')
       await waitForBatch(run, ['ts-1'])
       expect(vi.getTimerCount()).toBe(0)
+    })
+  })
+
+  /**
+   * #371 — a failed read of agent-teams.json is not an empty team library.
+   *
+   * This is the highest-value one of the five: the library is user-authored
+   * work, and the very next `saveTeam()` used to write a ONE-element array over
+   * the whole thing.
+   */
+  describe('a read failure is not an absence', () => {
+    it('refuses to save the team library over a file it could not read', () => {
+      cfg.readFails.add('agentTeams')
+      initTeamManager(() => mockWindow)
+      expect(listTeams()).toHaveLength(0) // the empty library the failure produced
+
+      saveTeam(makeTeam({ id: 'team-new' }))
+      expect(mockWriteConfig).not.toHaveBeenCalledWith('agentTeams', expect.anything())
+    })
+
+    it('refuses to delete through a library it could not read', () => {
+      cfg.readFails.add('agentTeams')
+      initTeamManager(() => mockWindow)
+      deleteTeam('team-test1')
+      expect(mockWriteConfig).not.toHaveBeenCalledWith('agentTeams', expect.anything())
+    })
+
+    it('one file failing does not latch the other', () => {
+      cfg.readFails.add('agentTeams')
+      mockReadConfig.mockImplementation((key: string) =>
+        key === 'agentTeamRuns' ? [makeRun({ status: 'running' })] : null,
+      )
+      initTeamManager(() => mockWindow)
+
+      // The boot sweep marks the stuck run failed and persists it — runs read fine.
+      expect(mockWriteConfig).toHaveBeenCalledWith('agentTeamRuns', expect.any(Array))
+      // …while the unreadable team library is left alone.
+      expect(mockWriteConfig).not.toHaveBeenCalledWith('agentTeams', expect.anything())
+    })
+
+    it('an ABSENT file still saves — a fresh install must be able to save its first team', () => {
+      initTeamManager(() => mockWindow)
+      saveTeam(makeTeam())
+      expect(mockWriteConfig).toHaveBeenCalledWith('agentTeams', expect.any(Array))
+    })
+
+    it('resumes saving once a load succeeds', () => {
+      cfg.readFails.add('agentTeams')
+      initTeamManager(() => mockWindow)
+      saveTeam(makeTeam({ id: 'team-lost' }))
+      expect(mockWriteConfig).not.toHaveBeenCalledWith('agentTeams', expect.anything())
+
+      cfg.readFails.clear()
+      mockReadConfig.mockImplementation((key: string) => (key === 'agentTeams' ? [makeTeam()] : null))
+      initTeamManager(() => mockWindow)
+      expect(listTeams()).toHaveLength(1)
+
+      saveTeam(makeTeam({ id: 'team-new' }))
+      expect(mockWriteConfig).toHaveBeenCalledWith('agentTeams', expect.any(Array))
     })
   })
 })

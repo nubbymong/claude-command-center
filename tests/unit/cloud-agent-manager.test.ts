@@ -15,8 +15,17 @@ vi.mock('child_process', () => ({
 // Mock config-manager
 const mockReadConfig = vi.fn()
 const mockWriteConfig = vi.fn()
+/** #371: when set, cloud-agents.json EXISTS and cannot be read — which is not
+ *  the same as it not being there, and must not become an empty list saved back
+ *  over it by the boot-time stuck-agent sweep. */
+const cfg = { readFails: false }
 vi.mock('../../src/main/config-manager', () => ({
   readConfig: (...args: any[]) => mockReadConfig(...args),
+  readConfigChecked: (key: string) => {
+    if (cfg.readFails) return { value: null, outcome: 'failed' }
+    const v = mockReadConfig(key)
+    return v == null ? { value: null, outcome: 'absent' } : { value: v, outcome: 'ok' }
+  },
   writeConfig: (...args: any[]) => mockWriteConfig(...args),
   getConfigDir: () => '/mock/CONFIG',
   ensureConfigDir: vi.fn(),
@@ -64,6 +73,7 @@ import {
   killAllAgents,
   cleanupStuckAgents,
   onAgentCompletion,
+  _resetCloudAgentLatchForTest,
 } from '../../src/main/cloud-agent-manager'
 
 // Create a mock ChildProcess
@@ -93,6 +103,8 @@ describe('cloud-agent-manager', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    cfg.readFails = false
+    _resetCloudAgentLatchForTest()
     // clearAllMocks resets call history but not return values — restore defaults.
     profMocks.getPrimaryProfileId.mockReturnValue(null)
     profMocks.getProfileConfigDir.mockImplementation((id: string) => `/nonexistent/profiles/${id}`)
@@ -463,6 +475,65 @@ describe('cloud-agent-manager', () => {
 
       expect(cb1).toHaveBeenCalled()
       expect(cb2).toHaveBeenCalled()
+    })
+  })
+
+  /**
+   * #371 — a failed read of cloud-agents.json is not an empty agent list.
+   *
+   * This is the worst of the five for timing: `cleanupStuckAgents()` runs at
+   * boot, immediately after the load, and persists whenever it changes
+   * anything. So a read failure went straight to a write of `[]`.
+   */
+  describe('a read failure is not an absence', () => {
+    it('refuses to persist over a file it could not read', async () => {
+      cfg.readFails = true
+      initCloudAgentManager(() => mockWindow)
+
+      expect(listAgents()).toHaveLength(0) // the empty list the failure produced
+
+      // Dispatching is what actually reaches persist() — the boot sweep cannot,
+      // because the failed load left nothing for it to change. This is the
+      // write that used to put a one-element array over the user's history.
+      mockSpawn.mockReturnValue(createMockProcess())
+      await dispatchAgent({ name: 'New', description: 'd', projectPath: '/p' })
+      expect(mockWriteConfig).not.toHaveBeenCalledWith('cloudAgents', expect.anything())
+    })
+
+    it('the boot sweep cannot reach the file either — it has nothing to change', () => {
+      cfg.readFails = true
+      initCloudAgentManager(() => mockWindow)
+      cleanupStuckAgents()
+      clearCompletedAgents()
+      // Not a latch assertion: with the list empty there is nothing to persist.
+      // Recorded so the NEXT reader knows the latch is proved by the dispatch
+      // test above, and does not mistake this for a guard being exercised.
+      expect(mockWriteConfig).not.toHaveBeenCalledWith('cloudAgents', expect.anything())
+    })
+
+    it('an ABSENT file still persists — a fresh install must be able to save its first agent', async () => {
+      mockReadConfig.mockReturnValue(null)
+      initCloudAgentManager(() => mockWindow)
+
+      mockSpawn.mockReturnValue(createMockProcess())
+      await dispatchAgent({ name: 'First', description: 'd', projectPath: '/p' })
+      expect(mockWriteConfig).toHaveBeenCalledWith('cloudAgents', expect.any(Array))
+    })
+
+    it('resumes persisting once a load succeeds', async () => {
+      cfg.readFails = true
+      initCloudAgentManager(() => mockWindow)
+      cleanupStuckAgents()
+      expect(mockWriteConfig).not.toHaveBeenCalled()
+
+      cfg.readFails = false
+      mockReadConfig.mockReturnValue([{ id: 'ca-old', name: 'kept', status: 'completed' }])
+      initCloudAgentManager(() => mockWindow)
+      expect(listAgents()).toHaveLength(1)
+
+      mockSpawn.mockReturnValue(createMockProcess())
+      await dispatchAgent({ name: 'Now', description: 'd', projectPath: '/p' })
+      expect(mockWriteConfig).toHaveBeenCalledWith('cloudAgents', expect.any(Array))
     })
   })
 })

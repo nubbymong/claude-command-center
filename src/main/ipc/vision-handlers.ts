@@ -1,13 +1,28 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { startGlobalVision, stopGlobalVision, getGlobalVisionStatus, launchBrowser, tryReconnectGlobalVision, resetVisionRelaunchBreaker, isGlobalVisionRunning } from '../vision-manager'
-import { readConfig, writeConfig } from '../config-manager'
+import { createReadFailureLatch, loadConfigLatched, saveConfigLatched } from '../persist-latch'
 import { isPackagedApp } from '../update-watcher'
 import { resolveCdpPort } from '../../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../../shared/types'
 
+/**
+ * #371. `vision:getConfig` answering null for a read FAILURE is what makes this
+ * one dangerous: the settings form renders its defaults for "not configured
+ * yet", the user touches one control, and `vision:saveConfig` writes those
+ * defaults over the config it never read. The old handler then returned
+ * `{ ok: true }` unconditionally — it discarded `writeConfig`'s boolean — so a
+ * failed save was reported to the user as a successful one either way.
+ */
+const visionLatch = createReadFailureLatch('vision-config')
+
+/** Test seam — the latch is module state and outlives a test file otherwise. */
+export function _resetVisionLatchForTest(): void {
+  visionLatch.reset()
+}
+
 export function registerVisionHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('vision:start', async () => {
-    const config = readConfig<GlobalVisionConfig>('visionGlobal')
+    const config = loadConfigLatched<GlobalVisionConfig>('visionGlobal', visionLatch)
     if (!config?.enabled) return { ok: false, error: 'Vision not configured' }
     try {
       await startGlobalVision(config, getWindow)
@@ -46,7 +61,7 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
       if (isGlobalVisionRunning()) {
         tryReconnectGlobalVision()
       } else {
-        const saved = readConfig<GlobalVisionConfig>('visionGlobal')
+        const saved = loadConfigLatched<GlobalVisionConfig>('visionGlobal', visionLatch)
         await startGlobalVision({ ...(saved ?? {}), browser, debugPort, headless } as GlobalVisionConfig, getWindow)
       }
       return { ok: true, ...result }
@@ -56,11 +71,19 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
   })
 
   ipcMain.handle('vision:saveConfig', async (_event, config: GlobalVisionConfig) => {
-    writeConfig('visionGlobal', config)
-    return { ok: true }
+    // Report the real outcome. A refused save (the last read FAILED) and a
+    // failed write both come back as ok:false rather than a false reassurance.
+    const saved = saveConfigLatched('visionGlobal', config, visionLatch)
+    if (saved) return { ok: true }
+    return {
+      ok: false,
+      error: visionLatch.failed()
+        ? 'Vision settings were not saved: the existing settings file could not be read, so it was left alone. Try again once it is readable.'
+        : 'Vision settings could not be saved.',
+    }
   })
 
   ipcMain.handle('vision:getConfig', async () => {
-    return readConfig<GlobalVisionConfig>('visionGlobal')
+    return loadConfigLatched<GlobalVisionConfig>('visionGlobal', visionLatch)
   })
 }
