@@ -200,7 +200,19 @@ export function resolveModelInfo(registry: ModelRegistry, modelId: string): Reso
     }
   }
   const entry = match.entry
-  const fam = registry.families[entry.family]
+  // ResolvedModelInfo declares `label` and `chartLabel` as `string`, and every
+  // consumer believes that — isModelActive() and shortModelName() both call
+  // string methods on `label` unguarded. `label` and `family` are only
+  // TYPE-required, though: matchEntry admits any entry with a usable `id`, so a
+  // hand-edited registry-overlay.json entry with no `label` used to make this
+  // function RETURN undefined in a string field, which crashed the whole
+  // SessionStatusStrip render as soon as the model picker opened (a second
+  // ADR-009 MAJOR-2 entry point, found re-verifying #404). Fixed here, at the
+  // source, so no present or future consumer has to re-derive the guard.
+  const family = typeof entry.family === 'string' && entry.family ? entry.family : null
+  const fam = family ? registry.families?.[family] : undefined
+  const label = typeof entry.label === 'string' && entry.label ? entry.label : entry.id
+  const famLabel = typeof fam?.label === 'string' && fam.label ? fam.label : null
   const base = entry.color ?? fam?.color ?? hashUnknownModelColor(modelId)
   const colors = {
     default: base,
@@ -208,8 +220,8 @@ export function resolveModelInfo(registry: ModelRegistry, modelId: string): Reso
     agentPill: fam?.colorOverrides?.agentPill ?? base,
   }
   return {
-    known: true, id: entry.id, family: entry.family, label: entry.label,
-    chartLabel: fam?.label ?? entry.family, matchKind: match.kind, colors,
+    known: true, id: entry.id, family, label,
+    chartLabel: famLabel ?? family ?? entry.id, matchKind: match.kind, colors,
     efforts: entry.efforts ?? null, fallbackPricing: entry.fallbackPricing,
   }
 }

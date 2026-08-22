@@ -92,10 +92,50 @@ throws on a null entry. Same `usableEntries()` fix.
   never drop an effort it merely failed to verify. Module-level because a helper
   in the component body is still in its TDZ when React calls the initialiser.
 
+### MAJOR-2, third entry point (found re-verifying the above)
+
+The same crash class survived one more call site. `ResolvedModelInfo` declares
+`label: string`, and consumers believe it -- but `label` is only TYPE-required on
+a `ModelEntry`, and `matchEntry` admits any entry with a usable `id`. So an
+overlay entry with no `label` made `resolveModelInfo` **return undefined in a
+string field**. `buildModelPickerRows` admits such an entry as a real pinned row
+(`label: m.label || m.id`), and opening the footer picker runs `isModelActive`
+for EVERY row -> `normalizeModelLabel(opt.label)` ->
+`TypeError: Cannot read properties of undefined (reading 'replace')`, killing the
+whole SessionStatusStrip render. `shortModelName` returned the same undefined,
+blanking the model pill.
+
+Fixed at the SOURCE (`resolveModelInfo` now guarantees `label`, `chartLabel` and
+`family` honour their declared types, falling back to the entry id), so no
+present or future consumer has to re-derive the guard -- plus second-layer
+guards in `isModelActive` (a row whose entry has no usable label is "not active"
+rather than a guess, matching the Q6 rule that ticking an unconfirmable row is
+the mistake this comparison exists to prevent) and `shortModelName` (falls back
+to the id, which is exactly what the picker row shows for the same entry, so
+pill and row agree). Both functions also now reject a non-string reading, since
+the statusline value is parsed JSON.
+
+Mutation-verified in three configurations, which is worth recording because it
+shows what is actually load-bearing:
+
+- revert BOTH layers -> **7 red**, incl. the original TypeError and the blanked pill
+- revert the `resolveModelInfo` root fix only -> **1 red** (the type-honesty test);
+  the call-site guards absorb the crash
+- revert the call-site guards only -> **0 red**; the root fix alone covers it
+
+So the root fix is the load-bearing one and the call-site guards are genuine
+defence in depth, not independently necessary. Given this crash class has now
+surfaced at three separate call sites, the second layer is worth its keep.
+
+Test (b) drives the REAL component through the REAL click
+(`tests/unit/renderer/session-status-strip-labelless-model.test.tsx`) rather than
+asserting on the helper alone -- the crash is a render crash, and the helper
+tests would have passed while the footer still died.
+
 ### Verification
 
-`npm run typecheck` clean. Full `npx vitest run`: 665 files passed / 2 skipped,
-7179 tests passed / 15 skipped / 2 todo, 0 failed.
+`npm run typecheck` clean. Full `npx vitest run`: 666 files passed / 2 skipped,
+7189 tests passed / 15 skipped / 2 todo, 0 failed.
 
 Revert proof (pre-fix code restored, same tests): 9 failures --
 `TypeError: m.patterns is not iterable` from both `resolvePickedModelId` and

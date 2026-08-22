@@ -103,11 +103,18 @@ export const PERMISSION_MODE_LABELS: Record<string, string> = Object.fromEntries
 // would flatten to "Opus 4.8"). A fuzzy `pattern` hit is never trusted for a
 // label — it would claim the wrong version (#385).
 export function shortModelName(name?: string, registry?: ModelRegistry): string {
-  if (!name) return 'default'
+  // typeof, not just falsiness: `name` is a statusline-supplied reading parsed
+  // out of JSON, and every branch below calls a string method on it.
+  if (!name || typeof name !== 'string') return 'default'
 
   if (registry) {
     const info = resolveModelInfo(registry, name)
-    if (info.known && info.matchKind !== 'pattern') return info.label
+    // `|| info.id`: an entry with no `label` (hand-edited overlay) used to make
+    // this return undefined and blank the footer model pill. resolveModelInfo
+    // now guarantees a string, so this is belt-and-braces — but the pill falls
+    // back to the id, matching what buildModelPickerRows shows for the same
+    // entry (`label: m.label || m.id`), so pill and picker row agree.
+    if (info.known && info.matchKind !== 'pattern') return info.label || info.id
   }
 
   // Statusline's display_name comes capitalised and space-separated. Pass
@@ -141,7 +148,10 @@ export function shortModelName(name?: string, registry?: ModelRegistry): string 
  * behaviour is kept for the alias rows.
  */
 export function isModelActive(optionValue: string, activeModel: string, registry?: ModelRegistry): boolean {
-  if (!activeModel) return false
+  // Both are string methods away from a crash: `activeModel` is the statusline
+  // reading (parsed JSON) and `optionValue` comes from a registry-derived row.
+  if (!activeModel || typeof activeModel !== 'string') return false
+  if (typeof optionValue !== 'string') return false
   const active = activeModel.toLowerCase()
   const wantsOneM = optionValue.includes('[1m]')
   const isOneM = /\[1m\]|1m context|\b1m\b/.test(active)
@@ -163,6 +173,13 @@ export function isModelActive(optionValue: string, activeModel: string, registry
       // A reading with no version at all ("Opus") names a family, not a
       // release, so only the family alias row can claim it.
       if (!/\d/.test(reading)) return opt.matchKind === 'alias'
+      // A row whose entry carries no usable label cannot be confirmed BY NAME
+      // against a display-name reading, and ticking a row we cannot confirm is
+      // the exact mistake this whole comparison exists to prevent — so it is
+      // "not active" rather than a guess. Guarded the same way
+      // resolvePickedModelId's label scan is; resolveModelInfo now also
+      // guarantees a string here, so this is the second layer.
+      if (typeof opt.label !== 'string' || !opt.label) return false
       return normalizeModelLabel(opt.label) === reading
     }
   }

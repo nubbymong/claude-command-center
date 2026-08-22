@@ -281,6 +281,76 @@ describe('an entry with no patterns never crashes a render (#404 MAJOR-2)', () =
   })
 })
 
+// The same MAJOR-2 crash class at a THIRD entry point, found re-verifying #404.
+// ResolvedModelInfo declares `label` as `string`, but `label` is only
+// TYPE-required on a ModelEntry: matchEntry admits any entry with a usable id,
+// so a hand-edited overlay entry with NO label made resolveModelInfo return
+// undefined in a string field. isModelActive() then called
+// normalizeModelLabel(opt.label) on it — reached from the footer model picker,
+// which runs isModelActive for EVERY row — and shortModelName() returned it
+// straight out, blanking the model pill.
+describe('a label-less entry never crashes the footer picker (#404 MAJOR-2, 3rd site)', () => {
+  // Exactly the overlay entry from the re-verification repro: no `label`.
+  // buildModelPickerRows admits it via `label: m.label || m.id`, so it becomes a
+  // real pinned picker row and isModelActive is called with its id.
+  const labelless = { id: 'claude-opus-9-9', family: 'opus', patterns: ['opus-9'] } as unknown as OverlayModelEntry
+  const nullLabel = { id: 'claude-opus-9-8', family: 'opus', patterns: ['opus-98'], label: null } as unknown as OverlayModelEntry
+  const merged = mergeRegistry(reg, { models: [labelless, nullLabel] })
+
+  it('the entry really does reach the picker as a row (guards the repro)', () => {
+    const rows = buildModelPickerRows(merged)
+    expect(rows.find((r) => r.value === 'claude-opus-9-9')!.label).toBe('claude-opus-9-9')
+  })
+
+  it('(a) isModelActive returns a boolean rather than throwing', () => {
+    // 'Opus 4.6' is the ordinary statusline display_name reading: it can only
+    // pattern-match, which is the branch that falls through to the label compare.
+    expect(() => isModelActive('claude-opus-9-9', 'Opus 4.6', merged)).not.toThrow()
+    expect(isModelActive('claude-opus-9-9', 'Opus 4.6', merged)).toBe(false)
+    expect(isModelActive('claude-opus-9-8', 'Opus 4.6', merged)).toBe(false)
+    // And every OTHER row still answers correctly with that entry present.
+    expect(isModelActive('claude-opus-4-6', 'Opus 4.6', merged)).toBe(true)
+    expect(isModelActive('claude-opus-4-8', 'Opus 4.6', merged)).toBe(false)
+  })
+
+  it('(a2) no row in the whole picker throws for any plausible reading', () => {
+    for (const row of buildModelPickerRows(merged)) {
+      for (const reading of ['Opus 4.6', 'Opus', 'Opus 4.7 (1M context)', 'claude-opus-4-6', 'who knows']) {
+        expect(() => isModelActive(row.value, reading, merged), `${row.value} / ${reading}`).not.toThrow()
+        expect(typeof isModelActive(row.value, reading, merged)).toBe('boolean')
+      }
+    }
+  })
+
+  it('(c) shortModelName returns the id, never undefined', () => {
+    expect(shortModelName('claude-opus-9-9', merged)).toBe('claude-opus-9-9')
+    expect(shortModelName('claude-opus-9-8', merged)).toBe('claude-opus-9-8')
+    // Which is what the picker row shows for the same entry — pill and row agree.
+    const row = buildModelPickerRows(merged).find((r) => r.value === 'claude-opus-9-9')!
+    expect(shortModelName('claude-opus-9-9', merged)).toBe(row.label)
+    // Healthy entries are untouched.
+    expect(shortModelName('claude-opus-4-6', merged)).toBe('Opus 4.6')
+  })
+
+  it('resolveModelInfo honours its own `label: string` type', () => {
+    const info = resolveModelInfo(merged, 'claude-opus-9-9')
+    expect(info.known).toBe(true)
+    expect(typeof info.label).toBe('string')
+    expect(typeof info.chartLabel).toBe('string')
+    // A family with no families[] record still yields a string chartLabel.
+    const noFam = mergeRegistry(reg, {
+      models: [{ id: 'claude-ghost-1', family: 'ghost', patterns: ['ghost'] } as unknown as OverlayModelEntry],
+    })
+    expect(typeof resolveModelInfo(noFam, 'claude-ghost-1').chartLabel).toBe('string')
+  })
+
+  it('a non-string reading is refused rather than crashing a string method', () => {
+    expect(() => isModelActive('claude-opus-4-6', 42 as unknown as string, merged)).not.toThrow()
+    expect(() => shortModelName(42 as unknown as string, merged)).not.toThrow()
+    expect(shortModelName(42 as unknown as string, merged)).toBe('default')
+  })
+})
+
 // ADR-009 MINOR on #404. SessionStatusStrip writes a picker row's value into a
 // LIVE PTY as a slash-command LINE (`/model <v>\n`) with no schema in front of
 // it, and the pinned rows are derived from a hand-editable registry overlay.
