@@ -425,13 +425,14 @@ export default function App() {
     async function postConfigInit() {
       const appMeta = useAppMetaStore.getState().meta
 
-      // Re-fire the first-run tour when the VERSION warrants it: every build on
-      // the beta line so testers see the current flow, and on any channel when
-      // the user has crossed a release line (2.0.x → 2.1.x). Clearing
-      // completedSteps + onboardingCompletedVersion flips deriveOnboarding back
-      // to due (the harness re-runs); its finish step re-stamps
-      // onboardingAppVersion so it will not re-fire until the next one that
-      // qualifies. A first install runs through deriveOnboarding already.
+      // Re-fire the first-run tour when the VERSION warrants it: an
+      // ONBOARDING_VERSION bump, or a crossed release line (2.0.x → 2.1.x) on
+      // any channel — see shouldReonboardForVersion; a beta bump alone no
+      // longer does (2026-08-21). Clearing completedSteps +
+      // onboardingCompletedVersion flips deriveOnboarding back to due (the
+      // harness re-runs); its finish step re-stamps onboardingAppVersion so it
+      // will not re-fire until the next one that qualifies. A first install
+      // runs through deriveOnboarding already.
       const reonboard = shouldReonboardForVersion(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)
       if (reonboard) {
         useAppMetaStore.getState().update({ completedSteps: {}, onboardingCompletedVersion: undefined })
@@ -452,6 +453,16 @@ export default function App() {
       // Only arm the notes-only mode when the harness is not already coming up
       // for its own reasons; there, whatsNewV2 is simply its first page.
       if (surface === 'tour' && !alreadyRunning) setWhatsNewOnly(true)
+
+      // Record that THIS build ran — AFTER the decision above has read the
+      // previous value, which is the whole point of it. It is the witness
+      // against a lastSeenVersion that no build of that version ever wrote
+      // (#369): a stamp newer than the last build that ran does not count as
+      // seen. Unconditional, unlike setupVersion below, which waits on config
+      // or the CLI and is only the fallback witness for metas older than this.
+      if (appMeta.lastRunVersion !== __APP_VERSION__) {
+        useAppMetaStore.getState().update({ lastRunVersion: __APP_VERSION__ })
+      }
 
       if (appMeta.setupVersion !== __APP_VERSION__) {
         const hasExistingConfig = useConfigStore.getState().configs.length > 0 ||

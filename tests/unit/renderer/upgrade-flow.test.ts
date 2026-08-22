@@ -6,7 +6,7 @@
 // the fourteen in between.
 
 import { describe, it, expect } from 'vitest'
-import { decideUpgradeFlow, entriesSince, bootWhatsNewSurface } from '../../../src/renderer/onboarding/upgrade-flow'
+import { decideUpgradeFlow, entriesSince, bootWhatsNewSurface, seenVersionFor, lastRunVersionOf } from '../../../src/renderer/onboarding/upgrade-flow'
 import { compareVersions, crossedReleaseLine, releaseLine } from '../../../src/shared/version-order'
 import { sectionsFor } from '../../../src/renderer/onboarding/WhatsNewV2Step'
 
@@ -253,5 +253,100 @@ describe('bootWhatsNewSurface — which surface carries the notes this launch', 
 
   it('nothing shows when nothing changed', () => {
     expect(bootWhatsNewSurface({ tourWillRun: false, whatsNewDue: false })).toBe('none')
+  })
+})
+
+describe('decideUpgradeFlow — a "seen" stamp no build of that version ever wrote (#369)', () => {
+  // The beta.16 incident. A beta.15-era build stamped `lastSeenVersion` from
+  // the changelog head (beta.16, pending) rather than from the version it was
+  // running. The real beta.16 then compared the stamp to itself, read
+  // `same-version`, and never showed the page. Nothing corrected it: the
+  // "corrects itself on the next launch" claim held only for a stamp two or
+  // more releases ahead, and the stamp that actually gets written is always
+  // exactly one ahead.
+  //
+  // The witness is the version that actually RAN last (`lastRunVersion`, or
+  // `setupVersion` on a meta written before that field existed — every build
+  // since 1.x has stamped it with its own version). A stamp newer than any
+  // build that ran cannot have been written on the build it names.
+  it('shows the page when the stamp equals the running build but is NEWER than the last build that ran', () => {
+    const d = decideUpgradeFlow({
+      lastSeenVersion: '2.1.0-beta.16',   // stamped by a beta.15 build, from the changelog head
+      lastRunVersion: '2.1.0-beta.15',    // the last build that actually ran
+      currentVersion: '2.1.0-beta.16',
+      channel: 'beta',
+    })
+    expect(d.showWhatsNew).toBe(true)
+    expect(d.reason).toBe('stamped-ahead')
+  })
+
+  it('still shows nothing when the stamp was written by the running build itself', () => {
+    // The ordinary relaunch: seen on beta.16, ran beta.16, running beta.16.
+    const d = decideUpgradeFlow({
+      lastSeenVersion: '2.1.0-beta.16',
+      lastRunVersion: '2.1.0-beta.16',
+      currentVersion: '2.1.0-beta.16',
+    })
+    expect(d).toMatchObject({ kind: 'nothing', showWhatsNew: false, reason: 'same-version' })
+  })
+
+  it('does not re-show after a downgrade once the notes for that build were acknowledged', () => {
+    // Ran beta.17 without acknowledging, dropped back to beta.16 whose notes
+    // WERE acknowledged on beta.16: the stamp (beta.16) is older than the last
+    // run (beta.17), so it is trusted, and it matches the running build.
+    const d = decideUpgradeFlow({
+      lastSeenVersion: '2.1.0-beta.16',
+      lastRunVersion: '2.1.0-beta.17',
+      currentVersion: '2.1.0-beta.16',
+    })
+    expect(d.showWhatsNew).toBe(false)
+  })
+
+  it('without any witness, trusts the stamp as before', () => {
+    // A meta with no record of what ran (neither field) is the pre-existing
+    // behaviour, and every other test in this file: the stamp decides.
+    const d = decideUpgradeFlow({ lastSeenVersion: '2.1.0-beta.16', currentVersion: '2.1.0-beta.16' })
+    expect(d.reason).toBe('same-version')
+  })
+
+  it('a stamp ahead by MORE than one release already showed (the one case the old rule caught)', () => {
+    const d = decideUpgradeFlow({
+      lastSeenVersion: '2.1.0-beta.17',
+      lastRunVersion: '2.1.0-beta.15',
+      currentVersion: '2.1.0-beta.16',
+    })
+    expect(d.showWhatsNew).toBe(true)
+  })
+
+  it('a fresh install stays a fresh install even if some build ran before', () => {
+    // No stamp at all means the tour never finished; the tour, not the notes,
+    // is what that user gets (deriveOnboarding has them). lastRunVersion must
+    // not turn that into an upgrade.
+    const d = decideUpgradeFlow({ lastRunVersion: '2.1.0-beta.15', currentVersion: '2.1.0-beta.16' })
+    expect(d.kind).toBe('first-install')
+    expect(d.showWhatsNew).toBe(false)
+  })
+})
+
+describe('seenVersionFor — the version the user can actually have seen', () => {
+  it('clamps a stamp that is ahead of the last build that ran', () => {
+    expect(seenVersionFor({ lastSeenVersion: '2.1.0-beta.16', lastRunVersion: '2.1.0-beta.15' })).toBe('2.1.0-beta.15')
+  })
+  it('leaves a stamp at or behind the last run alone', () => {
+    expect(seenVersionFor({ lastSeenVersion: '2.1.0-beta.16', lastRunVersion: '2.1.0-beta.16' })).toBe('2.1.0-beta.16')
+    expect(seenVersionFor({ lastSeenVersion: '2.1.0-beta.15', lastRunVersion: '2.1.0-beta.17' })).toBe('2.1.0-beta.15')
+  })
+  it('passes through when there is no witness, or no stamp', () => {
+    expect(seenVersionFor({ lastSeenVersion: '2.1.0-beta.16' })).toBe('2.1.0-beta.16')
+    expect(seenVersionFor({ lastRunVersion: '2.1.0-beta.16' })).toBeUndefined()
+    expect(seenVersionFor({})).toBeUndefined()
+  })
+})
+
+describe('lastRunVersionOf — which meta field witnesses the last run', () => {
+  it('prefers lastRunVersion, falls back to setupVersion, else undefined', () => {
+    expect(lastRunVersionOf({ lastRunVersion: '2.1.0-beta.16', setupVersion: '2.1.0-beta.15' })).toBe('2.1.0-beta.16')
+    expect(lastRunVersionOf({ setupVersion: '2.1.0-beta.15' })).toBe('2.1.0-beta.15')
+    expect(lastRunVersionOf({})).toBeUndefined()
   })
 })
