@@ -5,6 +5,7 @@ import type { SessionCapabilities } from '../../lib/session-capabilities'
 import { COMMAND_SWATCHES, swatchesFor, DEFAULT_COMMAND_COLOR } from '../../lib/command-swatches'
 import { COMMAND_ICON_KEYS, CommandIcon } from '../command-icons'
 import { chipTitle } from './layout'
+import { isContextMenuGesture } from '../../lib/pointer'
 
 /* ------------------------------------------------------------------------ */
 /* Shared menu chrome                                                        */
@@ -53,11 +54,12 @@ export function Menu({ x, y, onClose, children, ariaLabel, returnFocusTo, testId
   }
   return (
     // mousedown (not click): Ctrl+C in the terminal fires click events on
-    // backdrops -- the TerminalContextMenu pattern (house rule). Right-click is
-    // an inert dismiss: button 2 is ignored here and the contextmenu swallowed
-    // (stopPropagation, or the bar's own right-click menu would open), so the
-    // gesture never reaches the terminal underneath (which would paste).
-    <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (e.button !== 2) onClose() }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose() }} data-testid="command-bar-menu-backdrop">
+    // backdrops -- the TerminalContextMenu pattern (house rule). A context-menu
+    // gesture (right button; Ctrl+click on macOS) is an inert dismiss: ignored
+    // here and swallowed on contextmenu (stopPropagation, or the bar's own
+    // right-click menu would open), so it never reaches the terminal
+    // underneath (which would paste). See lib/pointer.ts.
+    <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (!isContextMenuGesture(e)) onClose() }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose() }} data-testid="command-bar-menu-backdrop">
       <div
         ref={ref}
         className="fixed rounded-lg shadow-xl py-1 min-w-[210px] text-xs"

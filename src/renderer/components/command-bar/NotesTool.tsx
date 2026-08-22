@@ -3,6 +3,7 @@ import NoteDialog, { type NoteEntry } from '../NoteDialog'
 import { ConfirmCard } from './menus'
 import { CHIP_CLASS, CHIP_STYLE } from './chips'
 import { trackUsage } from '../../stores/tipsStore'
+import { isContextMenuGesture } from '../../lib/pointer'
 
 export interface NotesToolHandle {
   /** Open the note dialog for a NEW note (the Add ▾ menu, the Core menu). */
@@ -145,10 +146,11 @@ const NotesTool = forwardRef<NotesToolHandle, Props>(function NotesTool({ config
 
       {open && (
         // mousedown (not click): Ctrl+C in the terminal fires click events on
-        // backdrops -- the TerminalContextMenu pattern (house rule). Right-click
-        // is an inert dismiss: button 2 ignored here, the contextmenu swallowed,
-        // so the gesture never reaches the terminal underneath (would paste).
-        <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (e.button !== 2) setOpen(null) }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(null) }} data-testid="notes-popover-backdrop">
+        // backdrops -- the TerminalContextMenu pattern (house rule). A
+        // context-menu gesture (right button; Ctrl+click on macOS --
+        // lib/pointer.ts) is an inert dismiss: ignored here, the contextmenu
+        // swallowed, so it never reaches the terminal underneath (would paste).
+        <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (!isContextMenuGesture(e)) setOpen(null) }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(null) }} data-testid="notes-popover-backdrop">
           <div
             ref={panelRef}
             className="fixed rounded-lg shadow-xl p-2 w-[330px] text-xs outline-none"

@@ -1,5 +1,6 @@
 import React from 'react'
 import type { CustomCommand } from '../../stores/commandStore'
+import { isContextMenuGesture } from '../../lib/pointer'
 
 /** Popover for customizing command arguments (shown on Ctrl+click, Alt+Enter, or "Run with arguments…"). */
 export default function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }: {
@@ -51,10 +52,12 @@ export default function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }:
   // Escape closes. The backdrop dismisses on MOUSEDOWN, never on click: Ctrl+C
   // in the terminal fires click events on backdrops (house rule -- the
   // TerminalContextMenu pattern), and this popover holds typed input that a
-  // stray click must not discard. A right-click is an INERT dismiss: the
-  // button-2 mousedown is ignored and the contextmenu is swallowed here, so the
-  // gesture never reaches what is under the pointer (the terminal's
-  // right-click would paste).
+  // stray click must not discard. A context-menu gesture (right button;
+  // Ctrl+click on macOS -- lib/pointer.ts) is an INERT dismiss: ignored on
+  // mousedown, the contextmenu swallowed on the backdrop, so it never reaches
+  // what is under the pointer (the terminal's right-click would paste). Inside
+  // the panel a right-click is swallowed too and keeps the popover (typed
+  // input survives).
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
     window.addEventListener('keydown', onKey, true)
@@ -87,12 +90,13 @@ export default function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }:
   }
 
   return (
-    <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (e.button !== 2) onClose() }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose() }} data-testid="command-args-backdrop">
+    <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (!isContextMenuGesture(e)) onClose() }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose() }} data-testid="command-args-backdrop">
       <div
         ref={popoverRef}
         className="fixed rounded-lg shadow-xl p-3 min-w-[240px] max-w-[340px]"
         style={{ ...pos, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)' }}
         onMouseDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation() }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label={`${cmd.label} — arguments`}

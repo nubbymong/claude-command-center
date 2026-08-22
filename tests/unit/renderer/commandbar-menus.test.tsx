@@ -824,6 +824,56 @@ describe('dismissal: a backdrop mousedown closes, a click never does (house rule
     expect(ptyWrite).not.toHaveBeenCalled()
   })
 
+  it('the Notes popover, at bar level: a contextmenu on its backdrop is swallowed -- no core-tool or bar menu opens on top', async () => {
+    await mount()
+    rightClick(mustGet('core-tool-notes'))
+    click(byTestId('menu-notes-open'))
+    await flush()
+    expect(menus()).toHaveLength(0)
+    const backdrop = mustGet('notes-popover-backdrop')
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 })
+    act(() => { backdrop.dispatchEvent(ev) })
+    expect(ev.defaultPrevented).toBe(true)
+    expect(byTestId('notes-popover'), 'popover closed').toBeNull()
+    expect(menus(), 'no menu opened on top').toHaveLength(0)
+  })
+
+  it('macOS: Ctrl + left mousedown on a menu backdrop is the context-menu gesture, so it keeps the menu (the contextmenu that follows closes it)', async () => {
+    const w = window as unknown as { electronPlatform?: string }
+    const before = w.electronPlatform
+    w.electronPlatform = 'darwin'
+    try {
+      await mount()
+      rightClick(chip('g1'))
+      const backdrop = mustGet('command-bar-menu-backdrop')
+      act(() => { backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, ctrlKey: true })) })
+      expect(menus(), 'still open after Ctrl+mousedown on macOS').toHaveLength(1)
+      act(() => { backdrop.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })) })
+      expect(menus()).toHaveLength(0)
+      // and on Windows the same Ctrl+mousedown is a plain dismiss
+      w.electronPlatform = 'win32'
+      rightClick(chip('g1'))
+      act(() => { mustGet('command-bar-menu-backdrop').dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0, ctrlKey: true })) })
+      expect(menus(), 'Windows: Ctrl+mousedown dismisses').toHaveLength(0)
+    } finally { w.electronPlatform = before }
+  })
+
+  it('the arguments popover: a right-click INSIDE it is swallowed and keeps the popover (typed input survives)', async () => {
+    COMMANDS = ALL.map((c) => (c.id === 'c1' ? { ...c, defaultArgs: ['--watch'] } : c))
+    await mount()
+    rightClick(chip('c1'))
+    click(byTestId('menu-run-args'))
+    const popover = () => container.querySelector<HTMLElement>('[role="dialog"][aria-label="Shell one — arguments"]')
+    const input = popover()!.querySelector<HTMLInputElement>('input[type="text"]')
+    typeInto(input, '--verbose')
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    act(() => { input!.dispatchEvent(ev) })
+    expect(ev.defaultPrevented).toBe(true)
+    expect(popover(), 'still open').not.toBeNull()
+    expect(popover()!.querySelector<HTMLInputElement>('input[type="text"]')!.value).toBe('--verbose')
+    expect(menus(), 'no menu opened').toHaveLength(0)
+  })
+
   it('the arguments popover: right-click away is an inert dismiss too', async () => {
     COMMANDS = ALL.map((c) => (c.id === 'c1' ? { ...c, defaultArgs: ['--watch'] } : c))
     await mount()

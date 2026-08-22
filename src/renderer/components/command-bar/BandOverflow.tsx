@@ -5,6 +5,7 @@ import { CommandIcon } from '../command-icons'
 import { DEFAULT_COMMAND_COLOR } from '../../lib/command-swatches'
 import { TargetMark } from './chips'
 import { clusterOf, type BandPlan } from './layout'
+import { isContextMenuGesture } from '../../lib/pointer'
 
 interface Props {
   plan: BandPlan
@@ -77,10 +78,11 @@ export default function BandOverflow({ plan, folded, caps, anchor, onRun, onCont
   let index = -1
   return (
     // mousedown (not click): Ctrl+C in the terminal fires click events on
-    // backdrops -- the TerminalContextMenu pattern (house rule). Right-click is
-    // an inert dismiss: button 2 is ignored here and the contextmenu swallowed,
-    // so the gesture never reaches the terminal underneath (which would paste).
-    <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (e.button !== 2) onClose() }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose() }} data-testid="command-overflow-backdrop">
+    // backdrops -- the TerminalContextMenu pattern (house rule). A context-menu
+    // gesture (right button; Ctrl+click on macOS -- lib/pointer.ts) is an inert
+    // dismiss: ignored here, the contextmenu swallowed, so it never reaches the
+    // terminal underneath (which would paste).
+    <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (!isContextMenuGesture(e)) onClose() }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose() }} data-testid="command-overflow-backdrop">
       <div
         ref={ref}
         className="fixed rounded-lg shadow-xl p-2 w-[300px] text-xs outline-none"
