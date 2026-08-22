@@ -104,6 +104,45 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-security.jpg',
   },
   {
+    // Shipped in 2.0 as "Ask Command Center" and renamed to "Ask Conductor",
+    // but it never had a card of its own -- FinishStep promises the Feature
+    // Guide "explains every feature", and the help surface itself was the one
+    // missing from it (#372). Pinned at 2.1.0 so it rides along with the other
+    // 2.1 cards rather than moving currentTrainingVersion(), which is the MAX
+    // sinceVersion across steps.
+    id: 'ask-conductor',
+    title: 'Ask Conductor',
+    sinceVersion: '2.1.0',
+    section: 'getting-started',
+    summary:
+      'Ask Conductor is the help session: a real Claude session that has already read this app\'s documentation, so you can ask how something works in plain English instead of hunting through Settings. It answers questions about the Conductor and about Claude Code itself, and tells you which of the two it is answering.',
+    highlights: [
+      'Ask in **plain English** -- "how do I run two accounts?" beats hunting through Settings',
+      'Covers **both** the Conductor and **Claude Code** itself, and says which one it is answering',
+      'Type your question into the Feature Guide first and the session opens with it **already asked**',
+      'Gets its **own tab** and behaves like any other session -- leave it open and come back to it',
+      '**Past discussions** in its header reopens an earlier conversation',
+      'It reads the **documentation, not your data** -- it cannot see your code, and will say so',
+    ],
+    howToTrigger: [
+      { label: 'Sidebar', value: 'Ask Conductor pill at the bottom of the sidebar' },
+      { label: 'Feature Guide', value: '? button → Ask the Conductor box' },
+      { label: 'From a tip', value: 'Discuss on any tip' },
+    ],
+    proTip:
+      'It runs in its own documentation folder rather than your project, which is exactly why it cannot see your repository. For a question about your own code, ask in that project\'s session instead. It is not a saved config and never appears in your Saved Configs list.',
+    bullets: [
+      'A **Claude session primed with this app\'s docs** -- ask about the Conductor in plain English',
+      'Also answers **Claude Code** questions, and tells you which of the two it is answering',
+      'Open it from the **sidebar pill**, the **Feature Guide** Ask box, or **Discuss** on any tip',
+      'Reads the **documentation only** -- not your code',
+    ],
+    // No dedicated capture of the Ask pill or the help session exists yet; the
+    // shell shot shows the sidebar it launches from and the ? button that opens
+    // this guide. (Future capture: step-ask-conductor.jpg.)
+    screenshotFilename: 'v2-shell-hero.jpg',
+  },
+  {
     id: 'codex-provider',
     title: 'Codex Provider',
     sinceVersion: '1.5.0',

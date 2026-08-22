@@ -8,13 +8,15 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 20 steps', () => {
+    it('has exactly 21 steps', () => {
       // v1.5.12 added dynamic-workflows; permission-tray step removed with the
       // feature; v2-readiness added multi-account + sentinel steps (16 -> 18);
       // v2.0.0 added the ai-usage-meter step (18 -> 19); the Agent Canvas got
       // an entry of its own (19 -> 20) -- FinishStep promises the Feature Guide
       // "explains every feature", and it was the one shipped feature missing.
-      expect(trainingSteps).toHaveLength(20)
+      // Ask Conductor was the next one missing (20 -> 21): it shipped in 2.0 as
+      // "Ask Command Center" and was renamed, but never got a card (#372).
+      expect(trainingSteps).toHaveLength(21)
     })
 
     it('every step has required fields', () => {
@@ -41,6 +43,39 @@ describe('training-steps', () => {
     it('steps are in logical order starting with session-options and ending with github-sidebar', () => {
       expect(trainingSteps[0].id).toBe('session-options')
       expect(trainingSteps[trainingSteps.length - 1].id).toBe('github-sidebar')
+    })
+  })
+
+  describe('the Ask Conductor entry (#372)', () => {
+    const ask = () => trainingSteps.find((s) => s.id === 'ask-conductor')
+
+    it('exists, so the Feature Guide covers the help surface itself', () => {
+      expect(ask()).toBeDefined()
+    })
+
+    it('is filed under its current name, never the retired 2.0 one', () => {
+      const step = ask()!
+      expect(step.title).toBe('Ask Conductor')
+      // It shipped as "Ask Command Center". The card is user-facing copy about
+      // what the feature is TODAY, so the old name must not leak into it.
+      const copy = [step.title, step.summary ?? '', step.proTip ?? '', ...step.bullets, ...(step.highlights ?? [])].join(' ')
+      expect(copy).not.toContain('Ask Command Center')
+      expect(copy).not.toContain('Command Center')
+    })
+
+    it('uses the hero layout and resolves a real screenshot', () => {
+      const step = ask()!
+      // `summary` is what switches FeatureGuidePage to the hero layout; without
+      // it the card silently falls back to the flat bullet list.
+      expect(step.summary).toBeTruthy()
+      expect(step.highlights?.length).toBeGreaterThan(0)
+      expect(step.howToTrigger?.length).toBeGreaterThan(0)
+      expect(step.screenshotFilename).toMatch(/\.jpg$/)
+    })
+
+    it('does not move the training version (rides with the 2.1 cards)', () => {
+      expect(ask()!.sinceVersion).toBe('2.1.0')
+      expect(currentTrainingVersion()).toBe('2.1.0')
     })
   })
 
