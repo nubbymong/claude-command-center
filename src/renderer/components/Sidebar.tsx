@@ -27,6 +27,7 @@ import SectionHeader from './sidebar/SectionHeader'
 import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
+import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
 import AskConductorDock from './sidebar/AskConductorDock'
 import { resolveConfigPanelExpanded, toggleConfigPanel, overrideAfterPinChange, type ConfigPanelOverride } from './sidebar/configPanelState'
@@ -113,6 +114,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [sessionGroupCollapsed, setSessionGroupCollapsed] = useState<Record<string, boolean>>({})
+  // #363: collapse state of the "Ungrouped" pseudo-group, keyed by section id
+  // ('' = the unsectioned tail). Lives alongside the group/section state above
+  // and persists the same way (for the life of the window).
+  const [ungroupedSessionsCollapsed, setUngroupedSessionsCollapsed] = useState<Record<string, boolean>>({})
+  const toggleUngroupedSessionsCollapsed = (key: string) =>
+    setUngroupedSessionsCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
   const [sessionRenameValue, setSessionRenameValue] = useState('')
   const [sessionContextMenu, setSessionContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null)
@@ -1125,7 +1132,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                 {sectionGroups.map(({ group, sessions: groupSessions }) => (
                   <div key={group.id} className="mb-1">
                     <SessionGroupHeader
-                      group={group}
+                      name={group.name}
                       collapsed={sessionGroupCollapsed[group.id]}
                       onToggleCollapse={() => setSessionGroupCollapsed((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
                       onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
@@ -1137,7 +1144,25 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                     )}
                   </div>
                 ))}
-                {looseSessions.map(renderSessionRow)}
+                {/* #363: loose sessions in this section get an "Ungrouped"
+                    heading only when a group sits above them; a section of
+                    nothing but loose sessions stays bare. */}
+                {sectionGroups.length > 0 && looseSessions.length > 0 ? (
+                  <div className="mb-1">
+                    <UngroupedSessionsHeader
+                      collapsed={ungroupedSessionsCollapsed[section.id]}
+                      onToggleCollapse={() => toggleUngroupedSessionsCollapsed(section.id)}
+                      onCloseAll={() => { looseSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
+                    />
+                    {!ungroupedSessionsCollapsed[section.id] && (
+                      <div className="space-y-0.5">
+                        {looseSessions.map(renderSessionRow)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  looseSessions.map(renderSessionRow)
+                )}
               </div>
             )}
           </div>
@@ -1147,7 +1172,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         {unsectionedSessionGroups.map(({ group, sessions: groupSessions }) => (
           <div key={group.id} className="mb-1">
             <SessionGroupHeader
-              group={group}
+              name={group.name}
               collapsed={sessionGroupCollapsed[group.id]}
               onToggleCollapse={() => setSessionGroupCollapsed((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
               onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
@@ -1160,8 +1185,28 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           </div>
         ))}
 
-        {/* Unsectioned ungrouped sessions */}
-        {unsectionedUngroupedSessions.map(renderSessionRow)}
+        {/* Unsectioned ungrouped sessions — the loose tail. #363: headed
+            "Ungrouped" (collapsible, close-all, same look as a group heading)
+            only when something organised sits above it — a section or a group
+            — so it stops reading as the tail of the last group, while a
+            sidebar of nothing but loose sessions stays clean. Mirrors the
+            loose-configs divider rule above. */}
+        {unsectionedUngroupedSessions.length > 0 && (sessionSectionData.length > 0 || unsectionedSessionGroups.length > 0) ? (
+          <div className="mb-1">
+            <UngroupedSessionsHeader
+              collapsed={ungroupedSessionsCollapsed['']}
+              onToggleCollapse={() => toggleUngroupedSessionsCollapsed('')}
+              onCloseAll={() => { unsectionedUngroupedSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
+            />
+            {!ungroupedSessionsCollapsed[''] && (
+              <div className="space-y-0.5">
+                {unsectionedUngroupedSessions.map(renderSessionRow)}
+              </div>
+            )}
+          </div>
+        ) : (
+          unsectionedUngroupedSessions.map(renderSessionRow)
+        )}
       </div>
 
       {/* Ask Conductor, docked below the session list. Sibling of the scroller
