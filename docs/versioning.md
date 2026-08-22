@@ -70,6 +70,34 @@ leaving the hand-written notes untouched — a *rolling re-release*.
 - Shipping stable: drop the suffix (`2.1.0`) and release from `main` with
   `channel=stable`.
 
+## Release gate (the cut is refused until it passes)
+
+`scripts/release-gate.mjs` runs before any release is made — as the first step
+of `scripts/release.js` (before `package.json` is touched) and as the first job
+of `release.yml` on every dispatch (`gate`; every build job `needs` it). It has
+no bypass. Two checks, both must pass:
+
+1. **Milestone (#375).** A GitHub milestone titled exactly the version being cut
+   (e.g. `2.1.0-beta.17`) must exist and have **no open issue** without the
+   `excluded` label. Open issues are printed by number; pull requests on the
+   milestone are ignored. A missing milestone **fails closed** — the gate cannot
+   tell "nothing outstanding" from "nobody made the list". To clear it: close
+   the issues, move them to a later milestone, or have the owner label them
+   `excluded` (owner-excluded from the current milestone gate).
+2. **Model registry (#385).** `resources/model-registry.json` must cover every
+   model in Anthropic's [Claude Code model configuration](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)
+   article. The expected set is hard-coded in
+   `scripts/fixtures/claude-code-model-configuration.json` with its fetch date
+   and refresh instructions; a dated article id (`claude-opus-4-5-20251101`) is
+   covered by the undated registry entry (`claude-opus-4-5`). A missing model
+   **fails** with a diff; a registry Claude model the article no longer lists is
+   a **warning** (flagged for the owner, not fatal). That article is the
+   reference whenever the model/effort options are set for a release: registry
+   `dropdown` rows, aliases, `--model` values, 1M variants, effort levels.
+
+Run it by hand at any time: `node scripts/release-gate.mjs [--version X]`
+(exit 0 pass, 1 refused, 2 could not evaluate — also a refusal).
+
 ## End-to-end flow
 
 1. Bump `package.json` `version` and add the matching `src/renderer/changelog.ts`
