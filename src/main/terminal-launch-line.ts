@@ -152,11 +152,14 @@ export function buildTerminalLaunchLine(opts: TerminalLaunchOptions | undefined,
   // harmless beats silently typing nothing -- is the right one, so both follow
   // it now.
   const ref = opts?.hasSecretArg ? secretRef(isWindows) : null
-  // The COMMAND field is a command line (its first word is the program, where a
-  // secret can never go); the ARGUMENTS field is appended after one, so its
-  // first word is just another argument.
-  const command = (ref ? substituteSecretToken(command0, ref, { isCommandLine: true }) : command0).trim()
-  if (!command) return ''
-  const args = (ref ? substituteSecretToken(opts?.args ?? '', ref) : (opts?.args ?? '')).trim()
-  return args ? `${command} ${args}` : command
+  // Join the two fields FIRST, then substitute the whole line once. They become
+  // one shell line the moment they are joined, so a separator ending the command
+  // (`curl ;`) has to make the first argument a command position too — which
+  // substituting the fields SEPARATELY could not see, leaking a secret typed as
+  // the first argument after a trailing `;`. As one line: word 0 is the program
+  // (a command position, blocked); every later word is an argument unless it
+  // follows a `; | &` or newline, which is a command position in any field.
+  const args0 = (opts?.args ?? '').trim()
+  const joined0 = args0 ? `${command0} ${args0}` : command0
+  return (ref ? substituteSecretToken(joined0, ref, { isCommandLine: true }) : joined0).trim()
 }

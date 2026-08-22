@@ -78,76 +78,87 @@ type QuoteState = 'none' | 'single' | 'double'
 interface ScannedWord {
   start: number
   end: number
-  /** The command name position — word 0, or the first word after a separator. */
-  isFirst: boolean
+  /** Word 0 of the whole text — the command name when this text is a command line. */
+  isWordZero: boolean
+  /** The word immediately follows a separator (`;` `|` `&`) or a newline, so it
+   *  begins a NEW command regardless of which field the text came from. */
+  afterSeparator: boolean
   /** The word contains a quote character somewhere. */
   hasQuote: boolean
-  /**
-   * The word carries a shell ESCAPE that the scanner cannot reason about: an
-   * escaped quote (`\"`, `` `" ``), or a trailing escape that would swallow a
-   * closing quote we add.
-   */
-  hasEscape: boolean
+  /** A quote region was still open when the word ended (unbalanced quotes). */
+  unbalanced: boolean
   /** Quote state at each `{secret}` inside this word. */
   tokens: QuoteState[]
 }
 
-/** `\` is bash's escape, `` ` `` is PowerShell's. Both are treated as escapes
- *  everywhere: over-flagging costs a literal token, under-flagging costs a
- *  credential. */
+/** `\` is bash's escape, `` ` `` is PowerShell's. ANY escape on the line poisons
+ *  the whole line: escapes are what fooled the quote scanner in every earlier
+ *  round (an escaped quote read as a real quote region), and they are rare in a
+ *  command/arguments field, so the safe-and-simple rule is to refuse to place a
+ *  secret on a line that carries one. Over-refusing costs a literal token the
+ *  user rewrites; under-refusing costs a credential. */
 const ESCAPE_CHARS = new Set(['\\', '`'])
 
-/** Words after these start a new COMMAND, so a token there is a command name. */
-const SEPARATORS = new Set([';', '|', '&', '\n'])
+/** These end a command, so the NEXT word is a command name — a secret there
+ *  would be run, not passed. Newline is handled as whitespace but also flips the
+ *  command position (a second line is a second command). */
+const SEPARATORS = new Set([';', '|', '&'])
 
 /**
- * Split a shell line into words, tracking QUOTE STATE — which is the only thing
- * that decides whether a reference is safe where the user put it.
+ * Split a shell line into words. A word is substitutable only when it is
+ * genuinely simple (see `placementFor`); everything the scanner is not certain
+ * about is left literal, so the failure direction is a command that visibly does
+ * not work rather than a secret in the wrong place.
  *
- * Deliberately not a full shell parser: it recognises `'` and `"` regions and
- * unquoted whitespace, which is what the placement rules below need. Anything
- * it cannot classify confidently falls through to "leave the token literal",
- * so the failure direction is a command that visibly does not work rather than
- * a secret in the wrong place.
+ * Deliberately NOT a full shell parser. Three properties are all it needs and
+ * all it guarantees: (1) it breaks words on unquoted whitespace AND on the
+ * separators `;` `|` `&` and newline, so a token after a separator is seen as a
+ * command name in EVERY field; (2) quote state is LOCAL to a word — it is reset
+ * at each word boundary — so an unbalanced quote in one word can never shift the
+ * classification of a later one; (3) if the line carries any escape char, the
+ * whole line is flagged (`lineHasEscape`) and every token on it is refused.
  */
-function scanShellWords(text: string): ScannedWord[] {
+function scanShellWords(text: string): { words: ScannedWord[]; lineHasEscape: boolean } {
   const words: ScannedWord[] = []
+  const lineHasEscape = /[\\`]/.test(text)
   let state: QuoteState = 'none'
   let cur: ScannedWord | null = null
-  /** The next word begins a command (start of text, or after a separator). */
-  let atCommandPosition = true
+  // Whether the NEXT word to begin follows a separator/newline (a new command).
+  // It must SURVIVE the whitespace between the separator and the word — `cd .;
+  // {secret}` has a space after the `;`, and clearing the flag on that space is
+  // exactly how a token after a spaced separator slipped back into an argument.
+  let pendingCommand = false
+  let isFirstWord = true
   const finish = (end: number) => {
     if (!cur) return
     cur.end = end
-    // A word that ENDS with an escape would swallow the closing quote we add.
-    const raw = text.slice(cur.start, end)
-    if (ESCAPE_CHARS.has(raw[raw.length - 1])) cur.hasEscape = true
-    // `;`, `|`, `&&`… — whether the word IS one or merely ends with one.
-    const bare = raw.replace(/["']/g, '')
-    if (bare.length > 0 && SEPARATORS.has(bare[bare.length - 1])) atCommandPosition = true
-    else atCommandPosition = false
+    cur.unbalanced = state !== 'none'
     words.push(cur)
     cur = null
+    state = 'none' // quote state does NOT carry across a word boundary
   }
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
+    // An escape consumes the next character so it cannot be read as a quote
+    // boundary. The line is already poisoned by `lineHasEscape`; this only keeps
+    // the scan from mis-parsing on the way through.
+    if (ESCAPE_CHARS.has(ch)) { i += 1; continue }
     if (state === 'none' && /\s/.test(ch)) {
       finish(i)
+      // A newline is itself a command separator; ordinary whitespace only ends a
+      // word and leaves any pending separator flag alone.
+      if (ch === '\n') pendingCommand = true
+      continue
+    }
+    if (state === 'none' && SEPARATORS.has(ch)) {
+      finish(i)
+      pendingCommand = true
       continue
     }
     if (!cur) {
-      cur = { start: i, end: text.length, isFirst: atCommandPosition, hasQuote: false, hasEscape: false, tokens: [] }
-    }
-    // An ESCAPE consumes the character after it, so that character can never be
-    // a quote-region boundary. Without this a user-escaped quote (`\"Bearer
-    // {secret}\"`) read as a real quoted region, the token looked safely
-    // enclosed, and the emitted reference landed UNQUOTED — measured in bash as
-    // the value becoming its own argv entry, which curl takes as a URL operand.
-    if (ESCAPE_CHARS.has(ch)) {
-      const next = text[i + 1]
-      if (next === '"' || next === "'") cur.hasEscape = true
-      if (next !== undefined && !/\s/.test(next)) { i += 1; continue }
-      continue
+      cur = { start: i, end: text.length, isWordZero: isFirstWord, afterSeparator: pendingCommand, hasQuote: false, unbalanced: false, tokens: [] }
+      isFirstWord = false
+      pendingCommand = false // consumed by the word that just began
     }
     if (state === 'none' && (ch === '"' || ch === "'")) {
       state = ch === '"' ? 'double' : 'single'
@@ -164,7 +175,7 @@ function scanShellWords(text: string): ScannedWord[] {
     }
   }
   finish(text.length)
-  return words
+  return { words, lineHasEscape }
 }
 
 /** What can safely be done with the tokens in one word. */
@@ -176,19 +187,25 @@ type Placement =
   | 'unsafe-single-quoted'
   | 'unsafe-mixed-quotes'
   | 'unsafe-escaped-quote'
+  | 'unsafe-unbalanced'
 
-function placementFor(w: ScannedWord, isCommandLine: boolean): Placement {
+function placementFor(w: ScannedWord, isCommandLine: boolean, lineHasEscape: boolean): Placement {
   if (w.tokens.length === 0) return 'none'
-  // An escape the scanner cannot reason about. Whatever the quote state LOOKS
-  // like, it may be wrong — so no reference form can be trusted here.
-  if (w.hasEscape) return 'unsafe-escaped-quote'
+  // Any escape ANYWHERE on the line makes the quote reading untrustworthy —
+  // refuse the whole line, not just the escaped word (an escaped quote in a
+  // neighbour shifts nothing here because state is per-word, but the reading is
+  // still not one to bet a credential on). Checked before command position so
+  // the message names the actual problem.
+  if (lineHasEscape) return 'unsafe-escaped-quote'
+  // Unbalanced quotes: we cannot tell where the value would land. Refuse.
+  if (w.unbalanced) return 'unsafe-unbalanced'
   // A secret is never a command NAME. Wrapping here produces a bare quoted
   // string, which PowerShell evaluates as an expression and PRINTS — the value
-  // straight into the terminal and its scrollback.
-  //
-  // Only when this text really is a command LINE: an arguments field is
-  // appended after a command, so its first word is just another argument.
-  if (isCommandLine && w.isFirst) return 'unsafe-command-word'
+  // straight into the terminal and its scrollback. Command position = word 0 of
+  // a command LINE (an arguments field is appended AFTER a command, so its word
+  // 0 is just another argument), OR the first word after ANY separator, which is
+  // a command name in every field.
+  if (w.afterSeparator || (w.isWordZero && isCommandLine)) return 'unsafe-command-word'
   const states = new Set(w.tokens)
   // Single quotes suppress expansion in bash AND PowerShell, so there is no
   // reference form at all here — substituting would emit the literal reference
@@ -234,11 +251,11 @@ export function substituteSecretToken(
   opts: { isCommandLine?: boolean } = {},
 ): string {
   if (!text.includes(COMMAND_SECRET_TOKEN)) return text
-  const words = scanShellWords(text)
+  const { words, lineHasEscape } = scanShellWords(text)
   let out = ''
   let cursor = 0
   for (const w of words) {
-    const placement = placementFor(w, opts.isCommandLine === true)
+    const placement = placementFor(w, opts.isCommandLine === true, lineHasEscape)
     if (placement === 'none') continue
     const raw = text.slice(w.start, w.end)
     out += text.slice(cursor, w.start)
@@ -263,16 +280,26 @@ export function substituteSecretToken(
  */
 export function secretPlacementProblem(text: string, opts: { isCommandLine?: boolean } = {}): string | null {
   if (typeof text !== 'string' || !text.includes(COMMAND_SECRET_TOKEN)) return null
-  for (const w of scanShellWords(text)) {
-    switch (placementFor(w, opts.isCommandLine === true)) {
+  const { words, lineHasEscape } = scanShellWords(text)
+  // A line with any escape carrying a token is refused as a whole — report it
+  // directly, even when the escape SWALLOWED the token's brace (`\{secret}`) so
+  // no word was left to classify. Without this the token is left literal with no
+  // warning, which looks like the feature silently doing nothing.
+  if (lineHasEscape) {
+    return `${COMMAND_SECRET_TOKEN} is on a line with a backslash (\\) or backtick (\`). A secret cannot be placed safely there — remove the escape (use forward slashes in paths) or move the secret to a line without one.`
+  }
+  for (const w of words) {
+    switch (placementFor(w, opts.isCommandLine === true, lineHasEscape)) {
       case 'unsafe-command-word':
-        return `${COMMAND_SECRET_TOKEN} cannot be the command itself — put it in an argument.`
+        return `${COMMAND_SECRET_TOKEN} is in the command position (the start of the line, or just after a ; | or &), where it would be run instead of passed. Put it in an argument.`
       case 'unsafe-single-quoted':
         return `${COMMAND_SECRET_TOKEN} inside single quotes cannot be filled in (a shell does not expand anything in '…'). Use double quotes: "… ${COMMAND_SECRET_TOKEN}".`
       case 'unsafe-mixed-quotes':
         return `${COMMAND_SECRET_TOKEN} sits just outside a quoted section, where the value would become a separate argument. Put it inside the quotes: "… ${COMMAND_SECRET_TOKEN}".`
       case 'unsafe-escaped-quote':
-        return `${COMMAND_SECRET_TOKEN} is next to an escaped quote (\\" or \`"), and the value could end up as a separate argument. Use plain double quotes around it: "… ${COMMAND_SECRET_TOKEN}".`
+        return `${COMMAND_SECRET_TOKEN} is on a line with a backslash (\\) or backtick (\`). A secret cannot be placed safely there — remove the escape (use forward slashes in paths) or move the secret to a line without one.`
+      case 'unsafe-unbalanced':
+        return `${COMMAND_SECRET_TOKEN} is in a word with an unclosed quote. Balance the quotes: "… ${COMMAND_SECRET_TOKEN}".`
       default:
         break
     }
@@ -326,15 +353,16 @@ export function secretValueProblem(value: string, isWindows: boolean): string | 
  * has a stored secret, so nothing a Claude prompt types can be touched by this.
  */
 export function buildCommandLine(prompt: string, args: readonly string[] | undefined, secretRef?: string | null): string {
-  // The prompt IS the shell command line here (its first word is the program);
-  // each arg chip is appended after it, so no chip is in command position.
-  const subLine = (s: string) => (secretRef ? substituteSecretToken(s, secretRef, { isCommandLine: true }) : s)
-  const subArg = (s: string) => (secretRef ? substituteSecretToken(s, secretRef) : s)
   // Emptiness is decided on what the user WROTE, before substitution: a command
   // is empty because nothing was typed, never because a token collapsed.
-  if (!(prompt ?? '').trim()) return ''
-  const p = subLine((prompt ?? '').trim()).trim()
-  if (!p) return ''
-  if (!args || args.length === 0) return p
-  return `${p} ${args.map(subArg).join(' ')}`
+  const p0 = (prompt ?? '').trim()
+  if (!p0) return ''
+  // The prompt and the arg chips ARE one shell line once joined — its first word
+  // is the program (a command position, where a secret is blocked), every chip
+  // after it is an argument unless it follows a `; | &` or newline. So join
+  // first and substitute the whole line ONCE: substituting the fields separately
+  // could not see a separator at the field boundary (a trailing `;` in the
+  // prompt with the secret as the first chip), which would have leaked.
+  const joined0 = args && args.length > 0 ? `${p0} ${args.join(' ')}` : p0
+  return (secretRef ? substituteSecretToken(joined0, secretRef, { isCommandLine: true }) : joined0).trim()
 }
