@@ -12,6 +12,7 @@ import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
+import { sanitizeRestoredSpawnOptions } from '../sanitize-restored-spawn-options'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -269,6 +270,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
     }
   }) => {
+    // #397 Group 5: repair persisted fields fail-open BEFORE the strict parse, so a
+    // corrupt session-state.json cannot abort the whole spawn (the session never
+    // launched). Dropped/floored values never reach the shell; the rest still parses.
+    options = sanitizeRestoredSpawnOptions(options, logInfo)
     try {
       sessionIdSchema.parse(sessionId)
       spawnOptionsSchema.parse(options)
