@@ -10,14 +10,24 @@ import { readPeSubsystem as readPeSubsystemLite } from '../../scripts/lib/pe-sub
 // `scripts/verify-console-bleed.mjs`, documented and skipped below, and what IS
 // automatable is automated: the two copies of the header read must agree.
 
-function buildPe(subsystem: number, peOffset = 0x80, magic = 0x10b): Buffer {
+interface PeOpts {
+  subsystem?: number
+  peOffset?: number
+  magic?: number
+  sizeOfOptionalHeader?: number
+  signature?: string
+  mz?: boolean
+}
+
+function buildPe(o: PeOpts = {}): Buffer {
+  const peOffset = o.peOffset ?? 0x80
   const buf = Buffer.alloc(peOffset + 0x100)
-  buf[0] = 0x4d; buf[1] = 0x5a
+  if (o.mz !== false) { buf[0] = 0x4d; buf[1] = 0x5a }
   buf.writeUInt32LE(peOffset, 0x3c)
-  buf.write('PE\0\0', peOffset, 'binary')
-  buf.writeUInt16LE(0xe0, peOffset + 0x14)
-  buf.writeUInt16LE(magic, peOffset + 0x18)
-  buf.writeUInt16LE(subsystem, peOffset + 0x5c)
+  buf.write(o.signature ?? 'PE\0\0', peOffset, 'binary')
+  buf.writeUInt16LE(o.sizeOfOptionalHeader ?? 0xe0, peOffset + 0x14)
+  buf.writeUInt16LE(o.magic ?? 0x10b, peOffset + 0x18)
+  buf.writeUInt16LE(o.subsystem ?? 2, peOffset + 0x5c)
   return buf
 }
 
@@ -25,13 +35,25 @@ describe('the verification script’s PE reader matches the app’s', () => {
   // The script runs under bare node with no TypeScript step, so it carries its
   // own copy of the header read. Two copies drift; this is the thing that
   // notices.
+  //
+  // The fixtures deliberately EXERCISE EVERY GATE, not just the happy path.
+  // Review MINOR-5: the first version always wrote a valid magic and a valid
+  // SizeOfOptionalHeader, so deleting either check from the lite copy kept all
+  // nine green -- a drift test that could not see drift.
   const cases: Array<[string, Buffer]> = [
-    ['GUI PE32', buildPe(2)],
-    ['GUI PE32+', buildPe(2, 0x80, 0x20b)],
-    ['console PE32', buildPe(3)],
-    ['console PE32+', buildPe(3, 0x100, 0x20b)],
-    ['driver subsystem', buildPe(1)],
-    ['far header', buildPe(2, 0x400)],
+    ['GUI PE32', buildPe({ subsystem: 2 })],
+    ['GUI PE32+', buildPe({ subsystem: 2, magic: 0x20b })],
+    ['console PE32', buildPe({ subsystem: 3 })],
+    ['console PE32+', buildPe({ subsystem: 3, peOffset: 0x100, magic: 0x20b })],
+    ['driver subsystem', buildPe({ subsystem: 1 })],
+    ['far header (still inside the window)', buildPe({ subsystem: 2, peOffset: 0x400 })],
+    ['ROM magic 0x107 — must be rejected', buildPe({ magic: 0x107 })],
+    ['bogus magic — must be rejected', buildPe({ magic: 0x1234 })],
+    ['optional header too small for Subsystem', buildPe({ sizeOfOptionalHeader: 0x45 })],
+    ['optional header exactly big enough', buildPe({ sizeOfOptionalHeader: 0x46, subsystem: 3 })],
+    ['optional header size zero', buildPe({ sizeOfOptionalHeader: 0 })],
+    ['bad PE signature', buildPe({ signature: 'NE\0\0' })],
+    ['no MZ', buildPe({ mz: false })],
     ['text file', Buffer.from('@echo off\r\n')],
     ['empty', Buffer.alloc(0)],
     ['MZ but truncated', Buffer.from([0x4d, 0x5a, 0x00, 0x00])],
@@ -42,6 +64,14 @@ describe('the verification script’s PE reader matches the app’s', () => {
       expect(readPeSubsystemLite(buf)).toBe(readPeSubsystem(buf))
     })
   }
+
+  it('the fixtures actually cover both rejection gates', () => {
+    // Guards the guard: if these ever stopped being null, dropping the magic or
+    // size check from either copy would go unnoticed again.
+    expect(readPeSubsystem(buildPe({ magic: 0x107 }))).toBeNull()
+    expect(readPeSubsystem(buildPe({ sizeOfOptionalHeader: 0x45 }))).toBeNull()
+    expect(readPeSubsystem(buildPe({ subsystem: 2 }))).toBe(2)
+  })
 })
 
 describe('MANUAL: the 30-second real-exe verification (#379)', () => {

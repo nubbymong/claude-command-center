@@ -3,17 +3,28 @@
  *
  * A command button types a line into a live shell; to say anything about the
  * program that line starts, we first have to work out which file it is. This
- * does that WITHOUT spawning `where` — spawning to answer "what would this
- * spawn" is both slow (a process per keystroke-ish probe) and the wrong shape
- * for a security-sensitive path: everything here reads, nothing executes.
+ * does that WITHOUT spawning `where` -- spawning to answer "what would this
+ * spawn" is both slow (a process per probe) and the wrong shape for a
+ * security-sensitive path: everything here reads, nothing executes.
  *
- * Resolution follows the Windows rules the shell would follow: a token with a
- * path separator is resolved against the working directory only; a bare name is
- * searched along PATH; either way the literal name is tried first and then each
- * PATHEXT extension in order. The `exists` predicate is injected so the unit
- * tests can lay out a virtual filesystem instead of touching disk.
+ * IT MUST NOT RESOLVE MORE PERMISSIVELY THAN THE SHELL IT STANDS IN FOR.
+ * The shell CCC starts for a shell button is `powershell.exe`, and PowerShell
+ * does NOT run `.\foo.exe` for a bare `foo` -- the current directory is not on
+ * its search path. An earlier version of this file searched the cwd first "as
+ * Windows does", which is cmd.exe's rule and not PowerShell's, and the effect
+ * was a real capability the typed path does not have: a repo containing its own
+ * `bambu-studio.exe` would be the file main spawned, silently, while typing the
+ * same line in the pane ran the copy on PATH. So: a bare name is resolved on
+ * PATH ONLY, and a path (anything with a separator, or a drive letter) is
+ * resolved against the working directory. `.\foo` still works, because the user
+ * wrote a path. (Review MAJOR-4.)
+ *
+ * Resolution is ASYNC and cached. `fs.statSync` down ~40 PATH entries × ~11
+ * PATHEXT extensions is ~440 synchronous stats on the main event loop, per
+ * button press, before anything is typed -- and this repo already treats
+ * main-loop stalls as a correctness problem for PTY input. (Review MAJOR-6.)
  */
-import * as fs from 'fs'
+import * as fsp from 'fs/promises'
 import * as path from 'path'
 
 /** Windows' documented default when PATHEXT is unset. */
@@ -36,7 +47,7 @@ export interface FirstToken {
  * call operator and is not part of the name.
  *
  * This is deliberately NOT a shell parser. It does not expand variables, follow
- * pipelines or understand `;` — it answers "what is the first word", and every
+ * pipelines or understand `;` -- it answers "what is the first word", and every
  * consumer treats the answer as a hint. A line whose program is `$env:TOOL` or
  * the right-hand side of a pipe simply fails to resolve, and the caller falls
  * back to the existing behaviour.
@@ -46,8 +57,7 @@ export function firstToken(commandLine: string): FirstToken | null {
   let s = commandLine.trim()
   if (!s) return null
 
-  // The PowerShell call operator, and the POSIX `command`/`exec` prefixes that
-  // do the same job. Only one is stripped: `& & x` is not a thing.
+  // The PowerShell call operator. Only one is stripped: `& & x` is not a thing.
   if (s.startsWith('&')) s = s.slice(1).trimStart()
   if (!s) return null
 
@@ -74,12 +84,14 @@ export interface ResolveOptions {
   pathExt?: string
   platform?: NodeJS.Platform
   /** Test seam. Default: the path names an existing regular file. */
-  exists?: (p: string) => boolean
+  exists?: (p: string) => Promise<boolean>
+  /** Test seam: bypass the cache entirely. */
+  noCache?: boolean
 }
 
-function defaultExists(p: string): boolean {
+async function defaultExists(p: string): Promise<boolean> {
   try {
-    return fs.statSync(p).isFile()
+    return (await fsp.stat(p)).isFile()
   } catch {
     return false
   }
@@ -95,15 +107,39 @@ function looksLikePath(token: string, isWindows: boolean): boolean {
   return false
 }
 
+interface CacheEntry {
+  at: number
+  result: string | null
+}
+
+/**
+ * Resolutions live briefly. A button pressed repeatedly must not re-walk PATH
+ * every time, but a tool installed a minute ago must still become visible
+ * without a restart. Negative results are cached too -- "not installed" is the
+ * expensive answer, because it is the one that walks every entry.
+ */
+const CACHE_TTL_MS = 30_000
+const CACHE_MAX = 256
+const cache = new Map<string, CacheEntry>()
+
+/** Test seam. */
+export function clearExecutableResolutionCache(): void {
+  cache.clear()
+}
+
+function cacheKey(token: string, o: ResolveOptions, platform: NodeJS.Platform): string {
+  return [platform, o.cwd, token, o.pathEnv ?? '', o.pathExt ?? ''].join('\u0000')
+}
+
 /**
  * The absolute path a program token resolves to, or null.
  *
  * Never throws, never spawns. A token that resolves to a directory, or to
- * nothing, is null — callers read that as "we cannot say anything about this
+ * nothing, is null -- callers read that as "we cannot say anything about this
  * command", which is always a safe answer here because every consumer's
  * fallback is the pre-existing behaviour.
  */
-export function resolveExecutable(token: string, opts: ResolveOptions): string | null {
+export async function resolveExecutable(token: string, opts: ResolveOptions): Promise<string | null> {
   if (typeof token !== 'string' || token.length === 0) return null
 
   const platform = opts.platform ?? process.platform
@@ -114,6 +150,23 @@ export function resolveExecutable(token: string, opts: ResolveOptions): string |
   // POSIX behaviour testable at all, and it removes a whole class of "works on
   // my machine" from a path-joining function.
   const pathApi = isWindows ? path.win32 : path.posix
+
+  const key = cacheKey(token, opts, platform)
+  if (!opts.noCache) {
+    const hit = cache.get(key)
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.result
+    if (hit) cache.delete(key)
+  }
+
+  const remember = (result: string | null): string | null => {
+    if (opts.noCache) return result
+    if (cache.size >= CACHE_MAX) {
+      const oldest = cache.keys().next()
+      if (!oldest.done) cache.delete(oldest.value)
+    }
+    cache.set(key, { at: Date.now(), result })
+    return result
+  }
 
   // Extensions to try after the literal name. Only Windows resolves by
   // extension; on POSIX the name is the name.
@@ -128,35 +181,32 @@ export function resolveExecutable(token: string, opts: ResolveOptions): string |
         .filter((e) => e.startsWith('.') && e.length > 1)
     : []
 
-  const tryCandidates = (base: string): string | null => {
-    if (exists(base)) return base
+  const tryCandidates = async (base: string): Promise<string | null> => {
+    if (await exists(base)) return base
     for (const ext of exts) {
       // Windows tries `name.EXT`; a token that already ends in that extension
       // was covered by the literal attempt above.
       const withExt = base + ext
-      if (exists(withExt)) return withExt
+      if (await exists(withExt)) return withExt
     }
     return null
   }
 
   if (looksLikePath(token, isWindows)) {
-    // Relative to the working directory, exactly as the shell would.
+    // The user wrote a path, so resolve it against the working directory --
+    // exactly as the shell would, `.\foo` included.
     let base: string
     try {
       base = pathApi.resolve(opts.cwd || '.', token)
     } catch {
-      return null
+      return remember(null)
     }
-    return tryCandidates(base)
+    return remember(await tryCandidates(base))
   }
 
-  // A bare name. Windows searches the current directory FIRST, then PATH;
-  // POSIX shells do not search the current directory at all.
-  if (isWindows) {
-    const local = tryCandidates(pathApi.resolve(opts.cwd || '.', token))
-    if (local) return local
-  }
-
+  // A BARE NAME: PATH only, never the current directory. See the header -- the
+  // cwd-first rule is cmd.exe's, and importing it here would give the capture
+  // path a reach that typing the same line does not have.
   const raw = opts.pathEnv ?? ''
   const sep = isWindows ? ';' : ':'
   for (const entry of raw.split(sep)) {
@@ -170,19 +220,19 @@ export function resolveExecutable(token: string, opts: ResolveOptions): string |
     } catch {
       continue
     }
-    const hit = tryCandidates(base)
-    if (hit) return hit
+    const hit = await tryCandidates(base)
+    if (hit) return remember(hit)
   }
 
-  return null
+  return remember(null)
 }
 
 /** Convenience: parse a command line and resolve its program in one step. */
-export function resolveCommandExecutable(
+export async function resolveCommandExecutable(
   commandLine: string,
   opts: ResolveOptions,
-): { token: string | null; exePath: string | null } {
+): Promise<{ token: string | null; exePath: string | null }> {
   const parsed = firstToken(commandLine)
   if (!parsed) return { token: null, exePath: null }
-  return { token: parsed.token, exePath: resolveExecutable(parsed.token, opts) }
+  return { token: parsed.token, exePath: await resolveExecutable(parsed.token, opts) }
 }

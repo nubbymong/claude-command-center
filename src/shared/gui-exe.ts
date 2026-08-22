@@ -114,8 +114,16 @@ export interface CapturedRunStart {
  */
 export const CAPTURED_RUN_MAX_BYTES = 512 * 1024
 
-/** A captured run is killed after this long. It is a foreground action the user
- *  is watching; nothing here is meant to be a daemon. */
+/**
+ * After this long we STOP CAPTURING a run. We do not stop the program.
+ *
+ * Everything reachable through this path is a GUI application by construction --
+ * the gate refuses anything else -- and a GUI application still alive after ten
+ * minutes is being USED, not hung. Killing it to reclaim a capture slot would
+ * take the user's unsaved work with it, so the timer only releases the slot and
+ * reports that the program is still running. (Review MAJOR-2; the first version
+ * force-killed here.)
+ */
 export const CAPTURED_RUN_TIMEOUT_MS = 10 * 60 * 1000
 
 /** How many captured runs may be in flight at once, across all sessions. */
@@ -124,3 +132,39 @@ export const CAPTURED_RUN_MAX_CONCURRENT = 4
 /** Longest command line we will parse a first token out of. Matches the
  *  `terminalOptions.command` bound at the pty IPC boundary. */
 export const EXE_PROBE_MAX_COMMAND_LEN = 4096
+
+/**
+ * Shell operators that a captured run will NOT honour.
+ *
+ * The console-less path spawns with an argv array and no shell, which is what
+ * makes it safe -- and also means `tool --x > log.txt` passes `>` and `log.txt`
+ * as two literal ARGUMENTS rather than redirecting. That is not an injection
+ * risk; it is a MEANING change, and the user has to be told before they choose
+ * it (review MAJOR-5).
+ *
+ * Order matters: the two-character operators come first so `&&` is reported as
+ * `&&` rather than as two `&`s.
+ */
+const SHELL_OPERATORS = ['&&', '||', '>>', '2>', '|', '>', '<', ';', '&', '$env:', '$(', '`'] as const
+
+/**
+ * Which shell operators appear in a command line -- in the order above, without
+ * duplicates. Empty when the line means the same thing either way.
+ *
+ * Deliberately a plain scan, not a parser: an operator inside quotes is still
+ * reported. Over-warning costs the user one sentence; under-warning costs them a
+ * command that silently did something else.
+ */
+export function shellOperatorsIn(command: string): string[] {
+  if (typeof command !== 'string' || !command) return []
+  const found: string[] = []
+  let rest = command
+  for (const op of SHELL_OPERATORS) {
+    if (rest.includes(op)) {
+      found.push(op)
+      // Blank out what matched so `&&` does not also report `&`.
+      rest = rest.split(op).join(' ')
+    }
+  }
+  return found
+}

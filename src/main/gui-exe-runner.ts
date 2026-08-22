@@ -8,11 +8,29 @@
  * it, and the pipes we handed the child survive. Measured: 5621 bytes captured,
  * nothing painted over anyone's TUI.
  *
+ * NO CREATION FLAGS. Fix A as measured is *a console-less parent plus pipes*,
+ * and nothing else. In particular this spawn must NOT set Node's `windowsHide`,
+ * which is `CREATE_NO_WINDOW` -- row 3 of the issue's matrix, measured at **0
+ * bytes captured**. The reason row 3 loses the log is that CREATE_NO_WINDOW
+ * gives the child its OWN (invisible) console, so `AttachConsole` is never
+ * reached: `freopen("CONOUT$")` succeeds onto that private console and the pipes
+ * stay empty. A console-less parent does not change what the flag allocates for
+ * the child. (Caught in review: the first version of this file set
+ * `windowsHide: true` as "belt and braces" and would have captured nothing --
+ * the panel would have said "That program printed nothing" forever.)
+ *
+ * Nor is a stray console window a risk worth guarding against: a GUI-subsystem
+ * image is never given an auto-allocated console in the first place -- that is
+ * what `Subsystem = 2` MEANS, and the gate below refuses anything else.
+ *
  * SECURITY POSTURE — this is a renderer-reachable spawn, so it is deliberately
  * the narrowest one in the app:
  *
  *  - `shell: false`, always, and argv is an ARRAY. Nothing is ever concatenated
- *    into a command string, so there is no shell to inject into.
+ *    into a command string, so there is no shell to inject into. Note the
+ *    consequence, which the dialog now states plainly: `>`, `|`, `&&`, `;` and
+ *    `$env:` are passed through as LITERAL arguments, so a line using them means
+ *    something different here than it would in the shell.
  *  - The file spawned is the ABSOLUTE PATH we resolved and then read. The OS is
  *    never asked to search PATH again, so the file that was sniffed is the file
  *    that runs (modulo the TOCTOU note below).
@@ -23,10 +41,12 @@
  *    it here would only widen the surface for no benefit.
  *  - `detached: false`. DETACHED_PROCESS is what leaves a child with no console
  *    of its own, which is precisely the state in which it goes hunting for its
- *    parent's — it is never a fix here (issue #379, matrix row 2).
- *  - Output is capped, the run is capped, and concurrency is capped.
+ *    parent's -- it is never a fix here (issue #379, matrix row 2).
+ *  - Output is capped, and concurrency is capped with the slot RESERVED before
+ *    the first await (see `start`) -- checking `active.size` and then awaiting
+ *    let every call in a single tick past the cap.
  *
- * It grants the renderer no NEW capability: a command button already types an
+ * It grants the renderer no NEW capability: a command button can already type an
  * arbitrary line into a live shell, which is strictly more than "start one
  * GUI-subsystem exe with an argv array and no shell". What it adds is a parent
  * without a console.
@@ -34,7 +54,7 @@
  * TOCTOU: between the sniff and the spawn the file could be swapped. That is not
  * a boundary this can close (an attacker who can rewrite an executable on the
  * user's PATH has already won), and the sniff is a UX hint, not an
- * authorisation — the user picked this command themselves.
+ * authorisation -- the user picked this command themselves.
  */
 import { spawn as nodeSpawn, execFile, type ChildProcess } from 'child_process'
 import { StringDecoder } from 'string_decoder'
@@ -58,12 +78,6 @@ const MAX_ARGS = 128
 /** Longest single argument. */
 const MAX_ARG_LEN = 4096
 
-/**
- * Both callbacks carry the `runId` in the payload rather than leaving the caller
- * to remember the one `start()` returned. The first chunk of a fast process can
- * land before that promise resolves, so a caller that closed over the returned
- * id would drop it.
- */
 export interface CapturedRunEvents {
   onChunk: (chunk: CapturedRunChunk) => void
   onExit: (exit: CapturedRunExit) => void
@@ -72,7 +86,7 @@ export interface CapturedRunEvents {
 export interface CapturedRunnerDeps {
   spawn?: typeof nodeSpawn
   sniff?: (p: string) => Promise<ExeSubsystem>
-  resolve?: (token: string, cwd: string) => string | null
+  resolve?: (token: string, cwd: string) => Promise<string | null>
   resolveWorkingDir?: (cwd: string | undefined) => string
   now?: () => number
   newId?: () => string
@@ -86,16 +100,22 @@ export interface StartOptions {
   cwd?: string
 }
 
-interface ActiveRun {
+interface RunState {
   child: ChildProcess
-  timer: ReturnType<typeof setTimeout>
+  timer: ReturnType<typeof setTimeout> | null
+  /** Stop reading, without ending the process. */
+  detach: () => void
+  /** Settle the run exactly once. */
+  finish: (exit: Omit<CapturedRunExit, 'runId'>) => void
+  truncated: () => boolean
+  startedAt: number
 }
 
 /**
  * Split the argument part of a typed line into argv.
  *
  * `buildCommandLine` (shared/command-secret) joins the user's arguments with a
- * single space and quotes NOTHING — "an argument containing a space arrives as
+ * single space and quotes NOTHING -- "an argument containing a space arrives as
  * two", as its comment says, and the dialog tells the user so. This splitter
  * therefore has exactly one job: reproduce what the shell would have handed the
  * program, for the two spellings a user actually writes. Quotes group; a
@@ -135,8 +155,12 @@ function defaultKillTree(pid: number): void {
 
 export interface CapturedRunner {
   start: (opts: StartOptions, events: CapturedRunEvents) => Promise<CapturedRunStart>
+  /** Kill the program. Only ever from an explicit user action that says so. */
   cancel: (runId: string) => boolean
-  cancelAll: () => void
+  /** Stop capturing and LEAVE THE PROGRAM RUNNING. */
+  release: (runId: string) => boolean
+  /** Release every run (app quit): never kill the user's applications. */
+  releaseAll: () => void
   activeCount: () => number
 }
 
@@ -153,129 +177,187 @@ export function createCapturedRunner(deps: CapturedRunnerDeps = {}): CapturedRun
     ((token: string, cwd: string) =>
       resolveExecutable(token, { cwd, pathEnv: process.env.PATH, pathExt: process.env.PATHEXT, platform }))
 
-  const active = new Map<string, ActiveRun>()
+  const active = new Map<string, RunState>()
+  /** Slots taken by a start() that has not finished its awaits yet. Without
+   *  this, every call in one tick reads `active.size === 0` and the cap is
+   *  advisory only (review MAJOR-1). */
+  const reserved = new Set<string>()
+  const inFlight = (): number => active.size + reserved.size
 
   const cancel = (runId: string): boolean => {
     const run = active.get(runId)
     if (!run) return false
+    if (run.timer) clearTimeout(run.timer)
+    run.detach()
+    active.delete(runId)
     try { run.child.kill() } catch { /* already gone */ }
     if (run.child.pid) killTree(run.child.pid)
+    run.finish({ code: null, signal: 'SIGKILL', truncated: run.truncated(), durationMs: now() - run.startedAt, error: 'Stopped.' })
+    return true
+  }
+
+  /**
+   * Stop capturing without ending the program.
+   *
+   * The gate guarantees every one of these IS a GUI application -- something
+   * whose defining behaviour is to open a window and stay open. Killing it
+   * because a capture timer expired, or because the log panel was closed, would
+   * take the user's unsaved work with it (review MAJOR-2). So: drop the
+   * listeners, drain the pipes so nothing backs up behind us, unref the child so
+   * it cannot hold the app open, and let it live.
+   */
+  const release = (runId: string): boolean => {
+    const run = active.get(runId)
+    if (!run) return false
+    if (run.timer) clearTimeout(run.timer)
+    run.detach()
+    active.delete(runId)
+    run.finish({
+      code: null,
+      signal: null,
+      truncated: run.truncated(),
+      durationMs: now() - run.startedAt,
+      error: 'Capture stopped. The program is still running.',
+    })
     return true
   }
 
   const start = async (opts: StartOptions, events: CapturedRunEvents): Promise<CapturedRunStart> => {
-    if (active.size >= CAPTURED_RUN_MAX_CONCURRENT) {
+    if (inFlight() >= CAPTURED_RUN_MAX_CONCURRENT) {
       return { runId: null, exePath: null, error: `Too many captured runs already going (${CAPTURED_RUN_MAX_CONCURRENT}).` }
     }
 
-    const parsed = firstToken(opts.command)
-    if (!parsed) return { runId: null, exePath: null, error: 'That command line has no program in it.' }
-
-    const cwd = resolveWorkingDir(opts.cwd)
-    const exePath = resolve(parsed.token, cwd)
-    if (!exePath) {
-      return { runId: null, exePath: null, error: `Could not find ${parsed.token} on PATH.` }
-    }
-
-    // THE GATE. Only a GUI-subsystem PE gets a console-less parent; everything
-    // else keeps its existing route. See the header for why this is narrow on
-    // purpose.
-    const subsystem = await sniff(exePath)
-    if (subsystem !== 'gui') {
-      return {
-        runId: null,
-        exePath,
-        error: `${exePath} is not a GUI-subsystem program (${subsystem}); it does not need the console-less path.`,
-      }
-    }
-
-    const args = splitArgs(parsed.rest)
-    if (args.length > MAX_ARGS) {
-      return { runId: null, exePath, error: `Too many arguments (${args.length} > ${MAX_ARGS}).` }
-    }
-    if (args.some((a) => a.length > MAX_ARG_LEN)) {
-      return { runId: null, exePath, error: 'One of the arguments is too long.' }
-    }
-
+    // Take the slot NOW, synchronously, before anything awaits.
     const runId = newId()
-    const startedAt = now()
-
-    let child: ChildProcess
+    reserved.add(runId)
+    let keptSlot = false
     try {
-      child = spawn(exePath, args, {
-        cwd,
-        // The whole fix: main has no console, and these pipes are not replaced
-        // because the freopen("CONOUT$") behind AttachConsole has nothing to
-        // reopen onto. stdin is ignored — this is a non-interactive capture, and
-        // a tool that blocked on input would otherwise hang forever unseen.
-        stdio: ['ignore', 'pipe', 'pipe'],
-        // Belt and braces for the GUI half: the tool may also want to show a
-        // window. windowsHide only suppresses a CONSOLE window, so a real GUI
-        // still appears — which is what the user asked for by running it.
-        windowsHide: true,
-        // NEVER true. See the header.
-        detached: false,
-        // NEVER true. argv is an array precisely so there is no shell.
-        shell: false,
+      const parsed = firstToken(opts.command)
+      if (!parsed) return { runId: null, exePath: null, error: 'That command line has no program in it.' }
+
+      const cwd = resolveWorkingDir(opts.cwd)
+      const exePath = await resolve(parsed.token, cwd)
+      if (!exePath) {
+        return { runId: null, exePath: null, error: `Could not find ${parsed.token} on PATH.` }
+      }
+
+      // THE GATE. Only a GUI-subsystem PE gets a console-less parent; everything
+      // else keeps its existing route. See the header for why this is narrow on
+      // purpose.
+      const subsystem = await sniff(exePath)
+      if (subsystem !== 'gui') {
+        return {
+          runId: null,
+          exePath,
+          error: `${exePath} is not a GUI-subsystem program (${subsystem}); it does not need the console-less path.`,
+        }
+      }
+
+      const args = splitArgs(parsed.rest)
+      if (args.length > MAX_ARGS) {
+        return { runId: null, exePath, error: `Too many arguments (${args.length} > ${MAX_ARGS}).` }
+      }
+      if (args.some((a) => a.length > MAX_ARG_LEN)) {
+        return { runId: null, exePath, error: 'One of the arguments is too long.' }
+      }
+
+      const startedAt = now()
+      let child: ChildProcess
+      try {
+        child = spawn(exePath, args, {
+          cwd,
+          // The whole fix: main has no console, and these pipes are not replaced
+          // because the freopen("CONOUT$") behind AttachConsole has nothing to
+          // reopen onto. stdin is ignored -- this is a non-interactive capture,
+          // and a tool that blocked on input would otherwise hang unseen.
+          stdio: ['ignore', 'pipe', 'pipe'],
+          // NEVER true. See the header.
+          detached: false,
+          // NEVER true. argv is an array precisely so there is no shell.
+          shell: false,
+          // NOTE: `windowsHide` is deliberately ABSENT and must stay absent. It
+          // is CREATE_NO_WINDOW -- the matrix row measured at 0 bytes captured.
+        })
+      } catch (err) {
+        return { runId: null, exePath, error: err instanceof Error ? err.message : 'Could not start that program.' }
+      }
+
+      let truncated = false
+      let settled = false
+      const budget = { stdout: CAPTURED_RUN_MAX_BYTES, stderr: CAPTURED_RUN_MAX_BYTES }
+      const listeners: Array<[NodeJS.ReadableStream, (buf: Buffer) => void]> = []
+
+      const pipe = (stream: 'stdout' | 'stderr', src: NodeJS.ReadableStream | null): void => {
+        if (!src) return
+        // A decoder per stream so a multi-byte character split across two chunks
+        // is not turned into two replacement characters.
+        const decoder = new StringDecoder('utf8')
+        const onData = (buf: Buffer): void => {
+          if (budget[stream] <= 0) { truncated = true; return }
+          const slice = buf.length > budget[stream] ? buf.subarray(0, budget[stream]) : buf
+          if (slice.length < buf.length) truncated = true
+          budget[stream] -= slice.length
+          const text = decoder.write(slice)
+          if (text) events.onChunk({ runId, stream, chunk: text })
+        }
+        src.on('data', onData)
+        src.on('error', () => { /* the exit/error handler reports it */ })
+        listeners.push([src, onData])
+      }
+
+      pipe('stdout', child.stdout)
+      pipe('stderr', child.stderr)
+
+      const detach = (): void => {
+        for (const [src, onData] of listeners) {
+          src.removeListener('data', onData)
+          // Resume with no listener so the child's writes are discarded rather
+          // than filling a buffer nobody drains -- destroying the pipe instead
+          // would hand the child an EPIPE it never asked for.
+          try { src.resume() } catch { /* already closed */ }
+        }
+        listeners.length = 0
+        try { child.unref() } catch { /* already gone */ }
+      }
+
+      const finish = (exit: Omit<CapturedRunExit, 'runId'>): void => {
+        if (settled) return
+        settled = true
+        const run = active.get(runId)
+        if (run?.timer) clearTimeout(run.timer)
+        active.delete(runId)
+        events.onExit({ runId, ...exit })
+      }
+
+      // On timeout: STOP CAPTURING, do not kill (review MAJOR-2). Ten minutes of
+      // silence from a GUI application means the user is using it, not that it
+      // has hung.
+      const timer = setTimeout(() => { release(runId) }, CAPTURED_RUN_TIMEOUT_MS)
+      if (typeof timer.unref === 'function') timer.unref()
+
+      active.set(runId, { child, timer, detach, finish, truncated: () => truncated, startedAt })
+      reserved.delete(runId)
+      keptSlot = true
+
+      child.on('error', (err: Error) => {
+        finish({ code: null, signal: null, truncated, durationMs: now() - startedAt, error: err.message })
       })
-    } catch (err) {
-      return { runId: null, exePath, error: err instanceof Error ? err.message : 'Could not start that program.' }
-    }
-
-    let truncated = false
-    let settled = false
-    const budget = { stdout: CAPTURED_RUN_MAX_BYTES, stderr: CAPTURED_RUN_MAX_BYTES }
-
-    const pipe = (stream: 'stdout' | 'stderr', src: NodeJS.ReadableStream | null): void => {
-      if (!src) return
-      // A decoder per stream so a multi-byte character split across two chunks
-      // is not turned into two replacement characters.
-      const decoder = new StringDecoder('utf8')
-      src.on('data', (buf: Buffer) => {
-        if (budget[stream] <= 0) { truncated = true; return }
-        const slice = buf.length > budget[stream] ? buf.subarray(0, budget[stream]) : buf
-        if (slice.length < buf.length) truncated = true
-        budget[stream] -= slice.length
-        const text = decoder.write(slice)
-        if (text) events.onChunk({ runId, stream, chunk: text })
+      child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+        finish({ code, signal: signal ?? null, truncated, durationMs: now() - startedAt })
       })
-      src.on('error', () => { /* the exit/error handler reports it */ })
+
+      return { runId, exePath }
+    } finally {
+      // Every refusal path above returns without registering; give the slot back.
+      if (!keptSlot) reserved.delete(runId)
     }
-
-    pipe('stdout', child.stdout)
-    pipe('stderr', child.stderr)
-
-    const finish = (exit: Omit<CapturedRunExit, 'runId'>): void => {
-      if (settled) return
-      settled = true
-      const run = active.get(runId)
-      if (run) { clearTimeout(run.timer); active.delete(runId) }
-      events.onExit({ runId, ...exit })
-    }
-
-    const timer = setTimeout(() => {
-      cancel(runId)
-      finish({ code: null, signal: 'SIGKILL', truncated, durationMs: now() - startedAt, error: 'Timed out.' })
-    }, CAPTURED_RUN_TIMEOUT_MS)
-    // The timer must not hold the app open at quit.
-    if (typeof timer.unref === 'function') timer.unref()
-
-    active.set(runId, { child, timer })
-
-    child.on('error', (err: Error) => {
-      finish({ code: null, signal: null, truncated, durationMs: now() - startedAt, error: err.message })
-    })
-    child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
-      finish({ code, signal: signal ?? null, truncated, durationMs: now() - startedAt })
-    })
-
-    return { runId, exePath }
   }
 
   return {
     start,
     cancel,
-    cancelAll: () => { for (const id of [...active.keys()]) cancel(id) },
+    release,
+    releaseAll: () => { for (const id of [...active.keys()]) release(id) },
     activeCount: () => active.size,
   }
 }

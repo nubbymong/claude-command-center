@@ -672,6 +672,9 @@ export interface ElectronAPI {
   exe: {
     probe: (req: { command: string; cwd?: string }) => Promise<import('../../shared/gui-exe').ExeProbeResult>
     runCaptured: (req: { command: string; cwd?: string }) => Promise<import('../../shared/gui-exe').CapturedRunStart>
+    /** Stop capturing; the program keeps running. */
+    releaseRun: (runId: string) => Promise<boolean>
+    /** Force-stop the program. */
     cancelRun: (runId: string) => Promise<boolean>
     onRunData: (callback: (chunk: import('../../shared/gui-exe').CapturedRunChunk) => void) => () => void
     onRunExit: (callback: (exit: import('../../shared/gui-exe').CapturedRunExit) => void) => () => void

@@ -9,7 +9,7 @@ import type { ExeSubsystem } from '../../src/shared/gui-exe'
 const deps = (over: { subsystem?: ExeSubsystem; resolved?: string | null; platform?: NodeJS.Platform } = {}) => ({
   platform: over.platform ?? ('win32' as NodeJS.Platform),
   sniff: vi.fn(async () => over.subsystem ?? ('gui' as ExeSubsystem)),
-  resolve: vi.fn(() => (over.resolved === undefined ? 'C:\\tools\\bambu-studio.exe' : over.resolved)),
+  resolve: vi.fn(async () => (over.resolved === undefined ? 'C:\\tools\\bambu-studio.exe' : over.resolved)),
   resolveWorkingDir: (cwd?: string) => cwd ?? 'C:\\work',
 })
 

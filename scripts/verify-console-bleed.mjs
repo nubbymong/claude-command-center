@@ -41,7 +41,7 @@ import { fileURLToPath } from 'url'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { readPeSubsystem } from './lib/pe-subsystem-lite.mjs'
+import { readPeSubsystemOfFile } from './lib/pe-subsystem-lite.mjs'
 
 const SELF = fileURLToPath(import.meta.url)
 
@@ -52,9 +52,13 @@ function captureRun(exe, args) {
     let text = ''
     const child = spawn(exe, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
       detached: false,
       shell: false,
+      // NO `windowsHide`. It is CREATE_NO_WINDOW -- matrix row 3, measured at 0
+      // bytes captured -- so setting it here would make this script "prove" the
+      // fix does not work however correct the runner is. It must spawn exactly
+      // the way src/main/gui-exe-runner.ts does. (Review BLOCKER-1: both had it,
+      // which is also why the script could not have caught the runner's copy.)
     })
     const take = (buf) => { bytes += buf.length; if (text.length < 400) text += buf.toString('utf8') }
     child.stdout?.on('data', take)
@@ -90,12 +94,9 @@ if (!fs.existsSync(exe)) {
   process.exit(2)
 }
 
-// 0. The sniffer, against a real binary.
-const head = Buffer.alloc(4096)
-const fd = fs.openSync(exe, 'r')
-const read = fs.readSync(fd, head, 0, head.length, 0)
-fs.closeSync(fd)
-const subsystem = readPeSubsystem(head.subarray(0, read))
+// 0. The sniffer, against a real binary. Uses the file reader with the
+// second-window read, so a long DOS stub does not abort the verification.
+const subsystem = readPeSubsystemOfFile(exe)
 const name = subsystem === 2 ? 'GUI (2)' : subsystem === 3 ? 'console (3)' : `${subsystem ?? 'not a PE'}`
 console.log(`\nPE subsystem: ${name}`)
 if (subsystem !== 2) {

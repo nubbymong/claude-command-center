@@ -8,7 +8,6 @@ import {
   classifySubsystem,
   classifyPeBuffer,
   sniffExecutableSubsystem,
-  sniffExecutableSubsystemSync,
   clearSubsystemCache,
   PE_SUBSYSTEM_GUI,
   PE_SUBSYSTEM_CONSOLE,
@@ -225,11 +224,21 @@ describe('sniffExecutableSubsystem (real files, crafted contents)', () => {
     await expect(sniffExecutableSubsystem(p)).resolves.toBe('gui')
   })
 
-  it('the sync variant agrees with the async one', () => {
-    const gui = write('g.exe', buildPe({ subsystem: PE_SUBSYSTEM_GUI }))
-    const cli = write('c.exe', buildPe({ subsystem: PE_SUBSYSTEM_CONSOLE }))
-    expect(sniffExecutableSubsystemSync(gui)).toBe('gui')
-    expect(sniffExecutableSubsystemSync(cli)).toBe('console')
-    expect(sniffExecutableSubsystemSync(path.join(dir, 'gone.exe'))).toBe('not-pe')
+  it('there is no synchronous variant to poison the cache', async () => {
+    // A sync sniffer existed briefly and was removed in review (MINOR-1): it had
+    // no callers, it skipped the far-header second read the async path does, and
+    // it shared this module's cache -- so one sync call on a long-DOS-stub
+    // binary would cache 'not-pe' and a later async sniff would return that from
+    // cache. A GUI exe read as harmless is precisely the bug this module exists
+    // to prevent.
+    const mod = await import('../../src/main/pe-subsystem')
+    expect('sniffExecutableSubsystemSync' in mod).toBe(false)
+  })
+
+  it('a far-header binary stays GUI on the cached second read', async () => {
+    // The concrete shape of that trap: same file, read twice.
+    const p = write('far2.exe', buildPe({ peOffset: 0x2000, subsystem: PE_SUBSYSTEM_GUI }))
+    await expect(sniffExecutableSubsystem(p)).resolves.toBe('gui')
+    await expect(sniffExecutableSubsystem(p)).resolves.toBe('gui')
   })
 })

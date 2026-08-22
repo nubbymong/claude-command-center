@@ -14,7 +14,7 @@ import { type ExeProbeResult, type ExeSubsystem } from '../shared/gui-exe'
 export interface ProbeDeps {
   platform?: NodeJS.Platform
   sniff?: (p: string) => Promise<ExeSubsystem>
-  resolve?: (token: string, cwd: string) => string | null
+  resolve?: (token: string, cwd: string) => Promise<string | null>
   resolveWorkingDir?: (cwd: string | undefined) => string
 }
 
@@ -44,7 +44,7 @@ export async function probeCommandExe(
     ((token: string, dir: string) =>
       resolveExecutable(token, { cwd: dir, pathEnv: process.env.PATH, pathExt: process.env.PATHEXT, platform }))
 
-  const exePath = resolve(parsed.token, workingDir)
+  const exePath = await resolve(parsed.token, workingDir)
   if (!exePath) return { status: 'unresolved', token: parsed.token, exePath: null }
 
   const sniff = deps.sniff ?? sniffExecutableSubsystem

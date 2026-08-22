@@ -26,7 +26,6 @@
  * (there are no GUI-subsystem binaries to rely on in CI, and shipping one would
  * be worse).
  */
-import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 import type { ExeSubsystem } from '../shared/gui-exe'
 
@@ -206,28 +205,12 @@ export async function sniffExecutableSubsystem(filePath: string): Promise<ExeSub
   }
 }
 
-/** Synchronous variant for the few call sites already inside sync code. Same
- *  contract, same cache. */
-export function sniffExecutableSubsystemSync(filePath: string): ExeSubsystem {
-  let fd: number | null = null
-  try {
-    const stat = fs.statSync(filePath)
-    if (!stat.isFile()) return 'not-pe'
-
-    const cached = cacheGet(filePath, stat.mtimeMs, stat.size)
-    if (cached !== null) return cached
-
-    fd = fs.openSync(filePath, 'r')
-    const head = Buffer.alloc(Math.min(HEADER_WINDOW, Math.max(stat.size, 0)))
-    if (head.length === 0) return 'not-pe'
-    const bytesRead = fs.readSync(fd, head, 0, head.length, 0)
-    const subsystem = classifyPeBuffer(head.subarray(0, bytesRead))
-
-    cacheSet(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, subsystem })
-    return subsystem
-  } catch {
-    return 'not-pe'
-  } finally {
-    if (fd !== null) { try { fs.closeSync(fd) } catch { /* already gone */ } }
-  }
-}
+// There is deliberately NO synchronous variant. One existed briefly and was
+// removed in review (MINOR-1): it had no callers, it omitted the second-window
+// read above, and it wrote the SAME module-level cache -- so a single call on a
+// binary with a long DOS stub would cache 'not-pe' and a later async sniff would
+// return that from cache. A GUI-subsystem exe classified as harmless is exactly
+// the bug this file exists to prevent. If a sync call site ever appears, give it
+// the second read and a test that compares it against the async path on a
+// FAR-header fixture -- the guard test that shipped with it used only near
+// headers, where the two cannot differ.

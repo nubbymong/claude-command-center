@@ -105,11 +105,29 @@ describe('main-process spawn options (#379 fix A audit)', () => {
 
   it('the captured runner never acquires a shell or a detached child', () => {
     const src = fs.readFileSync(path.join(MAIN_DIR, 'gui-exe-runner.ts'), 'utf8')
-    // The spawn options object, not the prose above it.
-    const spawnCall = src.slice(src.indexOf('child = spawn('))
-    expect(spawnCall).toContain('shell: false')
-    expect(spawnCall).toContain('detached: false')
-    expect(spawnCall).toContain("stdio: ['ignore', 'pipe', 'pipe']")
-    expect(spawnCall).not.toContain('shell: true')
+    // Just the options object of THAT call. Slicing to end-of-file would let a
+    // comment anywhere below satisfy `toContain` (review MINOR-6).
+    const at = src.indexOf('child = spawn(')
+    expect(at).toBeGreaterThan(-1)
+    const opts = enclosingObject(src, src.indexOf('stdio:', at))
+
+    expect(opts).toContain('shell: false')
+    expect(opts).toContain('detached: false')
+    expect(opts).toContain("stdio: ['ignore', 'pipe', 'pipe']")
+    expect(opts).not.toContain('shell: true')
+  })
+
+  it('the captured runner never sets windowsHide (#379 BLOCKER-1)', () => {
+    // CREATE_NO_WINDOW is matrix row 3: the child gets its OWN invisible
+    // console, freopen("CONOUT$") lands there, and the pipes capture 0 bytes.
+    // The runner's unit test asserts the absence at the call; this asserts it in
+    // the source, because "belt and braces" in a review comment is how it got
+    // there the first time.
+    const src = fs.readFileSync(path.join(MAIN_DIR, 'gui-exe-runner.ts'), 'utf8')
+    const at = src.indexOf('child = spawn(')
+    const opts = enclosingObject(src, src.indexOf('stdio:', at))
+    // Allowed in a comment (the file explains at length why it is absent);
+    // never as a property.
+    expect(opts).not.toMatch(/^\s*windowsHide\s*:/m)
   })
 })

@@ -56,15 +56,19 @@ vi.mock('../../../src/renderer/components/terminal/repaintRegistry', () => ({
 const ptyWrite = vi.fn()
 const probe = vi.fn()
 const runCaptured = vi.fn()
+const releaseRun = vi.fn(async () => true)
+const cancelRun = vi.fn(async () => true)
+const exeApi = { probe, runCaptured, releaseRun, cancelRun, onRunData: () => () => {}, onRunExit: () => () => {} }
 ;(globalThis as any).window = (globalThis as any).window ?? {}
 ;(globalThis as any).window.electronAPI = {
   pty: { write: ptyWrite },
   credentials: { save: vi.fn(), delete: vi.fn() },
-  exe: { probe, runCaptured, cancelRun: vi.fn(), onRunData: () => () => {}, onRunExit: () => () => {} },
+  exe: exeApi,
 }
 ;(globalThis as any).window.electronPlatform = 'win32'
 
 const { default: CommandBar } = await import('../../../src/renderer/components/CommandBar')
+const { __clearProbeCache } = await import('../../../src/renderer/lib/gui-exe-probe-cache')
 
 let container: HTMLDivElement
 let root: Root
@@ -95,7 +99,12 @@ const settle = async () => { await act(async () => { await Promise.resolve(); aw
 
 beforeEach(() => {
   ptyWrite.mockClear(); probe.mockReset(); runCaptured.mockReset()
+  releaseRun.mockClear(); cancelRun.mockClear()
   updateCommand.mockClear(); scheduleBleedRepaints.mockClear()
+  __clearProbeCache()
+  // The cache would otherwise carry a previous test's answer into this one and
+  // make the decision synchronously — a false green for the async cases.
+  ;(globalThis as any).window.electronAPI.exe = exeApi
 })
 afterEach(() => { act(() => { root.unmount() }); container.remove() })
 
@@ -214,14 +223,107 @@ describe('a shell button whose program is a GUI-subsystem exe', () => {
     expect(container.querySelector('[data-ux-id="gui-exe-dialog"]')).toBeNull()
   })
 
-  it('a refused captured run falls back to the pty rather than doing nothing', async () => {
+  it('a refused captured run falls back to the pty AND SAYS SO', async () => {
     probe.mockResolvedValue(gui)
     // The file changed between the probe and the spawn, or it was never a PE.
     runCaptured.mockResolvedValue({ runId: null, exePath: gui.exePath, error: 'not a GUI-subsystem program' })
     mount([shellCmd({ guiExePolicy: 'capture' })])
     click('Slice')
-    await act(async () => { for (let i = 0; i < 4; i++) await Promise.resolve() })
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve() })
+
     expect(ptyWrite).toHaveBeenCalledTimes(1)
+    // The user explicitly asked NOT to have their pane painted over. Falling
+    // back silently (a console.warn) was the first version's MINOR-3.
+    const panel = container.querySelector('[data-ux-id="captured-run-refused"]')
+    expect(panel).toBeTruthy()
+    expect(panel?.textContent).toContain('not a GUI-subsystem program')
+  })
+
+  it('warns that a captured run has no shell, naming the operators in the line', async () => {
+    probe.mockResolvedValue(gui)
+    mount([shellCmd({ defaultArgs: ['--debug', '2', '>', 'log.txt'] })])
+    click('Slice')
+    await settle()
+    const note = container.querySelector('[data-ux-id="gui-exe-noshell"]')
+    expect(note?.textContent).toContain('without a shell')
+    expect(note?.textContent).toContain('>')
+    expect(note?.textContent).toMatch(/literal argument/)
+  })
+
+  it('closing the log panel RELEASES the capture and does not kill the program', async () => {
+    probe.mockResolvedValue(gui)
+    runCaptured.mockResolvedValue({ runId: 'run-1', exePath: gui.exePath })
+    mount([shellCmd({ guiExePolicy: 'capture' })])
+    click('Slice')
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve() })
+
+    const close = container.querySelector('[data-ux-id="captured-run-close"]') as HTMLButtonElement
+    act(() => { close.click() })
+
+    expect(releaseRun).toHaveBeenCalledWith('run-1')
+    expect(cancelRun).not.toHaveBeenCalled()
+  })
+})
+
+describe('press ordering (#379 MAJOR-6)', () => {
+  it('two rapid presses reach the pty in press order even when the first must wait', async () => {
+    // sendCommand became async for shell buttons; the write used to be strictly
+    // ordered and has to stay that way. The first press waits on a probe, so the
+    // second must queue behind it rather than overtaking.
+    let releaseFirst: (v: unknown) => void = () => {}
+    const firstProbe = new Promise((r) => { releaseFirst = r })
+    probe
+      .mockImplementationOnce(async () => { await firstProbe; return { status: 'console', token: 'a', exePath: 'C:\\a.exe' } })
+      .mockImplementation(async () => ({ status: 'console', token: 'b', exePath: 'C:\\b.exe' }))
+
+    mount([
+      shellCmd({ id: 'aaa111', label: 'First', prompt: 'first-tool', defaultArgs: [] }),
+      shellCmd({ id: 'bbb222', label: 'Second', prompt: 'second-tool', defaultArgs: [] }),
+    ])
+
+    click('First')
+    click('Second')
+    expect(ptyWrite).not.toHaveBeenCalled() // both are waiting
+
+    await act(async () => { releaseFirst(null); for (let i = 0; i < 8; i++) await Promise.resolve() })
+
+    expect(ptyWrite).toHaveBeenCalledTimes(2)
+    expect(ptyWrite.mock.calls[0][1]).toBe('first-tool\r')
+    expect(ptyWrite.mock.calls[1][1]).toBe('second-tool\r')
+  })
+
+  it('a repeat press decides from cache, synchronously, keeping the old ordering guarantee', async () => {
+    probe.mockResolvedValue({ status: 'console', token: 'git', exePath: 'C:\\bin\\git.exe' })
+    mount([shellCmd({ prompt: 'git', defaultArgs: ['status'] })])
+
+    click('Slice')
+    await settle()
+    expect(ptyWrite).toHaveBeenCalledTimes(1)
+    expect(probe).toHaveBeenCalledTimes(1)
+
+    // Second press: no await anywhere, and no second IPC round trip.
+    click('Slice')
+    expect(ptyWrite).toHaveBeenCalledTimes(2)
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('when the probe is not available at all', () => {
+  it('types synchronously, exactly as the button always did', () => {
+    // Deliberate rather than accidental (review MINOR-8): the claim is that an
+    // older preload, or any harness without `exe`, keeps the original path.
+    const saved = (globalThis as any).window.electronAPI.exe
+    delete (globalThis as any).window.electronAPI.exe
+    try {
+      mount([shellCmd()])
+      click('Slice')
+      // No await: the write must already have happened.
+      expect(ptyWrite).toHaveBeenCalledTimes(1)
+      expect(ptyWrite.mock.calls[0][1]).toBe('bambu-studio --debug 2\r')
+      expect(probe).not.toHaveBeenCalled()
+    } finally {
+      ;(globalThis as any).window.electronAPI.exe = saved
+    }
   })
 })
 

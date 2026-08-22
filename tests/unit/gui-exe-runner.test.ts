@@ -14,7 +14,9 @@ class FakeChild extends EventEmitter {
   stderr = new Readable({ read() { /* pushed by the test */ } })
   pid = 4321
   killed = false
+  unreffed = false
   kill(): boolean { this.killed = true; return true }
+  unref(): void { this.unreffed = true }
 }
 
 interface Harness {
@@ -37,7 +39,7 @@ function harness(over: { subsystem?: ExeSubsystem; resolved?: string | null } = 
   const runner = createCapturedRunner({
     spawn: spawn as never,
     sniff: async () => over.subsystem ?? 'gui',
-    resolve: () => (over.resolved === undefined ? 'C:\\tools\\bambu-studio.exe' : over.resolved),
+    resolve: async () => (over.resolved === undefined ? 'C:\\tools\\bambu-studio.exe' : over.resolved),
     resolveWorkingDir: (cwd) => cwd ?? 'C:\\work',
     newId: () => `run-${++n}`,
     now: () => 1000,
@@ -77,8 +79,8 @@ describe('splitArgs', () => {
   })
 })
 
-describe('createCapturedRunner — the gate', () => {
-  it('spawns a GUI-subsystem exe with pipes, no shell, and not detached', async () => {
+describe('createCapturedRunner — the spawn options (#379 BLOCKER-1)', () => {
+  it('spawns with pipes, no shell, not detached', async () => {
     const h = harness()
     const res = await h.runner.start({ command: 'bambu-studio --debug 2', cwd: 'C:\\work' }, events(h) as never)
 
@@ -91,14 +93,27 @@ describe('createCapturedRunner — the gate', () => {
     expect(file).toBe('C:\\tools\\bambu-studio.exe')
     expect(args).toEqual(['--debug', '2'])
 
-    // The four options this whole issue turns on.
     expect(opts.shell).toBe(false)          // no shell to inject into
-    expect(opts.detached).toBe(false)       // DETACHED_PROCESS still bleeds (#379 matrix row 2)
-    expect(opts.windowsHide).toBe(true)
+    expect(opts.detached).toBe(false)       // DETACHED_PROCESS still bleeds (matrix row 2)
     expect(opts.stdio).toEqual(['ignore', 'pipe', 'pipe'])  // the pipes that survive
     expect(opts.cwd).toBe('C:\\work')
   })
 
+  it('MUST NOT set windowsHide: it is CREATE_NO_WINDOW, measured at 0 bytes captured', async () => {
+    // Matrix row 3. CREATE_NO_WINDOW gives the child its OWN invisible console,
+    // so freopen("CONOUT$") lands there and the pipes stay empty -- the capture
+    // panel would say "That program printed nothing" forever. A console-less
+    // parent does not change what the flag allocates for the child.
+    // Its own test because it is the thing that shipped wrong.
+    const h = harness()
+    await h.runner.start({ command: 'bambu-studio' }, events(h) as never)
+    const [, , opts] = h.spawn.mock.calls[0] as [string, string[], Record<string, unknown>]
+    expect(opts.windowsHide).toBeUndefined()
+    expect('windowsHide' in opts).toBe(false)
+  })
+})
+
+describe('createCapturedRunner — the gate', () => {
   it('REFUSES a console-subsystem exe -- it has no bleed problem to solve', async () => {
     const h = harness({ subsystem: 'console' })
     const res = await h.runner.start({ command: 'git status' }, events(h) as never)
@@ -228,18 +243,54 @@ describe('createCapturedRunner — capture', () => {
   })
 })
 
-describe('createCapturedRunner — lifecycle', () => {
-  it('cancels a run, killing the process tree', async () => {
+describe('createCapturedRunner — release vs cancel (#379 MAJOR-2)', () => {
+  it('release stops capturing and LEAVES THE PROGRAM RUNNING', async () => {
+    // Everything reachable here is a GUI application by construction. Closing a
+    // log panel must never take the user's unsaved work with it.
     const h = harness()
     const res = await h.runner.start({ command: 'bambu-studio' }, events(h) as never)
-    expect(h.runner.activeCount()).toBe(1)
+
+    expect(h.runner.release(res.runId!)).toBe(true)
+    expect(h.child.killed).toBe(false)
+    expect(h.killed).toEqual([])
+    expect(h.child.unreffed).toBe(true)
+    expect(h.runner.activeCount()).toBe(0)
+    expect(h.exits[0]).toMatchObject({ error: 'Capture stopped. The program is still running.' })
+  })
+
+  it('release stops delivering output without ending the process', async () => {
+    const h = harness()
+    const res = await h.runner.start({ command: 'bambu-studio' }, events(h) as never)
+    h.runner.release(res.runId!)
+    h.child.stdout.push(Buffer.from('later output\n'))
+    await new Promise((r) => setImmediate(r))
+    expect(h.chunks).toHaveLength(0)
+  })
+
+  it('cancel DOES kill -- it is the explicit user action that says so', async () => {
+    const h = harness()
+    const res = await h.runner.start({ command: 'bambu-studio' }, events(h) as never)
     expect(h.runner.cancel(res.runId!)).toBe(true)
     expect(h.child.killed).toBe(true)
     expect(h.killed).toEqual([4321])
   })
 
-  it('cancelling an unknown runId is false, not a throw', async () => {
+  it('releaseAll (app quit) never kills the user’s applications', async () => {
     const h = harness()
+    const kids = [new FakeChild(), new FakeChild()]
+    h.spawn.mockImplementationOnce(() => kids[0] as never).mockImplementationOnce(() => kids[1] as never)
+    await h.runner.start({ command: 'bambu-studio' }, events(h) as never)
+    await h.runner.start({ command: 'bambu-studio' }, events(h) as never)
+    h.runner.releaseAll()
+    expect(kids[0].killed).toBe(false)
+    expect(kids[1].killed).toBe(false)
+    expect(h.killed).toEqual([])
+    expect(h.runner.activeCount()).toBe(0)
+  })
+
+  it('release/cancel of an unknown runId is false, not a throw', async () => {
+    const h = harness()
+    expect(h.runner.release('nope')).toBe(false)
     expect(h.runner.cancel('nope')).toBe(false)
   })
 
@@ -250,11 +301,12 @@ describe('createCapturedRunner — lifecycle', () => {
     h.child.emit('close', 0, null)
     expect(h.runner.activeCount()).toBe(0)
   })
+})
 
-  it('refuses to exceed the concurrency cap', async () => {
+describe('createCapturedRunner — the concurrency cap (#379 MAJOR-1)', () => {
+  it('holds when starts are sequential', async () => {
     const h = harness()
     for (let i = 0; i < CAPTURED_RUN_MAX_CONCURRENT; i++) {
-      // A fresh child per start so they all stay active.
       h.spawn.mockImplementationOnce(() => new FakeChild() as never)
       const r = await h.runner.start({ command: 'bambu-studio' }, events(h) as never)
       expect(r.runId).not.toBeNull()
@@ -264,14 +316,49 @@ describe('createCapturedRunner — lifecycle', () => {
     expect(over.error).toMatch(/Too many captured runs/)
   })
 
-  it('cancelAll kills everything still running', async () => {
-    const h = harness()
-    const kids = [new FakeChild(), new FakeChild()]
-    h.spawn.mockImplementationOnce(() => kids[0] as never).mockImplementationOnce(() => kids[1] as never)
-    await h.runner.start({ command: 'bambu-studio' }, events(h) as never)
-    await h.runner.start({ command: 'bambu-studio' }, events(h) as never)
-    h.runner.cancelAll()
-    expect(kids[0].killed).toBe(true)
-    expect(kids[1].killed).toBe(true)
+  it('holds when every start is issued in the SAME TICK', async () => {
+    // The shape the original cap could not see: each call read `active.size ===
+    // 0` before any of them registered, because registration happened after two
+    // awaits. A held-down button or a Promise.all could spawn without limit.
+    let releaseSniff: () => void = () => {}
+    const gate = new Promise<void>((r) => { releaseSniff = r })
+    const spawned: FakeChild[] = []
+    const spawn = vi.fn(() => { const c = new FakeChild(); spawned.push(c); return c })
+    let n = 0
+
+    const runner = createCapturedRunner({
+      spawn: spawn as never,
+      // Everyone parks here together, exactly as a real PATH walk plus header
+      // read would park them.
+      sniff: async () => { await gate; return 'gui' },
+      resolve: async () => 'C:\\tools\\bambu-studio.exe',
+      resolveWorkingDir: () => 'C:\\work',
+      newId: () => `run-${++n}`,
+      now: () => 0,
+      killTree: () => {},
+      platform: 'win32',
+    })
+
+    const noop = { onChunk: () => {}, onExit: () => {} }
+    const all = Promise.all(
+      Array.from({ length: 20 }, () => runner.start({ command: 'bambu-studio' }, noop as never)),
+    )
+    releaseSniff()
+    const results = await all
+
+    expect(results.filter((r) => r.runId !== null)).toHaveLength(CAPTURED_RUN_MAX_CONCURRENT)
+    expect(spawn).toHaveBeenCalledTimes(CAPTURED_RUN_MAX_CONCURRENT)
+    expect(spawned).toHaveLength(CAPTURED_RUN_MAX_CONCURRENT)
+    expect(results.filter((r) => r.runId === null)).toHaveLength(20 - CAPTURED_RUN_MAX_CONCURRENT)
+  })
+
+  it('gives the slot back when a start is refused, so refusals cannot exhaust the cap', async () => {
+    const h = harness({ subsystem: 'console' })
+    for (let i = 0; i < 10; i++) {
+      const r = await h.runner.start({ command: 'git status' }, events(h) as never)
+      expect(r.runId).toBeNull()
+      expect(r.error).toMatch(/not a GUI-subsystem/) // never "too many"
+    }
+    expect(h.runner.activeCount()).toBe(0)
   })
 })

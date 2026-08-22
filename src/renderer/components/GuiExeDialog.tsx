@@ -12,8 +12,8 @@
  * events — see .github/copilot-instructions.md), Escape cancels, the panel
  * carries the dialog role, and the recommended action is autofocused.
  */
-import { useEffect, useRef, useState } from 'react'
-import type { GuiExePolicy } from '../../shared/gui-exe'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { shellOperatorsIn } from '../../shared/gui-exe'
 
 export interface GuiExeDialogProps {
   /** The button's label, for the title. */
@@ -29,6 +29,9 @@ export interface GuiExeDialogProps {
 export default function GuiExeDialog({ label, command, exePath, onChoose, onCancel }: GuiExeDialogProps) {
   const [remember, setRemember] = useState(false)
   const captureRef = useRef<HTMLButtonElement>(null)
+  // Capturing runs the program directly, with no shell, so anything the shell
+  // would have interpreted becomes a literal argument. Say which ones (MAJOR-5).
+  const operators = useMemo(() => shellOperatorsIn(command), [command])
 
   useEffect(() => {
     captureRef.current?.focus()
@@ -68,9 +71,24 @@ export default function GuiExeDialog({ label, command, exePath, onChoose, onCanc
         <p className="text-xs mb-3 font-mono break-all" style={{ color: 'var(--text-muted)' }}>
           {exePath}
         </p>
-        <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-          Running it from the app instead gives it no console to attach to, so its output can
-          be captured and shown to you. Any window the program opens still appears either way.
+        <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+          Capturing runs it from the app instead, where there is no console to attach to, so its
+          output can be shown to you. Any window the program opens still appears either way.
+        </p>
+        <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }} data-ux-id="gui-exe-noshell">
+          Captured runs start the program directly, without a shell.
+          {operators.length > 0 ? (
+            <>
+              {' '}This line uses{' '}
+              <span className="font-mono text-yellow">{operators.join(' ')}</span>
+              , which {operators.length === 1 ? 'will be passed through as a literal argument' : 'will be passed through as literal arguments'} rather than
+              interpreted — so it will not do the same thing as running it in the terminal.
+            </>
+          ) : (
+            <> Redirects and operators like <span className="font-mono">&gt;</span>,{' '}
+            <span className="font-mono">|</span>, <span className="font-mono">&amp;&amp;</span> and{' '}
+            <span className="font-mono">;</span> would be passed through as literal arguments.</>
+          )}
         </p>
 
         <label className="flex items-center gap-2 mb-4 text-xs cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
@@ -118,10 +136,4 @@ export default function GuiExeDialog({ label, command, exePath, onChoose, onCanc
       </div>
     </div>
   )
-}
-
-/** The policy a choice + "remember" maps to. Exported so the store write and the
- *  dialog cannot drift. */
-export function policyFor(choice: 'capture' | 'terminal', remember: boolean): GuiExePolicy | null {
-  return remember ? choice : null
 }

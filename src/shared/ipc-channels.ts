@@ -349,8 +349,9 @@ export const IPC = {
   // can actually be captured. See shared/gui-exe.ts.
   EXE_PROBE: 'exe:probe',                                           // renderer -> main: { command, cwd? } -> ExeProbeResult
   EXE_RUN_START: 'exe:run:start',                                   // renderer -> main: { command, cwd? } -> CapturedRunStart
-  EXE_RUN_CANCEL: 'exe:run:cancel',                                 // renderer -> main: { runId } -> boolean
-  EXE_RUN_DATA: 'exe:run:data',                                     // push: main -> renderer, CapturedRunChunk
+  EXE_RUN_RELEASE: 'exe:run:release',                               // renderer -> main: { runId } -> boolean; stop capturing, LEAVE it running
+  EXE_RUN_CANCEL: 'exe:run:cancel',                                 // renderer -> main: { runId } -> boolean; KILLS the program
+  EXE_RUN_DATA: 'exe:run:data',                                     // push: main -> renderer (the requesting WebContents only), CapturedRunChunk
   EXE_RUN_EXIT: 'exe:run:exit',                                     // push: main -> renderer, CapturedRunExit
 
   // Conductor Channels (v1.5.10)
