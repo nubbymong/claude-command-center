@@ -90,6 +90,41 @@ describe('service-health-handlers', () => {
     expect(s.services[0].id).toBe('hooks')
   })
 
+  it('folds the watchdog ServiceHealth + monitor snapshot when the manager is present', () => {
+    const hooksSnap = { capturedAt: 1, services: [createInitialHealth('hooks', 'Hooks gateway')], log: [] }
+    const wdHealth = { ...createInitialHealth('watchdog', 'Watchdog'), state: 'listening' as const }
+    const wdMon = {
+      activeSessions: 2, waitingSessions: 1, silentSessions: 1,
+      throttle: { stallsLastMin: 0, tickMs: 5000 },
+      sessions: [{ sessionId: 's1', status: 'monitoring', gaveUp: false, waitUntil: null, silent: true, idleMs: 130000 }],
+    }
+    const s = getMergedDiagnostics(
+      () => ({ getDiagnosticsSnapshot: () => hooksSnap } as never),
+      () => null,
+      () => ({
+        getDiagnosticsSnapshot: () => ({ capturedAt: 1, services: [wdHealth], log: [] }),
+        getMonitorSnapshot: () => wdMon,
+      } as never),
+    )
+    expect(s.services.map((svc) => svc.id)).toContain('watchdog')
+    expect(s.watchdog).toEqual(wdMon)
+  })
+
+  it('routes a watchdog restart to the watchdog manager', () => {
+    const restart = buildRestart(
+      () => ({ manualRestart: () => ({ ok: true, who: 'hooks' }) } as never),
+      () => ({ manualRestart: (id: string) => ({ ok: true, who: 'watchdog', id }) } as never),
+    )
+    expect(restart('watchdog')).toEqual({ ok: true, who: 'watchdog', id: 'watchdog' })
+  })
+
+  it('omits the watchdog block when the manager is absent', () => {
+    const hooksSnap = { capturedAt: 1, services: [createInitialHealth('hooks', 'Hooks gateway')], log: [] }
+    const s = getMergedDiagnostics(() => ({ getDiagnosticsSnapshot: () => hooksSnap } as never), () => null, () => null)
+    expect(s.services.map((svc) => svc.id)).not.toContain('watchdog')
+    expect(s.watchdog).toBeUndefined()
+  })
+
   it('PTY block and logging block are both merged simultaneously', () => {
     const hooksSnap = { capturedAt: 1, services: [createInitialHealth('hooks', 'Hooks gateway')], log: [] }
     const logHealth = { ...createInitialHealth('logging', 'Session logging'), state: 'listening' as const }

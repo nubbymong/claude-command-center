@@ -985,7 +985,8 @@ if (!gotTheLock) {
     // push carries BOTH snapshots (else one source would wipe the other in the UI).
     const getSup = () => getHooksSupervisor()
     const getPtyDiag = () => getPtyIntegrityMonitor()?.diagnostics() ?? null
-    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag))
+    const getWatchdogDiag = () => getWatchdogManager()
+    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag, getWatchdogDiag))
     const ptyMonitor = new PtyIntegrityMonitor({ emit: pushDiagnostics })
     setPtyIntegrityMonitor(ptyMonitor)
     // Redirect ONLY SERVICE_HEALTH_UPDATE through the merge; every other channel
@@ -1060,11 +1061,14 @@ if (!gotTheLock) {
       send: (sessionId, text) => {
         writePty(sessionId, `${text}\r`)
       },
+      // Refresh the services view live when a watchdog state changes; routed
+      // through the same merge so the push carries every source (#235).
+      onHealthChange: () => pushDiagnostics(),
     })
     registerWatchdogHandlers()
     // D1b: diagnostics IPC. The getter returns null in the hooks-disabled branch
     // (supervisor never set) -> the handler serves an honest synthetic "hooks off" snapshot.
-    registerServiceHealthHandlers(getSup, getPtyDiag)
+    registerServiceHealthHandlers(getSup, getPtyDiag, getWatchdogDiag)
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }

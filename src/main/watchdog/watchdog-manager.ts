@@ -22,7 +22,7 @@ import { IPC } from '../../shared/ipc-channels'
 import type { HookEvent } from '../../shared/hook-types'
 import { stallsLastMin as readMainLoopStalls } from '../services/loop-stall-monitor'
 import { createInitialHealth } from '../../shared/service-health'
-import type { DiagnosticsSnapshot } from '../../shared/service-health'
+import type { DiagnosticsSnapshot, WatchdogMonitorSnapshot, WatchdogSessionMonitor } from '../../shared/service-health'
 
 // Only a usage-limit-scale tail is needed for detection (mirrors
 // session-watchdog's own USAGE_TAIL_LINES ceiling) — 200 lines is generous
@@ -78,27 +78,6 @@ export interface WatchdogSettings {
   silenceWindowMs?: number
 }
 
-/** Per-session monitor state surfaced to the services view (Phase 2). */
-export interface WatchdogSessionMonitor {
-  sessionId: string
-  status: string
-  gaveUp: boolean
-  waitUntil: number | null
-  /** True when no PTY output has arrived for the silence window. */
-  silent: boolean
-  /** ms since the last PTY chunk for this session. */
-  idleMs: number
-}
-
-/** Snapshot of the whole watchdog subsystem for the services view. */
-export interface WatchdogMonitorSnapshot {
-  activeSessions: number
-  waitingSessions: number
-  silentSessions: number
-  throttle: { stallsLastMin: number; tickMs: number }
-  sessions: WatchdogSessionMonitor[]
-}
-
 export interface WatchdogHostOptions {
   getWindow: () => BrowserWindow | null
   isSessionAlive: (sessionId: string) => boolean
@@ -115,6 +94,9 @@ export interface WatchdogHostOptions {
   now?: () => number
   setTimer?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (h: ReturnType<typeof setTimeout>) => void
+  /** Called when watchdog health changes (retry state or silence), so the host
+   *  can refresh the services view. Optional; no-op when absent. */
+  onHealthChange?: () => void
 }
 
 interface Entry {
@@ -202,9 +184,14 @@ export class WatchdogManager {
     return Math.min(MAX_TICK_INTERVAL_MS, Math.round(widened))
   }
 
-  private evaluateSilence(entry: Entry): void {
+  // Returns true when the silent state flipped, so the tick can fire one
+  // onHealthChange for the whole pass.
+  private evaluateSilence(entry: Entry): boolean {
     const window = this.silenceWindowMs()
-    entry.silent = window > 0 && (this.now() - entry.lastDataAt) > window
+    const next = window > 0 && (this.now() - entry.lastDataAt) > window
+    if (next === entry.silent) return false
+    entry.silent = next
+    return true
   }
 
   private ensureHookSubscription(): void {
@@ -231,14 +218,16 @@ export class WatchdogManager {
     if (this.tickTimer) return
     const run = () => {
       this.tickTimer = null
+      let silenceChanged = false
       for (const [sessionId, entry] of this.entries) {
         try {
           entry.wd.tick()
         } catch (err) {
           logError(`[watchdog] tick() threw for ${sessionId}`, err)
         }
-        this.evaluateSilence(entry)
+        if (this.evaluateSilence(entry)) silenceChanged = true
       }
+      if (silenceChanged) { try { this.host.onHealthChange?.() } catch { /* host gone */ } }
       this.lastStalls = this.readStalls()
       this.currentTickMs = this.computeTickMs(this.lastStalls)
       if (this.entries.size > 0) {
@@ -286,6 +275,7 @@ export class WatchdogManager {
       },
       onStateChange: (state: WatchdogPublicState) => {
         this.eventsTotal++
+        try { this.host.onHealthChange?.() } catch { /* host gone */ }
         const win = this.host.getWindow()
         if (!win || win.isDestroyed()) return
         try { win.webContents.send(IPC.WATCHDOG_STATE, state) } catch { /* destroyed */ }

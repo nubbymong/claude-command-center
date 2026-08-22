@@ -4,6 +4,7 @@ import type {
   ServiceHealth,
   ServiceLogEntry,
   PtyIntegritySnapshot,
+  WatchdogMonitorSnapshot,
 } from '../../shared/service-health'
 
 // No \u{...} escapes in JSX (esbuild). U+21BB CLOCKWISE OPEN CIRCLE ARROW,
@@ -131,6 +132,38 @@ function PtySection({ pty }: { pty: PtyIntegritySnapshot }) {
   )
 }
 
+function WatchdogSection({ watchdog }: { watchdog: WatchdogMonitorSnapshot }) {
+  const tickSec = Math.round(watchdog.throttle.tickMs / 1000)
+  return (
+    <div className="rounded border border-surface0 bg-crust/50 p-2.5">
+      <div
+        className="flex items-center gap-1.5 mb-2"
+        title="Session Watchdog. Waiting = sessions in a retry backoff; Silent = sessions whose provider stopped streaming; Tick = current scan cadence (widens when the main loop is under load); Stalls = main-loop stalls in the last minute."
+      >
+        <span className="w-2 h-2 rounded-full bg-overlay0" />
+        <span className="text-[12px] font-semibold text-text">Session Watchdog</span>
+        <span className="text-[10px] text-subtext0">{watchdog.activeSessions} watched</span>
+      </div>
+      <div className="grid grid-cols-4 gap-x-2 gap-y-1.5 mb-2">
+        <Metric label="Watched" value={watchdog.activeSessions} />
+        <Metric label="Waiting" value={watchdog.waitingSessions} />
+        <Metric label="Silent" value={watchdog.silentSessions} />
+        <Metric label="Tick" value={`${tickSec}s`} />
+      </div>
+      {watchdog.sessions.length > 0 && (
+        <div className="font-mono text-[10px] leading-snug text-subtext0 max-h-24 overflow-y-auto">
+          {watchdog.sessions.map((s) => (
+            <div key={s.sessionId} className="whitespace-pre-wrap break-words">
+              <span className="text-overlay1">{s.sessionId.slice(0, 8)} </span>
+              {s.gaveUp ? 'gave-up' : s.status}{s.silent ? ' · silent' : ''} idle:{Math.round(s.idleMs / 1000)}s
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ConductorServicesPanel({ open = true, onClose }: { open?: boolean; onClose: () => void }) {
   const [snap, setSnap] = useState<DiagnosticsSnapshot | null>(null)
   const [entered, setEntered] = useState(false)
@@ -212,6 +245,7 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
       ))}
       <LogTail log={snap?.log ?? []} />
       {snap?.pty && <PtySection pty={snap.pty} />}
+      {snap?.watchdog && snap.watchdog.activeSessions > 0 && <WatchdogSection watchdog={snap.watchdog} />}
       <div
         className="rounded border border-surface0/60 bg-crust/30 px-2.5 py-1.5 text-[11px] text-overlay1 flex items-center gap-1.5"
         title="MCP relocation is a future phase"
