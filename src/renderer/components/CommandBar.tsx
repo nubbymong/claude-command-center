@@ -19,7 +19,7 @@ import { trackUsage } from '../stores/tipsStore'
 import { CODEX_MODELS } from '../codex-models'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { sessionCapabilities } from '../lib/session-capabilities'
-import { planBar, type BandPlan } from './command-bar/layout'
+import { planBar, inapplicability, type BandPlan } from './command-bar/layout'
 import { CommandChip, TargetMark, SectionLabel, CHIP_CLASS, CHIP_STYLE } from './command-bar/chips'
 import BandOverflow from './command-bar/BandOverflow'
 import ArgsPopover from './command-bar/ArgsPopover'
@@ -254,10 +254,18 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     runCommand(cmd, e.ctrlKey && rect ? rect : undefined)
   }
 
+  // A keychain write that fails (no keyring on this Linux, a torn credentials
+  // file) must not pass silently: the record already says "has a secret".
+  const saveSecret = (key: string, value: string) => {
+    void Promise.resolve(window.electronAPI.credentials.save(key, value))
+      .then((ok) => { if (ok === false) console.warn('[CommandBar] the secret for', key, 'was NOT stored (keychain unavailable); the button will type an empty value') })
+      .catch((err: unknown) => console.warn('[CommandBar] secret save failed:', err))
+  }
+
   const handleAdd = (data: Omit<CustomCommand, 'id'>, argSecret?: string) => {
     const id = generateId()
     addCommand({ ...data, id })
-    if (data.hasSecretArg && argSecret) void window.electronAPI.credentials.save(commandSecretKey(id), argSecret)
+    if (data.hasSecretArg && argSecret) saveSecret(commandSecretKey(id), argSecret)
     trackUsage('commands.create-command')
     setShowDialog(null)
   }
@@ -266,7 +274,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     if (!editingCommand) return
     updateCommand(editingCommand.id, { ...data, needsReview: undefined })
     const key = commandSecretKey(editingCommand.id)
-    if (data.hasSecretArg && argSecret) void window.electronAPI.credentials.save(key, argSecret)
+    if (data.hasSecretArg && argSecret) saveSecret(key, argSecret)
     else if (!data.hasSecretArg) void window.electronAPI.credentials.delete(key)
     setEditingCommand(null)
   }
@@ -684,9 +692,10 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           // header is the tooltip) -- an orphan sectionId names nothing in either.
           sectionName={plans.find((p) => p.band === bandOfCmd(menuCmd))?.sections.find((s) => s.id === menuCmd.sectionId)?.name}
           hasConfig={!!configId}
+          cannotRunReason={inapplicability(menuCmd, caps)?.reason ?? null}
           returnFocusTo={menu.el}
           onClose={() => setMenu(null)}
-          onRun={() => { setMenu(null); runCommand(menuCmd) }}
+          onRun={() => { setMenu(null); if (!inapplicability(menuCmd, caps)) runCommand(menuCmd) }}
           onRunWithArgs={() => { const el = menu.el; setMenu(null); runCommand(menuCmd, el?.getBoundingClientRect() ?? new DOMRect(menu.x, menu.y, 1, 1)) }}
           onEdit={() => { setMenu(null); setEditingCommand(menuCmd) }}
           onDuplicate={() => {
@@ -855,7 +864,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           testId="confirm-scope"
           title={confirm.band === 'global' ? `Show "${confirmCmd.label}" in every config?` : `Keep "${confirmCmd.label}" only in this config?`}
           body={confirm.band === 'global'
-            ? <>It becomes <b>Global</b>: it appears in every config, and editing or deleting it reaches all of them.</>
+            ? <>It becomes <b>Global</b>: it appears in every config, and editing or deleting it reaches all of them.{confirmCmd.hasSecretArg ? <> Its secret then rides the environment of every shell you open on this PC, not only this config's.</> : null}</>
             : <>It becomes <b>Session</b>-only: it leaves your other {configCount && configCount > 1 ? `${configCount - 1} config${configCount - 1 === 1 ? '' : 's'}` : 'configs'} and shows only here{configName ? ` (${configName})` : ''}.</>}
           actions={[{ label: confirm.band === 'global' ? 'Make Global' : 'Keep it here only', primary: true, testId: 'confirm-scope-ok', onClick: () => {
             store.moveCommand(confirm.commandId, confirm.beforeId, confirm.band, configId)

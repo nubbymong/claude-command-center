@@ -217,8 +217,11 @@ export function CustomCommandsTab() {
           onConfirm={(data, argSecret) => {
             updateCommand(editing.id, { ...data, needsReview: undefined })
             const key = commandSecretKey(editing.id)
-            if (data.hasSecretArg && argSecret) void window.electronAPI.credentials.save(key, argSecret)
-            else if (!data.hasSecretArg) void window.electronAPI.credentials.delete(key)
+            if (data.hasSecretArg && argSecret) {
+              void Promise.resolve(window.electronAPI.credentials.save(key, argSecret))
+                .then((ok) => { if (ok === false) console.warn('[CustomCommands] the secret for', key, 'was NOT stored (keychain unavailable)') })
+                .catch((err: unknown) => console.warn('[CustomCommands] secret save failed:', err))
+            } else if (!data.hasSecretArg) void window.electronAPI.credentials.delete(key)
             setEditing(null)
           }}
           onCancel={() => setEditing(null)}

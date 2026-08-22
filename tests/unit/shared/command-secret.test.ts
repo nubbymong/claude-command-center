@@ -30,7 +30,7 @@ describe('the env variable name', () => {
 
 describe('the reference the button types', () => {
   it('is $env:NAME on Windows and a quoted "$NAME" on POSIX', () => {
-    expect(commandSecretRef('abc', true)).toBe('$env:CCC_CMD_SECRET_abc')
+    expect(commandSecretRef('abc', true)).toBe('${env:CCC_CMD_SECRET_abc}')
     expect(commandSecretRef('abc', false)).toBe('"$CCC_CMD_SECRET_abc"')
   })
 
@@ -56,9 +56,9 @@ describe('buildCommandLine — the ONE rule for what gets typed', () => {
   it('replaces {secret} in the arguments with the reference, every occurrence', () => {
     const ref = commandSecretRef('abc', true)!
     expect(buildCommandLine('curl', ['-H', `Authorization: ${COMMAND_SECRET_TOKEN}`], ref))
-      .toBe('curl -H Authorization: $env:CCC_CMD_SECRET_abc')
+      .toBe('curl -H Authorization: ${env:CCC_CMD_SECRET_abc}')
     expect(buildCommandLine('x', ['{secret}{secret}'], ref))
-      .toBe('x $env:CCC_CMD_SECRET_abc$env:CCC_CMD_SECRET_abc')
+      .toBe('x ${env:CCC_CMD_SECRET_abc}${env:CCC_CMD_SECRET_abc}')
   })
 
   it('never touches the prompt itself -- the secret is an ARGUMENT', () => {

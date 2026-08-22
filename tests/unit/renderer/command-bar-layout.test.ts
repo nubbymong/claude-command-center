@@ -30,6 +30,18 @@ describe('bands', () => {
   })
 })
 
+describe('a legacy record that carries a secret is a shell line (ADR-009 pass on #386)', () => {
+  it('hasSecretArg without a stored kind reads as shell on an agent session and on a terminal-only one', () => {
+    // beta.16 allowed a secret on a Global main-shell button of a terminal-only
+    // session (no kind stored, target claude). Read as a prompt, the next save
+    // would drop hasSecretArg and delete the keychain value.
+    expect(clusterOf(cmd({ id: 'l', target: 'claude', hasSecretArg: true }), local)).toBe('main-shell')
+    expect(clusterOf(cmd({ id: 'l', target: 'claude', hasSecretArg: true }), term)).toBe('main-shell')
+    // A stored kind still wins.
+    expect(clusterOf(cmd({ id: 'p', target: 'claude', hasSecretArg: true, kind: 'prompt' }), local)).toBe('agent')
+  })
+})
+
 describe('clusters inside a band follow the target, named for THIS session', () => {
   it('local Claude: prompt → agent, partner → partner, page → page', () => {
     expect(clusterOf(cmd({ id: 'p' }), local)).toBe('agent')

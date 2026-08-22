@@ -5,7 +5,7 @@ import { buildCommandLine, commandSecretRef, COMMAND_SECRET_TOKEN, secretValuePr
 import { normaliseBrowserInput } from '../../shared/browser-url'
 import { sessionCapabilities, describeTarget, type SessionCapabilities, type CommandTarget } from '../lib/session-capabilities'
 import { swatchesFor, DEFAULT_COMMAND_COLOR } from '../lib/command-swatches'
-import { describeReviewReason, looksLikeSecretArg } from '../lib/command-upgrade'
+import { describeReviewReason, planSecretMove } from '../lib/command-upgrade'
 import { CommandChip, TargetMark } from './command-bar/chips'
 import { clusterOf, effectiveKind } from './command-bar/layout'
 import { IconColourPicker } from './command-bar/menus'
@@ -52,9 +52,9 @@ interface Props {
 type ShellWhere = 'main' | 'partner'
 
 /** The kind a stored command has, for THIS session (legacy records inferred -- D6). */
-export function kindOf(cmd: Pick<CustomCommand, 'target' | 'kind' | 'scope'> | undefined, caps: SessionCapabilities): CommandKind {
+export function kindOf(cmd: Pick<CustomCommand, 'target' | 'kind' | 'scope' | 'hasSecretArg'> | undefined, caps: SessionCapabilities): CommandKind {
   if (!cmd) return 'prompt'
-  return effectiveKind({ kind: cmd.kind, target: cmd.target, scope: cmd.scope ?? 'global' }, caps)
+  return effectiveKind({ kind: cmd.kind, target: cmd.target, scope: cmd.scope ?? 'global', hasSecretArg: cmd.hasSecretArg }, caps)
 }
 
 /** The target a (kind, where) pair resolves to. A page button runs in the
@@ -173,6 +173,8 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   // The upgrade review banner (D13): reasons fixed here, or the whole thing dismissed.
   const [fixedReasons, setFixedReasons] = useState<CommandReviewReason[]>([])
   const [reviewDismissed, setReviewDismissed] = useState(false)
+  /** The value the one-click fix moved to the keychain (so remembered args holding it are forgotten on save). */
+  const [movedValue, setMovedValue] = useState<string | null>(null)
   const isWin = typeof window !== 'undefined' && (window as unknown as { electronPlatform?: string }).electronPlatform === 'win32'
 
   const store = useCommandStore()
@@ -243,9 +245,10 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   // here, because the app cannot rewrite a secret. One rule, shared with the
   // terminal config's secret argument: shared/command-secret.secretValueProblem.
   const secretProblem = secretOn && secretValue.length > 0 ? secretValueProblem(secretValue, isWin) : null
-  // A secret that is switched on must HAVE a value: stored already, or typed now,
-  // and a typed value must be one the shell can carry.
-  const secretReady = !secretOn || ((storedSecret || secretValue.length > 0) && !secretProblem)
+  // A secret that is switched on must HAVE a value: stored already, or typed now
+  // (not whitespace), and a typed value must be one the shell can carry.
+  const typedSecret = secretValue.trim().length > 0
+  const secretReady = !secretOn || ((storedSecret || typedSecret) && !secretProblem)
   const canSubmit = !!kind && !!label.trim() && secretReady && (kind === 'page' ? !!pageUrl.trim() : !!prompt.trim())
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -261,11 +264,14 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
     }
     if (kind === 'page') {
       // The one kind that types nothing. No prompt, no args, no secret, no
-      // watch -- a label, a page, and where it is filed.
+      // watch -- a label, a page, and where it is filed. The typing-kind fields
+      // are cleared EXPLICITLY: the store merges, so a shell button turned into
+      // a page would otherwise keep `hasSecretArg: true` while the caller
+      // deletes its keychain value (ADR-009 pass on #386).
       const result = normaliseBrowserInput(pageUrl)
       if (!result.ok) { setPageUrlError(result.error); return }
       setPageUrlError(null)
-      onConfirm({ ...base, prompt: '', target: 'claude', kind: 'page', pageUrl: result.url })
+      onConfirm({ ...base, prompt: '', target: 'claude', kind: 'page', pageUrl: result.url, defaultArgs: undefined, lastCustomArgs: undefined, hasSecretArg: undefined, webView: undefined })
       return
     }
     if (webViewEnabled) {
@@ -279,9 +285,13 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
       target,
       kind,
       defaultArgs: defaultArgs.length > 0 ? defaultArgs : undefined,
+      // The REMEMBERED (Ctrl+click) arguments are typed too. Once a secret is
+      // on, or a value was just moved to the keychain, they may hold that value
+      // in plain text -- they are forgotten rather than re-typed.
+      lastCustomArgs: secretOn || movedValue !== null ? undefined : initial?.lastCustomArgs,
       hasSecretArg: secretOn ? true : undefined,
       webView: webViewEnabled ? { enabled: true, url: webViewUrl.trim() } : undefined,
-    }, secretOn && secretValue.length > 0 ? secretValue : undefined)
+    }, secretOn && typedSecret ? secretValue : undefined)
   }
 
   // Copy that follows the kind. One field, two very different things typed
@@ -293,7 +303,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   // The preview shows the REFERENCE the shell will see, never a value. On
   // create the id does not exist yet, so the name is shown with a placeholder.
   const previewRef = secretOn
-    ? (initial?.id ? commandSecretRef(initial.id, isWin) : (isWin ? '$env:CCC_CMD_SECRET_<id>' : '"$CCC_CMD_SECRET_<id>"'))
+    ? (initial?.id ? commandSecretRef(initial.id, isWin) : (isWin ? '${env:CCC_CMD_SECRET_<id>}' : '"$CCC_CMD_SECRET_<id>"'))
     : undefined
   const line = previewLine(prompt, defaultArgs, previewRef)
   const pageNormalised = kind === 'page' ? normaliseBrowserInput(pageUrl) : null
@@ -320,27 +330,17 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   // ---- the upgrade review banner (D13) ----------------------------------------
   const pendingReasons = (initial?.needsReview ?? []).filter((r) => !fixedReasons.includes(r))
   const showReview = isEdit && !reviewDismissed && pendingReasons.length > 0
-  const secretLikeIndex = defaultArgs.findIndex(looksLikeSecretArg)
+  // What the one-click fix WOULD move (null = nothing movable, button withheld).
+  const secretMove = planSecretMove(defaultArgs)
   const markFixed = (r: CommandReviewReason) => setFixedReasons((f) => (f.includes(r) ? f : [...f, r]))
   /** One click: the value leaves the argument for the keychain and `{secret}`
-   *  takes its place in the line. Saving writes both. */
+   *  takes its place in the line (planSecretMove decides which). Saving writes both. */
   const makeArgSecret = () => {
-    const i = secretLikeIndex
-    if (i === -1) return
-    const args = [...defaultArgs]
-    const a = args[i].trim()
-    let value: string
-    if (/^[-/]+[\w-]+$/.test(a) && args[i + 1] !== undefined) {
-      // "-Token" in one chip, the value in the next.
-      value = args[i + 1]
-      args[i + 1] = COMMAND_SECRET_TOKEN
-    } else {
-      const m = a.match(/^([-/]+[\w-]+)(?:[=:]|\s+)(.+)$/)
-      if (m) { value = m[2].trim(); args[i] = `${m[1]} ${COMMAND_SECRET_TOKEN}` } else { value = a; args[i] = COMMAND_SECRET_TOKEN }
-    }
-    setDefaultArgs(args)
+    if (!secretMove) return
+    setDefaultArgs(secretMove.args)
     setHasSecret(true)
-    setSecretValue(value)
+    setSecretValue(secretMove.value)
+    setMovedValue(secretMove.value)
     markFixed('secret-like-arg')
   }
   const dismissReview = () => {
@@ -426,8 +426,8 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                   {pendingReasons.map((r) => (
                     <li key={r} className="flex items-start gap-2" data-testid={`command-review-reason-${r}`}>
                       <span className="flex-1 leading-snug">{describeReviewReason(r)}</span>
-                      {r === 'secret-like-arg' && kind === 'shell' && secretAllowed && secretLikeIndex !== -1 && (
-                        <button type="button" onClick={makeArgSecret} className="shrink-0 h-6 px-2 rounded-md text-[11px] font-medium" style={{ background: 'var(--brand)', color: '#0a0e13' }} data-testid="command-review-fix-secret">Make this argument a secret</button>
+                      {r === 'secret-like-arg' && kind === 'shell' && secretAllowed && secretMove && (
+                        <button type="button" onClick={makeArgSecret} className="shrink-0 h-6 px-2 rounded-md text-[11px] font-medium" style={{ background: 'var(--brand)', color: '#0a0e13' }} title={`Moves the value of "${defaultArgs[secretMove.index]}" to the keychain`} data-testid="command-review-fix-secret">Make this argument a secret</button>
                       )}
                       {r === 'prompt-inert-on-shell-configs' && configId && scope === 'global' && (
                         <button type="button" onClick={() => { changeScope('config'); markFixed('prompt-inert-on-shell-configs') }} className="shrink-0 h-6 px-2 rounded-md text-[11px] font-medium" style={{ background: 'var(--brand)', color: '#0a0e13' }} data-testid="command-review-fix-session">Make it Session-only</button>
@@ -465,6 +465,11 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
 
             {kind && (
               <>
+                {storedSecret && kind !== 'shell' && (
+                  <p className="mb-3 rounded-[9px] border px-3 py-2 text-[11.5px] leading-snug" style={{ borderColor: 'color-mix(in srgb, var(--status-warning) 40%, transparent)', background: 'color-mix(in srgb, var(--status-warning) 9%, transparent)', color: 'var(--text-secondary)' }} data-testid="command-secret-dropped">
+                    This button stores a secret. A secret rides a shell line only, so saving it as {kind === 'page' ? 'a page' : 'a prompt'} removes the stored value from the keychain.
+                  </p>
+                )}
                 <Field label="Button label">
                   <input
                     type="text"
@@ -583,6 +588,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--status-warning)" strokeWidth="2" className="shrink-0 mt-px" aria-hidden><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
                                   <span>
                                     <b style={{ color: 'var(--text-primary)' }}>Mark an argument secret</b> and its value goes to the OS keychain. The button passes a reference the shell expands, so the value never appears in the command line and never reaches your shell history. Write <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{COMMAND_SECRET_TOKEN}</span> where the value belongs, e.g. <span className="font-mono" style={{ color: 'var(--text-primary)' }}>-Token {COMMAND_SECRET_TOKEN}</span>.
+                                    {' '}The button types {isWin ? <span className="font-mono">{'${env:NAME}'}</span> : <span className="font-mono">"$NAME"</span>} ({isWin ? 'PowerShell' : 'bash, zsh'}); a shell of another kind, such as {isWin ? 'cmd.exe or WSL' : 'PowerShell or nushell'}, will not expand it.
                                     {' '}A shell that is already open does not have it yet -- restart the shell after saving.
                                     {isWin && <> On Windows the value cannot contain a double quote or <span className="font-mono">&amp; | ^ &lt; &gt; %</span>, or end with a backslash -- PowerShell cannot pass those to a command intact.</>}
                                   </span>

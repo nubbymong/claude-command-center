@@ -107,6 +107,78 @@ export function looksLikeSecretArg(arg: string): boolean {
   return false
 }
 
+/** The one-click "Make this argument a secret" plan: which argument value leaves
+ *  for the keychain and what the arguments look like afterwards. */
+export interface SecretMove {
+  /** The chip that now carries `{secret}` (the value chip, or the flag+value chip). */
+  index: number
+  /** The plaintext that goes to the keychain. */
+  value: string
+  /** The arguments after the move. */
+  args: string[]
+}
+
+const BARE_FLAG = /^[-/]+[\w-]+$/
+const FLAG_SEP_VALUE = /^([-/]+[\w-]+)([=:])(.+)$/
+
+/**
+ * Decide what "Make this argument a secret" moves (ADR-009 pass on #386: the
+ * first cut took the first flagged chip and guessed). Rules, in order: a chip
+ * whose VALUE is key-shaped wins over a chip that merely names a secret flag;
+ * `--token=V` / `/Token:V` keep their joiner (`--token={secret}`) because the
+ * tool may not accept a space; a chip holding several `-flag value` pairs
+ * replaces the value after the LAST secret-named flag; a bare `-Token` takes the
+ * next chip as its value and is skipped when there is no next chip (the value
+ * is not there to move); a chip already holding `{secret}` is never a candidate.
+ * Returns null when nothing can be moved -- the button is then not offered.
+ */
+export function planSecretMove(args: readonly string[]): SecretMove | null {
+  const tryAt = (i: number): SecretMove | null => {
+    const a = (args[i] ?? '').trim()
+    if (!a || a.includes(COMMAND_SECRET_TOKEN)) return null
+    const next = [...args]
+    if (BARE_FLAG.test(a)) {
+      const v = args[i + 1]
+      if (v === undefined || BARE_FLAG.test(v.trim()) || v.includes(COMMAND_SECRET_TOKEN)) return null
+      next[i + 1] = COMMAND_SECRET_TOKEN
+      return { index: i + 1, value: v, args: next }
+    }
+    const sep = a.match(FLAG_SEP_VALUE)
+    if (sep) { next[i] = `${sep[1]}${sep[2]}${COMMAND_SECRET_TOKEN}`; return { index: i, value: sep[3].trim(), args: next } }
+    if (/\s/.test(a)) {
+      // Several words in one chip: replace the value after the last secret-named flag.
+      const words = a.split(/\s+/)
+      for (let j = words.length - 2; j >= 0; j--) {
+        if (BARE_FLAG.test(words[j]) && FLAG_NAME.test(words[j]) && !BARE_FLAG.test(words[j + 1])) {
+          const value = words[j + 1]
+          words[j + 1] = COMMAND_SECRET_TOKEN
+          next[i] = words.join(' ')
+          return { index: i, value, args: next }
+        }
+      }
+      // No flag inside: the last word is the value.
+      const value = words[words.length - 1]
+      words[words.length - 1] = COMMAND_SECRET_TOKEN
+      next[i] = words.join(' ')
+      return { index: i, value, args: next }
+    }
+    next[i] = COMMAND_SECRET_TOKEN
+    return { index: i, value: a, args: next }
+  }
+  const candidates = args.map((a, i) => ({ a: (a ?? '').trim(), i })).filter(({ a }) => looksLikeSecretArg(a))
+  // A key-shaped VALUE first (the chip that IS the secret), then anything else that can move.
+  for (const { a, i } of candidates) {
+    if (BARE_FLAG.test(a)) continue
+    const plan = tryAt(i)
+    if (plan && looksLikeSecretArg(plan.value) && !BARE_FLAG.test(plan.value)) return plan
+  }
+  for (const { i } of candidates) {
+    const plan = tryAt(i)
+    if (plan) return plan
+  }
+  return null
+}
+
 function sameReasons(a: CommandReviewReason[] | undefined, b: CommandReviewReason[]): boolean {
   if (!a || a.length !== b.length) return false
   return a.every((r, i) => r === b[i])
@@ -123,7 +195,8 @@ export function reviewCommandsForUpgrade(
     const reasons: CommandReviewReason[] = []
     const isPage = c.kind === 'page'
     const isPrompt = !isPage && (c.target ?? 'claude') === 'claude'
-    if (!isPage && !c.hasSecretArg && (c.defaultArgs ?? []).some(looksLikeSecretArg)) reasons.push('secret-like-arg')
+    // Remembered (Ctrl+click) arguments are typed too, so they are scanned too.
+    if (!isPage && !c.hasSecretArg && [...(c.defaultArgs ?? []), ...(c.lastCustomArgs ?? [])].some(looksLikeSecretArg)) reasons.push('secret-like-arg')
     if (isPrompt && c.scope === 'global' && anyShellConfig) reasons.push('prompt-inert-on-shell-configs')
     if (ctx.dissolvedCommandIds.has(c.id)) reasons.push('section-dissolved')
     if (!isPage && c.target === 'partner' && c.scope === 'config' && c.configId && sshConfigIds.has(c.configId)) reasons.push('ssh-partner-is-local')

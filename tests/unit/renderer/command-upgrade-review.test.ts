@@ -113,6 +113,10 @@ describe('reviewCommandsForUpgrade -- tagged, never changed', () => {
     const before = [cmd({ id: 'd', target: 'partner', hasSecretArg: true, defaultArgs: ['-Token {secret}'] })]
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)
   })
+  it('scans the REMEMBERED (Ctrl+click) arguments too -- they are typed just the same (ADR-009 pass on #386)', () => {
+    const before = [cmd({ id: 'r', target: 'partner', defaultArgs: ['-Env', 'prod'], lastCustomArgs: ['-Token', 'ghp_abcdefghijklmnopqrstuvwxyz0123'] })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
+  })
   it('tags a Global prompt button when the user has a terminal-only config, and not otherwise', () => {
     const before = [cmd({ id: 'p', scope: 'global' })]
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['prompt-inert-on-shell-configs'])

@@ -55,6 +55,10 @@ export default function NoteDialog({ note, configId, configName, onSave, onCance
   const [color, setColor] = useState(note?.color || DEFAULT_NOTE_COLOR)
   const [scope, setScope] = useState<'global' | 'config'>(note ? (note.configId ? 'config' : 'global') : configId ? 'config' : 'global')
   const [loading, setLoading] = useState(!!note)
+  // The note could not be decrypted (keychain unavailable, file damaged, IPC
+  // failed): say so and refuse to save, so an empty editor never overwrites
+  // the ciphertext (ADR-009 pass on #386).
+  const [loadFailed, setLoadFailed] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const contentRef = useRef<HTMLTextAreaElement>(null)
   const id = note?.id || generateId()
@@ -63,19 +67,20 @@ export default function NoteDialog({ note, configId, configName, onSave, onCance
   useEffect(() => {
     let cancelled = false
     if (note) {
-      window.electronAPI.notes.load(note.id).then((text) => {
+      Promise.resolve(window.electronAPI.notes.load(note.id)).then((text) => {
         if (cancelled) return
-        setContent(text || '')
+        if (text === null || text === undefined) { setLoadFailed(true); setLoading(false); return }
+        setContent(text)
         setLoading(false)
         setTimeout(() => contentRef.current?.focus(), 50)
-      })
+      }).catch(() => { if (!cancelled) { setLoadFailed(true); setLoading(false) } })
     } else {
       setTimeout(() => contentRef.current?.focus(), 50)
     }
     return () => { cancelled = true }
   }, [note])
 
-  const canSave = !!label.trim() && !loading
+  const canSave = !!label.trim() && !loading && !loadFailed
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!canSave) return
@@ -132,6 +137,10 @@ export default function NoteDialog({ note, configId, configName, onSave, onCance
               </label>
               {loading ? (
                 <div className="h-[160px] rounded-lg border grid place-items-center text-xs" style={{ ...INPUT_STYLE, color: 'var(--text-muted)' }} data-testid="note-decrypting">Decrypting…</div>
+              ) : loadFailed ? (
+                <div className="h-[160px] rounded-lg border grid place-items-center text-xs px-4 text-center leading-relaxed" style={{ ...INPUT_STYLE, color: 'var(--status-danger)' }} role="alert" data-testid="note-decrypt-failed">
+                  This note could not be decrypted -- the OS keychain is unavailable or the note file is damaged. Saving is disabled so the stored content is not overwritten; delete the note if it is beyond recovery.
+                </div>
               ) : (
                 <textarea
                   ref={contentRef}

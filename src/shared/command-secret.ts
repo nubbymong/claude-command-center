@@ -54,7 +54,12 @@ export function commandSecretKey(commandId: string): string {
 export function commandSecretRef(commandId: string, isWindows: boolean): string | null {
   const name = commandSecretEnvName(commandId)
   if (!name) return null
-  return isWindows ? `$env:${name}` : `"$${name}"`
+  // `${env:NAME}` rather than `$env:NAME`: the bare form is unbounded, so
+  // `{secret}_v2`, `{secret}.json` or `{secret}:x` read as a longer variable name
+  // (or a member access) and the whole argument vanishes -- shifting the next
+  // flag into its slot. The braced form ends where the name ends, on PowerShell
+  // 5.1 and 7 alike (measured in the ADR-009 pass on #386).
+  return isWindows ? `\${env:${name}}` : `"$${name}"`
 }
 
 /**

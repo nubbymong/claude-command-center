@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useSessionStore, Session } from '../stores/sessionStore'
 import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../stores/configStore'
+import { useCommandStore } from '../stores/commandStore'
+import { commandSecretKey } from '../../shared/command-secret'
 import { reorderLoose } from '../utils/reorderLoose'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -320,6 +322,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     // (pre-2.1.0-beta.5 bug).
     await window.electronAPI.credentials.delete(configId + '_sudo')
     await window.electronAPI.credentials.delete(configId + '_argsecret')
+    // The config's own command buttons go with it, and so do their secrets
+    // (ADR-018: "config delete sweeps its buttons' secrets") -- otherwise they
+    // linger as rows "a deleted config" with ciphertext nothing can ever use.
+    const store = useCommandStore.getState()
+    for (const cmd of store.commands.filter((c) => c.scope === 'config' && c.configId === configId)) {
+      if (cmd.hasSecretArg) await window.electronAPI.credentials.delete(commandSecretKey(cmd.id))
+      store.removeCommand(cmd.id)
+    }
   }
 
   const launchFromConfig = async (config: TerminalConfig) => {

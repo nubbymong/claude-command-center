@@ -315,14 +315,19 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       if (argSecret) resolvedOptions = { ...resolvedOptions, terminalSecret: argSecret }
     }
 
-    // Command-button secrets: every SHELL spawn (the partner pane, or the main
-    // pane of a terminal-only config) gets the secrets of the commands visible
-    // to its config, as env vars, so a button can type a reference instead of
-    // the value. Resolved HERE from the commands file on disk and the keychain;
-    // the renderer's copy of the commands list is never consulted, because it
-    // could name any id it liked. No secrets for a Claude spawn: a reference
-    // typed into the TUI is just text to Claude.
-    if (options?.shellOnly && options.configId) {
+    // Command-button secrets: every LOCAL shell spawn (the partner pane, or the
+    // main pane of a terminal-only config) gets the secrets of the commands
+    // visible to it -- the Global ones, plus its config's when it has one -- as
+    // env vars, so a button can type a reference instead of the value. Resolved
+    // HERE from the commands file on disk and the keychain; the renderer's copy
+    // of the commands list is never consulted, because it could name any id it
+    // liked. No secrets for a Claude spawn (a reference typed into the TUI is
+    // just text to Claude) and none for an SSH spawn (the env never leaves this
+    // PC, and decrypting for it would be for nothing). A shell with no config
+    // (Ask Conductor's partner) still gets the Global ones: a Global button runs
+    // in every session it can run in (ADR-018 D5), and without this it would
+    // type a reference to nothing. (ADR-009 pass on #386.)
+    if (options?.shellOnly && !options.ssh) {
       const secrets = collectCommandSecrets(readConfig('commands'), options.configId, loadCredential)
       if (Object.keys(secrets).length > 0) resolvedOptions = { ...resolvedOptions, commandSecrets: secrets }
     }

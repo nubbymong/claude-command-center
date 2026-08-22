@@ -167,7 +167,9 @@ afterEach(() => {
 })
 
 describe('a button that cannot run here leaves the row and the pill says so (D5)', () => {
-  it('a Global button carrying a secret, aimed at the agent on a local Claude session: secrets reach shells on this PC only', () => {
+  it('a Global legacy button carrying a secret (no kind, aimed at the main pane) is a shell line, so on an agent session it cannot run here', () => {
+    // A secret only ever rode a shell line (ADR-009 pass on #386): the record
+    // is read as one, and an agent's main pane is not a shell.
     COMMANDS = [secretGlobal(1, 'Deploy'), { id: 'ok', label: 'Plain', prompt: 'hello', scope: 'global' }]
     render()
     const global = byTestId('command-band-global')!
@@ -180,7 +182,7 @@ describe('a button that cannot run here leaves the row and the pill says so (D5)
     const row = byTestId('command-overflow-item', dlg)!
     expect(row.dataset.commandId).toBe('sec1')
     expect(row.dataset.inapplicable).toBe('true')
-    expect(row.title).toBe('Deploy — cannot run here: Secret values reach shells on this PC only')
+    expect(row.title).toBe('Deploy — cannot run here: This shell line was made for a terminal-only session; here the main pane is an agent')
   })
 
   it('a Global prompt (no kind) on a terminal-only session: there is no agent to read it', () => {
@@ -222,7 +224,7 @@ describe('a button that cannot run here leaves the row and the pill says so (D5)
     const rows = allByTestId('command-overflow-item', dlg)
     expect(rows.map((r) => r.dataset.commandId)).toEqual(['csec1'])
     expect(rows[0].dataset.inapplicable).toBe('true')
-    expect(rows[0].title).toBe('Session deploy — cannot run here: Secret values reach shells on this PC only')
+    expect(rows[0].title).toBe('Session deploy — cannot run here: This shell line was made for a terminal-only session; here the main pane is an agent')
   })
 })
 
@@ -527,6 +529,27 @@ describe('running a row from the popover (D5, D8)', () => {
     expect(ptyWrite).toHaveBeenCalledTimes(1)
     expect(ptyWrite).toHaveBeenCalledWith('s-1', 'say 6\r')
     expect(byTestId('command-overflow')).toBeNull()
+  })
+
+  it('a greyed row\'s own menu cannot run it either: Run and Run with arguments are disabled with the reason, and nothing is typed (D5)', () => {
+    // ADR-009 pass on #386: the popover refused the click, but the row's
+    // right-click menu still offered Run. Fixture: a legacy Global secret
+    // button (no kind, aimed at the main pane) on an AGENT session -- inapplicable.
+    COMMANDS = [{ id: 'sec1', label: 'Deploy', prompt: 'deploy 1', scope: 'global', hasSecretArg: true, defaultArgs: ['-T', '{secret}'] }, { id: 'ok', label: 'Plain', prompt: 'hello', scope: 'global' }]
+    render()
+    const dlg = openOverflow('global')
+    const row = byTestId('command-overflow-item', dlg)!
+    expect(row.dataset.commandId).toBe('sec1')
+    expect(row.dataset.inapplicable).toBe('true')
+    rightClick(row)
+    const menu = byTestId('command-menu')!
+    const isDisabled = (el: HTMLElement | null) => !!el && (el as HTMLButtonElement).disabled && el.getAttribute('aria-disabled') === 'true'
+    expect(isDisabled(byTestId('menu-run', menu)), 'Run disabled').toBe(true)
+    expect(isDisabled(byTestId('menu-run-args', menu)), 'Run with arguments disabled').toBe(true)
+    expect(menu.textContent).toContain('This shell line was made for a terminal-only session; here the main pane is an agent')
+    // Even if something reaches the handler, nothing is typed.
+    act(() => { byTestId('menu-run', menu)!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(ptyWrite).not.toHaveBeenCalled()
   })
 
   it('Enter on a greyed row types nothing and leaves the popover open; the next runnable row still runs', () => {

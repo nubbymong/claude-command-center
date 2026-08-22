@@ -286,7 +286,7 @@ describe('a secret argument (shell kind only)', () => {
     act(() => { byTest<HTMLInputElement>('command-secret-toggle')!.click() })
     act(() => { type(byTest<HTMLInputElement>('command-secret-value')!, 'sk-verysecret') })
     const line = byTest('command-preview-line')!.textContent!
-    expect(line).toContain('-Token $env:CCC_CMD_SECRET_')
+    expect(line).toContain('-Token ${env:CCC_CMD_SECRET_')
     expect(line).not.toContain('sk-verysecret')
     expect(line).not.toContain('{secret}')
   })

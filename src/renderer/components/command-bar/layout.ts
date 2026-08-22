@@ -20,9 +20,13 @@ export type EffectiveKind = 'prompt' | 'shell' | 'page'
  * claude-target button, off its scope: a Session button of a terminal-only
  * config is that shell's own line, anything else is a prompt. (ADR-018 D6)
  */
-export function effectiveKind(cmd: Pick<CustomCommand, 'kind' | 'target' | 'scope'>, caps: SessionCapabilities): EffectiveKind {
+export function effectiveKind(cmd: Pick<CustomCommand, 'kind' | 'target' | 'scope' | 'hasSecretArg'>, caps: SessionCapabilities): EffectiveKind {
   if (cmd.kind === 'page' || cmd.kind === 'shell' || cmd.kind === 'prompt') return cmd.kind
   if (cmd.target === 'partner') return 'shell'
+  // A secret argument only ever existed on a shell line (beta.16 allowed one on
+  // a Global main-shell button of a terminal-only session): reading such a
+  // record as a prompt would let the next save delete its keychain value.
+  if (cmd.hasSecretArg) return 'shell'
   return caps.mainPaneIsShell && cmd.scope === 'config' ? 'shell' : 'prompt'
 }
 

@@ -222,6 +222,8 @@ export interface UserButtonMenuProps {
   onMove: (dir: 'left' | 'right' | 'start' | 'end') => void
   onDelete: () => void
   returnFocusTo?: HTMLElement | null
+  /** Why the button cannot run in THIS session (D5) -- Run is then disabled here too. */
+  cannotRunReason?: string | null
 }
 
 export function UserButtonMenu(p: UserButtonMenuProps) {
@@ -229,6 +231,7 @@ export function UserButtonMenu(p: UserButtonMenuProps) {
   const isPage = cmd.kind === 'page'
   const hasArgs = !isPage && !!(cmd.defaultArgs?.length || cmd.lastCustomArgs?.length)
   const isGlobal = cmd.scope === 'global'
+  const runDisabled = !!p.cannotRunReason
   return (
     <Menu x={p.x} y={p.y} onClose={p.onClose} ariaLabel={`${cmd.label} menu`} returnFocusTo={p.returnFocusTo} testId="command-menu">
       {/* The header IS the tooltip (D4): title + " — " + sub. Slice the label
@@ -237,8 +240,9 @@ export function UserButtonMenu(p: UserButtonMenuProps) {
       {cmd.needsReview?.length ? (
         <MenuItem onClick={p.onEdit} icon={I.warn} testId="menu-review">Review this button…<span className="ml-1" style={{ color: 'var(--status-warning)' }}>({cmd.needsReview.length})</span></MenuItem>
       ) : null}
-      <MenuItem onClick={p.onRun} icon={I.play} testId="menu-run">{isPage ? 'Open' : 'Run'}</MenuItem>
-      {!isPage && <MenuItem onClick={p.onRunWithArgs} icon={I.args} hint="Ctrl+click" disabled={!hasArgs} testId="menu-run-args">Run with arguments…</MenuItem>}
+      <MenuItem onClick={p.onRun} icon={I.play} disabled={runDisabled} hint={runDisabled ? "can't run here" : undefined} testId="menu-run">{isPage ? 'Open' : 'Run'}</MenuItem>
+      {!isPage && <MenuItem onClick={p.onRunWithArgs} icon={I.args} hint={runDisabled ? "can't run here" : 'Ctrl+click'} disabled={!hasArgs || runDisabled} testId="menu-run-args">Run with arguments…</MenuItem>}
+      {runDisabled && <MenuFoot>{p.cannotRunReason}</MenuFoot>}
       <MenuRule />
       <MenuItem onClick={p.onEdit} icon={I.edit} testId="menu-edit">Edit…</MenuItem>
       <MenuItem onClick={p.onDuplicate} icon={I.copy} testId="menu-duplicate">Duplicate</MenuItem>
