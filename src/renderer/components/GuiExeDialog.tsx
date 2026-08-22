@@ -14,6 +14,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { shellOperatorsIn } from '../../shared/gui-exe'
+import { scrim } from './ui/Dialog'
 
 export interface GuiExeDialogProps {
   /** The button's label, for the title. */
@@ -50,7 +51,7 @@ export default function GuiExeDialog({ label, command, exePath, onChoose, onCanc
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'color-mix(in srgb, var(--color-base) 80%, transparent)' }}
+      style={{ background: scrim(0.8) }}
       data-ux-id="gui-exe-backdrop"
     >
       <div

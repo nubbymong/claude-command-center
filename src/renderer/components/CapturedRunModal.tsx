@@ -20,6 +20,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { CapturedRunExit } from '../../shared/gui-exe'
+import { scrim } from './ui/Dialog'
 
 export interface CapturedRunModalProps {
   /** Null when the run was refused; the panel then explains the fallback. */
@@ -112,7 +113,7 @@ export default function CapturedRunModal({ runId, label, command, exePath, start
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'color-mix(in srgb, var(--color-base) 80%, transparent)' }}
+      style={{ background: scrim(0.8) }}
       data-ux-id="captured-run-backdrop"
     >
       <div
