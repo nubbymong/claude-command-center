@@ -190,6 +190,21 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
   const bothChosen = uiProvider !== null && sessionType !== null
 
+  // Changing the model must not leave an effort the new model can't run selected:
+  // the chip greys out (disabled) but its value stays in state and still submits
+  // (--effort xhigh --model claude-opus-4-6). Reset to '' (Default, always valid)
+  // when the current effort is no longer supported, using the SAME per-model
+  // gating the chips use (effortsForModel → disabled). '' needs no check.
+  const handleModelChange = (nextModel: string) => {
+    setModel(nextModel)
+    if (effortLevel !== '') {
+      const stillSupported = effortsForModel(registry, nextModel).some(
+        (ef) => ef.value === effortLevel && !ef.disabled,
+      )
+      if (!stillSupported) setEffortLevel('')
+    }
+  }
+
   const handleBrowse = async () => {
     const path = await window.electronAPI.dialog.openFolder()
     if (path) setWorkingDir(path)
@@ -793,7 +808,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       </div>
                       <select
                         value={model}
-                        onChange={(e) => setModel(e.target.value)}
+                        onChange={(e) => handleModelChange(e.target.value)}
                         className={inputCls}
                       >
                         <option value="">Default — follows your Claude plan</option>
