@@ -157,6 +157,20 @@ describe('reviewCommandsForUpgrade -- tagged, never changed', () => {
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)
   })
 
+  /**
+   * The path/URL filter used to run BEFORE the credential-flag test, so a real
+   * plaintext credential whose value contains a `/` — ordinary base64 — was
+   * discarded as a path and never tagged (#371, ADR-009 re-verification).
+   */
+  it.each([
+    'curl --token=aB3xY/9kQ2mNp7Rw',
+    'deploy --api-key=cD4/zE8wR1tY6uI0oP',
+    'run /Token:mN2/qW5eR8tY1uI4',
+  ])('still tags a credential flag whose VALUE contains a slash: %s', (line) => {
+    const before = [cmd({ id: 'sh', kind: 'shell', target: 'partner', prompt: line })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
+  })
+
   it('still tags a REAL credential sitting next to a path or a URL', () => {
     const before = [cmd({
       id: 'sh',

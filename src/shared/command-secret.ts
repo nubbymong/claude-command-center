@@ -78,13 +78,27 @@ type QuoteState = 'none' | 'single' | 'double'
 interface ScannedWord {
   start: number
   end: number
-  /** The command name position. A secret can never be one. */
+  /** The command name position — word 0, or the first word after a separator. */
   isFirst: boolean
   /** The word contains a quote character somewhere. */
   hasQuote: boolean
+  /**
+   * The word carries a shell ESCAPE that the scanner cannot reason about: an
+   * escaped quote (`\"`, `` `" ``), or a trailing escape that would swallow a
+   * closing quote we add.
+   */
+  hasEscape: boolean
   /** Quote state at each `{secret}` inside this word. */
   tokens: QuoteState[]
 }
+
+/** `\` is bash's escape, `` ` `` is PowerShell's. Both are treated as escapes
+ *  everywhere: over-flagging costs a literal token, under-flagging costs a
+ *  credential. */
+const ESCAPE_CHARS = new Set(['\\', '`'])
+
+/** Words after these start a new COMMAND, so a token there is a command name. */
+const SEPARATORS = new Set([';', '|', '&', '\n'])
 
 /**
  * Split a shell line into words, tracking QUOTE STATE — which is the only thing
@@ -100,16 +114,40 @@ function scanShellWords(text: string): ScannedWord[] {
   const words: ScannedWord[] = []
   let state: QuoteState = 'none'
   let cur: ScannedWord | null = null
-  let seenWord = false
+  /** The next word begins a command (start of text, or after a separator). */
+  let atCommandPosition = true
+  const finish = (end: number) => {
+    if (!cur) return
+    cur.end = end
+    // A word that ENDS with an escape would swallow the closing quote we add.
+    const raw = text.slice(cur.start, end)
+    if (ESCAPE_CHARS.has(raw[raw.length - 1])) cur.hasEscape = true
+    // `;`, `|`, `&&`… — whether the word IS one or merely ends with one.
+    const bare = raw.replace(/["']/g, '')
+    if (bare.length > 0 && SEPARATORS.has(bare[bare.length - 1])) atCommandPosition = true
+    else atCommandPosition = false
+    words.push(cur)
+    cur = null
+  }
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (state === 'none' && /\s/.test(ch)) {
-      if (cur) { cur.end = i; words.push(cur); cur = null }
+      finish(i)
       continue
     }
     if (!cur) {
-      cur = { start: i, end: text.length, isFirst: !seenWord, hasQuote: false, tokens: [] }
-      seenWord = true
+      cur = { start: i, end: text.length, isFirst: atCommandPosition, hasQuote: false, hasEscape: false, tokens: [] }
+    }
+    // An ESCAPE consumes the character after it, so that character can never be
+    // a quote-region boundary. Without this a user-escaped quote (`\"Bearer
+    // {secret}\"`) read as a real quoted region, the token looked safely
+    // enclosed, and the emitted reference landed UNQUOTED — measured in bash as
+    // the value becoming its own argv entry, which curl takes as a URL operand.
+    if (ESCAPE_CHARS.has(ch)) {
+      const next = text[i + 1]
+      if (next === '"' || next === "'") cur.hasEscape = true
+      if (next !== undefined && !/\s/.test(next)) { i += 1; continue }
+      continue
     }
     if (state === 'none' && (ch === '"' || ch === "'")) {
       state = ch === '"' ? 'double' : 'single'
@@ -125,15 +163,25 @@ function scanShellWords(text: string): ScannedWord[] {
       i += COMMAND_SECRET_TOKEN.length - 1
     }
   }
-  if (cur) { cur.end = text.length; words.push(cur) }
+  finish(text.length)
   return words
 }
 
 /** What can safely be done with the tokens in one word. */
-type Placement = 'none' | 'bare' | 'wrap' | 'unsafe-command-word' | 'unsafe-single-quoted' | 'unsafe-mixed-quotes'
+type Placement =
+  | 'none'
+  | 'bare'
+  | 'wrap'
+  | 'unsafe-command-word'
+  | 'unsafe-single-quoted'
+  | 'unsafe-mixed-quotes'
+  | 'unsafe-escaped-quote'
 
 function placementFor(w: ScannedWord, isCommandLine: boolean): Placement {
   if (w.tokens.length === 0) return 'none'
+  // An escape the scanner cannot reason about. Whatever the quote state LOOKS
+  // like, it may be wrong — so no reference form can be trusted here.
+  if (w.hasEscape) return 'unsafe-escaped-quote'
   // A secret is never a command NAME. Wrapping here produces a bare quoted
   // string, which PowerShell evaluates as an expression and PRINTS — the value
   // straight into the terminal and its scrollback.
@@ -223,6 +271,8 @@ export function secretPlacementProblem(text: string, opts: { isCommandLine?: boo
         return `${COMMAND_SECRET_TOKEN} inside single quotes cannot be filled in (a shell does not expand anything in '…'). Use double quotes: "… ${COMMAND_SECRET_TOKEN}".`
       case 'unsafe-mixed-quotes':
         return `${COMMAND_SECRET_TOKEN} sits just outside a quoted section, where the value would become a separate argument. Put it inside the quotes: "… ${COMMAND_SECRET_TOKEN}".`
+      case 'unsafe-escaped-quote':
+        return `${COMMAND_SECRET_TOKEN} is next to an escaped quote (\\" or \`"), and the value could end up as a separate argument. Use plain double quotes around it: "… ${COMMAND_SECRET_TOKEN}".`
       default:
         break
     }

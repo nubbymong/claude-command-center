@@ -129,8 +129,17 @@ function looksLikePathOrUrl(word: string): boolean {
 function looksLikeSecretWordInShellLine(word: string): boolean {
   const w = (word ?? '').trim()
   if (!w || w.includes(COMMAND_SECRET_TOKEN)) return false
+  // The FLAG test runs FIRST, because a credential-named flag is never a path
+  // whatever its VALUE looks like: running the path/URL filter first meant
+  // `--token=aB3xY/9kQ2mNp7Rw` (ordinary base64) was discarded as a path and
+  // never tagged (#371, ADR-009 re-verification).
+  //
+  // "Flag" has to be precise, though. A leading `/` is a Windows switch
+  // (`/Token:abc`) AND the start of every POSIX absolute path — so a switch is
+  // one segment with an optional `:value`, and `/var/lib/pat:/pat` is not one.
+  const isFlag = /^-/.test(w) || /^\/[A-Za-z][\w-]*(:.*)?$/.test(w)
+  if (isFlag) return looksLikeSecretArg(w)
   if (looksLikePathOrUrl(w)) return false
-  if (/^[-/]/.test(w)) return looksLikeSecretArg(w)
   // Not a flag: only the VALUE shapes count, never the name shapes.
   return KEY_SHAPED.test(w) || (HIGH_ENTROPY.test(w) && /[A-Za-z]/.test(w) && /[0-9]/.test(w))
 }
