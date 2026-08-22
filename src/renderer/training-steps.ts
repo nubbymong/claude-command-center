@@ -107,12 +107,24 @@ export const trainingSteps: TrainingStep[] = [
     // Shipped in 2.0 as "Ask Command Center" and renamed to "Ask Conductor",
     // but it never had a card of its own -- FinishStep promises the Feature
     // Guide "explains every feature", and the help surface itself was the one
-    // missing from it (#372). Pinned at 2.1.0 so it rides along with the other
-    // 2.1 cards rather than moving currentTrainingVersion(), which is the MAX
-    // sinceVersion across steps.
+    // missing from it (#372).
+    //
+    // 2.1.1, deliberately ABOVE the 2.1.0 cards, and the reason is the whole
+    // point of the entry. getNewSteps() keeps steps with sinceVersion >
+    // lastVersion, and TrainingWalkthrough stamps lastTrainingVersion =
+    // currentTrainingVersion() on close, so every beta user who has already run
+    // the 2.1 tour holds '2.1.0'. At 2.1.0 this card is filtered OUT for them
+    // and shouldShowTraining() returns false: the one cohort that already has
+    // the feature and does not know what it does would never be shown it --
+    // which is the discovery gap #372 was filed about. At 2.1.1 they are shown
+    // exactly this one card; the other 2.1.0 cards are not > 2.1.0, so nothing
+    // else is re-surfaced. Same move, same reason, as the session-options
+    // re-version above. Users arriving from 2.0.x get the card either way.
+    // The badge is unaffected -- FeatureGuidePage's shortVersion() renders both
+    // 2.1.0 and 2.1.1 as "since 2.1".
     id: 'ask-conductor',
     title: 'Ask Conductor',
-    sinceVersion: '2.1.0',
+    sinceVersion: '2.1.1',
     section: 'getting-started',
     summary:
       'Ask Conductor is the help session: a real Claude session that has already read this app\'s documentation, so you can ask how something works in plain English instead of hunting through Settings. It answers questions about the Conductor and about Claude Code itself, and tells you which of the two it is answering.',

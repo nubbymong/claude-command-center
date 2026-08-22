@@ -56,7 +56,9 @@ describe('training-steps', () => {
     }
 
     it('exists, so the Feature Guide covers the help surface itself', () => {
-      expect(ask().id).toBe('ask-conductor')
+      // Asserted against the id list rather than through ask(), which finds BY
+      // id and so could only ever agree with itself.
+      expect(trainingSteps.map((s) => s.id)).toContain('ask-conductor')
     })
 
     it('is filed under its current name, never the retired 2.0 one', () => {
@@ -90,9 +92,16 @@ describe('training-steps', () => {
       expect(step.screenshotFilename).toMatch(/\.jpg$/)
     })
 
-    it('does not move the training version (rides with the 2.1 cards)', () => {
-      expect(ask().sinceVersion).toBe('2.1.0')
-      expect(currentTrainingVersion()).toBe('2.1.0')
+    it('is surfaced to beta users who already ran the 2.1 tour, and alone', () => {
+      // The whole point of the entry. A user who finished the 2.1 tour holds
+      // lastTrainingVersion '2.1.0'; getNewSteps keeps sinceVersion > that, so
+      // the card has to sit ABOVE 2.1.0 or shouldShowTraining() stays false and
+      // the cohort that already has the feature is never shown it (#372).
+      // Equally it must be the ONLY thing re-surfaced -- one new card is a
+      // proportionate interruption, replaying the 2.1 set is not.
+      expect(getNewSteps('2.1.0').map((s) => s.id)).toEqual(['ask-conductor'])
+      // Users arriving from 2.0.x get it as part of the normal backlog.
+      expect(getNewSteps('2.0.0').map((s) => s.id)).toContain('ask-conductor')
     })
   })
 
