@@ -51,7 +51,10 @@ export default function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }:
   // Escape closes. The backdrop dismisses on MOUSEDOWN, never on click: Ctrl+C
   // in the terminal fires click events on backdrops (house rule -- the
   // TerminalContextMenu pattern), and this popover holds typed input that a
-  // stray click must not discard.
+  // stray click must not discard. A right-click is an INERT dismiss: the
+  // button-2 mousedown is ignored and the contextmenu is swallowed here, so the
+  // gesture never reaches what is under the pointer (the terminal's
+  // right-click would paste).
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
     window.addEventListener('keydown', onKey, true)
@@ -84,7 +87,7 @@ export default function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }:
   }
 
   return (
-    <div className="fixed inset-0 z-50" onMouseDown={onClose} data-testid="command-args-backdrop">
+    <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (e.button !== 2) onClose() }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose() }} data-testid="command-args-backdrop">
       <div
         ref={popoverRef}
         className="fixed rounded-lg shadow-xl p-3 min-w-[240px] max-w-[340px]"

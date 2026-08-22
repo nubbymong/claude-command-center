@@ -612,4 +612,20 @@ describe('running a row from the popover (D5, D8)', () => {
     expect(byTestId('command-overflow')).toBeNull()
     expect(ptyWrite).not.toHaveBeenCalled()
   })
+
+  it('right-click away is an INERT dismiss: button-2 mousedown keeps it, the contextmenu is swallowed and closes it, no menu opens', () => {
+    installLayout()
+    COMMANDS = globals(6)
+    render()
+    openOverflow('global')
+    const backdrop = byTestId('command-overflow-backdrop')!
+    act(() => { backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 })) })
+    expect(byTestId('command-overflow'), 'still open after a button-2 mousedown').not.toBeNull()
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 })
+    act(() => { backdrop.dispatchEvent(ev) })
+    expect(ev.defaultPrevented).toBe(true)
+    expect(byTestId('command-overflow')).toBeNull()
+    expect(container.querySelector('[data-testid$="-menu"]'), 'no menu opened on top').toBeNull()
+    expect(ptyWrite).not.toHaveBeenCalled()
+  })
 })

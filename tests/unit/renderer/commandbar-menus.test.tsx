@@ -789,6 +789,20 @@ describe('dismissal: a backdrop mousedown closes, a click never does (house rule
     expect(menus()).toHaveLength(0)
   })
 
+  it('a chip menu: right-click away is an INERT dismiss -- button-2 mousedown keeps it, the contextmenu closes it and opens nothing else (the terminal would paste)', async () => {
+    await mount()
+    rightClick(chip('g1'))
+    expect(menus()).toHaveLength(1)
+    const backdrop = mustGet('command-bar-menu-backdrop')
+    act(() => { backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 })) })
+    expect(menus(), 'still open after a button-2 mousedown').toHaveLength(1)
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 })
+    act(() => { backdrop.dispatchEvent(ev) })
+    expect(ev.defaultPrevented, 'the contextmenu is swallowed').toBe(true)
+    expect(menus(), 'closed, and the bar menu did NOT open on top').toHaveLength(0)
+    expect(ptyWrite).not.toHaveBeenCalled()
+  })
+
   it('the arguments popover: typed input survives a click on the backdrop; a mousedown on it closes', async () => {
     COMMANDS = ALL.map((c) => (c.id === 'c1' ? { ...c, defaultArgs: ['--watch'] } : c))
     await mount()
@@ -808,5 +822,21 @@ describe('dismissal: a backdrop mousedown closes, a click never does (house rule
     mousedown(backdrop)
     expect(popover()).toBeNull()
     expect(ptyWrite).not.toHaveBeenCalled()
+  })
+
+  it('the arguments popover: right-click away is an inert dismiss too', async () => {
+    COMMANDS = ALL.map((c) => (c.id === 'c1' ? { ...c, defaultArgs: ['--watch'] } : c))
+    await mount()
+    rightClick(chip('c1'))
+    click(byTestId('menu-run-args'))
+    const popover = () => container.querySelector<HTMLElement>('[role="dialog"][aria-label="Shell one — arguments"]')
+    const backdrop = mustGet('command-args-backdrop')
+    act(() => { backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 })) })
+    expect(popover(), 'still open after a button-2 mousedown').not.toBeNull()
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    act(() => { backdrop.dispatchEvent(ev) })
+    expect(ev.defaultPrevented).toBe(true)
+    expect(popover()).toBeNull()
+    expect(menus(), 'no bar menu opened on top').toHaveLength(0)
   })
 })

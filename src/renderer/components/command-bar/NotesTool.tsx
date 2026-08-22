@@ -145,8 +145,10 @@ const NotesTool = forwardRef<NotesToolHandle, Props>(function NotesTool({ config
 
       {open && (
         // mousedown (not click): Ctrl+C in the terminal fires click events on
-        // backdrops -- the TerminalContextMenu pattern (house rule).
-        <div className="fixed inset-0 z-50" onMouseDown={() => setOpen(null)} onContextMenu={(e) => { e.preventDefault(); setOpen(null) }} data-testid="notes-popover-backdrop">
+        // backdrops -- the TerminalContextMenu pattern (house rule). Right-click
+        // is an inert dismiss: button 2 ignored here, the contextmenu swallowed,
+        // so the gesture never reaches the terminal underneath (would paste).
+        <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (e.button !== 2) setOpen(null) }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(null) }} data-testid="notes-popover-backdrop">
           <div
             ref={panelRef}
             className="fixed rounded-lg shadow-xl p-2 w-[330px] text-xs outline-none"

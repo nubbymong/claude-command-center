@@ -77,8 +77,10 @@ export default function BandOverflow({ plan, folded, caps, anchor, onRun, onCont
   let index = -1
   return (
     // mousedown (not click): Ctrl+C in the terminal fires click events on
-    // backdrops -- the TerminalContextMenu pattern (house rule).
-    <div className="fixed inset-0 z-50" onMouseDown={onClose} data-testid="command-overflow-backdrop">
+    // backdrops -- the TerminalContextMenu pattern (house rule). Right-click is
+    // an inert dismiss: button 2 is ignored here and the contextmenu swallowed,
+    // so the gesture never reaches the terminal underneath (which would paste).
+    <div className="fixed inset-0 z-50" onMouseDown={(e) => { if (e.button !== 2) onClose() }} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onClose() }} data-testid="command-overflow-backdrop">
       <div
         ref={ref}
         className="fixed rounded-lg shadow-xl p-2 w-[300px] text-xs outline-none"

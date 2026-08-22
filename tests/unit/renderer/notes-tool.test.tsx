@@ -611,4 +611,16 @@ describe('12. the E5 tokens on the note dialog, and no backdrop click-to-close',
     await act(async () => { backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })) })
     expect(byTest('notes-popover')).toBeNull()
   })
+
+  it('right-click away is an inert dismiss: button-2 mousedown keeps the popover, the contextmenu is swallowed and closes it', async () => {
+    await render({ configId: 'cfg' })
+    await openPopover()
+    const backdrop = byTest('notes-popover-backdrop')!
+    await act(async () => { backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 })) })
+    expect(byTest('notes-popover'), 'still open after a button-2 mousedown').not.toBeNull()
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+    await act(async () => { backdrop.dispatchEvent(ev) })
+    expect(ev.defaultPrevented).toBe(true)
+    expect(byTest('notes-popover')).toBeNull()
+  })
 })
