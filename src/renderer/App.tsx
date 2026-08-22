@@ -44,6 +44,7 @@ import SshCloseDialog from './components/SshCloseDialog'
 import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
+import { useCommandBarStore } from './stores/commandBarStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
@@ -474,6 +475,10 @@ export default function App() {
       try {
         const savedState = await window.electronAPI.session.load() as SessionState | null
         if (savedState && savedState.sessions.length > 0) setPendingRestore(savedState)
+        // Nothing to restore: every per-session tool hide from the last run is
+        // for a session that no longer exists. (The restore path sweeps after
+        // it knows which sessions came back.)
+        else useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
       } catch (err) {
         console.error('[App] Failed to load saved sessions:', err)
       }
@@ -676,6 +681,9 @@ export default function App() {
       markRestoredSessionsPredetermined(restoredSessions.map((s) => s.id))
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
+      // Per-session "hide this tool" entries key on session ids, which persist
+      // across restarts; drop the ones whose session did not come back (ADR-018 M3).
+      useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
       await window.electronAPI.session.clear()
 
       if (sessionSummary.changed > 0) {
@@ -1057,6 +1065,7 @@ export default function App() {
             partnerSessionId={activeSession.id + '-partner'}
             parentSessionId={activeSession.id}
             mainPaneIsShell={!!activeSession.shellOnly}
+            configCount={configs.length}
           />
         )}
       </div>
@@ -1208,6 +1217,7 @@ export default function App() {
             }}
             onDontOpen={() => {
               setPendingRestore(null)
+              useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
               // Discard the saved cards so the next boot doesn't re-prompt; the
               // conversations themselves stay resumable from inside Claude.
               void window.electronAPI.session.clear()

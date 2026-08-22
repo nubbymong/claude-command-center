@@ -39,7 +39,6 @@ export const IPC = {
 
   // Credentials
   CREDENTIALS_SAVE: 'credentials:save',
-  CREDENTIALS_LOAD: 'credentials:load',
   CREDENTIALS_DELETE: 'credentials:delete',
 
   // PTY

@@ -90,7 +90,7 @@ import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
-import { loadCredential, saveCredential, deleteCredential } from './credential-store'
+import { saveCredential, deleteCredential } from './credential-store'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
 import { safeExternalHttpsHref } from '../shared/safe-url'
@@ -568,9 +568,8 @@ function createWindow(): void {
     return saveCredential(configId, password)
   })
 
-  ipcMain.handle('credentials:load', async (_event, configId: string) => {
-    return loadCredential(configId)
-  })
+  // No 'credentials:load' handler: a credential's value is injected into the
+  // shell environment at spawn (pty-handlers) and never handed to the renderer.
 
   ipcMain.handle('credentials:delete', async (_event, configId: string) => {
     return deleteCredential(configId)

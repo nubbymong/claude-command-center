@@ -205,10 +205,14 @@ describe('stepsNewSince — the pages an upgrader is shown after the notes', () 
     expect(stepsNewSince(undefined, {}, REGISTRY)).toEqual([])
   })
 
-  it('today\'s real registry yields nothing for a within-line upgrade', () => {
-    // Every shipped step is sinceVersion 2.0.0, so a beta-to-beta upgrader sees
-    // the notes and nothing else. If this ever fails, a step was added without
-    // thinking about which cohort it is for.
-    expect(stepsNewSince('2.1.0-beta.15', {})).toEqual([])
+  it('today\'s real registry yields exactly the command-bar page for a within-line upgrade, and nothing for the same build', () => {
+    // Every shipped step is sinceVersion 2.0.0 EXCEPT commandBar (2.1.0-beta.17,
+    // #382): a beta-to-beta upgrader sees the notes plus that one page -- the
+    // owner asked for the one-row bar to be introduced to existing users too.
+    // Someone already on beta.17 sees nothing. If this ever fails, a step was
+    // added without thinking about which cohort it is for.
+    expect(stepsNewSince('2.1.0-beta.15', {}).map((s) => s.id)).toEqual(['commandBar'])
+    expect(stepsNewSince('2.1.0-beta.16', {}).map((s) => s.id)).toEqual(['commandBar'])
+    expect(stepsNewSince('2.1.0-beta.17', {})).toEqual([])
   })
 })

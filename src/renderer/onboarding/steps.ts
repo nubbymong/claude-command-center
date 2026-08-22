@@ -78,6 +78,10 @@ export interface OnboardingStep {
 export const STEPS: OnboardingStep[] = [
   { id: 'whatsNewV2',    sinceVersion: '2.0.0', requiresSetup: false },
   { id: 'welcome',       sinceVersion: '2.0.0', requiresSetup: false },
+  // The one-row command bar (ADR-018, #382): stamped with the release it ships
+  // in, so every existing user gets this page once on the first launch after
+  // the upgrade (stepsNewSince), and fresh installs meet it in the full flow.
+  { id: 'commandBar',    sinceVersion: '2.1.0-beta.17', requiresSetup: false },
   { id: 'findClaude',    sinceVersion: '2.0.0', requiresSetup: false },
   { id: 'compatibility', sinceVersion: '2.0.0', requiresSetup: false },
   { id: 'accounts',      sinceVersion: '2.0.0', requiresSetup: false },

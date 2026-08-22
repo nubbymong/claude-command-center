@@ -14,6 +14,7 @@ import GitHubConfigTab from './github/config/GitHubConfigTab'
 import CopilotMeterSettings from './settings/CopilotMeterSettings'
 import { isSentinelEnabled } from '../../shared/sentinel-enabled'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
+import { CustomCommandsTab } from './settings/CustomCommandsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import { SectionLabel } from './ui/SectionLabel'
@@ -24,7 +25,7 @@ import AccountsPanel from './AccountsPanel'
 declare const __BUILD_TIME__: string
 declare const __APP_VERSION__: string
 
-export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
+export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'commands', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
 
 const TABS: { id: SettingsTab; label: string }[] = [
@@ -35,6 +36,7 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'github', label: 'GitHub' },
   { id: 'codex', label: 'Codex' },
+  { id: 'commands', label: 'Custom Commands' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'about', label: 'About' }
 ]
@@ -544,6 +546,8 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
           {activeTab === 'github' && <GitHubConfigTab />}
 
           {activeTab === 'codex' && <CodexSettingsTab />}
+
+          {activeTab === 'commands' && <CustomCommandsTab />}
 
           {activeTab === 'hooks' && <HooksGatewaySection />}
 
