@@ -93,6 +93,21 @@ const FLAG_NAME = /(^|[-/])(token|secret|password|passwd|pwd|api[-_]?key|apikey|
 const KEY_SHAPED = /^(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{12,}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/
 const HIGH_ENTROPY = /^[A-Za-z0-9+/_=-]{32,}$/
 
+/**
+ * A word that is a URL or a filesystem path, and so is not a credential however
+ * much its last segment looks like one (#371).
+ *
+ * A Windows-style flag (`/Token:abc`) is deliberately NOT caught: its only
+ * slash is the leading one. Anything with a scheme, a backslash, a drive
+ * prefix, or a slash anywhere other than position 0 is a path.
+ */
+function looksLikePathOrUrl(word: string): boolean {
+  if (word.includes('://')) return true
+  if (word.includes('\\')) return true
+  if (/^[A-Za-z]:[\\/]/.test(word)) return true
+  return word.indexOf('/', 1) > 0
+}
+
 /** Does this argument look like it carries a credential in plain text? */
 export function looksLikeSecretArg(arg: string): boolean {
   const a = (arg ?? '').trim()
@@ -203,11 +218,29 @@ export function reviewCommandsForUpgrade(
     // A record written before `kind` existed carries no kind, and a partner
     // target is what made it a shell line then — the same widening
     // `effectiveKind` does, minus the parts that need a live session.
-    const isShellLine = !isPage && (c.kind === 'shell' || (!c.kind && c.target === 'partner'))
+    // Mirrors `effectiveKind`'s session-independent branches: an explicit
+    // 'shell' kind; a legacy record with no kind whose partner target is what
+    // made it one; and a legacy config-scoped record on a terminal-only config,
+    // which `effectiveKind` also widens to 'shell' and which `ctx.configs`
+    // already carries the `shellOnly` fact for.
+    const isShellLine =
+      !isPage &&
+      (c.kind === 'shell' ||
+        (!c.kind &&
+          (c.target === 'partner' ||
+            (c.scope === 'config' && ctx.configs.some((cfg) => cfg.id === c.configId && cfg.shellOnly)))))
     // Split into words: `looksLikeSecretArg` judges ONE argument (its key-shape
     // and entropy rules are anchored), so handing it a whole command line would
-    // match nothing. The words are what the chips would have been.
-    const shellLine = isShellLine ? (c.prompt ?? '').split(/\s+/).filter(Boolean) : []
+    // match nothing. The words are what the chips would have been — minus the
+    // ones that are plainly a URL or a path, which `looksLikeSecretArg` was
+    // never meant to judge and gets wrong (#371):
+    //   curl https://api.example.com/auth   -> matched on ".../auth"
+    //   git push origin feature/auth        -> matched on "feature/auth"
+    //   docker run -v /var/lib/pat:/pat …   -> matched on the volume spec
+    // Those are sticky one-shot banners on healthy buttons, and a banner the
+    // user learns to dismiss is worse than no banner: it is the same banner
+    // that has to carry a REAL plaintext token when one turns up.
+    const shellLine = isShellLine ? (c.prompt ?? '').split(/\s+/).filter((w) => w && !looksLikePathOrUrl(w)) : []
     if (!isPage && !c.hasSecretArg && [...shellLine, ...(c.defaultArgs ?? []), ...(c.lastCustomArgs ?? [])].some(looksLikeSecretArg)) reasons.push('secret-like-arg')
     if (isPrompt && c.scope === 'global' && anyShellConfig) reasons.push('prompt-inert-on-shell-configs')
     if (ctx.dissolvedCommandIds.has(c.id)) reasons.push('section-dissolved')

@@ -54,12 +54,70 @@ export function commandSecretKey(commandId: string): string {
 export function commandSecretRef(commandId: string, isWindows: boolean): string | null {
   const name = commandSecretEnvName(commandId)
   if (!name) return null
-  // `${env:NAME}` rather than `$env:NAME`: the bare form is unbounded, so
-  // `{secret}_v2`, `{secret}.json` or `{secret}:x` read as a longer variable name
-  // (or a member access) and the whole argument vanishes -- shifting the next
-  // flag into its slot. The braced form ends where the name ends, on PowerShell
-  // 5.1 and 7 alike (measured in the ADR-009 pass on #386).
-  return isWindows ? `\${env:${name}}` : `"$${name}"`
+  return secretRefCore(name, isWindows)
+}
+
+/**
+ * The BARE reference to an environment variable — no surrounding quotes.
+ *
+ * Braced on both platforms (`${env:NAME}` / `${NAME}`) because the unbraced
+ * form is unbounded: an adjacent `_v2` runs straight into the variable name.
+ *
+ * Quoting is NOT baked in here, and that is the whole point of the split. A
+ * pre-quoted reference is only correct when the token stands alone as its own
+ * argument; substituted into text the user already quoted it nests wrongly and
+ * leaves the expansion unquoted. `substituteSecretToken` decides the quoting
+ * from the surrounding word instead — see the measured table there.
+ */
+export function secretRefCore(envName: string, isWindows: boolean): string {
+  return isWindows ? `\${env:${envName}}` : `\${${envName}}`
+}
+
+/**
+ * Replace every `{secret}` in `text` with a shell reference, quoting per the
+ * word it lands in.
+ *
+ * MEASURED, not reasoned about (#371, on Windows PowerShell 5.1.26100 and
+ * PowerShell 7.6, and on bash), against a real argv printer. `--out X --force`
+ * with the reference written as:
+ *
+ *   written form        bare $env:X   braced ${env:X}   whole word quoted
+ *   {secret}            ok            ok                ok
+ *   {secret}_v2         ARG DROPPED   ok                ok
+ *   {secret}:x          ARG DROPPED   ok                ok
+ *   {secret}.json       ARG DROPPED   ARG DROPPED       ok
+ *
+ * The `.` case is why the braced form alone is not the fix: PowerShell parses
+ * `${env:X}.json` as a member access on the string, yields $null, and the
+ * argument evaporates — silently shifting the next flag into its slot, which is
+ * the exact failure this is supposed to end. Quoting the WHOLE word measured
+ * correct for every row above, on both shells, and it keeps a value containing
+ * spaces or globs as one argument.
+ *
+ * The one case that must NOT be quoted is a token the user has already put
+ * inside their own quotes (`curl -H "Bearer {secret}"`): the reference is
+ * already bounded there, and adding another pair produces
+ * `"Bearer "$X""` — measured in bash as `[Bearer pa] [ss*word]`, i.e. the value
+ * word-split and glob-expanded. So a word that already contains a `"` gets the
+ * bare core and nothing else.
+ *
+ * Safe from quote-parity problems because `secretValueProblem` refuses a `"` in
+ * a Windows secret value.
+ */
+export function substituteSecretToken(text: string, refCore: string): string {
+  if (!text.includes(COMMAND_SECRET_TOKEN)) return text
+  // Split on whitespace but KEEP it, so the line is reassembled byte-identical
+  // apart from the tokens themselves.
+  return text
+    .split(/(\s+)/)
+    .map((word) => {
+      if (!word.includes(COMMAND_SECRET_TOKEN)) return word
+      const replaced = word.split(COMMAND_SECRET_TOKEN).join(refCore)
+      // The user's own quotes already bound the reference and stop splitting.
+      if (word.includes('"')) return replaced
+      return `"${replaced}"`
+    })
+    .join('')
 }
 
 /**
@@ -108,7 +166,7 @@ export function secretValueProblem(value: string, isWindows: boolean): string | 
  * has a stored secret, so nothing a Claude prompt types can be touched by this.
  */
 export function buildCommandLine(prompt: string, args: readonly string[] | undefined, secretRef?: string | null): string {
-  const sub = (s: string) => (secretRef ? s.split(COMMAND_SECRET_TOKEN).join(secretRef) : s)
+  const sub = (s: string) => (secretRef ? substituteSecretToken(s, secretRef) : s)
   // Emptiness is decided on what the user WROTE, before substitution: a command
   // is empty because nothing was typed, never because a token collapsed.
   if (!(prompt ?? '').trim()) return ''

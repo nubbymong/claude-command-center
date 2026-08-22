@@ -29,9 +29,9 @@ describe('the env variable name', () => {
 })
 
 describe('the reference the button types', () => {
-  it('is $env:NAME on Windows and a quoted "$NAME" on POSIX', () => {
+  it('is a BRACED, unquoted core on both platforms -- quoting is decided per word', () => {
     expect(commandSecretRef('abc', true)).toBe('${env:CCC_CMD_SECRET_abc}')
-    expect(commandSecretRef('abc', false)).toBe('"$CCC_CMD_SECRET_abc"')
+    expect(commandSecretRef('abc', false)).toBe('${CCC_CMD_SECRET_abc}')
   })
 
   it('is null for an id that has no valid name', () => {
@@ -56,9 +56,9 @@ describe('buildCommandLine — the ONE rule for what gets typed', () => {
   it('replaces {secret} in the arguments with the reference, every occurrence', () => {
     const ref = commandSecretRef('abc', true)!
     expect(buildCommandLine('curl', ['-H', `Authorization: ${COMMAND_SECRET_TOKEN}`], ref))
-      .toBe('curl -H Authorization: ${env:CCC_CMD_SECRET_abc}')
+      .toBe('curl -H Authorization: "${env:CCC_CMD_SECRET_abc}"')
     expect(buildCommandLine('x', ['{secret}{secret}'], ref))
-      .toBe('x ${env:CCC_CMD_SECRET_abc}${env:CCC_CMD_SECRET_abc}')
+      .toBe('x "${env:CCC_CMD_SECRET_abc}${env:CCC_CMD_SECRET_abc}"')
   })
 
   /**
@@ -72,7 +72,7 @@ describe('buildCommandLine — the ONE rule for what gets typed', () => {
    */
   it('substitutes {secret} in the command line as well as the arguments', () => {
     const ref = commandSecretRef('abc', true)!
-    expect(buildCommandLine('echo {secret}', ['x'], ref)).toBe('echo ${env:CCC_CMD_SECRET_abc} x')
+    expect(buildCommandLine('echo {secret}', ['x'], ref)).toBe('echo "${env:CCC_CMD_SECRET_abc}" x')
     expect(buildCommandLine('curl -H "Bearer {secret}"', [], ref))
       .toBe('curl -H "Bearer ${env:CCC_CMD_SECRET_abc}"')
   })

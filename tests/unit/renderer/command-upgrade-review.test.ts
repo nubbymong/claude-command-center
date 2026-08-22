@@ -127,6 +127,43 @@ describe('reviewCommandsForUpgrade -- tagged, never changed', () => {
     const before = [cmd({ id: 'sh', kind: 'shell', target: 'partner', prompt: 'curl -H "Bearer ghp_abcdefghijklmnopqrstuvwxyz0123"' })]
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
   })
+  /**
+   * #371 review MAJOR-3. `looksLikeSecretArg` judges ONE chip, and its
+   * `(^|[-/])` branch exists for `--token` / `/Token`. Fed the words of a whole
+   * command line it matched the last segment of any URL or path, and
+   * HIGH_ENTROPY's charset includes `/` and `-` so long paths matched too.
+   *
+   * The review ran these exact lines against the predicate and every one was
+   * TAGGED. The review runs once per install, so each was a permanent banner on
+   * a healthy button — training the user to dismiss the one banner that has to
+   * carry a real plaintext token when one turns up.
+   */
+  it.each([
+    'curl https://api.example.com/auth',
+    'git push origin feature/auth',
+    'docker run -v /var/lib/pat:/pat busybox',
+    'cd /srv/deployments/release-2026-08-22-abcdef123456',
+    'npm run build && cp dist/token.js out/',
+  ])('does not tag an ordinary shell line: %s', (line) => {
+    const before = [cmd({ id: 'sh', kind: 'shell', target: 'partner', prompt: line })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)
+  })
+
+  it('still tags a REAL credential sitting next to a path or a URL', () => {
+    const before = [cmd({
+      id: 'sh',
+      kind: 'shell',
+      target: 'partner',
+      prompt: 'curl https://api.example.com/auth -H "Bearer ghp_abcdefghijklmnopqrstuvwxyz0123"',
+    })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
+  })
+
+  it('scans a legacy config-scoped button on a terminal-only config (effectiveKind widens it to shell)', () => {
+    const before = [cmd({ id: 'lg', scope: 'config', configId: 'termCfg', prompt: 'deploy --api-key=AKIAABCDEFGHIJKLMNOP' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toContain('secret-like-arg')
+  })
+
   it('does not scan a PROMPT button\'s text -- a prompt is prose, and no reference is ever typed into one', () => {
     const before = [cmd({ id: 'pr', scope: 'config', configId: 'claudeCfg', prompt: 'explain the --password flag to me' })]
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)

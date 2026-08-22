@@ -11,6 +11,8 @@
  * submitted lines to disk (PSReadLine's ConsoleHost_history.txt on Windows),
  * so a substituted plaintext secret would be written to disk forever.
  */
+import { secretRefCore, substituteSecretToken } from '../shared/command-secret'
+
 export interface TerminalLaunchOptions {
   command?: string
   args?: string
@@ -40,7 +42,7 @@ export interface TerminalLaunchOptions {
  *  same rule the command-button secret uses); what passes arrives intact --
  *  measured on 5.1, ADR-009 pass, beta.16. */
 export function secretRef(isWindows: boolean): string {
-  return isWindows ? '${env:CCC_ARG_SECRET}' : '"$CCC_ARG_SECRET"'
+  return secretRefCore('CCC_ARG_SECRET', isWindows)
 }
 
 /** Shell-appropriate reference to the Ask Conductor opening prompt.
@@ -140,14 +142,18 @@ export function buildTerminalLaunchLine(opts: TerminalLaunchOptions | undefined,
   // command field is where a user naturally writes a whole invocation
   // (`curl -H "Bearer {secret}" ...`). Writing it there used to type the
   // literal token -- the "handed over literally" case the beta.16 pass noted.
-  const written = (opts?.command ?? '').trim()
-  // Emptiness is decided on what the user WROTE, before substitution: a command
-  // field is empty because nothing was typed in it, never because a token
-  // collapsed to nothing.
-  if (!written) return ''
-  const ref = opts?.hasSecretArg ? secretRef(isWindows) : ''
-  const sub = (s: string) => s.replace(/\{secret\}/g, ref)
-  const command = sub(written).trim()
+  const command0 = (opts?.command ?? '').trim()
+  if (!command0) return ''
+  // With NO secret stored the token is left LITERAL rather than replaced with
+  // nothing (#371). The two builders disagreed here and this one silently
+  // dropped it: `mytool --token {secret}` became `mytool --token`, which runs
+  // without a credential instead of failing loudly, and a command field holding
+  // only the token vanished entirely. `buildCommandLine`'s rule -- visible and
+  // harmless beats silently typing nothing -- is the right one, so both follow
+  // it now.
+  const ref = opts?.hasSecretArg ? secretRef(isWindows) : null
+  const sub = (s: string) => (ref ? substituteSecretToken(s, ref) : s)
+  const command = sub(command0).trim()
   if (!command) return ''
   const args = sub(opts?.args ?? '').trim()
   return args ? `${command} ${args}` : command

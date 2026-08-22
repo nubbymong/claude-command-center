@@ -50,7 +50,7 @@ describe('buildTerminalLaunchLine — {secret} substitution', () => {
 
   it('substitutes an env REFERENCE, never the value (Windows)', () => {
     const out = win({ command: 'openclaw', args: '--token {secret}', hasSecretArg: true })
-    expect(out).toBe('openclaw --token ${env:CCC_ARG_SECRET}')
+    expect(out).toBe('openclaw --token "${env:CCC_ARG_SECRET}"')
   })
 
   /**
@@ -62,11 +62,11 @@ describe('buildTerminalLaunchLine — {secret} substitution', () => {
    */
   it('the reference is bounded, so an adjacent character cannot eat the variable name', () => {
     expect(win({ command: 'x', args: '--out {secret}.json', hasSecretArg: true }))
-      .toBe('x --out ${env:CCC_ARG_SECRET}.json')
+      .toBe('x --out "${env:CCC_ARG_SECRET}.json"')
     expect(win({ command: 'x', args: '{secret}_v2', hasSecretArg: true }))
-      .toBe('x ${env:CCC_ARG_SECRET}_v2')
+      .toBe('x "${env:CCC_ARG_SECRET}_v2"')
     expect(win({ command: 'x', args: '--token={secret}', hasSecretArg: true }))
-      .toBe('x --token=${env:CCC_ARG_SECRET}')
+      .toBe('x "--token=${env:CCC_ARG_SECRET}"')
     // The failure this prevents: a bare reference would read as one long name.
     expect(win({ command: 'x', args: '{secret}.json', hasSecretArg: true }))
       .not.toContain('$env:CCC_ARG_SECRET.json')
@@ -76,27 +76,32 @@ describe('buildTerminalLaunchLine — {secret} substitution', () => {
     // The natural place to write a whole invocation. It used to type the token.
     expect(win({ command: 'curl -H "Bearer {secret}" https://x.test', hasSecretArg: true }))
       .toBe('curl -H "Bearer ${env:CCC_ARG_SECRET}" https://x.test')
+    // POSIX: the reference goes INSIDE the quotes the user already wrote. The
+    // old pre-quoted form produced `"Bearer "$CCC_ARG_SECRET""`, which bash
+    // parses as `[Bearer pa] [ss*word]` for a spaced value — word-split and
+    // glob-expanded. Measured; see secret-ref-shell-parse.test.ts.
     expect(posix({ command: 'curl -H "Bearer {secret}"', hasSecretArg: true }))
-      .toBe('curl -H "Bearer "$CCC_ARG_SECRET""')
+      .toBe('curl -H "Bearer ${CCC_ARG_SECRET}"')
   })
 
-  it('a command field holding only the token with no secret stored runs nothing', () => {
-    // It collapses to empty, and an empty command must not become a bare line.
-    expect(win({ command: '{secret}', args: '--x' })).toBe('')
+  it('with NO secret stored the token is left LITERAL, in the command as in the arguments', () => {
+    // #371 MINOR-4: the two builders disagreed, and this one silently dropped
+    // it — `mytool --token {secret}` became `mytool --token`, running with no
+    // credential instead of failing loudly, and a command that was only the
+    // token vanished. Visible and harmless beats silently typing nothing.
+    expect(win({ command: '{secret}', args: '--x' })).toBe('{secret} --x')
+    expect(win({ command: 'openclaw', args: '--token {secret}' })).toBe('openclaw --token {secret}')
   })
 
   it('substitutes a quoted env reference on POSIX', () => {
     expect(posix({ command: 'openclaw', args: '--token {secret}', hasSecretArg: true }))
-      .toBe('openclaw --token "$CCC_ARG_SECRET"')
+      .toBe('openclaw --token "${CCC_ARG_SECRET}"')
   })
 
-  it('collapses the token to empty when no secret is stored (no dangling var)', () => {
-    expect(win({ command: 'openclaw', args: '--token {secret}' })).toBe('openclaw --token')
-  })
 
   it('replaces every occurrence', () => {
     expect(win({ command: 'x', args: '{secret} and {secret}', hasSecretArg: true }))
-      .toBe('x ${env:CCC_ARG_SECRET} and ${env:CCC_ARG_SECRET}')
+      .toBe('x "${env:CCC_ARG_SECRET}" and "${env:CCC_ARG_SECRET}"')
   })
 
   it('leaves arguments without the token untouched', () => {

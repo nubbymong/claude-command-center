@@ -72,13 +72,29 @@ describe('askPromptRef', () => {
    * What must still hold is the POSIX quoting, which is what keeps a value with
    * spaces or globs one argument in both cases.
    */
-  it('shares the POSIX quoting rule with the secret reference', () => {
-    expect(askPromptRef(false).startsWith('"$')).toBe(secretRef(false).startsWith('"$'))
-  })
-
-  it('differs from the secret reference on Windows, deliberately: only the secret can be adjacent to user text', () => {
+  /**
+   * They now differ on BOTH platforms, deliberately, and this caught the second
+   * change too (#371, review of #408).
+   *
+   * `secretRef` is a bare, unquoted, braced CORE on both platforms, because
+   * `{secret}` is written inside text the user wrote: the quoting has to be
+   * decided from the surrounding word (`substituteSecretToken`), and a
+   * pre-quoted reference is only ever correct for a token that stands alone.
+   * Substituted inside the user's own quotes it nested wrongly and left the
+   * expansion unquoted — measured in bash as a word-split, glob-expanded value.
+   *
+   * `askPromptRef` is emitted by the app itself, in one place, as a standalone
+   * trailing token followed by `;`. Nothing can be written next to it, so it
+   * keeps the self-contained form — bare on Windows, quoted on POSIX, which is
+   * what makes a spaced question one argument there.
+   */
+  it('is self-contained, where the secret reference is a core to be quoted in context', () => {
+    expect(askPromptRef(false)).toBe('"$CCC_ASK_PROMPT"')
     expect(askPromptRef(true)).toBe('$env:CCC_ASK_PROMPT')
+    // The secret's core carries no quotes of its own, on either platform.
     expect(secretRef(true)).toBe('${env:CCC_ARG_SECRET}')
+    expect(secretRef(false)).toBe('${CCC_ARG_SECRET}')
+    expect(secretRef(false).startsWith('"')).toBe(false)
   })
 })
 
