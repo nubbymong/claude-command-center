@@ -7,6 +7,7 @@ import {
   SECTION_LABELS,
   type TrainingStep,
 } from '../training-steps'
+import { DialogOverlay, DialogButton } from './ui/Dialog'
 
 // Vite glob import for training screenshots — automatically picks up all JPGs in the directory
 const screenshotModules = import.meta.glob('../assets/training/*.jpg', { eager: true, as: 'url' })
@@ -37,6 +38,12 @@ function getScreenshot(filename: string): string | undefined {
  *    Training. Renders as an unmasked floating card the user can dock
  *    next to the live UI so they can read step N and click the
  *    matching surface in the app at the same time.
+ *
+ * #360: the card is NOT a DialogPanel — help mode is deliberately
+ * `aria-modal="false"` (the app stays interactive behind it) and
+ * DialogPanel is modal by construction. So the card keeps its own frame,
+ * carries the dialog role/aria itself, and takes its colours from the
+ * semantic tokens; only the first-run scrim is the shared DialogOverlay.
  */
 type WalkthroughMode = 'first-run' | 'help'
 
@@ -53,7 +60,7 @@ function renderBullet(text: string): React.ReactNode {
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return (
-        <span key={i} className="text-text font-semibold">
+        <span key={i} className="font-semibold" style={{ color: 'var(--text-primary)' }}>
           {part.slice(2, -2)}
         </span>
       )
@@ -63,6 +70,10 @@ function renderBullet(text: string): React.ReactNode {
 }
 
 const TRANSITION_MS = 160
+
+/** A header icon button (expand / close): muted, brightening on hover. */
+const ICON_BTN_CLASS =
+  'text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors'
 
 export default function TrainingWalkthrough({ onClose, showAll = false, mode = 'first-run' }: Props) {
   const steps = showAll
@@ -150,29 +161,48 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
 
   // ── Inner card ──
   // Same content for both modes, just different framing wrappers below.
+  // It carries the dialog role/aria: first-run is modal, help is not.
   const card = (
-    <div className="flex flex-col overflow-hidden bg-base border border-surface0 rounded-xl shadow-2xl w-full h-full">
+    <div
+      role="dialog"
+      aria-modal={mode === 'first-run' ? 'true' : 'false'}
+      aria-label={mode === 'help' ? 'Help walkthrough' : 'Welcome walkthrough'}
+      className="flex flex-col overflow-hidden border rounded-xl shadow-2xl w-full h-full"
+      style={{
+        background: 'var(--surface-raised)',
+        borderColor: 'var(--border-subtle)',
+        color: 'var(--text-primary)',
+      }}
+    >
       {/* Progress bar */}
-      <div className="h-1 bg-surface0 shrink-0">
+      <div className="h-1 shrink-0" style={{ background: 'var(--surface-overlay)' }}>
         <div
-          className="h-full bg-blue transition-all duration-300 ease-out"
-          style={{ width: `${progress}%` }}
+          className="h-full transition-all duration-300 ease-out"
+          style={{ width: `${progress}%`, background: 'var(--brand)' }}
         />
       </div>
 
       {/* Header */}
-      <div className="px-6 pt-4 pb-3 flex items-center justify-between shrink-0 border-b border-surface0/60">
+      <div
+        className="px-6 pt-4 pb-3 flex items-center justify-between shrink-0 border-b"
+        style={{ borderColor: 'var(--border-subtle)' }}
+      >
         <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-wider text-overlay0 mb-0.5">
+          <div
+            className="text-[10px] uppercase tracking-wider mb-0.5"
+            style={{ color: 'var(--text-muted)' }}
+          >
             {mode === 'help' ? 'Help' : 'Welcome tour'} · step {currentIndex + 1} of {steps.length}
           </div>
-          <h2 className="text-base font-semibold text-text truncate">{step?.title}</h2>
+          <h2 className="text-base font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+            {step?.title}
+          </h2>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {mode === 'help' && (
             <button
               onClick={() => setExpanded((v) => !v)}
-              className="text-overlay0 hover:text-text transition-colors p-1 rounded"
+              className={`${ICON_BTN_CLASS} p-1 rounded`}
               title={expanded ? 'Collapse to corner panel' : 'Expand to full panel'}
               aria-label={expanded ? 'Collapse walkthrough' : 'Expand walkthrough'}
             >
@@ -191,7 +221,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
           )}
           <button
             onClick={handleClose}
-            className="text-overlay0 hover:text-text transition-colors text-lg leading-none px-2 py-1"
+            className={`${ICON_BTN_CLASS} text-lg leading-none px-2 py-1`}
             title="Close"
             aria-label="Close walkthrough"
           >
@@ -211,7 +241,10 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
           }}
         >
           {/* Screenshot area */}
-          <div className="rounded-lg border border-surface0/60 overflow-hidden bg-crust aspect-video">
+          <div
+            className="rounded-lg border overflow-hidden aspect-video"
+            style={{ borderColor: 'var(--border-subtle)', background: 'var(--surface-sunken)' }}
+          >
             {!showFallback && imgSrc ? (
               <img
                 src={imgSrc}
@@ -224,7 +257,10 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
                 }}
               />
             ) : (
-              <div className="flex items-center justify-center h-full text-overlay0">
+              <div
+                className="flex items-center justify-center h-full"
+                style={{ color: 'var(--text-muted)' }}
+              >
                 <div className="text-center">
                   <div className="text-3xl mb-2 font-mono opacity-40">&gt;_</div>
                   <p className="text-xs">Screenshot will appear here</p>
@@ -237,18 +273,34 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
           {step?.summary ? (
             <>
               {step.section && (
-                <div className="text-[10px] uppercase tracking-wider text-overlay0">
-                  {SECTION_LABELS[step.section]} <span className="text-surface2 mx-1">→</span> {step.title}
+                <div
+                  className="text-[10px] uppercase tracking-wider"
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  {SECTION_LABELS[step.section]}{' '}
+                  <span className="mx-1" style={{ color: 'var(--text-muted)' }}>→</span>{' '}
+                  {step.title}
                 </div>
               )}
-              <p className="text-sm text-subtext0 leading-relaxed">{step.summary}</p>
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {step.summary}
+              </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
                 <div>
-                  <div className="text-[10px] uppercase tracking-wider text-overlay1 font-medium mb-2">Highlights</div>
+                  <div
+                    className="text-[10px] uppercase tracking-wider font-medium mb-2"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    Highlights
+                  </div>
                   <ul className="space-y-2">
                     {(step.highlights ?? step.bullets).map((b, i) => (
-                      <li key={i} className="flex items-start gap-2 text-[13px] text-subtext0 leading-snug">
-                        <span className="text-blue mt-1.5 shrink-0">
+                      <li
+                        key={i}
+                        className="flex items-start gap-2 text-[13px] leading-snug"
+                        style={{ color: 'var(--text-secondary)' }}
+                      >
+                        <span className="mt-1.5 shrink-0" style={{ color: 'var(--brand)' }}>
                           <svg width="6" height="6" viewBox="0 0 6 6" fill="currentColor"><circle cx="3" cy="3" r="3" /></svg>
                         </span>
                         <span>{renderBullet(b)}</span>
@@ -259,21 +311,41 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
                 <div className="space-y-3">
                   {step.howToTrigger && step.howToTrigger.length > 0 && (
                     <div>
-                      <div className="text-[10px] uppercase tracking-wider text-overlay1 font-medium mb-2">How to open</div>
+                      <div
+                        className="text-[10px] uppercase tracking-wider font-medium mb-2"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        How to open
+                      </div>
                       <dl className="space-y-1.5">
                         {step.howToTrigger.map((row, i) => (
                           <div key={i} className="flex items-start gap-2 text-[12px]">
-                            <dt className="text-overlay0 shrink-0 w-16">{row.label}</dt>
-                            <dd className="text-text">{row.value}</dd>
+                            <dt className="shrink-0 w-16" style={{ color: 'var(--text-muted)' }}>
+                              {row.label}
+                            </dt>
+                            <dd style={{ color: 'var(--text-primary)' }}>{row.value}</dd>
                           </div>
                         ))}
                       </dl>
                     </div>
                   )}
                   {step.proTip && (
-                    <div className="rounded-md border border-blue/25 bg-blue/[0.06] px-3 py-2">
-                      <div className="text-[10px] uppercase tracking-wider text-blue/80 font-medium mb-1">Pro tip</div>
-                      <p className="text-[12px] text-subtext0 leading-snug">{step.proTip}</p>
+                    <div
+                      className="rounded-md border px-3 py-2"
+                      style={{
+                        borderColor: 'color-mix(in srgb, var(--brand) 25%, transparent)',
+                        background: 'color-mix(in srgb, var(--brand) 6%, transparent)',
+                      }}
+                    >
+                      <div
+                        className="text-[10px] uppercase tracking-wider font-medium mb-1"
+                        style={{ color: 'var(--brand)' }}
+                      >
+                        Pro tip
+                      </div>
+                      <p className="text-[12px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                        {step.proTip}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -284,8 +356,12 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
             // hero layout one at a time by adding a `summary` field.
             <ul className="space-y-2.5">
               {step?.bullets.map((bullet, i) => (
-                <li key={i} className="flex items-start gap-2.5 text-sm text-subtext0">
-                  <span className="text-blue mt-0.5 shrink-0">
+                <li
+                  key={i}
+                  className="flex items-start gap-2.5 text-sm"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  <span className="mt-0.5 shrink-0" style={{ color: 'var(--brand)' }}>
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
                       <circle cx="8" cy="8" r="3" fill="currentColor" />
                     </svg>
@@ -299,7 +375,13 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
       </div>
 
       {/* Footer */}
-      <div className="px-6 py-3 border-t border-surface0 flex items-center justify-between shrink-0 bg-mantle/30">
+      <div
+        className="px-6 py-3 border-t flex items-center justify-between shrink-0"
+        style={{
+          borderColor: 'var(--border-subtle)',
+          background: 'color-mix(in srgb, var(--surface-sunken) 40%, transparent)',
+        }}
+      >
         {/* Dot navigation */}
         <div className="flex items-center gap-1.5">
           {steps.map((_, i) => (
@@ -308,8 +390,8 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
               onClick={() => setCurrentIndex(i)}
               className={`w-2 h-2 rounded-full transition-all duration-200 ${
                 i === currentIndex
-                  ? 'bg-blue scale-125'
-                  : 'bg-surface1 hover:bg-overlay0'
+                  ? 'bg-[var(--brand)] scale-125'
+                  : 'bg-[var(--surface-overlay)] hover:bg-[var(--text-muted)]'
               }`}
               aria-label={`Go to step ${i + 1}`}
             />
@@ -319,27 +401,18 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
         {/* Buttons */}
         <div className="flex items-center gap-2">
           {!isFirst && (
-            <button
-              onClick={handleBack}
-              className="px-3 py-1 text-xs text-overlay1 hover:text-text transition-colors"
-            >
+            <DialogButton variant="ghost" onClick={handleBack}>
               Back
-            </button>
+            </DialogButton>
           )}
           {!isLast && mode === 'first-run' && (
-            <button
-              onClick={handleClose}
-              className="px-3 py-1 text-xs text-overlay0 hover:text-overlay1 transition-colors"
-            >
+            <DialogButton variant="ghost" onClick={handleClose}>
               Skip
-            </button>
+            </DialogButton>
           )}
-          <button
-            onClick={handleNext}
-            className="px-3 py-1 bg-blue text-crust rounded font-medium text-xs hover:bg-blue/85 transition-colors"
-          >
+          <DialogButton variant="primary" onClick={handleNext}>
             {isLast ? (mode === 'help' ? 'Done' : 'Get started') : 'Next'}
-          </button>
+          </DialogButton>
         </div>
       </div>
     </div>
@@ -355,12 +428,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
     //              so the rest of the app remains interactive.
     if (expanded) {
       return (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
-          role="dialog"
-          aria-modal="false"
-          aria-label="Help walkthrough"
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
           <div className="w-[min(1200px,95vw)] h-[min(880px,92vh)] flex pointer-events-auto">
             {card}
           </div>
@@ -368,12 +436,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
       )
     }
     return (
-      <div
-        className="fixed bottom-4 right-4 z-50 w-[460px] h-[min(680px,84vh)] flex pointer-events-auto"
-        role="dialog"
-        aria-modal="false"
-        aria-label="Help walkthrough"
-      >
+      <div className="fixed bottom-4 right-4 z-50 w-[460px] h-[min(680px,84vh)] flex pointer-events-auto">
         {card}
       </div>
     )
@@ -382,13 +445,14 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
   // first-run: full mask + centered card. Backdrop swallows clicks so
   // sidebar nav, session tabs, etc. can't be reached while the tour
   // is up. Backdrop click does nothing — only Skip / × dismiss, since
-  // accidentally clicking off would lose progress.
+  // accidentally clicking off would lose progress (DialogOverlay has no
+  // click-to-close by construction).
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-crust/80 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Welcome walkthrough">
+    <DialogOverlay className="backdrop-blur-sm" style={{ padding: 0 }}>
       <div className="w-[min(1200px,95vw)] h-[min(880px,92vh)] flex">
         {card}
       </div>
-    </div>
+    </DialogOverlay>
   )
 }
 

@@ -12,6 +12,16 @@ import { middleTruncateEmail, resolveAccountName, resolveAccountColourKey } from
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import { isAccountActive } from '../../shared/account-types'
+import {
+  DialogOverlay,
+  DialogPanel,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogButton,
+  DIALOG_INPUT_CLASS,
+  DIALOG_INPUT_STYLE,
+} from './ui/Dialog'
 
 export default function AccountLaunchGate() {
   const pending = useAccountGateStore((s) => s.queue[0] ?? null)
@@ -83,105 +93,109 @@ export default function AccountLaunchGate() {
   )
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Choose account for this session"
-    >
-      <div className="bg-surface0 rounded-lg p-6 w-[420px] shadow-2xl border border-surface1">
-        <h3 className="text-base font-semibold text-text mb-1">Start session</h3>
-        <p className="text-xs text-subtext0 mb-4">
-          Choose the account for{' '}
-          <span className="text-text font-medium">{pending.sessionLabel || 'this session'}</span>
-        </p>
+    <DialogOverlay z="z-[60]" dim={0.5}>
+      <DialogPanel width="w-[420px]" ariaLabel="Choose account for this session">
+        <DialogHeader
+          title="Start session"
+          subtitle={<>
+            Choose the account for{' '}
+            <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{pending.sessionLabel || 'this session'}</span>
+          </>}
+        />
 
-        {lastUsedProfile && (
-          <div
-            className="flex items-center gap-2 mb-4 rounded-md border border-surface1 bg-base/60 px-3 py-2"
-            data-testid="account-launch-lastused"
-          >
+        <DialogBody>
+          {lastUsedProfile && (
+            <div
+              className="flex items-center gap-2 mb-4 rounded-md px-3 py-2"
+              style={{
+                background: 'color-mix(in srgb, var(--surface-base) 60%, transparent)',
+                border: '1px solid var(--border-subtle)',
+              }}
+              data-testid="account-launch-lastused"
+            >
+              <span
+                className="w-2.5 h-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: lastUsedDot }}
+                aria-hidden
+              />
+              <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }} title={lastUsedProfile.accountEmail || undefined}>
+                {lastUsedLabel}
+              </span>
+              <span className="text-[10px] uppercase tracking-wide ml-1 shrink-0" style={{ color: 'var(--text-muted)' }}>Last used</span>
+              {selected === lastUsedProfile.id ? (
+                <span className="ml-auto text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>selected</span>
+              ) : (
+                <button
+                  onClick={() => setSelected(lastUsedProfile.id)}
+                  data-testid="account-launch-lastused-use"
+                  className="ml-auto text-xs text-[var(--brand)] hover:underline shrink-0 focus-ring rounded"
+                >
+                  Use →
+                </button>
+              )}
+            </div>
+          )}
+
+          <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>Account</label>
+          <div className="flex items-center gap-2">
             <span
               className="w-2.5 h-2.5 rounded-full shrink-0"
-              style={{ backgroundColor: lastUsedDot }}
+              style={{ backgroundColor: selectedDot }}
               aria-hidden
             />
-            <span className="text-sm text-text font-medium truncate" title={lastUsedProfile.accountEmail || undefined}>
-              {lastUsedLabel}
-            </span>
-            <span className="text-[10px] uppercase tracking-wide text-overlay1 ml-1 shrink-0">Last used</span>
-            {selected === lastUsedProfile.id ? (
-              <span className="ml-auto text-xs text-overlay1 shrink-0">selected</span>
-            ) : (
-              <button
-                onClick={() => setSelected(lastUsedProfile.id)}
-                data-testid="account-launch-lastused-use"
-                className="ml-auto text-xs text-blue hover:underline shrink-0 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50 rounded"
-              >
-                Use →
-              </button>
-            )}
+            <select
+              autoFocus
+              value={selected}
+              onChange={(e) => setSelected(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  launch()
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  cancelChoice()
+                }
+              }}
+              data-testid="account-launch-select"
+              className={DIALOG_INPUT_CLASS.replace('w-full', 'flex-1')}
+              style={DIALOG_INPUT_STYLE}
+            >
+              {selectableProfiles.map((p) => {
+                // Friendly name wins when set; otherwise the email (or a clear
+                // "setup incomplete" hint for a profile still mid-login).
+                const resolved = resolveAccountName(p.accountEmail, p.name, accountAliases)
+                const label = p.accountEmail
+                  ? (resolved === p.accountEmail ? middleTruncateEmail(p.accountEmail) : resolved)
+                  : `${p.name || 'New account'} (setup incomplete)`
+                return (
+                  <option key={p.id} value={p.id} title={p.accountEmail || undefined}>
+                    {label}
+                  </option>
+                )
+              })}
+            </select>
           </div>
-        )}
+        </DialogBody>
 
-        <label className="block text-xs text-subtext0 mb-1">Account</label>
-        <div className="flex items-center gap-2 mb-5">
-          <span
-            className="w-2.5 h-2.5 rounded-full shrink-0"
-            style={{ backgroundColor: selectedDot }}
-            aria-hidden
-          />
-          <select
-            autoFocus
-            value={selected}
-            onChange={(e) => setSelected(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                launch()
-              }
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                cancelChoice()
-              }
-            }}
-            data-testid="account-launch-select"
-            className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-          >
-            {selectableProfiles.map((p) => {
-              // Friendly name wins when set; otherwise the email (or a clear
-              // "setup incomplete" hint for a profile still mid-login).
-              const resolved = resolveAccountName(p.accountEmail, p.name, accountAliases)
-              const label = p.accountEmail
-                ? (resolved === p.accountEmail ? middleTruncateEmail(p.accountEmail) : resolved)
-                : `${p.name || 'New account'} (setup incomplete)`
-              return (
-                <option key={p.id} value={p.id} title={p.accountEmail || undefined}>
-                  {label}
-                </option>
-              )
-            })}
-          </select>
-        </div>
-
-        <div className="flex justify-end gap-2">
-          <button
+        <DialogFooter>
+          <DialogButton
+            variant="secondary"
             onClick={cancelChoice}
-            data-testid="account-launch-cancel"
-            className="px-4 py-1.5 rounded text-sm border border-surface1 text-overlay1 hover:text-text hover:bg-surface1 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+            testId="account-launch-cancel"
             title="Don't launch; close this session tab"
           >
             Cancel
-          </button>
-          <button
+          </DialogButton>
+          <DialogButton
+            variant="primary"
             onClick={launch}
-            data-testid="account-launch-confirm"
-            className="px-4 py-1.5 rounded text-sm bg-blue text-crust font-medium hover:bg-blue/90 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+            testId="account-launch-confirm"
           >
             Launch
-          </button>
-        </div>
-      </div>
-    </div>
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }

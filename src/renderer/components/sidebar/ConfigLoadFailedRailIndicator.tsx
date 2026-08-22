@@ -100,7 +100,8 @@ export default function ConfigLoadFailedRailIndicator() {
         {/* Instant inline tooltip, the rail's own pattern (SidebarNav); sits to
             the right of the glyph so it never clips off the window edge. */}
         <span
-          className="pointer-events-none absolute z-40 left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100"
+          className="pointer-events-none absolute z-40 left-full ml-2 top-1/2 -translate-y-1/2 px-2 py-0.5 text-[11px] rounded border shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100"
+          style={{ background: 'var(--surface-overlay)', color: 'var(--text-primary)', borderColor: 'var(--border-subtle)' }}
           aria-hidden="true"
         >
           {TOOLTIP}

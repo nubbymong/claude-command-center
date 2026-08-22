@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton } from '../../ui/Dialog'
 
 interface Props {
   onClose: () => void
@@ -42,57 +43,52 @@ export default function OnboardingModal({ onClose, onSetup }: Props) {
 
   useFocusTrap(dialogRef, true, onClose)
 
-  const backdropClass = `fixed inset-0 bg-base/80 flex items-center justify-center z-50 transition-opacity duration-200 ease-out ${entering ? 'opacity-100' : 'opacity-0'}`
-  const dialogClass = `bg-mantle p-6 rounded max-w-lg text-text shadow-lg border border-surface0 transition-all duration-200 ease-out ${entering ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`
-
   return (
-    <div className={backdropClass}>
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="github-onboarding-title"
-        className={dialogClass}
+    <DialogOverlay className={`transition-opacity duration-200 ease-out ${entering ? 'opacity-100' : 'opacity-0'}`}>
+      <DialogPanel
+        panelRef={dialogRef}
+        labelledBy="github-onboarding-title"
+        width="w-full"
+        style={{ maxWidth: '32rem' }}
+        className={`transition-all duration-200 ease-out ${entering ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`}
       >
-        <h3 id="github-onboarding-title" className="text-lg font-semibold mb-3">
-          New: GitHub sidebar
-        </h3>
-        {imgSrc && !imgFailed && (
-          <div className="bg-surface0 rounded overflow-hidden mb-3">
-            <img
-              src={imgSrc}
-              alt="GitHub panel preview"
-              className="w-full"
-              onError={() => setImgFailed(true)}
-            />
-          </div>
-        )}
-        <p className="text-sm text-subtext0 mb-3">
-          See PR, CI, reviews, issues, and session context for whatever
-          you&rsquo;re working on, right next to the terminal.
-        </p>
-        <ol className="text-sm text-subtext0 space-y-2 mb-4 list-decimal list-inside">
-          <li>We auto-detect your repos per session. Accept or edit.</li>
-          <li>
-            Sign in with GitHub (or use <code>gh</code> CLI if you have it).
-          </li>
-          <li>Enable per session at your own pace. Nothing runs until you opt in.</li>
-        </ol>
-        <div className="flex gap-2 justify-end">
-          <button
-            onClick={onClose}
-            className="text-subtext0 px-3 py-1 hover:text-text transition-colors"
-          >
+        <DialogHeader titleId="github-onboarding-title" title="New: GitHub sidebar" />
+
+        <DialogBody>
+          {imgSrc && !imgFailed && (
+            <div className="rounded-lg overflow-hidden mb-3" style={{ background: 'var(--surface-base)' }}>
+              <img
+                src={imgSrc}
+                alt="GitHub panel preview"
+                className="w-full"
+                onError={() => setImgFailed(true)}
+              />
+            </div>
+          )}
+          <p className="text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
+            See PR, CI, reviews, issues, and session context for whatever
+            you&rsquo;re working on, right next to the terminal.
+          </p>
+          <ol className="text-sm space-y-2 list-decimal list-inside" style={{ color: 'var(--text-secondary)' }}>
+            <li>We auto-detect your repos per session. Accept or edit.</li>
+            <li>
+              Sign in with GitHub (or use <code>gh</code> CLI if you have it).
+            </li>
+            <li>Enable per session at your own pace. Nothing runs until you opt in.</li>
+          </ol>
+        </DialogBody>
+
+        <DialogFooter>
+          <DialogButton variant="ghost" onClick={onClose}>
             Later
-          </button>
-          <button
-            onClick={onSetup}
-            className="bg-blue text-base px-3 py-1 rounded hover:bg-blue/80 transition-colors font-medium"
-          >
+          </DialogButton>
+          {/* Was `bg-blue text-base` — `text-base` is a font SIZE, so this label
+              inherited its colour instead of going dark on the brand fill (#360). */}
+          <DialogButton variant="primary" onClick={onSetup}>
             Set up now
-          </button>
-        </div>
-      </div>
-    </div>
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }

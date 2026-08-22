@@ -37,15 +37,16 @@ export default function DockRowMenu({ x, y, label, onHide, onClose }: Props) {
       ref={ref}
       role="menu"
       data-ux-id="dock-row-menu"
-      className="fixed z-50 bg-surface0 border border-surface1 rounded-lg shadow-xl py-1"
-      style={{ left, top, minWidth: MENU_W }}
+      className="fixed z-50 rounded-lg shadow-xl py-1"
+      style={{ left, top, minWidth: MENU_W, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
       <button
         type="button"
         role="menuitem"
         onClick={onHide}
         data-ux-id="dock-row-menu-hide"
-        className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+        style={{ color: 'var(--text-primary)' }}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" aria-hidden>
           <path d="M1 6s2-3.5 5-3.5S11 6 11 6s-2 3.5-5 3.5S1 6 1 6z" />

@@ -50,12 +50,13 @@ export default function SessionContextMenu({
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 min-w-[180px]"
-      style={{ left: x, top: y }}
+      className="fixed z-50 rounded-lg shadow-xl py-1 min-w-[180px]"
+      style={{ left: x, top: y, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
       <button
         onClick={onRename}
-        className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+        style={{ color: 'var(--text-primary)' }}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
         Rename
@@ -63,7 +64,8 @@ export default function SessionContextMenu({
       {hasGroup && (
         <button
           onClick={onRemoveFromGroup}
-          className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+          className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+          style={{ color: 'var(--text-primary)' }}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
             <path d="M4 6h4" strokeLinecap="round"/>
@@ -78,13 +80,14 @@ export default function SessionContextMenu({
           Settings — which is the whole reason these live here. */}
       {(onOpenArtifacts || onAuthenticateWeb || onSignInCode) && (
         <>
-          <div className="my-1 border-t border-surface1" />
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
           {onOpenArtifacts && (
             <button
               onClick={() => { onOpenArtifacts(); onDismiss() }}
               disabled={!hasWebSession}
               title={hasWebSession ? 'Open this account’s artifacts on claude.ai' : 'Authenticate claude.ai first'}
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
+              style={{ color: 'var(--text-primary)' }}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
                 <rect x="1.5" y="2" width="9" height="8" rx="1.2"/>
@@ -96,7 +99,8 @@ export default function SessionContextMenu({
           {onAuthenticateWeb && (
             <button
               onClick={() => { onAuthenticateWeb(); onDismiss() }}
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+              style={{ color: 'var(--text-primary)' }}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
                 <circle cx="6" cy="6" r="4.5"/>
@@ -110,7 +114,8 @@ export default function SessionContextMenu({
               onClick={() => { if (codeSignedIn) return; onSignInCode(); onDismiss() }}
               disabled={codeSignedIn}
               title={codeSignedIn ? 'Already signed in to Claude Code for this account' : 'Runs /login in this session’s terminal'}
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center gap-2"
+              style={{ color: 'var(--text-primary)' }}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
                 <path d="M7 1.5h2.5a1 1 0 011 1v7a1 1 0 01-1 1H7" strokeLinecap="round"/>
@@ -124,10 +129,11 @@ export default function SessionContextMenu({
 
       {showSwitch && (
         <>
-          <div className="my-1 border-t border-surface1" />
+          <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
           <button
             onClick={() => setAccountOpen((o) => !o)}
-            className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
               <circle cx="6" cy="4" r="2.2"/>
@@ -151,17 +157,17 @@ export default function SessionContextMenu({
                     key={p.id}
                     disabled={!selectable}
                     onClick={() => { if (selectable) { onSwitchAccount?.(p.id); onDismiss() } }}
-                    className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${selectable ? 'hover:bg-surface1' : 'cursor-default'}`}
-                    style={{ color: !selectable ? 'var(--color-overlay0)' : (isCurrent ? 'var(--color-text)' : 'var(--color-subtext0)') }}
+                    className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${selectable ? 'hover:bg-[var(--surface-overlay)]' : 'cursor-default'}`}
+                    style={{ color: !selectable ? 'var(--text-muted)' : (isCurrent ? 'var(--text-primary)' : 'var(--text-secondary)') }}
                     title={selectable ? p.accountEmail : `${p.accountEmail} (inactive)`}
                   >
-                    <span className="w-3 shrink-0 text-green">{isCurrent ? String.fromCodePoint(0x2713) : ''}</span>
+                    <span className="w-3 shrink-0" style={{ color: 'var(--status-success)' }}>{isCurrent ? String.fromCodePoint(0x2713) : ''}</span>
                     <span className="flex flex-col min-w-0">
                       <span className="truncate">
                         {resolveAccountName(p.accountEmail, p.name, accountAliases)}
-                        {!isAccountActive(p) && <span className="text-overlay0"> · inactive</span>}
+                        {!isAccountActive(p) && <span style={{ color: 'var(--text-muted)' }}> · inactive</span>}
                       </span>
-                      <span className="truncate text-overlay0" style={{ fontSize: 10, lineHeight: '13px' }}>{middleTruncateEmail(p.accountEmail)}</span>
+                      <span className="truncate" style={{ fontSize: 10, lineHeight: '13px', color: 'var(--text-muted)' }}>{middleTruncateEmail(p.accountEmail)}</span>
                     </span>
                   </button>
                 )
@@ -171,10 +177,11 @@ export default function SessionContextMenu({
         </>
       )}
 
-      <div className="my-1 border-t border-surface1" />
+      <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
       <button
         onClick={onClose}
-        className="w-full text-left px-3 py-1.5 text-xs text-red hover:bg-surface1 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+        style={{ color: 'var(--status-danger)' }}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
         Close Session

@@ -312,7 +312,7 @@ export default function TabBar({ activeView, openPageTabs, onActivateSession, on
           <button
             type="button"
             role="menuitem"
-            className="w-full text-left px-3 py-1.5 text-text hover:bg-surface0"
+            className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--surface-overlay)]"
             onClick={() => { const id = menu.id; setMenu(null); beginRename(id) }}
           >
             Rename&hellip;
@@ -320,7 +320,7 @@ export default function TabBar({ activeView, openPageTabs, onActivateSession, on
           <button
             type="button"
             role="menuitem"
-            className="w-full text-left px-3 py-1.5 text-text hover:bg-surface0 hover:text-red"
+            className="w-full text-left px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--surface-overlay)] hover:text-[var(--status-danger)]"
             onClick={() => { const id = menu.id; setMenu(null); closeSession(id) }}
           >
             Close

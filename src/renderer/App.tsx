@@ -41,6 +41,7 @@ import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import SshCloseDialog from './components/SshCloseDialog'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, DIALOG_INPUT_CLASS, DIALOG_INPUT_STYLE } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
@@ -1248,44 +1249,50 @@ export default function App() {
         )}
 
         {bootGate === 'machineName' && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="bg-surface0 rounded-lg p-5 w-[360px] shadow-2xl border border-surface1">
-              <h3 className="text-sm font-semibold text-text mb-2">Name this machine</h3>
-              <p className="text-xs text-overlay1 mb-3">Give your local machine a name so sessions and memories can be identified by machine.</p>
-              <input
-                autoFocus
-                value={machineNameInput}
-                onChange={e => setMachineNameInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && machineNameInput.trim()) {
-                    useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
-                    setShowMachineNamePrompt(false)
-                  }
-                }}
-                placeholder="e.g. Desktop, Dev Workstation, Laptop"
-                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue mb-3"
+          <DialogOverlay dim={0.5}>
+            <DialogPanel width="w-[360px]" labelledBy="machine-name-title">
+              <DialogHeader
+                titleId="machine-name-title"
+                title="Name this machine"
+                subtitle="Give your local machine a name so sessions and memories can be identified by machine."
               />
-              <div className="flex justify-end gap-2">
-                <button
+              <DialogBody>
+                <input
+                  autoFocus
+                  value={machineNameInput}
+                  onChange={e => setMachineNameInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && machineNameInput.trim()) {
+                      useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
+                      setShowMachineNamePrompt(false)
+                    }
+                  }}
+                  placeholder="e.g. Desktop, Dev Workstation, Laptop"
+                  className={DIALOG_INPUT_CLASS}
+                  style={DIALOG_INPUT_STYLE}
+                />
+              </DialogBody>
+              <DialogFooter>
+                <DialogButton
+                  variant="ghost"
                   onClick={() => setShowMachineNamePrompt(false)}
-                  className="px-3 py-1.5 rounded text-xs text-subtext0 hover:text-text hover:bg-surface1 transition-colors"
                 >
                   Skip
-                </button>
-                <button
+                </DialogButton>
+                <DialogButton
+                  variant="primary"
                   onClick={() => {
                     if (machineNameInput.trim()) {
                       useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
                     }
                     setShowMachineNamePrompt(false)
                   }}
-                  className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
                 >
                   Save
-                </button>
-              </div>
-            </div>
-          </div>
+                </DialogButton>
+              </DialogFooter>
+            </DialogPanel>
+          </DialogOverlay>
         )}
 
         <SshCloseDialog />
@@ -1300,16 +1307,16 @@ export default function App() {
         )}
 
         {isClosing && (
-          <div className="absolute inset-0 bg-base/90 z-50 flex items-center justify-center">
+          <DialogOverlay position="absolute" dim={0.9}>
             <div className="text-center">
-              <div className="text-2xl font-mono mb-4 text-blue animate-pulse">
+              <div className="text-2xl font-mono mb-4 animate-pulse" style={{ color: 'var(--brand)' }}>
                 {isUpdating ? 'Updating...' : 'Closing...'}
               </div>
-              <p className="text-overlay1 text-sm">
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                 {isUpdating ? 'Installing update and restarting' : 'Please wait'}
               </p>
             </div>
-          </div>
+          </DialogOverlay>
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">

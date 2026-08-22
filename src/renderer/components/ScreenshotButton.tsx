@@ -92,23 +92,23 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
         {showDropdown && dropdownPos && (
           <div
             ref={dropdownRef}
-            className="fixed bg-mantle border border-surface0 rounded shadow-lg py-1 min-w-[160px] z-50"
-            style={{ left: dropdownPos.left, bottom: dropdownPos.bottom }}
+            className="fixed rounded shadow-lg py-1 min-w-[160px] z-50"
+            style={{ left: dropdownPos.left, bottom: dropdownPos.bottom, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
           >
             <button
               onClick={handleRectangle}
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface0 flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-overlay)] flex items-center gap-2"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-overlay1 shrink-0">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-[var(--text-muted)] shrink-0">
                 <rect x="2" y="2" width="12" height="12" rx="1" strokeDasharray="3 2" />
               </svg>
               Rectangle
             </button>
             <button
               onClick={() => { setShowDropdown(false); setShowWindowPicker(true) }}
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface0 flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-overlay)] flex items-center gap-2"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-overlay1 shrink-0">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-[var(--text-muted)] shrink-0">
                 <rect x="1" y="3" width="14" height="10" rx="1.5" />
                 <line x1="1" y1="6" x2="15" y2="6" />
               </svg>

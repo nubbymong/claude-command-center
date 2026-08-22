@@ -3,6 +3,16 @@ import { createPortal } from 'react-dom'
 import { useGitHubStore } from '../../../stores/githubStore'
 import { trackUsage } from '../../../stores/tipsStore'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
+import {
+  DialogOverlay,
+  DialogPanel,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogButton,
+  DIALOG_INPUT_CLASS,
+  DIALOG_INPUT_STYLE,
+} from '../../ui/Dialog'
 import OAuthDeviceFlow from './OAuthDeviceFlow'
 
 interface OAuthFlowStart {
@@ -47,6 +57,11 @@ export default function AddProfileModal({ onClose }: Props) {
     window.electronAPI.github.ghcliDetect().then((r) => setGhUsers(r.users))
   }, [])
 
+  // Escape closes the dialog through the trap's onEscape, so no
+  // useDialogEscape here. One caveat: the trap listens on `document` in the
+  // bubble phase, so while the device flow below is up -- it calls
+  // useDialogEscape, which is window-capture -- Escape cancels the OAuth poll
+  // and leaves this dialog open. Innermost wins, deliberately.
   useFocusTrap(dialogRef, true, onClose)
 
   const startOAuth = async () => {
@@ -122,67 +137,57 @@ export default function AddProfileModal({ onClose }: Props) {
     )
   }
 
-  const backdropClass = `fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 transition-opacity duration-200 ease-out ${entering ? 'opacity-100' : 'opacity-0'}`
-  const dialogClass = `bg-mantle rounded-lg shadow-2xl border border-surface0 w-full max-w-md max-h-[85vh] flex flex-col transition-all duration-200 ease-out ${entering ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`
+  // A segmented choice: the SELECTED half carries the brand fill, so its label
+  // must be the on-brand colour. It used to say `bg-blue text-base`, and
+  // `text-base` is a font SIZE — the label inherited its colour and sat on the
+  // fill unreadable (#360).
+  const scopeBtnClass = (selected: boolean) =>
+    `text-sm px-3 py-2 rounded transition-colors text-center ${
+      selected
+        ? 'font-medium bg-[var(--brand)] text-[var(--text-on-brand)]'
+        : 'bg-[var(--surface-base)] hover:bg-[var(--surface-overlay)] text-[var(--text-primary)]'
+    }`
+  const errorClass = 'text-xs mb-2'
+  const errorStyle = { color: 'var(--status-danger)' } as const
+  const eyebrowClass = 'text-xs uppercase tracking-wide mb-2'
+  const eyebrowStyle = { color: 'var(--text-secondary)' } as const
 
   // Rendered via portal to document.body so ancestor containers (Settings
   // page, AuthProfilesList section) can't trap `position: fixed` and
   // park the modal bottom-left.
   return createPortal(
-    <div className={backdropClass}>
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="gh-add-profile-title"
-        className={dialogClass}
+    <DialogOverlay className={`transition-opacity duration-200 ease-out ${entering ? 'opacity-100' : 'opacity-0'}`}>
+      <DialogPanel
+        panelRef={dialogRef}
+        labelledBy="gh-add-profile-title"
+        width="w-full"
+        className={`transition-all duration-200 ease-out ${entering ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`}
+        style={{ maxWidth: '28rem', maxHeight: '85vh' }}
       >
-        {/* Header */}
-        <div className="p-5 border-b border-surface0 shrink-0">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h3 id="gh-add-profile-title" className="text-lg font-bold text-text">
-                Add GitHub auth
-              </h3>
-              <p className="text-xs text-subtext0 mt-1">
-                Connect an account so the GitHub sidebar can read your PRs, CI runs, and issues.
-              </p>
-            </div>
-            <button
-              onClick={onClose}
-              aria-label="Close"
-              className="text-overlay0 hover:text-text transition-colors text-xl leading-none shrink-0"
-            >
-              &times;
-            </button>
-          </div>
-        </div>
+        <DialogHeader
+          titleId="gh-add-profile-title"
+          title="Add GitHub auth"
+          subtitle="Connect an account so the GitHub sidebar can read your PRs, CI runs, and issues."
+          onClose={onClose}
+        />
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-5">
+        <DialogBody className="flex-1">
           <div className="mb-4">
-            <label className="text-xs uppercase tracking-wide text-subtext0 block mb-2">
+            <label className={`${eyebrowClass} block`} style={eyebrowStyle}>
               Scope mode
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setOauthMode('public')}
-                className={`text-sm px-3 py-2 rounded transition-colors text-center ${
-                  oauthMode === 'public'
-                    ? 'bg-blue text-base font-medium'
-                    : 'bg-surface0 hover:bg-surface1 text-text'
-                }`}
+                className={scopeBtnClass(oauthMode === 'public')}
               >
                 Public repos only
                 <span className="block text-[10px] opacity-70 font-normal">safer</span>
               </button>
               <button
                 onClick={() => setOauthMode('private')}
-                className={`text-sm px-3 py-2 rounded transition-colors text-center ${
-                  oauthMode === 'private'
-                    ? 'bg-blue text-base font-medium'
-                    : 'bg-surface0 hover:bg-surface1 text-text'
-                }`}
+                className={scopeBtnClass(oauthMode === 'private')}
               >
                 Include private repos
                 <span className="block text-[10px] opacity-70 font-normal">full access</span>
@@ -190,34 +195,37 @@ export default function AddProfileModal({ onClose }: Props) {
             </div>
           </div>
 
-          <button
+          <DialogButton
+            variant="primary"
+            size="md"
+            block
             onClick={startOAuth}
             disabled={starting}
-            className="w-full bg-blue text-base font-medium px-4 py-2.5 rounded mb-2 hover:bg-blue/80 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+            className="mb-2"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
             </svg>
             {starting ? 'Starting' : 'Sign in with GitHub'}
-          </button>
+          </DialogButton>
           {oauthError && (
-            <div className="text-xs text-red mb-2" role="alert" aria-live="polite">
+            <div className={errorClass} style={errorStyle} role="alert" aria-live="polite">
               {oauthError}
             </div>
           )}
 
           {advanced && (
-            <div className="mt-6 pt-4 border-t border-surface0 space-y-5">
+            <div className="mt-6 pt-4 space-y-5" style={{ borderTop: '1px solid var(--border-subtle)' }}>
               {ghUsers.length > 0 && (
                 <div>
-                  <div className="text-xs uppercase tracking-wide text-subtext0 mb-2">
-                    <code className="text-subtext1">gh</code> CLI accounts detected
+                  <div className={eyebrowClass} style={eyebrowStyle}>
+                    <code>gh</code> CLI accounts detected
                   </div>
                   {ghUsers.map((u) => (
                     <button
                       key={u}
                       onClick={() => adoptGh(u)}
-                      className="block w-full text-left text-sm bg-surface0 hover:bg-surface1 p-2 rounded mb-1 transition-colors"
+                      className="block w-full text-left text-sm p-2 rounded mb-1 transition-colors bg-[var(--surface-base)] hover:bg-[var(--surface-overlay)] text-[var(--text-primary)]"
                     >
                       Use <strong>{u}</strong>
                     </button>
@@ -226,13 +234,14 @@ export default function AddProfileModal({ onClose }: Props) {
               )}
 
               <div>
-                <div className="text-xs uppercase tracking-wide text-subtext0 mb-2">
+                <div className={eyebrowClass} style={eyebrowStyle}>
                   Paste a PAT
                 </div>
                 <select
                   value={patKind}
                   onChange={(e) => setPatKind(e.target.value as typeof patKind)}
-                  className="bg-surface0 p-1.5 rounded text-sm mb-2 w-full"
+                  className={`${DIALOG_INPUT_CLASS} mb-2`}
+                  style={DIALOG_INPUT_STYLE}
                 >
                   <option value="pat-fine-grained">Fine-grained PAT</option>
                   <option value="pat-classic">Classic PAT</option>
@@ -241,57 +250,57 @@ export default function AddProfileModal({ onClose }: Props) {
                   placeholder="Label (e.g., work)"
                   value={patLabel}
                   onChange={(e) => setPatLabel(e.target.value)}
-                  className="w-full bg-surface0 p-2 rounded text-sm mb-2"
+                  className={`${DIALOG_INPUT_CLASS} mb-2`}
+                  style={DIALOG_INPUT_STYLE}
                 />
                 <input
                   type="password"
                   placeholder="Token"
                   value={patToken}
                   onChange={(e) => setPatToken(e.target.value)}
-                  className="w-full bg-surface0 p-2 rounded text-sm mb-2 font-mono"
+                  className={`${DIALOG_INPUT_CLASS} mb-2 font-mono`}
+                  style={DIALOG_INPUT_STYLE}
                 />
                 {patKind === 'pat-fine-grained' && (
                   <input
                     placeholder="Allowed repos (owner/repo, comma or space separated)"
                     value={patRepos}
                     onChange={(e) => setPatRepos(e.target.value)}
-                    className="w-full bg-surface0 p-2 rounded text-sm mb-2"
+                    className={`${DIALOG_INPUT_CLASS} mb-2`}
+                    style={DIALOG_INPUT_STYLE}
                   />
                 )}
                 {patError && (
-                  <div className="text-xs text-red mb-2" role="alert" aria-live="polite">
+                  <div className={errorClass} style={errorStyle} role="alert" aria-live="polite">
                     {patError}
                   </div>
                 )}
-                <button
+                <DialogButton
+                  variant="primary"
                   onClick={submitPat}
                   disabled={patSaving || !patToken}
-                  className="bg-blue text-base font-medium px-3 py-1.5 rounded text-sm hover:bg-blue/80 transition-colors disabled:opacity-60"
                 >
                   {patSaving ? 'Verifying' : 'Save PAT'}
-                </button>
+                </DialogButton>
               </div>
             </div>
           )}
-        </div>
+        </DialogBody>
 
         {/* Footer — advanced toggle left, close button right, clear separation */}
-        <div className="p-4 border-t border-surface0 flex items-center justify-between shrink-0">
-          <button
-            onClick={() => setAdvanced(!advanced)}
-            className="text-xs text-subtext0 hover:text-text transition-colors"
-          >
-            {advanced ? 'Hide' : 'Show'} advanced auth options
-          </button>
-          <button
-            onClick={onClose}
-            className="text-xs text-subtext0 hover:text-text transition-colors"
-          >
+        <DialogFooter
+          left={
+            <DialogButton variant="ghost" onClick={() => setAdvanced(!advanced)}>
+              {advanced ? 'Hide' : 'Show'} advanced auth options
+            </DialogButton>
+          }
+        >
+          <DialogButton variant="ghost" onClick={onClose}>
             Close
-          </button>
-        </div>
-      </div>
-    </div>,
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>,
     document.body,
   )
 }

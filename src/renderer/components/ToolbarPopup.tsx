@@ -65,18 +65,18 @@ export default function ToolbarPopup({ sections, onSelect, onClose, alignRight }
         ref={popupRef}
         className={`absolute bottom-full mb-1 z-50 rounded-lg shadow-xl py-1 min-w-[260px] w-max ${alignRight ? 'right-0' : 'left-0'}`}
         style={{
-          background: 'var(--color-mantle)',
-          border: '1px solid var(--color-surface1)',
+          background: 'var(--surface-raised)',
+          border: '1px solid var(--border-subtle)',
           maxWidth: 'calc(100vw - 16px)',
         }}
       >
         {sections.map((section, si) => (
           <div key={section.title}>
             {si > 0 && (
-              <div style={{ borderTop: '1px solid var(--color-surface0)', margin: '4px 0' }} />
+              <div style={{ borderTop: '1px solid var(--border-subtle)', margin: '4px 0' }} />
             )}
             <div className="flex items-center gap-2 px-3 py-1.5">
-              <span className="text-xs text-overlay1 font-medium">{section.title}</span>
+              <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{section.title}</span>
               {section.shortcut && (
                 <span className="ml-auto flex gap-0.5">
                   {section.shortcut.split('+').map((k, i) => (
@@ -84,8 +84,8 @@ export default function ToolbarPopup({ sections, onSelect, onClose, alignRight }
                       key={i}
                       className="text-xs px-1 py-0.5 rounded"
                       style={{
-                        background: 'var(--color-surface0)',
-                        color: 'var(--color-overlay1)',
+                        background: 'var(--surface-overlay)',
+                        color: 'var(--text-muted)',
                         fontSize: 10,
                       }}
                     >
@@ -104,15 +104,15 @@ export default function ToolbarPopup({ sections, onSelect, onClose, alignRight }
                 className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-start gap-2"
                 style={{
                   color: item.disabled
-                    ? 'var(--color-overlay0)'
+                    ? 'var(--text-muted)'
                     : item.active
-                      ? 'var(--color-text)'
-                      : 'var(--color-subtext0)',
+                      ? 'var(--text-primary)'
+                      : 'var(--text-secondary)',
                   cursor: item.disabled ? 'default' : 'pointer',
                 }}
                 onMouseEnter={(e) => {
                   if (!item.disabled)
-                    e.currentTarget.style.background = 'var(--color-surface0)'
+                    e.currentTarget.style.background = 'var(--surface-overlay)'
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = 'transparent'
@@ -123,17 +123,17 @@ export default function ToolbarPopup({ sections, onSelect, onClose, alignRight }
                     {item.label}
                   </span>
                   {item.hint && (
-                    <span className="text-overlay0" style={{ fontSize: 10, lineHeight: '14px' }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 10, lineHeight: '14px' }}>
                       {item.hint}
                     </span>
                   )}
                 </div>
                 <span className="flex items-center gap-1.5 shrink-0 pt-0.5">
                   {item.active && (
-                    <span className="text-green">{String.fromCodePoint(0x2713)}</span>
+                    <span style={{ color: 'var(--status-success)' }}>{String.fromCodePoint(0x2713)}</span>
                   )}
                   {!item.disabled && (
-                    <span className="text-overlay0" style={{ fontSize: 10 }}>
+                    <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>
                       {ii + 1}
                     </span>
                   )}

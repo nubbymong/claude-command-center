@@ -4,6 +4,7 @@ import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useFocusTrap } from '../hooks/useFocusTrap'
+import { DialogButton } from './ui/Dialog'
 
 interface Props {
   /**
@@ -74,38 +75,45 @@ export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
     copyStatus === 'failed' ? 'Copy failed' :
     'Copy to clipboard'
 
+  // The copy button flashes the outcome. Success/failure are the house tinted
+  // status fills; idle falls through to the DialogButton `secondary` look.
+  const tinted = (token: string): React.CSSProperties => ({
+    background: `color-mix(in srgb, ${token} 16%, transparent)`,
+    color: token,
+    border: `1px solid color-mix(in srgb, ${token} 40%, transparent)`,
+  })
+  const copyStyle =
+    copyStatus === 'copied' ? tinted('var(--status-success)') :
+    copyStatus === 'failed' ? tinted('var(--status-danger)') :
+    undefined
+
   return (
     <div
       ref={dialogRef}
-      className="fixed inset-0 z-50 flex flex-col bg-crust/95 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex flex-col backdrop-blur-sm"
+      style={{ background: 'color-mix(in srgb, var(--surface-sunken) 95%, transparent)' }}
       role="dialog"
       aria-modal="true"
     >
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-surface0 bg-mantle shrink-0">
-        <span className="text-sm font-medium text-text">Excalidraw</span>
+      <div
+        className="flex items-center gap-3 px-4 py-2 shrink-0"
+        style={{ background: 'var(--surface-raised)', borderBottom: '1px solid var(--border-subtle)' }}
+      >
+        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>Excalidraw</span>
         {backgroundImage && (
-          <span className="text-[11px] text-overlay0">Annotating frozen webview snapshot</span>
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Annotating frozen webview snapshot</span>
         )}
         <div className="flex-1" />
-        <button
+        <DialogButton
           onClick={handleCopy}
           disabled={copyStatus === 'copying'}
-          className={`px-3 py-1 text-xs rounded border transition-colors ${
-            copyStatus === 'copied'
-              ? 'border-green/60 bg-green/10 text-green'
-              : copyStatus === 'failed'
-              ? 'border-red/60 bg-red/10 text-red'
-              : 'border-surface1 bg-surface0 text-text hover:bg-surface1'
-          } disabled:opacity-50`}
+          style={copyStyle}
         >
           {buttonLabel}
-        </button>
-        <button
-          onClick={onClose}
-          className="px-3 py-1 text-xs rounded border border-surface1 bg-surface0 text-text hover:bg-surface1 transition-colors"
-        >
+        </DialogButton>
+        <DialogButton onClick={onClose}>
           Close
-        </button>
+        </DialogButton>
       </div>
       <div className="flex-1 min-h-0 relative">
         <Excalidraw

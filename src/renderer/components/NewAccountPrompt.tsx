@@ -1,4 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react'
+import {
+  DialogOverlay,
+  DialogPanel,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogButton,
+  useDialogEscape,
+  DIALOG_INPUT_CLASS,
+  DIALOG_INPUT_STYLE,
+  DIALOG_LABEL_CLASS,
+  DIALOG_LABEL_STYLE,
+} from './ui/Dialog'
 
 interface Props {
   email: string
@@ -50,36 +63,51 @@ export default function NewAccountPrompt({ email, onAdd, onDismiss }: Props) {
     }
   }
 
+  // Escape anywhere in the dialog dismisses it, not just while the name input
+  // holds focus (the input's own handler stays as the in-field path).
+  useDialogEscape(dismiss)
+
   const visible = entering && !closing
-  const backdropClass = `fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 transition-opacity duration-200 ease-out ${visible ? 'opacity-100' : 'opacity-0'}`
-  const dialogClass = `bg-mantle rounded-lg shadow-2xl border border-surface0 w-full max-w-sm flex flex-col transition-all duration-200 ease-out ${visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`
 
   return (
-    <div className={backdropClass} role="dialog" aria-modal="true" aria-labelledby="new-account-heading">
-      <div className={dialogClass}>
-        <div className="p-5 border-b border-surface0 flex items-center justify-between">
-          <h2 id="new-account-heading" className="text-base font-semibold text-text">
-            New account detected
-          </h2>
-          <button
-            onClick={dismiss}
-            className="text-overlay0 hover:text-text transition-colors text-xl leading-none ml-2"
-            aria-label="Dismiss"
-            tabIndex={-1}
-          >
-            &times;
-          </button>
-        </div>
+    <DialogOverlay className={`transition-opacity duration-200 ease-out ${visible ? 'opacity-100' : 'opacity-0'}`}>
+      <DialogPanel
+        labelledBy="new-account-heading"
+        width="w-full"
+        style={{ maxWidth: '24rem' }}
+        className={`transition-all duration-200 ease-out ${visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`}
+      >
+        <DialogHeader
+          titleId="new-account-heading"
+          title="New account detected"
+          right={
+            // Kept as a local button rather than DialogHeader's `onClose` so the
+            // deliberate `tabIndex={-1}` survives: the name input is the focus
+            // target on open, and the dismiss glyph must not sit in front of it
+            // in the tab order.
+            <button
+              type="button"
+              onClick={dismiss}
+              className="shrink-0 -mr-1.5 -mt-1 w-7 h-7 rounded-md inline-flex items-center justify-center focus-ring transition-colors hover:bg-[var(--surface-overlay)]"
+              style={{ color: 'var(--text-muted)' }}
+              aria-label="Dismiss"
+              title="Dismiss"
+              tabIndex={-1}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden><path d="M2 2l8 8M10 2l-8 8" /></svg>
+            </button>
+          }
+        />
 
-        <div className="p-5 space-y-4">
-          <p className="text-sm text-subtext0">
+        <DialogBody className="space-y-4">
+          <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
             You signed in to{' '}
-            <span className="text-text font-medium">{email}</span>
+            <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{email}</span>
             {', '}an account CCC has not seen before. Add it so you can switch back to it later.
           </p>
 
           <div>
-            <label htmlFor="new-account-name" className="block text-xs text-subtext1 mb-1">
+            <label htmlFor="new-account-name" className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE}>
               Name (optional)
             </label>
             <input
@@ -93,28 +121,21 @@ export default function NewAccountPrompt({ email, onAdd, onDismiss }: Props) {
                 if (e.key === 'Escape') dismiss()
               }}
               placeholder="Optional name, e.g. Work"
-              className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+              className={`${DIALOG_INPUT_CLASS} placeholder:text-[var(--text-muted)]`}
+              style={DIALOG_INPUT_STYLE}
             />
           </div>
-        </div>
+        </DialogBody>
 
-        <div className="px-5 pb-5 flex justify-end gap-2">
-          <button
-            onClick={dismiss}
-            disabled={busy}
-            className="px-3 py-1.5 rounded text-xs text-subtext0 hover:text-text hover:bg-surface1 transition-colors disabled:opacity-50"
-          >
+        <DialogFooter>
+          <DialogButton variant="ghost" onClick={dismiss} disabled={busy}>
             Not now
-          </button>
-          <button
-            onClick={() => void handleAdd()}
-            disabled={busy}
-            className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors disabled:opacity-50"
-          >
+          </DialogButton>
+          <DialogButton variant="primary" onClick={() => void handleAdd()} disabled={busy}>
             {busy ? 'Adding...' : 'Add account'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }

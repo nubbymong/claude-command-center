@@ -105,7 +105,7 @@ export function CanvasLibrary({
         </button>
       </div>
 
-      {error && <div className="px-3 py-1.5 text-[11px] text-red shrink-0">{error}</div>}
+      {error && <div className="px-3 py-1.5 text-[11px] text-[var(--status-danger)] shrink-0">{error}</div>}
 
       <div className="flex-1 overflow-y-auto">
         {entries !== null && entries.length === 0 && (
@@ -135,7 +135,7 @@ export function CanvasLibrary({
               <div className="text-[10.5px] text-[var(--text-secondary)] truncate">
                 {e.title && <span title={e.cwd}>{projectName(e.cwd)} · </span>}
                 {e.versionCount} version{e.versionCount === 1 ? '' : 's'} · {relTime(e.lastRenderedAt)}
-                {e.ownedByOpenSession && <span className="ml-1.5 text-mauve">open in another session</span>}
+                {e.ownedByOpenSession && <span className="ml-1.5 text-[var(--brand)]">open in another session</span>}
               </div>
             </div>
             <button
@@ -149,7 +149,7 @@ export function CanvasLibrary({
               <button
                 onClick={() => void remove(e.canvasId)}
                 disabled={busy === e.canvasId}
-                className="shrink-0 text-[11px] rounded px-2 py-0.5 bg-red/15 border border-red/50 text-red hover:bg-red/25 disabled:opacity-50 focus-ring"
+                className="shrink-0 text-[11px] rounded px-2 py-0.5 bg-[color-mix(in_srgb,var(--status-danger)_15%,transparent)] border border-[color-mix(in_srgb,var(--status-danger)_50%,transparent)] text-[var(--status-danger)] hover:bg-[color-mix(in_srgb,var(--status-danger)_25%,transparent)] disabled:opacity-50 focus-ring"
                 data-testid="canvas-library-confirm-delete"
               >
                 {e.ownedByOpenSession
@@ -159,7 +159,7 @@ export function CanvasLibrary({
             ) : (
               <button
                 onClick={() => { setConfirming(e.canvasId); setError(null) }}
-                className="shrink-0 text-[11px] rounded px-2 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-red focus-ring"
+                className="shrink-0 text-[11px] rounded px-2 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--status-danger)] focus-ring"
                 data-testid="canvas-library-delete"
               >
                 Delete

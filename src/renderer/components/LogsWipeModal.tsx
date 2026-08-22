@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton } from './ui/Dialog'
 
 /**
  * LogsWipeModal — first-run BLOCKING confirm for the Logs v2 reset.
@@ -15,7 +16,8 @@ import React, { useEffect, useRef, useState } from 'react'
  * signals the parent via onComplete so boot continues. Detection-driven +
  * idempotent: once wiped nothing is detected and this never re-appears.
  *
- * V2 Catppuccin tokens, smooth 200ms enter/exit per the UX prefs.
+ * Shared dialog primitives, smooth 200ms enter/exit per the UX prefs. There is
+ * deliberately no cancel path (and so no Escape): the wipe is the only way on.
  */
 
 const CLOSE_ANIMATION_MS = 200
@@ -61,35 +63,29 @@ export default function LogsWipeModal({ totalBytes, onComplete }: Props) {
   }
 
   const visible = entering && !closing
-  const backdropClass = `fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 transition-opacity duration-200 ease-out ${visible ? 'opacity-100' : 'opacity-0'}`
-  const dialogClass = `bg-mantle rounded-lg shadow-2xl border border-surface0 w-full max-w-md flex flex-col transition-all duration-200 ease-out ${visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`
 
   return (
-    <div className={backdropClass} role="dialog" aria-modal="true" aria-labelledby="logs-wipe-heading">
-      <div className={dialogClass}>
-        <div className="p-5 border-b border-surface0">
-          <h2 id="logs-wipe-heading" className="text-base font-semibold text-text">
-            Beta log reset
-          </h2>
-        </div>
-        <div className="p-5">
-          <p className="text-sm leading-relaxed text-subtext1">
+    <DialogOverlay className={`transition-opacity duration-200 ease-out ${visible ? 'opacity-100' : 'opacity-0'}`}>
+      <DialogPanel
+        labelledBy="logs-wipe-heading"
+        width="w-full"
+        style={{ maxWidth: '28rem' }}
+        className={`transition-all duration-200 ease-out ${visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`}
+      >
+        <DialogHeader titleId="logs-wipe-heading" title="Beta log reset" />
+        <DialogBody>
+          <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
             CCC&apos;s recorded terminal logs from previous betas will now be deleted
             ({formatGiB(totalBytes)}). This is not recoverable. Claude&apos;s own
             conversation transcripts are not affected.
           </p>
-        </div>
-        <div className="p-5 pt-0 flex items-center justify-end">
-          <button
-            onClick={proceed}
-            disabled={busy}
-            className="px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-60"
-            style={{ background: 'var(--color-blue)', color: 'var(--color-crust)' }}
-          >
+        </DialogBody>
+        <DialogFooter>
+          <DialogButton size="md" variant="primary" onClick={proceed} disabled={busy}>
             {busy ? 'Deleting…' : 'Delete old logs'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }
