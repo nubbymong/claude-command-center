@@ -60,6 +60,7 @@ import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/servi
 import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
+import { registerExeHandlers, stopAllCapturedRuns } from './ipc/exe-handlers'
 import { registerRegistryHandlers } from './ipc/registry-handlers'
 import { initSentinel, reconcileOnUpdate, sentinelStartupCheck } from './sentinel/index'
 import { registerSentinelHandlers } from './ipc/sentinel-handlers'
@@ -967,6 +968,7 @@ if (!gotTheLock) {
     registerVisionHandlers(getWindow)
     registerCodexHandlers()
     registerCodexReviewHandlers()
+    registerExeHandlers()
     registerChannelHandlers()
     startRulesEngine()
     registerCloudAgentHandlers(getWindow)
@@ -1179,6 +1181,9 @@ if (!gotTheLock) {
     try { shutdownLogging() } catch { /* never init / disabled */ }
     // Tear down the tokenomics indexing worker. No-op when never init.
     try { shutdownTokenomics() } catch { /* never init */ }
+    // Kill any GUI-subsystem tool still being captured (#379). Its stdio is
+    // piped to us, so leaving it running orphans a process nobody can see.
+    try { stopAllCapturedRuns() } catch { /* never started */ }
     stopServiceStatusPoller()
     stopLoopStallMonitor()
     stopUpdateWatcher()

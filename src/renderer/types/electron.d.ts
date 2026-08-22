@@ -668,6 +668,17 @@ export interface ElectronAPI {
     getUsage: (sessionId: string) => Promise<import('../../shared/types').CodexReviewUsageRecord | null>
     onUsageUpdated: (callback: (payload: { sessionId: string; record: import('../../shared/types').CodexReviewUsageRecord }) => void) => () => void
   }
+  /** GUI-subsystem executables (#379). See shared/gui-exe.ts. */
+  exe: {
+    probe: (req: { command: string; cwd?: string }) => Promise<import('../../shared/gui-exe').ExeProbeResult>
+    runCaptured: (req: { command: string; cwd?: string }) => Promise<import('../../shared/gui-exe').CapturedRunStart>
+    /** Stop capturing; the program keeps running. */
+    releaseRun: (runId: string) => Promise<boolean>
+    /** Force-stop the program. */
+    cancelRun: (runId: string) => Promise<boolean>
+    onRunData: (callback: (chunk: import('../../shared/gui-exe').CapturedRunChunk) => void) => () => void
+    onRunExit: (callback: (exit: import('../../shared/gui-exe').CapturedRunExit) => void) => () => void
+  }
   channels: {
     send: (req: { targetSessionId: string; targetLabel?: string; payload: ChannelPayload; meta: ChannelEnvelopeMeta }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>
     retract: (p: { targetSessionId: string; targetLabel?: string }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>

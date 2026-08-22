@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
 import { bandOf, bandMembers, type CommandBand } from '../lib/command-bands'
+import type { GuiExePolicy } from '../../shared/gui-exe'
 
 /**
  * Why an existing command was tagged for the user's attention on the first
@@ -79,6 +80,11 @@ export interface CustomCommand {
   /** Set once on the first launch after the one-row bar for commands that clash
    *  with the new model; cleared on fix or dismiss. Never acted on by the app. */
   needsReview?: CommandReviewReason[]
+  /** What to do when this button's program turns out to be a Windows
+   *  GUI-subsystem exe, which prints over the terminal instead of into it
+   *  (#379). Absent means 'ask', and the dialog writes this only when the user
+   *  ticks "remember". See shared/gui-exe.ts. */
+  guiExePolicy?: GuiExePolicy
 }
 
 export interface CommandSection {

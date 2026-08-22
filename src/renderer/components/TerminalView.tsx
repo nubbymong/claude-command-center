@@ -30,6 +30,7 @@ import TerminalContextMenu from './TerminalContextMenu'
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
+import { registerRepainter } from './terminal/repaintRegistry'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostics'
@@ -420,6 +421,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     // term.refresh) on the triggers that correlate with the ghosting — scroll and
     // streaming output — throttled so a firehose costs at most a few repaints/sec.
     let repainter: StaleGlyphRepainter | null = null
+    /** Undo the #379 fix-E registration; see registerRepainter below. */
+    let unregisterRepainter: (() => void) | null = null
     let lastWheelAt = Number.NEGATIVE_INFINITY
 
     // PTY-integrity instrumentation (scoped to this session's mount; resets on
@@ -596,6 +599,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         clearTimer: (h) => clearTimeout(h),
       })
       repainterRef.current = repainter
+
+      // #379 fix E: publish this terminal's repainter so the command bar can ask
+      // for a full repaint after a GUI-subsystem tool has written over the pane.
+      // That text never passes through the pty stream, so xterm cannot know its
+      // model is stale — only an unconditional repaint puts the two back in
+      // agreement.
+      unregisterRepainter = registerRepainter(sessionId, {
+        settleStrong: (quietMs, intervalMs) => repainter?.settleStrong(quietMs, intervalMs),
+      })
 
       // #119: cursor options passed to the Terminal constructor do NOT reliably
       // initialize the WebGL renderer's cursor layer — the caret stays absent
@@ -1226,6 +1238,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
+      unregisterRepainter?.()
       repainter?.dispose()
       if (repainterRef.current === repainter) repainterRef.current = null
       resizeObserver?.disconnect()

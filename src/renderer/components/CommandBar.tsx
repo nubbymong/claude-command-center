@@ -19,7 +19,12 @@ import { trackUsage } from '../stores/tipsStore'
 import { CODEX_MODELS } from '../codex-models'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { sessionCapabilities } from '../lib/session-capabilities'
-import { planBar, inapplicability, type BandPlan } from './command-bar/layout'
+import { planBar, inapplicability, effectiveKind, type BandPlan } from './command-bar/layout'
+import GuiExeDialog from './GuiExeDialog'
+import CapturedRunModal from './CapturedRunModal'
+import { scheduleBleedRepaints } from './terminal/repaintRegistry'
+import { getCachedProbe, setCachedProbe } from '../lib/gui-exe-probe-cache'
+import type { ExeProbeResult } from '../../shared/gui-exe'
 import { CommandChip, TargetMark, SectionLabel, CHIP_CLASS, CHIP_STYLE } from './command-bar/chips'
 import BandOverflow from './command-bar/BandOverflow'
 import ArgsPopover from './command-bar/ArgsPopover'
@@ -143,6 +148,14 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [overflowOpen, setOverflowOpen] = useState<{ band: CommandBand; anchor: DOMRect } | null>(null)
   const [argsPopover, setArgsPopover] = useState<{ cmd: CustomCommand; rect: DOMRect } | null>(null)
   const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection; band: CommandBand } | null>(null)
+  // #379: a shell button whose program turned out to be a Windows GUI-subsystem
+  // exe, waiting on the user's choice; and the log panel for a captured run.
+  const [guiPrompt, setGuiPrompt] = useState<{ cmd: CustomCommand; fullCommand: string; exePath: string } | null>(null)
+  const [capturedRun, setCapturedRun] = useState<{ runId: string | null; label: string; command: string; exePath: string | null; startError?: string } | null>(null)
+  // Press ordering (#379 review MAJOR-6): once one press has to wait on a probe,
+  // every later press queues behind it so the pty sees them in press order.
+  const sendQueue = useRef<Promise<void>>(Promise.resolve())
+  const pendingSends = useRef(0)
   // drag state
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
@@ -211,12 +224,22 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webviewKey, webviewUrlsKey])
 
-  /** Send a command to the appropriate PTY */
-  const sendCommand = (cmd: CustomCommand, fullCommand: string) => {
+  /**
+   * Type a command into the appropriate PTY. The original behaviour, unchanged.
+   *
+   * `expectBleed` is set when we know the line starts a Windows GUI-subsystem
+   * program (#379): it will `AttachConsole` to this pty's console and write its
+   * log straight into the screen buffer, over whatever TUI is drawing there.
+   * Those bytes never reach xterm, so xterm's model and the screen silently
+   * disagree — fix E arms a repaint sweep to put them back in step. It cannot
+   * un-draw the log; only the TUI's next frame does that.
+   */
+  const typeIntoPty = (cmd: CustomCommand, fullCommand: string, expectBleed = false) => {
     const target = cmd.target || 'claude'
     const webViewUrl = cmd.webView?.enabled ? cmd.webView.url : null
     const writeTo = (ptyId: string) => {
       window.electronAPI.pty.write(ptyId, fullCommand + '\r')
+      if (expectBleed) scheduleBleedRepaints(ptyId)
       if (webViewUrl) startWebviewPolling(webViewUrl)
       else if (webviewUrls.length > 0) void probeWebviewUrls(webviewKey, webviewUrls)
     }
@@ -232,6 +255,100 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     }
     const targetId = target === 'partner' && partnerSessionId ? partnerSessionId : sessionId
     writeTo(targetId)
+  }
+
+  /** Run a command line from the console-less main process and show its log. */
+  const runCaptured = (cmd: CustomCommand, fullCommand: string) => {
+    void window.electronAPI.exe
+      .runCaptured({ command: fullCommand, cwd: session?.workingDirectory })
+      .then((res) => {
+        if (!res.runId) {
+          // Refused (the file changed between the probe and the spawn, or the
+          // cap is full). The user explicitly asked NOT to have their pane
+          // painted over, so falling back silently is the one thing we must not
+          // do: type it, and open the panel to say what happened.
+          typeIntoPty(cmd, fullCommand, true)
+          setCapturedRun({ runId: null, label: cmd.label, command: fullCommand, exePath: res.exePath, startError: res.error })
+          return
+        }
+        setCapturedRun({ runId: res.runId, label: cmd.label, command: fullCommand, exePath: res.exePath })
+      })
+      .catch((err: unknown) => {
+        typeIntoPty(cmd, fullCommand, true)
+        setCapturedRun({
+          runId: null,
+          label: cmd.label,
+          command: fullCommand,
+          exePath: null,
+          startError: err instanceof Error ? err.message : 'The app could not start that program.',
+        })
+      })
+  }
+
+  /** Act on a probe result. Pure routing — no I/O of its own. */
+  const actOnProbe = (cmd: CustomCommand, fullCommand: string, res: ExeProbeResult) => {
+    // `gui` always carries a resolved path; anything else keeps the old route.
+    if (res.status !== 'gui' || !res.exePath) { typeIntoPty(cmd, fullCommand); return }
+    if (cmd.guiExePolicy === 'capture') { runCaptured(cmd, fullCommand); return }
+    setGuiPrompt({ cmd, fullCommand, exePath: res.exePath })
+  }
+
+  /**
+   * What `sendCommand` will do, when that can be decided without any I/O.
+   * Returns null when a probe is genuinely needed.
+   *
+   * This exists for ORDERING (#379, review MAJOR-6). Making every shell press
+   * asynchronous meant two rapid presses could reach the pty out of order, and
+   * the write used to be strictly ordered. Deciding synchronously wherever
+   * possible keeps the overwhelmingly common case on the old, ordered path; the
+   * queue below covers the rest.
+   */
+  const syncDecision = (cmd: CustomCommand, fullCommand: string): (() => void) | null => {
+    if (effectiveKind(cmd, caps) !== 'shell') return () => typeIntoPty(cmd, fullCommand)
+    if (cmd.guiExePolicy === 'terminal') return () => typeIntoPty(cmd, fullCommand, true)
+    // No probe available (an older preload, or a test harness that does not stub
+    // it): type it, exactly as the button always did. The warning is an
+    // improvement on the old behaviour, never a precondition for it.
+    if (typeof window.electronAPI?.exe?.probe !== 'function') return () => typeIntoPty(cmd, fullCommand)
+    const cached = getCachedProbe(fullCommand, session?.workingDirectory)
+    if (cached) return () => actOnProbe(cmd, fullCommand, cached)
+    return null
+  }
+
+  /**
+   * Send a command, checking first whether its program is one that will paint
+   * over the terminal instead of printing into it (#379).
+   *
+   * Only a SHELL line is probed. A prompt button's text goes to Claude's TUI as
+   * text — no program is started by it, so there is nothing to sniff, and a
+   * probe there would be both wrong and a wasted IPC round trip on every press.
+   * Everything the probe cannot answer (not Windows, unresolved program, a
+   * console-subsystem exe, a script) falls through to exactly the old path.
+   *
+   * Presses are kept in order: once anything is queued, everything queues behind
+   * it, so a slow first probe cannot let a later press overtake it.
+   */
+  const sendCommand = (cmd: CustomCommand, fullCommand: string) => {
+    const decided = syncDecision(cmd, fullCommand)
+    if (decided && pendingSends.current === 0) { decided(); return }
+
+    pendingSends.current += 1
+    sendQueue.current = sendQueue.current
+      .then(async () => {
+        const again = syncDecision(cmd, fullCommand)
+        if (again) { again(); return }
+        const cwd = session?.workingDirectory
+        try {
+          const res = await window.electronAPI.exe.probe({ command: fullCommand, cwd })
+          setCachedProbe(fullCommand, cwd, res)
+          actOnProbe(cmd, fullCommand, res)
+        } catch {
+          // A probe that fails tells us nothing, and must never cost the user
+          // their command. Old path.
+          typeIntoPty(cmd, fullCommand)
+        }
+      })
+      .finally(() => { pendingSends.current -= 1 })
   }
 
   const runCommand = (cmd: CustomCommand, withArgsAt?: DOMRect) => {
@@ -843,6 +960,34 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           }}
           onSetDefault={(args) => { updateCommand(argsPopover.cmd.id, { defaultArgs: args }); setArgsPopover(null) }}
           onClose={() => setArgsPopover(null)}
+        />
+      )}
+
+      {/* #379: the program this button starts prints over the terminal. */}
+      {guiPrompt && (
+        <GuiExeDialog
+          label={guiPrompt.cmd.label}
+          command={guiPrompt.fullCommand}
+          exePath={guiPrompt.exePath}
+          onChoose={(choice, remember) => {
+            const { cmd, fullCommand } = guiPrompt
+            setGuiPrompt(null)
+            if (remember) updateCommand(cmd.id, { guiExePolicy: choice })
+            if (choice === 'capture') runCaptured(cmd, fullCommand)
+            else typeIntoPty(cmd, fullCommand, true)
+          }}
+          onCancel={() => setGuiPrompt(null)}
+        />
+      )}
+
+      {capturedRun && (
+        <CapturedRunModal
+          runId={capturedRun.runId}
+          label={capturedRun.label}
+          command={capturedRun.command}
+          exePath={capturedRun.exePath}
+          startError={capturedRun.startError}
+          onClose={() => setCapturedRun(null)}
         />
       )}
 
