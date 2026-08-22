@@ -342,6 +342,17 @@ export const IPC = {
   CODEX_REVIEW_USAGE_GET: 'codex-review:usage:get',
   CODEX_REVIEW_USAGE_UPDATED: 'codex-review:usage:updated',
 
+  // GUI-subsystem executables (#379). A command button types into a live pty,
+  // whose shell HAS a console, so a Subsystem=2 tool attaches to it and paints
+  // its log over the pane. PROBE reads the target's PE header to say so; RUN
+  // re-parents the tool onto the console-less main process, where its output
+  // can actually be captured. See shared/gui-exe.ts.
+  EXE_PROBE: 'exe:probe',                                           // renderer -> main: { command, cwd? } -> ExeProbeResult
+  EXE_RUN_START: 'exe:run:start',                                   // renderer -> main: { command, cwd? } -> CapturedRunStart
+  EXE_RUN_CANCEL: 'exe:run:cancel',                                 // renderer -> main: { runId } -> boolean
+  EXE_RUN_DATA: 'exe:run:data',                                     // push: main -> renderer, CapturedRunChunk
+  EXE_RUN_EXIT: 'exe:run:exit',                                     // push: main -> renderer, CapturedRunExit
+
   // Conductor Channels (v1.5.10)
   CHANNELS_SEND: 'channels:send',                                   // renderer -> main: dispatch a payload
   CHANNELS_RETRACT: 'channels:retract',                             // renderer -> main: send retraction follow-up
