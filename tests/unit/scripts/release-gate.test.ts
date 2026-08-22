@@ -142,6 +142,14 @@ describe('release-gate evaluateModels', () => {
     expect(r.extra).toEqual([{ id: 'claude-opus-4-8-fast', label: 'Opus 4.8 Fast' }])
   })
 
+  it('FAILS CLOSED when the expected-models fixture is empty or missing — a truncated fixture must not vacuously pass', () => {
+    for (const expected of [{ models: [] }, {}, null, undefined]) {
+      const r = evaluateModels({ registry: REGISTRY_OK, expected })
+      expect(r.ok, JSON.stringify(expected)).toBe(false)
+      expect(r.reason).toMatch(/empty or missing|cannot verify|fail closed/i)
+    }
+  })
+
   it('registryIdCovers: equal, or equal minus a -YYYYMMDD suffix — nothing looser', () => {
     expect(registryIdCovers('claude-opus-4-5', 'claude-opus-4-5-20251101')).toBe(true)
     expect(registryIdCovers('claude-opus-4-5', 'claude-opus-4-5')).toBe(true)

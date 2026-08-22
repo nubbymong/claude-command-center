@@ -120,6 +120,17 @@ export function registryIdCovers(registryId, expectedId) {
 export function evaluateModels({ registry, expected }) {
   const registryModels = (registry && registry.models) || []
   const expectedModels = (expected && expected.models) || []
+  // Fail closed: an empty or missing expected-models fixture (a truncated file
+  // from a bad merge, say) must NOT vacuously pass -- with nothing to check the
+  // loop below would leave `missing` empty and report ok. A safety gate that
+  // passes because it had nothing to compare is worse than no gate.
+  if (expectedModels.length === 0) {
+    return {
+      ok: false,
+      reason: 'the expected-models fixture is empty or missing — cannot verify the registry (fail closed)',
+      missing: [], extra: [], covered: [],
+    }
+  }
   const missing = []
   const covered = []
   const usedRegistryIds = new Set()
