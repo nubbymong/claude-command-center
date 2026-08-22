@@ -152,9 +152,11 @@ export function buildTerminalLaunchLine(opts: TerminalLaunchOptions | undefined,
   // harmless beats silently typing nothing -- is the right one, so both follow
   // it now.
   const ref = opts?.hasSecretArg ? secretRef(isWindows) : null
-  const sub = (s: string) => (ref ? substituteSecretToken(s, ref) : s)
-  const command = sub(command0).trim()
+  // The COMMAND field is a command line (its first word is the program, where a
+  // secret can never go); the ARGUMENTS field is appended after one, so its
+  // first word is just another argument.
+  const command = (ref ? substituteSecretToken(command0, ref, { isCommandLine: true }) : command0).trim()
   if (!command) return ''
-  const args = sub(opts?.args ?? '').trim()
+  const args = (ref ? substituteSecretToken(opts?.args ?? '', ref) : (opts?.args ?? '')).trim()
   return args ? `${command} ${args}` : command
 }

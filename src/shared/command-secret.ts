@@ -73,51 +73,161 @@ export function secretRefCore(envName: string, isWindows: boolean): string {
   return isWindows ? `\${env:${envName}}` : `\${${envName}}`
 }
 
+type QuoteState = 'none' | 'single' | 'double'
+
+interface ScannedWord {
+  start: number
+  end: number
+  /** The command name position. A secret can never be one. */
+  isFirst: boolean
+  /** The word contains a quote character somewhere. */
+  hasQuote: boolean
+  /** Quote state at each `{secret}` inside this word. */
+  tokens: QuoteState[]
+}
+
 /**
- * Replace every `{secret}` in `text` with a shell reference, quoting per the
- * word it lands in.
+ * Split a shell line into words, tracking QUOTE STATE — which is the only thing
+ * that decides whether a reference is safe where the user put it.
  *
- * MEASURED, not reasoned about (#371, on Windows PowerShell 5.1.26100 and
- * PowerShell 7.6, and on bash), against a real argv printer. `--out X --force`
- * with the reference written as:
- *
- *   written form        bare $env:X   braced ${env:X}   whole word quoted
- *   {secret}            ok            ok                ok
- *   {secret}_v2         ARG DROPPED   ok                ok
- *   {secret}:x          ARG DROPPED   ok                ok
- *   {secret}.json       ARG DROPPED   ARG DROPPED       ok
- *
- * The `.` case is why the braced form alone is not the fix: PowerShell parses
- * `${env:X}.json` as a member access on the string, yields $null, and the
- * argument evaporates — silently shifting the next flag into its slot, which is
- * the exact failure this is supposed to end. Quoting the WHOLE word measured
- * correct for every row above, on both shells, and it keeps a value containing
- * spaces or globs as one argument.
- *
- * The one case that must NOT be quoted is a token the user has already put
- * inside their own quotes (`curl -H "Bearer {secret}"`): the reference is
- * already bounded there, and adding another pair produces
- * `"Bearer "$X""` — measured in bash as `[Bearer pa] [ss*word]`, i.e. the value
- * word-split and glob-expanded. So a word that already contains a `"` gets the
- * bare core and nothing else.
- *
- * Safe from quote-parity problems because `secretValueProblem` refuses a `"` in
- * a Windows secret value.
+ * Deliberately not a full shell parser: it recognises `'` and `"` regions and
+ * unquoted whitespace, which is what the placement rules below need. Anything
+ * it cannot classify confidently falls through to "leave the token literal",
+ * so the failure direction is a command that visibly does not work rather than
+ * a secret in the wrong place.
  */
-export function substituteSecretToken(text: string, refCore: string): string {
+function scanShellWords(text: string): ScannedWord[] {
+  const words: ScannedWord[] = []
+  let state: QuoteState = 'none'
+  let cur: ScannedWord | null = null
+  let seenWord = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (state === 'none' && /\s/.test(ch)) {
+      if (cur) { cur.end = i; words.push(cur); cur = null }
+      continue
+    }
+    if (!cur) {
+      cur = { start: i, end: text.length, isFirst: !seenWord, hasQuote: false, tokens: [] }
+      seenWord = true
+    }
+    if (state === 'none' && (ch === '"' || ch === "'")) {
+      state = ch === '"' ? 'double' : 'single'
+      cur.hasQuote = true
+      continue
+    }
+    if ((state === 'double' && ch === '"') || (state === 'single' && ch === "'")) {
+      state = 'none'
+      continue
+    }
+    if (text.startsWith(COMMAND_SECRET_TOKEN, i)) {
+      cur.tokens.push(state)
+      i += COMMAND_SECRET_TOKEN.length - 1
+    }
+  }
+  if (cur) { cur.end = text.length; words.push(cur) }
+  return words
+}
+
+/** What can safely be done with the tokens in one word. */
+type Placement = 'none' | 'bare' | 'wrap' | 'unsafe-command-word' | 'unsafe-single-quoted' | 'unsafe-mixed-quotes'
+
+function placementFor(w: ScannedWord, isCommandLine: boolean): Placement {
+  if (w.tokens.length === 0) return 'none'
+  // A secret is never a command NAME. Wrapping here produces a bare quoted
+  // string, which PowerShell evaluates as an expression and PRINTS — the value
+  // straight into the terminal and its scrollback.
+  //
+  // Only when this text really is a command LINE: an arguments field is
+  // appended after a command, so its first word is just another argument.
+  if (isCommandLine && w.isFirst) return 'unsafe-command-word'
+  const states = new Set(w.tokens)
+  // Single quotes suppress expansion in bash AND PowerShell, so there is no
+  // reference form at all here — substituting would emit the literal reference
+  // text, and wrapping breaks the user's quoting.
+  if (states.has('single')) return 'unsafe-single-quoted'
+  if (states.has('none')) {
+    // An unquoted token in a word that ALSO carries quotes — `-H "Bearer"{secret}`.
+    // Measured on PowerShell 5.1 and 7: the value becomes its OWN bare argv
+    // entry, which for `curl` is consumed as the URL, so the secret leaves the
+    // machine as a DNS lookup. There is no safe form; do not substitute.
+    if (w.hasQuote) return 'unsafe-mixed-quotes'
+    return 'wrap'
+  }
+  return 'bare'
+}
+
+/**
+ * Replace every `{secret}` in `text` with a shell reference — or leave it
+ * LITERAL where no reference form is safe.
+ *
+ * MEASURED, not reasoned about, against a real argv printer on Windows
+ * PowerShell 5.1.26100, PowerShell 7 and bash (#371, ADR-009 pass). The rules,
+ * and what each one is protecting against:
+ *
+ * | written                          | emitted            | why |
+ * |----------------------------------|--------------------|-----|
+ * | `--out {secret}`                 | `"${env:X}"`       | quoting the whole word keeps a spaced/globbing value one argument |
+ * | `--out {secret}.json`            | `"${env:X}.json"`  | bare AND braced both DROP the argument — `${env:X}.json` is a member access yielding $null |
+ * | `{secret}_v2`, `{secret}:x`, `--token={secret}` | whole word quoted | same |
+ * | `-H "Bearer {secret}"`           | bare core inside   | already bounded; adding quotes nests wrongly and word-splits |
+ * | `-H "Bearer"{secret}`            | **LEFT LITERAL**   | the quote CLOSES before the token: the value became its own argv entry, which curl consumes as the URL |
+ * | `-H 'Bearer {secret}'`           | **LEFT LITERAL**   | single quotes suppress expansion in both shells |
+ * | `{secret}` as the FIRST word     | **LEFT LITERAL**   | PowerShell evaluates a bare quoted string and PRINTS the value |
+ *
+ * Leaving it literal is the safe direction: the command visibly fails with
+ * `{secret}` in it, and no value reaches the line, a log, or a broken-quoted
+ * argv. `secretPlacementProblem` turns the same analysis into a sentence the
+ * dialogs show, so the user is told rather than left guessing.
+ */
+export function substituteSecretToken(
+  text: string,
+  refCore: string,
+  opts: { isCommandLine?: boolean } = {},
+): string {
   if (!text.includes(COMMAND_SECRET_TOKEN)) return text
-  // Split on whitespace but KEEP it, so the line is reassembled byte-identical
-  // apart from the tokens themselves.
-  return text
-    .split(/(\s+)/)
-    .map((word) => {
-      if (!word.includes(COMMAND_SECRET_TOKEN)) return word
-      const replaced = word.split(COMMAND_SECRET_TOKEN).join(refCore)
-      // The user's own quotes already bound the reference and stop splitting.
-      if (word.includes('"')) return replaced
-      return `"${replaced}"`
-    })
-    .join('')
+  const words = scanShellWords(text)
+  let out = ''
+  let cursor = 0
+  for (const w of words) {
+    const placement = placementFor(w, opts.isCommandLine === true)
+    if (placement === 'none') continue
+    const raw = text.slice(w.start, w.end)
+    out += text.slice(cursor, w.start)
+    if (placement === 'bare') {
+      out += raw.split(COMMAND_SECRET_TOKEN).join(refCore)
+    } else if (placement === 'wrap') {
+      out += `"${raw.split(COMMAND_SECRET_TOKEN).join(refCore)}"`
+    } else {
+      out += raw // unsafe placement: the token stays exactly as written
+    }
+    cursor = w.end
+  }
+  return out + text.slice(cursor)
+}
+
+/**
+ * Why a `{secret}` in this text cannot be substituted, or null when every
+ * occurrence is in a position with a safe reference form.
+ *
+ * The dialogs surface this: silently leaving a token literal would look like
+ * the feature is broken, and the fix is always a small rewrite of the line.
+ */
+export function secretPlacementProblem(text: string, opts: { isCommandLine?: boolean } = {}): string | null {
+  if (typeof text !== 'string' || !text.includes(COMMAND_SECRET_TOKEN)) return null
+  for (const w of scanShellWords(text)) {
+    switch (placementFor(w, opts.isCommandLine === true)) {
+      case 'unsafe-command-word':
+        return `${COMMAND_SECRET_TOKEN} cannot be the command itself — put it in an argument.`
+      case 'unsafe-single-quoted':
+        return `${COMMAND_SECRET_TOKEN} inside single quotes cannot be filled in (a shell does not expand anything in '…'). Use double quotes: "… ${COMMAND_SECRET_TOKEN}".`
+      case 'unsafe-mixed-quotes':
+        return `${COMMAND_SECRET_TOKEN} sits just outside a quoted section, where the value would become a separate argument. Put it inside the quotes: "… ${COMMAND_SECRET_TOKEN}".`
+      default:
+        break
+    }
+  }
+  return null
 }
 
 /**
@@ -166,12 +276,15 @@ export function secretValueProblem(value: string, isWindows: boolean): string | 
  * has a stored secret, so nothing a Claude prompt types can be touched by this.
  */
 export function buildCommandLine(prompt: string, args: readonly string[] | undefined, secretRef?: string | null): string {
-  const sub = (s: string) => (secretRef ? substituteSecretToken(s, secretRef) : s)
+  // The prompt IS the shell command line here (its first word is the program);
+  // each arg chip is appended after it, so no chip is in command position.
+  const subLine = (s: string) => (secretRef ? substituteSecretToken(s, secretRef, { isCommandLine: true }) : s)
+  const subArg = (s: string) => (secretRef ? substituteSecretToken(s, secretRef) : s)
   // Emptiness is decided on what the user WROTE, before substitution: a command
   // is empty because nothing was typed, never because a token collapsed.
   if (!(prompt ?? '').trim()) return ''
-  const p = sub((prompt ?? '').trim()).trim()
+  const p = subLine((prompt ?? '').trim()).trim()
   if (!p) return ''
   if (!args || args.length === 0) return p
-  return `${p} ${args.map(sub).join(' ')}`
+  return `${p} ${args.map(subArg).join(' ')}`
 }

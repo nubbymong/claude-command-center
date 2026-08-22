@@ -108,6 +108,33 @@ function looksLikePathOrUrl(word: string): boolean {
   return word.indexOf('/', 1) > 0
 }
 
+/**
+ * Does this WORD of a shell command line carry a plaintext credential?
+ *
+ * Stricter than `looksLikeSecretArg`, which judges an argument CHIP. Its
+ * `FLAG_NAME` accepts a bare credential-ish word at start-of-string — right for
+ * a chip like `Token=abc`, wrong for a command line, where `auth`, `secret` and
+ * `pwd` are ordinary subcommands and program names:
+ *
+ *   gh auth status · kubectl get secret · git push origin auth · pwd
+ *
+ * All four were tagged (ADR-009 pass). The review banner fires ONCE per install,
+ * so each false positive is a permanent banner on a healthy button — and it
+ * teaches the user to dismiss the one banner that has to carry a real token.
+ *
+ * So on a command line a word only counts when it is a FLAG carrying a
+ * credential name (`--token=…`, `/Token:…`), or is itself key-shaped or
+ * high-entropy. A bare English word never does.
+ */
+function looksLikeSecretWordInShellLine(word: string): boolean {
+  const w = (word ?? '').trim()
+  if (!w || w.includes(COMMAND_SECRET_TOKEN)) return false
+  if (looksLikePathOrUrl(w)) return false
+  if (/^[-/]/.test(w)) return looksLikeSecretArg(w)
+  // Not a flag: only the VALUE shapes count, never the name shapes.
+  return KEY_SHAPED.test(w) || (HIGH_ENTROPY.test(w) && /[A-Za-z]/.test(w) && /[0-9]/.test(w))
+}
+
 /** Does this argument look like it carries a credential in plain text? */
 export function looksLikeSecretArg(arg: string): boolean {
   const a = (arg ?? '').trim()
@@ -240,8 +267,12 @@ export function reviewCommandsForUpgrade(
     // Those are sticky one-shot banners on healthy buttons, and a banner the
     // user learns to dismiss is worse than no banner: it is the same banner
     // that has to carry a REAL plaintext token when one turns up.
-    const shellLine = isShellLine ? (c.prompt ?? '').split(/\s+/).filter((w) => w && !looksLikePathOrUrl(w)) : []
-    if (!isPage && !c.hasSecretArg && [...shellLine, ...(c.defaultArgs ?? []), ...(c.lastCustomArgs ?? [])].some(looksLikeSecretArg)) reasons.push('secret-like-arg')
+    const shellLineHasSecret = isShellLine && (c.prompt ?? '').split(/\s+/).some(looksLikeSecretWordInShellLine)
+    if (
+      !isPage &&
+      !c.hasSecretArg &&
+      (shellLineHasSecret || [...(c.defaultArgs ?? []), ...(c.lastCustomArgs ?? [])].some(looksLikeSecretArg))
+    ) reasons.push('secret-like-arg')
     if (isPrompt && c.scope === 'global' && anyShellConfig) reasons.push('prompt-inert-on-shell-configs')
     if (ctx.dissolvedCommandIds.has(c.id)) reasons.push('section-dissolved')
     if (!isPage && c.target === 'partner' && c.scope === 'config' && c.configId && sshConfigIds.has(c.configId)) reasons.push('ssh-partner-is-local')

@@ -144,6 +144,14 @@ describe('reviewCommandsForUpgrade -- tagged, never changed', () => {
     'docker run -v /var/lib/pat:/pat busybox',
     'cd /srv/deployments/release-2026-08-22-abcdef123456',
     'npm run build && cp dist/token.js out/',
+    // Round two (ADR-009 pass): bare credential-ish WORDS are ordinary
+    // subcommands and program names on a command line, and were all tagged.
+    'gh auth status',
+    'kubectl get secret',
+    'git push origin auth',
+    'pwd',
+    'aws secretsmanager list-secrets',
+    'ssh-add -l',
   ])('does not tag an ordinary shell line: %s', (line) => {
     const before = [cmd({ id: 'sh', kind: 'shell', target: 'partner', prompt: line })]
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)
