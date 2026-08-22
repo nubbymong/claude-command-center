@@ -5,7 +5,7 @@
  */
 
 import { join } from 'path'
-import { readFileSync, existsSync, unlinkSync, renameSync } from 'fs'
+import { readFileSync, existsSync, unlinkSync, renameSync, copyFileSync } from 'fs'
 import { getConfigDir, ensureConfigDir, migrateConfigToProviderShape } from './config-manager'
 import { logInfo, logError } from './debug-logger'
 import { atomicWriteFileSync } from './atomic-write'
@@ -20,6 +20,15 @@ const LEGACY_CLAUDE_FIELDS = ['model', 'effortLevel', 'legacyVersion', 'disableA
 // Lazy getter -- can't call getConfigDir() at module load time
 function getSessionStateFile(): string {
   return join(getConfigDir(), 'session-state.json')
+}
+
+// #397 Group 3: a previous-good mirror of session-state.json. Written after every
+// successful save; read back only when the primary file exists but does NOT parse.
+// Atomic writes already rule out a partial write, so this guards the OTHER way the
+// file goes bad -- external corruption (an AV scanner, a disk fault, a bad edit) --
+// so a corrupt primary recovers the last-good set instead of losing every session.
+function getSessionStateBakFile(): string {
+  return `${getSessionStateFile()}.bak`
 }
 
 /**
@@ -72,13 +81,40 @@ export function saveSessionState(state: SessionState): boolean {
   }
   try {
     ensureConfigDir()
-    atomicWriteSessionState(getSessionStateFile(), state)
+    const file = getSessionStateFile()
+    atomicWriteSessionState(file, state)
+    // #397 Group 3: mirror the just-written (known-good) file to the .bak. Copying
+    // AFTER the atomic write -- not the prior file before it -- guarantees the .bak
+    // is always a valid, recently-persisted state, never a half-written one. Best
+    // effort: a copy failure must not fail the save the user actually asked for.
+    try { copyFileSync(file, getSessionStateBakFile()) } catch { /* .bak is a bonus, not a requirement */ }
     logInfo(`[session-state] Saved ${state.sessions.length} sessions`)
     return true
   } catch (err) {
     console.error('[session-state] Failed to save:', err)
     return false
   }
+}
+
+/**
+ * Parse session-state JSON text into a SessionState, tolerating the two content
+ * defects that used to lose the WHOLE saved set (#397 Group 3):
+ *   - a missing/non-array `sessions` (it reached the renderer and threw on
+ *     `.length`, silently dropping the Resume prompt) -- coerced to [];
+ *   - the top-level value not being an object at all.
+ * Returns null ONLY when the JSON itself does not parse (the caller then tries the
+ * .bak). A single malformed session ENTRY is handled later, per-entry, not here.
+ */
+function parseSessionStateText(text: string): SessionState | null {
+  let state: SessionState
+  try {
+    state = JSON.parse(text) as SessionState
+  } catch {
+    return null
+  }
+  if (!state || typeof state !== 'object') return null
+  if (!Array.isArray(state.sessions)) state.sessions = []
+  return state
 }
 
 /**
@@ -95,38 +131,62 @@ export function loadSessionState(): SessionState | null {
       return null
     }
     const data = readFileSync(file, 'utf-8')
-    let state: SessionState
-    try {
-      state = JSON.parse(data) as SessionState
-    } catch (parseErr) {
-      // Unreadable CONTENT, not an unreadable FILE: keep it for forensics, start clean.
+    let state = parseSessionStateText(data)
+    if (!state) {
+      // The primary file exists but its CONTENT does not parse. Before starting
+      // clean, try the .bak previous-good mirror (#397 Group 3) so external
+      // corruption of the primary recovers the last-good set instead of losing it.
+      const bak = getSessionStateBakFile()
+      let recovered: SessionState | null = null
+      try {
+        if (existsSync(bak)) recovered = parseSessionStateText(readFileSync(bak, 'utf-8'))
+      } catch { /* .bak unreadable too -- fall through to clean start */ }
+
       const aside = `${file}.corrupt-${Date.now()}`
       try { renameSync(file, aside) } catch { /* best effort; the next save overwrites it */ }
-      logError(`[session-state] session-state.json did not parse (${(parseErr as Error)?.message ?? parseErr}); moved aside to ${aside} and starting with no saved sessions`)
       lastLoadFailed = false
-      return null
-    }
-    lastLoadFailed = false
 
-    if (!Array.isArray(state.sessions)) {
-      logInfo('[session-state] No sessions array in state; skipping migration')
-      return state
+      if (recovered) {
+        // Reinstate the recovered set as the primary so the next save has a baseline.
+        try { atomicWriteSessionState(file, recovered) } catch { /* best effort */ }
+        logError(`[session-state] session-state.json did not parse; RECOVERED ${recovered.sessions.length} sessions from ${bak} (corrupt file moved aside to ${aside})`)
+        state = recovered
+      } else {
+        logError(`[session-state] session-state.json did not parse and no usable .bak exists; moved aside to ${aside} and starting with no saved sessions`)
+        return null
+      }
+    } else {
+      lastLoadFailed = false
     }
 
     // v1.5: back-fill provider field + claudeOptions on each SavedSession.
     // Strips legacy top-level Claude fields; persists back only if something changed.
+    // #397 Group 3: guarded PER ENTRY. A null/primitive entry, or a migration that
+    // throws on one row, must not throw the whole load away (that used to null the
+    // set AND wrongly trip the read-failure latch, refusing all later saves).
     let dirty = false
-    const migratedSessions = state.sessions.map((s: any) => {
-      const out = migrateConfigToProviderShape(s)
-      if (!s.provider || LEGACY_CLAUDE_FIELDS.some(f => f in s)) {
-        dirty = true
+    const migratedSessions: SavedSession[] = []
+    for (const s of state.sessions as any[]) {
+      if (!s || typeof s !== 'object') {
+        dirty = true // dropping an un-restorable entry changes the set; persist the cleaned one
+        logError('[session-state] dropped a malformed (null/non-object) session entry during load')
+        continue
       }
-      return out
-    })
+      try {
+        const out = migrateConfigToProviderShape(s)
+        if (!s.provider || LEGACY_CLAUDE_FIELDS.some(f => f in s)) dirty = true
+        migratedSessions.push(out)
+      } catch (perEntryErr) {
+        // Keep the raw entry rather than losing it or nuking the whole set.
+        logError(`[session-state] migration failed for one session; keeping it unmigrated: ${(perEntryErr as Error)?.message ?? perEntryErr}`)
+        migratedSessions.push(s as SavedSession)
+      }
+    }
+    state.sessions = migratedSessions
     if (dirty) {
-      state.sessions = migratedSessions
       try {
         atomicWriteSessionState(getSessionStateFile(), state)
+        try { copyFileSync(getSessionStateFile(), getSessionStateBakFile()) } catch { /* .bak is a bonus */ }
         logInfo('[session-state] Migrated sessions to provider shape')
       } catch (writeErr) {
         logError(`[session-state] migration write failed; in-memory state preserved: ${(writeErr as Error)?.message ?? writeErr}`)
