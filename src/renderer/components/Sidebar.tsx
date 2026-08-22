@@ -31,6 +31,9 @@ import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
+import SavedConfigsCards from './sidebar/SavedConfigsCards'
+import SavedConfigsFind from './sidebar/SavedConfigsFind'
+import { resolveSavedConfigsView, runningConfigIds } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import { resolveConfigPanelExpanded, toggleConfigPanel, overrideAfterPinChange, type ConfigPanelOverride } from './sidebar/configPanelState'
 import FirstRunCard from './FirstRunCard'
@@ -174,6 +177,16 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     updateSettings({ configPanelPinned: newVal })
   }
   const [configSearchQuery, setConfigSearchQuery] = useState('')
+  // #362: which layout the panel body uses. The list is the default and is
+  // untouched; cards and find are the two views from the design pass.
+  const savedConfigsView = resolveSavedConfigsView(useSettingsStore((s) => s.settings.savedConfigsView))
+  // Configs with a live session: the cards and find views never list them and
+  // launch-all never starts them. `sessions` already excludes the Ask session.
+  const runningIds = useMemo(() => runningConfigIds(sessions), [sessions])
+  // Bumped when the panel is opened DELIBERATELY (header click), so the find
+  // box takes focus. Never on hover: a mouse passing over the sidebar must not
+  // steal the keyboard from the terminal.
+  const [configPanelFocusRequest, setConfigPanelFocusRequest] = useState(0)
   // The panel used to cap itself at a flat 60vh, which cut the list off partway
   // down a row while empty sidebar sat underneath it. Measure what is actually
   // free below the panel's top edge instead, keeping SESSION_RESERVE px for the
@@ -343,6 +356,15 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const launchFromConfig = async (config: TerminalConfig) => {
     launchConfig(config)
     onViewChange('sessions')
+  }
+
+  // #362: launch-all from the cards / find views. They hand over an already
+  // filtered list (running and Codex-blocked configs removed) -- see
+  // launchAllTargets -- so this is just the loop.
+  const launchMany = async (targets: TerminalConfig[]) => {
+    for (const config of targets) {
+      await launchFromConfig(config)
+    }
   }
 
   const launchGroup = async (groupId: string) => {
@@ -732,7 +754,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             type="button"
             /* Works while pinned too: a pinned panel stays collapsible. This used
                to be blocked when pinned, so "pinned" also meant "stuck open". */
-            onClick={() => setConfigPanelOpen((o) => toggleConfigPanel(o, configPanelPinned))}
+            onClick={() => {
+              const next = toggleConfigPanel(configPanelOpen, configPanelPinned)
+              setConfigPanelOpen(next)
+              if (next) setConfigPanelFocusRequest((n) => n + 1)
+            }}
             aria-expanded={configPanelExpanded}
             className="flex items-center gap-1.5 rounded focus-ring"
             title={configPanelExpanded ? 'Collapse saved configs' : 'Show all saved configs'}
@@ -861,7 +887,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             }
         }
       >
-        {/* Search input */}
+        {/* Search input (list view) */}
+        {savedConfigsView === 'list' && (
         <div className="px-2 pt-2 pb-1 shrink-0">
           <input
             value={configSearchQuery}
@@ -870,11 +897,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             className="w-full bg-base border border-surface1 rounded px-2 py-1 text-xs text-text placeholder:text-overlay0 outline-none focus:border-blue"
           />
         </div>
+        )}
 
         {/* Fills whatever height the panel got. Previously a second hard-coded
             `calc(60vh - 40px)`, which had to be kept in step with the panel cap
-            AND with the search box's real height by hand. */}
-        <div className="px-2 space-y-0.5 overflow-y-auto pb-2 flex-1 min-h-0">
+            AND with the search box's real height by hand. In the cards / find
+            views this holds only the empty state and the new-section input;
+            the view below owns the scrolling list. */}
+        <div className={savedConfigsView === 'list' ? 'px-2 space-y-0.5 overflow-y-auto pb-2 flex-1 min-h-0' : 'px-2 space-y-0.5 shrink-0'}>
         {configs.length === 0 && !showNewSectionInput && (
           <div className="text-xs text-overlay0 text-center py-4">
             No saved configs.<br />Click + to create one.
@@ -905,6 +935,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           </div>
         )}
 
+        {savedConfigsView === 'list' && (<>
         {/* Sectioned configs */}
         {sectionData.map(({ section, groups: sectionGroups, looseConfigs }) => (
           <div key={section.id} className="mb-1">
@@ -990,7 +1021,38 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           />
         )}
         {unsectionedUngroupedConfigs.map(renderConfigRow)}
+        </>)}
       </div>
+        {/* #362: the two alternative layouts, chosen in Settings -> General.
+            Both own their search box; the inline new-section input and the
+            empty state below stay with the panel. */}
+        {savedConfigsView === 'cards' && (
+          <SavedConfigsCards
+            configs={configs}
+            groups={groups}
+            sections={sections}
+            runningIds={runningIds}
+            onLaunch={launchFromConfig}
+            onLaunchMany={launchMany}
+            onContextMenu={handleConfigContextMenu}
+            focusRequest={configPanelFocusRequest}
+          />
+        )}
+        {savedConfigsView === 'find' && (
+          <SavedConfigsFind
+            configs={configs}
+            groups={groups}
+            sections={sections}
+            runningIds={runningIds}
+            onLaunch={launchFromConfig}
+            onLaunchMany={launchMany}
+            onEdit={setEditingConfig}
+            onDelete={(c) => handleDeleteConfig(c.id)}
+            onContextMenu={handleConfigContextMenu}
+            focusRequest={configPanelFocusRequest}
+          />
+        )}
+
       </div>{/* end overlay */}
       </div>{/* end relative hover wrapper */}
 
