@@ -89,16 +89,32 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
    * never save over the file once it is readable again.
    */
   ipcMain.handle('vision:saveConfig', async (_event, config: GlobalVisionConfig, generation?: number) => {
-    if (typeof generation === 'number' && generation !== visionLatch.generation()) {
+    // The token is MANDATORY (#371, ADR-009 pass). Accepting a save without one
+    // left the whole guard opt-in: any caller that omitted it — an older
+    // renderer, a future one, a bug — got the unguarded path back.
+    if (typeof generation !== 'number') {
+      return {
+        ok: false,
+        error: 'Vision settings were not saved: this panel did not say which reading of the settings file it was built from. Reopen it and try again.',
+      }
+    }
+    if (generation !== visionLatch.generation()) {
       return {
         ok: false,
         stale: true,
         error: 'Vision settings were not saved: these settings were shown before the settings file could be read, so saving them would overwrite the real ones. Reopen this panel to see what is actually saved.',
       }
     }
+    // `retry: false`: a vision config is ONE object, so there is nothing to
+    // merge. Letting the shared retry recover the file and then write would put
+    // the renderer's defaults over the settings it had just rescued — the very
+    // clobber the generation token is here to stop (#371, ADR-009 pass). A
+    // latched save refuses, and the user reopens the panel to see what is really
+    // stored.
+    //
     // Report the real outcome. A refused save (the last read FAILED) and a
     // failed write both come back as ok:false rather than a false reassurance.
-    const saved = saveConfigLatched('visionGlobal', config, visionLatch)
+    const saved = saveConfigLatched('visionGlobal', config, visionLatch, { retry: false })
     if (saved) return { ok: true }
     return {
       ok: false,

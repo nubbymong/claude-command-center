@@ -126,6 +126,16 @@ export interface LatchedSaveOptions {
   /** Names the refused operation in the log ('save', 'clear', …). */
   action?: string
   /**
+   * Set false to REFUSE outright instead of retrying the read.
+   *
+   * The retry exists for stores that can MERGE (a list keyed by id): recover
+   * the file, fold it in, write the union. A store whose state is a single
+   * object has nothing to merge, so recovering the file only to write the
+   * in-memory fallback over it is the loss, not the fix. `window-state` and the
+   * vision config are both that shape (#371, ADR-009 pass).
+   */
+  retry?: boolean
+  /**
    * Called when the retry read below RECOVERS a file that had previously failed
    * to read. The owner MUST fold the recovered content back into its in-memory
    * state before the write happens — otherwise the empty store built from the
@@ -164,10 +174,15 @@ export function saveConfigLatched(
   opts: LatchedSaveOptions = {},
 ): boolean {
   const action = opts.action ?? 'save'
+  let justRecovered = false
   if (latch.failed()) {
+    if (opts.retry === false) {
+      latch.refuses(action)
+      return false
+    }
     const retry = readConfigChecked(key)
-    latch.note(retry.outcome)
     if (retry.outcome === 'failed') {
+      latch.note(retry.outcome)
       latch.refuses(action)
       return false
     }
@@ -176,8 +191,24 @@ export function saveConfigLatched(
     // it can decide — `recovered` is null in both cases, which is a truthful
     // answer meaning "there is nothing on disk to merge".
     opts.onRecovered?.(retry.value)
+    justRecovered = true
+    latch.note(retry.outcome)
   }
-  return writeConfig(key, typeof value === 'function' ? (value as () => unknown)() : value)
+  const ok = writeConfig(key, typeof value === 'function' ? (value as () => unknown)() : value)
+  if (!ok && justRecovered) {
+    // The latch was cleared by the recovery and the WRITE then failed, so the
+    // caller is about to roll its in-memory state back — to the PRE-recovery
+    // snapshot, which is the small set built from a failed load. With the latch
+    // clear, the next save would write that over the file we just proved is
+    // readable, report {ok:true}, and lose the lot silently (#371, ADR-009
+    // pass). Re-latch: the next save retries the read and merges again.
+    latch.note('failed')
+    logError(
+      `[${latch.name}] ${key} became readable but the write FAILED; re-latching so the next save ` +
+        `re-reads and merges rather than overwriting the file with a state built from the failed load`,
+    )
+  }
+  return ok
 }
 
 /**

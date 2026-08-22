@@ -55,8 +55,10 @@ const REAL: GlobalVisionConfig = { enabled: true, browser: 'edge', debugPort: 93
 const DEFAULTS = { enabled: true, browser: 'chrome', debugPort: 9222, headless: true } as GlobalVisionConfig
 
 const getConfig = () => handlers.get('vision:getConfig')!({})
-const saveConfig = (c: GlobalVisionConfig, generation?: number) =>
-  handlers.get('vision:saveConfig')!({}, c, generation)
+/** The generation is MANDATORY now, so the default mirrors a panel that read
+ *  the config and then saved it. Pass one explicitly to model a stale panel. */
+const saveConfig = async (c: GlobalVisionConfig, generation?: number) =>
+  handlers.get('vision:saveConfig')!({}, c, generation ?? (await getConfig()).generation)
 /** The config half of the new `{config, generation, readFailed}` answer. */
 const readConfig = async () => (await getConfig()).config
 
@@ -113,6 +115,33 @@ describe('vision config persistence', () => {
     expect(await readConfig()).toEqual(REAL)
     expect(await saveConfig(DEFAULTS)).toEqual({ ok: true })
     expect(store.visionGlobal).toEqual(DEFAULTS)
+  })
+
+  /**
+   * #371 ADR-009 pass. Without a mandatory token the whole guard was opt-in:
+   * any caller that omitted it got the unguarded path back.
+   */
+  it('refuses a save that carries no generation at all', async () => {
+    store.visionGlobal = REAL
+    const res = await handlers.get('vision:saveConfig')!({}, DEFAULTS)
+    expect(res.ok).toBe(false)
+    expect(store.visionGlobal).toEqual(REAL)
+  })
+
+  /**
+   * The save's OWN retry used to recover the file and then write the renderer's
+   * defaults over it — no merge is possible for a single-object config, so the
+   * recovery was the loss.
+   */
+  it('a latched save never recovers-then-writes: it refuses and keeps the file', async () => {
+    store.visionGlobal = REAL
+    cfg.readFails = true
+    const stale = (await getConfig()).generation
+    // The file becomes readable again before the save lands.
+    cfg.readFails = false
+    const res = await saveConfig(DEFAULTS, stale)
+    expect(res.ok).toBe(false)
+    expect(store.visionGlobal).toEqual(REAL)
   })
 
   it('vision:start latches too — it reads the same file', async () => {

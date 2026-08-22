@@ -24,6 +24,10 @@ const h = vi.hoisted(() => ({
   resourcesDir: '',
   failFor: null as string | null,
   failRenameFor: null as string | null,
+  failWriteFor: null as string | null,
+  /** Models a mapped/removable drive that is not attached: every path on it
+   *  answers ENOENT, including the volume root. */
+  unreachableRoot: false,
   errno: 'EBUSY',
 }))
 
@@ -47,7 +51,22 @@ vi.mock('fs', async (importOriginal) => {
         err.code = h.errno
         throw err
       }
+      if (h.unreachableRoot) {
+        const err = new Error(`ENOENT: no such file or directory, open '${String(p)}'`) as NodeJS.ErrnoException
+        err.code = 'ENOENT'
+        throw err
+      }
       return real.readFileSync(p, o)
+    },
+    // The volume root itself disappears with the drive.
+    existsSync: (p: any) => (h.unreachableRoot ? false : real.existsSync(p)),
+    writeFileSync: (p: any, d: any, o: any) => {
+      if (h.failWriteFor && String(p).includes(h.failWriteFor.replace(/\.json$/, ''))) {
+        const err = new Error(`EACCES: permission denied, open '${String(p)}'`) as NodeJS.ErrnoException
+        err.code = 'EACCES'
+        throw err
+      }
+      return real.writeFileSync(p, d, o)
     },
     // Lets a test model "the file did not parse AND could not be quarantined".
     renameSync: (from: any, to: any) => {
@@ -83,6 +102,8 @@ afterAll(() => {
 beforeEach(() => {
   h.failFor = null
   h.failRenameFor = null
+  h.failWriteFor = null
+  h.unreachableRoot = false
   h.errno = 'EBUSY'
   vi.mocked(logError).mockClear()
   windowState._resetWindowStateLatchForTest()
@@ -342,6 +363,72 @@ describe('a latched save retries the read rather than refusing forever', () => {
     for (let i = 0; i < 5; i++) expect(saveConfigLatched('cloudAgents', () => [], latch)).toBe(false)
     const refusals = vi.mocked(logError).mock.calls.filter((c) => String(c[0]).includes('refusing to save'))
     expect(refusals).toHaveLength(1)
+  })
+})
+
+/**
+ * #371 ADR-009 pass — two clobber paths the RETRY itself introduced.
+ */
+describe('a recovery whose write then fails does not become a silent total loss', () => {
+  it('re-latches, so the next save re-reads instead of overwriting with the failed-load state', () => {
+    writeGoodAgents()
+    const latch = createReadFailureLatch('test')
+    h.failFor = 'cloud-agents.json'
+    loadConfigLatched('cloudAgents', latch)
+    expect(latch.failed()).toBe(true)
+
+    // The file becomes readable, the recovery runs — and the WRITE fails.
+    h.failFor = null
+    h.failWriteFor = 'cloud-agents.json'
+    let recovered: unknown = null
+    expect(
+      saveConfigLatched('cloudAgents', () => [{ id: 'ca-new' }], latch, { onRecovered: (r) => { recovered = r } }),
+    ).toBe(false)
+    expect(recovered).toEqual(GOOD)
+
+    // The caller now rolls back to its PRE-recovery snapshot (the small set
+    // built from the failed load). If the latch had stayed clear, that would be
+    // written over the good file next time and reported as a success.
+    expect(latch.failed()).toBe(true)
+
+    h.failWriteFor = null
+    expect(saveConfigLatched('cloudAgents', () => [{ id: 'ca-new' }], latch, {
+      onRecovered: (r) => { recovered = r },
+    })).toBe(true)
+    // It re-read and merged again rather than clobbering.
+    expect(recovered).toEqual(GOOD)
+  })
+
+  it('retry:false refuses outright — for a store with nothing to merge', () => {
+    writeGoodAgents()
+    const before = agentBytes()
+    const latch = createReadFailureLatch('test')
+    h.failFor = 'cloud-agents.json'
+    loadConfigLatched('cloudAgents', latch)
+
+    // The file is readable again, but a single-object store must NOT be
+    // recovered-then-overwritten with its in-memory fallback.
+    h.failFor = null
+    expect(saveConfigLatched('cloudAgents', () => [], latch, { retry: false })).toBe(false)
+    expect(agentBytes()).toBe(before)
+  })
+})
+
+describe('an unreachable resources volume is not a fresh install', () => {
+  it('ENOENT with the root gone is a read FAILURE, not an absence', () => {
+    // What a mapped network drive that has not reconnected, or a removable
+    // drive not yet attached at logon, answers for every path on it.
+    h.unreachableRoot = true
+    expect(readConfigChecked('cloudAgents').outcome).toBe('failed')
+  })
+
+  it('ENOENT with the root present is a genuine absence — a fresh install must still write', () => {
+    rmSync(agentsFile(), { force: true })
+    expect(readConfigChecked('cloudAgents').outcome).toBe('absent')
+    const latch = createReadFailureLatch('test')
+    expect(loadConfigLatched('cloudAgents', latch)).toBeNull()
+    expect(latch.failed()).toBe(false)
+    expect(saveConfigLatched('cloudAgents', () => GOOD, latch)).toBe(true)
   })
 })
 

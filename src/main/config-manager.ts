@@ -4,7 +4,7 @@
  * and can live on a network drive for portability.
  */
 
-import { join } from 'path'
+import { join, parse } from 'path'
 import { readFileSync, existsSync, readdirSync, copyFileSync, rmSync, statSync, renameSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError, logWarn } from './debug-logger'
@@ -255,6 +255,23 @@ export interface CheckedRead<T> {
  * one, so answering "absent" would invite a caller to build an empty store for
  * a key it can never persist.
  */
+/**
+ * Is the volume the config store lives on actually there?
+ *
+ * Deliberately the ROOT (`F:\`, `\\server\share\`, `/`) and not the CONFIG
+ * directory: a fresh install legitimately has no CONFIG directory yet, and
+ * treating that as a failure would latch writes off before the first save.
+ */
+function configRootReachable(): boolean {
+  try {
+    const root = parse(getConfigDir()).root
+    if (!root) return true // relative/unknown shape — do not invent a failure
+    return existsSync(root)
+  } catch {
+    return true // cannot tell: fall back to the plain ENOENT reading
+  }
+}
+
 export function readConfigChecked<T = unknown>(
   key: ConfigKey,
   opts: { quarantineUnparseable?: boolean } = {},
@@ -280,7 +297,23 @@ export function readConfigChecked<T = unknown>(
     data = readFileSync(filePath, 'utf-8')
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code
-    if (code === 'ENOENT') return { value: null, outcome: 'absent' }
+    if (code === 'ENOENT') {
+      // ENOENT is NOT proof of absence on Windows: a mapped network drive that
+      // has not reconnected, or a removable drive not yet attached at logon,
+      // answers ENOENT for every path on it. The resources directory can live
+      // on either (it is user-selected), so a whole unavailable config store
+      // would read as "fresh install", latch nothing, and the first save would
+      // clobber it once the drive came back (#371, ADR-009 pass).
+      //
+      // So ask whether the ROOT is there. Root missing → the store is
+      // unreachable → failed. Root present but the file is not → genuinely
+      // absent, which is what a real fresh install looks like.
+      if (!configRootReachable()) {
+        logError(`[config-manager] ${key} read ENOENT and the resources root is unreachable — treating as a READ FAILURE, not a fresh install`)
+        return { value: null, outcome: 'failed' }
+      }
+      return { value: null, outcome: 'absent' }
+    }
     // The file is (probably) there and could not be read: EBUSY, EACCES,
     // EPERM, EIO, ENOTDIR, a junction refusal. This is the case the latch
     // exists for.

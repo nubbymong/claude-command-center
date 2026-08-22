@@ -57,7 +57,11 @@ export function loadWindowState(): WindowState {
  * ending anyway.
  */
 export function saveWindowState(state: WindowState): boolean {
-  return saveConfigLatched('windowState', state, windowStateLatch)
+  // `retry: false` is what makes the paragraph above TRUE (#371, ADR-009 pass).
+  // Without it the shared retry would recover the file and then write the
+  // fallback 3200x1800 straight over the geometry it had just rescued — the
+  // exact loss this refusal exists to prevent, with the doc claiming otherwise.
+  return saveConfigLatched('windowState', state, windowStateLatch, { retry: false })
 }
 
 /** True while the last load failed to READ the file (rather than not find it). */
