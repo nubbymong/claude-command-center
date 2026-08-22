@@ -14,8 +14,6 @@ import { act } from 'react'
 
 vi.mock('../../../src/renderer/hooks/useThemeController', () => ({ useResolvedTheme: () => 'dark' }))
 vi.mock('../../../src/renderer/hooks/useTypography', () => ({ useRegionTypography: () => ({}) }))
-// Peripheral children — not under test here.
-vi.mock('../../../src/renderer/components/NotesBar', () => ({ default: () => null }))
 
 const { default: SessionHeader } = await import('../../../src/renderer/components/SessionHeader')
 import type { Session } from '../../../src/renderer/stores/sessionStore'
