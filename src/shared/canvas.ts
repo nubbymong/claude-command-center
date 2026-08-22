@@ -133,14 +133,63 @@ export interface FocusObject {
 export type AnnotationScope = 'element' | 'region' | 'general'
 /**
  * `open` is the only state a note is born in. The user moves it to `approved`,
- * `dismissed` or `reannotated` from the panel. `addressed` is the AGENT's:
- * "I acted on this note" — set through canvas_resolve after the agent has done
- * the work, so a review the user finishes in chat rather than in the panel
- * does not sit as five open notes forever. It is deliberately not `approved`:
- * approval is the user's word, and the agent never speaks it for them.
+ * `dismissed`, `stale` or `reannotated` from the panel. `addressed` is the
+ * AGENT's: "I acted on this note" — set through canvas_resolve after the agent
+ * has done the work, so a review the user finishes in chat rather than in the
+ * panel does not sit as five open notes forever. It is deliberately not
+ * `approved`: approval is the user's word, and the agent never speaks it for
+ * them.
+ *
+ * `stale` is the CLOSE-OUT state: the work this note was about has SHIPPED, so
+ * the note is no longer live — and nobody is claiming it was reviewed and found
+ * good. That distinction is the whole reason for a sixth state rather than
+ * reusing `approved`: "this went out" and "I looked and it is right" are
+ * different facts, and only the second is the user's verdict to give.
+ *
+ * `approved` is the one state NO tool can write. Enforced in the review store
+ * (`closeAnnotationsByAgent`), not merely described in a tool schema — a tool
+ * description is a request, and MCP arguments are model-generated.
  */
-export type AnnotationState = 'open' | 'addressed' | 'approved' | 'reannotated' | 'dismissed'
+export type AnnotationState = 'open' | 'addressed' | 'approved' | 'reannotated' | 'dismissed' | 'stale'
 export type PlanVerdict = 'accept' | 'reject' | 'question'
+
+/**
+ * The two terminal states an AGENT may set, and then only on the user's
+ * explicit instruction (the `canvas_verdict` tool).
+ *
+ * A frozen list rather than a bare type union, because the check enforcing it
+ * has to exist at RUNTIME: the value arrives from a model-generated MCP tool
+ * call, and a TypeScript union is not a boundary. `approved` is deliberately,
+ * permanently absent — approval stays a click only the user can make.
+ */
+export const AGENT_CLOSE_VERDICTS = ['stale', 'dismissed'] as const
+export type AgentCloseVerdict = (typeof AGENT_CLOSE_VERDICTS)[number]
+
+/** Who moved a note to a terminal state. `agent` means `canvas_verdict` wrote
+ *  it on the user's instruction — which the panel says out loud, and lists
+ *  apart from the user's own approvals. */
+export type AnnotationClosedBy = 'user' | 'agent'
+
+/**
+ * Who moved a note into `addressed` — the state the agent's close-out
+ * precondition is entirely made of.
+ *
+ * Only 'agent' is reachable today (`canvas_resolve` is the single writer of
+ * that state), and that is exactly the point: the close-out barrier has to be
+ * able to READ the fact rather than assume it, so that if a user-side "mark
+ * addressed" ever exists the barrier treats it correctly instead of inheriting
+ * a hole from an assumption nobody re-checked.
+ */
+export type AnnotationAddressedActor = 'agent' | 'user'
+
+/** The provenance of one open -> addressed transition. */
+export interface AddressedBy {
+  actor: AnnotationAddressedActor
+  /** The session that made the write. `canvas_verdict` compares it against its
+   *  own session so the record can say "you addressed these yourself" rather
+   *  than the vaguer "somebody did". */
+  sessionId: string
+}
 
 /** A sketch attached to a note (D6). The glass is never the data model: this
  *  RECORD references glass elements; the PNG is exported once, at submit. */
@@ -170,6 +219,67 @@ export interface Annotation {
   state: AnnotationState
   /** Id of the re-annotation that replaced this note (state 'reannotated'). */
   supersededBy?: string
+  /**
+   * Who moved this note to its terminal state. Absent on a live note, and
+   * absent on records written before close-out existed.
+   *
+   * The panel needs it because `stale` and `dismissed` are reachable from both
+   * sides: the user clicking "Accept as built", and the agent calling
+   * `canvas_verdict` on the user's word. Those read very differently to the
+   * person who has to trust the list, so the row says which one happened.
+   * `approved` is always the user's — no tool can write it — so this field can
+   * never be 'agent' beside that state.
+   */
+  closedBy?: AnnotationClosedBy
+  /**
+   * The state this note held when it was closed, so REOPEN can put it back
+   * exactly where it was rather than guessing.
+   *
+   * Without it, reopening has to pick one: send it back to 'open' (telling the
+   * agent to do work it already did) or to 'addressed' (claiming the agent
+   * acted when it may never have). Both are wrong some of the time, and the
+   * record already knew the answer at the moment it was closed.
+   */
+  closedFrom?: 'open' | 'addressed'
+  /**
+   * When the AGENT marked this note addressed (`canvas_resolve`).
+   *
+   * Provenance for the panel and for anyone reading the record: the moment the
+   * agent claimed to have acted. It is NOT what authorises a close — a delay is
+   * not permission, and an unattended agent can wait — so the close-out barrier
+   * reads `addressedBy`/`userSawAddressed` instead. See `closeAnnotationsByAgent`.
+   *
+   * Absent on a note nobody has addressed, and on records written before this.
+   */
+  addressedAt?: string
+  /**
+   * WHO moved this note into `addressed`, and from which session.
+   *
+   * Half of the close-out barrier. The agent's precondition for closing a round
+   * ("every note on it is addressed") is a state the agent writes ITSELF, so on
+   * its own it proves nothing: `canvas_resolve` then `canvas_verdict` satisfies
+   * it in one unattended pass with no user anywhere in the chain. Recording the
+   * actor is what lets the store refuse to let one party be both the hand that
+   * created the precondition and the hand that spends it.
+   *
+   * Absent on records written before this — and absent is NOT a pass: a note
+   * with no provenance is treated as agent-addressed, because the backlog this
+   * feature exists to clear was all addressed by agents.
+   */
+  addressedBy?: AddressedBy
+  /**
+   * Whether the USER has actually seen this note in its addressed state.
+   *
+   * The other half of the barrier, and the only thing on this record an agent
+   * cannot write. It is set from the renderer — and only when the note's
+   * addressed state has been on the user's screen, in the active session, in a
+   * visible window, long enough to read — never by any MCP tool, and never by
+   * the main process on an agent's behalf.
+   *
+   * Cleared every time the note is re-addressed: seeing an OLD claim of work is
+   * not seeing the new one.
+   */
+  userSawAddressed?: boolean
 }
 
 export interface Review {
@@ -676,6 +786,19 @@ export interface CanvasLibraryEntry {
    *  be read — deliberately not 0, so a broken store never renders as "clear". */
   openReviewCount?: number
   draftNoteCount?: number
+  /**
+   * How many notes a bulk close-out on this row would ACTUALLY clear.
+   *
+   * Not "addressed notes on this canvas", which is a different and larger
+   * number: the close-out skips any round still holding an open note, so on a
+   * partial round (one note handled, one not) there are addressed notes and
+   * nothing closeable. Labelling the button from the larger number promised
+   * work it would not do and left a control that never went away.
+   *
+   * `undefined` for an unreadable store, exactly like the two above: the
+   * library must never offer "close 0 notes" when the truth is "could not tell".
+   */
+  closeableNoteCount?: number
 }
 
 export interface CanvasSnapshotRequestEvent {

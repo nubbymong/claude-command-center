@@ -5,7 +5,9 @@ import type { Annotation, CanvasSketchExport, CanvasVersion, FocusObject, Rect }
 import {
   draftAnnotationsOf,
   draftReviewOf,
+  notesWaitingOnYou,
   reviewGroupsOf,
+  roundsWaitingOnYou,
   useCanvasReviewStore,
   type ReviewGroup,
 } from '../stores/canvasReviewStore'
@@ -18,7 +20,34 @@ interface Props {
   getGlassApi: () => ExcalidrawImperativeAPI | null
   /** One-click return to the terminal after submit (spec D3). */
   onReturnToTerminal: () => void
+  /**
+   * Is this panel the one the user is actually looking at?
+   *
+   * Every session renders its own pane and the inactive ones are hidden with
+   * CSS, so being MOUNTED proves nothing about being seen. This is the session
+   * being the active one on the sessions view — and it is load-bearing, not
+   * cosmetic: it gates the "the user has seen this round addressed" report that
+   * releases the agent's close-out barrier. Defaults to false at every call
+   * site that does not know, which fails closed (the barrier stays shut and the
+   * user closes the round themselves).
+   */
+  isActive: boolean
 }
+
+/**
+ * How long an addressed round must be ON SCREEN before it counts as SEEN.
+ *
+ * The close-out barrier's release is a claim about the user's eyes, so the
+ * report has to be worth something: a note that appeared for one frame during a
+ * re-render, or while the pane was mounted behind another view, has not been
+ * read by anybody. A second and a half of continuous visibility in the active,
+ * visible window is a modest claim that is actually true.
+ *
+ * Note where this dwell lives — on the USER's side, measuring the user's
+ * exposure. The dwell it replaces sat on the agent's side and measured the
+ * agent's patience, which an unattended agent simply spends.
+ */
+const SEEN_DWELL_MS = 1500
 
 /** Scene-coord bbox of a set of glass elements. The glass is pinned 1:1 over
  *  the content (scene ≡ page coords), so this IS the sketch's page bbox. */
@@ -58,6 +87,26 @@ function reviewSentLabel(review: { submittedAt?: string; createdAt: string; vers
   return when ? `sent ${when} · on ${review.versionId}` : `on ${review.versionId}`
 }
 
+/**
+ * What happened to a closed note — and, as load-bearing as the verdict itself,
+ * WHO said so.
+ *
+ * The agent can reach two of these three states (`stale`, `dismissed`) when the
+ * user tells it to, so a row that showed only the verdict would let "the agent
+ * closed this because you asked" and "you decided this yourself" read
+ * identically. `approved` is the user's alone — the store refuses a record that
+ * claims otherwise — so it can never carry the agent's name here.
+ */
+export function closedLabel(note: Annotation): string {
+  const verdict =
+    note.state === 'approved' ? 'approved' : note.state === 'stale' ? 'closed — work shipped' : 'dismissed'
+  if (note.closedBy === 'agent') return `${verdict} · by the agent on your instruction`
+  if (note.closedBy === 'user') return `${verdict} · by you`
+  // A record from before close-out existed. Says the verdict and claims
+  // nothing about who gave it, which is all that is actually known.
+  return verdict
+}
+
 const SCOPE_BADGE: Record<Annotation['scope'], string> = {
   element: 'text-blue',
   region: 'text-peach',
@@ -88,13 +137,15 @@ function FocusLabel({ focus, className }: { focus: FocusObject; className?: stri
  * from earlier reviews, the composer for the note being written, the draft
  * list, and Submit. GitHub-review vocabulary throughout.
  */
-export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onReturnToTerminal }: Props) {
+export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onReturnToTerminal, isActive }: Props) {
   const state = useCanvasReviewStore((s) => s.bySessionId[sessionId])
   const refresh = useCanvasReviewStore((s) => s.refresh)
+  const markAddressedSeen = useCanvasReviewStore((s) => s.markAddressedSeen)
   const upsertNote = useCanvasReviewStore((s) => s.upsertNote)
   const deleteNote = useCanvasReviewStore((s) => s.deleteNote)
   const submitReview = useCanvasReviewStore((s) => s.submitReview)
   const resolveNote = useCanvasReviewStore((s) => s.resolveNote)
+  const reopenNote = useCanvasReviewStore((s) => s.reopenNote)
   const clearFocus = useCanvasReviewStore((s) => s.clearFocus)
   const expandFocus = useCanvasReviewStore((s) => s.expandFocus)
   const setEditing = useCanvasReviewStore((s) => s.setEditingAnnotation)
@@ -150,6 +201,13 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   }, [overrideKey])
   const [busyReviewId, setBusyReviewId] = useState<string | null>(null)
   const [confirmDismissId, setConfirmDismissId] = useState<string | null>(null)
+  /** Two-step, like every other bulk action here: the first click arms, the
+   *  second does it and says how many. Nothing is deleted either way. */
+  const [closeAllArmed, setCloseAllArmed] = useState(false)
+  const [closingAll, setClosingAll] = useState(false)
+  /** Which rounds have their Closed list expanded. Closed work is kept, not
+   *  hidden — but it folds away by default so it does not bury what is live. */
+  const [closedOpen, setClosedOpen] = useState<Record<string, boolean>>({})
 
   const editingNote = useMemo(
     () => (editingId ? (draftNotes.find((a) => a.id === editingId) ?? null) : null),
@@ -201,6 +259,105 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   }, [noteText, editingNote, composerScope, focus, attachedSketch, sessionId, version.id, upsertNote, setEditing, clearFocus])
 
   /**
+   * Resolve a snapshotted list of note ids one at a time, ABORTING the moment
+   * the session's canvas changes underneath the loop.
+   *
+   * `annotationResolve` takes only an annotation id, and main resolves it
+   * against whatever canvas the session points at RIGHT NOW. Annotation ids
+   * restart at a1 on every canvas, and an agent's `canvas_render` naming a
+   * different subject files the current canvas mid-flight. Without this check a
+   * bulk pass carries on against the new canvas and marks whichever a4 / a7 /
+   * … happen to exist there as closed, under the user's own name, on notes
+   * they never looked at. The ids were captured for one canvas; when that
+   * canvas is gone, so is the rest of the pass.
+   */
+  const resolveEach = useCallback(
+    async (ids: string[], action: 'approve' | 'dismiss' | 'stale') => {
+      const canvasNow = () => useCanvasReviewStore.getState().bySessionId[sessionId]?.canvasId ?? null
+      const startedOn = canvasNow()
+      // No canvas, nothing this pass could have been composed against.
+      if (!startedOn) return
+      for (const id of ids) {
+        // The pre-flight check stops the REST of the pass. It cannot stop the
+        // one note already in flight when the canvas changes — the check and
+        // the write it authorises are separated by an await. So the canvas the
+        // pass started on travels WITH each call, and main refuses any write
+        // that arrives after the session has moved on; the residual one-note
+        // window closes there, inside the same synchronous mutation.
+        if (canvasNow() !== startedOn) break
+        await resolveNote(sessionId, id, action, startedOn)
+      }
+    },
+    [resolveNote, sessionId],
+  )
+
+  /** One note, one click. The canvas is read at CLICK time — that is the one
+   *  the user is looking at — and travels with the call so main can refuse the
+   *  write if the session moves between the click and the handler. */
+  const resolveOne = useCallback(
+    (annotationId: string, action: 'approve' | 'dismiss' | 'reannotate' | 'stale') => {
+      const on = useCanvasReviewStore.getState().bySessionId[sessionId]?.canvasId ?? null
+      if (!on) return
+      void resolveNote(sessionId, annotationId, action, on)
+    },
+    [resolveNote, sessionId],
+  )
+
+  /**
+   * Report to main that the user has these addressed notes ON SCREEN.
+   *
+   * This is the release side of the agent's close-out barrier: until the user
+   * has seen a note in its addressed state, `canvas_verdict` refuses to close
+   * it and the agent is told to hand back. The report is therefore a claim
+   * about the user's eyes, and every condition here exists to keep that claim
+   * honest:
+   *
+   *   - `isActive`: every session mounts its own pane, hidden with CSS. Mounted
+   *     is not seen.
+   *   - the document being VISIBLE: a minimised or background window shows
+   *     nobody anything.
+   *   - `SEEN_DWELL_MS` of both, uninterrupted: a row that flashed past during
+   *     a re-render was not read.
+   *
+   * Only notes not already marked are sent, so the steady state is an empty
+   * list and no IPC — the effect cannot feed itself through the refresh its own
+   * write triggers.
+   */
+  const unseenAddressedIds = useMemo(
+    () =>
+      (state?.annotations ?? [])
+        .filter((a) => a.state === 'addressed' && a.userSawAddressed !== true)
+        .map((a) => a.id),
+    [state?.annotations],
+  )
+  /** Identity that changes only when the SET does, so the dwell is not restarted
+   *  by every unrelated store commit. */
+  const unseenKey = unseenAddressedIds.join(',')
+  const canvasId = state?.canvasId ?? null
+
+  /** Window visibility as state, so a window hidden mid-dwell RESTARTS the dwell
+   *  when it comes back rather than leaving a cancelled timer nobody re-arms. */
+  const [windowVisible, setWindowVisible] = useState(
+    () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
+  )
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const onVisibility = (): void => setWindowVisible(document.visibilityState !== 'hidden')
+    document.addEventListener('visibilitychange', onVisibility)
+    onVisibility()
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
+
+  useEffect(() => {
+    if (!isActive || !windowVisible || !canvasId || unseenKey === '') return
+    const ids = unseenKey.split(',')
+    const timer = setTimeout(() => {
+      void markAddressedSeen(sessionId, canvasId, ids)
+    }, SEEN_DWELL_MS)
+    return () => clearTimeout(timer)
+  }, [isActive, windowVisible, canvasId, unseenKey, sessionId, markAddressedSeen])
+
+  /**
    * Close a whole round in one action.
    *
    * Sequential, not parallel: every resolve round-trips through main and
@@ -210,23 +367,63 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
    * notes the first pass has already consumed.
    */
   const resolveGroup = useCallback(
-    async (group: ReviewGroup, action: 'approve' | 'dismiss') => {
-      if (busyReviewId) return
+    async (group: ReviewGroup, action: 'approve' | 'dismiss' | 'stale') => {
+      // `closingAll` too: the header's bulk pass is already walking these same
+      // notes, and two loops interleaving means each resolve lands on a note
+      // the other has consumed.
+      if (busyReviewId || closingAll) return
       setBusyReviewId(group.review.id)
       try {
         // Snapshot the ids first: `group` is derived from the store, which each
         // resolve mutates underneath us.
         const ids = group.notes.filter((n) => n.state === 'addressed').map((n) => n.id)
-        for (const id of ids) {
-          await resolveNote(sessionId, id, action)
-        }
+        await resolveEach(ids, action)
       } finally {
         setBusyReviewId(null)
         setConfirmDismissId(null)
       }
     },
-    [busyReviewId, resolveNote, sessionId],
+    [busyReviewId, closingAll, resolveEach],
   )
+
+  /** Every round waiting on YOU, and the notes in them. The scope rule for the
+   *  bulk button, derived in one place so the label and the action cannot
+   *  disagree about what "waiting on me" means. */
+  const waitingRounds = useMemo(() => roundsWaitingOnYou(groups), [groups])
+  const waitingNotes = useMemo(() => notesWaitingOnYou(groups), [groups])
+
+  /** Any verdict pass in flight locks EVERY verdict control, not just the one
+   *  that started it. Two loops over the same notes interleave otherwise, and
+   *  each resolve lands on a note the other has already consumed. */
+  const actionsLocked = busyReviewId !== null || closingAll
+
+  /**
+   * "Close all rounds waiting on me."
+   *
+   * Marks every one of those notes STALE — the work moved on — not approved.
+   * Sequential for the same reason `resolveGroup` is: each resolve commits the
+   * mirror main returns, so parallel calls would overwrite each other. Ids are
+   * snapshotted up front because the list they came from is re-derived on every
+   * commit.
+   */
+  const closeAllWaiting = useCallback(async () => {
+    if (closingAll || busyReviewId) return
+    const ids = waitingNotes.map((n) => n.id)
+    if (ids.length === 0) return
+    setClosingAll(true)
+    try {
+      await resolveEach(ids, 'stale')
+    } finally {
+      setClosingAll(false)
+      setCloseAllArmed(false)
+    }
+  }, [closingAll, busyReviewId, waitingNotes, resolveEach])
+
+  // A round that stops waiting on you (the agent re-opened it, or you cleared
+  // it) must not leave the button armed for a set that no longer exists.
+  useEffect(() => {
+    if (waitingNotes.length === 0 && closeAllArmed) setCloseAllArmed(false)
+  }, [waitingNotes.length, closeAllArmed])
 
   const cancelEdit = useCallback(() => {
     setEditing(sessionId, null)
@@ -366,6 +563,50 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
         <div className="flex-1" />
       </div>
 
+      {/* ── Close out everything waiting on YOU ──
+          The pill counts rounds the agent has finished and only your verdict
+          can close, and until now there was no way to clear them in one go —
+          not from here, and not by telling the agent. This is that way. It
+          writes STALE ("the work moved on"), never approved: nothing here
+          claims you reviewed anything. Nothing is deleted either — every note
+          keeps its text and a Reopen, which is what makes one click safe. */}
+      {waitingNotes.length > 0 && (
+        <div className="px-3 py-1.5 border-b border-surface0 flex items-center gap-2 shrink-0 bg-peach/5" data-testid="close-all-waiting">
+          <span className="text-[11px] text-subtext0 truncate">
+            {waitingRounds.length} round{waitingRounds.length === 1 ? '' : 's'} waiting on you
+          </span>
+          <div className="flex-1" />
+          {closeAllArmed ? (
+            <>
+              <button
+                onClick={() => setCloseAllArmed(false)}
+                className="px-1.5 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:text-text focus-ring"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void closeAllWaiting()}
+                disabled={closingAll}
+                data-testid="close-all-waiting-confirm"
+                className="px-2 py-0.5 text-[10px] font-semibold rounded border border-peach/50 text-peach bg-peach/15 hover:bg-peach/25 disabled:opacity-40 focus-ring"
+                title="Marks them as closed because the work moved on — not as approved. Each one can be reopened."
+              >
+                {closingAll ? 'Closing…' : `Close ${waitingNotes.length} note${waitingNotes.length === 1 ? '' : 's'}`}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setCloseAllArmed(true)}
+              data-testid="close-all-waiting-arm"
+              className="px-2 py-0.5 text-[10px] rounded border border-surface1 text-subtext0 hover:text-text focus-ring"
+              title="Close every round that is waiting on you. They are marked as closed because the work moved on — never as approved — and nothing is deleted."
+            >
+              Close all waiting on me
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto min-h-0">
         {/* ── First-use primer — until the first note exists or it's dismissed ── */}
         {!helpDismissed && draftNotes.length === 0 && (state?.reviews.length ?? 0) === 0 && (
@@ -474,22 +715,38 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                   <div className="text-text/90 mt-0.5 line-clamp-3 whitespace-pre-wrap">{note.note}</div>
                   <div className="flex gap-1.5 mt-1.5">
                     <button
-                      onClick={() => void resolveNote(sessionId, note.id, 'approve')}
-                      className="px-1.5 py-0.5 text-[10px] rounded border border-green/40 text-green hover:bg-green/10"
+                      onClick={() => resolveOne(note.id, 'approve')}
+                      disabled={actionsLocked}
+                      className="px-1.5 py-0.5 text-[10px] rounded border border-green/40 text-green hover:bg-green/10 disabled:opacity-40"
                       title="The agent addressed this note"
                     >
                       Approve
                     </button>
                     <button
-                      onClick={() => void resolveNote(sessionId, note.id, 'reannotate')}
-                      className="px-1.5 py-0.5 text-[10px] rounded border border-peach/40 text-peach hover:bg-peach/10"
+                      onClick={() => resolveOne(note.id, 'reannotate')}
+                      disabled={actionsLocked}
+                      className="px-1.5 py-0.5 text-[10px] rounded border border-peach/40 text-peach hover:bg-peach/10 disabled:opacity-40"
                       title="Not addressed — write a follow-up note linked to this one"
                     >
                       Re-annotate
                     </button>
+                    {/* The close-out verdict, and deliberately NOT a second
+                        Approve: "the work this asked about shipped" is a
+                        different claim from "I checked it and it is right",
+                        and only the second is an approval. */}
                     <button
-                      onClick={() => void resolveNote(sessionId, note.id, 'dismiss')}
-                      className="px-1.5 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:bg-surface0"
+                      onClick={() => resolveOne(note.id, 'stale')}
+                      disabled={actionsLocked}
+                      className="px-1.5 py-0.5 text-[10px] rounded border border-peach/40 text-peach hover:bg-peach/10 disabled:opacity-40"
+                      title="The work this note was about has shipped — close it without calling it approved"
+                      data-testid="note-close-stale"
+                    >
+                      Close
+                    </button>
+                    <button
+                      onClick={() => resolveOne(note.id, 'dismiss')}
+                      disabled={actionsLocked}
+                      className="px-1.5 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:bg-surface0 disabled:opacity-40"
                       title="Drop this note without action"
                     >
                       Dismiss
@@ -508,18 +765,30 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
               <div className="flex items-center gap-1.5 px-3 py-1.5 border-t border-surface0/60">
                 <button
                   onClick={() => void resolveGroup(group, 'approve')}
-                  disabled={busyReviewId === group.review.id}
+                  disabled={actionsLocked}
                   className="px-2 py-0.5 text-[10px] font-semibold rounded border border-green/40 text-green bg-green/10 hover:bg-green/20 disabled:opacity-40"
                   title="Mark every remaining note in this round as done. The agent has already said it addressed them."
                   data-testid="review-approve-rest"
                 >
                   Approve all {group.addressedCount} as done
                 </button>
+                {/* For a round whose work has already gone out. Says what it
+                    means — the thing was built — rather than borrowing the
+                    word for a judgement nobody is making. */}
+                <button
+                  onClick={() => void resolveGroup(group, 'stale')}
+                  disabled={actionsLocked}
+                  className="px-2 py-0.5 text-[10px] rounded border border-peach/40 text-peach hover:bg-peach/10 disabled:opacity-40"
+                  title="The work in this round has shipped. Closes all of it without calling any of it approved; each note can be reopened."
+                  data-testid="review-accept-as-built"
+                >
+                  Accept as built
+                </button>
                 <div className="flex-1" />
                 {confirmDismissId === group.review.id ? (
                   <button
                     onClick={() => void resolveGroup(group, 'dismiss')}
-                    disabled={busyReviewId === group.review.id}
+                    disabled={actionsLocked}
                     className="px-2 py-0.5 text-[10px] font-semibold rounded border border-red/50 text-red bg-red/15 hover:bg-red/25 disabled:opacity-40"
                     title="Drop these notes without action. They will not come back."
                     data-testid="review-dismiss-rest-confirm"
@@ -536,6 +805,71 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                     Dismiss the rest
                   </button>
                 )}
+              </div>
+            )}
+
+            {/* ── Closed ──
+                Cleared, not deleted. Everything ruled on in this round is still
+                here with its text, and every row says WHO closed it — because
+                "the agent closed this because you told it to" and "you approved
+                this" are different facts, and the second is the only one that
+                is an approval. Reopen is one click, which is what makes a bulk
+                close something a person can risk. */}
+            {!collapsed && group.closedNotes.length > 0 && (
+              <div className="border-t border-surface0/60" data-testid="review-closed-section">
+                <button
+                  type="button"
+                  onClick={() => setClosedOpen((p) => ({ ...p, [overrideKey(group.review.id)]: !p[overrideKey(group.review.id)] }))}
+                  className="w-full flex items-center gap-1.5 px-3 py-1 text-left hover:bg-surface0/40 focus-ring"
+                  aria-expanded={!!closedOpen[overrideKey(group.review.id)]}
+                  data-testid="review-closed-toggle"
+                >
+                  <span className="text-[10px] text-overlay1">
+                    Closed · {group.closedNotes.length}
+                  </span>
+                  {group.agentClosedCount > 0 && (
+                    <span
+                      className="text-[9.5px] px-1 py-px rounded border text-mauve border-mauve/40 bg-mauve/10"
+                      title="Closed by the agent on your instruction — not approved. Reopen any of them below."
+                      data-testid="review-agent-closed-chip"
+                    >
+                      {group.agentClosedCount} on your instruction
+                    </span>
+                  )}
+                  <div className="flex-1" />
+                  <span className="text-[10px] text-overlay0">{closedOpen[overrideKey(group.review.id)] ? 'hide' : 'show'}</span>
+                </button>
+                {closedOpen[overrideKey(group.review.id)] && group.closedNotes.map((note) => (
+                  <div key={note.id} className="px-3 py-1.5 border-t border-surface0/40" data-testid="review-closed-note">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[10px] uppercase tracking-wide ${SCOPE_BADGE[note.scope]}`}>{note.scope}</span>
+                      <span className="text-[10px] text-overlay1">{closedLabel(note)}</span>
+                      <div className="flex-1" />
+                      <button
+                        onClick={() => void reopenNote(sessionId, note.id)}
+                        className="px-1.5 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:text-text focus-ring"
+                        title="Put this note back in play, exactly where it was before it was closed"
+                        data-testid="review-reopen-note"
+                      >
+                        Reopen
+                      </button>
+                    </div>
+                    <div className="text-text/60 mt-0.5 line-clamp-2 whitespace-pre-wrap">{note.note}</div>
+                    {/* The residual risk, said out loud on the row it applies to.
+                        The agent's close-out precondition is a state the agent
+                        itself writes (canvas_resolve), so on an agent-closed
+                        note the same party did the work AND ended the
+                        conversation about it. The store refuses the two in one
+                        pass, but it cannot see whether the user actually asked —
+                        that instruction lives in chat. So the row says who did
+                        what, and Reopen sits next to it. */}
+                    {note.closedBy === 'agent' && note.closedFrom === 'addressed' && (
+                      <div className="text-[9.5px] text-overlay0 mt-0.5" data-testid="review-closed-agent-both">
+                        the agent marked this addressed and closed it — nobody else checked it
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>

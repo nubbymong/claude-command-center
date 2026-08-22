@@ -21,11 +21,14 @@ import {
 } from '../canvas/canvas-store'
 import {
   MAX_SKETCH_PNG_BYTES,
+  closeOutCanvasReviews,
   deleteAnnotation,
   dropReviewsForCanvas,
   getReviewCountsForCanvas,
   getReviewStateForSession,
+  markAddressedNotesSeen,
   onReviewChanged,
+  reopenAnnotation,
   resolveAnnotation,
   submitReview,
   upsertAnnotation,
@@ -216,12 +219,47 @@ const reviewSubmitSchema = z
   })
   .strict()
 
+/** The canvas a renderer call was composed against. Same charset bound as the
+ *  library's close-out id. Required, not optional: a call that cannot say which
+ *  canvas it meant is exactly the one the mismatch check exists to refuse. */
+const canvasIdSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/)
+
 const annotationResolveSchema = z
   .object({
     sessionId: sessionIdSchema,
+    // The canvas the panel had on screen when the user clicked. The store
+    // refuses the call if the session has since moved to another canvas —
+    // annotation ids restart at a1 on every one, so without it a verdict aimed
+    // at the round the user was reading can land on a stranger's note.
+    canvasId: canvasIdSchema,
     annotationId: annotationIdSchema,
-    action: z.enum(['approve', 'dismiss', 'reannotate']),
+    // 'stale' is the close-out verdict: the work shipped, so the note is no
+    // longer live. Deliberately distinct from 'approve' — the user is saying
+    // "this went out", not "I checked it and it is right".
+    action: z.enum(['approve', 'dismiss', 'reannotate', 'stale']),
   })
+  .strict()
+
+/** "The user has these addressed notes on screen." The release side of the
+ *  close-out barrier, and renderer-only by construction: there is no MCP tool
+ *  that reaches this channel. */
+const reviewMarkSeenSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    annotationIds: z.array(annotationIdSchema).max(500),
+  })
+  .strict()
+
+const annotationReopenSchema = z.object({ sessionId: sessionIdSchema, annotationId: annotationIdSchema }).strict()
+
+/** The library's bulk close-out. Takes a canvas ID and nothing else — same
+ *  charset bound as delete, and like delete it is keyed by canvas rather than
+ *  session because the library shows the whole project, including canvases
+ *  owned by sessions that have since closed. Clearing notes is housekeeping: it
+ *  never moves ownership, and it never removes a file. */
+const reviewCloseOutSchema = z
+  .object({ canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
   .strict()
 
 // ---------------------------------------------------------------------------
@@ -284,6 +322,11 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
       if (!counts) continue
       e.openReviewCount = counts.openReviewIds.length
       e.draftNoteCount = counts.draftNotes
+      // What a bulk close-out on this row would ACTUALLY clear. The store
+      // computes it with the same per-review gate the mutation applies, so the
+      // button's label and the button's effect cannot disagree. Left undefined
+      // with the other two when the store is unreadable.
+      e.closeableNoteCount = counts.closeableNotes
     }
     return entries
   })
@@ -332,8 +375,34 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   })
 
   ipcMain.handle(IPC.CANVAS_ANNOTATION_RESOLVE, async (_e, args: unknown) => {
-    const { sessionId, annotationId, action } = annotationResolveSchema.parse(args)
-    return resolveAnnotation(sessionId, annotationId, action)
+    const { sessionId, canvasId, annotationId, action } = annotationResolveSchema.parse(args)
+    return resolveAnnotation(sessionId, annotationId, action, canvasId)
+  })
+
+  // The user's eyes on an addressed round — the one input to the close-out
+  // barrier that no agent can produce. Renderer-only: the MCP surface has no
+  // path here, and must never be given one.
+  ipcMain.handle(IPC.CANVAS_REVIEW_MARK_SEEN, async (_e, args: unknown) => {
+    const { sessionId, canvasId, annotationIds } = reviewMarkSeenSchema.parse(args)
+    return markAddressedNotesSeen(sessionId, canvasId, annotationIds)
+  })
+
+  // The undo half of close-out. Cheap and one click away, which is what makes
+  // a bulk close safe to offer at all.
+  ipcMain.handle(IPC.CANVAS_ANNOTATION_REOPEN, async (_e, args: unknown) => {
+    const { sessionId, annotationId } = annotationReopenSchema.parse(args)
+    return reopenAnnotation(sessionId, annotationId)
+  })
+
+  // "The work on this canvas shipped — clear its notes." Clears, never deletes:
+  // the canvas, its versions and every note's text stay exactly where they are,
+  // and each cleared note keeps a Reopen.
+  ipcMain.handle(IPC.CANVAS_REVIEW_CLOSE_OUT, async (_e, args: unknown) => {
+    const { canvasId } = reviewCloseOutSchema.parse(args)
+    const result = closeOutCanvasReviews(canvasId)
+    // null is "could not read the store", which must not render as "cleared 0".
+    if (!result) return { ok: false as const }
+    return { ok: true as const, closed: result.closed, reviews: result.reviews }
   })
 
   onReviewChanged((event) => {

@@ -43,7 +43,12 @@ import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
 import { canvasRootsForSession, getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
-import { getReviewCountsForCanvas, getReviewPayload, markAnnotationsAddressed } from './canvas/canvas-review-store'
+import {
+  closeAnnotationsByAgent,
+  getReviewCountsForCanvas,
+  getReviewPayload,
+  markAnnotationsAddressed,
+} from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 import { readCheckedFile } from './utils/safe-file-read'
 
@@ -856,6 +861,11 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
         readAttachment: (absPath) => fs.readFileSync(absPath),
         markAddressed: (sessionId, reviewId, ids) => markAnnotationsAddressed(sessionId, reviewId, ids),
+        // canvas_verdict. The store is what refuses 'approved' and what refuses
+        // a round still waiting on the agent — this is a pass-through on
+        // purpose, so there is exactly one place either rule can be read or
+        // changed, and it is the single mutation point.
+        closeByAgent: (sessionId, reviewId, ids, verdict) => closeAnnotationsByAgent(sessionId, reviewId, ids, verdict),
         // Read-only, by canvasId, counts and store-minted ids only. It is what
         // lets a tool reply say "the user is mid-review" instead of the agent
         // rendering over notes nobody has submitted yet.

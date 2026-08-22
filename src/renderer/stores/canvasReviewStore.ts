@@ -112,11 +112,32 @@ interface CanvasReviewStoreState {
   upsertNote: (sessionId: string, draft: CanvasAnnotationDraft) => Promise<string | null>
   deleteNote: (sessionId: string, annotationId: string) => Promise<void>
   submitReview: (sessionId: string, reviewId: string, sketches: CanvasSketchExport[]) => Promise<Review | null>
+  /**
+   * The user's verdict on one note. `canvasId` is the canvas the caller composed
+   * the verdict against — for a bulk pass, the one it STARTED on — and main
+   * refuses the write if the session has moved to another canvas since. Note ids
+   * restart at a1 on every canvas, so without it a verdict can land on a
+   * stranger's note under the user's own name.
+   */
   resolveNote: (
     sessionId: string,
     annotationId: string,
-    action: 'approve' | 'dismiss' | 'reannotate',
+    action: 'approve' | 'dismiss' | 'reannotate' | 'stale',
+    canvasId: string,
   ) => Promise<void>
+  /** Put a closed note back in play. Returns nothing to decide — the mirror
+   *  main returns is the answer, as with every other mutation here. */
+  reopenNote: (sessionId: string, annotationId: string) => Promise<void>
+  /**
+   * Tell main the user has these addressed notes ON SCREEN.
+   *
+   * The release side of the agent's close-out barrier: until the user has seen
+   * a note in its addressed state, `canvas_verdict` may not close it. Only the
+   * panel calls this, and only after the rows have been visible long enough to
+   * read — it is a report of what the user saw, so anything that would let it
+   * fire without them looking makes it a lie.
+   */
+  markAddressedSeen: (sessionId: string, canvasId: string, annotationIds: string[]) => Promise<void>
   reset: () => void
 }
 
@@ -263,9 +284,9 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
     }
   },
 
-  resolveNote: async (sessionId, annotationId, action) => {
+  resolveNote: async (sessionId, annotationId, action, canvasId) => {
     try {
-      const { state, reannotationId } = await window.electronAPI.canvas.annotationResolve({ sessionId, annotationId, action })
+      const { state, reannotationId } = await window.electronAPI.canvas.annotationResolve({ sessionId, canvasId, annotationId, action })
       set((s) => ({
         bySessionId: {
           ...s.bySessionId,
@@ -278,6 +299,34 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
       }))
     } catch (err) {
       console.error('[canvasReviewStore] resolveNote failed:', err)
+    }
+  },
+
+  reopenNote: async (sessionId, annotationId) => {
+    try {
+      const state = await window.electronAPI.canvas.annotationReopen({ sessionId, annotationId })
+      set((s) => ({
+        bySessionId: { ...s.bySessionId, [sessionId]: fromMain(s.bySessionId[sessionId], state) },
+      }))
+    } catch (err) {
+      console.error('[canvasReviewStore] reopenNote failed:', err)
+    }
+  },
+
+  markAddressedSeen: async (sessionId, canvasId, annotationIds) => {
+    if (annotationIds.length === 0) return
+    try {
+      const { state, seen } = await window.electronAPI.canvas.reviewMarkSeen({ sessionId, canvasId, annotationIds })
+      // Nothing moved (already seen, or the canvas changed under the report) —
+      // don't touch the mirror, so a steady-state panel cannot loop.
+      if (seen.length === 0) return
+      set((s) => ({
+        bySessionId: { ...s.bySessionId, [sessionId]: fromMain(s.bySessionId[sessionId], state) },
+      }))
+    } catch (err) {
+      // A refused report is not a user-visible failure: the barrier simply
+      // stays closed, and the user closes the round from the panel instead.
+      console.error('[canvasReviewStore] markAddressedSeen failed:', err)
     }
   },
 
@@ -333,15 +382,37 @@ export function openReviewsOf(state: CanvasReviewSessionState): Review[] {
 export interface ReviewGroup {
   review: Review
   /** The notes still in play: 'open' (the agent has not said it acted) and
-   *  'addressed' (it has, and the verdict is yours). Dismissed, approved and
-   *  superseded notes are done and are not listed. */
+   *  'addressed' (it has, and the verdict is yours). Closed and superseded
+   *  notes are done and live in `closedNotes` instead. */
   notes: Annotation[]
+  /**
+   * Notes already ruled on: approved, dismissed, or closed as stale — by you,
+   * or by the agent on your instruction.
+   *
+   * Kept and shown rather than dropped, because close-out CLEARS a note and
+   * never deletes it: the text stays, the row says who closed it, and Reopen is
+   * one click. A bulk action you cannot see the results of, and cannot undo, is
+   * not one anybody should be asked to click.
+   *
+   * 'reannotated' is excluded — that note has a live successor carrying the
+   * same issue, so listing it here would show the same feedback twice.
+   */
+  closedNotes: Annotation[]
   /** 'agent' while ANY note is still open — the round cannot be closed by you
    *  alone. 'you' once every remaining note is addressed. 'closed' when nothing
    *  is left. */
   waitingOn: 'you' | 'agent' | 'closed'
   openCount: number
   addressedCount: number
+  /** Of `closedNotes`, how many the AGENT closed on your instruction. Drives
+   *  the one line that tells you this round was cleared on your word rather
+   *  than by your own click. */
+  agentClosedCount: number
+}
+
+/** A note nobody is waiting on any more. Not the same as "gone". */
+function isClosedNote(a: Annotation): boolean {
+  return a.state === 'approved' || a.state === 'dismissed' || a.state === 'stale'
 }
 
 /** Sort key for a review: when it was sent, falling back to when it was
@@ -364,21 +435,25 @@ function reviewOrdinal(r: Review): number {
  */
 export function reviewGroupsOf(state: CanvasReviewSessionState): ReviewGroup[] {
   const byReview = new Map<string, Annotation[]>()
+  const closedByReview = new Map<string, Annotation[]>()
   for (const a of state.annotations) {
-    if (a.state !== 'open' && a.state !== 'addressed') continue
-    const list = byReview.get(a.reviewId)
+    const bucket = a.state === 'open' || a.state === 'addressed' ? byReview : isClosedNote(a) ? closedByReview : null
+    if (!bucket) continue
+    const list = bucket.get(a.reviewId)
     if (list) list.push(a)
-    else byReview.set(a.reviewId, [a])
+    else bucket.set(a.reviewId, [a])
   }
   return state.reviews
     .filter((r) => r.status !== 'draft')
     .map((review) => {
       const notes = byReview.get(review.id) ?? []
+      const closedNotes = closedByReview.get(review.id) ?? []
       const openCount = notes.filter((n) => n.state === 'open').length
       const addressedCount = notes.length - openCount
       const waitingOn: ReviewGroup['waitingOn'] =
         notes.length === 0 ? 'closed' : openCount > 0 ? 'agent' : 'you'
-      return { review, notes, waitingOn, openCount, addressedCount }
+      const agentClosedCount = closedNotes.filter((n) => n.closedBy === 'agent').length
+      return { review, notes, closedNotes, waitingOn, openCount, addressedCount, agentClosedCount }
     })
     .sort((a, b) => {
       const at = Date.parse(a.review.submittedAt ?? a.review.createdAt)
@@ -395,4 +470,23 @@ export function reviewGroupsOf(state: CanvasReviewSessionState): ReviewGroup[] {
 export function openSubmittedNotesOf(state: CanvasReviewSessionState): Annotation[] {
   const submitted = new Set(state.reviews.filter((r) => r.status === 'submitted').map((r) => r.id))
   return state.annotations.filter((a) => submitted.has(a.reviewId) && (a.state === 'open' || a.state === 'addressed'))
+}
+
+/**
+ * The rounds a bulk close-out would actually clear: the ones waiting on YOU.
+ *
+ * A round still holding open notes is excluded, and that is the whole scope
+ * rule on this side — the same one the store enforces for the agent. "Close all
+ * rounds waiting on me" must never quietly clear feedback the agent has not
+ * claimed to have acted on, so the button counts what it will do from this and
+ * from nothing else.
+ */
+export function roundsWaitingOnYou(groups: ReviewGroup[]): ReviewGroup[] {
+  return groups.filter((g) => g.waitingOn === 'you')
+}
+
+/** The notes those rounds hold, in the order the rounds are listed. What a
+ *  bulk close iterates, and what its label counts. */
+export function notesWaitingOnYou(groups: ReviewGroup[]): Annotation[] {
+  return roundsWaitingOnYou(groups).flatMap((g) => g.notes.filter((n) => n.state === 'addressed'))
 }

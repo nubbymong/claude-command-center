@@ -380,9 +380,19 @@ export interface ElectronAPI {
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) => Promise<CanvasReviewState>
     annotationResolve: (args: {
       sessionId: string
+      /** The canvas the panel was showing. Refused if the session has moved on. */
+      canvasId: string
       annotationId: string
-      action: 'approve' | 'dismiss' | 'reannotate'
+      action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
     }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
+    /** The user puts a closed note back in play — the undo half of close-out. */
+    annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The user has these addressed notes on screen — the release side of the
+     *  agent close-out barrier. Renderer-only; no MCP tool reaches it. */
+    reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
+    /** Bulk close-out for one canvas whose work has shipped. Clears, never
+     *  deletes. `ok: false` means the store could not be read. */
+    reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {
