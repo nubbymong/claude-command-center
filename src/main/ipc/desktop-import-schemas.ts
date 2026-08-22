@@ -45,6 +45,18 @@ export const fromShareArgsSchema = z.object({
  * the same ceiling the paste path uses, evaluated before generateBrief allocates
  * anything.
  */
+// Per-object cost added to the cumulative sum so the ceiling bounds the OBJECT
+// GRAPH, not just its characters (adversarial review re-attack, #209): a
+// transcript of 20000 messages x 2000 empty code-blocks passes a char-only cap
+// while carrying tens of millions of objects. Counting a fixed cost per message
+// and per code-block (plus title/lang lengths) makes such a payload trip the same
+// ceiling. The array `.max()`es are also tightened from the original 20000/2000
+// to bound the count directly. NOTE: this is defence-in-depth only — Electron
+// structured-clone deserializes the object graph in the main process BEFORE zod
+// runs, so a truly enormous payload strains transport first; the real reach here
+// is a compromised renderer, and this keeps the guard's promise honest for the
+// payloads that do survive deserialize.
+const OBJECT_COST = 256
 export const transcriptSchema = z.object({
   source: z.enum(['paste', 'share']),
   title: z.string().max(500).optional(),
@@ -55,27 +67,27 @@ export const transcriptSchema = z.object({
         text: z.string().max(MAX_TRANSCRIPT_CHARS),
         codeBlocks: z
           .array(z.object({ lang: z.string().max(50), code: z.string().max(MAX_TRANSCRIPT_CHARS) }))
-          .max(2000),
+          .max(500),
       }),
     )
-    .max(20000),
+    .max(5000),
   messageCount: z.number().int().nonnegative(),
   codeBlockCount: z.number().int().nonnegative(),
   charCount: z.number().int().nonnegative(),
   roleMarkersDetected: z.boolean(),
   truncated: z.boolean(),
 }).superRefine((t, ctx) => {
-  let total = 0
+  const bail = (): void => {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `transcript exceeds the ${MAX_TRANSCRIPT_CHARS}-char ceiling`,
+    })
+  }
+  let total = (t.title?.length ?? 0)
   for (const m of t.messages) {
-    total += m.text.length
-    for (const c of m.codeBlocks) total += c.code.length
-    if (total > MAX_TRANSCRIPT_CHARS) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `transcript exceeds the ${MAX_TRANSCRIPT_CHARS}-char ceiling`,
-      })
-      return
-    }
+    total += m.text.length + OBJECT_COST
+    for (const c of m.codeBlocks) total += c.code.length + c.lang.length + OBJECT_COST
+    if (total > MAX_TRANSCRIPT_CHARS) { bail(); return }
   }
 })
 

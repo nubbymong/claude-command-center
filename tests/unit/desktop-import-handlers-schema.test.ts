@@ -53,6 +53,26 @@ describe('transcriptSchema cumulative size bound (#209 OOM guard)', () => {
     expect(transcriptSchema.safeParse(big).success).toBe(false)
   })
 
+  it('rejects a high-object-count transcript even when every string is empty (#209 re-attack)', () => {
+    // Char-only cap gap: 5000 messages x 500 empty code-blocks is millions of
+    // objects but ~0 chars. The per-object cost must make it trip the ceiling.
+    // Mutation: drop OBJECT_COST from the sum and this passes.
+    const many = {
+      ...baseTranscript,
+      messages: Array.from({ length: 5000 }, () => ({
+        role: 'human' as const,
+        text: '',
+        codeBlocks: Array.from({ length: 500 }, () => ({ lang: '', code: '' })),
+      })),
+      messageCount: 5000,
+    }
+    expect(transcriptSchema.safeParse(many).success).toBe(false)
+  })
+
+  it('rejects arrays past the tightened count caps', () => {
+    expect(transcriptSchema.safeParse({ ...baseTranscript, messages: Array.from({ length: 5001 }, () => msg('x')) }).success).toBe(false)
+  })
+
   it('rejects code-block content over the cumulative ceiling', () => {
     const big = {
       ...baseTranscript,

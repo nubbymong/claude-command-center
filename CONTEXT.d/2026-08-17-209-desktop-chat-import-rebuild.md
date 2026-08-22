@@ -118,3 +118,36 @@ tab; there is no fetch/list primitive to reuse). So the leverage here is the aut
 PARTITION, not any artifact-fetch code.
 
 Gate: typecheck clean (3 tsconfigs), 6196 unit tests pass, changelog in sync.
+
+## 2026-08-22 -- Phase-3 re-attack: PASS
+
+Two fresh independent attackers (neither wrote nor reviewed the code) against the patched diff
+origin/beta..HEAD, focused on the new authenticated-fetch surface and on whether the earlier
+fixes hold.
+
+Verdict: PASS. No blocker, no major. All five new guards were mutation-verified as load-bearing
+(revert the mechanism -> the named test goes red): partitionForImport account routing,
+fromShareArgsSchema profileId regex, fetchText redirect:'error', the transcript cumulative bound,
+and the buildInjectPrompt Unicode guard. Confirmed sound and NOT bypassable: partition-name
+injection (both gates byte-identical, 19-input battery), SSRF/cookie-exfiltration (uuid rebuilt
+from a hex-only capture group; redirect:'error' aborts a 3xx per Electron's own typings so cookies
+never reach a redirect host), the nonce fence (128-bit CSPRNG per call), the summariser tool
+denylist + --strict-mcp-config (checked against live `claude --help`), and the concurrency cap
+(check-then-increment is atomic in single-threaded JS; finally-decrement on every path). The
+public-share path (no profileId) is intact; no dangling refs from the rewire.
+
+One MINOR, fixed here: the cumulative size bound counted only text+code chars, so a
+high-object-count transcript (empty strings, millions of message/code-block objects) passed while
+still being an allocation bomb. Added a per-object cost to the sum and tightened the array caps
+(messages 20000->5000, codeBlocks 2000->500); mutation-verified. Honest caveat kept in the code
+comment: Electron structured-clone deserializes the graph in main BEFORE zod runs, so the real
+reach is a compromised renderer and this is defence-in-depth, not a transport-level guarantee.
+
+One accepted low-risk coverage gap: the renderer prop-forwarding (DesktopImportDialog ->
+DesktopImportTab -> fromShare(profileId)) has no unit test; it is a single unconditional
+pass-through that fails safe to the public partition on a wiring mistake. A prop test is a nice
+follow-up, not a blocker.
+
+Gate: typecheck clean (3 tsconfigs), full unit suite green apart from the known load-dependent
+conductor-mcp-sse-timeout flake (passes in isolation; #209 does not touch conductor-mcp). The
+ADR-009 pass is now satisfied for this diff; a HUMAN still approves and desktop-tests before merge.
