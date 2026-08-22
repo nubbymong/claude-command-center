@@ -342,3 +342,82 @@ describe('atlasCoordinator — generation backstop (#311)', () => {
     expect(coord.resyncIfBehind(rB)).toBe(false)
   })
 })
+
+/**
+ * The always-on atlas event ring + snapshot (#374): the sequence a glyph capture
+ * needs is recorded as it happens — which terminal cleared the shared atlas,
+ * which others were repaired in the frame pass, which were caught up late, and
+ * which are still behind. `now` is injected so timestamps are assertable.
+ */
+describe('atlasCoordinator event ring + snapshot', () => {
+  const withClock = () => {
+    let t = 1000
+    const raf = makeRaf()
+    const coord = createAtlasCoordinator(raf.raf, () => t)
+    return { coord, raf, tick: (n = 1) => { t += n } }
+  }
+
+  it('records register/clear/resync with labels and the generation after each', () => {
+    const { coord, raf } = withClock()
+    const src = () => {}
+    const victim = () => {}
+    coord.register(src, 'sess-A')
+    coord.register(victim, 'sess-B')
+    coord.notifyCleared(src)     // gen -> 1
+    raf.flush()                  // repairs victim
+    const kinds = coord.snapshot().events.map((e) => `${e.kind}:${e.label}@${e.generation}`)
+    expect(kinds).toEqual([
+      'register:sess-A@0',
+      'register:sess-B@0',
+      'clear:sess-A@1',
+      'resync:sess-B@1',   // the source is skipped; only the victim is resynced
+    ])
+  })
+
+  it('snapshot reports each terminal and how far behind it is; catchup clears the gap', () => {
+    const { coord } = withClock()
+    const a = () => {}
+    const behind = () => {}
+    coord.register(a, 'A')
+    coord.register(behind, 'B')
+    coord.notifyCleared(a)       // gen 1; a is a source (current), B is 1 behind
+    let snap = coord.snapshot()
+    expect(snap.generation).toBe(1)
+    expect(snap.liveCount).toBe(2)
+    expect(snap.live.find((l) => l.label === 'B')?.behind).toBe(1)
+    expect(snap.live.find((l) => l.label === 'A')?.behind).toBe(0)
+    expect(coord.resyncIfBehind(behind)).toBe(true)
+    snap = coord.snapshot()
+    expect(snap.live.find((l) => l.label === 'B')?.behind).toBe(0)
+    expect(snap.events.at(-1)).toMatchObject({ kind: 'catchup', label: 'B', generation: 1 })
+  })
+
+  it('records a miss when a resync throws, and unregister as an event', () => {
+    const { coord, raf } = withClock()
+    const src = () => {}
+    const boom = () => { throw new Error('disposed') }
+    coord.register(src, 'S')
+    coord.register(boom, 'X')
+    coord.notifyCleared(src)
+    raf.flush()
+    expect(coord.snapshot().events.some((e) => e.kind === 'miss' && e.label === 'X')).toBe(true)
+    const un = coord.register(() => {}, 'Y')
+    un()
+    expect(coord.snapshot().events.at(-1)).toMatchObject({ kind: 'unregister', label: 'Y' })
+  })
+
+  it('bounds the ring — old events drop, it never grows without limit', () => {
+    const { coord } = withClock()
+    const s = () => {}
+    coord.register(s, 'S')
+    for (let i = 0; i < 500; i++) coord.notifyCleared(s)
+    expect(coord.snapshot().events.length).toBeLessThanOrEqual(300)
+  })
+
+  it('an unlabelled terminal shows as "unknown", not undefined', () => {
+    const { coord } = withClock()
+    const s = () => {}
+    coord.register(s)
+    expect(coord.snapshot().events[0]).toMatchObject({ kind: 'register', label: 'unknown' })
+  })
+})

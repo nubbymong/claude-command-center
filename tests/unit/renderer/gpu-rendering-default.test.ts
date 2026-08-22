@@ -10,75 +10,63 @@ import {
 } from '../../../src/renderer/stores/settingsStore'
 
 /**
- * GPU (WebGL) terminal rendering is OPT-IN. Only a literal `true` enables it.
- *
- * `@xterm/addon-webgl` keeps ONE glyph atlas per process, and
- * `clearTextureAtlas()` wipes it for every terminal while calling
- * `_clearModel(true)` on only the caller. #312 tried to repair the others by
- * calling `term.refresh()` on them; an adversarial pass disproved it in a real
- * WebGL renderer, because `WebglRenderer._updateModel` skips every cell whose
- * contents have not changed, so a victim redraws stale vertices against the
- * emptied texture and goes blank. Until a repair is proven on real hardware,
- * unset must mean OFF.
+ * GPU (WebGL) terminal rendering is **default ON** (owner decision 2026-08-22,
+ * #374): on unless the user has explicitly turned it OFF. The shared-atlas
+ * corruption is repaired the way a resize repairs it — a victim drops its OWN
+ * render model first, then repaints (`atlasCoordinator` / `createAtlasResync`),
+ * not the #312 refresh-the-others attempt that was disproved — so default-on is
+ * safe, and an always-on atlas event ring + the Ctrl+Alt+G glyph capture exist
+ * to catch any residual in the field.
  *
  * Two ways this regresses, so both are pinned:
- *   - the default flips to true, or
- *   - a reader goes back to `!== false`, which treats UNSET as ON and quietly
- *     re-enables it for everyone who has never touched the setting. That is the
- *     subtle one: flipping the default alone changes nothing while any reader
- *     still uses `!== false`.
+ *   - the default flips back to false, or
+ *   - a reader goes back to `=== true`, which treats UNSET as OFF and quietly
+ *     disables it for everyone who has never touched the setting. Flipping the
+ *     default alone does nothing while any reader still uses `=== true`.
  *
- * Behavioural, not a source-text grep. The guard this pattern replaced asserted
- * with `readFileSync` + a regex over TerminalView.tsx, which pins a SPELLING:
- * routing the comparison through a helper walks straight past it while green.
- * The hydration cases drive the REAL `hydrate()` rather than re-spreading it —
- * an earlier version rebuilt the merge inline and therefore tested a copy of
- * the code, letting a reversed spread order through unnoticed.
+ * Behavioural, not a source-text grep: the hydration cases drive the REAL
+ * `hydrate()` rather than re-spreading it, so a reversed merge order is caught.
  */
-describe('GPU terminal rendering is opt-in', () => {
-  it('is OFF by default', () => {
-    expect(DEFAULT_TERMINAL_SETTINGS.gpuRendering).toBe(false)
-    expect(gpuRenderingEnabled(DEFAULT_TERMINAL_SETTINGS)).toBe(false)
+describe('GPU terminal rendering is default-on', () => {
+  it('is ON by default', () => {
+    expect(DEFAULT_TERMINAL_SETTINGS.gpuRendering).toBe(true)
+    expect(gpuRenderingEnabled(DEFAULT_TERMINAL_SETTINGS)).toBe(true)
   })
 
-  it('treats an unset value as OFF', () => {
-    expect(gpuRenderingEnabled({})).toBe(false)
-    expect(gpuRenderingEnabled({ gpuRendering: undefined })).toBe(false)
-    expect(gpuRenderingEnabled(undefined)).toBe(false)
+  it('treats an unset value as ON (on unless explicitly off)', () => {
+    expect(gpuRenderingEnabled({})).toBe(true)
+    expect(gpuRenderingEnabled({ gpuRendering: undefined })).toBe(true)
+    expect(gpuRenderingEnabled(undefined)).toBe(true)
   })
 
-  it('enables only on a literal true', () => {
-    expect(gpuRenderingEnabled({ gpuRendering: true })).toBe(true)
+  it('is disabled only by a literal false', () => {
     expect(gpuRenderingEnabled({ gpuRendering: false })).toBe(false)
+    expect(gpuRenderingEnabled({ gpuRendering: true })).toBe(true)
   })
 
-  it('refuses a non-boolean that a corrupt or hand-edited config might hold', () => {
-    // JSON is not type-checked on the way in. `!== false` would read every one
-    // of these as ON, which is the failure mode this predicate exists to avoid.
+  it('a non-boolean a corrupt config might hold falls to the ON default (only the boolean false opts out)', () => {
     for (const v of ['false', 'true', 0, 1, null, '', 'yes'] as unknown[]) {
-      expect(gpuRenderingEnabled({ gpuRendering: v as boolean })).toBe(false)
+      expect(gpuRenderingEnabled({ gpuRendering: v as boolean })).toBe(true)
     }
   })
 
-  it('stays OFF through hydrate() for a config that predates the field', () => {
+  it('stays ON through hydrate() for a config that predates the field', () => {
     useSettingsStore.getState().hydrate({ terminal: { fontSize: 15 } } as never)
     const t = useSettingsStore.getState().settings.terminal
-    expect(gpuRenderingEnabled(t)).toBe(false)
+    expect(gpuRenderingEnabled(t)).toBe(true)
     // A genuine merge, not a wholesale replacement that would only look right
     // for this one field.
     expect(t.fontSize).toBe(15)
     expect(t.cursorStyle).toBe(DEFAULT_TERMINAL_SETTINGS.cursorStyle)
   })
 
-  it('stays OFF through hydrate() when there is no terminal block', () => {
+  it('stays ON through hydrate() when there is no terminal block', () => {
     useSettingsStore.getState().hydrate({} as never)
-    expect(gpuRenderingEnabled(useSettingsStore.getState().settings.terminal)).toBe(false)
+    expect(gpuRenderingEnabled(useSettingsStore.getState().settings.terminal)).toBe(true)
   })
 
-  it('honours a stored ON through hydrate()', () => {
-    // The opt-in half: someone who ticked the box keeps it, and the default
-    // does not override them either.
-    useSettingsStore.getState().hydrate({ terminal: { gpuRendering: true } } as never)
-    expect(gpuRenderingEnabled(useSettingsStore.getState().settings.terminal)).toBe(true)
+  it('honours a stored OFF through hydrate() — an explicit opt-out survives', () => {
+    useSettingsStore.getState().hydrate({ terminal: { gpuRendering: false } } as never)
+    expect(gpuRenderingEnabled(useSettingsStore.getState().settings.terminal)).toBe(false)
   })
 })

@@ -54,10 +54,43 @@
  *  shared texture atlas — see the header. */
 export type TerminalResync = () => void
 
+/**
+ * One entry in the atlas event ring (#374). The ring is always on and cheap so
+ * that when a user hits the glyph-capture shortcut the moment they see
+ * corruption, the SEQUENCE that produced it is already recorded — which
+ * terminal cleared the shared atlas, when, which others fell behind, and
+ * whether each was repaired or missed. `kind`:
+ *  - `clear`   a terminal rebuilt the shared atlas (the trigger for corruption)
+ *  - `resync`  the coalesced frame pass repaired a victim
+ *  - `catchup` `resyncIfBehind` repaired a terminal late (activation/focus/resize)
+ *  - `miss`    a resync threw — the terminal is still behind and drawing stale
+ *  - `register` / `unregister` a terminal joined or left the coordinator
+ */
+export interface AtlasEvent {
+  t: number
+  kind: 'clear' | 'resync' | 'catchup' | 'miss' | 'register' | 'unregister'
+  /** The terminal's label (its session id), or 'unknown' when unlabelled. */
+  label: string
+  /** Generation after the event. */
+  generation: number
+}
+
+/** A point-in-time view of the coordinator for a diagnostic bundle. */
+export interface AtlasDiagnosticSnapshot {
+  generation: number
+  liveCount: number
+  /** Every live terminal and how many generations behind the shared atlas it is
+   *  (0 = up to date; >0 = drawing against a rebuilt atlas until it resyncs). */
+  live: Array<{ label: string; generation: number; behind: number }>
+  /** The event ring, oldest first. */
+  events: AtlasEvent[]
+}
+
 export interface AtlasCoordinator {
-  /** Register a live terminal's resync callback. Returns an unregister fn to
+  /** Register a live terminal's resync callback, optionally labelled (its
+   *  session id) so the event ring is readable. Returns an unregister fn to
    *  call on teardown. */
-  register(resync: TerminalResync): () => void
+  register(resync: TerminalResync, label?: string): () => void
   /** Report that `source` just rebuilt the shared atlas. Bumps the generation
    *  and schedules a coalesced resync of every OTHER registered terminal on the
    *  next animation frame. */
@@ -73,13 +106,30 @@ export interface AtlasCoordinator {
    * registered late, threw mid-teardown, or was created after the clear.
    */
   resyncIfBehind(resync: TerminalResync): boolean
+  /** A snapshot of the current state + the event ring, for the glyph-capture
+   *  diagnostic (#374). Never throws. */
+  snapshot(): AtlasDiagnosticSnapshot
 }
+
+/** How many atlas events the always-on ring keeps. Enough to hold the run-up to
+ *  a corruption a user is about to capture, small enough to be free. */
+const ATLAS_EVENT_CAP = 300
 
 export function createAtlasCoordinator(
   raf: (cb: () => void) => number = (cb) => globalThis.requestAnimationFrame(cb),
+  now: () => number = () => Date.now(),
 ): AtlasCoordinator {
   /** Live terminals → the generation each last resynced against. */
   const live = new Map<TerminalResync, number>()
+  /** Live terminals → their label (session id), for the event ring. */
+  const labels = new Map<TerminalResync, string>()
+  /** Always-on event ring; oldest entries drop first. */
+  const events: AtlasEvent[] = []
+  const labelOf = (r: TerminalResync) => labels.get(r) ?? 'unknown'
+  const record = (kind: AtlasEvent['kind'], label: string) => {
+    events.push({ t: now(), kind, label, generation })
+    if (events.length > ATLAS_EVENT_CAP) events.shift()
+  }
   const clearedThisFrame = new Set<TerminalResync>()
   let generation = 0
   let armed = false
@@ -114,17 +164,21 @@ export function createAtlasCoordinator(
         live.set(resync, generation)
         continue
       }
-      run(resync)
+      record(run(resync) ? 'resync' : 'miss', labelOf(resync))
     }
   }
 
   return {
-    register(resync) {
+    register(resync, label) {
       // A terminal joining now has a model built against the CURRENT atlas, so
       // it starts current rather than owing a resync it does not need.
       live.set(resync, generation)
+      if (label) labels.set(resync, label)
+      record('register', labelOf(resync))
       return () => {
+        record('unregister', labelOf(resync))
         live.delete(resync)
+        labels.delete(resync)
         clearedThisFrame.delete(resync)
       }
     },
@@ -133,7 +187,14 @@ export function createAtlasCoordinator(
       // or not the frame below ever runs. That is what makes resyncIfBehind a
       // real backstop instead of a second copy of the same optimism.
       generation++
+      // The source's own model was rebuilt by the clearTextureAtlas() that
+      // triggered this, so it is current as of the new generation — record that
+      // now, not only when the frame flush reaches it, so a snapshot taken
+      // between the clear and the frame does not misreport the one terminal that
+      // was never broken as behind.
+      if (live.has(source)) live.set(source, generation)
       clearedThisFrame.add(source)
+      record('clear', labelOf(source))
       if (!armed) {
         armed = true
         // If scheduling itself fails, DISARM. `armed` is the only thing that
@@ -164,7 +225,21 @@ export function createAtlasCoordinator(
       // model here to reason about, and resyncing one would be a repaint with
       // no owner.
       if (at === undefined || at >= generation) return false
-      return run(resync)
+      const ok = run(resync)
+      record(ok ? 'catchup' : 'miss', labelOf(resync))
+      return ok
+    },
+    snapshot() {
+      return {
+        generation,
+        liveCount: live.size,
+        live: [...live.entries()].map(([resync, at]) => ({
+          label: labelOf(resync),
+          generation: at,
+          behind: Math.max(0, generation - at),
+        })),
+        events: [...events],
+      }
     },
   }
 }

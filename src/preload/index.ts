@@ -293,6 +293,9 @@ export interface ElectronAPI {
     onSourceConfigured: (callback: (configured: boolean) => void) => () => void
     onServerConnected: (callback: (connected: boolean) => void) => () => void
   }
+  diagnostics: {
+    captureGlyph: (payload: unknown) => Promise<{ ok: boolean; jsonPath?: string; imagePath?: string; error?: string }>
+  }
   screenshot: {
     captureRectangle: () => Promise<string | null>
     captureWindow: (sourceId: string) => Promise<string | null>
@@ -873,6 +876,9 @@ const electronAPI: ElectronAPI = {
     isCliReady: () => ipcRenderer.invoke(IPC.SETUP_IS_CLI_READY),
     spawnCliSetup: (cols: number, rows: number) => ipcRenderer.invoke(IPC.SETUP_SPAWN_CLI_SETUP, cols, rows),
     killCliSetup: () => ipcRenderer.invoke(IPC.SETUP_KILL_CLI_SETUP),
+  },
+  diagnostics: {
+    captureGlyph: (payload: unknown) => ipcRenderer.invoke(IPC.DIAGNOSTICS_CAPTURE_GLYPH, payload),
   },
   screenshot: {
     captureRectangle: () => ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE_RECTANGLE),
