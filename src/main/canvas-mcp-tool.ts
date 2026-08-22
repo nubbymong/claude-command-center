@@ -283,6 +283,7 @@ function captureFailureReason(err: unknown): string {
 function renderFailureReason(
   err: unknown,
   roots?: { project: string | null; worktree: string | null; worktreePending: boolean },
+  refusal?: string | null,
 ): string {
   const message = err instanceof Error ? err.message : ''
   if (/version cap/i.test(message)) {
@@ -298,6 +299,10 @@ function renderFailureReason(
     if (advice) {
       return `that directory is not inside the folders this session serves from: ${advice} Build into one of them (for example <that folder>/dist) and render that path.`
     }
+    // Same half-closed gap the design path had (#371): when a FLOOR emptied the
+    // root list, `rootAdvice` is null and "build inside the project" is advice
+    // the agent has already followed. Name the actual reason.
+    if (refusal) return `${refusal} Nothing can be served for this session until that is changed.`
     return 'that directory is not inside this session’s project folder, which is the only place the canvas serves from. Build inside the project you are working in and render that path.'
   }
   if (/distRoot does not exist|not a directory/i.test(message)) return 'that build directory does not exist.'
@@ -549,7 +554,14 @@ export async function runCanvasRender(
     // their own agent's work.
     rendered = deps.renderVersion(sessionId, source)
   } catch (err) {
-    return { text: `Could not render the canvas: ${renderFailureReason(err, safeRoots(deps, sessionId))}`, isError: true }
+    return {
+      text: `Could not render the canvas: ${renderFailureReason(
+        err,
+        safeRoots(deps, sessionId),
+        (() => { try { return deps.canvasRootRefusalFor?.(sessionId) ?? null } catch { return null } })(),
+      )}`,
+      isError: true,
+    }
   }
 
   // Both ids are ours: one minted by the store, one a `v<n>` counter. Nothing

@@ -160,6 +160,47 @@ describe('a refusal says which floor it hit', () => {
     expect(words).toMatch(/Settings|move|Point this session/i)
   })
 
+  /**
+   * The refusal string is relayed to a MODEL, and a folder name inside the path
+   * is user-authored. Control/format/bidi characters and unbounded length are
+   * the same ingress class `safeRootLabel` already strips one layer up
+   * (#371, ADR-009 pass).
+   */
+  it('sanitises the path before putting it in model-facing text', () => {
+    const nasty = `${resources}\u0007\u001b[31m\u202Eevil\u0085\u200B`
+    const words = store.describeCanvasRootRefusal('resources-dir', nasty)
+    for (const ch of ['\u0007', '\u001b', '\u202E', '\u0085']) expect(words).not.toContain(ch)
+    expect(words).toContain('evil') // the NAME survives; only the controls go
+  })
+
+  it('caps an absurdly long path rather than relaying all of it', () => {
+    const words = store.describeCanvasRootRefusal('resources-dir', `C:\\${'a'.repeat(5000)}`)
+    expect(words.length).toBeLessThan(600)
+    expect(words).toContain('…')
+  })
+
+  /**
+   * TOCTOU: the check and the add used to realpath separately, so a directory
+   * swapped for a symlink between them was checked as itself and added as its
+   * target. `canvasRootCheck` resolves ONCE and hands that path back.
+   */
+  it('resolves once, and registers exactly what it checked', () => {
+    const project = tmp('ccc-proj-')
+    const checked = store.canvasRootCheck(SID, project)
+    expect(checked.refusal).toBeNull()
+    expect(checked.real).toBe(fs.realpathSync.native(project))
+
+    expect(store.registerCanvasUatRoot(SID, project)).toBe(true)
+    expect(store.canvasRootsForSession(SID).project).toBe(checked.real)
+  })
+
+  it('never throws, whatever it is handed — a spawn must not die on a bad path', () => {
+    for (const bad of ['', 'relative', 'C:\\does\\not\\exist\\at\\all', '\0', 'Z:\\unmapped']) {
+      expect(() => store.canvasRootCheck(SID, bad)).not.toThrow()
+      expect(() => store.registerCanvasUatRoot(SID, bad)).not.toThrow()
+    }
+  })
+
   it('distinguishes the floors rather than lumping them together', () => {
     const project = tmp('ccc-proj-')
     expect(store.canvasRootRefusalReason(SID, project)).toBeNull()

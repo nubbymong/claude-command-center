@@ -236,29 +236,55 @@ export type CanvasRootRefusal =
   | 'dot-dir-under-home'
   | 'resources-dir'
 
-export function canvasRootRefusalReason(sessionId: string, baseDir: string): CanvasRootRefusal | null {
-  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return 'bad-session-id'
-  if (typeof baseDir !== 'string' || !path.isAbsolute(baseDir)) return 'not-absolute'
+/**
+ * The refusal, plus the RESOLVED path when there is none.
+ *
+ * Returning the resolution is what closes a TOCTOU (#371, ADR-009 pass):
+ * `registerCanvasUatRoot` used to realpath once to CHECK and again to ADD, so a
+ * directory swapped for a symlink between the two calls was checked as itself
+ * and added as its target. Check and use are now one resolution.
+ */
+export function canvasRootCheck(
+  sessionId: string,
+  baseDir: string,
+): { refusal: CanvasRootRefusal; real?: undefined } | { refusal: null; real: string } {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return { refusal: 'bad-session-id' }
+  if (typeof baseDir !== 'string' || !path.isAbsolute(baseDir)) return { refusal: 'not-absolute' }
   let real: string
   try {
     real = fs.realpathSync.native(path.resolve(baseDir))
   } catch {
-    return 'unresolvable'
+    return { refusal: 'unresolvable' }
   }
   try {
-    if (!fs.statSync(real).isDirectory()) return 'not-a-directory'
+    if (!fs.statSync(real).isDirectory()) return { refusal: 'not-a-directory' }
   } catch {
-    return 'not-a-directory'
+    return { refusal: 'not-a-directory' }
   }
-  if (isHomeOrAncestor(real)) return 'home-or-ancestor'
-  if (isVolumeRoot(real)) return 'volume-root'
-  if (isDotDirUnderHome(real)) return 'dot-dir-under-home'
-  if (isResourcesDirOrAround(real)) return 'resources-dir'
-  return null
+  if (isHomeOrAncestor(real)) return { refusal: 'home-or-ancestor' }
+  if (isVolumeRoot(real)) return { refusal: 'volume-root' }
+  if (isDotDirUnderHome(real)) return { refusal: 'dot-dir-under-home' }
+  if (isResourcesDirOrAround(real)) return { refusal: 'resources-dir' }
+  return { refusal: null, real }
 }
 
-/** One sentence a user or an agent can act on, for each refusal. */
-export function describeCanvasRootRefusal(reason: CanvasRootRefusal, dir: string): string {
+/** Just the reason, for callers that only have to explain themselves. */
+export function canvasRootRefusalReason(sessionId: string, baseDir: string): CanvasRootRefusal | null {
+  return canvasRootCheck(sessionId, baseDir).refusal
+}
+
+/**
+ * One sentence a user or an agent can act on, for each refusal.
+ *
+ * `dir` is SANITISED before it is interpolated (#371, ADR-009 pass). The path
+ * is CCC's own, but a folder NAME inside it is user-authored and this string is
+ * relayed to a model — so control, format and bidi characters go, and the
+ * length is capped. Same rule, and the same reason, as `safeRootLabel` in
+ * canvas-mcp-tool: nothing outside the envelope is anything but operator text.
+ */
+export function describeCanvasRootRefusal(reason: CanvasRootRefusal, rawDir: string): string {
+  const cleaned = String(rawDir ?? '').replace(FORMAT_CONTROLS_RE, '')
+  const dir = cleaned.length > 200 ? `${cleaned.slice(0, 200)}…` : cleaned
   switch (reason) {
     case 'resources-dir':
       return `the canvas cannot serve ${dir} because the app's own resources directory (which holds your saved credentials and accounts) is inside it, or is it. Point this session at a project folder that does not contain the resources directory, or move the resources directory somewhere else in Settings.`
@@ -297,9 +323,14 @@ export function canvasRootRefusalFor(sessionId: string): string | null {
 }
 
 export function registerCanvasUatRoot(sessionId: string, baseDir: string): boolean {
-  if (canvasRootRefusalReason(sessionId, baseDir) !== null) return false
+  // ONE resolution, used for both the check and the add. Resolving twice let a
+  // directory swapped for a symlink between the two calls be checked as itself
+  // and added as its target (#371, ADR-009 pass). `canvasRootCheck` never
+  // throws, so a mid-call ENOENT cannot escape into spawnPty either.
+  const checked = canvasRootCheck(sessionId, baseDir)
+  if (checked.refusal !== null) return false
   rootRefusalBySession.delete(sessionId) // it registered; there is nothing to explain
-  const real = fs.realpathSync.native(path.resolve(baseDir))
+  const real = checked.real
   let roots = uatRootsBySession.get(sessionId)
   if (!roots) {
     roots = new Set<string>()
