@@ -100,6 +100,37 @@ npm run test         # both
 - Run `npx vitest run` for fast unit test feedback
 - Tests mock Electron APIs - no real PTY/window in unit tests
 
+### Driving the desktop-test gate (agents: do the legwork, don't punt it)
+
+The desktop-test gate (`.github/workflows/ci.yml` `desktop-gate`, #309) is a
+**human label** by design — headless CI can pass while the packaged app is broken.
+You cannot clear it, but for any user-facing feature you **can and should** drive
+the real packaged app end-to-end and leave screenshot evidence, so the human is
+left with a short eyeball plus the `desktop-tested` label rather than the whole
+manual pass. Exemplar: `tests/e2e/desktop-import.spec.ts` (#209).
+
+- **Driver:** Playwright's `_electron` via `tests/e2e/helpers/electron-app.ts`
+  (`launchIsolatedApp` — packaged build, isolated temp data dir, seeded past the
+  boot gates). Attach screenshots with `test.info().outputPath()` + a path-based
+  `attach` so they persist under any reporter (a `body` attach is dropped by the
+  `list` reporter).
+- **Build first, always.** `npm run build` before e2e. A stale `out/` desyncs the
+  seeded version and flakes *every* spec (the helper waits on `[data-tour="new-config"]`
+  and the setup-wizard modal silently intercepts clicks). `npm run test:e2e` does
+  NOT build for you.
+- **Open a session context menu** with `.session-card` + `dispatchEvent('contextmenu')`,
+  not a synthetic right-click: the row div overlays its own label span (hit-test
+  refuses the click), and a saved CONFIG can share the session's name (wrong menu).
+- **Tear down the process tree.** A launched session leaves a long-lived shell PTY
+  as an Electron child; `afterAll` must `taskkill /pid <electron> /T /F` (stdio
+  ignored) or the orphan's inherited pipes hang Playwright's worker teardown.
+- **Keep CI deterministic and honest.** Env-gate anything that hits the network or
+  needs auth (e.g. a live share fetch behind `CCC_E2E_SHARE_URL`); org-scoped /
+  signed-in-account legs stay human-only. Control-byte and render-structure
+  invariants stay unit-tested — xterm renders to a canvas with no DOM text to read.
+- Still binding: never push/PR without the owner's OK, and the human still applies
+  `desktop-tested`. The spec is evidence, not the attestation.
+
 ## Release Process
 
 RC-branch model (adopted with #89): `beta` is never frozen — features merge there continuously; each release stabilizes on its own branch.
