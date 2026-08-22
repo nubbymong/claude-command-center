@@ -54,7 +54,7 @@ describe('the command-bar welcome page', () => {
   it('singular when one button needs a look; "nothing to review" when none do', () => {
     COMMANDS = [{ id: 'a', needsReview: ['ssh-partner-is-local'] }]
     render({ onNext: vi.fn() })
-    expect(byUx('commandbar-review')!.textContent).toContain('1 of your existing button carries an amber mark')
+    expect(byUx('commandbar-review')!.textContent).toContain('1 of your existing buttons carries an amber mark')
     expect(byUx('commandbar-review')!.textContent).toContain('Review 1 command')
     act(() => { root.unmount() })
     root = createRoot(container)

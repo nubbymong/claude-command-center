@@ -144,11 +144,14 @@ const NotesTool = forwardRef<NotesToolHandle, Props>(function NotesTool({ config
       </button>
 
       {open && (
-        <div className="fixed inset-0 z-50" onClick={() => setOpen(null)} onContextMenu={(e) => { e.preventDefault(); setOpen(null) }} data-testid="notes-popover-backdrop">
+        // mousedown (not click): Ctrl+C in the terminal fires click events on
+        // backdrops -- the TerminalContextMenu pattern (house rule).
+        <div className="fixed inset-0 z-50" onMouseDown={() => setOpen(null)} onContextMenu={(e) => { e.preventDefault(); setOpen(null) }} data-testid="notes-popover-backdrop">
           <div
             ref={panelRef}
             className="fixed rounded-lg shadow-xl p-2 w-[330px] text-xs outline-none"
             style={{ ...pos, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)' }}
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(null); chipRef.current?.focus() } }}
             role="dialog"

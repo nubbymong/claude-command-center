@@ -596,4 +596,20 @@ describe('running a row from the popover (D5, D8)', () => {
     expect(byTestId('command-cluster-partner', items[1])).not.toBeNull()
     expect(byTestId('command-cluster-agent', items[1])).toBeNull()
   })
+
+  it('dismissal is a backdrop MOUSEDOWN, never a click (Ctrl+C fires click events on backdrops -- house rule)', () => {
+    installLayout()
+    COMMANDS = globals(6)
+    render()
+    const dlg = openOverflow('global')
+    const backdrop = byTestId('command-overflow-backdrop')!
+    expect(backdrop.onclick, 'no click handler on the backdrop').toBeNull()
+    click(backdrop)
+    expect(byTestId('command-overflow'), 'still open after a click on the backdrop').not.toBeNull()
+    act(() => { dlg.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })) })
+    expect(byTestId('command-overflow'), 'still open after a mousedown inside').not.toBeNull()
+    act(() => { backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })) })
+    expect(byTestId('command-overflow')).toBeNull()
+    expect(ptyWrite).not.toHaveBeenCalled()
+  })
 })

@@ -598,4 +598,17 @@ describe('12. the E5 tokens on the note dialog, and no backdrop click-to-close',
     expect(byTest('note-dialog')).not.toBeNull()
     expect(byTest<HTMLInputElement>('note-label')!.value).toBe('API keys')
   })
+
+  it('the popover dismisses on a backdrop MOUSEDOWN, never on a click (the same rule; Copilot on PR #386)', async () => {
+    await render({ configId: 'cfg' })
+    await openPopover()
+    const backdrop = byTest('notes-popover-backdrop')!
+    expect(backdrop.onclick, 'no click handler on the backdrop').toBeNull()
+    await click(backdrop)
+    expect(byTest('notes-popover'), 'still open after a click on the backdrop').not.toBeNull()
+    await act(async () => { byTest('notes-popover')!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })) })
+    expect(byTest('notes-popover'), 'still open after a mousedown inside').not.toBeNull()
+    await act(async () => { backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })) })
+    expect(byTest('notes-popover')).toBeNull()
+  })
 })

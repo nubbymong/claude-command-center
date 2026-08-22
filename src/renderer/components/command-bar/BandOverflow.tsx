@@ -76,11 +76,14 @@ export default function BandOverflow({ plan, folded, caps, anchor, onRun, onCont
 
   let index = -1
   return (
-    <div className="fixed inset-0 z-50" onClick={onClose} data-testid="command-overflow-backdrop">
+    // mousedown (not click): Ctrl+C in the terminal fires click events on
+    // backdrops -- the TerminalContextMenu pattern (house rule).
+    <div className="fixed inset-0 z-50" onMouseDown={onClose} data-testid="command-overflow-backdrop">
       <div
         ref={ref}
         className="fixed rounded-lg shadow-xl p-2 w-[300px] text-xs outline-none"
         style={{ ...pos, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)' }}
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKey}
         role="dialog"

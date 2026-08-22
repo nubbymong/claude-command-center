@@ -52,11 +52,14 @@ export function Menu({ x, y, onClose, children, ariaLabel, returnFocusTo, testId
     else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus() }
   }
   return (
-    <div className="fixed inset-0 z-50" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }}>
+    // mousedown (not click): Ctrl+C in the terminal fires click events on
+    // backdrops -- the TerminalContextMenu pattern (house rule).
+    <div className="fixed inset-0 z-50" onMouseDown={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }} data-testid="command-bar-menu-backdrop">
       <div
         ref={ref}
         className="fixed rounded-lg shadow-xl py-1 min-w-[210px] text-xs"
         style={{ ...pos, ...MENU_STYLE }}
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKey}
         role="menu"

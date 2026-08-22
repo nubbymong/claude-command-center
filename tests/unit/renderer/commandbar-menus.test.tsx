@@ -760,3 +760,53 @@ describe('right-click a Core tool: the core tool menu', () => {
 
   it.todo('Move left/right on a Core tool -- not wired (D9 optional): CoreToolMenu draws the item only when the bar passes onMove')
 })
+
+/**
+ * Dismissal is MOUSEDOWN on the backdrop, never click (the house rule behind
+ * TerminalContextMenu: Ctrl+C in the terminal fires click events on backdrops,
+ * so a click-to-close surface vanishes under the user's hands). A synthetic
+ * click on the backdrop must leave the surface open; a mousedown inside it
+ * must too; only a mousedown on the backdrop closes it. Copilot review on
+ * PR #386 caught the click handlers.
+ */
+describe('dismissal: a backdrop mousedown closes, a click never does (house rule)', () => {
+  const mousedown = (el: Element | null) => {
+    if (!el) throw new Error('nothing to mousedown')
+    act(() => { el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })) })
+  }
+
+  it('a chip menu: click on the backdrop keeps it; mousedown inside keeps it; mousedown on the backdrop closes it', async () => {
+    await mount()
+    rightClick(chip('g1'))
+    const menu = mustGet('command-menu')
+    const backdrop = mustGet('command-bar-menu-backdrop')
+    expect(backdrop.onclick, 'no click handler on the backdrop').toBeNull()
+    click(backdrop)
+    expect(menus(), 'still open after a click on the backdrop').toHaveLength(1)
+    mousedown(menuItemsOf(menu)[0])
+    expect(menus(), 'still open after a mousedown inside').toHaveLength(1)
+    mousedown(backdrop)
+    expect(menus()).toHaveLength(0)
+  })
+
+  it('the arguments popover: typed input survives a click on the backdrop; a mousedown on it closes', async () => {
+    COMMANDS = ALL.map((c) => (c.id === 'c1' ? { ...c, defaultArgs: ['--watch'] } : c))
+    await mount()
+    rightClick(chip('c1'))
+    click(byTestId('menu-run-args'))
+    const popover = () => container.querySelector<HTMLElement>('[role="dialog"][aria-label="Shell one — arguments"]')
+    expect(popover(), 'args popover open').not.toBeNull()
+    const backdrop = mustGet('command-args-backdrop')
+    expect(backdrop.onclick).toBeNull()
+    const input = popover()!.querySelector<HTMLInputElement>('input[type="text"]')
+    typeInto(input, '--verbose')
+    click(backdrop)
+    expect(popover(), 'still open after a click on the backdrop').not.toBeNull()
+    expect(popover()!.querySelector<HTMLInputElement>('input[type="text"]')!.value, 'typed input kept').toBe('--verbose')
+    mousedown(input)
+    expect(popover(), 'still open after a mousedown inside').not.toBeNull()
+    mousedown(backdrop)
+    expect(popover()).toBeNull()
+    expect(ptyWrite).not.toHaveBeenCalled()
+  })
+})

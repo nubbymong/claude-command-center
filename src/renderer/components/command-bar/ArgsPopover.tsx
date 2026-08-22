@@ -48,8 +48,10 @@ export default function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }:
     else setPos({ left, top: rect.bottom + 4 })
   }, [rect])
 
-  // Escape closes (the backdrop click is NOT a cancel path for typed input --
-  // Ctrl+C in the terminal fires click events on backdrops).
+  // Escape closes. The backdrop dismisses on MOUSEDOWN, never on click: Ctrl+C
+  // in the terminal fires click events on backdrops (house rule -- the
+  // TerminalContextMenu pattern), and this popover holds typed input that a
+  // stray click must not discard.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
     window.addEventListener('keydown', onKey, true)
@@ -82,11 +84,12 @@ export default function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }:
   }
 
   return (
-    <div className="fixed inset-0 z-50" onClick={onClose}>
+    <div className="fixed inset-0 z-50" onMouseDown={onClose} data-testid="command-args-backdrop">
       <div
         ref={popoverRef}
         className="fixed rounded-lg shadow-xl p-3 min-w-[240px] max-w-[340px]"
         style={{ ...pos, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)' }}
+        onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label={`${cmd.label} — arguments`}

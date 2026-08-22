@@ -73,7 +73,7 @@ export function CommandBarStep({ onNext, onBack }: { onNext: () => void; onBack?
           <p className="gh-freebie" data-ux-id="commandbar-review" data-review-count={reviewCount}>
             {reviewCount > 0 ? (
               <>
-                <b>{reviewCount} of your existing button{reviewCount === 1 ? '' : 's'} carr{reviewCount === 1 ? 'ies' : 'y'} an amber mark</b> — an argument that looks like a secret, a Global prompt your terminal-only configs cannot run, a dissolved "Global" section, or a shell button on an SSH config. Nothing was changed: open <b>Add ▾ → Review {reviewCount} command{reviewCount === 1 ? '' : 's'}</b> on the bar, or <b>Settings → Custom Commands → Needs review</b>, and fix or keep each one.
+                <b>{reviewCount} of your existing buttons carr{reviewCount === 1 ? 'ies' : 'y'} an amber mark</b> — an argument that looks like a secret, a Global prompt your terminal-only configs cannot run, a dissolved "Global" section, or a shell button on an SSH config. Nothing was changed: open <b>Add ▾ → Review {reviewCount} command{reviewCount === 1 ? '' : 's'}</b> on the bar, or <b>Settings → Custom Commands → Needs review</b>, and fix or keep each one.
               </>
             ) : (
               <>
