@@ -50,7 +50,23 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
 // out, and pushed to the UI) — so the panel says "Trimmed", not "Drops",
 // which read as lost ingest and alarmed users.
 
-function ServiceCard({ s }: { s: ServiceHealth }) {
+// Per-card restart gating. Preserves the original hooks rule (a supervised
+// gateway that fell back to in-process cannot be restarted in place — relaunch),
+// while letting other services (watchdog, logging) restart when running. A
+// stopped service is never restartable.
+function restartInfoFor(s: ServiceHealth): { disabled: boolean; title: string } {
+  if (s.state === 'stopped') {
+    return { disabled: true, title: s.id === 'hooks' ? 'Hooks are disabled in Settings' : `${s.label} is stopped` }
+  }
+  if (s.id === 'hooks' && s.host === 'in-process-fallback') {
+    return { disabled: true, title: 'Relaunch the app to retry the supervised gateway' }
+  }
+  if (s.id === 'watchdog') return { disabled: false, title: 'Restart the watchdog (re-arms watchers on the next session)' }
+  return { disabled: false, title: `Restart ${s.label}` }
+}
+
+function ServiceCard({ s, onRestart }: { s: ServiceHealth; onRestart: (id: string) => void }) {
+  const r = restartInfoFor(s)
   return (
     <div className="rounded border border-surface0 bg-crust/50 p-2.5">
       <div className="flex items-center gap-1.5 mb-2">
@@ -61,6 +77,14 @@ function ServiceCard({ s }: { s: ServiceHealth }) {
             ? 'disabled'
             : `${s.host}${s.port ? ` :${s.port}` : ''}${s.state !== 'listening' ? ` (${s.state})` : ''}`}
         </span>
+        <button
+          onClick={() => onRestart(s.id)}
+          disabled={r.disabled}
+          title={r.title}
+          className="ml-auto px-1.5 py-0.5 rounded border border-red/40 bg-red/10 text-[10px] text-red transition-colors hover:bg-red/20 disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
+        >
+          {RESTART_GLYPH} Restart
+        </button>
       </div>
       <div className="grid grid-cols-4 gap-x-2 gap-y-1.5">
         <Metric label="PID" value={s.pid ?? '-'} />
@@ -199,19 +223,10 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
   }, [onClose])
 
   const services = snap?.services ?? []
-  const svc = services[0]
-  // A 'stopped' service (hooks off in Settings) defaults to host 'in-process-fallback'
-  // but is NOT a crash-fallback — distinguish so we don't tell the user to relaunch.
-  const stopped = svc?.state === 'stopped'
-  const inFallback = !stopped && svc?.host === 'in-process-fallback'
-  const restartDisabled = stopped || inFallback
-  const restartTitle = stopped
-    ? 'Hooks are disabled in Settings'
-    : inFallback
-      ? 'Relaunch the app to retry the supervised gateway'
-      : 'Restart the hooks gateway'
-
-  const handleRestart = () => { void window.electronAPI.serviceHealth.restart('hooks') }
+  // Per-card restart: each ServiceCard passes its own s.id (routing + disable
+  // gating live in buildRestart / restartInfoFor), so every service — hooks,
+  // logging, watchdog — is individually restartable.
+  const handleRestart = (id: string) => { void window.electronAPI.serviceHealth.restart(id) }
   // BUG-2: the copy gave no feedback, so it read as a no-op even on success.
   // Flip to a brief "Copied" state and surface real failures.
   const handleCopy = async () => {
@@ -241,7 +256,7 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
       }`}
     >
       {services.map((s) => (
-        <ServiceCard key={s.id} s={s} />
+        <ServiceCard key={s.id} s={s} onRestart={handleRestart} />
       ))}
       <LogTail log={snap?.log ?? []} />
       {snap?.pty && <PtySection pty={snap.pty} />}
@@ -255,14 +270,6 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
         <span className="text-overlay0">in-process :19333 (next phase)</span>
       </div>
       <div className="flex items-center gap-2 pt-0.5">
-        <button
-          onClick={handleRestart}
-          disabled={restartDisabled}
-          title={restartTitle}
-          className="flex-1 px-2 py-1 rounded border border-red/40 bg-red/10 text-[11px] text-red transition-colors hover:bg-red/20 disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
-        >
-          {RESTART_GLYPH} Restart
-        </button>
         <button
           onClick={handleCopy}
           title="Copy the full diagnostics snapshot as JSON"

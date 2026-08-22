@@ -145,6 +145,31 @@ describe('ConductorServicesPanel', () => {
     expect(restartBtn.hasAttribute('disabled')).toBe(true)
   })
 
+  it('per-card Restart passes that card\'s own id (watchdog)', async () => {
+    const hooks = { ...createInitialHealth('hooks', 'Hooks gateway'), state: 'listening' as ServiceState, host: 'utility-process' as ServiceHost }
+    const wd = { ...createInitialHealth('watchdog', 'Watchdog'), state: 'listening' as ServiceState }
+    mockApi({ capturedAt: 1, services: [hooks, wd], log: [] })
+    const r = await renderPanel({ onClose: () => {} })
+    unmount = r.unmount
+    const restarts = Array.from(r.container.querySelectorAll('button')).filter((b) => /Restart/i.test(b.textContent ?? ''))
+    expect(restarts).toHaveLength(2) // one per card, no footer restart
+    await act(async () => { restarts[1].click() })
+    expect(restartMock).toHaveBeenCalledWith('watchdog')
+  })
+
+  it('watchdog Restart is enabled despite its in-process-fallback host', async () => {
+    // createInitialHealth defaults host to 'in-process-fallback'; that is normal
+    // for the watchdog (not a crashed supervisor), so it must NOT disable restart.
+    const wd = { ...createInitialHealth('watchdog', 'Watchdog'), state: 'listening' as ServiceState }
+    mockApi({ capturedAt: 1, services: [wd], log: [] })
+    const r = await renderPanel({ onClose: () => {} })
+    unmount = r.unmount
+    const btn = findButton(r.container, /Restart/i)
+    expect(btn.hasAttribute('disabled')).toBe(false)
+    await act(async () => { btn.click() })
+    expect(restartMock).toHaveBeenCalledWith('watchdog')
+  })
+
   it('renders the disabled "next phase" MCP row', async () => {
     mockApi(mkSnap('listening'))
     const r = await renderPanel({ onClose: () => {} })
