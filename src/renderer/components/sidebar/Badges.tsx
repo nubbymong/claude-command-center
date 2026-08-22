@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 
 export function ClaudeBadge({ needsAttention }: { needsAttention: boolean }) {
   const isWorking = !needsAttention
