@@ -17,7 +17,7 @@
 //  4. The counts the pill is drawn from drop accordingly, and a review with
 //     nothing live left is 'resolved' — with the reverse true on Reopen.
 
-import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import { vi } from 'vitest'
@@ -41,10 +41,10 @@ function renderCanvas(): { canvasId: string; versionId: string } {
 }
 
 /**
- * One submitted review with `count` notes, all marked ADDRESSED — i.e. a round
- * waiting on the user, which is the only shape the agent may close.
+ * One submitted review with `count` notes, all marked ADDRESSED just now — a
+ * round the agent has finished IN THIS PASS. The agent may not close this yet.
  */
-function addressedRound(count: number): { canvasId: string; reviewId: string; ids: string[] } {
+function freshAddressedRound(count: number): { canvasId: string; reviewId: string; ids: string[] } {
   const { canvasId, versionId } = renderCanvas()
   const ids: string[] = []
   for (let i = 0; i < count; i++) {
@@ -58,6 +58,20 @@ function addressedRound(count: number): { canvasId: string; reviewId: string; id
   return { canvasId, reviewId: 'R1', ids }
 }
 
+/**
+ * The same round, after enough time has passed that the user could have seen
+ * it — the shape the agent may close on their instruction.
+ *
+ * The clock move is the point: the close-out barrier exists precisely to
+ * separate "the agent addressed these and closed them in one breath" from "the
+ * agent finished, handed back, and the user said close them".
+ */
+function addressedRound(count: number): { canvasId: string; reviewId: string; ids: string[] } {
+  const round = freshAddressedRound(count)
+  vi.advanceTimersByTime(store.MIN_ADDRESSED_DWELL_MS + 1000)
+  return round
+}
+
 /** A round where one note is still OPEN (the agent has not claimed it). */
 function halfDoneRound(): { canvasId: string; reviewId: string; addressed: string[]; open: string[] } {
   const { canvasId, versionId } = renderCanvas()
@@ -65,6 +79,7 @@ function halfDoneRound(): { canvasId: string; reviewId: string; addressed: strin
   const a2 = store.upsertAnnotation(SID, { scope: 'general', note: 'two', versionId }).annotationId
   store.submitReview(SID, 'R1', [])
   store.markAnnotationsAddressed(SID, 'R1', [a1])
+  vi.advanceTimersByTime(store.MIN_ADDRESSED_DWELL_MS + 1000)
   return { canvasId, reviewId: 'R1', addressed: [a1], open: [a2] }
 }
 
@@ -75,9 +90,16 @@ function noteById(canvasId: string, id: string) {
 }
 
 beforeEach(() => {
+  // The close-out barrier is a clock comparison, so the clock is controlled.
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-08-22T12:00:00.000Z'))
   store._resetCanvasReviewStoreForTest()
   canvasStore._resetCanvasStoreForTest()
   fs.rmSync(path.join(getResourcesDirectory(), 'canvas'), { recursive: true, force: true })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 afterAll(() => {
@@ -179,6 +201,145 @@ describe('closeAnnotationsByAgent — the scope rule', () => {
     expect(() => store.closeAnnotationsByAgent(SID, 'R1', null, 'stale')).toThrow(/still a draft/)
     expect(() => store.closeAnnotationsByAgent(SID, 'R9', null, 'stale')).toThrow(/not on this canvas/)
     expect(() => store.closeAnnotationsByAgent(SID, 'nonsense', null, 'stale')).toThrow(/invalid review id/)
+  })
+})
+
+describe('closeAnnotationsByAgent — the chaining barrier (Q-2)', () => {
+  /**
+   * The attack the scope rule alone does not stop: the agent writes its own
+   * precondition. canvas_resolve moves every note open -> addressed with no
+   * user involvement, so resolve-then-verdict in one pass satisfies "the round
+   * is waiting on the user" and takes the round off the pill that would have
+   * sent the user to look at it. No user instruction anywhere.
+   */
+  it('refuses a round the agent addressed moments ago', () => {
+    const { canvasId, reviewId, ids } = freshAddressedRound(3)
+    let thrown: unknown
+    try {
+      store.closeAnnotationsByAgent(SID, reviewId, null, 'dismissed')
+    } catch (err) {
+      thrown = err
+    }
+    expect((thrown as Error).message).toBe('review was addressed just now')
+    expect((thrown as { freshNotes?: number }).freshNotes).toBe(3)
+    // Nothing moved, and the round is still on the pill.
+    for (const id of ids) expect(noteById(canvasId, id).state).toBe('addressed')
+    expect(store.getReviewCountsForCanvas(canvasId)!.openReviewIds).toEqual([reviewId])
+  })
+
+  it('refuses the named-ids form of the same chain', () => {
+    const { reviewId, ids } = freshAddressedRound(2)
+    expect(() => store.closeAnnotationsByAgent(SID, reviewId, [ids[0]], 'stale')).toThrow(/addressed just now/)
+  })
+
+  it('allows it once the round has had time to reach the user', () => {
+    const { canvasId, reviewId, ids } = freshAddressedRound(2)
+    expect(() => store.closeAnnotationsByAgent(SID, reviewId, null, 'stale')).toThrow(/addressed just now/)
+    vi.advanceTimersByTime(store.MIN_ADDRESSED_DWELL_MS + 1)
+    const result = store.closeAnnotationsByAgent(SID, reviewId, null, 'stale')
+    expect(result.closed.sort()).toEqual([...ids].sort())
+    expect(noteById(canvasId, ids[0]).state).toBe('stale')
+  })
+
+  it('stamps addressedAt at the moment the agent marks a note', () => {
+    const { canvasId, ids } = addressedRound(1)
+    expect(noteById(canvasId, ids[0]).addressedAt).toBe('2026-08-22T12:00:00.000Z')
+  })
+
+  it('keeps the stamp when a note reopens to addressed — the agent really did act', () => {
+    const { canvasId, reviewId, ids } = addressedRound(1)
+    store.closeAnnotationsByAgent(SID, reviewId, null, 'stale')
+    store.reopenAnnotation(SID, ids[0])
+    const note = noteById(canvasId, ids[0])
+    expect(note.state).toBe('addressed')
+    expect(note.addressedAt).toBe('2026-08-22T12:00:00.000Z')
+  })
+
+  it('drops the stamp when a note reopens to open — nobody claims to have acted', () => {
+    const { canvasId, versionId } = renderCanvas()
+    const a1 = store.upsertAnnotation(SID, { scope: 'general', note: 'never touched', versionId }).annotationId
+    store.submitReview(SID, 'R1', [])
+    store.resolveAnnotation(SID, a1, 'dismiss') // closed straight from 'open'
+    store.reopenAnnotation(SID, a1)
+    const note = noteById(canvasId, a1)
+    expect(note.state).toBe('open')
+    expect(note.addressedAt).toBeUndefined()
+  })
+
+  it('refuses a note whose stamp is present but unreadable — the fail-closed direction', () => {
+    const { canvasId, reviewId } = addressedRound(1)
+    const file = path.join(getResourcesDirectory(), 'canvas', canvasId, 'reviews.json')
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'))
+    record.annotations[0].addressedAt = 'not a date'
+    fs.writeFileSync(file, JSON.stringify(record))
+    store._resetCanvasReviewStoreForTest()
+
+    expect(() => store.closeAnnotationsByAgent(SID, reviewId, null, 'stale')).toThrow(/addressed just now/)
+  })
+
+  it('does not block a note with no stamp at all (a record from before the barrier)', () => {
+    const { canvasId, reviewId } = addressedRound(2)
+    const file = path.join(getResourcesDirectory(), 'canvas', canvasId, 'reviews.json')
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'))
+    for (const a of record.annotations) delete a.addressedAt
+    fs.writeFileSync(file, JSON.stringify(record))
+    store._resetCanvasReviewStoreForTest()
+
+    expect(store.closeAnnotationsByAgent(SID, reviewId, null, 'stale').closed).toHaveLength(2)
+  })
+
+  it('does not apply to the USER closing their own notes', () => {
+    // The barrier is about the agent chaining its own writes. A user clicking
+    // "Accept as built" the instant the agent finishes is exactly the flow the
+    // feature is for, and must not be slowed down.
+    const { canvasId, ids } = freshAddressedRound(2)
+    store.resolveAnnotation(SID, ids[0], 'stale')
+    expect(noteById(canvasId, ids[0]).state).toBe('stale')
+    expect(store.closeOutCanvasReviews(canvasId)).toEqual({ closed: 1, reviews: ['R1'] })
+  })
+})
+
+describe('the record proves its two membership views agree (Q-5)', () => {
+  it('refuses a record whose review lists a note that does not name it', () => {
+    const { canvasId, ids } = addressedRound(2)
+    const file = path.join(getResourcesDirectory(), 'canvas', canvasId, 'reviews.json')
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'))
+    // The drift that made the scope rule and settleReviewStatus disagree: a
+    // note carrying reviewId R1 but absent from R1.annotationIds.
+    record.reviews[0].annotationIds = [ids[0]]
+    fs.writeFileSync(file, JSON.stringify(record))
+
+    store._resetCanvasReviewStoreForTest()
+    expect(store.getReviewCountsForCanvas(canvasId)).toBeNull()
+    expect(store.getReviewStateForSession(SID)).toMatchObject({ reviews: [], annotations: [] })
+  })
+
+  it('refuses a record listing a member twice', () => {
+    const { canvasId, ids } = addressedRound(1)
+    const file = path.join(getResourcesDirectory(), 'canvas', canvasId, 'reviews.json')
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'))
+    record.reviews[0].annotationIds = [ids[0], ids[0]]
+    fs.writeFileSync(file, JSON.stringify(record))
+
+    store._resetCanvasReviewStoreForTest()
+    expect(store.getReviewCountsForCanvas(canvasId)).toBeNull()
+  })
+
+  it('accepts every record the API itself produces', () => {
+    // The check must never fire on a record this store wrote. Exercise the
+    // paths that touch membership: draft, edit, delete, submit, re-annotate.
+    const { canvasId, versionId } = renderCanvas()
+    const a1 = store.upsertAnnotation(SID, { scope: 'general', note: 'one', versionId }).annotationId
+    const a2 = store.upsertAnnotation(SID, { scope: 'general', note: 'two', versionId }).annotationId
+    store.upsertAnnotation(SID, { scope: 'general', note: 'reworded', versionId, annotationId: a1 })
+    store.deleteAnnotation(SID, a2)
+    store.submitReview(SID, 'R1', [])
+    store.markAnnotationsAddressed(SID, 'R1', [a1])
+    store.resolveAnnotation(SID, a1, 'reannotate')
+
+    store._resetCanvasReviewStoreForTest()
+    expect(store.getReviewCountsForCanvas(canvasId)).not.toBeNull()
+    expect(store.getReviewStateForSession(SID)!.annotations.length).toBeGreaterThan(0)
   })
 })
 
@@ -369,6 +530,71 @@ describe('closeOutCanvasReviews (the library bulk)', () => {
     expect(store.closeOutCanvasReviews(canvasId)).toEqual({ closed: 0, reviews: [] })
     expect(noteById(canvasId, addressed[0]).state).toBe('addressed')
     expect(noteById(canvasId, open[0]).state).toBe('open')
+  })
+
+  // Q-1. The count that LABELS the library button must be the count the button
+  // CLEARS. It was `addressedNotes`, which ignores the per-review open gate, so
+  // a partial round advertised "Close 1 note", cleared nothing, and -- because
+  // the number never moved -- left a button that could never go away. This is
+  // the assertion one line from the test above that would have caught it.
+  it('reports zero closeable on a partial round, though a note IS addressed', () => {
+    const { canvasId } = halfDoneRound()
+    const counts = store.getReviewCountsForCanvas(canvasId)!
+    expect(counts.addressedNotes).toBe(1) // there is an addressed note
+    expect(counts.closeableNotes).toBe(0) // and nothing a close-out would clear
+    expect(store.closeOutCanvasReviews(canvasId)!.closed).toBe(counts.closeableNotes)
+  })
+
+  it('counts exactly what it clears on a canvas mixing a clean and a partial round', () => {
+    // R1 clean (2 addressed), R2 partial (1 addressed, 1 open). The old count
+    // said 3; the mutation clears 2.
+    const { canvasId, versionId } = renderCanvas()
+    const a1 = store.upsertAnnotation(SID, { scope: 'general', note: 'one', versionId }).annotationId
+    const a2 = store.upsertAnnotation(SID, { scope: 'general', note: 'two', versionId }).annotationId
+    store.submitReview(SID, 'R1', [])
+    store.markAnnotationsAddressed(SID, 'R1', [a1, a2])
+    const a3 = store.upsertAnnotation(SID, { scope: 'general', note: 'three', versionId }).annotationId
+    store.upsertAnnotation(SID, { scope: 'general', note: 'four', versionId })
+    store.submitReview(SID, 'R2', [])
+    store.markAnnotationsAddressed(SID, 'R2', [a3])
+
+    const counts = store.getReviewCountsForCanvas(canvasId)!
+    expect(counts.addressedNotes).toBe(3)
+    expect(counts.closeableNotes).toBe(2)
+    const result = store.closeOutCanvasReviews(canvasId)!
+    expect(result).toEqual({ closed: 2, reviews: ['R1'] })
+    expect(result.closed).toBe(counts.closeableNotes)
+  })
+
+  it('drops the closeable count to zero once the canvas is cleared', () => {
+    const { canvasId } = addressedRound(3)
+    expect(store.getReviewCountsForCanvas(canvasId)!.closeableNotes).toBe(3)
+    store.closeOutCanvasReviews(canvasId)
+    expect(store.getReviewCountsForCanvas(canvasId)!.closeableNotes).toBe(0)
+  })
+
+  // Q-4. `readRecordNoRebind` deliberately skips loadRecord's counter repair,
+  // and a close-out commits what it read straight into the cache every later
+  // load short-circuits on. A skew surviving that mints a duplicate id.
+  it('repairs skewed id counters before committing a record it read itself', () => {
+    const { canvasId, versionId } = renderCanvas()
+    const a1 = store.upsertAnnotation(SID, { scope: 'general', note: 'one', versionId }).annotationId
+    const a2 = store.upsertAnnotation(SID, { scope: 'general', note: 'two', versionId }).annotationId
+    store.submitReview(SID, 'R1', [])
+    store.markAnnotationsAddressed(SID, 'R1', [a1, a2])
+
+    const file = path.join(getResourcesDirectory(), 'canvas', canvasId, 'reviews.json')
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'))
+    record.nextAnnotation = 1 // below max(id) + 1: hand-edited, older format, torn write
+    fs.writeFileSync(file, JSON.stringify(record))
+
+    // Cold cache: the close-out is the first thing to touch this canvas.
+    store._resetCanvasReviewStoreForTest()
+    expect(store.closeOutCanvasReviews(canvasId)!.closed).toBe(2)
+
+    // The next note must not reuse a1 or a2.
+    const { annotationId } = store.upsertAnnotation(SID, { scope: 'general', note: 'after', versionId })
+    expect(annotationId).toBe('a3')
   })
 
   it('answers null for a canvas it cannot read, and never a zero', () => {

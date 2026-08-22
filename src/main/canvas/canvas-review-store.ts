@@ -232,6 +232,11 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // row a person is being asked to trust.
   if (a.closedBy !== undefined && (typeof a.closedBy !== 'string' || !CLOSED_BY_VALUES.has(a.closedBy))) return false
   if (a.closedFrom !== undefined && (typeof a.closedFrom !== 'string' || !CLOSED_FROM_VALUES.has(a.closedFrom))) return false
+  // A timestamp the close-out barrier reads. Bounded and clean like every other
+  // stored string; a value that is present but does not PARSE is treated by the
+  // barrier as "just now", i.e. it refuses the close — the fail-closed
+  // direction, since the barrier exists to withhold permission.
+  if (a.addressedAt !== undefined && !isCleanString(a.addressedAt, 64)) return false
   // 'approved' is the user's alone, so a record claiming the agent set it is
   // corrupt by definition — refuse it rather than render it.
   if (a.state === 'approved' && a.closedBy === 'agent') return false
@@ -266,10 +271,60 @@ function isValidRecord(value: unknown, canvasId: string): value is ReviewFileRec
   const drafts = rec.reviews.filter((r) => r.status === 'draft')
   if (drafts.length > 1) return false
   const reviewIds = new Set(rec.reviews.map((r) => r.id))
-  return rec.annotations.every((a) => reviewIds.has(a.reviewId))
+  if (!rec.annotations.every((a) => reviewIds.has(a.reviewId))) return false
+
+  /**
+   * The two views of "which notes are on this review" must be THE SAME SET.
+   *
+   * A review lists its members (`annotationIds`) and every note names its owner
+   * (`reviewId`), and nothing used to check that the two agreed. Every mutation
+   * maintains both in lockstep, so drift is unreachable through the API — but
+   * the code reads whichever is convenient, and a record where they disagree
+   * makes the readers disagree too. A note absent from `R1.annotationIds` but
+   * carrying `reviewId: 'R1'` is invisible to the scope rule (which counts
+   * members, sees no open notes, and permits a close) and visible to
+   * `settleReviewStatus` (which counts by `reviewId` and keeps R1 submitted),
+   * leaving a round the agent has "closed" that never resolves.
+   *
+   * Checking it here makes the two provably equal for every record that loads,
+   * which is what lets the readers stop caring which one they use. A record
+   * that fails is BROKEN — preserved evidence, not free space.
+   */
+  const ownedByReview = new Map<string, Set<string>>()
+  for (const a of rec.annotations) {
+    const set = ownedByReview.get(a.reviewId)
+    if (set) set.add(a.id)
+    else ownedByReview.set(a.reviewId, new Set([a.id]))
+  }
+  for (const r of rec.reviews) {
+    const listed = new Set(r.annotationIds)
+    if (listed.size !== r.annotationIds.length) return false // a repeated member
+    const owned = ownedByReview.get(r.id) ?? new Set<string>()
+    if (listed.size !== owned.size) return false
+    for (const id of listed) if (!owned.has(id)) return false
+  }
+  return true
 }
 
 // ── Load / access ───────────────────────────────────────────────────────────
+
+/**
+ * Heal skewed id counters upward. Ids must never repeat.
+ *
+ * Extracted because EVERY path that can reach `commit` has to run it, not just
+ * `loadRecord`. `commit` writes the record into `records`, and every later
+ * `loadRecord` short-circuits on that cached entry — so a record that entered
+ * the cache without this repair keeps its skew for the life of the process. A
+ * `reviews.json` whose `nextAnnotation` sits below `max(id) + 1` (hand-edited,
+ * an older format, a torn write) would then mint a duplicate annotation id on
+ * the very next note.
+ */
+function healCounters(record: ReviewFileRecord): void {
+  const maxReview = record.reviews.reduce((max, r) => Math.max(max, Number(r.id.slice(1))), 0)
+  const maxAnnotation = record.annotations.reduce((max, a) => Math.max(max, Number(a.id.slice(1))), 0)
+  record.nextReview = Math.max(record.nextReview, maxReview + 1)
+  record.nextAnnotation = Math.max(record.nextAnnotation, maxAnnotation + 1)
+}
 
 /** The record re-stamped onto a new owner session — every review's embedded
  *  handle moves with it, so the strict validation stays satisfiable. */
@@ -317,11 +372,7 @@ function loadRecord(canvasId: string, sessionId: string): ReviewFileRecord | nul
            successful mutation persists the re-bound record anyway */
       }
     }
-    // Heal counters upward if skewed; ids must never repeat.
-    const maxReview = record.reviews.reduce((max, r) => Math.max(max, Number(r.id.slice(1))), 0)
-    const maxAnnotation = record.annotations.reduce((max, a) => Math.max(max, Number(a.id.slice(1))), 0)
-    record.nextReview = Math.max(record.nextReview, maxReview + 1)
-    record.nextAnnotation = Math.max(record.nextAnnotation, maxAnnotation + 1)
+    healCounters(record)
     records.set(canvasId, record)
     return record
   } catch {
@@ -439,6 +490,21 @@ export interface CanvasReviewCounts {
   openNotes: number
   /** Notes the agent has marked addressed and the user has not ruled on. */
   addressedNotes: number
+  /**
+   * What a bulk close-out on this canvas would ACTUALLY clear.
+   *
+   * Not the same as `addressedNotes`, and the difference is a real bug that
+   * shipped in the first cut of this feature: `closeOutCanvasReviews` skips a
+   * whole review that still holds an `open` note, so on the routine partial
+   * round (one note handled, one not) `addressedNotes` is 1 while the close-out
+   * clears 0 — a button that promised "Close 1 note", did nothing, and never
+   * went away because the number it was drawn from never moved.
+   *
+   * So the count is computed with the SAME per-review gate the mutation
+   * applies. The label and the mutation share one rule, which is the property
+   * the panel already had via `roundsWaitingOnYou` and the library did not.
+   */
+  closeableNotes: number
 }
 
 export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts | null {
@@ -457,17 +523,36 @@ export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts |
   let addressedNotes = 0
   const withOpenNotes = new Set<string>()
   const draftVersions = new Set<string>()
+  // Per review, so the closeable count below can apply the mutation's own gate.
+  const openByReview = new Map<string, number>()
+  const addressedByReview = new Map<string, number>()
   for (const a of record.annotations) {
     if (draftIds.has(a.id)) {
       draftVersions.add(a.versionId)
       continue
     }
     if (!submitted.has(a.reviewId)) continue
-    if (a.state === 'open') { openNotes++; withOpenNotes.add(a.reviewId) }
-    else if (a.state === 'addressed') { addressedNotes++; withOpenNotes.add(a.reviewId) }
+    if (a.state === 'open') {
+      openNotes++
+      withOpenNotes.add(a.reviewId)
+      openByReview.set(a.reviewId, (openByReview.get(a.reviewId) ?? 0) + 1)
+    } else if (a.state === 'addressed') {
+      addressedNotes++
+      withOpenNotes.add(a.reviewId)
+      addressedByReview.set(a.reviewId, (addressedByReview.get(a.reviewId) ?? 0) + 1)
+    }
   }
+  // The close-out's own rule, restated over the same tallies: a submitted
+  // review with zero open notes contributes all of its addressed ones; a review
+  // still holding an open note contributes NOTHING, because the mutation skips
+  // it whole. Read by `a.reviewId` rather than membership, which the validator
+  // now proves is the same set.
+  let closeableNotes = 0
   for (const r of record.reviews) {
-    if (r.status === 'submitted' && withOpenNotes.has(r.id)) openReviewIds.push(r.id)
+    if (r.status !== 'submitted') continue
+    if (withOpenNotes.has(r.id)) openReviewIds.push(r.id)
+    if ((openByReview.get(r.id) ?? 0) > 0) continue
+    closeableNotes += addressedByReview.get(r.id) ?? 0
   }
   return {
     draftNotes: draftIds.size,
@@ -475,6 +560,7 @@ export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts |
     openReviewIds,
     openNotes,
     addressedNotes,
+    closeableNotes,
   }
 }
 
@@ -545,6 +631,54 @@ function draftReviewOf(record: ReviewFileRecord): Review | null {
  */
 function isLiveNote(a: Annotation): boolean {
   return a.state === 'open' || a.state === 'addressed'
+}
+
+/**
+ * The notes on one review — ONE definition, used by every close-out path.
+ *
+ * The record holds the membership twice (`review.annotationIds` and each note's
+ * `reviewId`) and the file used to read whichever was nearer. `isValidRecord`
+ * now proves the two are the same set for any record that loads, so this reads
+ * both and the intersection is exactly either one; requiring both means a
+ * record that somehow reached memory with drift narrows the set rather than
+ * widening it, which is the safe direction for a function that decides what may
+ * be closed.
+ */
+function notesOfReview(record: ReviewFileRecord, review: Review): Annotation[] {
+  const members = new Set(review.annotationIds)
+  return record.annotations.filter((a) => a.reviewId === review.id && members.has(a.id))
+}
+
+/**
+ * How long a note must have been `addressed` before the AGENT may close it.
+ *
+ * The scope rule ("every note on this round is addressed") is a precondition
+ * the agent writes itself: `canvas_resolve` moves notes open -> addressed with
+ * no user involvement, so an agent can call resolve and then verdict back to
+ * back, satisfy the rule, and take the round off the pill without the user ever
+ * being asked. Nothing in the store can see the chat instruction that is
+ * supposed to authorise the close, so nothing in the store can verify it.
+ *
+ * What the store CAN see is the shape of that chain: the legitimate flow has a
+ * human in it — the agent finishes, hands back, the user reads the summary and
+ * says "close them" — and that turnaround is never instant. The mechanical
+ * chain is. A dwell time does not make the close authorised, but it does stop
+ * the unattended one-pass version, and it costs the real flow nothing.
+ *
+ * Deliberately generous. Erring long fails toward "the user closes it in the
+ * pane in one click", which is a working path, rather than toward an agent
+ * clearing a round nobody looked at.
+ */
+export const MIN_ADDRESSED_DWELL_MS = 60_000
+
+/** Milliseconds since a note was addressed. `null` when it carries no stamp
+ *  (a record written before the stamp existed); 0 when the stamp is unreadable,
+ *  which refuses the close. */
+function addressedAgeMs(a: Annotation, now: number): number | null {
+  if (a.addressedAt === undefined) return null
+  const at = Date.parse(a.addressedAt)
+  if (!Number.isFinite(at)) return 0
+  return Math.max(0, now - at)
 }
 
 /**
@@ -986,6 +1120,9 @@ export function markAnnotationsAddressed(
     if (!wanted.has(a.id)) continue
     if (a.state === 'open' && members.has(a.id)) {
       a.state = 'addressed'
+      // When, so the agent's own close-out barrier can tell a round the user
+      // has had a chance to see from one this same pass just manufactured.
+      a.addressedAt = new Date().toISOString()
       addressed.push(a.id)
     } else {
       skipped.push(a.id)
@@ -1021,6 +1158,8 @@ export interface CloseOutResult {
 interface ScopeError extends Error {
   openNotes?: number
   addressedNotes?: number
+  /** How many notes were addressed too recently to be closeable yet. */
+  freshNotes?: number
 }
 
 function scopeError(message: string, counts: { openNotes: number; addressedNotes: number }): ScopeError {
@@ -1083,7 +1222,7 @@ export function closeAnnotationsByAgent(
   if (review.status === 'draft') throw new Error('review is still a draft')
 
   const members = new Set(review.annotationIds)
-  const memberNotes = base.annotations.filter((a) => members.has(a.id))
+  const memberNotes = notesOfReview(base, review)
   const openNotes = memberNotes.filter((a) => a.state === 'open').length
   const addressedNotes = memberNotes.filter((a) => a.state === 'addressed').length
 
@@ -1091,6 +1230,24 @@ export function closeAnnotationsByAgent(
   if (openNotes > 0) throw scopeError('review is still with the agent', { openNotes, addressedNotes })
   // Nothing to do, and saying so beats reporting a successful close of zero.
   if (addressedNotes === 0) throw scopeError('review has nothing waiting on the user', { openNotes, addressedNotes })
+
+  // The chaining barrier. The scope rule above is satisfied by the agent's OWN
+  // write (canvas_resolve), so on its own it does not distinguish "the user
+  // told me to close the round we finished" from "I marked everything
+  // addressed a moment ago and am now removing it from the pill". A note the
+  // agent addressed seconds ago cannot have been seen, let alone ruled on, by
+  // anybody — so it is not closeable yet, and the refusal says to hand back.
+  const now = Date.now()
+  const tooFresh = memberNotes.filter((a) => {
+    if (a.state !== 'addressed') return false
+    const age = addressedAgeMs(a, now)
+    return age !== null && age < MIN_ADDRESSED_DWELL_MS
+  })
+  if (tooFresh.length > 0) {
+    const err = scopeError('review was addressed just now', { openNotes, addressedNotes }) as ScopeError
+    err.freshNotes = tooFresh.length
+    throw err
+  }
 
   const wanted = new Set<string>()
   if (annotationIds !== null) {
@@ -1107,13 +1264,16 @@ export function closeAnnotationsByAgent(
 
   const closed: string[] = []
   const skipped: string[] = []
+  // The same membership `notesOfReview` uses — both halves, so a note can only
+  // move if the review lists it AND it names the review.
+  const onReview = (a: Annotation): boolean => a.reviewId === review.id && members.has(a.id)
   for (const a of next.annotations) {
-    const named = annotationIds === null ? members.has(a.id) : wanted.has(a.id)
+    const named = annotationIds === null ? onReview(a) : wanted.has(a.id)
     if (!named) continue
     // Only an ADDRESSED note on THIS review moves. `openNotes === 0` above
     // means no member can be 'open', so anything refused here is either off
     // this review or already ruled on.
-    if (a.state === 'addressed' && members.has(a.id)) {
+    if (a.state === 'addressed' && onReview(a)) {
       a.state = nextState
       a.closedBy = 'agent'
       a.closedFrom = 'addressed'
@@ -1171,6 +1331,10 @@ export function reopenAnnotation(sessionId: string, annotationId: string): Canva
   nextTarget.state = nextTarget.closedFrom ?? 'open'
   delete nextTarget.closedBy
   delete nextTarget.closedFrom
+  // A note back to 'open' is one nobody has claimed to have acted on, so the
+  // addressed stamp is no longer true of it. One returning to 'addressed' keeps
+  // its stamp: the agent really did act, at that time.
+  if (nextTarget.state === 'open') delete nextTarget.addressedAt
   settleReviewStatus(next, owner.id)
 
   commit(next)
@@ -1191,7 +1355,17 @@ export function reopenAnnotation(sessionId: string, annotationId: string): Canva
 function recordByCanvasId(canvasId: string): ReviewFileRecord | null {
   if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return null
   if (broken.has(canvasId)) return null
-  return records.get(canvasId) ?? readRecordNoRebind(canvasId)
+  const cached = records.get(canvasId)
+  if (cached) return cached
+  const parsed = readRecordNoRebind(canvasId)
+  if (!parsed) return null
+  // `readRecordNoRebind` deliberately skips loadRecord's repairs because it
+  // serves a REPORTING read that must not write. This path can reach `commit`,
+  // which puts the record in `records` where every later `loadRecord`
+  // short-circuits on it — so the counter repair has to happen here or a skewed
+  // `nextAnnotation` survives the process and mints a duplicate id.
+  healCounters(parsed)
+  return parsed
 }
 
 /**
@@ -1226,10 +1400,11 @@ export function closeOutCanvasReviews(canvasId: string): { closed: number; revie
   let closed = 0
   for (const review of next.reviews) {
     if (review.status !== 'submitted') continue
-    const members = new Set(review.annotationIds)
-    const memberNotes = next.annotations.filter((a) => members.has(a.id))
+    const memberNotes = notesOfReview(next, review)
     // A round still with the agent is not "shipped work waiting on you", so it
-    // is skipped whole rather than half-cleared.
+    // is skipped whole rather than half-cleared. `getReviewCountsForCanvas`
+    // applies this same gate, so the library's label counts exactly what this
+    // clears — they disagreed once, and the button promised work it never did.
     if (memberNotes.some((a) => a.state === 'open')) continue
     const addressed = memberNotes.filter((a) => a.state === 'addressed')
     if (addressed.length === 0) continue

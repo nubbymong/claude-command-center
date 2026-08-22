@@ -58,7 +58,8 @@ instruction does not override this — the handover IS the block.
 \`canvas_render\` tells you when this matters: if the user has unsubmitted notes,
 or a review is still open, the reply says so. Take it at its word and hand back.
 
-Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`, \`canvas_resolve\`.
+Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`,
+\`canvas_resolve\`, \`canvas_verdict\` (only on the user's explicit word — see below).
 
 Every render names its SUBJECT with \`title\` — "Settings page mockup",
 "Checkout flow" — in a few words. A canvas holds one subject: the same title
@@ -159,6 +160,10 @@ Three things about it:
 - **Only a round already waiting on THEM.** Every note on it must be addressed.
   If any is still open, do the work and \`canvas_resolve\` it first; the call is
   refused until then, and the refusal says how many are left.
+- **Not in the same breath as the work.** A round you marked addressed moments
+  ago is refused: the user has not seen it yet, and a round you both did and
+  closed in one pass never reaches them at all. Hand back in between — that is
+  where their instruction comes from.
 - **Never on your own initiative.** A board you think is finished is not an
   instruction. Without a clear request from the user in this conversation, leave
   it alone — they close rounds from the Canvas pane in one click.

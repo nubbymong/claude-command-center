@@ -190,9 +190,12 @@ export function CanvasLibrary({
                 {e.ownedByOpenSession && <span className="ml-1.5 text-[var(--brand)]">open in another session</span>}
               </div>
             </div>
-            {/* Clear, not delete. Offered only when there is something to
-                clear: notes the agent says it handled and nobody has ruled on. */}
-            {!!e.addressedNoteCount && (
+            {/* Clear, not delete. Offered only when there is something this
+                click would actually clear — `closeableNoteCount` is computed
+                with the same per-review gate the mutation applies, so a canvas
+                whose only round is still half-done shows no button rather than
+                one that promises a note and clears nothing. */}
+            {!!e.closeableNoteCount && (
               confirmClose === e.canvasId ? (
                 <button
                   onClick={() => void closeOut(e.canvasId)}
@@ -201,7 +204,7 @@ export function CanvasLibrary({
                   className="shrink-0 text-[11px] rounded px-2 py-0.5 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] border border-[color-mix(in_srgb,var(--status-warning)_50%,transparent)] text-[var(--status-warning)] hover:bg-[color-mix(in_srgb,var(--status-warning)_25%,transparent)] disabled:opacity-50 focus-ring"
                   title="Marks them closed because the work shipped — not approved. Nothing is deleted, and each note can be reopened from the Canvas pane."
                 >
-                  Close {e.addressedNoteCount} note{e.addressedNoteCount === 1 ? '' : 's'}
+                  Close {e.closeableNoteCount} note{e.closeableNoteCount === 1 ? '' : 's'}
                 </button>
               ) : (
                 <button

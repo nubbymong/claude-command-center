@@ -105,6 +105,28 @@ describe('canvas_verdict — the scope rule, as the agent reads it', () => {
     expect(out.text).toMatch(/Canvas pane/)
   })
 
+  it('explains the chaining barrier and sends the agent to hand back', () => {
+    // Q-2: the scope rule is satisfiable by the agent's own canvas_resolve, so
+    // the store also refuses a round addressed moments ago. The refusal has to
+    // name the remedy — hand back — not merely report a failure.
+    const err = new Error('review was addressed just now') as Error & { freshNotes?: number }
+    err.freshNotes = 3
+    const out = runCanvasVerdict(
+      { reviewId: 'R3', verdict: 'stale' },
+      'sess-mine',
+      deps({
+        closeByAgent: () => {
+          throw err
+        },
+      }),
+    )
+    expect(out.isError).toBe(true)
+    expect(out.text).toContain('you marked 3 of those note(s) addressed moments ago')
+    expect(out.text).toMatch(/cannot have seen them yet/i)
+    expect(out.text).toMatch(/Hand back/)
+    expect(out.text).toMatch(/Canvas pane/)
+  })
+
   it('explains a round with nothing left waiting on the user', () => {
     const out = runCanvasVerdict(
       { reviewId: 'R3', verdict: 'stale' },

@@ -298,4 +298,90 @@ describe('closed work stays visible, and reopens in one click', () => {
     await click(closeBtn)
     expect(resolves).toEqual([{ annotationId: 'a1', action: 'stale' }])
   })
+
+  it('says out loud when the agent both did the work and closed the note', async () => {
+    // Q-2 residue. The agent's close-out precondition is a state the agent
+    // writes itself, so on an agent-closed note the same party did the work and
+    // ended the conversation about it. The store refuses the two in one pass;
+    // it cannot see whether the user actually asked. So the row says so, next
+    // to a Reopen.
+    current = {
+      canvasId: 'canvas-a',
+      sessionId: SID,
+      reviews: [review('R1', 'resolved', '01')],
+      annotations: [
+        note('a1', 'R1', 'stale', { closedBy: 'agent', closedFrom: 'addressed' }),
+        note('a2', 'R1', 'stale', { closedBy: 'user', closedFrom: 'addressed' }),
+      ],
+    }
+    await render()
+    await expandRound('R1')
+    await click(byTestId('review-closed-toggle'))
+    const flags = container.querySelectorAll('[data-testid="review-closed-agent-both"]')
+    // Only the agent-closed row carries it; the user's own close does not.
+    expect(flags).toHaveLength(1)
+    expect(flags[0].textContent).toContain('nobody else checked it')
+  })
+})
+
+describe('a bulk pass cannot land on the wrong canvas, or race itself', () => {
+  it('stops the moment the session switches canvas mid-pass (Q-3)', async () => {
+    // `annotationResolve` carries only a note id, and main resolves it against
+    // whatever canvas the session points at NOW. Ids restart at a1 on every
+    // canvas, so a canvas_render naming a new subject mid-pass would send the
+    // remaining ids at an unrelated canvas — closing that canvas's notes under
+    // the user's own name.
+    let calls = 0
+    ;(window as any).electronAPI.canvas.annotationResolve = vi.fn(
+      async ({ annotationId, action }: { annotationId: string; action: string }) => {
+        resolves.push({ annotationId, action })
+        const state = applyResolve(annotationId, action)
+        calls++
+        // The agent files this canvas and starts a new one, right after the
+        // first note is closed.
+        if (calls === 1) current = { ...state, canvasId: 'canvas-b' }
+        return { state: current }
+      },
+    )
+
+    await render()
+    await click(byTestId('close-all-waiting-arm'))
+    await click(byTestId('close-all-waiting-confirm'))
+
+    // One resolve landed on the canvas the ids belonged to; the pass then
+    // stopped rather than continuing against canvas-b.
+    expect(resolves).toHaveLength(1)
+  })
+
+  it('locks every other verdict control while the bulk pass runs (Q-6)', async () => {
+    // Two loops over the same notes interleave otherwise, each resolve landing
+    // on a note the other has already consumed.
+    let release: (() => void) | null = null
+    ;(window as any).electronAPI.canvas.annotationResolve = vi.fn(
+      async ({ annotationId, action }: { annotationId: string; action: string }) => {
+        resolves.push({ annotationId, action })
+        const state = applyResolve(annotationId, action)
+        if (!release) await new Promise<void>((r) => { release = r })
+        return { state }
+      },
+    )
+
+    await render()
+    await click(byTestId('close-all-waiting-arm'))
+    // Start the pass but do not let it finish.
+    void act(async () => (byTestId('close-all-waiting-confirm') as HTMLElement).click())
+    await act(async () => {})
+
+    // Assert the controls are PRESENT and disabled — `?? true` on a missing
+    // element would pass this test without the lock existing at all.
+    const accept = group('R1').querySelector('[data-testid="review-accept-as-built"]') as HTMLButtonElement | null
+    const perNote = group('R1').querySelector('[data-testid="note-close-stale"]') as HTMLButtonElement | null
+    expect(accept).toBeTruthy()
+    expect(perNote).toBeTruthy()
+    expect(accept!.disabled).toBe(true)
+    expect(perNote!.disabled).toBe(true)
+
+    if (release) (release as () => void)()
+    await act(async () => {})
+  })
 })

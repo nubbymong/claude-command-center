@@ -300,10 +300,11 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
       if (!counts) continue
       e.openReviewCount = counts.openReviewIds.length
       e.draftNoteCount = counts.draftNotes
-      // What a bulk close-out on this row would actually clear: notes the agent
-      // says it handled and the user has not ruled on. Left undefined with the
-      // other two when the store is unreadable.
-      e.addressedNoteCount = counts.addressedNotes
+      // What a bulk close-out on this row would ACTUALLY clear. The store
+      // computes it with the same per-review gate the mutation applies, so the
+      // button's label and the button's effect cannot disagree. Left undefined
+      // with the other two when the store is unreadable.
+      e.closeableNoteCount = counts.closeableNotes
     }
     return entries
   })

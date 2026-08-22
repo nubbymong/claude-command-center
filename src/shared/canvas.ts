@@ -220,6 +220,19 @@ export interface Annotation {
    * record already knew the answer at the moment it was closed.
    */
   closedFrom?: 'open' | 'addressed'
+  /**
+   * When the AGENT marked this note addressed (`canvas_resolve`).
+   *
+   * Recorded because the agent's close-out precondition — "every note on this
+   * round is addressed" — is a state the agent itself writes. Without a stamp,
+   * `canvas_resolve` followed straight away by `canvas_verdict` satisfies the
+   * scope rule in one unattended pass and takes the round off the pill that
+   * would have sent the user to look at it. The timestamp is what lets the
+   * store tell that chain apart from a round the user has had a chance to see.
+   *
+   * Absent on a note nobody has addressed, and on records written before this.
+   */
+  addressedAt?: string
 }
 
 export interface Review {
@@ -726,11 +739,19 @@ export interface CanvasLibraryEntry {
    *  be read — deliberately not 0, so a broken store never renders as "clear". */
   openReviewCount?: number
   draftNoteCount?: number
-  /** Notes the agent has marked addressed and the user has not ruled on — the
-   *  ones a bulk close-out on this row would actually clear. `undefined` for
-   *  an unreadable store, exactly like the two above: the library must never
-   *  offer "close 0 notes" when the truth is "could not tell". */
-  addressedNoteCount?: number
+  /**
+   * How many notes a bulk close-out on this row would ACTUALLY clear.
+   *
+   * Not "addressed notes on this canvas", which is a different and larger
+   * number: the close-out skips any round still holding an open note, so on a
+   * partial round (one note handled, one not) there are addressed notes and
+   * nothing closeable. Labelling the button from the larger number promised
+   * work it would not do and left a control that never went away.
+   *
+   * `undefined` for an unreadable store, exactly like the two above: the
+   * library must never offer "close 0 notes" when the truth is "could not tell".
+   */
+  closeableNoteCount?: number
 }
 
 export interface CanvasSnapshotRequestEvent {
