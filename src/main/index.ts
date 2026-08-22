@@ -733,18 +733,19 @@ if (!gotTheLock) {
 
   app.whenReady().then(() => {
     // #397 Group 2: exit paths that skip app 'before-quit'. An OS shutdown/logoff
-    // (powerMonitor; macOS/Linux) and a process signal (SIGTERM/SIGINT, e.g. a
-    // console Ctrl+C on a dev run or a task-manager terminate) can end the app
-    // without the window-close flow running. Persist sessions first, then quit
-    // gracefully so before-quit's own teardown still runs.
+    // (powerMonitor; macOS/Linux) and SIGTERM (task-manager terminate / OS teardown)
+    // can end the app without the window-close flow running. Persist sessions first.
     powerMonitor.on('shutdown', () => sessionDurability.flushOnExit('powerMonitor shutdown'))
     powerMonitor.on('suspend', () => sessionDurability.flushOnExit('powerMonitor suspend'))
-    for (const sig of ['SIGTERM', 'SIGINT'] as const) {
-      process.on(sig, () => {
-        sessionDurability.flushOnExit(sig)
-        app.quit()
-      })
-    }
+    // Only SIGTERM. SIGINT is intentionally LEFT to Node's default so a console
+    // Ctrl+C on a dev run still terminates in one press — a SIGINT handler here
+    // re-entered the vetoable graceful-close dialog and left the app alive
+    // (adversarial-review round-2). Flush, then exit HARD: app.quit() would be
+    // vetoed by that same dialog, so a signal must not route through it.
+    process.on('SIGTERM', () => {
+      sessionDurability.flushOnExit('SIGTERM')
+      app.exit(0)
+    })
 
     // Set up application menu with Edit roles so Ctrl+C/V/X/A work in frameless window
     // On macOS, include the app name menu (About, Hide, Quit) and Window menu (macOS convention)

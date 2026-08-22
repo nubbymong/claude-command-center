@@ -87,7 +87,14 @@ export function saveSessionState(state: SessionState): boolean {
     // AFTER the atomic write -- not the prior file before it -- guarantees the .bak
     // is always a valid, recently-persisted state, never a half-written one. Best
     // effort: a copy failure must not fail the save the user actually asked for.
-    try { copyFileSync(file, getSessionStateBakFile()) } catch { /* .bak is a bonus, not a requirement */ }
+    // #397 round-2: log a copy failure. A silently-lagged .bak (the copy loses the
+    // same EBUSY/AV race the primary write can hit) would let a later recovery
+    // reinstate an OLDER set with no trace; the log gives that a trail.
+    try {
+      copyFileSync(file, getSessionStateBakFile())
+    } catch (bakErr) {
+      logError(`[session-state] .bak mirror copy failed (previous-good may be stale): ${(bakErr as Error)?.message ?? bakErr}`)
+    }
     logInfo(`[session-state] Saved ${state.sessions.length} sessions`)
     return true
   } catch (err) {

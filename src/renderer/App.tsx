@@ -83,7 +83,7 @@ import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
-import { useSessionAutosave } from './hooks/useSessionAutosave'
+import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -766,6 +766,9 @@ export default function App() {
     if (isUpdate) setIsUpdating(true)
     try {
       await flushPendingConfigSaves()
+      // #397 round-2: kill any pending debounced autosave first, so it cannot fire
+      // after the clear and rewrite the set the user just chose to discard.
+      cancelSessionAutosave()
       await window.electronAPI.session.clear()
       console.log('[App] Session state cleared')
       if (isUpdate) {
@@ -804,9 +807,15 @@ export default function App() {
       if (state.sessions.length === 0) {
         // No dialog on the zero-session path, so drain pending debounced
         // config saves here before letting the window die.
-        void flushPendingConfigSaves().finally(() => {
-          window.electronAPI.window.allowClose()
-        })
+        // #397 round-2: the user has closed every card. Cancel any pending autosave
+        // and clear the saved set so the exit-time flush cannot re-assert sessions
+        // the user closed (the file/cache could still hold the last non-empty set
+        // in the sub-second window before the empty autosave would have fired).
+        cancelSessionAutosave()
+        void flushPendingConfigSaves()
+          .then(() => window.electronAPI.session.clear())
+          .catch(() => { /* best-effort: the empty store still yields no card next launch */ })
+          .finally(() => window.electronAPI.window.allowClose())
         return
       }
       setCloseDialog('close')
@@ -1253,6 +1262,9 @@ export default function App() {
               useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
               // Discard the saved cards so the next boot doesn't re-prompt; the
               // conversations themselves stay resumable from inside Claude.
+              // #397 round-2: cancel a pending autosave first so it can't rewrite
+              // the discarded set into the file after the clear.
+              cancelSessionAutosave()
               void window.electronAPI.session.clear()
             }}
             onRefresh={async () => {

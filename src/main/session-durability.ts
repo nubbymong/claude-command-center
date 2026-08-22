@@ -37,18 +37,30 @@ export interface SessionDurability {
 
 export function createSessionDurability(deps: DurabilityDeps): SessionDurability {
   let last: SessionState | null = null
+  // #397 round-2: dedup redundant exit-flush I/O. Several exit hooks can fire in one
+  // teardown (e.g. SIGTERM → before-quit, or forceClose → render-process-gone); each
+  // flush re-enriches (a head read per Claude session) + atomic write + .bak copy.
+  // A real save resets this so a suspend-then-resume-then-quit still flushes fresh.
+  let flushedSinceSave = false
   const log = deps.log ?? (() => {})
 
-  function saveEnriched(state: SessionState): boolean {
+  // Enrich from the binder, cache, persist. Never touches the dedup flag.
+  function persist(state: SessionState): boolean {
     const enriched = enrichSessionStateWithResumeTargets(state, deps.enrichDeps)
     last = enriched
     return deps.save(enriched)
   }
 
+  function saveEnriched(state: SessionState): boolean {
+    flushedSinceSave = false
+    return persist(state)
+  }
+
   function flushOnExit(reason: string): void {
-    if (!last) return
+    if (!last || flushedSinceSave) return
+    flushedSinceSave = true
     try {
-      const ok = saveEnriched(last)
+      const ok = persist(last)
       log(ok
         ? `[session-state] durable flush on ${reason}`
         : `[session-state] durable flush on ${reason} REFUSED (read-failure latch); on-disk file kept`)

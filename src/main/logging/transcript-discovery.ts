@@ -201,16 +201,33 @@ export const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F
 // #397 N2: the cwd this resolver needs is written into the transcript's FIRST
 // entries, so read only a bounded HEAD, not the whole file. Enrichment now runs on
 // the MAIN process on every debounced autosave; a full sync read of a multi-MB
-// transcript there stalls all IPC. A head read keeps it O(constant). Fail-safe: any
-// error (or a missing file) yields '' → the resolver returns null → prior behaviour.
-const RESUME_HEAD_BYTES = 131072
+// transcript there stalls all IPC. A head read keeps it O(bounded).
+//
+// #397 round-2 (adversarial-review F1): the cap is 1 MB, not 128 KB, and the
+// trailing PARTIAL line is dropped when the file is larger than the cap. The
+// opening message of a Claude session is frequently the biggest (a pasted log /
+// diff), and it carries the cwd on that same line; a 128 KB slice cut that line
+// mid-way, JSON.parse failed, and the resume target was silently lost. 1 MB covers
+// a realistic first line, and dropping the truncated tail line means the resolver
+// only ever parses COMPLETE lines. Residual (fail-safe): a first line larger than
+// 1 MB still yields no cwd → null → the resume picker, exactly as before this file.
+const RESUME_HEAD_BYTES = 1_048_576
 function readTranscriptHead(p: string): string {
   let fd: number | null = null
   try {
     fd = fs.openSync(p, 'r')
-    const buf = Buffer.alloc(RESUME_HEAD_BYTES)
-    const n = fs.readSync(fd, buf, 0, RESUME_HEAD_BYTES, 0)
-    return buf.toString('utf-8', 0, n)
+    const size = fs.fstatSync(fd).size
+    const readLen = Math.min(RESUME_HEAD_BYTES, size)
+    const buf = Buffer.alloc(readLen)
+    const n = fs.readSync(fd, buf, 0, readLen, 0)
+    let text = buf.toString('utf-8', 0, n)
+    // If the file is larger than what we read, the last line is (almost certainly)
+    // truncated — drop it so a mid-line cut is never handed to JSON.parse.
+    if (readLen < size) {
+      const lastNl = text.lastIndexOf('\n')
+      text = lastNl === -1 ? '' : text.slice(0, lastNl + 1)
+    }
+    return text
   } catch {
     return ''
   } finally {
