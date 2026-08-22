@@ -329,6 +329,30 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     [canvasId, sessionId],
   )
 
+  /**
+   * Bring the frame's belief about hover reporting in line with the x-ray mode
+   * (#367).
+   *
+   * The host already ignores what it does not want, so this is not the gate —
+   * it is what makes Off free for the PAGE: a bridge told to stop does no hit
+   * test, no measurement and no postMessage per mousemove. Sent only when the
+   * frame's belief disagrees, so the common case (x-ray on, the bridge's own
+   * default) costs no round-trip at all.
+   */
+  const syncHoverReporting = useCallback(() => {
+    const enabled = xrayHoverIsLive(xrayModeRef.current)
+    if (frameHoverReportingRef.current === enabled) return
+    const target = iframeRef.current?.contentWindow
+    if (!target) return
+    frameHoverReportingRef.current = enabled
+    void askCanvasFrame(target, canvasId, { type: 'hoverReporting', enabled }, HOVER_REPORTING_TIMEOUT_MS).catch(() => {
+      /* An old bridge, a frame mid-navigation, a page that answers nothing: the
+         mode still holds, because the host-side gate is what enforces it. Left
+         marked as sent — a retry loop over an unanswerable frame would be the
+         page choosing the host's call rate. */
+    })
+  }, [canvasId])
+
   const handleReportedKey = useCallback(
     (key: string) => {
       const store = useCanvasReviewStore.getState()
@@ -360,6 +384,16 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         onReady: () => {
           bridgeReadyRef.current = true
           setBridgeReady(true)
+          // Every `ready` is a NEW document with a NEW bridge, and a new bridge
+          // reports by default. An in-frame navigation (a link inside the
+          // content) replaces the document without changing `contentUrl` or the
+          // reload nonce, so this is the ONLY signal that the frame has
+          // forgotten what it was told — without the reset, x-ray Off stopped
+          // quieting the page after the first link click, and the pane looked
+          // right only because the host gate was still dropping the reports
+          // (Copilot review, #405).
+          frameHoverReportingRef.current = true
+          syncHoverReporting()
         },
         onViewport: (vp) => {
           setViewport(vp)
@@ -391,7 +425,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         onFlood: () => setBridgeFlooded(true),
       },
     })
-  }, [repinGlass, canvasId, inspectAndLock, handleReportedKey])
+  }, [repinGlass, canvasId, inspectAndLock, handleReportedKey, syncHoverReporting])
 
   // The same two keys, host-side, for when the HOST document has keyboard
   // focus (after touching the panel or the chrome). Never while typing.
@@ -410,27 +444,12 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     return () => window.removeEventListener('keydown', onKey)
   }, [sessionId, handleReportedKey])
 
-  // Tell the frame whether the hover surface is wanted at all (#367).
-  //
-  // The host already ignores what it does not want, so this is not the gate —
-  // it is what makes Off free for the PAGE: a bridge told to stop does no hit
-  // test, no measurement and no postMessage per mousemove. Sent only when the
-  // frame's belief disagrees with the mode, so the common case (x-ray on, the
-  // bridge's own default) costs no round-trip at all.
+  // The user changed the mode: bring the frame in line with it. (A frame that
+  // is not ready yet is told on its `ready` instead — see the channel above.)
   useEffect(() => {
     if (!bridgeReady) return
-    const enabled = xrayHoverIsLive(xrayMode)
-    if (frameHoverReportingRef.current === enabled) return
-    const target = iframeRef.current?.contentWindow
-    if (!target) return
-    frameHoverReportingRef.current = enabled
-    void askCanvasFrame(target, canvasId, { type: 'hoverReporting', enabled }, HOVER_REPORTING_TIMEOUT_MS).catch(() => {
-      /* An old bridge, a frame mid-navigation, a page that answers nothing: the
-         mode still holds, because the host-side gate above is what enforces it.
-         Left marked as sent — a retry loop over an unanswerable frame would be
-         the page choosing the host's call rate. */
-    })
-  }, [xrayMode, bridgeReady, canvasId])
+    syncHoverReporting()
+  }, [xrayMode, bridgeReady, syncHoverReporting])
 
   // Switching x-ray off drops whatever was hovered at that instant, so nothing
   // is left painted over a page the user just asked to see plainly.

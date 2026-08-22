@@ -273,6 +273,32 @@ describe('x-ray OFF — the page behaves like a normal browser tab', () => {
     expect(hoverReportingCalls()).toEqual([false])
   })
 
+  it('tells a newly navigated document to stop reporting too', async () => {
+    // A link click inside the content replaces the document — and its bridge,
+    // which starts at its reporting default — without changing the pane's
+    // contentUrl or its reload nonce. `ready` is the only signal that the frame
+    // has forgotten what it was told, so a mode sync keyed on the URL left Off
+    // quieting only the FIRST page the canvas ever loaded (Copilot review,
+    // #405). The host gate hid this: nothing was drawn either way, and only the
+    // page's own per-mousemove work came back.
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    expect(hoverReportingCalls()).toEqual([false])
+
+    await act(async () => handlers().onReady())
+    expect(hoverReportingCalls()).toEqual([false, false])
+  })
+
+  it('does not re-ask a document that is already quiet', async () => {
+    // The reset is on `ready` (a new document), not on every render: a mode the
+    // frame already agrees with must still cost no round-trip.
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    await act(async () => handlers().onPointer(SAVE_BUTTON))
+    await act(async () => handlers().onViewport(VIEWPORT))
+    expect(hoverReportingCalls()).toEqual([false])
+  })
+
   it('says in the mode strip that hovering and clicking do nothing', async () => {
     await renderPane('off')
     expect(container.textContent).toContain('x-ray is off')
