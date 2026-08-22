@@ -35,11 +35,11 @@ vi.mock('../../../src/renderer/utils/config-saver', () => ({ saveConfigNow: vi.f
 // A frame that answers a hoverReporting request (as a real bridge does) and
 // never answers anything else — an inspect left in flight is what the
 // one-inspect-at-a-time rule is about, and is not this file's subject.
-const askFrame = vi.fn((_target: unknown, _canvasId: unknown, payload: { type?: string; enabled?: boolean }) =>
+const answerAsARealFrameWould = (_target: unknown, _canvasId: unknown, payload: { type?: string; enabled?: boolean }) =>
   payload?.type === 'hoverReporting'
     ? Promise.resolve({ enabled: payload.enabled })
-    : new Promise(() => {}),
-)
+    : new Promise(() => {})
+const askFrame = vi.fn(answerAsARealFrameWould)
 vi.mock('../../../src/renderer/canvas/canvas-frame-rpc', () => ({
   askCanvasFrame: (...args: unknown[]) => askFrame(...(args as [])),
   framesInFlight: () => 0,
@@ -122,6 +122,18 @@ function readout(): HTMLElement | null {
   return container.querySelector('[data-testid="canvas-xray-readout"]')
 }
 
+/**
+ * Park the NEXT frame request: it stays unanswered until the returned settle is
+ * called. This is the shape both review blockers hide in — a hoverReporting
+ * request is in flight (for up to HOVER_REPORTING_TIMEOUT_MS of real time)
+ * while the world moves under it.
+ */
+function parkNextRequest(): (value: unknown) => void {
+  let settle: (value: unknown) => void = () => {}
+  askFrame.mockImplementationOnce(() => new Promise((resolve) => { settle = resolve }))
+  return (value: unknown) => settle(value)
+}
+
 /** The hoverReporting requests the pane has sent to the frame, in order. */
 function hoverReportingCalls(): boolean[] {
   return askFrame.mock.calls
@@ -143,7 +155,10 @@ async function renderPane(mode?: CanvasXrayMode): Promise<void> {
 beforeEach(() => {
   createChannel.mockClear()
   disposeChannel.mockClear()
-  askFrame.mockClear()
+  // Reset, not clear: a test that installs its own frame behaviour must not
+  // leave it running for the next one.
+  askFrame.mockReset()
+  askFrame.mockImplementation(answerAsARealFrameWould)
   useCanvasStore.getState().reset()
   useCanvasReviewStore.getState().reset()
   useCanvasStore.setState({
@@ -224,6 +239,32 @@ describe('x-ray STEALTH — resolved, but nothing drawn on the page', () => {
     const label = container.querySelector('[data-testid="canvas-xray-label"]')
     expect(label?.textContent).toContain('page-reported')
     expect(label?.getAttribute('title')).toMatch(/cannot verify/i)
+  })
+
+  it('does not invite a hover the glass would swallow', async () => {
+    // In Draw (and Region) the pointer never reaches the content, so "Hover the
+    // page" was an instruction the user could follow for a while before working
+    // out why nothing ever appeared (independent review of #405).
+    await renderPane('stealth')
+    await act(async () => {
+      useCanvasStore.getState().setInteractionMode(SID, 'draw')
+    })
+    const idle = container.querySelector('[data-testid="canvas-xray-idle"]')
+    expect(idle?.textContent).toContain('Draw has the pointer')
+    expect(idle?.textContent).not.toContain('Hover the page')
+  })
+
+  it('says so for Region too, and goes back to the invitation in Browse', async () => {
+    await renderPane('stealth')
+    await act(async () => {
+      useCanvasReviewStore.getState().setMarqueeArmed(SID, true)
+    })
+    expect(container.querySelector('[data-testid="canvas-xray-idle"]')?.textContent).toContain('Region has the pointer')
+
+    await act(async () => {
+      useCanvasReviewStore.getState().setMarqueeArmed(SID, false)
+    })
+    expect(container.querySelector('[data-testid="canvas-xray-idle"]')?.textContent).toContain('Hover the page')
   })
 
   it('empties the readout when the pointer leaves the page', async () => {
@@ -314,43 +355,122 @@ describe('x-ray OFF — the page behaves like a normal browser tab', () => {
     // doing per-mousemove work for the rest of that document's life (Copilot
     // review, #405). Nothing is drawn either way, so the work IS the symptom.
     const refuse = () => Promise.reject(new Error('Too many canvas frame requests are already in flight'))
-    // `ready` and the mode effect that follows it are two triggers, so two
-    // refusals leave the frame un-told with nothing left to ask on its own.
     askFrame.mockImplementationOnce(refuse).mockImplementationOnce(refuse)
     await renderPane('off')
+    // Each refusal reconciles when it settles, so the third attempt lands
+    // without waiting for anything the page has to do first.
     await act(async () => handlers().onReady())
-    expect(hoverReportingCalls()).toEqual([false, false])
-
-    // The page is still reporting, which is the evidence that it never heard.
-    await act(async () => handlers().onPointer(SAVE_BUTTON))
     expect(hoverReportingCalls()).toEqual([false, false, false])
-    // …and nothing was drawn while it was still reporting.
     expect(overlay().textContent).not.toContain('button "Save"')
 
     // Once one lands, the asking stops.
     await act(async () => handlers().onPointer(SAVE_BUTTON))
-    await act(async () => handlers().onPointer(SAVE_BUTTON))
+    await act(async () => handlers().onViewport(VIEWPORT))
     expect(hoverReportingCalls()).toEqual([false, false, false])
   })
 
-  it('asks once at a time, however fast a page that will not go quiet reports', async () => {
-    // The repair is driven by the page's own reports, so without the in-flight
-    // guard the page would be choosing the host's call rate.
-    let settle: (v: unknown) => void = () => {}
-    askFrame.mockImplementationOnce(() => new Promise((resolve) => { settle = resolve }))
+  it('gives up on a frame that will never confirm, and tries again when the user asks again', async () => {
+    // The reconcile retries whenever a request settles without the frame
+    // agreeing, so something has to stop a page that never complies from
+    // setting the host's call rate. Three attempts per intent. (A non-boolean
+    // is no answer at all: the reply is page-authored, so nothing is believed
+    // from it and the state stays where it was.)
+    askFrame.mockImplementation(() => Promise.resolve({ enabled: 'nope' }))
     await renderPane('off')
     await act(async () => handlers().onReady())
+    expect(hoverReportingCalls()).toEqual([false, false, false])
+
+    // Reports from the page do not buy it more attempts.
     await act(async () => {
       for (let i = 0; i < 50; i++) handlers().onPointer(SAVE_BUTTON)
       for (let i = 0; i < 50; i++) handlers().onContentClick(1, 1)
     })
-    expect(hoverReportingCalls()).toEqual([false])
-    await act(async () => settle({ enabled: false }))
+    expect(hoverReportingCalls()).toEqual([false, false, false])
+
+    // Passing through On and back to Off is the user asking again, which is a
+    // new intent and a fresh budget. On itself sends nothing: the frame is
+    // already reporting, which is what On wants.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="canvas-xray-on"]')!.click()
+    })
+    expect(hoverReportingCalls()).toEqual([false, false, false])
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="canvas-xray-off"]')!.click()
+    })
+    expect(hoverReportingCalls()).toEqual([false, false, false, false, false, false])
+
+    // Nothing was ever drawn throughout: the host gate never depended on the
+    // frame complying.
+    expect(overlay().textContent).not.toContain('button "Save"')
   })
 
   it('says in the mode strip that hovering and clicking do nothing', async () => {
     await renderPane('off')
     expect(container.textContent).toContain('x-ray is off')
+  })
+})
+
+// ── The world moving under a parked request (independent review of #405) ─────
+// A hoverReporting request can sit unanswered for up to HOVER_REPORTING_TIMEOUT_MS.
+// Both findings live in that window, and neither has a symptom to repair from:
+// the frame in both cases goes QUIET, which is indistinguishable from a page
+// nobody is pointing at.
+describe('a mode change while a request is in flight', () => {
+  it('is not lost when the parked answer finally lands', async () => {
+    // BLOCKER-1. Off, request parked; the user flips to On, and the in-flight
+    // guard drops that sync. The parked answer then lands saying "quiet" — and
+    // before the post-settle reconcile, nothing re-ran: the frame stayed quiet
+    // for the life of the document, so x-ray On drew nothing, Stealth read out
+    // nothing, and clicks stopped selecting, with no report to notice it by.
+    const settle = parkNextRequest()
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    expect(hoverReportingCalls()).toEqual([false])
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="canvas-xray-on"]')!.click()
+    })
+    expect(hoverReportingCalls()).toEqual([false])
+
+    await act(async () => settle({ enabled: false }))
+    expect(hoverReportingCalls()).toEqual([false, true])
+
+    // …and the pane works again, which is the point.
+    await hoverSaveButton()
+    expect(overlay().textContent).toContain('button "Save"')
+  })
+
+  it('does not let the previous document’s answer land on the new one', async () => {
+    // MAJOR-2. Doc A's parked answer arrives after doc B's `ready`. Believing
+    // it about doc B set the state to "quiet" while doc B was loud, and the
+    // reconcile then short-circuited — re-opening, through the other door, the
+    // in-frame-navigation bug e608cf32 closed.
+    const settleDocA = parkNextRequest()
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    expect(hoverReportingCalls()).toEqual([false])
+
+    // Doc B: an in-frame navigation, so a new bridge at its reporting default.
+    await act(async () => handlers().onReady())
+    expect(hoverReportingCalls()).toEqual([false])
+
+    await act(async () => settleDocA({ enabled: false }))
+    expect(hoverReportingCalls()).toEqual([false, false])
+  })
+
+  it('releases the in-flight slot even for an answer it refuses to believe', async () => {
+    // The generation check must not skip the cleanup: one navigation during one
+    // request would otherwise wedge the switch for the life of the pane.
+    const settleDocA = parkNextRequest()
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    await act(async () => handlers().onReady())
+    await act(async () => settleDocA({ enabled: false }))
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="canvas-xray-on"]')!.click()
+    })
+    expect(hoverReportingCalls()).toEqual([false, false, true])
   })
 })
 

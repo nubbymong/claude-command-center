@@ -17,6 +17,19 @@
 import type { CanvasHitInfo } from '../../shared/canvas'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
 
+/**
+ * Who owns the pointer right now — the pane's Browse / Draw / Region switch,
+ * restated for this strip.
+ *
+ * The readout has to say something when it has no element to name, and "hover
+ * the page" is only true when hovering the page is a thing that can happen. In
+ * Draw the glass sits over the content and in Region the marquee layer does, so
+ * the content never sees the pointer: the invitation was an instruction the
+ * user could follow for a while before working out why nothing ever appeared
+ * (independent review of #405).
+ */
+export type CanvasPointerOwner = 'content' | 'glass' | 'marquee'
+
 interface Props {
   /** The hovered element as the CONTENT reported it, or null when the pointer
    *  is off the page (or has not been on it yet). */
@@ -24,6 +37,9 @@ interface Props {
   /** The same one-line identity the On-mode chip prints, assembled by the pane
    *  so the two modes can never drift into naming the same element differently. */
   label: string
+  /** Which layer the pointer is on, so the empty state can be honest about
+   *  whether hovering the content is even possible. */
+  pointerOwner: CanvasPointerOwner
 }
 
 /** Page coordinates, rounded — a sub-pixel box is noise in a readout. */
@@ -32,7 +48,15 @@ function boxText(box: CanvasHitInfo['box']): string {
   return `${r(box.width)} × ${r(box.height)} at ${r(box.x)}, ${r(box.y)}`
 }
 
-export default function CanvasXrayReadout({ hit, label }: Props) {
+/** What to say with no element to name — which depends entirely on whether the
+ *  content could have been hovered at all. */
+function idleText(pointerOwner: CanvasPointerOwner): string {
+  if (pointerOwner === 'glass') return 'Draw has the pointer — switch to Browse to name what you point at.'
+  if (pointerOwner === 'marquee') return 'Region has the pointer — switch to Browse to name what you point at.'
+  return 'Hover the page — what you point at is named here.'
+}
+
+export default function CanvasXrayReadout({ hit, label, pointerOwner }: Props) {
   return (
     <div
       className="w-80 shrink-0 border-l border-t border-surface0 bg-mantle text-[12px] px-3 py-2"
@@ -57,8 +81,8 @@ export default function CanvasXrayReadout({ hit, label }: Props) {
           </div>
         </>
       ) : (
-        <div className="mt-1 text-[11px] text-subtext0">
-          Hover the page — what you point at is named here.
+        <div className="mt-1 text-[11px] text-subtext0" data-testid="canvas-xray-idle">
+          {idleText(pointerOwner)}
         </div>
       )}
     </div>

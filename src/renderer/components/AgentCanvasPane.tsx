@@ -18,6 +18,7 @@ import {
   CanvasVersion,
   canvasContentUrl,
   type AnchorRef,
+  type CanvasHoverReportingResult,
 } from '../../shared/canvas'
 import { contentPageRectToStage, stageToContentPagePoint, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
 import { safeAnchorResolutions, safeInspectResult } from '../utils/canvas-geometry-guard'
@@ -51,6 +52,13 @@ const FRAME_READY_TIMEOUT_MS = 8000
  *  nothing waits on the answer — the host's own gate is what enforces the mode,
  *  and this request only asks the page to stop doing work it need not do. */
 const HOVER_REPORTING_TIMEOUT_MS = 3000
+
+/** How many times one intent may be re-sent to a frame that will not confirm
+ *  it. The reconcile retries whenever a request settles without the frame
+ *  agreeing, so without a cap a page that answers wrongly (or a saturated RPC
+ *  cap) would set the host's call rate. A new document and a new intent each
+ *  reset it, so this bounds futile retries, never the feature. */
+const MAX_HOVER_REPORTING_ATTEMPTS = 3
 
 /** Wall-clock of a render, or null when the stored stamp will not parse. */
 function versionClock(iso: string): string | null {
@@ -250,15 +258,40 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const modeRef = useRef(mode)
   const xrayModeRef = useRef(xrayMode)
   const versionIdRef = useRef(version.id)
-  /** What the CURRENT frame was last told about hover reporting. The bridge
-   *  starts reporting, so a freshly loaded frame believes `true` and only a
-   *  mode that disagrees costs a round-trip. Reset when the frame reloads —
-   *  the new document has a new bridge with the default back on. */
+  /** What the CURRENT document says it is doing about hover reporting. A bridge
+   *  starts reporting, so a freshly loaded frame is `true` and only a mode that
+   *  disagrees costs a round-trip. Written from the frame's ANSWER, never from
+   *  the send. */
   const frameHoverReportingRef = useRef(true)
-  /** One hoverReporting request at a time. The repair path is driven by the
-   *  page's own reports, so without this a page that declines to go quiet would
-   *  be choosing the host's call rate. */
+  /** One hoverReporting request in flight at a time. */
   const hoverReportingPendingRef = useRef(false)
+  /**
+   * Which document the in-flight request is about.
+   *
+   * Bumped on every `ready`. An answer is only believed about the document it
+   * was asked of: an in-frame navigation replaces the bridge while a request is
+   * parked, and letting the old document's answer land on the new one's state
+   * re-opened the exact bug e608cf32 closed, through the other door (independent
+   * review of #405).
+   */
+  const frameGenerationRef = useRef(0)
+  /**
+   * Attempts spent on the current intent. A frame can refuse (the RPC's
+   * in-flight cap), time out, or answer something other than what it was asked
+   * — and the reconcile below retries — so something has to stop a page that
+   * will never comply from choosing the host's call rate. The budget belongs to
+   * one intent, so it bounds futile retries rather than the feature.
+   */
+  const hoverReportingAttemptsRef = useRef(0)
+  /** Which intent that budget belongs to: `<document generation>:<wanted>`. A
+   *  new document or a new answer to want is a new intent and a fresh budget.
+   *  Kept as one derived key so there is a single place that decides, rather
+   *  than a reset at each call site — `ready` and the effect that follows it
+   *  are the same intent, and resetting in both handed it a double budget. */
+  const hoverReportingIntentRef = useRef('')
+  /** Self-reference for the post-settle reconcile, held in a ref so the
+   *  recursion does not depend on which render's binding was captured. */
+  const syncHoverReportingRef = useRef<() => void>(() => {})
   /** One outstanding inspect per frame — a page-driven click cannot open a
    *  second one while the first is unanswered. */
   const inspectPendingRef = useRef(false)
@@ -343,37 +376,67 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
    * frame's belief disagrees, so the common case (x-ray on, the bridge's own
    * default) costs no round-trip at all.
    *
-   * The belief is recorded on the ANSWER, never on the send. A request can be
-   * refused before it is posted — canvas-frame-rpc caps requests in flight at
-   * four, and a snapshot, an inspect and a resolveAnchors can already be
-   * outstanding when the user reaches for the switch — and marking it sent
-   * anyway left the host permanently certain it had quieted a frame that was
-   * never told, with the page doing per-mousemove work for the rest of that
-   * document's life (Copilot review, #405). Nothing is drawn either way, so the
-   * only symptom is the work itself.
+   * What the frame is doing is recorded from its ANSWER, never from the send. A
+   * request can be refused before it is ever posted — canvas-frame-rpc caps
+   * requests in flight at four, and a snapshot, an inspect and a resolveAnchors
+   * can already be outstanding when the user reaches for the switch — and
+   * marking it sent anyway left the host permanently certain it had quieted a
+   * frame that was never told (Copilot review, #405).
+   *
+   * And the reconcile happens when the request SETTLES, not when the page next
+   * reports. An earlier revision repaired from the symptom — a report arriving
+   * in a mode that wants none — which cannot see the failure that matters:
+   * flip the mode while a request is parked and the flip is dropped by the
+   * in-flight guard, the parked answer lands, and the frame stays quiet for the
+   * life of the document with x-ray showing nothing at all. Silence is not a
+   * symptom, so nothing is allowed to wait for one (independent review, #405).
    */
   const syncHoverReporting = useCallback(() => {
     const enabled = xrayHoverIsLive(xrayModeRef.current)
-    if (frameHoverReportingRef.current === enabled || hoverReportingPendingRef.current) return
+    // Recorded BEFORE the nothing-to-do check, so that passing through a mode
+    // the frame already agrees with still counts as changing the intent. Keyed
+    // after it, "Off (gave up) -> On -> Off" read as the same intent as the
+    // first Off and the second one got no attempts at all — the user asking
+    // again is the clearest signal there is that they want it to work.
+    const intent = `${frameGenerationRef.current}:${enabled}`
+    if (hoverReportingIntentRef.current !== intent) {
+      hoverReportingIntentRef.current = intent
+      hoverReportingAttemptsRef.current = 0
+    }
+    if (frameHoverReportingRef.current === enabled) return
+    if (hoverReportingPendingRef.current) return
+    if (hoverReportingAttemptsRef.current >= MAX_HOVER_REPORTING_ATTEMPTS) return
     const target = iframeRef.current?.contentWindow
     if (!target) return
+    const generation = frameGenerationRef.current
     hoverReportingPendingRef.current = true
+    hoverReportingAttemptsRef.current += 1
     askCanvasFrame(target, canvasId, { type: 'hoverReporting', enabled }, HOVER_REPORTING_TIMEOUT_MS)
       .then(
-        () => {
-          frameHoverReportingRef.current = enabled
+        (raw) => {
+          // Believed only about the document it was asked of, and only as the
+          // frame's own account of itself — the reply is page-authored, so a
+          // non-boolean is no answer at all and leaves the state alone.
+          if (generation !== frameGenerationRef.current) return
+          const answered = (raw as CanvasHoverReportingResult | null | undefined)?.enabled
+          if (typeof answered === 'boolean') frameHoverReportingRef.current = answered
         },
         () => {
           /* Never landed: refused by the in-flight cap, a frame mid-navigation,
-             a page that answers nothing. The belief stays where it was, so the
-             next report, mode change or `ready` asks again — and the mode still
-             holds meanwhile, because the host-side gate is what enforces it. */
+             a page that answers nothing. Nothing is believed — and the mode
+             still holds meanwhile, because the host-side gate is what enforces
+             it, not this request. */
         },
       )
       .finally(() => {
+        // Cleared for EVERY generation: a stale answer that is no longer
+        // believed must still release the in-flight slot, or one navigation
+        // mid-request would wedge the switch for the life of the pane.
         hoverReportingPendingRef.current = false
+        syncHoverReportingRef.current()
       })
   }, [canvasId])
+  syncHoverReportingRef.current = syncHoverReporting
 
   const handleReportedKey = useCallback(
     (key: string) => {
@@ -414,6 +477,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           // quieting the page after the first link click, and the pane looked
           // right only because the host gate was still dropping the reports
           // (Copilot review, #405).
+          //
+          // The generation bump is what stops the PREVIOUS document's parked
+          // answer from landing on this one's state and undoing this reset.
+          frameGenerationRef.current += 1
           frameHoverReportingRef.current = true
           syncHoverReporting()
         },
@@ -430,12 +497,6 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         onPointer: (hit) => {
           if (!xrayHoverIsLive(xrayModeRef.current)) {
             setHover(null)
-            // A report arriving in a mode that wants none IS the evidence that
-            // the frame was never told — the request was refused, lost, or this
-            // is a document that has not been asked yet. So the symptom drives
-            // the repair; the pending guard keeps it to one request at a time
-            // however fast the reports come.
-            syncHoverReporting()
             return
           }
           setHover(hit ? { hit } : null)
@@ -446,12 +507,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           // Under x-ray Off a click selects nothing: the page was asked for as a
           // normal browser tab, and a tab does not turn a click into a selection
           // (#367 left this open; see xrayClickSelects).
-          if (!xrayClickSelects(xrayModeRef.current)) {
-            // Same evidence as an unwanted pointer report: this frame is still
-            // reporting and should not be.
-            syncHoverReporting()
-            return
-          }
+          if (!xrayClickSelects(xrayModeRef.current)) return
           if (modeRef.current === 'browse') void inspectAndLock(pageX, pageY)
         },
         onContentKey: handleReportedKey,
@@ -648,6 +704,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     if (!hover || !viewport) return null
     return contentPageRectToStage(hover.hit.box, viewport)
   }, [hover, viewport])
+
+  /** Which layer the pointer is on — the same three-way the glass and marquee
+   *  layers are wired from, named once so the stealth readout can tell the user
+   *  why hovering the content is doing nothing. */
+  const pointerOwner = marqueeArmed ? 'marquee' : mode === 'draw' ? 'glass' : 'content'
 
   /** The hover box AS PAINTED on the stage. Null in every posture that must
    *  leave the content alone — the glass owning the pointer, a marquee being
@@ -1152,7 +1213,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             />
           </div>
           {xrayReadsOutInPanel(xrayMode) && (
-            <CanvasXrayReadout hit={mode === 'browse' && !marqueeArmed ? (hover?.hit ?? null) : null} label={hoverLabel} />
+            <CanvasXrayReadout
+              hit={pointerOwner === 'content' ? (hover?.hit ?? null) : null}
+              label={hoverLabel}
+              pointerOwner={pointerOwner}
+            />
           )}
         </div>
       </div>
