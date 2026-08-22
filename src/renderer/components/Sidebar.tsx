@@ -34,6 +34,7 @@ import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
 import ConfigHydrationNotice from './ConfigHydrationNotice'
 import ConfigLoadFailedNotice from './ConfigLoadFailedNotice'
+import ConfigLoadFailedRailIndicator from './sidebar/ConfigLoadFailedRailIndicator'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
@@ -610,6 +611,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           collapsed
           onShowAccountUsage={onShowAccountUsage}
         />
+        {/* #370: the config-load-failed notice below is in the EXPANDED list
+            only, so the rail carries a danger glyph (tooltip + click opens the
+            same notice in a popover) while writes are latched. Renders nothing
+            otherwise. */}
+        <ConfigLoadFailedRailIndicator />
         {/* `mt-auto` because the collapsed rail has no flex-1 child to push
             against — the nav is content-height. */}
         <AskConductorDock
