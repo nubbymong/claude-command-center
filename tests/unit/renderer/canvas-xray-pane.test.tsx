@@ -40,9 +40,13 @@ const answerAsARealFrameWould = (_target: unknown, _canvasId: unknown, payload: 
     ? Promise.resolve({ enabled: payload.enabled })
     : new Promise(() => {})
 const askFrame = vi.fn(answerAsARealFrameWould)
+/** How many requests the RPC layer already has outstanding to this frame. The
+ *  pane reads this before it posts, so a test can saturate the cap the way a
+ *  snapshot, an inspect and a resolution pass do. */
+let framesInFlightNow = 0
 vi.mock('../../../src/renderer/canvas/canvas-frame-rpc', () => ({
   askCanvasFrame: (...args: unknown[]) => askFrame(...(args as [])),
-  framesInFlight: () => 0,
+  framesInFlight: () => framesInFlightNow,
   MAX_FRAME_REQUESTS_IN_FLIGHT: 4,
 }))
 
@@ -69,6 +73,14 @@ const STATE: CanvasState = {
   activeVersionId: 'v1',
   versions: [{ id: 'v1', mode: 'design', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'design', entry: 'index.html' } }],
 } as CanvasState
+
+/** A second render on the same canvas — switching to it reloads the frame. */
+const V2 = {
+  id: 'v2',
+  mode: 'design',
+  createdAt: '2026-08-14T10:05:00Z',
+  source: { mode: 'design', entry: 'index.html' },
+} as (typeof STATE.versions)[number]
 
 const SAVE_BUTTON = {
   role: 'button',
@@ -159,6 +171,7 @@ beforeEach(() => {
   // leave it running for the next one.
   askFrame.mockReset()
   askFrame.mockImplementation(answerAsARealFrameWould)
+  framesInFlightNow = 0
   useCanvasStore.getState().reset()
   useCanvasReviewStore.getState().reset()
   useCanvasStore.setState({
@@ -374,7 +387,7 @@ describe('x-ray OFF — the page behaves like a normal browser tab', () => {
     // agreeing, so something has to stop a page that never complies from
     // setting the host's call rate. Three attempts per intent. (A non-boolean
     // is no answer at all: the reply is page-authored, so nothing is believed
-    // from it and the state stays where it was.)
+    // from it and the host records that it does not know.)
     askFrame.mockImplementation(() => Promise.resolve({ enabled: 'nope' }))
     await renderPane('off')
     await act(async () => handlers().onReady())
@@ -388,16 +401,20 @@ describe('x-ray OFF — the page behaves like a normal browser tab', () => {
     expect(hoverReportingCalls()).toEqual([false, false, false])
 
     // Passing through On and back to Off is the user asking again, which is a
-    // new intent and a fresh budget. On itself sends nothing: the frame is
-    // already reporting, which is what On wants.
+    // new intent and a fresh budget. On costs a round-trip of its own here —
+    // this frame answered nothing the host could believe, so the host does NOT
+    // know whether it is still reporting, and a mode that needs those reports
+    // has to say so rather than assume the default it started from (fix-delta
+    // verification, #405). A frame that answers truthfully still costs nothing:
+    // see the round-trip test below.
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="canvas-xray-on"]')!.click()
     })
-    expect(hoverReportingCalls()).toEqual([false, false, false])
+    expect(hoverReportingCalls()).toEqual([false, false, false, true, true, true])
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="canvas-xray-off"]')!.click()
     })
-    expect(hoverReportingCalls()).toEqual([false, false, false, false, false, false])
+    expect(hoverReportingCalls()).toEqual([false, false, false, true, true, true, false, false, false])
 
     // Nothing was ever drawn throughout: the host gate never depended on the
     // frame complying.
@@ -471,6 +488,115 @@ describe('a mode change while a request is in flight', () => {
       container.querySelector<HTMLButtonElement>('[data-testid="canvas-xray-on"]')!.click()
     })
     expect(hoverReportingCalls()).toEqual([false, false, true])
+  })
+})
+
+// ── What the host does NOT know (fix-delta verification of #405) ─────────────
+// The bridge applies hoverReporting and only THEN replies, so a request that
+// does not come back is not a request that did not happen. Everything here is
+// about the host being honest that it has no account of the frame, and about
+// not spending its one budget on conditions inside itself.
+describe('a request the frame never acknowledged', () => {
+  it('leaves the host not knowing, so the next mode still asks', async () => {
+    // MAJOR-A. Off is applied by the bridge; the ack is dropped (or lands after
+    // the timeout). Carrying the old belief forward made the flip to On a
+    // no-op — desire(true) matched belief(true), the reconcile short-circuited
+    // — and the frame stayed quiet for the life of the document: x-ray On drew
+    // nothing, clicks selected nothing, and no report was left to repair from.
+    const lost = () => Promise.reject(new Error('The canvas frame did not answer the hoverReporting request in time.'))
+    askFrame.mockImplementationOnce(lost).mockImplementationOnce(lost).mockImplementationOnce(lost)
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    expect(hoverReportingCalls()).toEqual([false, false, false])
+
+    // The user asks for On. The frame may well be quiet — the host cannot say —
+    // so this MUST go out rather than be answered from a stale belief.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="canvas-xray-on"]')!.click()
+    })
+    expect(hoverReportingCalls()).toEqual([false, false, false, true])
+
+    // …and once that lands the asking stops: unknown is a state to leave, not a
+    // reason to keep asking.
+    await act(async () => handlers().onPointer(SAVE_BUTTON))
+    expect(hoverReportingCalls()).toEqual([false, false, false, true])
+  })
+
+  it('does not spend the budget on a frame it never managed to ask', async () => {
+    // MINOR-B. Over the RPC's in-flight cap the request is refused BEFORE a
+    // listener exists — a synchronous rejection, which the post-settle
+    // reconcile fires straight back into: all three attempts went in three
+    // microtasks, on a condition that clears in milliseconds. (Reachable: the
+    // resolution pass has no in-flight guard of its own, so a few note edits
+    // inside its ten-second window saturate the cap.) The intent was then
+    // wedged — the cap cleared and nothing ever asked again.
+    askFrame.mockImplementation((target: unknown, canvasId: unknown, payload: { type?: string; enabled?: boolean }) =>
+      framesInFlightNow >= 4
+        ? Promise.reject(new Error('Too many canvas frame requests are already in flight'))
+        : answerAsARealFrameWould(target, canvasId, payload),
+    )
+    framesInFlightNow = 4
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    // Nothing was asked at all, so nothing was held against the frame.
+    expect(hoverReportingCalls()).toEqual([])
+
+    framesInFlightNow = 0
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    })
+    expect(hoverReportingCalls()).toEqual([false])
+  })
+
+  it('does not let a parked answer land on the document that replaced it', async () => {
+    // The NIT. A new version (or a retry) reloads the frame and resets the
+    // belief to a fresh bridge's default — but the request parked against the
+    // OLD document was still in its generation, so its answer landed on the new
+    // one and undid that reset. The generation bump belongs with every reset,
+    // not only with `ready`.
+    const settleOld = parkNextRequest()
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    expect(hoverReportingCalls()).toEqual([false])
+
+    await act(async () => {
+      useCanvasStore.setState((s) => ({
+        bySessionId: {
+          ...s.bySessionId,
+          [SID]: {
+            ...s.bySessionId[SID]!,
+            versions: [...STATE.versions, V2],
+            activeVersionId: V2.id,
+          },
+        },
+      }))
+    })
+    await act(async () => settleOld({ enabled: false }))
+    expect(hoverReportingCalls()).toEqual([false, false])
+  })
+
+  it('does not let a flood of `ready` multiply the send rate', async () => {
+    // MINOR-C. `ready` is page-authored, and every one of them is a new
+    // document with a fresh attempt budget — so a page that simply re-emits it
+    // multiplied the host's send rate by that budget (three requests became
+    // eighteen after five extra readys). The rolling send window is the
+    // ceiling, whatever drives it. Time is frozen so this asserts the ceiling
+    // and not the wall clock.
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+    try {
+      askFrame.mockImplementation(() => Promise.resolve({ enabled: 'nope' }))
+      await renderPane('off')
+      for (let i = 0; i < 6; i++) await act(async () => handlers().onReady())
+      // Six documents × three attempts is eighteen without a ceiling.
+      expect(hoverReportingCalls().length).toBe(12)
+      expect(hoverReportingCalls().every((enabled) => enabled === false)).toBe(true)
+      // And the mode still holds regardless: the host gate never depended on
+      // any of this landing.
+      await hoverSaveButton()
+      expect(overlay().textContent).not.toContain('button "Save"')
+    } finally {
+      now.mockRestore()
+    }
   })
 })
 

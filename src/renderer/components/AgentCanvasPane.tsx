@@ -23,7 +23,7 @@ import {
 import { contentPageRectToStage, stageToContentPagePoint, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
 import { safeAnchorResolutions, safeInspectResult } from '../utils/canvas-geometry-guard'
 import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
-import { askCanvasFrame } from '../canvas/canvas-frame-rpc'
+import { askCanvasFrame, framesInFlight, MAX_FRAME_REQUESTS_IN_FLIGHT } from '../canvas/canvas-frame-rpc'
 import { createCanvasInboundChannel } from '../canvas/canvas-inbound-channel'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
 import {
@@ -59,6 +59,32 @@ const HOVER_REPORTING_TIMEOUT_MS = 3000
  *  cap) would set the host's call rate. A new document and a new intent each
  *  reset it, so this bounds futile retries, never the feature. */
 const MAX_HOVER_REPORTING_ATTEMPTS = 3
+
+/** How long the reconcile waits before looking again when the request could not
+ *  be SENT at all — the frame's request channel was full, or the send window
+ *  below was spent. Both conditions clear on their own in well under a second,
+ *  so this is a pause, not a backoff. */
+const HOVER_REPORTING_RETRY_MS = 250
+
+/** How many times one attempt may be deferred that way before the pane stops
+ *  looking. Bounded because the timer is the HOST's own loop: without a cap a
+ *  frame that stays saturated would be polled for the life of the document. */
+const MAX_HOVER_REPORTING_DEFERRALS = 12
+
+/**
+ * The ceiling on hoverReporting requests actually posted to a frame in one
+ * rolling window — the flood budget for this channel.
+ *
+ * The per-intent attempt budget bounds futile RETRIES; it cannot bound a page
+ * that manufactures new intents. `ready` is a page-authored message and every
+ * `ready` is a new document with a fresh budget, so a page that simply re-emits
+ * it multiplied the host's send rate by the attempt budget — three requests
+ * became eighteen after five extra readys (independent review of #405). This
+ * bounds the rate whatever drives it; over the ceiling the reconcile waits for
+ * the window rather than spending an attempt.
+ */
+const MAX_HOVER_REPORTING_SENDS_PER_WINDOW = 12
+const HOVER_REPORTING_SEND_WINDOW_MS = 1000
 
 /** Wall-clock of a render, or null when the stored stamp will not parse. */
 function versionClock(iso: string): string | null {
@@ -258,11 +284,25 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const modeRef = useRef(mode)
   const xrayModeRef = useRef(xrayMode)
   const versionIdRef = useRef(version.id)
-  /** What the CURRENT document says it is doing about hover reporting. A bridge
-   *  starts reporting, so a freshly loaded frame is `true` and only a mode that
-   *  disagrees costs a round-trip. Written from the frame's ANSWER, never from
-   *  the send. */
-  const frameHoverReportingRef = useRef(true)
+  /**
+   * What the CURRENT document says it is doing about hover reporting. A bridge
+   * starts reporting, so a freshly loaded frame is `true` and only a mode that
+   * disagrees costs a round-trip. Written from the frame's ANSWER, never from
+   * the send.
+   *
+   * `'unknown'` is a real third state, not a spelling of `true`. A request that
+   * settles without a boolean — refused, timed out, answered with something the
+   * frame did not have to mean — leaves the host with NO account of what the
+   * frame is doing, and leaving the last belief standing there is a lie the
+   * reconcile then acts on: the bridge applies hoverReporting and only then
+   * replies (canvas/bridge), so an Off whose ack is dropped has quieted a frame
+   * the host still believes is loud. Flip to On and desire (true) matched
+   * belief (true), the reconcile short-circuited, and the frame stayed quiet for
+   * the life of the document — x-ray On drawing nothing and clicks selecting
+   * nothing, with no report left to repair from (fix-delta verification, #405).
+   * Unknown never equals what is wanted, so it always re-sends.
+   */
+  const frameHoverReportingRef = useRef<boolean | 'unknown'>(true)
   /** One hoverReporting request in flight at a time. */
   const hoverReportingPendingRef = useRef(false)
   /**
@@ -289,6 +329,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
    *  than a reset at each call site — `ready` and the effect that follows it
    *  are the same intent, and resetting in both handed it a double budget. */
   const hoverReportingIntentRef = useRef('')
+  /** How many times the CURRENT attempt has been deferred because the request
+   *  could not be posted at all. Reset when one is actually dispatched, and
+   *  with the intent. */
+  const hoverReportingDeferralsRef = useRef(0)
+  /** The one outstanding deferral timer, so a deferral cannot fan out. */
+  const hoverReportingRetryTimerRef = useRef<number | null>(null)
+  /** The rolling send window: requests posted since `start`. */
+  const hoverReportingWindowRef = useRef({ start: 0, sent: 0 })
   /** Self-reference for the post-settle reconcile, held in a ref so the
    *  recursion does not depend on which render's binding was captured. */
   const syncHoverReportingRef = useRef<() => void>(() => {})
@@ -367,6 +415,46 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   )
 
   /**
+   * Look again shortly, because the request could not be POSTED — not because
+   * the frame said anything. Deliberately not an attempt: an attempt is a thing
+   * the frame was actually asked, and spending the budget on a condition inside
+   * the HOST clears it in three microtasks and wedges the intent (see the
+   * dispatch checks below).
+   */
+  const deferHoverReconcile = useCallback(() => {
+    if (hoverReportingRetryTimerRef.current !== null) return
+    if (hoverReportingDeferralsRef.current >= MAX_HOVER_REPORTING_DEFERRALS) return
+    hoverReportingDeferralsRef.current += 1
+    hoverReportingRetryTimerRef.current = window.setTimeout(() => {
+      hoverReportingRetryTimerRef.current = null
+      syncHoverReportingRef.current()
+    }, HOVER_REPORTING_RETRY_MS)
+  }, [])
+
+  /** Requests still postable in the current send window, rolling it over when
+   *  it has expired. Reading it is what advances the window; posting is what
+   *  spends it. */
+  const hoverReportingSendBudget = useCallback((now: number) => {
+    const w = hoverReportingWindowRef.current
+    if (now - w.start >= HOVER_REPORTING_SEND_WINDOW_MS) {
+      w.start = now
+      w.sent = 0
+    }
+    return MAX_HOVER_REPORTING_SENDS_PER_WINDOW - w.sent
+  }, [])
+
+  // A deferral timer must not outlive the pane: it holds the reconcile, which
+  // would post into a frame the user has closed.
+  useEffect(() => {
+    return () => {
+      if (hoverReportingRetryTimerRef.current !== null) {
+        window.clearTimeout(hoverReportingRetryTimerRef.current)
+        hoverReportingRetryTimerRef.current = null
+      }
+    }
+  }, [])
+
+  /**
    * Bring the frame's belief about hover reporting in line with the x-ray mode
    * (#367).
    *
@@ -402,30 +490,57 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     if (hoverReportingIntentRef.current !== intent) {
       hoverReportingIntentRef.current = intent
       hoverReportingAttemptsRef.current = 0
+      hoverReportingDeferralsRef.current = 0
     }
+    // Unknown is never equal to what is wanted, so a frame the host has no
+    // account of is always asked again rather than short-circuited here.
     if (frameHoverReportingRef.current === enabled) return
     if (hoverReportingPendingRef.current) return
     if (hoverReportingAttemptsRef.current >= MAX_HOVER_REPORTING_ATTEMPTS) return
     const target = iframeRef.current?.contentWindow
     if (!target) return
+    // ── Two ways the request cannot be posted AT ALL, neither of which is the
+    //    frame's doing, and neither of which spends an attempt.
+    //
+    // The first is the RPC's in-flight cap: over it the request is refused
+    // before a listener exists, and that refusal is a synchronous rejection —
+    // which the post-settle reconcile below then fires on, spending the whole
+    // budget in three microtasks on a condition that clears in milliseconds.
+    // (Reachable: the resolution pass has no in-flight guard of its own, so a
+    // few note edits inside its ten-second window saturate the cap.) The
+    // second is this channel's own send window. Both clear on their own, so the
+    // reconcile waits for them instead of counting them against the frame
+    // (fix-delta verification, #405).
+    if (framesInFlight(target) >= MAX_FRAME_REQUESTS_IN_FLIGHT || hoverReportingSendBudget(Date.now()) <= 0) {
+      deferHoverReconcile()
+      return
+    }
     const generation = frameGenerationRef.current
     hoverReportingPendingRef.current = true
     hoverReportingAttemptsRef.current += 1
+    hoverReportingDeferralsRef.current = 0
+    hoverReportingWindowRef.current.sent += 1
     askCanvasFrame(target, canvasId, { type: 'hoverReporting', enabled }, HOVER_REPORTING_TIMEOUT_MS)
       .then(
         (raw) => {
           // Believed only about the document it was asked of, and only as the
           // frame's own account of itself — the reply is page-authored, so a
-          // non-boolean is no answer at all and leaves the state alone.
+          // non-boolean is no answer at all and the host is left not knowing.
           if (generation !== frameGenerationRef.current) return
           const answered = (raw as CanvasHoverReportingResult | null | undefined)?.enabled
-          if (typeof answered === 'boolean') frameHoverReportingRef.current = answered
+          frameHoverReportingRef.current = typeof answered === 'boolean' ? answered : 'unknown'
         },
         () => {
           /* Never landed: refused by the in-flight cap, a frame mid-navigation,
-             a page that answers nothing. Nothing is believed — and the mode
-             still holds meanwhile, because the host-side gate is what enforces
-             it, not this request. */
+             a page that answers nothing, an ack lost or too late. The bridge
+             APPLIES the change and only then replies, so a request that does
+             not come back leaves the host with no account of the frame at all —
+             recorded as exactly that, because carrying the old belief forward is
+             what let a dropped ack strand the frame quiet for the life of the
+             document. The mode still holds meanwhile: the host-side gate is what
+             enforces it, not this request. */
+          if (generation !== frameGenerationRef.current) return
+          frameHoverReportingRef.current = 'unknown'
         },
       )
       .finally(() => {
@@ -435,7 +550,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         hoverReportingPendingRef.current = false
         syncHoverReportingRef.current()
       })
-  }, [canvasId])
+  }, [canvasId, deferHoverReconcile, hoverReportingSendBudget])
   syncHoverReportingRef.current = syncHoverReporting
 
   const handleReportedKey = useCallback(
@@ -549,6 +664,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // New version (or a retry) → the frame reloads; bridge state starts over.
   useEffect(() => {
     bridgeReadyRef.current = false
+    // Bumped for the same reason `ready` bumps it: this is a NEW document, and
+    // the request parked against the old one must not land on the reset below
+    // and undo it. (The reset without the bump was the one place the two were
+    // not kept together — fix-delta verification, #405.)
+    frameGenerationRef.current += 1
     frameHoverReportingRef.current = true
     setBridgeReady(false)
     setViewport(null)
