@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
 import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
@@ -89,7 +89,9 @@ import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
-import { getConfigDir, snapshotConfig } from './config-manager'
+import { enrichSessionStateWithResumeTargets } from './session-resume-enrich'
+import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
+import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
@@ -105,6 +107,45 @@ import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVer
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
+
+// #397: the most recent session state pushed from the renderer, already enriched
+// with exact-conversation resume targets. Cached so a durable flush on a
+// non-graceful exit (before-quit / signal / power event) can write it even when
+// the renderer never reached its graceful Save-&-Close path.
+let lastKnownSessionState: SessionState | null = null
+
+// Enrich a renderer-supplied SessionState from the live transcript binder, then
+// persist it. This is the SINGLE session-state write choke point: every renderer
+// writer (autosave, account flush, GitHub flush, Save-&-Close) routes through the
+// `session:save` IPC into here, so EVERY persisted file carries a resumable target
+// — not just the graceful-close one. That closes #397 Group 1 (a non-graceful exit
+// left a non-enriched file → next launch fell back to the resume picker) and the
+// autosave-clobber race (there is no longer a non-enriched writer). Also caches the
+// enriched state for the exit-time durable flush (#397 Group 2).
+function saveEnrichedSessionState(state: SessionState): boolean {
+  const binder = getTranscriptBinder()
+  const enriched = enrichSessionStateWithResumeTargets(state, {
+    getLatestTranscriptPath: (id) => binder?.getLatestTranscriptPath(id) ?? null,
+    resolveResumeTargetFromTranscript,
+  })
+  lastKnownSessionState = enriched
+  return saveSessionState(enriched)
+}
+
+// #397 Group 2: write the last-known session state on ANY exit path — not only the
+// renderer's graceful Save-&-Close. Re-enriches from the still-live binder so the
+// freshest resume target is written. saveSessionState is atomic and idempotent, so
+// being called from several exit hooks in one teardown is harmless. A no-op until
+// the renderer has pushed at least one state this run.
+function flushSessionStateOnExit(reason: string): void {
+  if (!lastKnownSessionState) return
+  try {
+    saveEnrichedSessionState(lastKnownSessionState)
+    logInfo(`[session-state] durable flush on ${reason}`)
+  } catch (err) {
+    logError(`[session-state] durable flush on ${reason} failed: ${(err as Error)?.message ?? err}`)
+  }
+}
 
 // Multi-instance (dev alongside prod): a dev build must NOT share prod's data
 // dir (CONFIG/sessions/transcripts/profiles). Point it at a dedicated dev root
@@ -457,6 +498,12 @@ function createWindow(): void {
     }
   })
 
+  // #397 Group 2: a renderer crash / OOM kills the window before it can run its
+  // graceful save. Persist the last-known session state so the sessions survive.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    flushSessionStateOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
+  })
+
   // Renderer calls this after saving sessions and graceful exit
   ipcMain.on('window:allowClose', () => {
     allowClose = true
@@ -482,6 +529,9 @@ function createWindow(): void {
   // then calls 'window:forceClose' to actually close
   ipcMain.on('window:close', () => mainWindow?.close())
   ipcMain.on('window:forceClose', () => {
+    // #397 Group 2: destroy() bypasses the 'close' event and the graceful save;
+    // persist the last-known session state before the window is torn down.
+    flushSessionStateOnExit('window:forceClose')
     if (mainWindow) {
       mainWindow.destroy()  // Force close without triggering close event
     }
@@ -574,7 +624,7 @@ function createWindow(): void {
 
   // Session state persistence IPC handlers
   ipcMain.handle('session:save', async (_event, state: SessionState) => {
-    return saveSessionState(state)
+    return saveEnrichedSessionState(state)
   })
 
   ipcMain.handle('session:load', async () => {
@@ -699,6 +749,20 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(() => {
+    // #397 Group 2: exit paths that skip app 'before-quit'. An OS shutdown/logoff
+    // (powerMonitor; macOS/Linux) and a process signal (SIGTERM/SIGINT, e.g. a
+    // console Ctrl+C on a dev run or a task-manager terminate) can end the app
+    // without the window-close flow running. Persist sessions first, then quit
+    // gracefully so before-quit's own teardown still runs.
+    powerMonitor.on('shutdown', () => flushSessionStateOnExit('powerMonitor shutdown'))
+    powerMonitor.on('suspend', () => flushSessionStateOnExit('powerMonitor suspend'))
+    for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+      process.on(sig, () => {
+        flushSessionStateOnExit(sig)
+        app.quit()
+      })
+    }
+
     // Set up application menu with Edit roles so Ctrl+C/V/X/A work in frameless window
     // On macOS, include the app name menu (About, Hide, Quit) and Window menu (macOS convention)
     const menuTemplate: Electron.MenuItemConstructorOptions[] = []
@@ -1145,6 +1209,9 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     logInfo('App quitting...')
+    // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
+    // transcript binder down — flushing after that would lose the resume targets.
+    flushSessionStateOnExit('before-quit')
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
     try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
