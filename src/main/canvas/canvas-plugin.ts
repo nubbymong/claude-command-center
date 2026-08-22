@@ -140,6 +140,32 @@ submitted a review. Then:
 re-opens the canvas; each addressed note is re-anchored against your new
 version and THEY approve or re-annotate it by hand. Approval is theirs alone.
 
+## When they tell you to close a round
+
+Sometimes the verdict arrives in chat instead: "those all shipped, mark them
+stale", "drop the rest of R3". Then — and ONLY then —
+
+\`canvas_verdict { reviewId: "R3", verdict: "stale" }\`
+
+closes the round on their word. \`stale\` means the work the notes asked about
+has shipped; \`dismissed\` means it is being dropped without action. Name
+specific notes with \`annotationIds\` if they meant only some of them.
+
+Three things about it:
+
+- **It cannot approve, and neither can you.** There is no approve verdict, and
+  the app refuses one rather than taking this page's word for it. Afterwards,
+  say you closed the notes because they asked — never that they were approved.
+- **Only a round already waiting on THEM.** Every note on it must be addressed.
+  If any is still open, do the work and \`canvas_resolve\` it first; the call is
+  refused until then, and the refusal says how many are left.
+- **Never on your own initiative.** A board you think is finished is not an
+  instruction. Without a clear request from the user in this conversation, leave
+  it alone — they close rounds from the Canvas pane in one click.
+
+What you close is recorded as "closed by the agent on your instruction", listed
+apart from their own approvals, and reopenable in one click. Nothing is deleted.
+
 ## Exceptions you may hit
 
 - Render refused for being outside the served folders: the refusal NAMES the

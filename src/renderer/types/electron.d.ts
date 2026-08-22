@@ -381,8 +381,13 @@ export interface ElectronAPI {
     annotationResolve: (args: {
       sessionId: string
       annotationId: string
-      action: 'approve' | 'dismiss' | 'reannotate'
+      action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
     }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
+    /** The user puts a closed note back in play — the undo half of close-out. */
+    annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** Bulk close-out for one canvas whose work has shipped. Clears, never
+     *  deletes. `ok: false` means the store could not be read. */
+    reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {

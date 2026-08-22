@@ -273,8 +273,14 @@ export interface ElectronAPI {
     annotationResolve: (args: {
       sessionId: string
       annotationId: string
-      action: 'approve' | 'dismiss' | 'reannotate'
+      action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
     }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
+    /** The user puts a closed note back in play — the undo half of close-out. */
+    annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** Bulk close-out for one canvas whose work has shipped. Clears the rounds
+     *  already waiting on the user; deletes nothing. `ok: false` means the
+     *  review store could not be read — never "there was nothing to clear". */
+    reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {
@@ -838,8 +844,11 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_DELETE, args),
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
-    annotationResolve: (args: { sessionId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' }) =>
+    annotationResolve: (args: { sessionId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' | 'stale' }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_RESOLVE, args),
+    annotationReopen: (args: { sessionId: string; annotationId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_REOPEN, args),
+    reviewCloseOut: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_CLOSE_OUT, args),
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
       const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)
       ipcRenderer.on(IPC.CANVAS_REVIEW_CHANGED, handler)

@@ -56,6 +56,7 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
       throw new Error('no design files in this fixture')
     },
     markAddressed: () => ({ addressed: [], skipped: [] }),
+    closeByAgent: () => ({ closed: [], skipped: [], reviewClosed: false }),
     // Defaults are the "could not tell" answers, so every pre-existing
     // expectation over the reply text stays exactly as it was. Tests that care
     // about the context lines override them.
@@ -323,7 +324,8 @@ describe('registration', () => {
   it('advertises canvas_snapshot with a schema the SDK can accept', () => {
     const registered = vi.fn()
     registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
-    expect(registered).toHaveBeenCalledTimes(4)
+    // snapshot, render, review, resolve, verdict (#365).
+    expect(registered).toHaveBeenCalledTimes(5)
     const [name, description, shape, handler] = registered.mock.calls[0]
     expect(name).toBe('canvas_snapshot')
     expect(String(description)).toMatch(/scoped/i)
@@ -772,7 +774,13 @@ describe('canvas_render', () => {
       },
     }
     registerCanvasTools(server, z, () => null, deps())
-    expect(Object.keys(tools).sort()).toEqual(['canvas_render', 'canvas_resolve', 'canvas_review', 'canvas_snapshot'])
+    expect(Object.keys(tools).sort()).toEqual([
+      'canvas_render',
+      'canvas_resolve',
+      'canvas_review',
+      'canvas_snapshot',
+      'canvas_verdict',
+    ])
 
     const reply = await tools.canvas_render({ mode: 'design', html: '<p>hi</p>' })
     expect(reply.isError).toBe(true)

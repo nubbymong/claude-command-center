@@ -133,14 +133,42 @@ export interface FocusObject {
 export type AnnotationScope = 'element' | 'region' | 'general'
 /**
  * `open` is the only state a note is born in. The user moves it to `approved`,
- * `dismissed` or `reannotated` from the panel. `addressed` is the AGENT's:
- * "I acted on this note" — set through canvas_resolve after the agent has done
- * the work, so a review the user finishes in chat rather than in the panel
- * does not sit as five open notes forever. It is deliberately not `approved`:
- * approval is the user's word, and the agent never speaks it for them.
+ * `dismissed`, `stale` or `reannotated` from the panel. `addressed` is the
+ * AGENT's: "I acted on this note" — set through canvas_resolve after the agent
+ * has done the work, so a review the user finishes in chat rather than in the
+ * panel does not sit as five open notes forever. It is deliberately not
+ * `approved`: approval is the user's word, and the agent never speaks it for
+ * them.
+ *
+ * `stale` is the CLOSE-OUT state: the work this note was about has SHIPPED, so
+ * the note is no longer live — and nobody is claiming it was reviewed and found
+ * good. That distinction is the whole reason for a sixth state rather than
+ * reusing `approved`: "this went out" and "I looked and it is right" are
+ * different facts, and only the second is the user's verdict to give.
+ *
+ * `approved` is the one state NO tool can write. Enforced in the review store
+ * (`closeAnnotationsByAgent`), not merely described in a tool schema — a tool
+ * description is a request, and MCP arguments are model-generated.
  */
-export type AnnotationState = 'open' | 'addressed' | 'approved' | 'reannotated' | 'dismissed'
+export type AnnotationState = 'open' | 'addressed' | 'approved' | 'reannotated' | 'dismissed' | 'stale'
 export type PlanVerdict = 'accept' | 'reject' | 'question'
+
+/**
+ * The two terminal states an AGENT may set, and then only on the user's
+ * explicit instruction (the `canvas_verdict` tool).
+ *
+ * A frozen list rather than a bare type union, because the check enforcing it
+ * has to exist at RUNTIME: the value arrives from a model-generated MCP tool
+ * call, and a TypeScript union is not a boundary. `approved` is deliberately,
+ * permanently absent — approval stays a click only the user can make.
+ */
+export const AGENT_CLOSE_VERDICTS = ['stale', 'dismissed'] as const
+export type AgentCloseVerdict = (typeof AGENT_CLOSE_VERDICTS)[number]
+
+/** Who moved a note to a terminal state. `agent` means `canvas_verdict` wrote
+ *  it on the user's instruction — which the panel says out loud, and lists
+ *  apart from the user's own approvals. */
+export type AnnotationClosedBy = 'user' | 'agent'
 
 /** A sketch attached to a note (D6). The glass is never the data model: this
  *  RECORD references glass elements; the PNG is exported once, at submit. */
@@ -170,6 +198,28 @@ export interface Annotation {
   state: AnnotationState
   /** Id of the re-annotation that replaced this note (state 'reannotated'). */
   supersededBy?: string
+  /**
+   * Who moved this note to its terminal state. Absent on a live note, and
+   * absent on records written before close-out existed.
+   *
+   * The panel needs it because `stale` and `dismissed` are reachable from both
+   * sides: the user clicking "Accept as built", and the agent calling
+   * `canvas_verdict` on the user's word. Those read very differently to the
+   * person who has to trust the list, so the row says which one happened.
+   * `approved` is always the user's — no tool can write it — so this field can
+   * never be 'agent' beside that state.
+   */
+  closedBy?: AnnotationClosedBy
+  /**
+   * The state this note held when it was closed, so REOPEN can put it back
+   * exactly where it was rather than guessing.
+   *
+   * Without it, reopening has to pick one: send it back to 'open' (telling the
+   * agent to do work it already did) or to 'addressed' (claiming the agent
+   * acted when it may never have). Both are wrong some of the time, and the
+   * record already knew the answer at the moment it was closed.
+   */
+  closedFrom?: 'open' | 'addressed'
 }
 
 export interface Review {
@@ -676,6 +726,11 @@ export interface CanvasLibraryEntry {
    *  be read — deliberately not 0, so a broken store never renders as "clear". */
   openReviewCount?: number
   draftNoteCount?: number
+  /** Notes the agent has marked addressed and the user has not ruled on — the
+   *  ones a bulk close-out on this row would actually clear. `undefined` for
+   *  an unreadable store, exactly like the two above: the library must never
+   *  offer "close 0 notes" when the truth is "could not tell". */
+  addressedNoteCount?: number
 }
 
 export interface CanvasSnapshotRequestEvent {

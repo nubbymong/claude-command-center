@@ -21,11 +21,13 @@ import {
 } from '../canvas/canvas-store'
 import {
   MAX_SKETCH_PNG_BYTES,
+  closeOutCanvasReviews,
   deleteAnnotation,
   dropReviewsForCanvas,
   getReviewCountsForCanvas,
   getReviewStateForSession,
   onReviewChanged,
+  reopenAnnotation,
   resolveAnnotation,
   submitReview,
   upsertAnnotation,
@@ -220,8 +222,22 @@ const annotationResolveSchema = z
   .object({
     sessionId: sessionIdSchema,
     annotationId: annotationIdSchema,
-    action: z.enum(['approve', 'dismiss', 'reannotate']),
+    // 'stale' is the close-out verdict: the work shipped, so the note is no
+    // longer live. Deliberately distinct from 'approve' — the user is saying
+    // "this went out", not "I checked it and it is right".
+    action: z.enum(['approve', 'dismiss', 'reannotate', 'stale']),
   })
+  .strict()
+
+const annotationReopenSchema = z.object({ sessionId: sessionIdSchema, annotationId: annotationIdSchema }).strict()
+
+/** The library's bulk close-out. Takes a canvas ID and nothing else — same
+ *  charset bound as delete, and like delete it is keyed by canvas rather than
+ *  session because the library shows the whole project, including canvases
+ *  owned by sessions that have since closed. Clearing notes is housekeeping: it
+ *  never moves ownership, and it never removes a file. */
+const reviewCloseOutSchema = z
+  .object({ canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
   .strict()
 
 // ---------------------------------------------------------------------------
@@ -284,6 +300,10 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
       if (!counts) continue
       e.openReviewCount = counts.openReviewIds.length
       e.draftNoteCount = counts.draftNotes
+      // What a bulk close-out on this row would actually clear: notes the agent
+      // says it handled and the user has not ruled on. Left undefined with the
+      // other two when the store is unreadable.
+      e.addressedNoteCount = counts.addressedNotes
     }
     return entries
   })
@@ -334,6 +354,24 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   ipcMain.handle(IPC.CANVAS_ANNOTATION_RESOLVE, async (_e, args: unknown) => {
     const { sessionId, annotationId, action } = annotationResolveSchema.parse(args)
     return resolveAnnotation(sessionId, annotationId, action)
+  })
+
+  // The undo half of close-out. Cheap and one click away, which is what makes
+  // a bulk close safe to offer at all.
+  ipcMain.handle(IPC.CANVAS_ANNOTATION_REOPEN, async (_e, args: unknown) => {
+    const { sessionId, annotationId } = annotationReopenSchema.parse(args)
+    return reopenAnnotation(sessionId, annotationId)
+  })
+
+  // "The work on this canvas shipped — clear its notes." Clears, never deletes:
+  // the canvas, its versions and every note's text stay exactly where they are,
+  // and each cleared note keeps a Reopen.
+  ipcMain.handle(IPC.CANVAS_REVIEW_CLOSE_OUT, async (_e, args: unknown) => {
+    const { canvasId } = reviewCloseOutSchema.parse(args)
+    const result = closeOutCanvasReviews(canvasId)
+    // null is "could not read the store", which must not render as "cleared 0".
+    if (!result) return { ok: false as const }
+    return { ok: true as const, closed: result.closed, reviews: result.reviews }
   })
 
   onReviewChanged((event) => {

@@ -36,6 +36,11 @@ export function CanvasLibrary({
   const [confirming, setConfirming] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** Which row has its close-out armed, and what the last one cleared — the
+   *  count is the only proof the click did anything, since a cleared canvas
+   *  simply stops advertising notes. */
+  const [confirmClose, setConfirmClose] = useState<string | null>(null)
+  const [closed, setClosed] = useState<{ canvasId: string; count: number } | null>(null)
   const openSessionIds = useSessionStore((s) => s.sessions.map((x) => x.id).join(','))
 
   const load = useCallback(async () => {
@@ -70,6 +75,40 @@ export function CanvasLibrary({
       setConfirming(null)
     }
   }, [])
+
+  /**
+   * "The work on this canvas shipped — clear its notes."
+   *
+   * Sits next to Delete and is the opposite of it: nothing is removed. The
+   * canvas, its versions and every note's text stay; the rounds that were
+   * waiting on the user are marked closed, each reopenable from the pane. This
+   * is the housekeeping action people actually wanted the first time they
+   * reached for Delete on a canvas whose feature had already gone out.
+   *
+   * Only rounds ALREADY waiting on the user are cleared — main enforces that,
+   * and a round still with the agent is left alone — so this can never bury
+   * feedback nobody has acted on.
+   */
+  const closeOut = useCallback(async (canvasId: string) => {
+    setBusy(canvasId)
+    setError(null)
+    try {
+      const res = await window.electronAPI.canvas.reviewCloseOut({ canvasId })
+      if (res?.ok) {
+        setClosed({ canvasId, count: res.closed ?? 0 })
+        await load()
+      } else {
+        // ok:false is "the review store could not be read", which is not the
+        // same as "there was nothing to close" and must not read like it.
+        setError('That canvas’s notes could not be read, so nothing was closed.')
+      }
+    } catch {
+      setError('That canvas’s notes could not be closed.')
+    } finally {
+      setBusy(null)
+      setConfirmClose(null)
+    }
+  }, [load])
 
   const openHere = useCallback(async (canvasId: string) => {
     setBusy(canvasId)
@@ -135,9 +174,46 @@ export function CanvasLibrary({
               <div className="text-[10.5px] text-[var(--text-secondary)] truncate">
                 {e.title && <span title={e.cwd}>{projectName(e.cwd)} · </span>}
                 {e.versionCount} version{e.versionCount === 1 ? '' : 's'} · {relTime(e.lastRenderedAt)}
+                {/* Counts are undefined, never zero, when the review store
+                    could not be read — so an unreadable one shows no claim
+                    rather than a confident "clear". */}
+                {!!e.openReviewCount && (
+                  <span className="ml-1.5 text-[var(--status-warning)]">
+                    {e.openReviewCount} review{e.openReviewCount === 1 ? '' : 's'} open
+                  </span>
+                )}
+                {closed?.canvasId === e.canvasId && (
+                  <span className="ml-1.5 text-[var(--status-success)]" data-testid="canvas-library-closed-count">
+                    closed {closed.count} note{closed.count === 1 ? '' : 's'}
+                  </span>
+                )}
                 {e.ownedByOpenSession && <span className="ml-1.5 text-[var(--brand)]">open in another session</span>}
               </div>
             </div>
+            {/* Clear, not delete. Offered only when there is something to
+                clear: notes the agent says it handled and nobody has ruled on. */}
+            {!!e.addressedNoteCount && (
+              confirmClose === e.canvasId ? (
+                <button
+                  onClick={() => void closeOut(e.canvasId)}
+                  disabled={busy === e.canvasId}
+                  data-testid="canvas-library-close-confirm"
+                  className="shrink-0 text-[11px] rounded px-2 py-0.5 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] border border-[color-mix(in_srgb,var(--status-warning)_50%,transparent)] text-[var(--status-warning)] hover:bg-[color-mix(in_srgb,var(--status-warning)_25%,transparent)] disabled:opacity-50 focus-ring"
+                  title="Marks them closed because the work shipped — not approved. Nothing is deleted, and each note can be reopened from the Canvas pane."
+                >
+                  Close {e.addressedNoteCount} note{e.addressedNoteCount === 1 ? '' : 's'}
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setConfirmClose(e.canvasId); setConfirming(null); setError(null) }}
+                  data-testid="canvas-library-close"
+                  className="shrink-0 text-[11px] rounded px-2 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--status-warning)] focus-ring"
+                  title="The work on this canvas has shipped — close the rounds that are waiting on you. Clears them; deletes nothing."
+                >
+                  Close notes
+                </button>
+              )
+            )}
             <button
               onClick={() => void openHere(e.canvasId)}
               disabled={busy === e.canvasId}
@@ -158,7 +234,7 @@ export function CanvasLibrary({
               </button>
             ) : (
               <button
-                onClick={() => { setConfirming(e.canvasId); setError(null) }}
+                onClick={() => { setConfirming(e.canvasId); setConfirmClose(null); setError(null) }}
                 className="shrink-0 text-[11px] rounded px-2 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--status-danger)] focus-ring"
                 data-testid="canvas-library-delete"
               >
