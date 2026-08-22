@@ -20,6 +20,9 @@ import { readConfig } from '../config-manager'
 import { logInfo, logWarn, logError } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import type { HookEvent } from '../../shared/hook-types'
+import { stallsLastMin as readMainLoopStalls } from '../services/loop-stall-monitor'
+import { createInitialHealth } from '../../shared/service-health'
+import type { DiagnosticsSnapshot } from '../../shared/service-health'
 
 // Only a usage-limit-scale tail is needed for detection (mirrors
 // session-watchdog's own USAGE_TAIL_LINES ceiling) — 200 lines is generous
@@ -43,7 +46,22 @@ const FEED_DEBOUNCE_MS = 250
 
 // One shared interval drives every active watchdog's tick(); it exists only
 // while at least one watchdog is running (see ensureTickTimer/maybeStopTimer).
+// This is the BASE cadence when the main loop is calm; the throttle (#311-style
+// self-defense, ticket #235 follow-up) widens it under load — see computeTickMs.
 const TICK_INTERVAL_MS = 5_000
+
+// Hard ceiling on the widened tick cadence. Under sustained main-loop jank the
+// watchdog backs its periodic work off toward this, so a busy main process is
+// not further loaded by every session's tick() firing at the base rate. The
+// countdown/retry checks lag by at most this much, which is acceptable — retries
+// are scheduled minutes out, not seconds.
+const MAX_TICK_INTERVAL_MS = 30_000
+
+// A session that produces NO PTY output for this long is reported as "silent"
+// (the provider stopped streaming). STATUS ONLY — silence never triggers a
+// retry on its own (that stays gated on an actual detected banner). Configurable
+// via settings.watchdog.silenceWindowMs; 0 disables silence detection.
+const DEFAULT_SILENCE_WINDOW_MS = 120_000
 
 export interface WatchdogSessionInfo {
   provider?: string
@@ -55,6 +73,30 @@ export interface WatchdogSettings {
   enabled?: boolean
   retryMessage?: string
   maxRetries?: number
+  /** Silence window (ms). A session with no PTY output for this long is marked
+   *  "silent". 0 disables. Absent = DEFAULT_SILENCE_WINDOW_MS. */
+  silenceWindowMs?: number
+}
+
+/** Per-session monitor state surfaced to the services view (Phase 2). */
+export interface WatchdogSessionMonitor {
+  sessionId: string
+  status: string
+  gaveUp: boolean
+  waitUntil: number | null
+  /** True when no PTY output has arrived for the silence window. */
+  silent: boolean
+  /** ms since the last PTY chunk for this session. */
+  idleMs: number
+}
+
+/** Snapshot of the whole watchdog subsystem for the services view. */
+export interface WatchdogMonitorSnapshot {
+  activeSessions: number
+  waitingSessions: number
+  silentSessions: number
+  throttle: { stallsLastMin: number; tickMs: number }
+  sessions: WatchdogSessionMonitor[]
 }
 
 export interface WatchdogHostOptions {
@@ -66,12 +108,23 @@ export interface WatchdogHostOptions {
    *  sanitized to a single control-char-free line (config.ts), so the lone
    *  appended '\r' is the only submit and cannot be broken out of. */
   send: (sessionId: string, text: string) => void
+  /** Main-loop stall count in the last minute — drives the tick throttle.
+   *  Injectable for tests; defaults to the loop-stall-monitor singleton. */
+  getStalls?: () => number
+  /** Injectable clock/scheduler for deterministic tests. Default real timers. */
+  now?: () => number
+  setTimer?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clearTimer?: (h: ReturnType<typeof setTimeout>) => void
 }
 
 interface Entry {
   wd: SessionWatchdog
   tail: string
   feedTimer: ReturnType<typeof setTimeout> | null
+  /** now() of the last PTY chunk seen — reset on each feedData; drives silence. */
+  lastDataAt: number
+  /** Latched silence state (no output for the silence window). */
+  silent: boolean
 }
 
 function readWatchdogSettings(): WatchdogSettings {
@@ -114,10 +167,45 @@ function extractStopFailureError(payload: Record<string, unknown>): string | und
 
 export class WatchdogManager {
   private entries = new Map<string, Entry>()
-  private tickTimer: ReturnType<typeof setInterval> | null = null
+  private tickTimer: ReturnType<typeof setTimeout> | null = null
   private hookUnsub: (() => void) | null = null
 
-  constructor(private host: WatchdogHostOptions) {}
+  // Injected deps (real timers / stall reader by default).
+  private readStalls: () => number
+  private now: () => number
+  private setTimer: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>
+  private clearTimer: (h: ReturnType<typeof setTimeout>) => void
+
+  // Throttle + reporting state.
+  private currentTickMs = TICK_INTERVAL_MS
+  private lastStalls = 0
+  private eventsTotal = 0
+  private startedAt: number | null = null
+
+  constructor(private host: WatchdogHostOptions) {
+    this.readStalls = host.getStalls ?? (() => readMainLoopStalls())
+    this.now = host.now ?? (() => Date.now())
+    this.setTimer = host.setTimer ?? ((cb, ms) => setTimeout(cb, ms))
+    this.clearTimer = host.clearTimer ?? ((h) => clearTimeout(h))
+  }
+
+  private silenceWindowMs(): number {
+    const v = readWatchdogSettings().silenceWindowMs
+    return typeof v === 'number' && v >= 0 ? v : DEFAULT_SILENCE_WINDOW_MS
+  }
+
+  // Widen the shared tick as main-loop stalls rise, so a busy main process is
+  // not further loaded by every session ticking at the base rate. Bounded curve:
+  // 0 stalls -> base (5s); each stall adds half the base; capped at 30s.
+  private computeTickMs(stalls: number): number {
+    const widened = TICK_INTERVAL_MS * (1 + Math.min(Math.max(stalls, 0), 12) * 0.5)
+    return Math.min(MAX_TICK_INTERVAL_MS, Math.round(widened))
+  }
+
+  private evaluateSilence(entry: Entry): void {
+    const window = this.silenceWindowMs()
+    entry.silent = window > 0 && (this.now() - entry.lastDataAt) > window
+  }
 
   private ensureHookSubscription(): void {
     if (this.hookUnsub) return
@@ -135,23 +223,38 @@ export class WatchdogManager {
     })
   }
 
+  // Self-rescheduling tick (was a fixed setInterval): each pass reads the
+  // main-loop stall count and picks the NEXT delay from computeTickMs, so the
+  // cadence adapts to load. Reschedules only while at least one watchdog is
+  // tracked; stopWatchdog/maybeStopTimer clears a pending timer at zero.
   private ensureTickTimer(): void {
     if (this.tickTimer) return
-    this.tickTimer = setInterval(() => {
+    const run = () => {
+      this.tickTimer = null
       for (const [sessionId, entry] of this.entries) {
         try {
           entry.wd.tick()
         } catch (err) {
           logError(`[watchdog] tick() threw for ${sessionId}`, err)
         }
+        this.evaluateSilence(entry)
       }
-    }, TICK_INTERVAL_MS)
+      this.lastStalls = this.readStalls()
+      this.currentTickMs = this.computeTickMs(this.lastStalls)
+      if (this.entries.size > 0) {
+        this.tickTimer = this.setTimer(run, this.currentTickMs)
+        this.tickTimer.unref?.()
+      }
+    }
+    this.lastStalls = this.readStalls()
+    this.currentTickMs = this.computeTickMs(this.lastStalls)
+    this.tickTimer = this.setTimer(run, this.currentTickMs)
     this.tickTimer.unref?.()
   }
 
   private maybeStopTimer(): void {
     if (this.entries.size === 0 && this.tickTimer) {
-      clearInterval(this.tickTimer)
+      this.clearTimer(this.tickTimer)
       this.tickTimer = null
     }
   }
@@ -174,7 +277,7 @@ export class WatchdogManager {
       getTail: () => this.entries.get(sessionId)?.tail ?? '',
       isSessionAlive: () => this.host.isSessionAlive(sessionId),
       send: (text: string) => this.host.send(sessionId, text),
-      now: () => Date.now(),
+      now: () => this.now(),
       log: (level, msg) => {
         const line = `[watchdog:${sessionId}] ${msg}`
         if (level === 'error') logError(line)
@@ -182,6 +285,7 @@ export class WatchdogManager {
         else logInfo(line)
       },
       onStateChange: (state: WatchdogPublicState) => {
+        this.eventsTotal++
         const win = this.host.getWindow()
         if (!win || win.isDestroyed()) return
         try { win.webContents.send(IPC.WATCHDOG_STATE, state) } catch { /* destroyed */ }
@@ -192,7 +296,8 @@ export class WatchdogManager {
       retryMessage: settings.retryMessage,
       maxRetries: settings.maxRetries,
     })
-    this.entries.set(sessionId, { wd, tail: '', feedTimer: null })
+    this.entries.set(sessionId, { wd, tail: '', feedTimer: null, lastDataAt: this.now(), silent: false })
+    if (this.startedAt === null) this.startedAt = this.now()
     this.ensureTickTimer()
     this.ensureHookSubscription()
     logInfo(`[watchdog] started for session ${sessionId}`)
@@ -230,6 +335,10 @@ export class WatchdogManager {
   feedData(sessionId: string, data: string): void {
     const entry = this.entries.get(sessionId)
     if (!entry) return // no watchdog running for this session (off, or not a local Claude session)
+    // Silence detection (#235): each chunk resets the idle clock. Clear a
+    // latched silent state immediately on the first byte after a silence.
+    entry.lastDataAt = this.now()
+    entry.silent = false
     this.appendTail(entry, data)
     if (entry.feedTimer) return // a feed is already scheduled for this burst
     entry.feedTimer = setTimeout(() => {
@@ -248,6 +357,53 @@ export class WatchdogManager {
 
   isActive(sessionId: string): boolean {
     return this.entries.has(sessionId)
+  }
+
+  /** Per-session monitor state + current throttle, for the services view. */
+  getMonitorSnapshot(): WatchdogMonitorSnapshot {
+    const now = this.now()
+    const sessions: WatchdogSessionMonitor[] = [...this.entries.entries()].map(([sessionId, e]) => {
+      const st = e.wd.getState()
+      return {
+        sessionId,
+        status: st.status,
+        gaveUp: st.gaveUp,
+        waitUntil: st.waitUntil,
+        silent: e.silent,
+        idleMs: Math.max(0, now - e.lastDataAt),
+      }
+    })
+    return {
+      activeSessions: sessions.length,
+      waitingSessions: sessions.filter((s) => s.status !== 'monitoring' && !s.gaveUp).length,
+      silentSessions: sessions.filter((s) => s.silent).length,
+      throttle: { stallsLastMin: this.lastStalls, tickMs: this.currentTickMs },
+      sessions,
+    }
+  }
+
+  /** ServiceHealth snapshot so the watchdog appears in the services view merge,
+   *  modelled on the logging supervisor's getDiagnosticsSnapshot(). */
+  getDiagnosticsSnapshot(): DiagnosticsSnapshot {
+    const now = this.now()
+    const mon = this.getMonitorSnapshot()
+    const health = createInitialHealth('watchdog', 'Watchdog')
+    health.state = this.entries.size > 0 ? 'listening' : 'stopped'
+    health.startedAt = this.startedAt
+    health.inFlight = mon.waitingSessions
+    health.eventsTotal = this.eventsTotal
+    health.mainLoopStallsLastMin = this.lastStalls
+    health.lastHeartbeatAt = now
+    return { capturedAt: now, services: [health], log: [] }
+  }
+
+  /** Restart hook for the services view. Per-session watchdogs re-arm at the
+   *  next PTY spawn, so a manual restart tears down current watchers under the
+   *  current settings rather than resurrecting mid-session give-up latches. */
+  manualRestart(serviceId: string): { ok: boolean; reason?: string } {
+    if (serviceId !== 'watchdog') return { ok: false, reason: 'unknown-service' }
+    this.disposeAll()
+    return { ok: true }
   }
 }
 
