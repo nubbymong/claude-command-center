@@ -24,8 +24,37 @@ permissions:
   contents: write
 
 jobs:
+  # ── Release gate (#375, #385) ──
+  # Refuse the cut before a single installer is built: the GitHub milestone
+  # titled after package.json's version must have no open issue without the
+  # `excluded` label (a missing milestone fails closed), and
+  # resources/model-registry.json must cover every model in Anthropic's Claude
+  # Code model configuration article (scripts/fixtures/ holds the expected set).
+  # Every build job `needs` this one. Read-only: GITHUB_TOKEN with issues:read.
+  # No `npm ci` here on purpose — the script is dependency-free plain node, so
+  # the verdict arrives in seconds, not after a native toolchain install.
+  # A dry run is not a release, so it sees the verdict but is not blocked by it.
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Refuse to cut with open milestone issues or a stale model registry
+        continue-on-error: ${{ inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release-gate.mjs
+
   # ── Build Windows installer ──
   build-windows:
+    needs: gate
     # Pinned off windows-latest: the new vs2026 image breaks @electron/node-gyp
     # (no supported Visual Studio). Same pin as ci.yml — unpin together.
     runs-on: windows-2025
@@ -269,6 +298,7 @@ jobs:
 
   # ── Build macOS app ──
   build-macos:
+    needs: gate
     if: ${{ !inputs.dry_run }}
     runs-on: macos-latest
     steps:
@@ -372,6 +402,7 @@ jobs:
   # in the run (visible to the maintainer), and release.js flags the missing
   # AppImage asset — but the release proceeds with the platforms that built.
   build-linux:
+    needs: gate
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     continue-on-error: true
