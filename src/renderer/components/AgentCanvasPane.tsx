@@ -255,6 +255,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
    *  mode that disagrees costs a round-trip. Reset when the frame reloads —
    *  the new document has a new bridge with the default back on. */
   const frameHoverReportingRef = useRef(true)
+  /** One hoverReporting request at a time. The repair path is driven by the
+   *  page's own reports, so without this a page that declines to go quiet would
+   *  be choosing the host's call rate. */
+  const hoverReportingPendingRef = useRef(false)
   /** One outstanding inspect per frame — a page-driven click cannot open a
    *  second one while the first is unanswered. */
   const inspectPendingRef = useRef(false)
@@ -338,19 +342,37 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
    * test, no measurement and no postMessage per mousemove. Sent only when the
    * frame's belief disagrees, so the common case (x-ray on, the bridge's own
    * default) costs no round-trip at all.
+   *
+   * The belief is recorded on the ANSWER, never on the send. A request can be
+   * refused before it is posted — canvas-frame-rpc caps requests in flight at
+   * four, and a snapshot, an inspect and a resolveAnchors can already be
+   * outstanding when the user reaches for the switch — and marking it sent
+   * anyway left the host permanently certain it had quieted a frame that was
+   * never told, with the page doing per-mousemove work for the rest of that
+   * document's life (Copilot review, #405). Nothing is drawn either way, so the
+   * only symptom is the work itself.
    */
   const syncHoverReporting = useCallback(() => {
     const enabled = xrayHoverIsLive(xrayModeRef.current)
-    if (frameHoverReportingRef.current === enabled) return
+    if (frameHoverReportingRef.current === enabled || hoverReportingPendingRef.current) return
     const target = iframeRef.current?.contentWindow
     if (!target) return
-    frameHoverReportingRef.current = enabled
-    void askCanvasFrame(target, canvasId, { type: 'hoverReporting', enabled }, HOVER_REPORTING_TIMEOUT_MS).catch(() => {
-      /* An old bridge, a frame mid-navigation, a page that answers nothing: the
-         mode still holds, because the host-side gate is what enforces it. Left
-         marked as sent — a retry loop over an unanswerable frame would be the
-         page choosing the host's call rate. */
-    })
+    hoverReportingPendingRef.current = true
+    askCanvasFrame(target, canvasId, { type: 'hoverReporting', enabled }, HOVER_REPORTING_TIMEOUT_MS)
+      .then(
+        () => {
+          frameHoverReportingRef.current = enabled
+        },
+        () => {
+          /* Never landed: refused by the in-flight cap, a frame mid-navigation,
+             a page that answers nothing. The belief stays where it was, so the
+             next report, mode change or `ready` asks again — and the mode still
+             holds meanwhile, because the host-side gate is what enforces it. */
+        },
+      )
+      .finally(() => {
+        hoverReportingPendingRef.current = false
+      })
   }, [canvasId])
 
   const handleReportedKey = useCallback(
@@ -408,6 +430,12 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         onPointer: (hit) => {
           if (!xrayHoverIsLive(xrayModeRef.current)) {
             setHover(null)
+            // A report arriving in a mode that wants none IS the evidence that
+            // the frame was never told — the request was refused, lost, or this
+            // is a document that has not been asked yet. So the symptom drives
+            // the repair; the pending guard keeps it to one request at a time
+            // however fast the reports come.
+            syncHoverReporting()
             return
           }
           setHover(hit ? { hit } : null)
@@ -418,7 +446,12 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           // Under x-ray Off a click selects nothing: the page was asked for as a
           // normal browser tab, and a tab does not turn a click into a selection
           // (#367 left this open; see xrayClickSelects).
-          if (!xrayClickSelects(xrayModeRef.current)) return
+          if (!xrayClickSelects(xrayModeRef.current)) {
+            // Same evidence as an unwanted pointer report: this frame is still
+            // reporting and should not be.
+            syncHoverReporting()
+            return
+          }
           if (modeRef.current === 'browse') void inspectAndLock(pageX, pageY)
         },
         onContentKey: handleReportedKey,

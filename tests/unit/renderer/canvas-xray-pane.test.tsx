@@ -32,7 +32,14 @@ vi.mock('../../../src/renderer/components/CanvasNotesPanel', () => ({ default: (
 // preference and the round-trip through it is part of what is under test).
 vi.mock('../../../src/renderer/utils/config-saver', () => ({ saveConfigNow: vi.fn(async () => true) }))
 
-const askFrame = vi.fn(() => new Promise(() => {}))
+// A frame that answers a hoverReporting request (as a real bridge does) and
+// never answers anything else — an inspect left in flight is what the
+// one-inspect-at-a-time rule is about, and is not this file's subject.
+const askFrame = vi.fn((_target: unknown, _canvasId: unknown, payload: { type?: string; enabled?: boolean }) =>
+  payload?.type === 'hoverReporting'
+    ? Promise.resolve({ enabled: payload.enabled })
+    : new Promise(() => {}),
+)
 vi.mock('../../../src/renderer/canvas/canvas-frame-rpc', () => ({
   askCanvasFrame: (...args: unknown[]) => askFrame(...(args as [])),
   framesInFlight: () => 0,
@@ -297,6 +304,48 @@ describe('x-ray OFF — the page behaves like a normal browser tab', () => {
     await act(async () => handlers().onPointer(SAVE_BUTTON))
     await act(async () => handlers().onViewport(VIEWPORT))
     expect(hoverReportingCalls()).toEqual([false])
+  })
+
+  it('does not believe a request that was refused before it was posted', async () => {
+    // canvas-frame-rpc caps requests in flight at four, and a snapshot, an
+    // inspect and a resolveAnchors can already be outstanding when the user
+    // reaches for the switch. Marking the frame quiet on the SEND left the host
+    // permanently certain it had told a frame that was never told, and the page
+    // doing per-mousemove work for the rest of that document's life (Copilot
+    // review, #405). Nothing is drawn either way, so the work IS the symptom.
+    const refuse = () => Promise.reject(new Error('Too many canvas frame requests are already in flight'))
+    // `ready` and the mode effect that follows it are two triggers, so two
+    // refusals leave the frame un-told with nothing left to ask on its own.
+    askFrame.mockImplementationOnce(refuse).mockImplementationOnce(refuse)
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    expect(hoverReportingCalls()).toEqual([false, false])
+
+    // The page is still reporting, which is the evidence that it never heard.
+    await act(async () => handlers().onPointer(SAVE_BUTTON))
+    expect(hoverReportingCalls()).toEqual([false, false, false])
+    // …and nothing was drawn while it was still reporting.
+    expect(overlay().textContent).not.toContain('button "Save"')
+
+    // Once one lands, the asking stops.
+    await act(async () => handlers().onPointer(SAVE_BUTTON))
+    await act(async () => handlers().onPointer(SAVE_BUTTON))
+    expect(hoverReportingCalls()).toEqual([false, false, false])
+  })
+
+  it('asks once at a time, however fast a page that will not go quiet reports', async () => {
+    // The repair is driven by the page's own reports, so without the in-flight
+    // guard the page would be choosing the host's call rate.
+    let settle: (v: unknown) => void = () => {}
+    askFrame.mockImplementationOnce(() => new Promise((resolve) => { settle = resolve }))
+    await renderPane('off')
+    await act(async () => handlers().onReady())
+    await act(async () => {
+      for (let i = 0; i < 50; i++) handlers().onPointer(SAVE_BUTTON)
+      for (let i = 0; i < 50; i++) handlers().onContentClick(1, 1)
+    })
+    expect(hoverReportingCalls()).toEqual([false])
+    await act(async () => settle({ enabled: false }))
   })
 
   it('says in the mode strip that hovering and clicking do nothing', async () => {
