@@ -134,4 +134,15 @@ describe('BottomBar -- slim runtime footer', () => {
     act(() => { buttonByText('Update')!.click() })
     expect(updateInstall).toHaveBeenCalledTimes(1)
   })
+
+  it('carries no "not affiliated with Anthropic" line (#383)', async () => {
+    // Owner call 2026-08-22: now that the app is AI Code Conductor the
+    // footer disclaimer is not wanted anywhere. Checked on the rendered text
+    // AND on every title attribute, so it cannot survive as a tooltip either.
+    await render()
+    expect(container.textContent).not.toMatch(/affiliated|endorsed by/i)
+    for (const el of Array.from(container.querySelectorAll<HTMLElement>('[title]'))) {
+      expect(el.getAttribute('title')).not.toMatch(/affiliated|endorsed by/i)
+    }
+  })
 })

@@ -21,7 +21,7 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
   {
     id: 'overview',
     title: 'What is AI Code Conductor?',
-    body: `AI Code Conductor (formerly Claude Command Center) runs the Claude Code you already have, side by side: multiple sessions in one window, with saved configs, live usage in a status line, cost tracking, searchable history, and optional GitHub and Codex integrations. It sits on top of Claude Code; it never replaces it, and Claude Code outside the Conductor keeps working exactly as before. It is an independent community project, not affiliated with or endorsed by Anthropic.`,
+    body: `AI Code Conductor (formerly Claude Command Center) runs the Claude Code you already have, side by side: multiple sessions in one window, with saved configs, live usage in a status line, cost tracking, searchable history, and optional GitHub and Codex integrations. It sits on top of Claude Code; it never replaces it, and Claude Code outside the Conductor keeps working exactly as before. It is an independent community project.`,
   },
   {
     id: 'sessions',

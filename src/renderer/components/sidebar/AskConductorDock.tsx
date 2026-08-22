@@ -104,9 +104,14 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
     if (feature === 'tips') useTipsStore.getState().silenceUntilRestart()
   }
 
+  // The one line that says what Ask is FOR. It reads under the label in the
+  // expanded rail and is the tooltip / accessible name in the collapsed one,
+  // where there is no room for a subtitle. Owner wording, #372: "about this
+  // app" undersold it -- Ask also changes settings and features for you.
+  const askSubtitle = 'Ask about and customise app functionality'
   const askTitle = running
     ? `${ASK_LABEL} -- go to the open session`
-    : `${ASK_LABEL} -- ask about this app`
+    : `${ASK_LABEL} -- ${askSubtitle.toLowerCase()}`
 
   const open = () => {
     void launchAskConductor().then((id) => { if (id) onOpened() })
@@ -248,7 +253,7 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
                 {ASK_LABEL}
               </span>
               <span className="block text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
-                About this app
+                {askSubtitle}
               </span>
             </span>
             {running && (
