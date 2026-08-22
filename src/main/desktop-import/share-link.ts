@@ -208,6 +208,14 @@ export function fetchText(url: string, timeoutMs = 20_000): Promise<{ status: nu
       url,
       partition: CLAUDE_WEB_PARTITION,
       useSessionCookies: true,
+      // Fail closed on a redirect rather than following it (adversarial review,
+      // #209, defence-in-depth). The URL is already reconstructed from a strict
+      // uuid so the initial target is always claude.ai, but this request carries
+      // the member's claude.ai cookies — if claude.ai ever served an open
+      // redirect on the share path, `follow` (Electron's default) would carry
+      // those cookies to the redirect target. A share page has no legitimate
+      // reason to 3xx, so a redirect becomes an error, not a hop.
+      redirect: 'error',
     })
     const timer = setTimeout(() => {
       done(() => reject(new Error('timed out fetching the share link')))

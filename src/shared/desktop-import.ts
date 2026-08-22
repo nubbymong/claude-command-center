@@ -97,8 +97,13 @@ export function buildInjectPrompt(absoluteBriefPath: string): string | null {
   // \n before the guard ever saw it and hand back a prompt naming a DIFFERENT
   // path than the caller passed — which is the sanitising behaviour this
   // function exists to avoid.
-  // eslint-disable-next-line no-control-regex
-  if (/[\x00-\x1f\x7f]/.test(absoluteBriefPath)) return null
+  //
+  // The class covers Unicode control/format/line/paragraph separators, not only
+  // ASCII C0/DEL (adversarial review, #209): U+2028/U+2029 are line separators
+  // and U+202E (RTL override) can visually reverse the tail of the path in the
+  // terminal so the operator approves something other than what they see. A
+  // legitimately CCC-generated brief path never contains any of these.
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(absoluteBriefPath)) return null
   const p = absoluteBriefPath.trim()
   if (!p) return null
   return (

@@ -15,13 +15,14 @@
 import { ipcMain } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
-import { MAX_TRANSCRIPT_CHARS, type ParsedTranscript } from '../../shared/desktop-import'
+import { type ParsedTranscript } from '../../shared/desktop-import'
 import { logError } from '../debug-logger'
 import { resolveCwd } from '../path-utils'
 import { parsePastedTranscript } from '../desktop-import/parse-transcript'
 import { importFromShareLink } from '../desktop-import/share-link'
 import { generateBrief } from '../desktop-import/brief'
 import { writeBriefFile } from '../desktop-import/brief-file'
+import { pasteSchema, urlSchema, transcriptSchema, writeBriefArgsSchema } from './desktop-import-schemas'
 
 type Ok<T> = { ok: true } & T
 type Err = { ok: false; error: string }
@@ -32,33 +33,15 @@ function fail(scope: string, err: unknown): Err {
   return { ok: false, error }
 }
 
-// A pasted transcript is bounded at the IPC seam as well as in the parser — the
-// parser truncates, but we never want a 100 MB string crossing the bridge first.
-const pasteSchema = z.string().min(1).max(MAX_TRANSCRIPT_CHARS + 1024)
-const urlSchema = z.string().min(1).max(2048)
-
 /**
- * The transcript the renderer hands back for brief generation. It came FROM us,
- * but it round-tripped through the renderer, so it is re-validated as untrusted.
+ * In-flight cap on the headless summariser (adversarial review, #209). Each
+ * buildBrief spawns a `claude -p` child that can run for up to 180 s; without a
+ * cap, a renderer looping the IPC call spawns an unbounded fleet of them. Two at
+ * once covers a user regenerating while another is mid-flight; beyond that the
+ * call is refused rather than queued (a brief is not latency-critical).
  */
-const transcriptSchema = z.object({
-  source: z.enum(['paste', 'share']),
-  title: z.string().max(500).optional(),
-  messages: z
-    .array(
-      z.object({
-        role: z.enum(['human', 'assistant', 'unknown']),
-        text: z.string(),
-        codeBlocks: z.array(z.object({ lang: z.string().max(50), code: z.string() })).max(2000),
-      }),
-    )
-    .max(20000),
-  messageCount: z.number().int().nonnegative(),
-  codeBlockCount: z.number().int().nonnegative(),
-  charCount: z.number().int().nonnegative(),
-  roleMarkersDetected: z.boolean(),
-  truncated: z.boolean(),
-})
+const MAX_CONCURRENT_BRIEFS = 2
+let briefsInFlight = 0
 
 export function registerDesktopImportHandlers(): void {
   ipcMain.handle(IPC.DESKTOP_IMPORT_PARSE_PASTE, async (_e, raw: unknown) => {
@@ -80,22 +63,23 @@ export function registerDesktopImportHandlers(): void {
   })
 
   ipcMain.handle(IPC.DESKTOP_IMPORT_BUILD_BRIEF, async (_e, args: unknown) => {
+    if (briefsInFlight >= MAX_CONCURRENT_BRIEFS) {
+      return { ok: false, error: 'A brief is already being generated — wait for it to finish.' } as Err
+    }
+    briefsInFlight++
     try {
       const { transcript } = z.object({ transcript: transcriptSchema }).parse(args)
       return { ok: true, brief: await generateBrief(transcript as ParsedTranscript) }
     } catch (err) {
       return fail('buildBrief', err)
+    } finally {
+      briefsInFlight--
     }
   })
 
   ipcMain.handle(IPC.DESKTOP_IMPORT_WRITE_BRIEF, async (_e, args: unknown) => {
     try {
-      const { workingDirectory, markdown } = z
-        .object({
-          workingDirectory: z.string().min(1).max(4096),
-          markdown: z.string().min(1).max(4_000_000),
-        })
-        .parse(args)
+      const { workingDirectory, markdown } = writeBriefArgsSchema.parse(args)
       // resolveCwd is what the PTY itself uses, so the brief lands in the SAME
       // directory the session runs in. Resolving here rather than in
       // writeBriefFile matters: a config working directory of '.' or '~' would

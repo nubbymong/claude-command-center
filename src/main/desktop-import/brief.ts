@@ -23,6 +23,7 @@
  * No default export (project convention).
  */
 
+import { randomBytes } from 'crypto'
 import { spawnClaudeHeadless } from '../claude-headless'
 import { logError, logInfo } from '../debug-logger'
 import {
@@ -32,9 +33,22 @@ import {
   type ParsedTranscript,
 } from '../../shared/desktop-import'
 
-/** Fence used to delimit untrusted transcript text inside the summariser prompt. */
-const DATA_OPEN = '<<<IMPORTED_TRANSCRIPT'
-const DATA_CLOSE = 'IMPORTED_TRANSCRIPT>>>'
+/**
+ * Fence used to delimit untrusted transcript text inside the summariser prompt.
+ *
+ * The token carries a per-invocation random nonce (adversarial review, #209): a
+ * FIXED delimiter is disclosed in the prompt itself, so a hostile transcript can
+ * embed the exact closing marker, break out of the fence, and address the
+ * summarising model directly. The attacker cannot predict a 128-bit random
+ * nonce, so a forged marker never matches the real boundary. `buildBriefPrompt`
+ * takes the nonce as a parameter (defaulted to a fresh random one) so a test can
+ * pin it; production never passes one.
+ */
+function freshFenceNonce(): string {
+  return randomBytes(16).toString('hex')
+}
+const fenceOpen = (nonce: string): string => `<<<IMPORTED_TRANSCRIPT_${nonce}`
+const fenceClose = (nonce: string): string => `${nonce}_IMPORTED_TRANSCRIPT>>>`
 
 /**
  * Banner prepended to EVERY brief. It tells the receiving session what this file
@@ -72,7 +86,9 @@ export function renderTranscriptForBrief(
   return `${head}\n\n[... middle of the conversation omitted to fit the summariser budget ...]\n\n${tail}`
 }
 
-export function buildBriefPrompt(t: ParsedTranscript): string {
+export function buildBriefPrompt(t: ParsedTranscript, nonce: string = freshFenceNonce()): string {
+  const DATA_OPEN = fenceOpen(nonce)
+  const DATA_CLOSE = fenceClose(nonce)
   return [
     'You are converting a chat transcript into a HANDOFF BRIEF for a fresh coding',
     'session that has none of this context.',
@@ -120,8 +136,20 @@ export function buildBriefSpawnArgs(): string[] {
     '--output-format', 'text',
     // Plan mode plus an explicit denylist: the summariser reads stdin and writes
     // stdout, nothing else. An injected instruction has no tool to reach for.
+    //
+    // The denylist now covers the READ-family tools too (Read/Glob/Grep), not
+    // just the mutating/network ones (adversarial review, #209): plan mode alone
+    // was the only thing holding those back, and a summariser fed untrusted text
+    // should not be able to read the operator's filesystem into the brief either.
+    // `--strict-mcp-config` makes the pass ignore the operator's MCP config
+    // entirely, so none of their configured MCP tools (slack, m365, azure, …)
+    // load — the denylist cannot name those by tool id, so this is how they are
+    // excluded. An empty --allowedTools would be the cleanest deny-all, but
+    // assertSafeArgv (claude-headless.ts) rejects an empty argv element because
+    // shell:true silently drops it.
     '--permission-mode', 'plan',
-    '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Task',
+    '--strict-mcp-config',
+    '--disallowedTools', 'Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Task,Read,Glob,Grep',
   ]
 }
 

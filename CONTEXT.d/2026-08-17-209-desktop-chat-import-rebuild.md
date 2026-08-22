@@ -49,3 +49,40 @@ Gate: typecheck clean (3 tsconfigs), 6180 unit tests pass (the lone red, conduct
 timeout, is a load-dependent flake -- passes in isolation in <1s, and #209 does not touch
 conductor-mcp), changelog in sync, via a real per-worktree npm ci on beta.15. Not yet
 desktop-tested -- that remains the merge gate (now the desktop-tested label, #309).
+
+## 2026-08-22 -- adversarial-review fixes (ADR-009) + moved to the 2.2 line
+
+The ADR-009 pass on the rebuilt feature returned FINDINGS; all fixed here, each guard
+mutation-verified (revert the mechanism -> the named test goes red):
+
+- HIGH (main-process OOM): buildBrief took a structured transcript OBJECT straight from the
+  renderer with no cumulative size bound (per-message text was unbounded), so one shape-valid
+  IPC call could OOM main and kill every session. Added per-field `.max()` + an object-level
+  `superRefine` capping cumulative size to MAX_TRANSCRIPT_CHARS, evaluated before generateBrief
+  allocates. Schemas were extracted to `src/main/ipc/desktop-import-schemas.ts` (electron-free)
+  so the boundary is unit-testable without the handler's subprocess import graph -- that
+  untested seam was the root cause every attacker lens converged on.
+- MAJOR (prompt-injection): the summariser prompt fenced the untrusted transcript with a FIXED
+  delimiter disclosed in the prompt itself, so a hostile transcript could forge the close marker
+  and break out. Now a per-invocation 128-bit random nonce in the fence; a forged static marker
+  cannot match. (A live 4/4 run showed the current model already refuses the injection, but the
+  boundary is now code-enforced, not model-judgment.)
+- MEDIUM: the summariser denylist covered only mutating/network tools; Read/Glob/Grep and all
+  MCP tools relied on plan mode alone. Added Read/Glob/Grep to the denylist and
+  `--strict-mcp-config` so the operator's MCP tools never load. (An empty --allowedTools would be
+  the clean deny-all but assertSafeArgv rejects an empty argv element.)
+- MEDIUM: writeBrief accepted a relative workingDirectory that resolveCwd would resolve against
+  the MAIN-PROCESS cwd, not the session's. Now requires absolute (or ~-anchored) at the boundary.
+- LOW: no concurrency cap on the headless summariser -> a looping renderer spawns an unbounded
+  claude fleet. Capped at 2 in flight.
+- MINOR: buildInjectPrompt's control-char guard was ASCII C0/DEL only; extended to Unicode
+  Cc/Cf/Zl/Zp (U+2028/2029/0085 line separators, U+202E bidi override). And share-link fetch now
+  fails closed on a redirect (`redirect:'error'`) rather than following one with the member's
+  cookies attached.
+
+Gate: typecheck clean (3 tsconfigs), 6190 unit tests pass (the lone red, conductor-mcp-sse-
+timeout, is the known load-dependent flake -- #209 does not touch conductor-mcp), changelog in
+sync. A fresh re-attack against the patched code is still owed before merge.
+
+Moved from release-2.1 to release-2.2 (#224/#209): the feature is being extended for 2.2 to reuse
+#216's per-account claude.ai web session for org-scoped share import (see the follow-up below).

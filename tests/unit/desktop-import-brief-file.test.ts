@@ -92,6 +92,20 @@ describe('buildInjectPrompt (in-session import)', () => {
     expect(buildInjectPrompt('   ')).toBeNull()
   })
 
+  // #209 adversarial review (MINOR): the guard covers Unicode control/format/
+  // line/paragraph separators, not only ASCII C0/DEL. U+2028/U+2029 are line
+  // separators; U+202E (RTL override) can visually reverse the path tail in the
+  // terminal so the operator approves something other than what they read.
+  // Mutation: revert the guard to /[\x00-\x1f\x7f]/ and these go red.
+  it('refuses a path carrying a Unicode line/format/bidi separator', () => {
+    expect(buildInjectPrompt('/tmp/a\u2028b')).toBeNull() // LINE SEPARATOR
+    expect(buildInjectPrompt('/tmp/a\u2029b')).toBeNull() // PARAGRAPH SEPARATOR
+    expect(buildInjectPrompt('/tmp/a\u0085b')).toBeNull() // NEL
+    expect(buildInjectPrompt('/tmp/a\u202eb')).toBeNull() // RTL OVERRIDE
+    // An ordinary path (spaces allowed) still passes.
+    expect(buildInjectPrompt('/tmp/a b/.claude/imports/x.md')).toContain('/tmp/a b/.claude/imports/x.md')
+  })
+
   it('round-trips the absolute path a real write produces', () => {
     const root = tempDir()
     const written = writeBriefFile(root, '# brief\n')
