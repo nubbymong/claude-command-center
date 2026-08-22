@@ -505,6 +505,33 @@ describe('SessionWatchdog — handleHookEvent fast path', () => {
     expect(t.sent).toEqual(['continue'])
   })
 
+  // FINDING 3 (MAJOR): the event path skipped the fire-time re-verify, so a
+  // session that recovered SILENTLY during the backoff (no banner, no working
+  // marker) still got a spurious `continue`. Re-verify against the tail snapshot.
+  it('event path does NOT send when the tail advanced during the backoff (fix #3)', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s1', t.adapter, undefined, noJitterRand)
+    t.setTail('turn failed — overload')
+    wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
+    expect(t.sent).toHaveLength(0)
+    // Silent recovery: tail moved on, but no working/limit/overload signal.
+    t.setTail('a different idle prompt now')
+    t.setNow((wd.getState().waitUntil as number) + 1)
+    wd.tick()
+    expect(t.sent).toHaveLength(0)
+    expect(wd.getState().status).toBe('monitoring')
+  })
+
+  it('event path still sends when the tail is unchanged at fire time (fix #3 guard)', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s1', t.adapter, undefined, noJitterRand)
+    t.setTail('turn failed — overload')
+    wd.handleHookEvent({ event: 'StopFailure', error: 'overloaded' })
+    t.setNow((wd.getState().waitUntil as number) + 1)
+    wd.tick() // tail unchanged since the event
+    expect(t.sent).toEqual(['continue'])
+  })
+
   // FINDING 4 (MAJOR — handleHookEvent clobbers a latched gaveUp / active
   // waiting): a StopFailure hook must never override an active usage-limit
   // wait, nor resurrect a latched give-up. Only 'monitoring', or an existing

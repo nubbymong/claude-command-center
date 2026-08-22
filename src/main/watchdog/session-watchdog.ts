@@ -105,6 +105,12 @@ export class SessionWatchdog {
   // Marks the current overload window as opened by handleHookEvent (edge-
   // triggered, authoritative) rather than the tail scraper — see tickOverload.
   private viaEvent = false
+  // The tail captured when a hook event OPENED the current overload incident.
+  // At fire time the event path re-verifies against this: if the tail advanced,
+  // the session moved on since the event, so clear instead of firing a spurious
+  // retry into a silently-recovered session (adversarial FINDING 3). Null when
+  // the incident was not event-opened.
+  private eventTailSnapshot: string | null = null
 
   private waitingGaveUpLogged = false
   private safeguardGaveUpLogged = false
@@ -163,6 +169,7 @@ export class SessionWatchdog {
     this.overloadTotalWaitMs = 0
     this.overloadGaveUpLogged = false
     this.viaEvent = false
+    this.eventTailSnapshot = null
     // lastHandledOverloadTail is intentionally NOT cleared here: the banner it
     // suppresses can still be on screen right after recovery. It has its own
     // lifecycle, cleared once the banner actually leaves the tail.
@@ -201,10 +208,13 @@ export class SessionWatchdog {
     }
   }
 
-  // StopFailure fast path. Authoritative: no scraping, no ambiguity. Only the
-  // two retryable error kinds start an incident; anything else is ignored so
-  // an out-of-date hook writer (still emitting a retired error kind) can't
-  // start a backoff no policy owns.
+  // StopFailure fast path. Authoritative to OPEN an incident (edge-triggered by
+  // the hook, no scraping needed to start the backoff) — but the fire-time send
+  // is still re-verified against the tail snapshot (see tickOverload /
+  // eventTailSnapshot), so a silent recovery during the backoff does not fire a
+  // spurious retry. Only the two retryable error kinds start an incident;
+  // anything else is ignored so an out-of-date hook writer (still emitting a
+  // retired error kind) can't start a backoff no policy owns.
   handleHookEvent(evt: { event: string; error?: string }): void {
     if (this.disposed) return
     if (!this.config.overload.enabled) return
@@ -252,6 +262,7 @@ export class SessionWatchdog {
     this.status = 'overload'
     this.gaveUp = false
     this.viaEvent = true
+    this.eventTailSnapshot = tail // fire-time re-verify baseline (FINDING 3)
     this.emit(`overload incident detected via hook event (error=${evt.error}); backing off ${Math.round(w / 1000)}s`)
   }
 
@@ -407,9 +418,17 @@ export class SessionWatchdog {
       return
     }
     // Edge-triggered event incidents may carry no scraped banner at all — the
-    // hook event was the authoritative signal. Only the scraper path treats
-    // "no overload text in the tail" as a clearing signal.
-    if (!this.viaEvent && !detectOverload(tail, this.config.overload.patterns)) {
+    // hook event was the authoritative signal to OPEN the incident, so "no
+    // overload text in the tail" is NOT a clearing signal for it. Instead the
+    // event path clears when the tail ADVANCED since the snapshot taken at the
+    // event (a silent recovery, FINDING 3); the scraper path still clears on
+    // absent overload text.
+    if (this.viaEvent) {
+      if (this.eventTailSnapshot !== null && tail !== this.eventTailSnapshot) {
+        this.resetOverload()
+        this.toMonitoring('overload cleared (session advanced since the hook event)')
+      }
+    } else if (!detectOverload(tail, this.config.overload.patterns)) {
       this.resetOverload()
       this.toMonitoring('overload text no longer present')
     }
@@ -431,7 +450,17 @@ export class SessionWatchdog {
       this.toMonitoring('overload cleared (session recovered)')
       return
     }
-    if (!this.viaEvent && !detectOverload(tail, this.config.overload.patterns)) {
+    // Fire-time re-verify (FINDING 3): an event-opened incident does not require
+    // scraped overload text, so re-check by whether the tail ADVANCED since the
+    // event snapshot — if it did, the session recovered silently, so clear rather
+    // than send a spurious retry. The scraper path still clears on absent text.
+    if (this.viaEvent) {
+      if (this.eventTailSnapshot !== null && tail !== this.eventTailSnapshot) {
+        this.resetOverload()
+        this.toMonitoring('overload cleared (session advanced since the hook event)')
+        return
+      }
+    } else if (!detectOverload(tail, this.config.overload.patterns)) {
       this.resetOverload()
       this.toMonitoring('overload text no longer present')
       return
