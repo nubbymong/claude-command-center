@@ -188,11 +188,22 @@ export function toolEchoMask(lines: string[]): boolean[] {
       mask[i] = true
       continue
     }
-    if (inBlock && (TOOL_ECHO_RESULT.test(l) || (/^\s/.test(l) && l.trim() !== ''))) {
-      mask[i] = true
-      continue
+    if (inBlock) {
+      // A blank / whitespace-only line does NOT end a tool block — result blocks
+      // contain empty rows, and treating one as a terminator un-masked the quoted
+      // error text that followed it (a `● Tool(…)` render with `API Error: 529` a
+      // couple of lines down, after a spacer, then read as a live banner → false
+      // retry). Keep the block LATCHED across blanks and mask them.
+      if (l.trim() === '') { mask[i] = true; continue }
+      // Result markers (⎿ └) and indented continuation lines are children of the
+      // block.
+      if (TOOL_ECHO_RESULT.test(l) || /^\s/.test(l)) { mask[i] = true; continue }
+      // Only a non-empty, flush-left line that is NOT a result marker ends the
+      // block — it is content in its own right (and stays UNmasked), which also
+      // preserves the live-banner-as-child case: a `└ You've hit …` under a
+      // non-`Name(` notice never set inBlock, so it is never reached here.
+      inBlock = false
     }
-    inBlock = false
   }
   return mask
 }

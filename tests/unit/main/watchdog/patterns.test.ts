@@ -111,6 +111,24 @@ describe('isRateLimited — tool-echo masking (#63)', () => {
     expect(detectOverload(pane, OVERLOAD_PATTERNS)).toBe(false)
   })
 
+  it('keeps a tool block masked across a blank line inside it (fix #2)', () => {
+    // A spacer row inside the result block must NOT un-mask the quoted error text
+    // that follows it — that reset inBlock and read the quote as a live banner.
+    const pane = [
+      '● Bash(cat ~/logs/x.log)',
+      '  ⎿  matched:',
+      '',
+      '     API Error: 529 overloaded_error',
+      ...CHROME,
+    ].join('\n')
+    expect(detectOverload(pane, OVERLOAD_PATTERNS)).toBe(false)
+  })
+
+  it('still detects the same text as a real live banner (not over-masked, fix #2 guard)', () => {
+    const pane = ['thinking…', 'API Error: 529 overloaded_error', ...CHROME].join('\n')
+    expect(detectOverload(pane, OVERLOAD_PATTERNS)).toBe(true)
+  })
+
   it('does NOT match quoted safeguard text in a Bash() line', () => {
     const pane = [
       '● Bash(grep "safeguards flagged this message" session.log)',
