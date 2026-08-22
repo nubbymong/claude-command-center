@@ -7,7 +7,9 @@ import { CanvasLibrary } from './CanvasLibrary'
 import CanvasSubjectPicker from './CanvasSubjectPicker'
 import CanvasFiledStrip from './CanvasFiledStrip'
 import CanvasNotesPanel from './CanvasNotesPanel'
+import CanvasXrayReadout from './CanvasXrayReadout'
 import { useCanvasStore } from '../stores/canvasStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import {
   MAX_RESOLVE_ANCHORS,
@@ -23,6 +25,15 @@ import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
 import { askCanvasFrame } from '../canvas/canvas-frame-rpc'
 import { createCanvasInboundChannel } from '../canvas/canvas-inbound-channel'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
+import {
+  CANVAS_XRAY_MODE_OPTIONS,
+  resolveCanvasXrayMode,
+  xrayClickSelects,
+  xrayDrawsOnPage,
+  xrayHoverIsLive,
+  xrayReadsOutInPanel,
+  type CanvasXrayMode,
+} from '../canvas/xray-mode'
 import { openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 import { relativeTime } from '../utils/relativeTime'
@@ -35,6 +46,11 @@ const MONO = "'JetBrains Mono', ui-monospace, monospace"
  *  loading. A 404, a CSP-blocked bridge script and a crashed page otherwise
  *  look exactly like a slow one — forever. */
 const FRAME_READY_TIMEOUT_MS = 8000
+
+/** How long the frame gets to acknowledge an x-ray mode change (#367). Short:
+ *  nothing waits on the answer — the host's own gate is what enforces the mode,
+ *  and this request only asks the page to stop doing work it need not do. */
+const HOVER_REPORTING_TIMEOUT_MS = 3000
 
 /** Wall-clock of a render, or null when the stored stamp will not parse. */
 function versionClock(iso: string): string | null {
@@ -216,6 +232,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
   const setActiveVersion = useCanvasStore((s) => s.setActiveVersion)
 
+  // X-ray hover mode (#367) — PER USER, so it comes from settings rather than
+  // from the canvas store where the per-canvas interaction mode lives. Every
+  // read goes through the resolver: an absent or hand-edited value is 'on'.
+  const xrayMode = resolveCanvasXrayMode(useSettingsStore((s) => s.settings.canvasXrayMode))
+
   const focus = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.focus ?? null)
   const marqueeArmed = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.marqueeArmed ?? false)
   const panelHighlight = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.panelHighlight ?? null)
@@ -227,7 +248,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const repinPendingRef = useRef(false)
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
   const modeRef = useRef(mode)
+  const xrayModeRef = useRef(xrayMode)
   const versionIdRef = useRef(version.id)
+  /** What the CURRENT frame was last told about hover reporting. The bridge
+   *  starts reporting, so a freshly loaded frame believes `true` and only a
+   *  mode that disagrees costs a round-trip. Reset when the frame reloads —
+   *  the new document has a new bridge with the default back on. */
+  const frameHoverReportingRef = useRef(true)
   /** One outstanding inspect per frame — a page-driven click cannot open a
    *  second one while the first is unanswered. */
   const inspectPendingRef = useRef(false)
@@ -256,6 +283,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
 
   viewportRef.current = viewport
   modeRef.current = mode
+  xrayModeRef.current = xrayMode
   versionIdRef.current = version.id
 
   // Keep the glass pinned to the content: scene scroll ≡ −content scroll at
@@ -339,10 +367,24 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           viewportRef.current = vp
           repinGlass()
         },
-        onPointer: (hit) => setHover(hit ? { hit } : null),
+        // X-ray Off is enforced HERE, not only by the request that asked the
+        // bridge to go quiet (#367). The bridge shares a realm with the page it
+        // reports on and may ignore that request — or never have received it —
+        // so the mode the user chose is applied to what actually arrives.
+        onPointer: (hit) => {
+          if (!xrayHoverIsLive(xrayModeRef.current)) {
+            setHover(null)
+            return
+          }
+          setHover(hit ? { hit } : null)
+        },
         onContentClick: (pageX, pageY) => {
           // Click-to-lock (spec §6 step 3) — browse mode only; in draw mode the
           // glass owns the pointer and a frame click cannot happen anyway.
+          // Under x-ray Off a click selects nothing: the page was asked for as a
+          // normal browser tab, and a tab does not turn a click into a selection
+          // (#367 left this open; see xrayClickSelects).
+          if (!xrayClickSelects(xrayModeRef.current)) return
           if (modeRef.current === 'browse') void inspectAndLock(pageX, pageY)
         },
         onContentKey: handleReportedKey,
@@ -368,9 +410,38 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     return () => window.removeEventListener('keydown', onKey)
   }, [sessionId, handleReportedKey])
 
+  // Tell the frame whether the hover surface is wanted at all (#367).
+  //
+  // The host already ignores what it does not want, so this is not the gate —
+  // it is what makes Off free for the PAGE: a bridge told to stop does no hit
+  // test, no measurement and no postMessage per mousemove. Sent only when the
+  // frame's belief disagrees with the mode, so the common case (x-ray on, the
+  // bridge's own default) costs no round-trip at all.
+  useEffect(() => {
+    if (!bridgeReady) return
+    const enabled = xrayHoverIsLive(xrayMode)
+    if (frameHoverReportingRef.current === enabled) return
+    const target = iframeRef.current?.contentWindow
+    if (!target) return
+    frameHoverReportingRef.current = enabled
+    void askCanvasFrame(target, canvasId, { type: 'hoverReporting', enabled }, HOVER_REPORTING_TIMEOUT_MS).catch(() => {
+      /* An old bridge, a frame mid-navigation, a page that answers nothing: the
+         mode still holds, because the host-side gate above is what enforces it.
+         Left marked as sent — a retry loop over an unanswerable frame would be
+         the page choosing the host's call rate. */
+    })
+  }, [xrayMode, bridgeReady, canvasId])
+
+  // Switching x-ray off drops whatever was hovered at that instant, so nothing
+  // is left painted over a page the user just asked to see plainly.
+  useEffect(() => {
+    if (!xrayHoverIsLive(xrayMode)) setHover(null)
+  }, [xrayMode])
+
   // New version (or a retry) → the frame reloads; bridge state starts over.
   useEffect(() => {
     bridgeReadyRef.current = false
+    frameHoverReportingRef.current = true
     setBridgeReady(false)
     setViewport(null)
     setHover(null)
@@ -526,6 +597,12 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     return contentPageRectToStage(hover.hit.box, viewport)
   }, [hover, viewport])
 
+  /** The hover box AS PAINTED on the stage. Null in every posture that must
+   *  leave the content alone — the glass owning the pointer, a marquee being
+   *  dragged, and now x-ray Stealth and Off (#367), where the hover is either
+   *  read out beside the stage or not resolved at all. */
+  const stageHoverRect = mode === 'browse' && !marqueeArmed && xrayDrawsOnPage(xrayMode) ? hoverStageRect : null
+
   const focusStageRect = useMemo(() => {
     if (!focus || !viewport) return null
     return contentPageRectToStage(focus.bboxPage, viewport)
@@ -560,11 +637,29 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // review); the leftover chrome is hidden by the glass-scoped CSS.
   const glassUIOptions = useMemo(() => ({ welcomeScreen: false, tools: { image: false } }), [])
 
+  // What Browse actually does depends on the x-ray mode now, and the strip is
+  // the only thing that says so — a user who switched x-ray off and still read
+  // "hover to inspect, click to select" would reasonably think it had failed.
+  const browseHint =
+    xrayMode === 'off'
+      ? 'the page is live and plain — x-ray is off, so hovering and clicking do nothing here'
+      : xrayMode === 'stealth'
+        ? 'the page is live — hovering names the element in the panel and draws nothing · click to select · ↑ parent · Esc clear'
+        : 'the page is live — hover to inspect, click to select · ↑ parent · Esc clear'
+
   const modeStrip = marqueeArmed
     ? { color: 'text-peach', label: 'Region', hint: 'drag a rectangle over the area — Esc cancels' }
     : mode === 'draw'
       ? { color: 'text-mauve', label: 'Draw', hint: 'sketch on the glass; select strokes, then attach them to a note' }
-      : { color: 'text-blue', label: 'Browse', hint: 'the page is live — hover to inspect, click to select · ↑ parent · Esc clear' }
+      : { color: 'text-blue', label: 'Browse', hint: browseHint }
+
+  /** Per USER, so it is written straight to settings rather than to any canvas
+   *  state (#367). Fire-and-forget: the store applies the change synchronously
+   *  and the persist is the config saver's problem, exactly as every other
+   *  settings toggle in the app does it. */
+  const setXrayMode = (next: CanvasXrayMode) => {
+    void useSettingsStore.getState().updateSettings({ canvasXrayMode: next })
+  }
 
   const segmentClass = (active: boolean) =>
     `px-2.5 py-[5px] rounded text-[11.5px] font-medium leading-none transition-colors focus-ring disabled:opacity-40 ${
@@ -706,6 +801,32 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             Region
           </button>
         </div>
+        {/* X-ray (#367) — whether pointing at the page marks it up, names it
+            quietly beside the stage, or does nothing at all. Beside the mode
+            switch because the two together are the whole answer to "what
+            happens when I move the mouse over this". */}
+        <span className="shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]" aria-hidden="true">
+          X-ray
+        </span>
+        <div
+          className="shrink-0 flex items-center gap-[2px] p-[2px] rounded-md bg-[var(--surface-panel)] border border-[var(--border-subtle)]"
+          role="group"
+          aria-label="Canvas x-ray hover"
+          data-testid="canvas-xray-mode"
+        >
+          {CANVAS_XRAY_MODE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => setXrayMode(option.value)}
+              aria-pressed={xrayMode === option.value}
+              className={segmentClass(xrayMode === option.value)}
+              title={option.title}
+              data-testid={`canvas-xray-${option.value}`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
         <button
           onClick={() => togglePane(sessionId)}
           aria-label="Close Agent Canvas"
@@ -790,14 +911,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               Clipped to the stage so a box for offscreen page coords cannot
               paint over the surrounding chrome. */}
           <div className="absolute inset-0 pointer-events-none overflow-hidden" data-canvas-layer="overlay">
-            {mode === 'browse' && !marqueeArmed && hoverStageRect && (
+            {stageHoverRect && (
               <div
                 className="absolute border-2 border-blue rounded-sm"
                 style={{
-                  left: hoverStageRect.x,
-                  top: hoverStageRect.y,
-                  width: hoverStageRect.width,
-                  height: hoverStageRect.height,
+                  left: stageHoverRect.x,
+                  top: stageHoverRect.y,
+                  width: stageHoverRect.width,
+                  height: stageHoverRect.height,
                   background: 'color-mix(in srgb, var(--color-blue) 12%, transparent)',
                 }}
               />
@@ -862,12 +983,12 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 }}
               />
             )}
-            {mode === 'browse' && !marqueeArmed && hoverStageRect && (
+            {stageHoverRect && (
               <div
                 className="absolute px-1.5 py-0.5 text-[10px] rounded bg-crust text-text border border-surface1 whitespace-nowrap max-w-[60%] overflow-hidden text-ellipsis"
                 style={{
-                  left: Math.max(0, hoverStageRect.x),
-                  top: Math.max(0, hoverStageRect.y - 22),
+                  left: Math.max(0, stageHoverRect.x),
+                  top: Math.max(0, stageHoverRect.y - 22),
                 }}
                 // Every word of this chip — role, name, tag, ux-id — is the
                 // frame's `pointer` report about itself, so it is marked like
@@ -962,14 +1083,26 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           </div>
         </div>
 
-        {/* Notes panel — docked (spec D3). */}
-        <CanvasNotesPanel
-          sessionId={sessionId}
-          version={version}
-          getGlassApi={() => glassApiRef.current}
-          onReturnToTerminal={() => togglePane(sessionId)}
-          isActive={isActive}
-        />
+        {/* Notes panel — docked (spec D3) — with the stealth x-ray readout
+            below it when that mode is on (#367). The readout is a SIBLING, not
+            a section of the panel: it belongs to the stage's pointer, not to
+            the review, and keeping it out means the panel's own file is
+            untouched by this change. The panel keeps its own width and left
+            border; this column just stacks the two. */}
+        <div className="shrink-0 flex flex-col min-h-0">
+          <div className="flex-1 min-h-0 flex">
+            <CanvasNotesPanel
+              sessionId={sessionId}
+              version={version}
+              getGlassApi={() => glassApiRef.current}
+              onReturnToTerminal={() => togglePane(sessionId)}
+              isActive={isActive}
+            />
+          </div>
+          {xrayReadsOutInPanel(xrayMode) && (
+            <CanvasXrayReadout hit={mode === 'browse' && !marqueeArmed ? (hover?.hit ?? null) : null} label={hoverLabel} />
+          )}
+        </div>
       </div>
     </div>
   )

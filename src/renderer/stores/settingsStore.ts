@@ -214,6 +214,16 @@ export interface AppSettings {
    *  hide running configs). Absent = 'list', so no existing install changes
    *  shape on upgrade. */
   savedConfigsView?: 'list' | 'cards' | 'find'
+  /** #367: the Agent Canvas x-ray hover mode. 'on' is the outline + label chip
+   *  drawn over the content (what shipped); 'stealth' still resolves the
+   *  hovered element but draws nothing, reading it out in the canvas side panel
+   *  instead; 'off' does no hover work at all, so the content behaves like a
+   *  normal browser tab. PER USER, not per canvas (owner, book item 52) — which
+   *  is why it lives here rather than in the canvas store, where the canvas's
+   *  own interaction mode lives. Absent = 'on', so no existing install changes
+   *  behaviour on upgrade. Every reader goes through resolveCanvasXrayMode
+   *  (src/renderer/canvas/xray-mode.ts) rather than comparing the field. */
+  canvasXrayMode?: 'off' | 'stealth' | 'on'
   // Agent Hub first-run "How it works" banner: true once the user dismisses it.
   // Optional/absent = not yet dismissed (banner shows).
   agentHubExplainerDismissed?: boolean
