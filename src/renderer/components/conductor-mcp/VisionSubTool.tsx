@@ -10,7 +10,7 @@ const visionIcon = (
 )
 
 export default function VisionSubTool() {
-  const { browserRunning, browserConnected, stopBrowser, launchBrowser } = useConductorMcpStore()
+  const { browserRunning, browserConnected, stopBrowser, launchBrowser, error } = useConductorMcpStore()
 
   const statusLabel = browserRunning && browserConnected ? 'Connected'
     : browserRunning ? 'Browser launching...'
@@ -39,6 +39,22 @@ export default function VisionSubTool() {
       description="Headless Chrome via CDP. Auto-starts at app boot; Stop button kills it for the current run."
       toolList={['screenshot', 'navigate', 'click', 'type', 'eval']}
       actions={actions}
-    />
+    >
+      {/* #371: the store's error had no surface at all, so a refused settings
+          read/write — and a failed browser launch before it — were silent. */}
+      {error && (
+        <div
+          role="alert"
+          className="text-xs leading-snug rounded-lg px-2.5 py-1.5"
+          style={{
+            color: 'var(--status-danger)',
+            background: 'color-mix(in srgb, var(--status-danger) 12%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)',
+          }}
+        >
+          {error}
+        </div>
+      )}
+    </SubToolCard>
   )
 }

@@ -568,6 +568,10 @@ export default function CloudAgentsPage() {
   const accountFilter = useCloudAgentStore(s => s.accountFilter)
   const setAccountFilter = useCloudAgentStore(s => s.setAccountFilter)
   const clearCompleted = useCloudAgentStore(s => s.clearCompleted)
+  // #371 BLOCKER-1: a refused remove / clear used to be discarded, so the rows
+  // vanished and came back on restart. They now stay put — say why.
+  const mutationError = useCloudAgentStore(s => s.error)
+  const clearMutationError = useCloudAgentStore(s => s.clearError)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   // First-run example prefill for the New Agent dialog (ephemeral).
@@ -689,6 +693,26 @@ export default function CloudAgentsPage() {
         <div className="flex flex-col flex-1 min-h-0">
         {!explainerDismissed && (
           <AgentHubExplainer onDismiss={() => { void updateSettings({ agentHubExplainerDismissed: true }) }} />
+        )}
+        {mutationError && (
+          <div
+            role="alert"
+            className="mx-4 mt-2 flex items-start gap-2 text-xs leading-snug rounded-lg px-2.5 py-1.5 shrink-0"
+            style={{
+              color: 'var(--status-danger)',
+              background: 'color-mix(in srgb, var(--status-danger) 12%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)',
+            }}
+          >
+            <span className="flex-1 min-w-0">{mutationError}</span>
+            <button
+              onClick={clearMutationError}
+              className="shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+              title="Dismiss"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>
+            </button>
+          </div>
         )}
         {counts.all === 0 ? (
           <AgentHubExamples

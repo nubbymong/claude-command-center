@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // Mock config-manager
 const mockReadConfig = vi.fn()
-const mockWriteConfig = vi.fn()
+const mockWriteConfig = vi.fn(() => true)
 /** #371: names the keys whose file EXISTS and cannot be read. The two files are
  *  independent, so one failing must not latch the other. */
 const cfg = { readFails: new Set<string>() }
@@ -172,7 +172,8 @@ describe('team-manager', () => {
     it('adds new team', () => {
       const team = makeTeam({ id: 'team-new' })
       const saved = saveTeam(team)
-      expect(saved.id).toBe('team-new')
+      expect(saved.ok).toBe(true)
+      expect(saved.team!.id).toBe('team-new')
       expect(listTeams()).toHaveLength(1)
       expect(mockWriteConfig).toHaveBeenCalledWith('agentTeams', expect.any(Array))
     })
@@ -180,20 +181,20 @@ describe('team-manager', () => {
     it('updates existing team', () => {
       saveTeam(makeTeam({ id: 'team-1', name: 'Original' }))
       const updated = saveTeam(makeTeam({ id: 'team-1', name: 'Updated' }))
-      expect(updated.name).toBe('Updated')
+      expect(updated.team!.name).toBe('Updated')
       expect(listTeams()).toHaveLength(1)
     })
 
     it('generates ID if missing', () => {
       const team = makeTeam({ id: '' })
       const saved = saveTeam(team)
-      expect(saved.id).toMatch(/^team-/)
+      expect(saved.team!.id).toMatch(/^team-/)
     })
 
     it('sets timestamps', () => {
       const before = Date.now()
       const saved = saveTeam(makeTeam({ id: 'team-ts', createdAt: 0, updatedAt: 0 }))
-      expect(saved.updatedAt).toBeGreaterThanOrEqual(before)
+      expect(saved.team!.updatedAt).toBeGreaterThanOrEqual(before)
     })
   })
 
@@ -201,13 +202,13 @@ describe('team-manager', () => {
     it('removes team from list', () => {
       saveTeam(makeTeam({ id: 'team-a' }))
       saveTeam(makeTeam({ id: 'team-b' }))
-      expect(deleteTeam('team-a')).toBe(true)
+      expect(deleteTeam('team-a')).toEqual({ ok: true, deleted: true })
       expect(listTeams()).toHaveLength(1)
       expect(listTeams()[0].id).toBe('team-b')
     })
 
     it('returns false for unknown id', () => {
-      expect(deleteTeam('nonexistent')).toBe(false)
+      expect(deleteTeam('nonexistent')).toEqual({ ok: true, deleted: false })
     })
 
     it('persists after deletion', () => {
@@ -403,20 +404,53 @@ describe('team-manager', () => {
    * the whole thing.
    */
   describe('a read failure is not an absence', () => {
-    it('refuses to save the team library over a file it could not read', () => {
+    it('refuses to save the team library over a file it could not read, and SAYS SO', () => {
       cfg.readFails.add('agentTeams')
       initTeamManager(() => mockWindow)
       expect(listTeams()).toHaveLength(0) // the empty library the failure produced
 
-      saveTeam(makeTeam({ id: 'team-new' }))
+      // Review BLOCKER-1: this used to return the team as though it had saved,
+      // so the editor closed and the work was gone on the next restart.
+      const res = saveTeam(makeTeam({ id: 'team-new' }))
+      expect(res.ok).toBe(false)
+      expect(res.error).toMatch(/could not be read/i)
+      expect(mockWriteConfig).not.toHaveBeenCalledWith('agentTeams', expect.anything())
+      // …and the in-memory library is rolled back, so the screen keeps matching
+      // the disk rather than showing a team that does not exist.
+      expect(listTeams()).toHaveLength(0)
+    })
+
+    it('after a failed load there is nothing to delete, so a delete never reaches disk', () => {
+      // Stated as it actually is rather than as a latch assertion: a failed
+      // load leaves the library EMPTY, so `deleteTeam` finds nothing and
+      // returns before it would ever persist. The refusal path is unreachable
+      // from here — the write-failure test below is the one that exercises the
+      // reporting.
+      cfg.readFails.add('agentTeams')
+      mockReadConfig.mockImplementation(() => null)
+      initTeamManager(() => mockWindow)
+      expect(deleteTeam('team-test1')).toEqual({ ok: true, deleted: false })
       expect(mockWriteConfig).not.toHaveBeenCalledWith('agentTeams', expect.anything())
     })
 
-    it('refuses to delete through a library it could not read', () => {
-      cfg.readFails.add('agentTeams')
+    it('a delete whose WRITE fails is reported, and the row stays', () => {
+      const a = makeTeam({ id: 'team-a' })
+      mockReadConfig.mockImplementation((key: string) => (key === 'agentTeams' ? [a] : null))
       initTeamManager(() => mockWindow)
-      deleteTeam('team-test1')
-      expect(mockWriteConfig).not.toHaveBeenCalledWith('agentTeams', expect.anything())
+
+      mockWriteConfig.mockReturnValueOnce(false)
+      const res = deleteTeam('team-a')
+      expect(res.ok).toBe(false)
+      expect(res.error).toBeTruthy()
+      // Rolled back: the UI must not show the row gone when disk still has it.
+      expect(listTeams().map((t) => t.id)).toEqual(['team-a'])
+    })
+
+    it('a save whose WRITE fails is reported, and the team is not added', () => {
+      initTeamManager(() => mockWindow)
+      mockWriteConfig.mockReturnValueOnce(false)
+      expect(saveTeam(makeTeam({ id: 'team-x' })).ok).toBe(false)
+      expect(listTeams()).toHaveLength(0)
     })
 
     it('one file failing does not latch the other', () => {
@@ -438,19 +472,40 @@ describe('team-manager', () => {
       expect(mockWriteConfig).toHaveBeenCalledWith('agentTeams', expect.any(Array))
     })
 
-    it('resumes saving once a load succeeds', () => {
+    /**
+     * Review MAJOR-1. `initTeamManager` runs ONCE, at boot, so the first cut's
+     * "a later successful load clears the latch" had no production path: one
+     * transient lock at startup disabled team persistence for the whole
+     * process. The old test proved recovery by calling `initTeamManager` a
+     * second time — a seam the app never reaches.
+     *
+     * This drives the real one: init once, the lock lifts, and the NEXT SAVE
+     * recovers by itself.
+     */
+    it('recovers on the next save, with no second load — the production path', () => {
+      const existing = makeTeam({ id: 'team-existing', name: 'Built last week' })
+      mockReadConfig.mockImplementation((key: string) => (key === 'agentTeams' ? [existing] : null))
       cfg.readFails.add('agentTeams')
       initTeamManager(() => mockWindow)
-      saveTeam(makeTeam({ id: 'team-lost' }))
-      expect(mockWriteConfig).not.toHaveBeenCalledWith('agentTeams', expect.anything())
+      expect(listTeams()).toHaveLength(0)
 
+      // The AV scanner lets go. Nothing re-initialises; the user just saves.
       cfg.readFails.clear()
-      mockReadConfig.mockImplementation((key: string) => (key === 'agentTeams' ? [makeTeam()] : null))
-      initTeamManager(() => mockWindow)
-      expect(listTeams()).toHaveLength(1)
+      const res = saveTeam(makeTeam({ id: 'team-new', name: 'Built now' }))
 
-      saveTeam(makeTeam({ id: 'team-new' }))
-      expect(mockWriteConfig).toHaveBeenCalledWith('agentTeams', expect.any(Array))
+      expect(res.ok).toBe(true)
+      // The library that was on disk is BACK, and the new team is with it —
+      // the whole point of folding the recovered file in before writing.
+      const written = mockWriteConfig.mock.calls.filter((c: any[]) => c[0] === 'agentTeams').at(-1)![1] as any[]
+      expect(written.map((t) => t.id).sort()).toEqual(['team-existing', 'team-new'])
+      expect(listTeams().map((t) => t.id).sort()).toEqual(['team-existing', 'team-new'])
+    })
+
+    it('keeps refusing while the file is STILL unreadable', () => {
+      cfg.readFails.add('agentTeams')
+      initTeamManager(() => mockWindow)
+      for (let i = 0; i < 3; i++) expect(saveTeam(makeTeam({ id: `t-${i}` })).ok).toBe(false)
+      expect(mockWriteConfig).not.toHaveBeenCalledWith('agentTeams', expect.anything())
     })
   })
 })

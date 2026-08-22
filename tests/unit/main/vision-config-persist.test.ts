@@ -55,7 +55,10 @@ const REAL: GlobalVisionConfig = { enabled: true, browser: 'edge', debugPort: 93
 const DEFAULTS = { enabled: true, browser: 'chrome', debugPort: 9222, headless: true } as GlobalVisionConfig
 
 const getConfig = () => handlers.get('vision:getConfig')!({})
-const saveConfig = (c: GlobalVisionConfig) => handlers.get('vision:saveConfig')!({}, c)
+const saveConfig = (c: GlobalVisionConfig, generation?: number) =>
+  handlers.get('vision:saveConfig')!({}, c, generation)
+/** The config half of the new `{config, generation, readFailed}` answer. */
+const readConfig = async () => (await getConfig()).config
 
 beforeEach(() => {
   handlers.clear()
@@ -69,7 +72,7 @@ beforeEach(() => {
 describe('vision config persistence', () => {
   it('round-trips a saved config', async () => {
     expect(await saveConfig(REAL)).toEqual({ ok: true })
-    expect(await getConfig()).toEqual(REAL)
+    expect(await readConfig()).toEqual(REAL)
   })
 
   it('refuses to save over a config it could not read, and says so', async () => {
@@ -77,14 +80,14 @@ describe('vision config persistence', () => {
     cfg.readFails = true
 
     // The form renders defaults because getConfig came back null…
-    expect(await getConfig()).toBeNull()
+    expect(await readConfig()).toBeNull()
     // …the user touches a control and it saves. This is the write that lost it.
     const res = await saveConfig(DEFAULTS)
     expect(res.ok).toBe(false)
     expect(res.error).toMatch(/could not be read/i)
 
     cfg.readFails = false
-    expect(await getConfig()).toEqual(REAL)
+    expect(await readConfig()).toEqual(REAL)
   })
 
   it('reports a failed write as a failure rather than {ok:true}', async () => {
@@ -95,7 +98,7 @@ describe('vision config persistence', () => {
   })
 
   it('an ABSENT config still saves — first-run setup must be able to write one', async () => {
-    expect(await getConfig()).toBeNull()
+    expect(await readConfig()).toBeNull()
     expect(await saveConfig(REAL)).toEqual({ ok: true })
     expect(store.visionGlobal).toEqual(REAL)
   })
@@ -107,7 +110,7 @@ describe('vision config persistence', () => {
     expect((await saveConfig(DEFAULTS)).ok).toBe(false)
 
     cfg.readFails = false
-    expect(await getConfig()).toEqual(REAL)
+    expect(await readConfig()).toEqual(REAL)
     expect(await saveConfig(DEFAULTS)).toEqual({ ok: true })
     expect(store.visionGlobal).toEqual(DEFAULTS)
   })
@@ -120,6 +123,6 @@ describe('vision config persistence', () => {
     await handlers.get('vision:start')!({})
     expect((await saveConfig(DEFAULTS)).ok).toBe(false)
     cfg.readFails = false
-    expect(await getConfig()).toEqual(REAL)
+    expect(await readConfig()).toEqual(REAL)
   })
 })

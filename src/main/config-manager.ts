@@ -262,34 +262,54 @@ export function readConfigChecked<T = unknown>(
   const quarantine = opts.quarantineUnparseable !== false
   const fileName = CONFIG_FILES[key]
   if (!fileName) {
-    logError(`[config-manager] Refusing to read unknown config key: ${String(key)}`)
+    // Not 'absent': `writeConfig` refuses an unregistered key too, so telling a
+    // caller "there is no file" would invite it to build an empty store for a
+    // key it can never persist. Named distinctly in the log — a typo'd key is a
+    // programming error, not an unreadable disk.
+    logError(`[config-manager] Refusing to read UNREGISTERED config key: ${String(key)} (not in CONFIG_FILES — this is a bug, not a disk failure)`)
     return { value: null, outcome: 'failed' }
   }
   const filePath = join(getConfigDir(), fileName)
   let data: string
   try {
-    if (!existsSync(filePath)) return { value: null, outcome: 'absent' }
+    // `existsSync` answers false for ANY stat error, not just ENOENT — a denied
+    // parent, an unmounted resources directory, a share that blinked. Reading
+    // that as "absent" is the exact collapse this function exists to undo, and
+    // it is the case `loadAllConfig` already handles on the renderer side by
+    // latching every key. So: open-and-read, and let only ENOENT mean absent.
     data = readFileSync(filePath, 'utf-8')
   } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code
+    if (code === 'ENOENT') return { value: null, outcome: 'absent' }
     // The file is (probably) there and could not be read: EBUSY, EACCES,
-    // EPERM, EIO, a junction refusal. This is the case the latch exists for.
-    logError(`[config-manager] Failed to read ${key} (read failure, NOT an absence): ${err}`)
+    // EPERM, EIO, ENOTDIR, a junction refusal. This is the case the latch
+    // exists for.
+    logError(`[config-manager] Failed to read ${key} (read failure, NOT an absence; code=${code ?? 'none'}): ${err}`)
     return { value: null, outcome: 'failed' }
   }
   try {
     return { value: JSON.parse(data) as T, outcome: 'ok' }
   } catch (parseErr) {
+    // Log unconditionally: the renderer bulk-load path passes
+    // `quarantineUnparseable: false`, and it is the path that latches every
+    // renderer write (GHSA-m8p2). Losing its only diagnostic to an `if` was the
+    // wrong direction. Quarantine conditionally; say why always.
+    logError(`[config-manager] ${key} did not parse: ${(parseErr as Error)?.message ?? parseErr}`)
+    if (!quarantine) return { value: null, outcome: 'unparseable' }
     // Unreadable CONTENT, not an unreadable FILE: keep it for forensics, start
-    // clean. Nothing is left to protect, so writes stay allowed.
-    if (quarantine) {
-      const aside = `${filePath}.corrupt-${Date.now()}`
-      try {
-        renameSync(filePath, aside)
-        logError(`[config-manager] ${key} did not parse (${(parseErr as Error)?.message ?? parseErr}); moved aside to ${aside}`)
-      } catch {
-        logError(`[config-manager] ${key} did not parse and could not be moved aside; the next save overwrites it`)
-      }
+    // clean. "Nothing is left to protect" is only true once the move has
+    // actually happened…
+    const aside = `${filePath}.corrupt-${Date.now()}`
+    try {
+      renameSync(filePath, aside)
+    } catch (renameErr) {
+      // …and when it has not, the premise is false: the unparseable file is
+      // still sitting there, possibly hand-recoverable, and allowing writes
+      // would let the next save overwrite it. Latch instead.
+      logError(`[config-manager] ${key} did not parse AND could not be moved aside (${(renameErr as Error)?.message ?? renameErr}); refusing writes rather than letting the next save overwrite it`)
+      return { value: null, outcome: 'failed' }
     }
+    logInfo(`[config-manager] ${key} moved aside to ${aside}; starting clean`)
     return { value: null, outcome: 'unparseable' }
   }
 }

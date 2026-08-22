@@ -23,6 +23,12 @@ export function _resetVisionLatchForTest(): void {
 export function registerVisionHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('vision:start', async () => {
     const config = loadConfigLatched<GlobalVisionConfig>('visionGlobal', visionLatch)
+    // Say WHICH kind of nothing this is. "Not configured" sends the user to the
+    // settings panel, which — on a read failure — is exactly where they would
+    // overwrite the config they still have (#371 MINOR-5).
+    if (!config && visionLatch.failed()) {
+      return { ok: false, error: 'Vision settings could not be read this time, so vision was not started. They are still on disk — try again in a moment.' }
+    }
     if (!config?.enabled) return { ok: false, error: 'Vision not configured' }
     try {
       await startGlobalVision(config, getWindow)
@@ -70,7 +76,26 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
     }
   })
 
-  ipcMain.handle('vision:saveConfig', async (_event, config: GlobalVisionConfig) => {
+  /**
+   * `generation` is the token `vision:getConfig` handed out with the config the
+   * form was built from (#371 MAJOR-5).
+   *
+   * The latch alone is not enough here, because the stale state lives in the
+   * RENDERER: `getConfig` fails, the panel renders defaults, then something
+   * else — `vision:start`, the launch path — reads the file successfully and
+   * clears the latch. A save arriving after that looks perfectly healthy and
+   * writes the defaults over the real config. The token closes that window: it
+   * changes on recovery, so a form built while the file was unreadable can
+   * never save over the file once it is readable again.
+   */
+  ipcMain.handle('vision:saveConfig', async (_event, config: GlobalVisionConfig, generation?: number) => {
+    if (typeof generation === 'number' && generation !== visionLatch.generation()) {
+      return {
+        ok: false,
+        stale: true,
+        error: 'Vision settings were not saved: these settings were shown before the settings file could be read, so saving them would overwrite the real ones. Reopen this panel to see what is actually saved.',
+      }
+    }
     // Report the real outcome. A refused save (the last read FAILED) and a
     // failed write both come back as ok:false rather than a false reassurance.
     const saved = saveConfigLatched('visionGlobal', config, visionLatch)
@@ -84,6 +109,14 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
   })
 
   ipcMain.handle('vision:getConfig', async () => {
-    return loadConfigLatched<GlobalVisionConfig>('visionGlobal', visionLatch)
+    const config = loadConfigLatched<GlobalVisionConfig>('visionGlobal', visionLatch)
+    return {
+      config,
+      generation: visionLatch.generation(),
+      /** True when `config` is null because the file could not be READ, rather
+       *  than because there is none. The panel must not offer defaults as if
+       *  this were a fresh install. */
+      readFailed: visionLatch.failed(),
+    }
   })
 }

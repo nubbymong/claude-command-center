@@ -20,7 +20,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync as realReadFileSync
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-const h = vi.hoisted(() => ({ resourcesDir: '', failFor: null as string | null, errno: 'EBUSY' }))
+const h = vi.hoisted(() => ({
+  resourcesDir: '',
+  failFor: null as string | null,
+  failRenameFor: null as string | null,
+  errno: 'EBUSY',
+}))
 
 vi.mock('../../../src/main/ipc/setup-handlers', () => ({
   getResourcesDirectory: () => h.resourcesDir,
@@ -44,12 +49,22 @@ vi.mock('fs', async (importOriginal) => {
       }
       return real.readFileSync(p, o)
     },
+    // Lets a test model "the file did not parse AND could not be quarantined".
+    renameSync: (from: any, to: any) => {
+      if (h.failRenameFor && String(from).endsWith(h.failRenameFor)) {
+        const err = new Error(`EACCES: permission denied, rename '${String(from)}'`) as NodeJS.ErrnoException
+        err.code = 'EACCES'
+        throw err
+      }
+      return real.renameSync(from, to)
+    },
   }
   return { ...patched, default: patched }
 })
 
+const { logError } = await import('../../../src/main/debug-logger')
 const { readConfigChecked, writeConfig } = await import('../../../src/main/config-manager')
-const { createReadFailureLatch, loadConfigLatched, saveConfigLatched } = await import('../../../src/main/persist-latch')
+const { createReadFailureLatch, loadConfigLatched, saveConfigLatched, mergeById } = await import('../../../src/main/persist-latch')
 const windowState = await import('../../../src/main/window-state')
 
 let configDir = ''
@@ -67,7 +82,9 @@ afterAll(() => {
 
 beforeEach(() => {
   h.failFor = null
+  h.failRenameFor = null
   h.errno = 'EBUSY'
+  vi.mocked(logError).mockClear()
   windowState._resetWindowStateLatchForTest()
 })
 
@@ -126,6 +143,53 @@ describe('readConfigChecked tells the three ways to get nothing apart', () => {
   it('an unregistered key is FAILED, not absent — writeConfig refuses it, so an empty store could never be saved', () => {
     const r = readConfigChecked('nope' as never)
     expect(r.outcome).toBe('failed')
+  })
+
+  /**
+   * Review MAJOR-2. The first cut asked `existsSync` first, and `existsSync`
+   * answers false for ANY stat error — a denied parent, an unmounted resources
+   * directory, a share that blinked — so the one case with the widest blast
+   * radius (the whole CONFIG directory unreachable) read as "fresh install".
+   * Only ENOENT may mean absent.
+   */
+  it.each(['ENOTDIR', 'EACCES', 'EPERM', 'EBUSY', 'EIO', 'ELOOP'])(
+    '%s means the file could not be READ, never that it is absent',
+    (code) => {
+      writeGoodAgents()
+      h.failFor = 'cloud-agents.json'
+      h.errno = code
+      expect(readConfigChecked('cloudAgents').outcome).toBe('failed')
+    },
+  )
+
+  it('ENOENT is the only error that means absent', () => {
+    writeGoodAgents()
+    h.failFor = 'cloud-agents.json'
+    h.errno = 'ENOENT'
+    expect(readConfigChecked('cloudAgents').outcome).toBe('absent')
+  })
+
+  /**
+   * Review MAJOR-3. "Nothing is left to protect" is the entire justification
+   * for letting writes continue after an unparseable read — and it is only true
+   * once the file has ACTUALLY been moved aside. When the rename fails the file
+   * is still sitting there, possibly hand-recoverable, and the next save would
+   * overwrite it.
+   */
+  it('an unparseable file that could NOT be moved aside latches instead of allowing the overwrite', () => {
+    writeFileSync(agentsFile(), '{ truncated by a power cut, 90% recoverable')
+    const before = agentBytes()
+    h.failRenameFor = 'cloud-agents.json'
+
+    const r = readConfigChecked('cloudAgents')
+    expect(r.outcome).toBe('failed')
+
+    const latch = createReadFailureLatch('test')
+    latch.note(r.outcome)
+    expect(saveConfigLatched('cloudAgents', () => [], latch)).toBe(false)
+
+    h.failRenameFor = null
+    expect(agentBytes()).toBe(before)
   })
 })
 
@@ -203,6 +267,107 @@ describe('the latch refuses writes only after a READ failure', () => {
     expect(agentsLatch.failed()).toBe(true)
     expect(teamsLatch.failed()).toBe(false)
     expect(saveConfigLatched('agentTeams', [{ id: 't-2' }], teamsLatch)).toBe(true)
+  })
+})
+
+/**
+ * Review findings on #406. The first cut latched correctly and then never
+ * un-latched: five of the six persisters load exactly once, at boot, so a
+ * single 50 ms lock disabled persistence for the whole process — and every
+ * refused write was reported to the caller as a success. Both halves are worse
+ * than the bug they replaced, so both are pinned here.
+ */
+describe('a latched save retries the read rather than refusing forever', () => {
+  it('recovers, folds the file back in, and writes — no second load needed', () => {
+    writeGoodAgents()
+    const latch = createReadFailureLatch('test')
+
+    h.failFor = 'cloud-agents.json'
+    expect(loadConfigLatched('cloudAgents', latch)).toBeNull()
+    expect(latch.failed()).toBe(true)
+
+    // The lock lifts. Nothing re-loads — this is the production shape, where
+    // init ran once at boot and only saves happen from here on.
+    h.failFor = null
+    let recovered: unknown = 'never called'
+    const inMemory = [{ id: 'ca-new', name: 'made while the file was locked' }]
+    expect(
+      saveConfigLatched('cloudAgents', () => inMemory, latch, { onRecovered: (r) => { recovered = r } }),
+    ).toBe(true)
+
+    // The owner was handed the file it never managed to read…
+    expect(recovered).toEqual(GOOD)
+    expect(latch.failed()).toBe(false)
+  })
+
+  it('still refuses while the file is STILL unreadable, and leaves the bytes alone', () => {
+    writeGoodAgents()
+    const before = agentBytes()
+    const latch = createReadFailureLatch('test')
+
+    h.failFor = 'cloud-agents.json'
+    loadConfigLatched('cloudAgents', latch)
+    expect(saveConfigLatched('cloudAgents', () => [], latch)).toBe(false)
+
+    h.failFor = null
+    expect(agentBytes()).toBe(before)
+  })
+
+  it('evaluates the value AFTER recovery, so the merged state is what lands', () => {
+    writeGoodAgents()
+    const latch = createReadFailureLatch('test')
+    h.failFor = 'cloud-agents.json'
+    loadConfigLatched('cloudAgents', latch)
+
+    // Exactly how the persisters use it: the thunk reads module state that
+    // `onRecovered` has just merged into.
+    h.failFor = null
+    let state: unknown[] = [{ id: 'ca-new' }]
+    saveConfigLatched('cloudAgents', () => state, latch, {
+      onRecovered: (r) => { state = mergeById(r, state as { id?: unknown }[]) },
+    })
+
+    const onDisk = readConfigChecked<Array<{ id: string }>>('cloudAgents').value!
+    expect(onDisk.map((a) => a.id).sort()).toEqual(['ca-1', 'ca-new'])
+  })
+
+  it('the refusal is logged once per latch, not once per save', () => {
+    writeGoodAgents()
+    const latch = createReadFailureLatch('test')
+    h.failFor = 'cloud-agents.json'
+    loadConfigLatched('cloudAgents', latch)
+
+    // `saveSnapshots` runs on every usage poll; a line per poll for the life of
+    // the process is noise that buries the one that matters.
+    for (let i = 0; i < 5; i++) expect(saveConfigLatched('cloudAgents', () => [], latch)).toBe(false)
+    const refusals = vi.mocked(logError).mock.calls.filter((c) => String(c[0]).includes('refusing to save'))
+    expect(refusals).toHaveLength(1)
+  })
+})
+
+describe('the generation changes only on recovery', () => {
+  it('an ordinary re-read does not invalidate a form built from the last one', () => {
+    writeGoodAgents()
+    const latch = createReadFailureLatch('test')
+    loadConfigLatched('cloudAgents', latch)
+    const g = latch.generation()
+    loadConfigLatched('cloudAgents', latch)
+    expect(latch.generation()).toBe(g)
+  })
+
+  it('a load that succeeds AFTER a failure does invalidate it', () => {
+    writeGoodAgents()
+    const latch = createReadFailureLatch('test')
+    loadConfigLatched('cloudAgents', latch)
+    const g = latch.generation()
+
+    h.failFor = 'cloud-agents.json'
+    loadConfigLatched('cloudAgents', latch)
+    expect(latch.generation()).toBe(g) // a FAILED read is not a new generation
+
+    h.failFor = null
+    loadConfigLatched('cloudAgents', latch)
+    expect(latch.generation()).not.toBe(g)
   })
 })
 

@@ -7,7 +7,7 @@ import { BrowserWindow } from 'electron'
 import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
-import { createReadFailureLatch, loadConfigLatched, saveConfigLatched } from './persist-latch'
+import { createReadFailureLatch, loadConfigLatched, saveConfigLatched, mergeById } from './persist-latch'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveVersionBinary, isVersionInstalled, installVersion } from './legacy-version-manager'
 import { isValidLegacyVersion } from '../shared/legacy-version'
@@ -96,8 +96,33 @@ function generateId(): string {
  *  the very next `cleanupStuckAgents()` writes back over the file. */
 const cloudAgentsLatch = createReadFailureLatch('cloud-agent')
 
-function persist(): void {
-  saveConfigLatched('cloudAgents', agents, cloudAgentsLatch)
+/**
+ * Returns false when the agent list did NOT reach disk. Callers must surface
+ * that: `initCloudAgentManager` runs once, at boot, so before the retry inside
+ * `saveConfigLatched` existed a single transient lock at startup silently
+ * discarded every agent dispatched for the rest of the process.
+ */
+function persist(removedIds?: readonly string[]): boolean {
+  return saveConfigLatched('cloudAgents', () => agents, cloudAgentsLatch, {
+    onRecovered: (recovered) => {
+      // The file is readable again: everything that was on disk before the
+      // failed load comes back, and anything dispatched since wins on its id.
+      agents = mergeById(recovered, agents)
+      // …but a REMOVAL must not be undone by the merge — the removed row is
+      // still on disk, so folding disk back in would resurrect it.
+      if (removedIds && removedIds.length > 0) {
+        const gone = new Set(removedIds)
+        agents = agents.filter((a) => !gone.has(a.id))
+      }
+    },
+  })
+}
+
+/** Why the last write did not land, in words a user can act on. */
+function persistFailure(): string {
+  return cloudAgentsLatch.failed()
+    ? 'Your cloud agents could not be saved: the agents file could not be read, so it was left alone rather than overwritten. Nothing on disk was lost — try again once it is readable.'
+    : 'Your cloud agents could not be written to disk.'
 }
 
 function broadcastStatus(agent: CloudAgentData): void {
@@ -373,18 +398,25 @@ export function cancelAgent(id: string): boolean {
   return true
 }
 
-export function removeAgent(id: string): boolean {
+export function removeAgent(id: string): { ok: boolean; removed: boolean; error?: string } {
   const idx = agents.findIndex(a => a.id === id)
-  if (idx < 0) return false
+  if (idx < 0) return { ok: true, removed: false }
 
   // Cancel if running
   if (agents[idx].status === 'running') {
     cancelAgent(id)
   }
 
-  agents.splice(idx, 1)
-  persist()
-  return true
+  const snapshot = agents
+  agents = agents.filter(a => a.id !== id)
+  // #371 BLOCKER-1: a refused write used to return true, so the row vanished
+  // from the UI and came back on restart. Roll the in-memory list back so the
+  // screen keeps matching the disk.
+  if (!persist([id])) {
+    agents = snapshot
+    return { ok: false, removed: false, error: persistFailure() }
+  }
+  return { ok: true, removed: true }
 }
 
 export async function retryAgent(id: string): Promise<CloudAgentData | null> {
@@ -410,12 +442,16 @@ export function getAgentOutput(id: string): string {
   return agent?.output || ''
 }
 
-export function clearCompletedAgents(): number {
-  const before = agents.length
+export function clearCompletedAgents(): { ok: boolean; removed: number; error?: string } {
+  const snapshot = agents
+  const clearedIds = agents.filter(a => a.status !== 'running' && a.status !== 'pending').map(a => a.id)
+  if (clearedIds.length === 0) return { ok: true, removed: 0 }
   agents = agents.filter(a => a.status === 'running' || a.status === 'pending')
-  const removed = before - agents.length
-  if (removed > 0) persist()
-  return removed
+  if (!persist(clearedIds)) {
+    agents = snapshot
+    return { ok: false, removed: 0, error: persistFailure() }
+  }
+  return { ok: true, removed: clearedIds.length }
 }
 
 export function killAllAgents(): void {

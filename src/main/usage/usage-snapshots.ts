@@ -88,7 +88,18 @@ export function loadSnapshots(): Map<string, UsageSnapshot> {
  *  not worth failing a usage fetch over, so this never throws. */
 export function saveSnapshots(snapshots: Map<string, UsageSnapshot>): boolean {
   try {
-    return saveConfigLatched('usageSnapshots', Object.fromEntries(snapshots), snapshotsLatch)
+    return saveConfigLatched('usageSnapshots', () => Object.fromEntries(snapshots), snapshotsLatch, {
+      onRecovered: (recovered) => {
+        // `account-usage` hydrates once per process and then saves on every
+        // successful fetch, so without this the first failed read disabled
+        // snapshots until restart. On recovery, every OTHER profile's snapshot
+        // comes back from disk; the live map wins for the profiles it holds,
+        // because those figures are newer than anything on disk.
+        for (const [profileId, snap] of parseSnapshots(recovered)) {
+          if (!snapshots.has(profileId)) snapshots.set(profileId, snap)
+        }
+      },
+    })
   } catch {
     return false
   }

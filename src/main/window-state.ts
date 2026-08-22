@@ -44,7 +44,18 @@ export function loadWindowState(): WindowState {
   return saved
 }
 
-/** Persist the geometry. Refused while the last load was a read FAILURE. */
+/**
+ * Persist the geometry. Refused while the last load was a read FAILURE.
+ *
+ * Deliberately the ONE latched save with no recovery retry (#371). The others
+ * retry because they load once at boot and save many times, so a refusal that
+ * never lifts would be a session-long outage. This one loads once and saves
+ * once, at window close, and the geometry it would write after a failed load is
+ * the fallback DEFAULT rather than anything the user chose — so recovering the
+ * file only to overwrite it with 3200x1800 would be the loss, not the fix.
+ * Keeping the saved geometry is the right answer here, and the process is
+ * ending anyway.
+ */
 export function saveWindowState(state: WindowState): boolean {
   return saveConfigLatched('windowState', state, windowStateLatch)
 }

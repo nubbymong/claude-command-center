@@ -88,7 +88,8 @@ const mockElectronAPI = {
       output: '',
     })),
     cancel: vi.fn(() => Promise.resolve(true)),
-    remove: vi.fn(() => Promise.resolve(true)),
+    // #371: remove/clearCompleted report the real disk outcome now.
+    remove: vi.fn(() => Promise.resolve({ ok: true, removed: true })),
     retry: vi.fn((id: string) => Promise.resolve({
       id: 'ca-retry123',
       name: 'Retried',
@@ -101,7 +102,7 @@ const mockElectronAPI = {
     })),
     list: vi.fn(() => Promise.resolve([])),
     getOutput: vi.fn(() => Promise.resolve('')),
-    clearCompleted: vi.fn(() => Promise.resolve(0)),
+    clearCompleted: vi.fn(() => Promise.resolve({ ok: true, removed: 0 })),
     onStatusChanged: vi.fn(() => () => {}),
     onOutputChunk: vi.fn(() => () => {}),
   },
@@ -116,8 +117,9 @@ const mockElectronAPI = {
   },
   team: {
     list: vi.fn(() => Promise.resolve([])),
-    save: vi.fn((team: any) => Promise.resolve({ ...team, id: team.id || 'team-mock123', updatedAt: Date.now() })),
-    delete: vi.fn(() => Promise.resolve(true)),
+    // #371: save/delete report the real disk outcome now.
+    save: vi.fn((team: any) => Promise.resolve({ ok: true, team: { ...team, id: team.id || 'team-mock123', updatedAt: Date.now() } })),
+    delete: vi.fn(() => Promise.resolve({ ok: true, deleted: true })),
     run: vi.fn((teamId: string) => Promise.resolve({
       id: 'tr-mock123',
       teamId,
@@ -144,6 +146,17 @@ const mockElectronAPI = {
     testConnection: vi.fn(() => Promise.resolve({ ok: true, message: 'connected' })),
   },
   dialog: { openFolder: vi.fn(() => Promise.resolve(null)) },
+  vision: {
+    start: vi.fn(() => Promise.resolve({ ok: true })),
+    stop: vi.fn(() => Promise.resolve({ ok: true })),
+    status: vi.fn(() => Promise.resolve({ running: false, connected: false, browser: '', mcpPort: 0 })),
+    launch: vi.fn(() => Promise.resolve({ ok: true })),
+    // #371: saveConfig takes the generation token getConfig handed out, and
+    // getConfig reports whether the read FAILED rather than answering a bare null.
+    saveConfig: vi.fn(() => Promise.resolve({ ok: true })),
+    getConfig: vi.fn(() => Promise.resolve({ config: null, generation: 1, readFailed: false })),
+    onStatusChanged: vi.fn(() => () => {}),
+  },
   memory: {
     scan: vi.fn(() => Promise.resolve({
       projects: [],

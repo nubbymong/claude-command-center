@@ -14,7 +14,7 @@ vi.mock('child_process', () => ({
 
 // Mock config-manager
 const mockReadConfig = vi.fn()
-const mockWriteConfig = vi.fn()
+const mockWriteConfig = vi.fn(() => true)
 /** #371: when set, cloud-agents.json EXISTS and cannot be read — which is not
  *  the same as it not being there, and must not become an empty list saved back
  *  over it by the boot-time stuck-agent sweep. */
@@ -331,13 +331,13 @@ describe('cloud-agent-manager', () => {
       ])
       initCloudAgentManager(() => mockWindow)
       const result = removeAgent('a1')
-      expect(result).toBe(true)
+      expect(result).toEqual({ ok: true, removed: true })
       expect(listAgents()).toHaveLength(1)
       expect(listAgents()[0].id).toBe('a2')
     })
 
     it('returns false for unknown id', () => {
-      expect(removeAgent('nonexistent')).toBe(false)
+      expect(removeAgent('nonexistent')).toEqual({ ok: true, removed: false })
     })
   })
 
@@ -382,7 +382,7 @@ describe('cloud-agent-manager', () => {
       ])
       initCloudAgentManager(() => mockWindow)
       const removed = clearCompletedAgents()
-      expect(removed).toBe(2)
+      expect(removed).toEqual({ ok: true, removed: 2 })
       expect(listAgents()).toHaveLength(1)
       expect(listAgents()[0].id).toBe('a2')
     })
@@ -390,7 +390,7 @@ describe('cloud-agent-manager', () => {
     it('returns 0 when nothing to clear', () => {
       mockReadConfig.mockReturnValue([{ id: 'a1', status: 'running' }])
       initCloudAgentManager(() => mockWindow)
-      expect(clearCompletedAgents()).toBe(0)
+      expect(clearCompletedAgents()).toEqual({ ok: true, removed: 0 })
     })
   })
 
@@ -520,20 +520,59 @@ describe('cloud-agent-manager', () => {
       expect(mockWriteConfig).toHaveBeenCalledWith('cloudAgents', expect.any(Array))
     })
 
-    it('resumes persisting once a load succeeds', async () => {
+    /**
+     * Review MAJOR-1. `initCloudAgentManager` runs once, at boot, so the old
+     * "call init twice" recovery test proved a property at a seam production
+     * never reaches. This drives the real one: init once, the lock lifts, and
+     * the next dispatch recovers by itself.
+     */
+    it('recovers on the next dispatch, with no second load — the production path', async () => {
+      mockReadConfig.mockReturnValue([{ id: 'ca-old', name: 'from last week', status: 'completed' }])
       cfg.readFails = true
       initCloudAgentManager(() => mockWindow)
-      cleanupStuckAgents()
-      expect(mockWriteConfig).not.toHaveBeenCalled()
+      expect(listAgents()).toHaveLength(0)
 
       cfg.readFails = false
-      mockReadConfig.mockReturnValue([{ id: 'ca-old', name: 'kept', status: 'completed' }])
+      mockSpawn.mockReturnValue(createMockProcess())
+      await dispatchAgent({ name: 'Now', description: 'd', projectPath: '/p' })
+
+      const written = mockWriteConfig.mock.calls.filter((c: any[]) => c[0] === 'cloudAgents').at(-1)![1] as any[]
+      // The agent that was on disk is back, alongside the new one.
+      expect(written.some((a) => a.id === 'ca-old')).toBe(true)
+      expect(written.some((a) => a.name === 'Now')).toBe(true)
+    })
+
+    /**
+     * The tombstone case, reachable here (unlike for teams, where a failed load
+     * leaves nothing to delete): once the merge folds the disk copy back in, a
+     * removal must stick rather than being resurrected by the next save.
+     */
+    it('a removal is not resurrected by the recovery merge', async () => {
+      mockReadConfig.mockReturnValue([{ id: 'ca-old', name: 'on disk', status: 'completed' }])
+      cfg.readFails = true
       initCloudAgentManager(() => mockWindow)
-      expect(listAgents()).toHaveLength(1)
+
+      cfg.readFails = false
+      // Nothing in memory yet (the load failed), so there is nothing to remove.
+      expect(removeAgent('ca-old')).toEqual({ ok: true, removed: false })
 
       mockSpawn.mockReturnValue(createMockProcess())
       await dispatchAgent({ name: 'Now', description: 'd', projectPath: '/p' })
-      expect(mockWriteConfig).toHaveBeenCalledWith('cloudAgents', expect.any(Array))
+      expect(listAgents().some((a) => a.id === 'ca-old')).toBe(true)
+
+      expect(removeAgent('ca-old')).toEqual({ ok: true, removed: true })
+      const written = mockWriteConfig.mock.calls.filter((c: any[]) => c[0] === 'cloudAgents').at(-1)![1] as any[]
+      expect(written.some((a) => a.id === 'ca-old')).toBe(false)
+    })
+
+    it('a remove whose WRITE fails is reported, and the agent stays', () => {
+      mockReadConfig.mockReturnValue([{ id: 'ca-1', name: 'x', status: 'completed' }])
+      initCloudAgentManager(() => mockWindow)
+      mockWriteConfig.mockReturnValueOnce(false)
+      const res = removeAgent('ca-1')
+      expect(res.ok).toBe(false)
+      expect(res.error).toBeTruthy()
+      expect(listAgents()).toHaveLength(1)
     })
   })
 })

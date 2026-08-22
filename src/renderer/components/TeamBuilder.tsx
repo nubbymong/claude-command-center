@@ -42,6 +42,10 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
   const [projectPath, setProjectPath] = useState(editingTeam?.projectPath || '')
   const [steps, setSteps] = useState<TeamStep[]>(editingTeam?.steps || [])
   const [saving, setSaving] = useState(false)
+  // #371 BLOCKER-1: a refused/failed disk write used to close this dialog as if
+  // it had saved, and the pipeline was gone on the next restart. The message
+  // stays here, in front of the work that did not land.
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   // Deliberately NO useDialogEscape: this is a multi-step pipeline with a
   // per-step prompt in each field, and Escape is a reflex when leaving a
@@ -87,6 +91,7 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
   const handleSave = async () => {
     if (!name.trim() || steps.length === 0) return
     setSaving(true)
+    setSaveError(null)
     try {
       const team: TeamTemplate = {
         id: editingTeam?.id || generateTeamId(),
@@ -97,7 +102,13 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
         createdAt: editingTeam?.createdAt || Date.now(),
         updatedAt: Date.now(),
       }
-      await saveTeam(team)
+      const result = await saveTeam(team)
+      if (!result.ok) {
+        // Do NOT close: the pipeline is not on disk, and closing would discard
+        // the only copy of it that exists.
+        setSaveError(result.error || 'Your pipeline could not be saved to disk.')
+        return
+      }
       onClose()
     } finally {
       setSaving(false)
@@ -204,6 +215,21 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
         </DialogBody>
 
         <DialogFooter>
+          {/* #371: a save that did not reach disk keeps the editor open and says
+              why, so the user's work is not lost behind a closed dialog. */}
+          {saveError && (
+            <div
+              role="alert"
+              className="flex-1 min-w-0 text-[11px] leading-snug rounded-lg px-2.5 py-1.5"
+              style={{
+                color: 'var(--status-danger)',
+                background: 'color-mix(in srgb, var(--status-danger) 12%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)',
+              }}
+            >
+              {saveError}
+            </div>
+          )}
           <DialogButton variant="ghost" onClick={onClose}>Cancel</DialogButton>
           <DialogButton variant="primary" onClick={handleSave} disabled={!isValid || saving}>
             {saving ? 'Saving...' : editingTeam ? 'Save Changes' : 'Create Pipeline'}

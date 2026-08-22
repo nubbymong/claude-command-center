@@ -5,7 +5,7 @@
  */
 
 import { BrowserWindow } from 'electron'
-import { createReadFailureLatch, loadConfigLatched, saveConfigLatched } from './persist-latch'
+import { createReadFailureLatch, loadConfigLatched, saveConfigLatched, mergeById } from './persist-latch'
 import { dispatchAgent, cancelAgent, getAgentOutput, onAgentCompletion, CloudAgentData } from './cloud-agent-manager'
 import { logInfo, logError } from './debug-logger'
 import type { TeamTemplate, TeamRun, TeamRunStep, TeamRunStatus, TeamStep } from '../shared/types'
@@ -36,12 +36,38 @@ function generateRunId(): string {
 const teamsLatch = createReadFailureLatch('team-manager:teams')
 const runsLatch = createReadFailureLatch('team-manager:runs')
 
-function persistTeams(): void {
-  saveConfigLatched('agentTeams', teams, teamsLatch)
+/**
+ * Returns false when the team library did NOT reach disk. `initTeamManager`
+ * runs once, at boot, so a transient lock there used to discard every team the
+ * user built for the rest of the process — while the UI reported each save as
+ * successful. That is #371 BLOCKER-1 and it is why these return a boolean.
+ */
+function persistTeams(removedIds?: readonly string[]): boolean {
+  return saveConfigLatched('agentTeams', () => teams, teamsLatch, {
+    onRecovered: (recovered) => {
+      teams = mergeById(recovered, teams)
+      // A deletion must survive the merge: the row is still on disk.
+      if (removedIds && removedIds.length > 0) {
+        const gone = new Set(removedIds)
+        teams = teams.filter((t) => !gone.has(t.id))
+      }
+    },
+  })
 }
 
-function persistRuns(): void {
-  saveConfigLatched('agentTeamRuns', runs, runsLatch)
+function persistRuns(): boolean {
+  return saveConfigLatched('agentTeamRuns', () => runs, runsLatch, {
+    onRecovered: (recovered) => {
+      runs = mergeById(recovered, runs)
+    },
+  })
+}
+
+/** Why the last team write did not land, in words a user can act on. */
+function teamPersistFailure(): string {
+  return teamsLatch.failed()
+    ? 'Your team library could not be saved: the teams file could not be read, so it was left alone rather than overwritten. Your saved teams are intact — try again once it is readable.'
+    : 'Your team library could not be written to disk.'
 }
 
 /** Test seam — the latches are module state and outlive a test file otherwise. */
@@ -92,26 +118,41 @@ export function listTeams(): TeamTemplate[] {
   return teams
 }
 
-export function saveTeam(team: TeamTemplate): TeamTemplate {
+export function saveTeam(team: TeamTemplate): { ok: boolean; team?: TeamTemplate; error?: string } {
+  const snapshot = teams
   const idx = teams.findIndex(t => t.id === team.id)
+  let saved: TeamTemplate
   if (idx >= 0) {
-    teams[idx] = { ...team, updatedAt: Date.now() }
+    saved = { ...team, updatedAt: Date.now() }
+    teams = teams.map((t, i) => (i === idx ? saved : t))
   } else {
-    team.id = team.id || generateTeamId()
-    team.createdAt = team.createdAt || Date.now()
-    team.updatedAt = Date.now()
-    teams.unshift(team)
+    saved = {
+      ...team,
+      id: team.id || generateTeamId(),
+      createdAt: team.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    }
+    teams = [saved, ...teams]
   }
-  persistTeams()
-  return idx >= 0 ? teams[idx] : team
+  // The user's work stays in the editor if this does not land: roll back so the
+  // in-memory library keeps matching what is actually on disk.
+  if (!persistTeams()) {
+    teams = snapshot
+    return { ok: false, error: teamPersistFailure() }
+  }
+  return { ok: true, team: saved }
 }
 
-export function deleteTeam(id: string): boolean {
+export function deleteTeam(id: string): { ok: boolean; deleted: boolean; error?: string } {
   const idx = teams.findIndex(t => t.id === id)
-  if (idx < 0) return false
-  teams.splice(idx, 1)
-  persistTeams()
-  return true
+  if (idx < 0) return { ok: true, deleted: false }
+  const snapshot = teams
+  teams = teams.filter(t => t.id !== id)
+  if (!persistTeams([id])) {
+    teams = snapshot
+    return { ok: false, deleted: false, error: teamPersistFailure() }
+  }
+  return { ok: true, deleted: true }
 }
 
 export function listRuns(): TeamRun[] {
