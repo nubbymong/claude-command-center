@@ -120,11 +120,11 @@ export default function CapturedRunModal({ runId, label, command, exePath, start
         aria-modal="true"
         aria-labelledby="captured-run-title"
         data-ux-id="captured-run-dialog"
-        className="bg-mantle border border-surface0 rounded-lg shadow-2xl w-full max-w-3xl mx-4 flex flex-col"
+        className="bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg shadow-2xl w-full max-w-3xl mx-4 flex flex-col"
         style={{ maxHeight: '80vh' }}
       >
-        <div className="p-4 border-b border-surface0">
-          <h2 id="captured-run-title" className="text-sm font-semibold text-text">
+        <div className="p-4 border-b border-[var(--border-subtle)]">
+          <h2 id="captured-run-title" className="text-sm font-semibold text-[var(--text-primary)]">
             {label}
           </h2>
           <p className="text-[11px] font-mono break-all mt-1" style={{ color: 'var(--text-muted)' }}>
@@ -147,7 +147,7 @@ export default function CapturedRunModal({ runId, label, command, exePath, start
             ref={scrollRef}
             data-ux-id="captured-run-output"
             className="flex-1 overflow-auto p-4 font-mono text-xs whitespace-pre-wrap break-words"
-            style={{ background: 'var(--color-crust, #11111b)', minHeight: '12rem' }}
+            style={{ background: 'var(--surface-sunken)', minHeight: '12rem' }}
           >
             {chunks.length === 0 && running && (
               <span style={{ color: 'var(--text-muted)' }}>Waiting for output…</span>
@@ -156,14 +156,14 @@ export default function CapturedRunModal({ runId, label, command, exePath, start
               <span style={{ color: 'var(--text-muted)' }}>That program printed nothing.</span>
             )}
             {chunks.map((c, i) => (
-              <span key={i} className={c.stream === 'stderr' ? 'text-red' : 'text-text'}>
+              <span key={i} className={c.stream === 'stderr' ? 'text-[var(--status-danger)]' : 'text-[var(--text-primary)]'}>
                 {c.text}
               </span>
             ))}
           </div>
         )}
 
-        <div className="p-4 border-t border-surface0 flex items-center gap-3">
+        <div className="p-4 border-t border-[var(--border-subtle)] flex items-center gap-3">
           <span
             className="text-xs flex-1"
             data-ux-id="captured-run-status"
@@ -178,7 +178,7 @@ export default function CapturedRunModal({ runId, label, command, exePath, start
               onClick={() => { if (runId) void window.electronAPI.exe.cancelRun(runId) }}
               data-ux-id="captured-run-cancel"
               title="Force-stop the program. Any unsaved work in it is lost."
-              className="py-1.5 px-4 text-xs rounded bg-surface1 hover:bg-surface2 text-text transition-colors focus-ring"
+              className="py-1.5 px-4 text-xs rounded bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] text-[var(--text-primary)] transition-colors focus-ring"
             >
               Stop the program
             </button>
@@ -189,7 +189,7 @@ export default function CapturedRunModal({ runId, label, command, exePath, start
             onClick={() => handleClose.current()}
             data-ux-id="captured-run-close"
             title={running ? 'Stop showing this log. The program keeps running.' : undefined}
-            className="py-1.5 px-4 text-xs rounded bg-surface1 hover:bg-surface2 text-text transition-colors focus-ring"
+            className="py-1.5 px-4 text-xs rounded bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] text-[var(--text-primary)] transition-colors focus-ring"
           >
             Close
           </button>

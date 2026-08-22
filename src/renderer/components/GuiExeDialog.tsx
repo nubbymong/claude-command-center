@@ -58,9 +58,9 @@ export default function GuiExeDialog({ label, command, exePath, onChoose, onCanc
         aria-modal="true"
         aria-labelledby="gui-exe-title"
         data-ux-id="gui-exe-dialog"
-        className="bg-surface0 border border-surface1 rounded-lg shadow-2xl p-6 max-w-md w-full mx-4"
+        className="bg-[var(--surface-raised)] border border-[var(--border-subtle)] rounded-lg shadow-2xl p-6 max-w-md w-full mx-4"
       >
-        <h2 id="gui-exe-title" className="text-lg font-semibold text-text mb-2">
+        <h2 id="gui-exe-title" className="text-lg font-semibold text-[var(--text-primary)] mb-2">
           {label} is a Windows GUI program
         </h2>
         <p className="text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
@@ -80,7 +80,7 @@ export default function GuiExeDialog({ label, command, exePath, onChoose, onCanc
           {operators.length > 0 ? (
             <>
               {' '}This line uses{' '}
-              <span className="font-mono text-yellow">{operators.join(' ')}</span>
+              <span className="font-mono text-[var(--status-warning)]">{operators.join(' ')}</span>
               , which {operators.length === 1 ? 'will be passed through as a literal argument' : 'will be passed through as literal arguments'} rather than
               interpreted — so it will not do the same thing as running it in the terminal.
             </>
@@ -97,7 +97,7 @@ export default function GuiExeDialog({ label, command, exePath, onChoose, onCanc
             checked={remember}
             onChange={(e) => setRemember(e.target.checked)}
             data-ux-id="gui-exe-remember"
-            className="accent-blue"
+            className="accent-[var(--brand)]"
           />
           Remember this choice for this button
         </label>
@@ -108,7 +108,7 @@ export default function GuiExeDialog({ label, command, exePath, onChoose, onCanc
             type="button"
             onClick={() => choose('capture')}
             data-ux-id="gui-exe-capture"
-            className="w-full py-2 px-4 text-sm font-medium rounded bg-blue hover:bg-blue/80 text-crust transition-colors focus-ring"
+            className="w-full py-2 px-4 text-sm font-medium rounded bg-[var(--brand)] hover:brightness-110 text-[var(--text-on-brand)] transition-colors focus-ring"
           >
             Capture the output
           </button>
@@ -116,7 +116,7 @@ export default function GuiExeDialog({ label, command, exePath, onChoose, onCanc
             type="button"
             onClick={() => choose('terminal')}
             data-ux-id="gui-exe-terminal"
-            className="w-full py-2 px-4 text-sm font-medium rounded bg-surface1 hover:bg-surface2 text-text transition-colors focus-ring"
+            className="w-full py-2 px-4 text-sm font-medium rounded bg-[var(--surface-overlay)] hover:bg-[var(--surface-raised)] text-[var(--text-primary)] transition-colors focus-ring"
           >
             Run in the terminal anyway
           </button>
@@ -124,7 +124,7 @@ export default function GuiExeDialog({ label, command, exePath, onChoose, onCanc
             type="button"
             onClick={onCancel}
             data-ux-id="gui-exe-cancel"
-            className="w-full py-1.5 px-4 text-xs text-overlay1 hover:text-text transition-colors focus-ring"
+            className="w-full py-1.5 px-4 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors focus-ring"
           >
             Cancel
           </button>
