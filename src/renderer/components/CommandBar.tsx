@@ -56,7 +56,7 @@ function CodexModelDropdown({ value, onChange }: { value: string; onChange: (nex
       <select
         value={value}
         onChange={(e) => { setDirty(true); onChange(e.target.value) }}
-        className="bg-base border border-surface1 rounded px-1.5 py-0.5 text-xs text-text"
+        className="bg-base border border-surface1 rounded px-1.5 h-[22px] py-0 text-xs text-text"
       >
         {CODEX_MODELS.map((m) => (<option key={m} value={m}>{m}</option>))}
       </select>
@@ -72,7 +72,7 @@ function PermissionsPresetDropdown({ value, onChange }: { value: CodexPreset; on
       <select
         value={value}
         onChange={(e) => { setDirty(true); onChange(e.target.value as CodexPreset) }}
-        className="bg-base border border-surface1 rounded px-1.5 py-0.5 text-xs text-text"
+        className="bg-base border border-surface1 rounded px-1.5 h-[22px] py-0 text-xs text-text"
       >
         {CODEX_PRESETS.map((p) => (<option key={p} value={p}>{p}</option>))}
       </select>
@@ -416,6 +416,9 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     key: p.band,
     ids: p.chips.filter((c) => !(c.sectionId && collapsedSectionIds.includes(c.sectionId))).map((c) => c.id),
     pinned: new Set(p.chips.filter((c) => c.pinned).map((c) => c.id)),
+    // A band whose pill is already on the row (buttons that cannot run here)
+    // needs no room reserved for it.
+    hasPill: p.inapplicable.length > 0,
   })), [plans, collapsedSectionIds])
   const { folded } = useBandFolding(rowRef, foldBands, overflowMode, !!dragId)
 
@@ -603,7 +606,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <div role="toolbar" aria-label="Session tools" className="flex items-center gap-1 shrink-0" data-testid="command-band-core" onDragOver={(e) => { if (dragId) { e.dataTransfer.dropEffect = 'none' } }}>
           {!hiddenHere.has('snap') && caps.canSendImageToAgent && coreWrap('snap', <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />)}
           {!hiddenHere.has('canvas') && coreWrap('canvas', <AgentCanvasButton sessionId={sessionId} />)}
-          {!hiddenHere.has('logs') && coreWrap('logs', <LogsButton sessionId={sessionId} structuralReason={caps.logsEmptyReason} />)}
+          {!hiddenHere.has('logs') && coreWrap('logs', <LogsButton sessionId={sessionId} structuralReason={caps.logsEmptyReason} remoteHost={caps.remoteHost} />)}
           {!hiddenHere.has('browser') && coreWrap('browser', <WebviewButton sessionId={webviewKey} />)}
           {partnerEnabled && onTogglePartner && !hiddenHere.has('partner') && coreWrap('partner', (
             <button
@@ -677,7 +680,9 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <UserButtonMenu
           x={menu.x} y={menu.y} cmd={menuCmd} caps={caps}
           sections={plans.find((p) => p.band === bandOfCmd(menuCmd))?.sections ?? []}
-          sectionName={sections.find((s) => s.id === menuCmd.sectionId)?.name}
+          // The band's OWN sections, as the chip's tooltip reads them (D4: the
+          // header is the tooltip) -- an orphan sectionId names nothing in either.
+          sectionName={plans.find((p) => p.band === bandOfCmd(menuCmd))?.sections.find((s) => s.id === menuCmd.sectionId)?.name}
           hasConfig={!!configId}
           returnFocusTo={menu.el}
           onClose={() => setMenu(null)}
@@ -700,6 +705,9 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             if (!plan) return
             const ordered = bandMembers(commands, plan.band, configId).filter((c) => !c.pinned || menuCmd.pinned)
             const idx = ordered.findIndex((c) => c.id === menuCmd.id)
+            // Already there: nothing to write (the keyboard path returns early too).
+            if ((dir === 'left' || dir === 'start') && idx <= 0) return
+            if ((dir === 'right' || dir === 'end') && idx === ordered.length - 1) return
             let beforeId: string | null = null
             if (dir === 'left') beforeId = ordered[idx - 1]?.id ?? ordered[0]?.id ?? null
             else if (dir === 'right') beforeId = ordered[idx + 2]?.id ?? null

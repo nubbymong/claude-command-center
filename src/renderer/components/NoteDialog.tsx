@@ -82,16 +82,18 @@ export default function NoteDialog({ note, configId, configName, onSave, onCance
     onSave(id, label.trim(), content, color, scope === 'config' ? configId : undefined)
   }
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.stopPropagation()
-      if (confirmDelete) setConfirmDelete(false)
-      else onCancel()
-    }
-  }
+  // Escape closes wherever focus is (the confirm card, when open, takes it first
+  // with its own capture listener and stops propagation).
+  const escapeRef = React.useRef<() => void>(() => {})
+  escapeRef.current = () => { if (confirmDelete) setConfirmDelete(false); else onCancel() }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); escapeRef.current() } }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onKeyDown={onKeyDown} data-testid="note-dialog">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" data-testid="note-dialog">
       <div
         className="rounded-[14px] shadow-2xl w-[560px] max-w-[94vw] max-h-[88vh] overflow-y-auto flex flex-col"
         style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}

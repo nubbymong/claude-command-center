@@ -231,7 +231,9 @@ export function UserButtonMenu(p: UserButtonMenuProps) {
   const isGlobal = cmd.scope === 'global'
   return (
     <Menu x={p.x} y={p.y} onClose={p.onClose} ariaLabel={`${cmd.label} menu`} returnFocusTo={p.returnFocusTo} testId="command-menu">
-      <MenuHeader title={cmd.label} sub={chipTitle(cmd, p.caps, p.sectionName).replace(/^[^—]*— /, '')} />
+      {/* The header IS the tooltip (D4): title + " — " + sub. Slice the label
+          off by length -- a label with its own em-dash must not leak into the sub. */}
+      <MenuHeader title={cmd.label} sub={chipTitle(cmd, p.caps, p.sectionName).slice(cmd.label.length + 3)} />
       {cmd.needsReview?.length ? (
         <MenuItem onClick={p.onEdit} icon={I.warn} testId="menu-review">Review this button…<span className="ml-1" style={{ color: 'var(--status-warning)' }}>({cmd.needsReview.length})</span></MenuItem>
       ) : null}

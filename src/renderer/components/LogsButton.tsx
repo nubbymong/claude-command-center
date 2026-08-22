@@ -13,12 +13,16 @@ interface Props {
    * explanation (ADR-018 D3). Absent = live.
    */
   structuralReason?: LogsEmptyReason | null
+  /** The SSH host, so the reason names the machine (ADR-018 D3: "lives on <host>"). */
+  remoteHost?: string
 }
 
-const REASON_COPY: Record<LogsEmptyReason, string> = {
-  'shell-only': 'a shell has no transcript',
-  'ssh': 'the transcript lives on the remote host',
-  'codex': "Codex transcripts aren't indexed",
+const reasonCopy = (reason: LogsEmptyReason, remoteHost?: string): string => {
+  switch (reason) {
+    case 'shell-only': return 'a shell has no transcript'
+    case 'ssh': return `the transcript lives on ${remoteHost || 'the remote host'}`
+    case 'codex': return "Codex transcripts aren't indexed"
+  }
 }
 
 /**
@@ -27,7 +31,7 @@ const REASON_COPY: Record<LogsEmptyReason, string> = {
  * hidden, only the global nav entry stays greyed-but-visible) -- the privacy
  * setting wins over any hide/dim state.
  */
-export default function LogsButton({ sessionId, structuralReason = null }: Props) {
+export default function LogsButton({ sessionId, structuralReason = null, remoteHost }: Props) {
   const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
   const isOpen = useLogsStore((s) => !!s.bySessionId[sessionId]?.isOpen)
   const togglePane = useLogsStore((s) => s.togglePane)
@@ -44,7 +48,7 @@ export default function LogsButton({ sessionId, structuralReason = null }: Props
           : 'bg-surface0/60 border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text'
       }`}
       style={dim ? { opacity: 0.5 } : undefined}
-      title={isOpen ? 'Hide session logs' : dim ? `Logs — nothing to show here: ${REASON_COPY[structuralReason!]}` : 'Open session logs'}
+      title={isOpen ? 'Hide session logs' : dim ? `Logs — nothing to show here: ${reasonCopy(structuralReason!, remoteHost)}` : 'Open session logs'}
       data-testid="logs-toggle"
       data-dimmed={dim ? 'true' : undefined}
     >

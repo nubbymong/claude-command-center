@@ -40,6 +40,9 @@ export default function BandOverflow({ plan, folded, caps, anchor, onRun, onCont
     const left = Math.max(8, Math.min(anchor.left, viewW - r.width - 8))
     if (anchor.top - r.height - 6 > 0) setPos({ left, bottom: viewH - anchor.top + 6 })
     else setPos({ left, top: anchor.bottom + 6 })
+    // Without a filter box nothing inside takes focus, so Escape / arrows would
+    // go nowhere (VM proof 2026-08-22): focus the panel itself.
+    if (!el.querySelector('input')) el.focus()
   }, [anchor])
 
   const q = query.trim().toLowerCase()

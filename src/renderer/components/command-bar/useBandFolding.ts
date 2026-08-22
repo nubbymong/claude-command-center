@@ -6,10 +6,12 @@ import React from 'react'
  * How: the bar renders every chip once with nothing folded; this hook measures
  * the row (in a layout effect, before paint) and folds chips until the row
  * fits. With `wrap2` the row may take a second line first, and folding starts
- * only when a third line would appear. Re-measure only on container resize and
+ * only when a third line appears. Re-measure only on container resize and
  * when the chip set changes -- never on hover/focus/drag-over -- because every
  * height change re-fits the terminal. While a drag is in progress the result
- * is frozen.
+ * is FROZEN: no re-measure, no reset, even if the chip set or the width
+ * changes under the pointer; the pending change is applied on the first
+ * unfrozen render.
  *
  * PRIORITY (D8): the caller gives the bands in FOLD ORDER -- Global first,
  * Session last. When the row overflows, the room is found by folding the
@@ -22,6 +24,9 @@ export interface FoldBand {
   /** Chip ids in row order; those listed in `pinned` are never folded. */
   ids: string[]
   pinned: Set<string>
+  /** True when the band already shows its "N more" pill for another reason
+   *  (buttons that cannot run here), so no room need be reserved for it. */
+  hasPill?: boolean
 }
 
 export interface FoldResult {
@@ -32,7 +37,7 @@ export interface FoldResult {
 
 const PILL_WIDTH = 72       // "N more" pill incl. gap, reserved the first time a band folds
 const CHIP_GAP = 4          // the row's gap-1
-const ROW_HEIGHT_SLACK = 6  // px of tolerance before a line counts as a new row
+const LINE_TOLERANCE = 3    // px: chip tops closer than this are the same line
 const MAX_PASSES = 8        // layout passes per chip set before we accept the result
 
 /**
@@ -64,22 +69,40 @@ export function foldForWidth(
   return next
 }
 
+/**
+ * The distinct line tops the chips sit on, in order (tops within LINE_TOLERANCE
+ * px count as one line). Pure: wrap2's "is there a third line?" is a question
+ * about measured positions, not about an assumed line pitch.
+ */
+export function lineTops(tops: readonly number[]): number[] {
+  const sorted = [...tops].sort((a, b) => a - b)
+  const lines: number[] = []
+  for (const t of sorted) {
+    if (lines.length === 0 || t - lines[lines.length - 1] > LINE_TOLERANCE) lines.push(t)
+  }
+  return lines
+}
+
 export function useBandFolding(
   rowRef: React.RefObject<HTMLDivElement | null>,
   bands: FoldBand[],
   mode: 'fold' | 'wrap2',
   frozen: boolean,
 ): FoldResult {
-  const signature = bands.map((b) => `${b.key}:${b.ids.join(',')}|${[...b.pinned].join(',')}`).join(';') + `#${mode}`
+  const signature = bands.map((b) => `${b.key}:${b.ids.join(',')}|${[...b.pinned].join(',')}|${b.hasPill ? 1 : 0}`).join(';') + `#${mode}`
   const [folded, setFolded] = React.useState<Record<string, Set<string>>>({})
   const [settled, setSettled] = React.useState(false)
   const lastSig = React.useRef('')
   const lastWidth = React.useRef(0)
   const passes = React.useRef(0)
+  // A width change that arrived while frozen; applied on the first unfrozen render.
+  const pendingReset = React.useRef(false)
 
-  // A new chip set or mode: unfold everything and measure again.
-  if (lastSig.current !== signature) {
+  // A new chip set or mode: unfold everything and measure again -- but not
+  // while a chip is in the air (D7: the bar keeps its shape during a drag).
+  if (!frozen && (lastSig.current !== signature || pendingReset.current)) {
     lastSig.current = signature
+    pendingReset.current = false
     passes.current = 0
     if (Object.keys(folded).length) setFolded({})
     if (settled) setSettled(false)
@@ -99,7 +122,7 @@ export function useBandFolding(
     for (const el of chipEls) rectOf.set(el.dataset.commandId!, el.getBoundingClientRect())
     const onRow: FoldBand[] = bands.map((b) => ({ ...b, ids: b.ids.filter((id) => rectOf.has(id)) }))
     const widths = (id: string) => rectOf.get(id)?.width ?? 0
-    const alreadyFolded = (key: string) => (folded[key]?.size ?? 0) > 0
+    const alreadyFolded = (key: string) => !!bands.find((b) => b.key === key)?.hasPill || (folded[key]?.size ?? 0) > 0
 
     let needed = 0
     if (mode === 'fold') {
@@ -109,11 +132,14 @@ export function useBandFolding(
       for (const r of rectOf.values()) lastRight = Math.max(lastRight, r.right)
       needed = lastRight - limit
     } else {
-      // wrap2: two lines allowed. Anything on a third line must go, and the
-      // room it takes is the width of those chips.
-      const lineHeight = (chipEls[0]?.getBoundingClientRect().height ?? 22) + 6
-      const thirdLineTop = rowRect.top + 2 * lineHeight + ROW_HEIGHT_SLACK
-      for (const r of rectOf.values()) if (r.top >= thirdLineTop) needed += r.width + CHIP_GAP
+      // wrap2: two lines allowed. Anything on the third line or later must go,
+      // and the room it takes is the width of those chips. Lines are read off
+      // the measured chip tops, not an assumed pitch.
+      const lines = lineTops(Array.from(rectOf.values()).map((r) => r.top))
+      if (lines.length > 2) {
+        const thirdTop = lines[2] - LINE_TOLERANCE
+        for (const r of rectOf.values()) if (r.top >= thirdTop) needed += r.width + CHIP_GAP
+      }
     }
     if (needed <= 0) { if (!settled) setSettled(true); return }
 
@@ -141,13 +167,17 @@ export function useBandFolding(
     measure()
   })
 
+  const frozenRef = React.useRef(frozen)
+  frozenRef.current = frozen
   React.useEffect(() => {
     const row = rowRef.current
     if (!row || typeof ResizeObserver === 'undefined') return
     const ro = new ResizeObserver(() => {
       const w = row.getBoundingClientRect().width
       if (Math.abs(w - lastWidth.current) < 2) return
-      // Width changed: start over (unfold) and let the layout effect re-measure.
+      // Width changed: start over (unfold) and let the layout effect re-measure
+      // -- after the drag, if one is in progress.
+      if (frozenRef.current) { pendingReset.current = true; return }
       lastSig.current = ''
       passes.current = 0
       setFolded({})

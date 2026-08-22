@@ -287,7 +287,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   // Copy that follows the kind. One field, two very different things typed
   // into it -- the label, helper and placeholder have to say which.
   const textField = kind === 'shell'
-    ? { label: 'Command to run', helper: 'Typed into the terminal exactly as written, then Enter.', placeholder: 'npm test', mono: true }
+    ? { label: 'Command to run', helper: 'Typed into the terminal exactly as written, then Enter.', placeholder: 'e.g. npm test', mono: true }
     : { label: 'Prompt to send', helper: `Submitted to ${agentName} as if you had typed it and pressed Enter.`, placeholder: 'Fix all lint errors and run the linter again', mono: false }
 
   // The preview shows the REFERENCE the shell will see, never a value. On
@@ -357,12 +357,18 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
     void import('../lib/askConductor').then((m) => m.launchAskConductor(q)).catch((err: unknown) => console.warn('[CommandDialog] Ask Conductor failed:', err))
   }
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.stopPropagation()
-      if (showNewSection) { setShowNewSection(false); setNewSectionName('') } else onCancel()
-    }
+  // Escape closes wherever focus is -- a one-click fix in the review banner
+  // unmounts the button that had focus, and a dialog that only listens on
+  // itself goes deaf the moment focus falls to the body (VM proof 2026-08-22).
+  const escapeRef = React.useRef<() => void>(() => {})
+  escapeRef.current = () => {
+    if (showNewSection) { setShowNewSection(false); setNewSectionName('') } else onCancel()
   }
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); escapeRef.current() } }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
 
   const kindTile = (value: CommandKind, glyph: string, title: string, sub: string) => {
     const active = kind === value
@@ -391,7 +397,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   const promptSub = caps.mainRunsOn === 'remote' ? `to ${agentName} on ${caps.remoteHost ?? 'the host'}` : `to ${agentName}`
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onKeyDown={onKeyDown} data-testid="command-dialog">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" data-testid="command-dialog">
       <div
         className="rounded-[14px] shadow-2xl w-[560px] max-w-[94vw] max-h-[88vh] overflow-y-auto flex flex-col"
         style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
@@ -504,6 +510,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                         style={INPUT_STYLE}
                         rows={kind === 'shell' ? 2 : 3}
                         placeholder={textField.placeholder}
+                        spellCheck={kind !== 'shell'}
                         data-testid="command-text"
                       />
                     </Field>
