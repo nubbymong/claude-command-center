@@ -37,6 +37,7 @@ import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from '
 import { devSessionDataDir } from './data-paths'
 import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
+import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
@@ -959,6 +960,7 @@ if (!gotTheLock) {
     // external `claude -p` on a dead refresh token). Freshest-wins + email-guarded.
     try { const r = syncPrimaryCredentialsWithGlobal(); if (r !== 'none') logInfo(`[profiles] primary<->global credential sync at launch: ${r}`) } catch (e) { logInfo(`[profiles] credential sync skipped: ${e}`) }
     registerScreenshotHandlers(getWindow)
+    registerDiagnosticsHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()

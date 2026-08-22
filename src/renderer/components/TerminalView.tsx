@@ -319,7 +319,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     })
     webglHandleRef.current = handle
     const resync = atlasResyncRef.current
-    const unregister = resync ? atlasCoordinator.register(resync) : null
+    const unregister = resync ? atlasCoordinator.register(resync, sessionId) : null
 
     return () => {
       unregister?.()

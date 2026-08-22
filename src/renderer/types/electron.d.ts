@@ -413,6 +413,9 @@ export interface ElectronAPI {
     spawnCliSetup: (cols: number, rows: number) => Promise<string>
     killCliSetup: () => Promise<boolean>
   }
+  diagnostics: {
+    captureGlyph: (payload: unknown) => Promise<{ ok: boolean; jsonPath?: string; imagePath?: string; error?: string }>
+  }
   screenshot: {
     captureRectangle: () => Promise<string | null>
     captureWindow: (sourceId: string) => Promise<string | null>

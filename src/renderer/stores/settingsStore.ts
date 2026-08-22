@@ -99,26 +99,24 @@ export interface TerminalSettings {
   cursorBlink: boolean
   background?: string   // optional user terminal-background override; undefined => --surface-stage token
   /**
-   * GPU (WebGL) rendering for terminals. **Opt-IN** — absent or false means the
-   * DOM renderer, which is what ships. Read it through `gpuRenderingEnabled`,
-   * never by comparing directly.
+   * GPU (WebGL) rendering for terminals. **Default ON** (owner decision
+   * 2026-08-22, #374) — absent means on; only an explicit `false` opts out.
+   * Read it through `gpuRenderingEnabled`, never by comparing directly.
    *
-   * The fault: `@xterm/addon-webgl` keeps ONE glyph atlas per process (a
-   * module-level `charAtlasCache`, keyed on font + colours, which every CCC
-   * terminal matches). `clearTextureAtlas()` wipes that shared atlas for EVERY
-   * terminal but rebuilds only the caller's render model, and `term.refresh()`
-   * cannot undo it for the others because the renderer skips cells whose
-   * contents have not changed. So one session repainting blanks the glyphs of
-   * every other open session — backgrounds intact, text gone — until that
-   * terminal is resized, scrolled, or activated. That is the real #273,
-   * misdiagnosed for months as "the atlas goes stale on its own".
+   * The fault it once had: `@xterm/addon-webgl` keeps ONE glyph atlas per
+   * process, so one terminal's `clearTextureAtlas()` blanked the glyphs of every
+   * other open session — backgrounds intact, text gone — until that terminal was
+   * resized/scrolled/activated. The repair that works is in (#311): a victim
+   * drops its OWN render model first (a same-value theme reassignment, which is
+   * what a resize does) and only then repaints, coordinated process-wide by
+   * `atlasCoordinator` with a generation counter and an activation backstop; and
+   * only the visible terminal holds a WebGL context. The earlier #312 attempt
+   * (refresh the others, nothing more) did NOT hold and is gone.
    *
-   * #312 attempted a repair (a process-wide coordinator that refreshes the other
-   * terminals) and it does NOT hold: refresh alone cannot rebuild a victim's
-   * model, so the victim redraws blank. It was briefly default-on on the
-   * strength of that repair, entirely within beta.16's unreleased development
-   * window, and is opt-in again. See `gpuRenderingEnabled` for the disproof and
-   * for the repair that does work. Applies to terminals opened after the change.
+   * Now default-on, with an always-on atlas event ring and a user-triggered
+   * glyph-capture (Ctrl+Alt+G, #374) so any residual corruption in the field can
+   * be captured the moment it happens. Applies to terminals opened after a
+   * change to the setting.
    */
   gpuRendering?: boolean
 }
@@ -126,27 +124,22 @@ export interface TerminalSettings {
 /**
  * Whether a terminal should render through WebGL.
  *
- * OPT-IN: only an explicit, literal `true` enables it. Absent, false, or any
- * non-boolean value a corrupt config might hold means the DOM renderer.
+ * **Default ON** (owner decision 2026-08-22, #374): on unless the user has
+ * explicitly turned it off, so absent / a corrupt non-boolean both mean ON.
+ * `false` — and only `false` — is the opt-out. Every reader goes through this
+ * predicate rather than comparing the field itself: two call sites each spelling
+ * their own check is how "unset" comes to mean one thing in the terminal and the
+ * opposite in the settings checkbox.
  *
- * It was briefly flipped to default-on during beta.16's development, on the
- * basis that #312 had repaired the shared-atlas fault. An adversarial pass
- * disproved that. The coordinator repairs a victim terminal with
- * `term.refresh()`, and refresh alone cannot undo a foreign atlas wipe:
- * `WebglRenderer._updateModel` skips every cell whose contents have not changed
- * (`// Nothing has changed, no updates needed`), so the victim redraws stale
- * vertices against an emptied texture and goes BLANK. Only the terminal that
- * called `clearTextureAtlas()` gets `_clearModel(true)`; the others get nothing
- * that would rebuild their model. Measured in a real WebGL renderer, the
- * victim's ink pixels drop to zero the moment the coordinator's refresh lands.
- *
- * So this stays opt-in until a repair is proven on a real GPU. Every reader goes
- * through this predicate rather than comparing the field itself: two call sites
- * each spelling their own check is how "unset" comes to mean one thing in the
- * terminal and the opposite in the settings checkbox.
+ * It is safe to default on because the shared-atlas corruption is repaired the
+ * way a resize repairs it — the victim drops its OWN render model first, then
+ * repaints (see `atlasCoordinator` / `createAtlasResync`) — not by the #312
+ * refresh-the-others attempt that an adversarial pass disproved. The always-on
+ * atlas event ring + the Ctrl+Alt+G glyph-capture exist to catch any residual in
+ * the field.
  */
 export function gpuRenderingEnabled(ts: Pick<TerminalSettings, 'gpuRendering'> | undefined): boolean {
-  return ts?.gpuRendering === true
+  return ts?.gpuRendering !== false
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
@@ -156,7 +149,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   lineHeight: 1.2,
   cursorStyle: 'bar',
   cursorBlink: true,
-  gpuRendering: false,
+  gpuRendering: true,
 }
 
 export interface AppSettings {
@@ -229,6 +222,7 @@ export interface AppSettings {
   theme: ThemeMode
   tokenomicsAccountFilter?: string  // 'all' | '__mixed__' | '__unknown__' | <email>
   fontMigratedV2?: boolean  // one-time guard: existing installs moved off the old Cascadia Code/14 default
+  gpuDefaultOnMigrated?: boolean  // one-time guard (#374): existing installs that had GPU rendering off (incl. the value auto-persisted while it was opt-in) moved to the new default-on
   identityColorMigratedV2?: boolean      // one-time guard: saved-config colours migrated to identity keys
   colourMigrationNoticePending?: boolean // a colour migration changed records and the notice should show
   colourMigrationNoticeDismissed?: boolean
@@ -382,6 +376,23 @@ export function migrateV2Font(settings: AppSettings): { settings: AppSettings; c
   }
 }
 
+// #374: GPU rendering flipped from opt-in to default-on. Existing installs carry
+// `terminal.gpuRendering: false` on disk — either a genuine experimental-era
+// opt-out OR the value migrateV2Font auto-persisted while it was opt-in — and the
+// hydrate merge lets that on-disk false override the new `true` default, so the
+// flip would miss every upgraded user. Turn it on exactly ONCE, guarded by
+// gpuDefaultOnMigrated: an on-disk false becomes true so the default applies.
+// A user who unticks it AFTER this has fired is respected (the guard has already
+// set). Caveat accepted (owner, 2026-08-22): a genuine opt-out is
+// indistinguishable from the baked default, so both are moved to on once; the
+// owner's call is that GPU rendering is on for everyone now.
+export function migrateGpuDefaultOn(settings: AppSettings): { settings: AppSettings; changed: boolean } {
+  if (settings.gpuDefaultOnMigrated) return { settings, changed: false }
+  const terminal = { ...settings.terminal }
+  if (terminal.gpuRendering === false) terminal.gpuRendering = true
+  return { settings: { ...settings, terminal, gpuDefaultOnMigrated: true }, changed: true }
+}
+
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: { ...DEFAULT_SETTINGS },
   isLoaded: false,
@@ -397,9 +408,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, ...(settings.conductorTools || {}) },
       typography: migrateTypography(settings),
     }
-    const { settings: migrated, changed } = migrateV2Font(merged)
-    if (changed) {
-      // Persist the one-time migration (including the guard flag) so it runs once.
+    const font = migrateV2Font(merged)
+    const gpu = migrateGpuDefaultOn(font.settings)
+    const migrated = gpu.settings
+    if (font.changed || gpu.changed) {
+      // Persist the one-time migrations (including their guard flags) so they run once.
       saveConfigNow('settings', migrated).catch(() => {})
     }
     set({ settings: migrated, isLoaded: true })

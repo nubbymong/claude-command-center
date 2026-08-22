@@ -151,6 +151,10 @@ export const IPC = {
   SETUP_SPAWN_CLI_SETUP: 'setup:spawnCliSetup',
   SETUP_KILL_CLI_SETUP: 'setup:killCliSetup',
 
+  // #374: write a glyph-corruption diagnostic (atlas event log + a window
+  // screenshot) so a user who sees the fault can capture and share it.
+  DIAGNOSTICS_CAPTURE_GLYPH: 'diagnostics:captureGlyph',
+
   // Screenshots
   SCREENSHOT_CAPTURE_RECTANGLE: 'screenshot:captureRectangle',
   SCREENSHOT_CAPTURE_WINDOW: 'screenshot:captureWindow',
