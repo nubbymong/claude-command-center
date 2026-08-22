@@ -44,7 +44,7 @@ vi.mock('../../../src/renderer/stores/settingsStore', () => {
   return { useSettingsStore }
 })
 
-const { shouldShowWhatsNew, markWhatsNewSeen, runningVersion } = await import(
+const { shouldShowWhatsNew, markWhatsNewSeen, runningVersion, seenVersion } = await import(
   '../../../src/renderer/onboarding/whats-new-gate'
 )
 
@@ -85,5 +85,40 @@ describe('whats-new gate is keyed on the RUNNING version', () => {
   it('is idempotent: stamping then re-asking shows nothing', () => {
     markWhatsNewSeen()
     expect(shouldShowWhatsNew()).toBe(false)
+  })
+})
+
+describe('#369 — a stamp no build of that version wrote does not suppress the page', () => {
+  // The owner's machine at the first launch of the real beta.16: a beta.15-era
+  // build had stamped lastSeenVersion = beta.16 from the pending changelog
+  // head, while setupVersion — stamped by every build with its own version —
+  // still said beta.15. The running build here is beta.15 (the file's pin), so
+  // the same shape is: stamp == running build, last run == one older.
+  it('shows the page when the stamp equals the running build but setupVersion says an older build ran last', () => {
+    metaState.meta.lastSeenVersion = '2.1.0-beta.15'
+    metaState.meta.setupVersion = '2.1.0-beta.14'
+    expect(shouldShowWhatsNew()).toBe(true)
+  })
+
+  it('lastRunVersion outranks setupVersion as the witness', () => {
+    metaState.meta.lastSeenVersion = '2.1.0-beta.15'
+    metaState.meta.setupVersion = '2.1.0-beta.14'     // stale: setup never re-stamped
+    metaState.meta.lastRunVersion = '2.1.0-beta.15'   // but this build has run and stamped
+    expect(shouldShowWhatsNew()).toBe(false)
+  })
+
+  it('a relaunch after acknowledging on this build shows nothing', () => {
+    metaState.meta.lastSeenVersion = '2.1.0-beta.15'
+    metaState.meta.setupVersion = '2.1.0-beta.15'
+    metaState.meta.lastRunVersion = '2.1.0-beta.15'
+    expect(shouldShowWhatsNew()).toBe(false)
+  })
+
+  it('seenVersion() is the stamp clamped to what actually ran — what the harness diffs against', () => {
+    metaState.meta.lastSeenVersion = '2.1.0-beta.15'
+    metaState.meta.setupVersion = '2.1.0-beta.14'
+    expect(seenVersion()).toBe('2.1.0-beta.14')
+    metaState.meta.lastRunVersion = '2.1.0-beta.15'
+    expect(seenVersion()).toBe('2.1.0-beta.15')
   })
 })

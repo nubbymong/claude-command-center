@@ -30,10 +30,54 @@ export interface VersionedEntry {
 export interface UpgradeFlowInput {
   /** `lastSeenVersion` from app meta. Absent on a first install. */
   lastSeenVersion?: string
-  /** The version now running (changelog head, i.e. this build). */
+  /**
+   * The version that last actually RAN on this machine — `lastRunVersionOf(meta)`.
+   * The witness against a "seen" stamp that the build it names never wrote
+   * (#369): a stamp NEWER than any build that has run cannot mean the user saw
+   * those notes, so it does not count as seen. Absent means no record, and the
+   * stamp is trusted as it always was.
+   */
+  lastRunVersion?: string
+  /** The version now running (`__APP_VERSION__`, i.e. this build). */
   currentVersion: string
   /** 'beta' testers re-walk the tour on every version; see `showTour`. */
   channel?: string
+}
+
+/**
+ * The last build that actually ran, as well as the stored meta can say.
+ *
+ * `lastRunVersion` is stamped with `__APP_VERSION__` at every boot (App.tsx,
+ * after the launch decision has read the previous value). It did not exist
+ * before the #369 fix, so a meta written by an older build falls back to
+ * `setupVersion`, which every build since 1.x has stamped with its own version
+ * on its first launch — the only pre-existing record of a build having run,
+ * and never ahead, because it too is keyed on `__APP_VERSION__`.
+ */
+export function lastRunVersionOf(meta: { lastRunVersion?: string; setupVersion?: string }): string | undefined {
+  return meta.lastRunVersion ?? meta.setupVersion
+}
+
+/**
+ * The version the user can actually have SEEN the notes for: the stamp,
+ * clamped to the last build that ran.
+ *
+ * This is the #369 repair in one line. Until beta.16 the dismissal stamped the
+ * changelog HEAD, which on any build between two releases is one release ahead
+ * of the build running — so the owner's machine reached the real beta.16
+ * already holding `lastSeenVersion = beta.16`, written by a beta.15 build, and
+ * the gate read "same version" and showed nothing. No build of beta.16 had run
+ * (`setupVersion` still said beta.15), so the stamp could not be true; a stamp
+ * newer than the last run is read as the last run instead.
+ *
+ * Anything that asks "what has this user seen?" — the launch decision, and the
+ * harness working out which pages are new since — goes through this, so the
+ * two never disagree.
+ */
+export function seenVersionFor(input: { lastSeenVersion?: string; lastRunVersion?: string }): string | undefined {
+  const { lastSeenVersion, lastRunVersion } = input
+  if (!lastSeenVersion || !lastRunVersion) return lastSeenVersion
+  return compareVersions(lastSeenVersion, lastRunVersion) > 0 ? lastRunVersion : lastSeenVersion
 }
 
 export interface UpgradeFlowDecision {
@@ -45,7 +89,7 @@ export interface UpgradeFlowDecision {
   showTour: boolean
   /** Why, in a word — for logging and for tests that assert the REASON rather
    *  than just the outcome, so a right answer for a wrong reason still fails. */
-  reason: 'no-stored-version' | 'same-version' | 'crossed-line' | 'beta-channel' | 'within-line'
+  reason: 'no-stored-version' | 'same-version' | 'stamped-ahead' | 'crossed-line' | 'beta-channel' | 'within-line'
 }
 
 export function decideUpgradeFlow(input: UpgradeFlowInput): UpgradeFlowDecision {
@@ -53,6 +97,8 @@ export function decideUpgradeFlow(input: UpgradeFlowInput): UpgradeFlowDecision 
 
   if (!lastSeenVersion) {
     // Nothing is "new" to someone who has never run it. They get the tour.
+    // A record of an earlier RUN does not change that: no stamp means the tour
+    // never finished, and the tour is what that user is owed.
     return { kind: 'first-install', showWhatsNew: false, showTour: true, reason: 'no-stored-version' }
   }
 
@@ -60,7 +106,16 @@ export function decideUpgradeFlow(input: UpgradeFlowInput): UpgradeFlowDecision 
   // release, and a stored version that differs only in formatting must not
   // re-fire the modal on every launch.
   if (compareVersions(lastSeenVersion, currentVersion) === 0) {
-    return { kind: 'nothing', showWhatsNew: false, showTour: false, reason: 'same-version' }
+    // ...unless the stamp is newer than any build that has actually run. Then
+    // it was written by an OLDER build naming a version it had not shipped —
+    // the beta.15 → beta.16 incident behind #369 — and the user has not seen
+    // these notes at all. Show them, once; the acknowledgement re-stamps from
+    // the running build and the next launch reads `same-version` honestly.
+    const seen = seenVersionFor(input)
+    if (seen === lastSeenVersion) {
+      return { kind: 'nothing', showWhatsNew: false, showTour: false, reason: 'same-version' }
+    }
+    return { kind: 'upgrade', showWhatsNew: true, showTour: false, reason: 'stamped-ahead' }
   }
 
   // Deliberately not gated on moving FORWARD. A downgrade — a tester dropping

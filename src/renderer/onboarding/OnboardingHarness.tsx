@@ -17,6 +17,7 @@ import { CodexSignInStep } from './CodexSignInStep'
 import { TransparencyStep } from './TransparencyStep'
 import { FinishStep } from './FinishStep'
 import { settleOnboardingFinish, settleWhatsNewOnly } from './settle'
+import { seenVersion } from './whats-new-gate'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 
@@ -161,7 +162,10 @@ export function OnboardingHarness({
   // is where that reshuffle is wanted.
   const [pages] = useState<BuiltStep[]>(() => {
     if (!whatsNewOnly) return PAGES
-    const lastSeen = useAppMetaStore.getState().meta.lastSeenVersion
+    // The stamp clamped to the last build that ran, not the raw stamp — the
+    // same origin the launch decision used (#369), so a stamp written ahead of
+    // its build cannot hide a page that is new in this one.
+    const lastSeen = seenVersion()
     const settings = { codexEnabled: useSettingsStore.getState().settings.codexEnabled }
     const newIds = new Set(stepsNewSince(lastSeen, settings).map((s) => s.id))
     return PAGES.filter((p) => p.id === 'whatsNewV2' || newIds.has(p.id))
