@@ -41,7 +41,7 @@ let lastCaptureAt = 0
 export function registerDiagnosticsHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.DIAGNOSTICS_CAPTURE_GLYPH, async (_event, payload: unknown): Promise<GlyphDiagnosticResult> => {
     try {
-      // Throttle: a person pressing Ctrl+Shift+G never hits this, but a
+      // Throttle: a person pressing Ctrl+Alt+G never hits this, but a
       // compromised renderer looping the IPC would otherwise spam files + open an
       // Explorer window per call. Reject-fast, before any work.
       const nowMs = Date.now()
