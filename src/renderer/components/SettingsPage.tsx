@@ -22,7 +22,10 @@ import { Kbd } from './ui/Kbd'
 import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
+import { BuildIdentityLine } from './BuildIdentityLine'
+import { shortSha } from '../../shared/build-identity'
 declare const __BUILD_TIME__: string
+declare const __BUILD_SHA__: string
 declare const __APP_VERSION__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'commands', 'hooks', 'about'] as const
@@ -562,8 +565,13 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text">Build</span>
-                  <span className="text-xs text-overlay0 font-mono tabular-nums">{formatBuildTime(__BUILD_TIME__)}</span>
+                  <span className="text-xs text-overlay0 font-mono tabular-nums">
+                    {/* #384: commit short sha first, then the build time. */}
+                    {shortSha(__BUILD_SHA__)} · {formatBuildTime(__BUILD_TIME__)}
+                  </span>
                 </div>
+                {/* #384: the one-line build identity — identical to the splash. */}
+                <BuildIdentityLine className="pt-0.5" />
                 <div className="pt-1 flex items-center gap-1.5">
                   <button
                     onClick={() => setShowWhatsNew(true)}

@@ -1,5 +1,6 @@
 import type { UpdateChannel } from '../stores/settingsStore'
 import { releaseLine as sharedReleaseLine } from '../../shared/version-order'
+import { channelForVersion } from '../../shared/build-identity'
 
 // "current installed version + channel" label for the update UI -- the Settings
 // Check-for-Updates field and the BottomBar update-pill tooltip (#250). Pure so
@@ -48,5 +49,7 @@ export function isPrereleaseVersion(version: string): boolean {
  * onboarding Transparency recap pre-selects this and lets the user override it.
  */
 export function defaultUpdateChannelForVersion(version: string): UpdateChannel {
-  return isPrereleaseVersion(version) ? 'beta' : 'stable'
+  // One definition of "which channel is this build on" (#384): the splash and
+  // Settings → About derive it the same way via the shared helper.
+  return channelForVersion(version)
 }

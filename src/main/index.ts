@@ -4,6 +4,7 @@ import { homedir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
+import { splashBuildQuery } from './splash-info'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
@@ -253,6 +254,23 @@ const SPLASH_POST_READY_MS = 1000
 // (e2e, page missing) behave as if the splash showed instantly.
 let splashShownAt = Date.now()
 
+// Build-time defines (electron.vite.config.ts). Guarded with typeof so a
+// context without the defines (unit tests, a bare tsx run) degrades to
+// app.getVersion() + "dev" rather than a ReferenceError at boot.
+declare const __APP_VERSION__: string
+declare const __BUILD_SHA__: string
+declare const __BUILD_TIME__: string
+function getBuildIdentityInput(): { version: string; sha?: string; buildTime?: string } {
+  let version = ''
+  try { if (typeof __APP_VERSION__ === 'string' && __APP_VERSION__) version = __APP_VERSION__ } catch { /* undefined */ }
+  if (!version) version = app.getVersion()
+  let sha: string | undefined
+  try { if (typeof __BUILD_SHA__ === 'string') sha = __BUILD_SHA__ } catch { /* undefined */ }
+  let buildTime: string | undefined
+  try { if (typeof __BUILD_TIME__ === 'string') buildTime = __BUILD_TIME__ } catch { /* undefined */ }
+  return { version, sha, buildTime }
+}
+
 function createSplashWindow(): void {
   // Playwright-driven runs (e2e + the training-screenshot capture) assume the
   // first window is the main window; keep the splash out of them. The probe
@@ -303,7 +321,12 @@ function createSplashWindow(): void {
   splashWindow.webContents.on('did-fail-load', () => closeSplashWindow())
   splashWindow.webContents.on('render-process-gone', () => closeSplashWindow())
 
-  splashWindow.loadFile(splashHtml)
+  // #384: the build identity ("v2.1.0-beta.17 · beta · build 3a1b2e2 ·
+  // 2026-08-22") rides the URL query — the page is static with a strict CSP
+  // (no inline script, no preload), so a query string read back by
+  // splash-info.js is the one channel that needs no new capability. Only
+  // main builds this URL; the page sets textContent, never markup.
+  splashWindow.loadFile(splashHtml, { query: splashBuildQuery(getBuildIdentityInput()) })
   splashWindow.once('ready-to-show', () => {
     splashShownAt = Date.now()
     splashWindow?.show()
