@@ -47,12 +47,18 @@ export interface WatchdogSettings {
   retryMessage?: string
   /** Max usage-limit retry attempts before the watchdog gives up on this incident. */
   maxRetries?: number
+  /** Silence window in MS: a watched session with no PTY output for this long is
+   *  reported "silent" (provider stopped streaming) in the services view. STATUS
+   *  ONLY — never triggers a retry. 0 disables silence detection. Absent = the
+   *  manager default (see main/watchdog/watchdog-manager.ts). */
+  silenceWindowMs?: number
 }
 
 export const DEFAULT_WATCHDOG_SETTINGS: WatchdogSettings = {
   enabled: false,
   retryMessage: 'continue',
   maxRetries: 5,
+  silenceWindowMs: 120_000,
 }
 
 // ── UI typography (Font & Size settings page, spec 2026-07-04) ──

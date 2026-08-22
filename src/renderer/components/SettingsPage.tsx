@@ -410,6 +410,21 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                         className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 transition-colors"
                       />
                     </Field>
+                    <Field label="Silence alert (seconds)">
+                      <input
+                        type="number"
+                        min={0}
+                        max={3600}
+                        value={Math.round((settings.watchdog?.silenceWindowMs ?? DEFAULT_WATCHDOG_SETTINGS.silenceWindowMs ?? 0) / 1000)}
+                        onChange={(e) => {
+                          const secs = parseInt(e.target.value, 10)
+                          const clamped = Number.isFinite(secs) ? Math.max(0, Math.min(3600, secs)) : 0
+                          save({ watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}), silenceWindowMs: clamped * 1000 } })
+                        }}
+                        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 transition-colors"
+                      />
+                      <span className="block text-[10px] text-overlay0 mt-1">Flags a watched session in the services view when its provider stops streaming for this long. Status only — never triggers a retry. 0 turns it off.</span>
+                    </Field>
                   </>
                 )}
               </Section>
