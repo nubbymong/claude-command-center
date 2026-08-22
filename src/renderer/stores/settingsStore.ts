@@ -222,6 +222,7 @@ export interface AppSettings {
   theme: ThemeMode
   tokenomicsAccountFilter?: string  // 'all' | '__mixed__' | '__unknown__' | <email>
   fontMigratedV2?: boolean  // one-time guard: existing installs moved off the old Cascadia Code/14 default
+  gpuDefaultOnMigrated?: boolean  // one-time guard (#374): existing installs that had GPU rendering off (incl. the value auto-persisted while it was opt-in) moved to the new default-on
   identityColorMigratedV2?: boolean      // one-time guard: saved-config colours migrated to identity keys
   colourMigrationNoticePending?: boolean // a colour migration changed records and the notice should show
   colourMigrationNoticeDismissed?: boolean
@@ -375,6 +376,23 @@ export function migrateV2Font(settings: AppSettings): { settings: AppSettings; c
   }
 }
 
+// #374: GPU rendering flipped from opt-in to default-on. Existing installs carry
+// `terminal.gpuRendering: false` on disk — either a genuine experimental-era
+// opt-out OR the value migrateV2Font auto-persisted while it was opt-in — and the
+// hydrate merge lets that on-disk false override the new `true` default, so the
+// flip would miss every upgraded user. Turn it on exactly ONCE, guarded by
+// gpuDefaultOnMigrated: an on-disk false becomes true so the default applies.
+// A user who unticks it AFTER this has fired is respected (the guard has already
+// set). Caveat accepted (owner, 2026-08-22): a genuine opt-out is
+// indistinguishable from the baked default, so both are moved to on once; the
+// owner's call is that GPU rendering is on for everyone now.
+export function migrateGpuDefaultOn(settings: AppSettings): { settings: AppSettings; changed: boolean } {
+  if (settings.gpuDefaultOnMigrated) return { settings, changed: false }
+  const terminal = { ...settings.terminal }
+  if (terminal.gpuRendering === false) terminal.gpuRendering = true
+  return { settings: { ...settings, terminal, gpuDefaultOnMigrated: true }, changed: true }
+}
+
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: { ...DEFAULT_SETTINGS },
   isLoaded: false,
@@ -390,9 +408,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, ...(settings.conductorTools || {}) },
       typography: migrateTypography(settings),
     }
-    const { settings: migrated, changed } = migrateV2Font(merged)
-    if (changed) {
-      // Persist the one-time migration (including the guard flag) so it runs once.
+    const font = migrateV2Font(merged)
+    const gpu = migrateGpuDefaultOn(font.settings)
+    const migrated = gpu.settings
+    if (font.changed || gpu.changed) {
+      // Persist the one-time migrations (including their guard flags) so they run once.
       saveConfigNow('settings', migrated).catch(() => {})
     }
     set({ settings: migrated, isLoaded: true })

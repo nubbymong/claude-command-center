@@ -41,12 +41,17 @@ const fakeWindow = (capture: () => Promise<{ toPNG: () => Buffer }>) => ({
   webContents: { capturePage: capture },
 })
 
+// The handler throttles by wall clock (Date.now). Advance it well past the
+// min-interval before each test so independent tests never rate-limit each other.
+let clock = 1_000_000
 describe('diagnostics:captureGlyph', () => {
   beforeEach(() => {
     handlers.clear()
     writes.clear()
     mkdirs.length = 0
     showItemInFolder.mockClear()
+    clock += 100_000
+    vi.spyOn(Date, 'now').mockImplementation(() => clock)
   })
 
   it('writes the JSON + PNG into a fixed glyph-diagnostics dir and reveals them', async () => {
@@ -90,15 +95,46 @@ describe('diagnostics:captureGlyph', () => {
     expect(writes.size).toBe(0)
   })
 
-  it('rejects an oversized payload before writing', async () => {
+  it('drops extra fields and defeats the pretty-print amplification (ADR-009): a nested extra field never reaches disk', async () => {
     registerDiagnosticsHandlers(() => null)
-    const huge = validPayload()
-    huge.atlas.events = Array.from({ length: 50_000 }, (_, i) => ({ t: i, kind: 'clear', label: 'x'.repeat(20), generation: i }))
-    // sanity: this really is over the cap
-    expect(Buffer.byteLength(JSON.stringify(huge), 'utf8')).toBeGreaterThan(GLYPH_DIAGNOSTIC_MAX_BYTES)
-    const r = await invoke(IPC.DIAGNOSTICS_CAPTURE_GLYPH, huge)
-    expect(r.ok).toBe(false)
-    expect(r.error).toMatch(/too large/)
-    expect(writes.size).toBe(0)
+    // A compact-small payload whose EXTRA field balloons when pretty-printed —
+    // the exact size-cap bypass the adversarial pass found. Sanitize strips it.
+    const evil: any = validPayload()
+    evil.x = Array.from({ length: 60 }, () => { let n: any = 1; for (let d = 0; d < 1000; d++) n = [n]; return n })
+    const compact = Buffer.byteLength(JSON.stringify(evil), 'utf8')
+    expect(compact).toBeLessThan(GLYPH_DIAGNOSTIC_MAX_BYTES)   // passes a compact cap
+    const r = await invoke(IPC.DIAGNOSTICS_CAPTURE_GLYPH, evil)
+    expect(r.ok).toBe(true)
+    const written = writes.get(r.jsonPath!) as string
+    expect(written).not.toContain('"x"')                       // the extra field is gone
+    expect(Buffer.byteLength(written, 'utf8')).toBeLessThan(GLYPH_DIAGNOSTIC_MAX_BYTES)  // no balloon
+    expect(JSON.parse(written).appVersion).toBe('2.1.0-beta.17')
+  })
+
+  it('caps the atlas arrays so a flood of events cannot balloon the write', async () => {
+    registerDiagnosticsHandlers(() => null)
+    const flood = validPayload()
+    flood.atlas.events = Array.from({ length: 50_000 }, (_, i) => ({ t: i, kind: 'clear', label: 'x'.repeat(500), generation: i })) as never
+    const r = await invoke(IPC.DIAGNOSTICS_CAPTURE_GLYPH, flood)
+    expect(r.ok).toBe(true)
+    const parsed = JSON.parse(writes.get(r.jsonPath!) as string)
+    expect(parsed.atlas.events.length).toBeLessThanOrEqual(500)
+    expect(parsed.atlas.events[0].label.length).toBeLessThanOrEqual(128)
+  })
+
+  it('throttles rapid calls — a second capture within the min interval is rate-limited and writes nothing', async () => {
+    registerDiagnosticsHandlers(() => null)
+    const first = await invoke(IPC.DIAGNOSTICS_CAPTURE_GLYPH, validPayload())
+    expect(first.ok).toBe(true)
+    const before = writes.size
+    // same clock value -> inside the min interval
+    const second = await invoke(IPC.DIAGNOSTICS_CAPTURE_GLYPH, validPayload())
+    expect(second.ok).toBe(false)
+    expect(second.error).toMatch(/rate limited/)
+    expect(writes.size).toBe(before)   // nothing new written
+    // past the interval -> accepted again
+    clock += 2000
+    const third = await invoke(IPC.DIAGNOSTICS_CAPTURE_GLYPH, validPayload())
+    expect(third.ok).toBe(true)
   })
 })

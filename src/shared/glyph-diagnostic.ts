@@ -50,6 +50,44 @@ export interface GlyphDiagnosticResult {
  *  cap is a guard against a compromised renderer sending an unbounded blob. */
 export const GLYPH_DIAGNOSTIC_MAX_BYTES = 256 * 1024
 
+/** How many atlas events / live-terminal rows the sanitized bundle keeps. The
+ *  ring is capped at 300 in the coordinator; these bound what a compromised
+ *  renderer can send regardless. */
+const SANITIZE_EVENT_CAP = 500
+const SANITIZE_LIVE_CAP = 200
+
+/**
+ * Rebuild a payload from ONLY the known fields, with each nested value coerced
+ * to a primitive. Main writes THIS, never the raw object: extra fields a
+ * compromised renderer attached never reach disk, and — because every value is
+ * a scalar and the arrays are capped — a deeply nested field cannot pass a
+ * size check and then balloon when the file is pretty-printed. Call only after
+ * `isGlyphDiagnosticPayload` has passed.
+ */
+export function sanitizeGlyphDiagnosticPayload(p: GlyphDiagnosticPayload): GlyphDiagnosticPayload {
+  const str = (v: unknown, max = 512): string => (typeof v === 'string' ? v.slice(0, max) : String(v ?? '').slice(0, max))
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  return {
+    capturedAt: str(p.capturedAt, 64),
+    appVersion: str(p.appVersion, 64),
+    gpuRendering: p.gpuRendering === true,
+    gpuAdapter: p.gpuAdapter === null ? null : str(p.gpuAdapter),
+    activeSessionId: p.activeSessionId === null ? null : str(p.activeSessionId, 128),
+    terminalCount: num(p.terminalCount),
+    atlas: {
+      generation: num(p.atlas?.generation),
+      liveCount: num(p.atlas?.liveCount),
+      live: (Array.isArray(p.atlas?.live) ? p.atlas.live : []).slice(0, SANITIZE_LIVE_CAP).map((l) => ({
+        label: str(l?.label, 128), generation: num(l?.generation), behind: num(l?.behind),
+      })),
+      events: (Array.isArray(p.atlas?.events) ? p.atlas.events : []).slice(0, SANITIZE_EVENT_CAP).map((e) => ({
+        t: num(e?.t), kind: str(e?.kind, 32), label: str(e?.label, 128), generation: num(e?.generation),
+      })),
+    },
+    ...(p.note !== undefined ? { note: str(p.note, 2048) } : {}),
+  }
+}
+
 /** Main-side shape check — the renderer is untrusted. Validates the fields the
  *  writer relies on; extra fields are ignored, missing/mistyped ones reject. */
 export function isGlyphDiagnosticPayload(v: unknown): v is GlyphDiagnosticPayload {

@@ -43,6 +43,25 @@ glyph fault the moment it appears, for a proper debug.
   write-only to a fixed location; the handler returns `{ok:false,error}` instead
   of throwing. Adversarial pass run for this change (ADR-009).
 
+### ADR-009 pass (Opus attackers, one round) — two majors fixed
+- **Default-on missed existing installs** (design lens): pre-#374 builds baked
+  `terminal.gpuRendering:false` into settings.json (migrateV2Font auto-persists
+  the terminal block), and the hydrate merge let that on-disk false win, so the
+  flip only reached NEW installs. Fixed with a one-time `migrateGpuDefaultOn`
+  (guard `gpuDefaultOnMigrated`) that turns an on-disk false ON once; a later
+  opt-out is respected. Owner-accepted caveat: a genuine experimental-era
+  opt-out is indistinguishable from the baked default, so both go on once.
+- **Size-cap bypass** (injection lens): the 256 KB cap was measured on the
+  COMPACT serialization but the file was written INDENTED, so a nested extra
+  field passed the cap and ballooned >1000x on write. Fixed by
+  `sanitizeGlyphDiagnosticPayload` — main rebuilds the payload from ONLY the
+  known fields (each flattened to a primitive, arrays capped) and bounds+writes
+  the SAME bytes; extra fields never reach disk.
+- Minors also fixed: IPC throttle (1.5 s min interval — a looping renderer can
+  no longer spam files/Explorer windows); `stamp()` gained milliseconds; the
+  Ctrl+Alt+G handler guards `AltGraph` so AltGr+G text entry is not swallowed on
+  international layouts. Re-verified: full suite green.
+
 ### Verification
 - `npm run typecheck` clean; full `npx vitest run` 7036 passed / 0 failed.
 - New tests: `gpu-rendering-default` (rewritten), `terminal-atlas-coordinator`

@@ -37,8 +37,9 @@ describe('buildGlyphDiagnostic', () => {
     } finally { reg() }
   })
 
-  it('reflects an explicit GPU opt-out', () => {
-    useSettingsStore.getState().hydrate({ terminal: { gpuRendering: false } } as never)
+  it('reflects an explicit GPU opt-out (post-migration)', () => {
+    // Guard set so the #374 default-on migration does not flip it back on.
+    useSettingsStore.getState().hydrate({ terminal: { gpuRendering: false }, gpuDefaultOnMigrated: true } as never)
     expect(buildGlyphDiagnostic(null).gpuRendering).toBe(false)
   })
 })

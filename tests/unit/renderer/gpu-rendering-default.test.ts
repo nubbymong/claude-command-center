@@ -6,6 +6,7 @@ vi.mock('../../../src/renderer/utils/config-saver', () => ({ saveConfigNow: vi.f
 import {
   DEFAULT_TERMINAL_SETTINGS,
   gpuRenderingEnabled,
+  migrateGpuDefaultOn,
   useSettingsStore,
 } from '../../../src/renderer/stores/settingsStore'
 
@@ -65,8 +66,39 @@ describe('GPU terminal rendering is default-on', () => {
     expect(gpuRenderingEnabled(useSettingsStore.getState().settings.terminal)).toBe(true)
   })
 
-  it('honours a stored OFF through hydrate() — an explicit opt-out survives', () => {
+  it('migrates an un-migrated stored OFF to ON once (#374) — the default-on flip reaches existing installs', () => {
+    // A pre-#374 install carries terminal.gpuRendering:false on disk (a genuine
+    // opt-out, or the value auto-persisted while it was opt-in) and no migration
+    // guard. hydrate must turn it ON once, or the flip would miss every upgrade.
     useSettingsStore.getState().hydrate({ terminal: { gpuRendering: false } } as never)
+    expect(gpuRenderingEnabled(useSettingsStore.getState().settings.terminal)).toBe(true)
+    expect(useSettingsStore.getState().settings.gpuDefaultOnMigrated).toBe(true)
+  })
+
+  it('respects an OFF chosen AFTER the migration has fired', () => {
+    // Guard already set: the user turned it off post-migration, so it stays off.
+    useSettingsStore.getState().hydrate({ terminal: { gpuRendering: false }, gpuDefaultOnMigrated: true } as never)
     expect(gpuRenderingEnabled(useSettingsStore.getState().settings.terminal)).toBe(false)
+  })
+})
+
+describe('migrateGpuDefaultOn (#374)', () => {
+  it('flips an on-disk false to true once and sets the guard', () => {
+    const r = migrateGpuDefaultOn({ terminal: { gpuRendering: false } } as never)
+    expect(r.changed).toBe(true)
+    expect(r.settings.terminal.gpuRendering).toBe(true)
+    expect(r.settings.gpuDefaultOnMigrated).toBe(true)
+  })
+
+  it('is a no-op once the guard is set — a later opt-out survives', () => {
+    const r = migrateGpuDefaultOn({ terminal: { gpuRendering: false }, gpuDefaultOnMigrated: true } as never)
+    expect(r.changed).toBe(false)
+    expect(r.settings.terminal.gpuRendering).toBe(false)
+  })
+
+  it('leaves an on-disk true alone (still sets the guard so it runs once)', () => {
+    const r = migrateGpuDefaultOn({ terminal: { gpuRendering: true } } as never)
+    expect(r.settings.terminal.gpuRendering).toBe(true)
+    expect(r.settings.gpuDefaultOnMigrated).toBe(true)
   })
 })

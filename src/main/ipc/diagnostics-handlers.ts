@@ -7,17 +7,25 @@ import { logInfo, logWarn } from '../debug-logger'
 import {
   GLYPH_DIAGNOSTIC_MAX_BYTES,
   isGlyphDiagnosticPayload,
+  sanitizeGlyphDiagnosticPayload,
   type GlyphDiagnosticResult,
 } from '../../shared/glyph-diagnostic'
 
-/** `glyph-YYYYMMDD-HHMMSS` — sortable, filesystem-safe, no separators to escape. */
+/** `glyph-YYYYMMDD-HHMMSS-mmm` — sortable, filesystem-safe, no separators to
+ *  escape. Milliseconds keep two captures in the same second from colliding. */
 function stamp(): string {
   return new Date()
     .toISOString()
     .replace(/T/, '-')
     .replace(/:/g, '')
-    .replace(/\..*$/, '')
+    .replace(/\.(\d{3})Z$/, '-$1')
 }
+
+/** Minimum gap between accepted captures. Bounds a compromised renderer that
+ *  loops the IPC (files written + Explorer windows opened); a person pressing
+ *  the shortcut never hits it. */
+const MIN_CAPTURE_INTERVAL_MS = 1500
+let lastCaptureAt = 0
 
 /**
  * The glyph-corruption capture (#374). The renderer hands over the atlas event
@@ -33,25 +41,37 @@ function stamp(): string {
 export function registerDiagnosticsHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.DIAGNOSTICS_CAPTURE_GLYPH, async (_event, payload: unknown): Promise<GlyphDiagnosticResult> => {
     try {
-      // Reject an oversized blob before parsing anything else.
-      let serialized: string
-      try {
-        serialized = JSON.stringify(payload)
-      } catch {
-        return { ok: false, error: 'payload not serializable' }
+      // Throttle: a person pressing Ctrl+Shift+G never hits this, but a
+      // compromised renderer looping the IPC would otherwise spam files + open an
+      // Explorer window per call. Reject-fast, before any work.
+      const nowMs = Date.now()
+      if (nowMs - lastCaptureAt < MIN_CAPTURE_INTERVAL_MS) {
+        return { ok: false, error: 'rate limited' }
       }
-      if (Buffer.byteLength(serialized, 'utf8') > GLYPH_DIAGNOSTIC_MAX_BYTES) {
-        return { ok: false, error: 'payload too large' }
-      }
+
       if (!isGlyphDiagnosticPayload(payload)) {
         return { ok: false, error: 'payload shape invalid' }
       }
+      // Write ONLY the known fields — never the raw object. This drops any extra
+      // fields a compromised renderer attached, which both keeps unvetted content
+      // off disk AND removes the amplification carrier behind the size check: the
+      // bytes we bound are the exact bytes we write (indented), so a deeply nested
+      // extra field can no longer pass a compact-serialized cap and then balloon
+      // on the pretty-printed write (ADR-009 pass on #399).
+      const clean = sanitizeGlyphDiagnosticPayload(payload)
+      const out = JSON.stringify(clean, null, 2)
+      if (Buffer.byteLength(out, 'utf8') > GLYPH_DIAGNOSTIC_MAX_BYTES) {
+        return { ok: false, error: 'payload too large' }
+      }
+      // Only now commit to this capture — a rejected payload must not start the
+      // throttle window.
+      lastCaptureAt = nowMs
 
       const dir = join(getResourcesDirectory(), 'glyph-diagnostics')
       mkdirSync(dir, { recursive: true })
       const base = `glyph-${stamp()}`
       const jsonPath = join(dir, `${base}.json`)
-      writeFileSync(jsonPath, JSON.stringify(payload, null, 2), 'utf8')
+      writeFileSync(jsonPath, out, 'utf8')
 
       // A full-window capture, saved beside the JSON. Best-effort: a diagnostic
       // is still useful without the image (headless, capture unsupported), so a

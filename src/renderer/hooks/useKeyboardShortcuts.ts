@@ -82,7 +82,10 @@ export function useKeyboardShortcuts(
       // characters go missing while backgrounds stay, this saves the always-on
       // atlas event ring + a window screenshot and reveals them to share. Fixed
       // action, not per-session, so it fires whatever the active view.
-      if (matchesShortcut(e, shortcuts.captureGlyphDiagnostic)) {
+      // Guard AltGraph: on international layouts AltGr reports ctrlKey && altKey,
+      // so a bare Ctrl+Alt+<key> binding would swallow AltGr text entry into the
+      // terminal. Skip when AltGr is really down (#399 ADR-009 pass).
+      if (matchesShortcut(e, shortcuts.captureGlyphDiagnostic) && !e.getModifierState?.('AltGraph')) {
         e.preventDefault()
         void captureGlyphDiagnostic(useSessionStore.getState().activeSessionId)
       }
