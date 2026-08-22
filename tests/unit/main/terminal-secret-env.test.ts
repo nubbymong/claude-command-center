@@ -50,7 +50,39 @@ describe('buildTerminalLaunchLine — {secret} substitution', () => {
 
   it('substitutes an env REFERENCE, never the value (Windows)', () => {
     const out = win({ command: 'openclaw', args: '--token {secret}', hasSecretArg: true })
-    expect(out).toBe('openclaw --token $env:CCC_ARG_SECRET')
+    expect(out).toBe('openclaw --token ${env:CCC_ARG_SECRET}')
+  })
+
+  /**
+   * #371 — the braced form, back-ported from the command-button path (#386).
+   * The bare `$env:NAME` is unbounded, so anything written next to the token
+   * runs into the variable name and the whole argument evaporates, shifting the
+   * next flag into its slot. These are the exact adjacency forms the beta.16
+   * ADR-009 pass measured as "handed to the child literally".
+   */
+  it('the reference is bounded, so an adjacent character cannot eat the variable name', () => {
+    expect(win({ command: 'x', args: '--out {secret}.json', hasSecretArg: true }))
+      .toBe('x --out ${env:CCC_ARG_SECRET}.json')
+    expect(win({ command: 'x', args: '{secret}_v2', hasSecretArg: true }))
+      .toBe('x ${env:CCC_ARG_SECRET}_v2')
+    expect(win({ command: 'x', args: '--token={secret}', hasSecretArg: true }))
+      .toBe('x --token=${env:CCC_ARG_SECRET}')
+    // The failure this prevents: a bare reference would read as one long name.
+    expect(win({ command: 'x', args: '{secret}.json', hasSecretArg: true }))
+      .not.toContain('$env:CCC_ARG_SECRET.json')
+  })
+
+  it('substitutes the token in the COMMAND field too, not only in Arguments', () => {
+    // The natural place to write a whole invocation. It used to type the token.
+    expect(win({ command: 'curl -H "Bearer {secret}" https://x.test', hasSecretArg: true }))
+      .toBe('curl -H "Bearer ${env:CCC_ARG_SECRET}" https://x.test')
+    expect(posix({ command: 'curl -H "Bearer {secret}"', hasSecretArg: true }))
+      .toBe('curl -H "Bearer "$CCC_ARG_SECRET""')
+  })
+
+  it('a command field holding only the token with no secret stored runs nothing', () => {
+    // It collapses to empty, and an empty command must not become a bare line.
+    expect(win({ command: '{secret}', args: '--x' })).toBe('')
   })
 
   it('substitutes a quoted env reference on POSIX', () => {
@@ -64,7 +96,7 @@ describe('buildTerminalLaunchLine — {secret} substitution', () => {
 
   it('replaces every occurrence', () => {
     expect(win({ command: 'x', args: '{secret} and {secret}', hasSecretArg: true }))
-      .toBe('x $env:CCC_ARG_SECRET and $env:CCC_ARG_SECRET')
+      .toBe('x ${env:CCC_ARG_SECRET} and ${env:CCC_ARG_SECRET}')
   })
 
   it('leaves arguments without the token untouched', () => {

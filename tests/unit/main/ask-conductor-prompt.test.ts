@@ -54,11 +54,31 @@ describe('askPromptRef', () => {
     expect(askPromptRef(false)).toBe('"$CCC_ASK_PROMPT"')
   })
 
-  it('follows the same shape as the secret reference it is modelled on', () => {
-    // If secretRef's quoting rule is ever revised, this pairing should be
-    // revisited together rather than drifting apart silently.
-    expect(askPromptRef(true).startsWith('$env:')).toBe(secretRef(true).startsWith('$env:'))
+  /**
+   * This pairing existed so the two references could not drift apart silently,
+   * and in #371 it caught the revision it was written for. They now differ ON
+   * PURPOSE, and the difference is the point:
+   *
+   * `secretRef` became BRACED (`${env:NAME}`) because `{secret}` is written by
+   * the user INSIDE their own text, so it can end up adjacent to another
+   * character — `{secret}.json`, `{secret}_v2`, `--token={secret}` — and a bare
+   * reference lets that character run into the variable name.
+   *
+   * `askPromptRef` is only ever emitted by the app itself, in one place, as a
+   * standalone token followed by `;`
+   * (`& 'claude' -- $env:CCC_ASK_PROMPT; exit`). Nothing can be written next to
+   * it, so the bare form has no way to be wrong here.
+   *
+   * What must still hold is the POSIX quoting, which is what keeps a value with
+   * spaces or globs one argument in both cases.
+   */
+  it('shares the POSIX quoting rule with the secret reference', () => {
     expect(askPromptRef(false).startsWith('"$')).toBe(secretRef(false).startsWith('"$'))
+  })
+
+  it('differs from the secret reference on Windows, deliberately: only the secret can be adjacent to user text', () => {
+    expect(askPromptRef(true)).toBe('$env:CCC_ASK_PROMPT')
+    expect(secretRef(true)).toBe('${env:CCC_ARG_SECRET}')
   })
 })
 

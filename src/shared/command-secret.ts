@@ -88,7 +88,7 @@ export function secretValueProblem(value: string, isWindows: boolean): string | 
 
 /**
  * THE rule for what a command button types: `prompt + ' ' + args.join(' ')`,
- * with `{secret}` in the arguments replaced by the reference when one is given.
+ * with `{secret}` replaced by the reference when one is given.
  *
  * One function, used by the command bar (what is typed) AND by the dialog's
  * preview (what is shown), so the two cannot disagree. Nothing is quoted for
@@ -96,13 +96,24 @@ export function secretValueProblem(value: string, isWindows: boolean): string | 
  * so. Without a reference the token is left alone: a command with no stored
  * secret types `{secret}` literally, which is visible and harmless, rather than
  * silently typing nothing.
+ *
+ * THE FIRST FIELD IS SUBSTITUTED TOO (#371). It used to be arguments only, on
+ * the reasoning that "the secret is an ARGUMENT" — but a secret can only exist
+ * on a SHELL button (the toggle is not offered for a prompt or a page, and a
+ * stored value is dropped if one is converted), and on a shell button that
+ * field is not a prompt: it is labelled "Command to run" and is typed into the
+ * terminal exactly as written. So a user writing `curl -H "Bearer {secret}"`
+ * there — the natural place to write a whole invocation — got the literal token
+ * typed into their shell. `secretRef` is non-null only for a shell button that
+ * has a stored secret, so nothing a Claude prompt types can be touched by this.
  */
 export function buildCommandLine(prompt: string, args: readonly string[] | undefined, secretRef?: string | null): string {
-  const p = (prompt ?? '').trim()
+  const sub = (s: string) => (secretRef ? s.split(COMMAND_SECRET_TOKEN).join(secretRef) : s)
+  // Emptiness is decided on what the user WROTE, before substitution: a command
+  // is empty because nothing was typed, never because a token collapsed.
+  if (!(prompt ?? '').trim()) return ''
+  const p = sub((prompt ?? '').trim()).trim()
   if (!p) return ''
   if (!args || args.length === 0) return p
-  const resolved = secretRef
-    ? args.map((a) => a.split(COMMAND_SECRET_TOKEN).join(secretRef))
-    : args
-  return `${p} ${resolved.join(' ')}`
+  return `${p} ${args.map(sub).join(' ')}`
 }

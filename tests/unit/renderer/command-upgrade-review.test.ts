@@ -117,6 +117,28 @@ describe('reviewCommandsForUpgrade -- tagged, never changed', () => {
     const before = [cmd({ id: 'r', target: 'partner', defaultArgs: ['-Env', 'prod'], lastCustomArgs: ['-Token', 'ghp_abcdefghijklmnopqrstuvwxyz0123'] })]
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
   })
+  /**
+   * #371 — a shell button's own command line was the one typed field never
+   * scanned. On a shell button that field is not a prompt; it is the line typed
+   * into the terminal, and a whole invocation with a token in it is the most
+   * natural thing to write there.
+   */
+  it('scans a SHELL button\'s command line, not just its arguments', () => {
+    const before = [cmd({ id: 'sh', kind: 'shell', target: 'partner', prompt: 'curl -H "Bearer ghp_abcdefghijklmnopqrstuvwxyz0123"' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
+  })
+  it('does not scan a PROMPT button\'s text -- a prompt is prose, and no reference is ever typed into one', () => {
+    const before = [cmd({ id: 'pr', scope: 'config', configId: 'claudeCfg', prompt: 'explain the --password flag to me' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)
+  })
+  it('scans a legacy shell button too -- written before `kind` existed, a partner target is what made it one', () => {
+    const before = [cmd({ id: 'legacy', target: 'partner', prompt: 'deploy --api-key=AKIAABCDEFGHIJKLMNOP' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
+  })
+  it('does not tag a shell button whose command line already carries the token', () => {
+    const before = [cmd({ id: 'sh2', kind: 'shell', target: 'partner', hasSecretArg: true, prompt: 'curl -H "Bearer {secret}"' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)
+  })
   it('tags a Global prompt button when the user has a terminal-only config, and not otherwise', () => {
     const before = [cmd({ id: 'p', scope: 'global' })]
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['prompt-inert-on-shell-configs'])

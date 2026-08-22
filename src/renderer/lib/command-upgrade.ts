@@ -196,7 +196,19 @@ export function reviewCommandsForUpgrade(
     const isPage = c.kind === 'page'
     const isPrompt = !isPage && (c.target ?? 'claude') === 'claude'
     // Remembered (Ctrl+click) arguments are typed too, so they are scanned too.
-    if (!isPage && !c.hasSecretArg && [...(c.defaultArgs ?? []), ...(c.lastCustomArgs ?? [])].some(looksLikeSecretArg)) reasons.push('secret-like-arg')
+    // So is a SHELL button's command line (#371): on a shell button that field
+    // is not a prompt, it is the line typed into the terminal, and a whole
+    // invocation with a token in it is the most natural thing to write there —
+    // `curl -H "Bearer ghp_..."`. It was the one typed field never scanned.
+    // A record written before `kind` existed carries no kind, and a partner
+    // target is what made it a shell line then — the same widening
+    // `effectiveKind` does, minus the parts that need a live session.
+    const isShellLine = !isPage && (c.kind === 'shell' || (!c.kind && c.target === 'partner'))
+    // Split into words: `looksLikeSecretArg` judges ONE argument (its key-shape
+    // and entropy rules are anchored), so handing it a whole command line would
+    // match nothing. The words are what the chips would have been.
+    const shellLine = isShellLine ? (c.prompt ?? '').split(/\s+/).filter(Boolean) : []
+    if (!isPage && !c.hasSecretArg && [...shellLine, ...(c.defaultArgs ?? []), ...(c.lastCustomArgs ?? [])].some(looksLikeSecretArg)) reasons.push('secret-like-arg')
     if (isPrompt && c.scope === 'global' && anyShellConfig) reasons.push('prompt-inert-on-shell-configs')
     if (ctx.dissolvedCommandIds.has(c.id)) reasons.push('section-dissolved')
     if (!isPage && c.target === 'partner' && c.scope === 'config' && c.configId && sshConfigIds.has(c.configId)) reasons.push('ssh-partner-is-local')

@@ -18,16 +18,29 @@ export interface TerminalLaunchOptions {
 }
 
 /** Shell-appropriate reference to the secret env var. Quoted on POSIX so a
- *  secret containing spaces or globs stays a single argument. On Windows the
- *  reference is bare, and that alone does NOT make the value one argument:
- *  PowerShell 5.1 re-serialises native-command arguments into one line and
- *  never escapes an embedded `"`, so a value holding `"`, a trailing `\`, a
- *  `!name!` pair or `&|^<>%` (through a .cmd shim) breaks the child's argv.
- *  Those values are REFUSED at the dialog by shared/command-secret's
- *  `secretValueProblem` (the same rule the command-button secret uses); what
- *  passes arrives intact -- measured on 5.1, ADR-009 pass, beta.16. */
+ *  secret containing spaces or globs stays a single argument.
+ *
+ *  On Windows the reference is BRACED — `${env:NAME}`, not `$env:NAME`. The
+ *  bare form is unbounded, so an adjacent character runs into the name:
+ *  `{secret}.json` becomes `$env:CCC_ARG_SECRET.json` (a member access on a
+ *  string, yielding nothing) and `{secret}_v2` reads as a longer variable name.
+ *  Either way the argument vanishes and the next flag shifts into its slot.
+ *  The braced form ends where the name ends, on PowerShell 5.1 and 7 alike.
+ *
+ *  This is the fix `shared/command-secret`'s `commandSecretRef` already took
+ *  for command buttons (measured in the ADR-009 pass on #386); the terminal
+ *  config path never had it back-ported, which is the adjacency case the
+ *  beta.16 pass recorded as "handed to the child literally" (#371).
+ *
+ *  A reference alone still does NOT make the value one argument: PowerShell 5.1
+ *  re-serialises native-command arguments into one line and never escapes an
+ *  embedded `"`, so a value holding `"`, a trailing `\`, a `!name!` pair or
+ *  `&|^<>%` (through a .cmd shim) breaks the child's argv. Those values are
+ *  REFUSED at the dialog by shared/command-secret's `secretValueProblem` (the
+ *  same rule the command-button secret uses); what passes arrives intact --
+ *  measured on 5.1, ADR-009 pass, beta.16. */
 export function secretRef(isWindows: boolean): string {
-  return isWindows ? '$env:CCC_ARG_SECRET' : '"$CCC_ARG_SECRET"'
+  return isWindows ? '${env:CCC_ARG_SECRET}' : '"$CCC_ARG_SECRET"'
 }
 
 /** Shell-appropriate reference to the Ask Conductor opening prompt.
@@ -122,9 +135,20 @@ export function askPromptEnvValue(question: string, isWindows: boolean): string 
  * leaving a dangling variable name the shell would expand to nothing anyway.
  */
 export function buildTerminalLaunchLine(opts: TerminalLaunchOptions | undefined, isWindows: boolean): string {
-  const command = (opts?.command ?? '').trim()
-  if (!command) return ''
+  // `{secret}` is substituted in the COMMAND as well as the arguments (#371).
+  // The two fields become one shell line the moment they are joined, and the
+  // command field is where a user naturally writes a whole invocation
+  // (`curl -H "Bearer {secret}" ...`). Writing it there used to type the
+  // literal token -- the "handed over literally" case the beta.16 pass noted.
+  const written = (opts?.command ?? '').trim()
+  // Emptiness is decided on what the user WROTE, before substitution: a command
+  // field is empty because nothing was typed in it, never because a token
+  // collapsed to nothing.
+  if (!written) return ''
   const ref = opts?.hasSecretArg ? secretRef(isWindows) : ''
-  const args = (opts?.args ?? '').replace(/\{secret\}/g, ref).trim()
+  const sub = (s: string) => s.replace(/\{secret\}/g, ref)
+  const command = sub(written).trim()
+  if (!command) return ''
+  const args = sub(opts?.args ?? '').trim()
   return args ? `${command} ${args}` : command
 }

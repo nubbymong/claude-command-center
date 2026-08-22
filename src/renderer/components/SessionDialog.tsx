@@ -1027,7 +1027,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         <p className="text-[11px] text-[var(--text-muted)]">
                           <span className="text-[var(--status-success)]">🔒</span> Kept in your OS keychain, never written to the
                           config file. Type <span className="font-mono text-[var(--text-secondary)]">{'{secret}'}</span> in
-                          Arguments to use it.
+                          the command or Arguments to use it.
+                          {window.electronPlatform === 'win32' && <> A value longer than about 8,000 characters will not reach a tool
+                          launched through a <span className="font-mono text-[var(--text-secondary)]">.cmd</span> wrapper
+                          (most <span className="font-mono text-[var(--text-secondary)]">npm</span>-installed tools) — a limit
+                          of the Windows command line itself.</>}
                         </p>
                         {storedSecret && (
                           <button
