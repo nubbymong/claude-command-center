@@ -268,6 +268,60 @@ describe('SessionDialog effort resets when the model stops supporting it', () =>
     expect(config.claudeOptions?.effortLevel).toBeUndefined()
   })
 
+  // ADR-009 MINOR on #404. handleModelChange only fires when the user TOUCHES
+  // the model select, so a config saved before claude-opus-4-6 dropped "xhigh"
+  // reopened with that chip still selected and re-submitted --effort xhigh on
+  // Save without the model ever being touched. Clamped on load AND on submit.
+  it('a saved effort the saved model no longer supports is clamped on LOAD', () => {
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: { ...CLAUDE_LOCAL, claudeOptions: { model: 'claude-opus-4-6', effortLevel: 'xhigh' } },
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    expect(effortChip(container, 'Extra high')!.disabled).toBe(true)
+    expect(effortChip(container, 'Extra high')!.checked).toBe(false)
+    expect(effortChip(container, 'Default')!.checked).toBe(true)
+  })
+
+  it('and cannot be re-submitted by a Save that touches nothing', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: { ...CLAUDE_LOCAL, claudeOptions: { model: 'claude-opus-4-6', effortLevel: 'xhigh' } },
+          onConfirm,
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    submit(container)
+    expect(onConfirm).toHaveBeenCalledOnce()
+    const [config] = onConfirm.mock.calls[0]
+    expect(config.claudeOptions?.model).toBe('claude-opus-4-6')
+    expect(config.claudeOptions?.effortLevel).toBeUndefined()
+  })
+
+  it('a saved effort the saved model DOES support is left alone', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: { ...CLAUDE_LOCAL, claudeOptions: { model: 'claude-opus-4-6', effortLevel: 'high' } },
+          onConfirm,
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    expect(effortChip(container, 'High')!.checked).toBe(true)
+    submit(container)
+    const [config] = onConfirm.mock.calls[0]
+    expect(config.claudeOptions?.effortLevel).toBe('high')
+  })
+
   it('a still-supported effort survives a model switch (no over-reset)', () => {
     const onConfirm = vi.fn()
     act(() => {

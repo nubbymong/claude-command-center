@@ -59,6 +59,25 @@ export function effortsForModel(
   }))
 }
 
+/**
+ * The charset the PTY IPC boundary already enforces for a `--model` value
+ * (`src/main/ipc/pty-handlers.ts`), mirrored for values written into a LIVE PTY
+ * as a slash command (`/model <v>`, `/effort <v>`).
+ *
+ * That path has no schema in front of it. The pinned picker rows are derived
+ * from the registry, and `registry-overlay.json` is a hand-editable user file
+ * whose entries are validated on APPLY rather than on load — so an id carrying a
+ * newline would be written into the PTY as a second, attacker-chosen line.
+ * Defence in depth (the overlay is a local file, not remote input), and it costs
+ * a regex. Legit values: 'opus', 'opus[1m]', 'claude-opus-4-8', 'xhigh'.
+ */
+export const PICKER_VALUE_RE = /^[a-zA-Z0-9._[\]-]+$/
+
+/** True when `v` is safe to write into a PTY as a slash-command argument. */
+export function isWritablePickerValue(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0 && v.length <= 64 && PICKER_VALUE_RE.test(v)
+}
+
 export const PERMISSION_MODES: OptionItem[] = [
   { label: 'Ask permissions', value: 'default', hint: 'Claude asks before most actions' },
   { label: 'Accept edits', value: 'acceptEdits', hint: 'Auto-accept file edits, ask for others' },

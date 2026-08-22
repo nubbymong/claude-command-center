@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import {
   modelCoverageFindings,
   modelCheckFailedFinding,
@@ -190,10 +192,19 @@ describe('parseArticleModelIds (#385 S1)', () => {
     expect(parseArticleModelIds(html)).toEqual(['claude-opus-5'])
   })
 
-  it('is case-insensitive and trims a trailing hyphen', () => {
-    expect(parseArticleModelIds('CLAUDE-OPUS-5- and claude-haiku-4-5')).toEqual([
+  it('is case-insensitive', () => {
+    expect(parseArticleModelIds('CLAUDE-OPUS-5 and claude-haiku-4-5')).toEqual([
       'claude-opus-5', 'claude-haiku-4-5',
     ])
+  })
+
+  it('rejects a token that CONTINUES past the id instead of trimming it back', () => {
+    // Was: a trailing hyphen was trimmed off, which is how `claude-fable-5` got
+    // carved out of the slug `claude-fable-5-on-your-plan`. A hyphen (or any
+    // further word) after the version means this is not a model id, so the whole
+    // token is dropped (ADR-009 MAJOR-1 on #404).
+    expect(parseArticleModelIds('claude-opus-5- and claude-fable-5-on-your-plan')).toEqual([])
+    expect(parseArticleModelIds('claude-opus-5-preview claude-haiku-4-5x')).toEqual([])
   })
 
   it('finds nothing in a page with no model ids, so the caller falls back', () => {
@@ -205,6 +216,93 @@ describe('parseArticleModelIds (#385 S1)', () => {
     // Round-trip: the ids we ship must be exactly what this parser would find.
     const html = EXPECTED_MODEL_SET.models.map((m) => `<td>${m.label}</td><td>${m.id}</td>`).join('\n')
     expect(parseArticleModelIds(html)).toEqual(EXPECTED_MODEL_SET.models.map((m) => m.id))
+  })
+
+  it('never reads a model id out of a tag — only out of visible text', () => {
+    const html = `
+      <h2>Supported models</h2>
+      <a title="Claude Fable 9 on your plan"
+         href="https://support.claude.com/en/articles/15424964-claude-fable-9">Read more</a>
+      <div data-model="claude-opus-9" class="claude-sonnet-9">
+        <p>claude-opus-5</p><p>claude-sonnet-5</p><p>claude-haiku-4-5</p>
+      </div>
+    `
+    // Note claude-fable-9 is a WHOLE-token id at the end of that href: the
+    // shape rule alone would take it, and only "text, not markup" keeps it out.
+    expect(parseArticleModelIds(html)).toEqual([
+      'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5',
+    ])
+  })
+
+  it('ignores a model named outside the Supported models section', () => {
+    const html = `
+      <h2>Supported models</h2>
+      <p>claude-opus-5</p><p>claude-sonnet-5</p><p>claude-haiku-4-5</p>
+      <h2>Retired models</h2>
+      <p>claude-opus-3 is no longer available.</p>
+    `
+    expect(parseArticleModelIds(html)).toEqual([
+      'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5',
+    ])
+  })
+
+  it('falls back to the whole page when the Supported models heading is gone', () => {
+    const html = `
+      <h2>Which models can I use?</h2>
+      <p>claude-opus-5</p><p>claude-sonnet-5</p><p>claude-haiku-4-5</p>
+    `
+    expect(parseArticleModelIds(html)).toEqual([
+      'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5',
+    ])
+  })
+
+  it('heals an id that inline markup split in two', () => {
+    const html = '<h2>Supported models</h2><code>claude --model<b> </b>claude-haiku-4-5-20251001</code>'
+    expect(parseArticleModelIds(html)).toEqual(['claude-haiku-4-5-20251001'])
+  })
+})
+
+// The defect this fixture exists for: the parser used to regex the WHOLE ~345 KB
+// page, so it harvested `claude-fable-5-on-your-plan` from a sidebar link's
+// href. registryIdCovers() cannot match that against `claude-fable-5`, so the
+// LIVE arm raised a permanent, stable-id'd `models:missing:...` finding on every
+// startup of every Sentinel-enabled build. See the fixture header for what the
+// three slices are; the markup inside each is the real page, unmodified.
+describe('parseArticleModelIds against the REAL article (ADR-009 MAJOR-1, #404)', () => {
+  const REAL_ARTICLE_HTML = readFileSync(
+    join(__dirname, '..', 'fixtures', 'model-article', 'claude-code-model-configuration.trimmed.html'),
+    'utf8',
+  )
+  const PHANTOM = 'claude-fable-5-on-your-plan'
+
+  it('still contains the sidebar link that produced the phantom', () => {
+    // Guards the fixture itself: if a future trim drops this href, the two tests
+    // below would pass for the wrong reason.
+    expect(REAL_ARTICLE_HTML).toContain(`15424964-${PHANTOM}`)
+  })
+
+  it('does NOT return the phantom id scraped from that link', () => {
+    const ids = parseArticleModelIds(REAL_ARTICLE_HTML)
+    expect(ids).not.toContain(PHANTOM)
+    expect(ids.some((id) => id.includes('on-your-plan'))).toBe(false)
+  })
+
+  it('DOES return every genuine id, in article order', () => {
+    expect(parseArticleModelIds(REAL_ARTICLE_HTML))
+      .toEqual(EXPECTED_MODEL_SET.models.map((m) => m.id))
+  })
+
+  it('is well clear of the "unreadable" floor, so the live arm still runs', () => {
+    expect(parseArticleModelIds(REAL_ARTICLE_HTML).length)
+      .toBeGreaterThanOrEqual(MIN_PLAUSIBLE_IDS)
+  })
+
+  it('raises NO finding when the live article is parsed against the shipped registry', () => {
+    // The user-visible symptom, end to end: with the old parser this produced
+    // `models:missing:claude-fable-5-on-your-plan` ("New model: ...") on every
+    // single startup, permanently, because the id is stable and never resolves.
+    const liveIds = parseArticleModelIds(REAL_ARTICLE_HTML)
+    expect(modelCoverageFindings(reg, EXPECTED_MODEL_SET, NOW, liveIds)).toEqual([])
   })
 })
 

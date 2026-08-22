@@ -19,6 +19,7 @@ import {
   effortsForModel,
   shortModelName,
   isModelActive,
+  isWritablePickerValue,
 } from '../lib/claude-cli-options'
 import { resolvePickedModelId } from '../../shared/model-registry'
 import { useRegistryStore } from '../stores/registryStore'
@@ -100,6 +101,17 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
     window.electronAPI.pty.write(sessionId, cmd)
   }
   const onModel = (si: number, v: string) => {
+    // These values are written straight into a live PTY as a slash-command
+    // LINE, with no schema in front of them. Pinned rows are derived from the
+    // registry and `registry-overlay.json` is hand-editable, so hold picker
+    // values to the same charset the `--model` IPC boundary enforces rather
+    // than trusting the row (ADR-009 MINOR on #404).
+    if (!isWritablePickerValue(v)) {
+      // eslint-disable-next-line no-console
+      console.warn('[model-picker] refusing to write a picker value outside the accepted charset:', v)
+      setOpenPicker(null)
+      return
+    }
     if (si < modelGroups.length) {
       write(`/model ${v}\n`)
     } else {

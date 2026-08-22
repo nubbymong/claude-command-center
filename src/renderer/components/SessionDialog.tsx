@@ -52,6 +52,26 @@ type UiProvider = 'claude' | 'codex' | 'terminal'
 /** The config's own effort union, derived so it can't drift from ClaudeOptions. */
 type EffortValue = NonNullable<NonNullable<TerminalConfig['claudeOptions']>['effortLevel']>
 
+/**
+ * Can `model` actually run effort level `ef`? '' is "Default", always valid.
+ *
+ * Module-level so the effortLevel state can clamp in its lazy initialiser — a
+ * helper defined in the component body would still be in its TDZ when React
+ * calls that initialiser on the first render.
+ *
+ * Uses the SAME per-model gating the chips use (effortsForModel -> disabled), so
+ * an unknown model or an un-hydrated registry enables everything and clamping
+ * fails OPEN — it can never silently drop an effort it merely failed to verify.
+ */
+function effortSupportedFor(
+  registry: Parameters<typeof effortsForModel>[0],
+  model: string,
+  ef: EffortValue | '',
+): boolean {
+  if (ef === '') return true
+  return effortsForModel(registry, model).some((r) => r.value === ef && !r.disabled)
+}
+
 /** Stronger consequence copy for the two modes that disable safety prompts.
  *  Falls back to the shared PERMISSION_MODES hint for everything else. */
 const DANGEROUS_MODE_COPY: Record<string, string> = {
@@ -127,10 +147,21 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // reopens as "Default", not the new-config 'opus' default (the old dialog
   // silently upgraded Default → opus on every save; same family as the
   // effortLevel wipe).
-  const [model, setModel] = useState(initial ? (initialClaude?.model ?? initial?.model ?? '') : 'opus')
+  const initialModel = initial ? (initialClaude?.model ?? initial?.model ?? '') : 'opus'
+  const [model, setModel] = useState(initialModel)
   // Typed against the config's own effort union (not widened to string) so the
   // saved claudeOptions.effortLevel stays assignable — '' is the "Default" chip.
-  const [effortLevel, setEffortLevel] = useState<EffortValue | ''>(initialClaude?.effortLevel ?? '')
+  //
+  // Clamped on LOAD, not just on model change: handleModelChange only fires when
+  // the user touches the model select, so a config saved before a model dropped
+  // an effort level (claude-opus-4-6 + xhigh) reopened with that effort still
+  // selected and re-submitted it on Save without the model being touched at all
+  // (ADR-009 MINOR on #404). handleSubmit clamps again, for the case where the
+  // registry had not hydrated yet when this ran.
+  const [effortLevel, setEffortLevel] = useState<EffortValue | ''>(() => {
+    const saved = initialClaude?.effortLevel ?? ''
+    return effortSupportedFor(registry, initialModel, saved) ? saved : ''
+  })
   const [permissionMode, setPermissionMode] = useState(initialClaude?.permissionMode ?? 'default')
   const [extraArgs, setExtraArgs] = useState(initialClaude?.extraArgs ?? '')
   const [loggingEnabled, setLoggingEnabled] = useState(initialClaude?.loggingEnabled !== false)
@@ -197,12 +228,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // gating the chips use (effortsForModel → disabled). '' needs no check.
   const handleModelChange = (nextModel: string) => {
     setModel(nextModel)
-    if (effortLevel !== '') {
-      const stillSupported = effortsForModel(registry, nextModel).some(
-        (ef) => ef.value === effortLevel && !ef.disabled,
-      )
-      if (!stillSupported) setEffortLevel('')
-    }
+    if (!effortSupportedFor(registry, nextModel, effortLevel)) setEffortLevel('')
   }
 
   const handleBrowse = async () => {
@@ -320,12 +346,18 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     const provider: ProviderId = uiProvider === 'codex' ? 'codex' : 'claude'
     const shellOnly = uiProvider === 'terminal'
 
+    // Last clamp before the value is persisted: the load-time one runs before
+    // the registry may have hydrated, and nothing re-checks in between if the
+    // user never touches the model select (ADR-009 MINOR on #404).
+    const effectiveEffort: EffortValue | '' =
+      effortSupportedFor(registry, model, effortLevel) ? effortLevel : ''
+
     // Both of these gate a tip's "you have already found this" variant, and
     // neither was ever recorded — so the tips kept explaining effort levels and
     // SSH sessions to people who had configured both. Recorded on save, not on
     // every keystroke: choosing a value in a form you then abandon is not using
     // the feature.
-    if (uiProvider === 'claude' && effortLevel !== '') trackUsage('sessions.effort-level')
+    if (uiProvider === 'claude' && effectiveEffort !== '') trackUsage('sessions.effort-level')
     if (sessionType === 'ssh') trackUsage('sessions.session-type')
     if (provider === 'codex') trackUsage('sessions.codex-config')
 
@@ -339,7 +371,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     const claudeOptions = uiProvider === 'claude' ? {
       ...initialClaude,
       model: model || undefined,
-      effortLevel: effortLevel === '' ? undefined : effortLevel,
+      effortLevel: effectiveEffort === '' ? undefined : effectiveEffort,
       // 'default' is the no-op sentinel; persist only a real override.
       permissionMode: permissionMode && permissionMode !== 'default' ? permissionMode : undefined,
       extraArgs: extraArgs.trim() || undefined,

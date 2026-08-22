@@ -129,28 +129,53 @@ export function hashUnknownModelColor(modelId: string): string {
 
 export type ModelMatchKind = 'exact' | 'alias' | 'prefix' | 'pattern'
 
+/**
+ * Entries this matcher will consider: those with a usable string `id`.
+ *
+ * `registry-overlay.json` is a hand-editable user file and validateProposal runs
+ * on APPLY, not on load, so an entry that satisfies none of `ModelEntry` reaches
+ * here intact — as does an entry that is legitimately alias-only (id + aliases,
+ * no `patterns`), which is a shape a user may reasonably write. Neither may
+ * throw: resolvePickedModelId() runs on EVERY render of the session status strip
+ * with a statusline-supplied model name, so one bad entry — or one model name
+ * the registry cannot place — used to take the whole footer down with a
+ * `TypeError: m.patterns is not iterable` (ADR-009 MAJOR-2 on #404).
+ */
+function usableEntries(registry: ModelRegistry): ModelEntry[] {
+  return (registry?.models ?? []).filter(
+    (m): m is ModelEntry => !!m && typeof m.id === 'string' && m.id.length > 0,
+  )
+}
+
 function matchEntry(
   registry: ModelRegistry,
   modelId: string,
 ): { entry: ModelEntry; kind: ModelMatchKind } | null {
-  const raw = modelId.trim()
+  const raw = typeof modelId === 'string' ? modelId.trim() : ''
   if (!raw) return null
+  const models = usableEntries(registry)
   // 1. exact id
-  const exact = registry.models.find((m) => m.id === raw)
+  const exact = models.find((m) => m.id === raw)
   if (exact) return { entry: exact, kind: 'exact' }
-  // 2. exact alias (CLI alias values like 'opus', 'opus[1m]')
-  const alias = registry.models.find((m) => m.aliases?.includes(raw))
+  // 2. exact alias (CLI alias values like 'opus', 'opus[1m]').
+  //    Array.isArray, not `?.includes`: a hand-edited overlay whose `aliases` is
+  //    a bare STRING would otherwise substring-match via String.prototype.includes.
+  const alias = models.find((m) => Array.isArray(m.aliases) && m.aliases.includes(raw))
   if (alias) return { entry: alias, kind: 'alias' }
   // 3. longest id-prefix (date-suffixed ids: claude-opus-4-7-20260101)
   let prefix: ModelEntry | null = null
-  for (const m of registry.models) {
+  for (const m of models) {
     if (raw.startsWith(m.id) && (!prefix || m.id.length > prefix.id.length)) prefix = m
   }
   if (prefix) return { entry: prefix, kind: 'prefix' }
-  // 4. first pattern match in registry order (substring unless anchored regex)
+  // 4. first pattern match in registry order (substring unless anchored regex).
+  //    A missing/!Array `patterns` degrades this entry to "unmatchable by
+  //    pattern" — it stays reachable by id, alias and prefix above.
   const lower = raw.toLowerCase()
-  for (const m of registry.models) {
-    for (const p of m.patterns) {
+  for (const m of models) {
+    const patterns = Array.isArray(m.patterns) ? m.patterns : []
+    for (const p of patterns) {
+      if (typeof p !== 'string' || !p) continue
       let hit = false
       try {
         hit = p.startsWith('^') || p.endsWith('$')
@@ -254,7 +279,9 @@ export function resolvePickedModelId(
     const info = resolveModelInfo(registry, reading)
     if (info.known && info.matchKind !== 'pattern') return info.id
     const norm = normalizeModelLabel(reading)
-    const byLabel = (registry.models ?? []).find(
+    // usableEntries, not `registry.models` — the label scan returns an `id`, and
+    // a null/id-less entry in a hand-edited overlay threw here too (#404 MAJOR-2).
+    const byLabel = usableEntries(registry).find(
       (m) => typeof m.label === 'string' && normalizeModelLabel(m.label) === norm,
     )
     if (byLabel) return byLabel.id

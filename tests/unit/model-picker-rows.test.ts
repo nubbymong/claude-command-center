@@ -5,12 +5,13 @@ import {
   buildEffortRows,
   familyDisplayLabel,
   resolvePickedModelId,
+  resolveModelInfo,
   mergeRegistry,
   ALIAS_GROUP_LABEL,
   type ModelRegistry,
   type OverlayModelEntry,
 } from '../../src/shared/model-registry'
-import { shortModelName, isModelActive } from '../../src/renderer/lib/claude-cli-options'
+import { shortModelName, isModelActive, isWritablePickerValue } from '../../src/renderer/lib/claude-cli-options'
 import baselineJson from '../../resources/model-registry.json'
 
 const reg = baselineJson as unknown as ModelRegistry
@@ -183,6 +184,138 @@ describe('resolvePickedModelId (#385)', () => {
     expect(viaDisplayName.every((r) => r.supported)).toBe(true)
     const viaResolved = buildEffortRows(reg, resolvePickedModelId(reg, 'Opus 4.6'))
     expect(viaResolved.find((r) => r.value === 'xhigh')!.supported).toBe(false)
+  })
+})
+
+// ADR-009 MAJOR-2 on #404. matchEntry's pattern step did `for (const p of
+// m.patterns)`, and the Q3 guard that skips a malformed entry lives in
+// buildModelPickerRows, NOT in the matcher. So an entry with no `patterns` —
+// including a legitimately ALIAS-ONLY one — threw `TypeError: m.patterns is not
+// iterable` out of both buildModelPickerRows AND resolvePickedModelId. The
+// second one is the damaging path: SessionStatusStrip calls it on EVERY render
+// with the statusline-supplied model name, so one such entry, or one model name
+// the registry could not place, took the whole footer strip down.
+describe('an entry with no patterns never crashes a render (#404 MAJOR-2)', () => {
+  /** The shape a user may reasonably hand-write into registry-overlay.json. */
+  const aliasOnly = {
+    id: 'claude-opus-9', family: 'opus', label: 'Opus 9', aliases: ['opus9'],
+    provenance: { addedBy: 'user' as const, date: '2026-09-01' },
+  } as unknown as OverlayModelEntry
+  const bare = {
+    id: 'claude-opus-8', family: 'opus', label: 'Opus 8',
+    provenance: { addedBy: 'user' as const, date: '2026-09-01' },
+  } as unknown as OverlayModelEntry
+
+  const merged = mergeRegistry(reg, { models: [aliasOnly, bare] })
+
+  it('(a) buildModelPickerRows does not crash, and still offers the entry', () => {
+    expect(() => buildModelPickerRows(merged)).not.toThrow()
+    const rows = buildModelPickerRows(merged)
+    expect(rows.find((r) => r.value === 'claude-opus-8')!.label).toBe('Opus 8')
+    expect(rows.find((r) => r.value === 'claude-opus-9')!.group).toBe('Opus')
+
+    // buildModelPickerRows reaches the matcher via its family-ordering pass
+    // (resolveModelInfo on every ALIAS row). With the shipped `dropdown` every
+    // alias resolves by id/alias/prefix and never reaches the pattern step, so
+    // an alias row that CANNOT be placed is what exposes the same throw here.
+    const withGhostAlias = {
+      ...merged,
+      dropdown: [...merged.dropdown, { value: 'ghost-alias', label: 'Ghost' }],
+    }
+    expect(() => buildModelPickerRows(withGhostAlias)).not.toThrow()
+    expect(buildModelPickerRows(withGhostAlias).some((r) => r.value === 'ghost-alias')).toBe(true)
+  })
+
+  it('(b) resolvePickedModelId falls back safely instead of throwing', () => {
+    // An unplaceable statusline reading walks the matcher all the way to the
+    // pattern step, which is where the throw was.
+    expect(() => resolvePickedModelId(merged, 'some unplaceable name')).not.toThrow()
+    expect(resolvePickedModelId(merged, 'some unplaceable name')).toBeUndefined()
+    expect(resolvePickedModelId(merged, 'Sonnet 9000', 'not-a-model-at-all')).toBeUndefined()
+  })
+
+  it('(c) buildEffortRows falls back to "all supported" instead of throwing', () => {
+    expect(() => buildEffortRows(merged, 'some unplaceable name')).not.toThrow()
+    expect(buildEffortRows(merged, 'some unplaceable name').every((r) => r.supported)).toBe(true)
+    expect(buildEffortRows(merged, resolvePickedModelId(merged, 'nope')).every((r) => r.supported)).toBe(true)
+  })
+
+  it('keeps a legitimately alias-only entry reachable by id, alias and prefix', () => {
+    // This is why the fix is in the matcher rather than "drop entries with no
+    // patterns at load": dropping them would make these three lookups fail.
+    expect(resolvePickedModelId(merged, 'claude-opus-9')).toBe('claude-opus-9')
+    expect(resolvePickedModelId(merged, 'opus9')).toBe('claude-opus-9')
+    expect(resolvePickedModelId(merged, 'claude-opus-9-20260901')).toBe('claude-opus-9')
+    expect(resolvePickedModelId(merged, 'Opus 8')).toBe('claude-opus-8')
+  })
+
+  it('leaves every healthy entry matching exactly as before', () => {
+    expect(resolvePickedModelId(merged, 'Opus 4.6')).toBe('claude-opus-4-6')
+    expect(resolveModelInfo(merged, 'claude-opus-4-6').matchKind).toBe('exact')
+    // A pattern hit on a healthy entry still works with a patternless one present.
+    expect(resolveModelInfo(merged, 'some opus build').matchKind).toBe('pattern')
+  })
+
+  it('survives every other shape a hand-edited overlay can produce', () => {
+    const junk = {
+      ...reg,
+      models: [
+        null,
+        undefined,
+        { id: 'claude-junk-1', family: 'opus', label: 'J1', patterns: 'not-an-array' },
+        { id: 'claude-junk-2', family: 'opus', label: 'J2', patterns: [null, 42, ''] },
+        { id: 'claude-junk-3', family: 'opus', label: 'J3', aliases: 'junk' },
+        { id: 42, family: 'opus', label: 'J4', patterns: ['j4'] },
+        ...reg.models,
+      ],
+    } as unknown as ModelRegistry
+    expect(() => buildModelPickerRows(junk)).not.toThrow()
+    expect(() => resolvePickedModelId(junk, 'some unplaceable name')).not.toThrow()
+    expect(() => buildEffortRows(junk, 'some unplaceable name')).not.toThrow()
+    expect(() => resolveModelInfo(junk, 'some unplaceable name')).not.toThrow()
+    expect(resolvePickedModelId(junk, 'some unplaceable name')).toBeUndefined()
+    // `aliases: 'junk'` must not substring-match via String.prototype.includes.
+    expect(resolvePickedModelId(junk, 'jun')).toBeUndefined()
+    // Healthy entries still resolve.
+    expect(resolvePickedModelId(junk, 'claude-opus-4-6')).toBe('claude-opus-4-6')
+  })
+})
+
+// ADR-009 MINOR on #404. SessionStatusStrip writes a picker row's value into a
+// LIVE PTY as a slash-command LINE (`/model <v>\n`) with no schema in front of
+// it, and the pinned rows are derived from a hand-editable registry overlay.
+describe('isWritablePickerValue — the charset the PTY boundary enforces (#404)', () => {
+  it('accepts every value the pickers actually offer', () => {
+    for (const row of buildModelPickerRows(reg)) {
+      expect(isWritablePickerValue(row.value), `row ${row.value}`).toBe(true)
+    }
+    for (const level of reg.effortLevels) {
+      expect(isWritablePickerValue(level.value), `effort ${level.value}`).toBe(true)
+    }
+    expect(isWritablePickerValue('opus[1m]')).toBe(true)
+  })
+
+  it('rejects a value that would inject a second line into the PTY', () => {
+    expect(isWritablePickerValue('claude-opus-5\n/exit')).toBe(false)
+    expect(isWritablePickerValue('claude-opus-5\r/exit')).toBe(false)
+    expect(isWritablePickerValue('claude-opus-5 && rm -rf /')).toBe(false)
+    expect(isWritablePickerValue('claude-opus-5;whoami')).toBe(false)
+    expect(isWritablePickerValue('')).toBe(false)
+    expect(isWritablePickerValue('x'.repeat(65))).toBe(false)
+    expect(isWritablePickerValue(undefined)).toBe(false)
+    expect(isWritablePickerValue(42)).toBe(false)
+  })
+
+  it('an overlay-injected id reaches the picker but is not writable', () => {
+    const merged = mergeRegistry(reg, {
+      models: [{
+        id: 'claude-opus-9\n/exit', patterns: ['x'], family: 'opus', label: 'Evil',
+        provenance: { addedBy: 'user', date: '2026-09-01' },
+      } as OverlayModelEntry],
+    })
+    const row = buildModelPickerRows(merged).find((r) => r.label === 'Evil')
+    expect(row).toBeTruthy()                        // the picker still lists it
+    expect(isWritablePickerValue(row!.value)).toBe(false)  // the write path refuses it
   })
 })
 

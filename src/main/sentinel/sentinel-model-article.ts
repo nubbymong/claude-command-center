@@ -20,11 +20,24 @@ const HOSTNAME = 'support.claude.com'
 const PATH = '/en/articles/11940350-claude-code-model-configuration'
 
 /**
- * A model id as the article spells it. Requires a DIGIT after the family so
- * `claude-code` (all over that page) is not mistaken for a model.
+ * A model id as the article spells it, matched as a WHOLE token.
+ *
+ * Two rules, and both are load-bearing (ADR-009 MAJOR-1 on #404):
+ *  - a DIGIT must follow the family, so `claude-code` (all over that page) is
+ *    not mistaken for a model;
+ *  - after the family only NUMERIC segments are allowed, and the lookahead
+ *    rejects any continuation. The old pattern's trailing `[0-9a-z-]*` swallowed
+ *    words, so the support-site slug `claude-fable-5-on-your-plan` came back as
+ *    a model id. Truncating it to `claude-fable-5` would be just as wrong (a
+ *    slug for an article about a FUTURE model would invent that model), so the
+ *    lookahead drops the whole token instead of trimming it.
+ *
  * Matches claude-opus-5, claude-sonnet-4-6, claude-opus-4-5-20251101, ...
  */
-const MODEL_ID_RE = /claude-(?:opus|sonnet|haiku|fable|mythos)-\d[0-9a-z-]*/gi
+const MODEL_ID_RE = /claude-(?:opus|sonnet|haiku|fable|mythos)(?:-\d+)+(?![0-9a-z-])/gi
+
+/** The heading that opens the article's "Supported models" section. */
+const SUPPORTED_HEADING_RE = /<h([1-6])[^>]*>\s*supported\s+models\s*<\/h\1>/i
 
 /**
  * A parse this thin can go wrong quietly if the page is restyled, so a result
@@ -33,15 +46,65 @@ const MODEL_ID_RE = /claude-(?:opus|sonnet|haiku|fable|mythos)-\d[0-9a-z-]*/gi
  */
 export const MIN_PLAUSIBLE_IDS = 3
 
-/** Distinct model ids in article order. Trailing hyphens trimmed. */
-export function parseArticleModelIds(html: string): string[] {
+/**
+ * Visible TEXT of an HTML fragment: `<script>`/`<style>` bodies dropped whole,
+ * then every tag replaced by a space.
+ *
+ * This is the primary MAJOR-1 defence. The phantom id was never in the article's
+ * prose — it was in a sidebar link's `href` (and `title`), i.e. inside a tag.
+ * Scanning text rather than markup means no attribute, URL slug, CSS class or
+ * embedded JSON blob can contribute a "model" at all. Replacing a tag with a
+ * SPACE (not '') also stops inline markup inside a code sample from splicing two
+ * tokens together, while still healing an id that markup split
+ * (`claude --model<b> </b>claude-haiku-4-5-20251001`).
+ */
+function visibleText(html: string): string {
+  return html
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+}
+
+/** Distinct ids in the order they appear in `fragment`. */
+function idsIn(fragment: string): string[] {
   const out: string[] = []
   const seen = new Set<string>()
-  for (const m of html.matchAll(MODEL_ID_RE)) {
-    const id = m[0].toLowerCase().replace(/-+$/, '')
+  for (const m of visibleText(fragment).matchAll(MODEL_ID_RE)) {
+    const id = m[0].toLowerCase()
     if (!seen.has(id)) { seen.add(id); out.push(id) }
   }
   return out
+}
+
+/**
+ * The article's "Supported models" section — from its heading to the next
+ * heading of the same or higher level — or null when that heading is not there.
+ */
+export function supportedModelsSection(html: string): string | null {
+  const head = SUPPORTED_HEADING_RE.exec(html)
+  if (!head) return null
+  const rest = html.slice(head.index + head[0].length)
+  const next = new RegExp(`<h[1-${head[1]}]\\b`, 'i').exec(rest)
+  return next ? rest.slice(0, next.index) : rest
+}
+
+/**
+ * Distinct model ids in article order.
+ *
+ * Scoped to the "Supported models" section when the article still has that
+ * heading, so a model named elsewhere on the page (a retired one in a "no longer
+ * available" note, an example in another section) is not reported as newly
+ * offered. When the heading is gone or the section reads as torn, this falls
+ * back to the whole document — `visibleText` + the whole-token `MODEL_ID_RE`
+ * make that fallback safe on its own, and a document that yields fewer than
+ * MIN_PLAUSIBLE_IDS is treated as unreadable by the caller anyway.
+ */
+export function parseArticleModelIds(html: string): string[] {
+  const section = supportedModelsSection(html)
+  if (section) {
+    const scoped = idsIn(section)
+    if (scoped.length >= MIN_PLAUSIBLE_IDS) return scoped
+  }
+  return idsIn(html)
 }
 
 function get(hostname: string, path: string, timeoutMs: number, depth = 0): Promise<string | null> {
