@@ -443,8 +443,16 @@ export interface ElectronAPI {
     stop: () => Promise<{ ok: boolean }>
     status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
-    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
-    getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
+    /**
+     * #371. `generation` is the token handed out by `getConfig` alongside the
+     * config the form was built from. Pass it back so main can refuse a save
+     * built from defaults it showed while the settings file was unreadable
+     * (`ok:false, stale:true`). `ok:false` means IT IS NOT ON DISK.
+     */
+    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }, generation?: number) => Promise<{ ok: boolean; stale?: boolean; error?: string }>
+    /** `readFailed` distinguishes "no config yet" from "could not read it" — the
+     *  caller must not present defaults as saved settings in the latter case. */
+    getConfig: () => Promise<{ config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null; generation: number; readFailed: boolean }>
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
   }
   legacyVersion: {
@@ -458,18 +466,23 @@ export interface ElectronAPI {
   cloudAgent: {
     dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent>
     cancel: (id: string) => Promise<boolean>
-    remove: (id: string) => Promise<boolean>
+    /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
+    remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
     retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
     list: () => Promise<import('../shared/types').CloudAgent[]>
     getOutput: (id: string) => Promise<string>
-    clearCompleted: () => Promise<number>
+    /** #371: `ok:false` means nothing was cleared — do not filter the list. */
+    clearCompleted: () => Promise<{ ok: true; removed: number } | { ok: false; error: string }>
     onStatusChanged: (callback: (agent: import('../shared/types').CloudAgent) => void) => () => void
     onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
   }
   team: {
     list: () => Promise<import('../shared/types').TeamTemplate[]>
-    save: (team: import('../shared/types').TeamTemplate) => Promise<import('../shared/types').TeamTemplate>
-    delete: (id: string) => Promise<boolean>
+    /** #371: `ok:false` means the team is NOT on disk — keep the user's work in
+     *  the editor rather than reporting a save that did not happen. */
+    save: (team: import('../shared/types').TeamTemplate) => Promise<{ ok: true; team: import('../shared/types').TeamTemplate } | { ok: false; error: string }>
+    /** #371: `ok:false` means the team is STILL on disk — do not drop the row. */
+    delete: (id: string) => Promise<{ ok: true; deleted: boolean } | { ok: false; error: string }>
     run: (teamId: string, projectPath?: string) => Promise<import('../shared/types').TeamRun | null>
     cancelRun: (runId: string) => Promise<boolean>
     listRuns: () => Promise<import('../shared/types').TeamRun[]>
@@ -986,7 +999,8 @@ const electronAPI: ElectronAPI = {
     status: () => ipcRenderer.invoke(IPC.VISION_STATUS),
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) =>
       ipcRenderer.invoke(IPC.VISION_LAUNCH, browser, debugPort, url, headless ?? true),
-    saveConfig: (config: any) => ipcRenderer.invoke(IPC.VISION_SAVE_CONFIG, config),
+    saveConfig: (config: any, generation?: number) =>
+      ipcRenderer.invoke(IPC.VISION_SAVE_CONFIG, config, generation),
     getConfig: () => ipcRenderer.invoke(IPC.VISION_GET_CONFIG),
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => {
       const handler = (_: unknown, data: any) => callback(data)

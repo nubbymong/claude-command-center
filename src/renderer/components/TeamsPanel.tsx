@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useTeamStore, setupTeamListener } from '../stores/teamStore'
 import TeamBuilder from './TeamBuilder'
 import TeamRunView from './TeamRunView'
@@ -33,10 +33,26 @@ export default function TeamsPanel() {
   const deleteTeam = useTeamStore(s => s.deleteTeam)
   const runTeam = useTeamStore(s => s.runTeam)
 
+  // #371 BLOCKER-1: a refused delete used to leave the row on screen with no
+  // explanation — indistinguishable from a click that missed. Say what happened.
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  const handleDelete = async (id: string) => {
+    setDeleteError(null)
+    const result = await deleteTeam(id)
+    if (!result.ok) {
+      setDeleteError(result.error || 'This pipeline could not be deleted from disk.')
+    }
+  }
+
   useEffect(() => {
     const cleanup = setupTeamListener()
     return cleanup
   }, [])
+
+  // A delete failure belongs to the pipeline it was raised for; moving away
+  // from that pipeline retires the message.
+  useEffect(() => { setDeleteError(null) }, [selectedTeamId])
 
   const selectedTeam = teams.find(t => t.id === selectedTeamId) || null
   const selectedRun = runs.find(r => r.id === selectedRunId) || null
@@ -149,8 +165,9 @@ export default function TeamsPanel() {
         ) : selectedTeam ? (
           <TeamDetail
             team={selectedTeam}
+            deleteError={deleteError}
             onEdit={() => openBuilder(selectedTeam)}
-            onDelete={() => deleteTeam(selectedTeam.id)}
+            onDelete={() => { void handleDelete(selectedTeam.id) }}
             onRun={() => runTeam(selectedTeam.id)}
           />
         ) : (
@@ -212,8 +229,8 @@ function TeamCard({ team, selected, lastStatus, onClick }: {
   )
 }
 
-function TeamDetail({ team, onEdit, onDelete, onRun }: {
-  team: TeamTemplate; onEdit: () => void; onDelete: () => void; onRun: () => void
+function TeamDetail({ team, deleteError, onEdit, onDelete, onRun }: {
+  team: TeamTemplate; deleteError: string | null; onEdit: () => void; onDelete: () => void; onRun: () => void
 }) {
   return (
     <div className="flex-1 flex flex-col min-h-0 p-4">
@@ -244,6 +261,19 @@ function TeamDetail({ team, onEdit, onDelete, onRun }: {
         </div>
         {team.description && (
           <p className="text-xs text-overlay1 mt-1">{team.description}</p>
+        )}
+        {deleteError && (
+          <div
+            role="alert"
+            className="mt-2 text-[11px] leading-snug rounded-lg px-2.5 py-1.5"
+            style={{
+              color: 'var(--status-danger)',
+              background: 'color-mix(in srgb, var(--status-danger) 12%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)',
+            }}
+          >
+            {deleteError}
+          </div>
         )}
       </div>
 

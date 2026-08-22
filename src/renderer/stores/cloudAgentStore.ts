@@ -3,19 +3,32 @@ import type { CloudAgent, CloudAgentStatus } from '../types/electron'
 
 type FilterType = 'all' | 'running' | 'completed' | 'failed'
 
+/**
+ * Outcome of a persisting mutation. `ok:false` means main REFUSED or FAILED the
+ * disk write (#371 BLOCKER-1) — the agent is still on disk, so the row must
+ * stay on screen rather than vanish and reappear on the next restart.
+ */
+export interface CloudAgentMutationResult {
+  ok: boolean
+  error?: string
+}
+
 interface CloudAgentState {
   agents: CloudAgent[]
   selectedAgentId: string | null
   filter: FilterType
   searchQuery: string
   accountFilter: string
+  /** Why the last remove / clear-completed did not land. */
+  error: string | null
 
   hydrate: (agents: CloudAgent[]) => void
   dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<void>
   cancel: (id: string) => Promise<void>
-  remove: (id: string) => Promise<void>
+  remove: (id: string) => Promise<CloudAgentMutationResult>
   retry: (id: string) => Promise<void>
-  clearCompleted: () => Promise<void>
+  clearCompleted: () => Promise<CloudAgentMutationResult>
+  clearError: () => void
   selectAgent: (id: string | null) => void
   setFilter: (filter: FilterType) => void
   setSearchQuery: (query: string) => void
@@ -58,6 +71,7 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   filter: 'all',
   searchQuery: '',
   accountFilter: 'all',
+  error: null,
 
   hydrate: (agents: CloudAgent[]) => {
     set({ agents: agents || [] })
@@ -78,13 +92,24 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
     await window.electronAPI.cloudAgent.cancel(id)
   },
 
+  // #371 BLOCKER-1. This still writes NOTHING itself (see the note above) — it
+  // only reads main's answer. `ok:false` means main rolled its own list back and
+  // the agent is still in cloud-agents.json, so filtering it out here would show
+  // a removal that did not happen and un-remove itself on the next restart.
   remove: async (id: string) => {
-    await window.electronAPI.cloudAgent.remove(id)
+    set({ error: null })
+    const result = await window.electronAPI.cloudAgent.remove(id)
+    if (!result.ok) {
+      const error = result.error || 'This agent could not be removed from disk.'
+      set({ error })
+      return { ok: false, error }
+    }
     set(state => {
       const agents = state.agents.filter(a => a.id !== id)
       const selectedAgentId = state.selectedAgentId === id ? null : state.selectedAgentId
       return { agents, selectedAgentId }
     })
+    return { ok: true }
   },
 
   retry: async (id: string) => {
@@ -96,7 +121,13 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   },
 
   clearCompleted: async () => {
-    await window.electronAPI.cloudAgent.clearCompleted()
+    set({ error: null })
+    const result = await window.electronAPI.cloudAgent.clearCompleted()
+    if (!result.ok) {
+      const error = result.error || 'The finished agents could not be cleared from disk.'
+      set({ error })
+      return { ok: false, error }
+    }
     set(state => {
       const agents = state.agents.filter(a => a.status === 'running' || a.status === 'pending')
       const selectedAgentId = agents.find(a => a.id === state.selectedAgentId)
@@ -104,7 +135,10 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
         : null
       return { agents, selectedAgentId }
     })
+    return { ok: true }
   },
+
+  clearError: () => set({ error: null }),
 
   selectAgent: (id: string | null) => set({ selectedAgentId: id }),
   setFilter: (filter: FilterType) => set({ filter }),

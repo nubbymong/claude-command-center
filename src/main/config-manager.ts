@@ -4,8 +4,8 @@
  * and can live on a network drive for portability.
  */
 
-import { join } from 'path'
-import { readFileSync, existsSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
+import { join, parse } from 'path'
+import { readFileSync, existsSync, readdirSync, copyFileSync, rmSync, statSync, renameSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError, logWarn } from './debug-logger'
 import { atomicWriteSecure, mkdirSecure, hardenCredentialDir, hardenCredentialFile } from './account-profiles'
@@ -228,6 +228,126 @@ export function readConfig<T = unknown>(key: ConfigKey): T | null {
 }
 
 /**
+ * Why a config read returned what it did.
+ *
+ * `readConfig` collapses all four of these into `null`, which is the shape the
+ * main-side persisters were built on and the reason they could overwrite a file
+ * they had failed to read (#371). See `persist-latch.ts` for the pattern that
+ * consumes this.
+ */
+export type ConfigReadOutcome = 'ok' | 'absent' | 'unparseable' | 'failed'
+
+export interface CheckedRead<T> {
+  value: T | null
+  outcome: ConfigReadOutcome
+}
+
+/**
+ * Read a config file and say WHY, distinguishing the three ways to get nothing.
+ *
+ * `quarantineUnparseable` (default true) moves a file whose CONTENT does not
+ * parse aside to `<name>.corrupt-<ts>` rather than leaving it to be silently
+ * overwritten by the next save. It is off for the renderer's bulk load, which
+ * latches on unparseable instead of quarantining — that path is a separate
+ * contract (#353) and is deliberately left exactly as it was.
+ *
+ * An unregistered key is `failed`, not `absent`: `writeConfig` already refuses
+ * one, so answering "absent" would invite a caller to build an empty store for
+ * a key it can never persist.
+ */
+/**
+ * Is the volume the config store lives on actually there?
+ *
+ * Deliberately the ROOT (`F:\`, `\\server\share\`, `/`) and not the CONFIG
+ * directory: a fresh install legitimately has no CONFIG directory yet, and
+ * treating that as a failure would latch writes off before the first save.
+ */
+function configRootReachable(): boolean {
+  try {
+    const root = parse(getConfigDir()).root
+    if (!root) return true // relative/unknown shape — do not invent a failure
+    return existsSync(root)
+  } catch {
+    return true // cannot tell: fall back to the plain ENOENT reading
+  }
+}
+
+export function readConfigChecked<T = unknown>(
+  key: ConfigKey,
+  opts: { quarantineUnparseable?: boolean } = {},
+): CheckedRead<T> {
+  const quarantine = opts.quarantineUnparseable !== false
+  const fileName = CONFIG_FILES[key]
+  if (!fileName) {
+    // Not 'absent': `writeConfig` refuses an unregistered key too, so telling a
+    // caller "there is no file" would invite it to build an empty store for a
+    // key it can never persist. Named distinctly in the log — a typo'd key is a
+    // programming error, not an unreadable disk.
+    logError(`[config-manager] Refusing to read UNREGISTERED config key: ${String(key)} (not in CONFIG_FILES — this is a bug, not a disk failure)`)
+    return { value: null, outcome: 'failed' }
+  }
+  const filePath = join(getConfigDir(), fileName)
+  let data: string
+  try {
+    // `existsSync` answers false for ANY stat error, not just ENOENT — a denied
+    // parent, an unmounted resources directory, a share that blinked. Reading
+    // that as "absent" is the exact collapse this function exists to undo, and
+    // it is the case `loadAllConfig` already handles on the renderer side by
+    // latching every key. So: open-and-read, and let only ENOENT mean absent.
+    data = readFileSync(filePath, 'utf-8')
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code
+    if (code === 'ENOENT') {
+      // ENOENT is NOT proof of absence on Windows: a mapped network drive that
+      // has not reconnected, or a removable drive not yet attached at logon,
+      // answers ENOENT for every path on it. The resources directory can live
+      // on either (it is user-selected), so a whole unavailable config store
+      // would read as "fresh install", latch nothing, and the first save would
+      // clobber it once the drive came back (#371, ADR-009 pass).
+      //
+      // So ask whether the ROOT is there. Root missing → the store is
+      // unreachable → failed. Root present but the file is not → genuinely
+      // absent, which is what a real fresh install looks like.
+      if (!configRootReachable()) {
+        logError(`[config-manager] ${key} read ENOENT and the resources root is unreachable — treating as a READ FAILURE, not a fresh install`)
+        return { value: null, outcome: 'failed' }
+      }
+      return { value: null, outcome: 'absent' }
+    }
+    // The file is (probably) there and could not be read: EBUSY, EACCES,
+    // EPERM, EIO, ENOTDIR, a junction refusal. This is the case the latch
+    // exists for.
+    logError(`[config-manager] Failed to read ${key} (read failure, NOT an absence; code=${code ?? 'none'}): ${err}`)
+    return { value: null, outcome: 'failed' }
+  }
+  try {
+    return { value: JSON.parse(data) as T, outcome: 'ok' }
+  } catch (parseErr) {
+    // Log unconditionally: the renderer bulk-load path passes
+    // `quarantineUnparseable: false`, and it is the path that latches every
+    // renderer write (GHSA-m8p2). Losing its only diagnostic to an `if` was the
+    // wrong direction. Quarantine conditionally; say why always.
+    logError(`[config-manager] ${key} did not parse: ${(parseErr as Error)?.message ?? parseErr}`)
+    if (!quarantine) return { value: null, outcome: 'unparseable' }
+    // Unreadable CONTENT, not an unreadable FILE: keep it for forensics, start
+    // clean. "Nothing is left to protect" is only true once the move has
+    // actually happened…
+    const aside = `${filePath}.corrupt-${Date.now()}`
+    try {
+      renameSync(filePath, aside)
+    } catch (renameErr) {
+      // …and when it has not, the premise is false: the unparseable file is
+      // still sitting there, possibly hand-recoverable, and allowing writes
+      // would let the next save overwrite it. Latch instead.
+      logError(`[config-manager] ${key} did not parse AND could not be moved aside (${(renameErr as Error)?.message ?? renameErr}); refusing writes rather than letting the next save overwrite it`)
+      return { value: null, outcome: 'failed' }
+    }
+    logInfo(`[config-manager] ${key} moved aside to ${aside}; starting clean`)
+    return { value: null, outcome: 'unparseable' }
+  }
+}
+
+/**
  * Write a config file atomically via the shared helper (#233) — staging,
  * exclusive create, the rename retry and cleanup all live in atomic-write.ts.
  *
@@ -330,18 +450,20 @@ export interface LoadAllResult {
   failedKeys: ConfigKey[]
 }
 
-/** Like readConfig, but says WHY it returned null. */
+/**
+ * Like readConfig, but says WHY it returned null.
+ *
+ * The renderer's bulk load has its own contract (#353): a file that EXISTS and
+ * cannot be read OR parsed latches renderer writes off, and nothing is moved
+ * aside — an unparseable renderer config is recoverable by hand and the latch
+ * is what stops defaults being written over it. So unparseable maps to
+ * `failed: true` here, and quarantine is off. An unregistered key stays
+ * `failed: false` (it is not one of RENDERER_CONFIG_KEYS anyway).
+ */
 function readConfigDetailed(key: ConfigKey): { value: unknown; failed: boolean } {
-  const fileName = CONFIG_FILES[key]
-  if (!fileName) return { value: null, failed: false }
-  const filePath = join(getConfigDir(), fileName)
-  try {
-    if (!existsSync(filePath)) return { value: null, failed: false }
-    return { value: JSON.parse(readFileSync(filePath, 'utf-8')), failed: false }
-  } catch (err) {
-    logError(`[config-manager] Failed to read ${key}: ${err}`)
-    return { value: null, failed: true }
-  }
+  if (!CONFIG_FILES[key]) return { value: null, failed: false }
+  const read = readConfigChecked<unknown>(key, { quarantineUnparseable: false })
+  return { value: read.value, failed: read.outcome === 'failed' || read.outcome === 'unparseable' }
 }
 
 export function loadAllConfig(): LoadAllResult {
