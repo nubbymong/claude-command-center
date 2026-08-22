@@ -63,23 +63,13 @@ describe('createSessionDurability', () => {
     expect(log.mock.calls[0][0]).toMatch(/REFUSED/)
   })
 
-  it('F: dedups redundant exit flushes within one teardown (single write)', () => {
+  it('flushOnExit re-persists on every exit path (no dedup — a suspend then a later exit both flush)', () => {
     const { d, save } = make()
     d.saveEnriched(state())
     save.mockClear()
-    d.flushOnExit('before-quit')
-    d.flushOnExit('render-process-gone') // same teardown, no intervening save
-    expect(save).toHaveBeenCalledOnce()
-  })
-
-  it('F: a real save between flushes re-arms the flush', () => {
-    const { d, save } = make()
-    d.saveEnriched(state())
-    d.flushOnExit('powerMonitor suspend') // flush #1
-    d.saveEnriched(state()) // app kept running, a new authoritative save
-    save.mockClear()
-    d.flushOnExit('before-quit') // must flush again
-    expect(save).toHaveBeenCalledOnce()
+    d.flushOnExit('powerMonitor suspend') // app keeps running after this
+    d.flushOnExit('before-quit')          // a later real exit must still flush fresh
+    expect(save).toHaveBeenCalledTimes(2)
   })
 
   it('flushOnExit swallows a save throw and reports it', () => {

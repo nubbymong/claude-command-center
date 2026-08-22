@@ -37,30 +37,25 @@ export interface SessionDurability {
 
 export function createSessionDurability(deps: DurabilityDeps): SessionDurability {
   let last: SessionState | null = null
-  // #397 round-2: dedup redundant exit-flush I/O. Several exit hooks can fire in one
-  // teardown (e.g. SIGTERM → before-quit, or forceClose → render-process-gone); each
-  // flush re-enriches (a head read per Claude session) + atomic write + .bak copy.
-  // A real save resets this so a suspend-then-resume-then-quit still flushes fresh.
-  let flushedSinceSave = false
   const log = deps.log ?? (() => {})
 
-  // Enrich from the binder, cache, persist. Never touches the dedup flag.
-  function persist(state: SessionState): boolean {
+  function saveEnriched(state: SessionState): boolean {
     const enriched = enrichSessionStateWithResumeTargets(state, deps.enrichDeps)
     last = enriched
     return deps.save(enriched)
   }
 
-  function saveEnriched(state: SessionState): boolean {
-    flushedSinceSave = false
-    return persist(state)
-  }
-
+  // Re-enriches from the (still-live) binder and persists on EVERY exit path. It is
+  // NOT deduped across hooks: an exit-flush dedup latch (removed in round-3) had to
+  // be reset per-exit, but powerMonitor 'suspend' is not an exit and poisoned it, so
+  // a later real exit skipped re-enrichment and dropped a now-available resume
+  // target to the picker. The cost of not deduping is a few bounded head reads if
+  // two exit hooks fire in one teardown (SIGTERM→before-quit) — negligible, and
+  // saveSessionState's atomic write is idempotent — so correctness wins over it.
   function flushOnExit(reason: string): void {
-    if (!last || flushedSinceSave) return
-    flushedSinceSave = true
+    if (!last) return
     try {
-      const ok = persist(last)
+      const ok = saveEnriched(last)
       log(ok
         ? `[session-state] durable flush on ${reason}`
         : `[session-state] durable flush on ${reason} REFUSED (read-failure latch); on-disk file kept`)
