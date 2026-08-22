@@ -141,6 +141,56 @@ describe('a designated worktree root gets the same floor', () => {
   })
 })
 
+/**
+ * #371 review MAJOR-1 — the refusal must not be a silent dead end.
+ *
+ * The one configuration the contains-it direction exists for (resources
+ * directory inside a project you work in) produced: a log line that did not say
+ * which floor refused, the loss of a worktree root that did not need refusing,
+ * and an agent told to "write the html inside the project folder" — which is
+ * exactly where it had just written it.
+ */
+describe('a refusal says which floor it hit', () => {
+  it('names the resources directory as the reason, and does not blame the path', () => {
+    expect(store.canvasRootRefusalReason(SID, resources)).toBe('resources-dir')
+    const words = store.describeCanvasRootRefusal('resources-dir', resources)
+    expect(words).toContain(resources)
+    expect(words).toMatch(/resources directory/i)
+    // It must tell the user what to DO, not just that it is refused.
+    expect(words).toMatch(/Settings|move|Point this session/i)
+  })
+
+  it('distinguishes the floors rather than lumping them together', () => {
+    const project = tmp('ccc-proj-')
+    expect(store.canvasRootRefusalReason(SID, project)).toBeNull()
+    expect(store.canvasRootRefusalReason(SID, os.homedir())).toBe('home-or-ancestor')
+    expect(store.canvasRootRefusalReason(SID, 'relative/path')).toBe('not-absolute')
+    // A drive root is ALSO an ancestor of home, and that floor is checked
+    // first — so it reports 'home-or-ancestor'. Refused either way; the point
+    // here is that the reasons are distinct, not that this one is 'volume-root'.
+    expect(store.canvasRootRefusalReason(SID, path.parse(process.cwd()).root)).not.toBeNull()
+  })
+
+  it('carries the explanation to whatever has to tell somebody, and clears once a root registers', () => {
+    store.setCanvasRootRefusal(SID, store.describeCanvasRootRefusal('resources-dir', resources))
+    expect(store.canvasRootRefusalFor(SID)).toMatch(/resources directory/i)
+
+    // A session that later registers a legitimate root has nothing to explain.
+    expect(store.registerCanvasUatRoot(SID, tmp('ccc-proj-'))).toBe(true)
+    expect(store.canvasRootRefusalFor(SID)).toBeNull()
+  })
+
+  it('a refused PROJECT root does not cost the session its worktree root', () => {
+    // They were in one else-if chain, so one refusal took both — even though
+    // `<parent>/ccc-wt/<sid>` neither contains nor sits under the resources dir.
+    expect(store.registerCanvasUatRoot(SID, resources)).toBe(false)
+    const wt = path.join(tmp('ccc-wt-'), 'branch-x')
+    expect(store.designateCanvasWorktreeRoot(SID, wt)).toBe(true)
+    fs.mkdirSync(wt, { recursive: true })
+    expect(store.canvasRootsForSession(SID).worktree).toBe(fs.realpathSync.native(wt))
+  })
+})
+
 describe('an unresolvable resources directory does not take the floor down with it', () => {
   it('falls back to the other refusals rather than accepting everything', () => {
     h.resourcesDir = ''

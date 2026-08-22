@@ -68,3 +68,37 @@ refusing everything.
 
 Full suite on the branch: 7086 passed, 15 skipped, 2 todo (662 files, 2 skipped);
 typecheck clean.
+
+## Review follow-up (same day)
+
+**A refusal now says which floor it hit.** `canvasRootRefusalReason` /
+`describeCanvasRootRefusal` name the floor, the log line carries it, and
+`canvasRootRefusalFor` hands it to the Conductor MCP tool so an agent whose render was
+refused is told *why* instead of being told to write the file where it already wrote it.
+The generic message was unreachable-by-design for this case: the branch that names the
+folders which WOULD have worked only runs when there is a root, and the refusal is what
+emptied the list.
+
+**The worktree designation is no longer collateral.** It sat in the same `else if` chain
+as the project root, so any refused project directory also cost the session its worktree
+root — even though `<parent>/ccc-wt/<sid>` neither contains nor sits under the resources
+directory and would have been accepted. One refusal, not two.
+
+**Fixture hygiene.** Four relocated fixtures had FIXED names in shared temp
+(`ccc-adopt-confine-proj`, `ccc-prov-planted-dist`, …). This repo mandates parallel
+sessions, so two concurrent runs writing one path is an EPERM window on Windows — the
+repo's known "flaky suite = load, not a test" failure mode. All are `mkdtemp` now, every
+relocated directory is tracked and removed in `afterAll`, and the `PRIVATE KEY` fixture no
+longer persists in shared temp.
+
+One relocated assertion had gone **vacuous**: it kept a hardcoded `'confine-outside'`
+basename after the directory moved, so it normalised to a path that does not exist and
+passed on the missing-file branch — it would have passed with the containment logic
+deleted. It uses the real directory now.
+
+**Not symmetric, stated plainly.** The floor is re-applied per resolution for
+*designated* worktree roots (`liveDesignatedRoot`), and the suite proves it. It is **not**
+re-applied for live UAT roots: `resolvesUnderSessionRoot` compares against the registered
+set and never re-runs the floor, so a project root keeps serving until the session
+respawns. Defensible — live roots are registered once at spawn — but the earlier wording
+implied all three sites give a live re-check, and they do not.

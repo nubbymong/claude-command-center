@@ -58,7 +58,19 @@ beforeEach(() => {
   fs.rmSync(path.join(getResourcesDirectory(), 'canvas'), { recursive: true, force: true })
 })
 
+/** Dist dirs moved OUT of the resources directory in #371, so the wholesale
+ *  sweep below no longer reached them. Tracked and removed here instead. */
+const extraTempDirs: string[] = []
+function tmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  extraTempDirs.push(dir)
+  return dir
+}
+
 afterAll(() => {
+  for (const d of extraTempDirs.splice(0)) {
+    try { fs.rmSync(d, { recursive: true, force: true }) } catch { /* best-effort */ }
+  }
   try {
     fs.rmSync(getResourcesDirectory(), { recursive: true, force: true })
   } catch {
@@ -84,7 +96,7 @@ describe('served CSP blocks WebRTC', () => {
   it('carries webrtc \'block\' on a UAT document too', async () => {
     // Outside the resources directory: served content may not live inside it,
     // and the floor now refuses a root under it (#371).
-    const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-egress-dist-'))
+    const dist = tmpDir('ccc-egress-dist-')
     fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><html><body>u</body></html>')
     expect(store.registerCanvasUatRoot(SID, dist)).toBe(true)
     const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
@@ -346,7 +358,7 @@ describe('resource hints cannot carry data out', () => {
     expect(res.headers.get('X-DNS-Prefetch-Control')).toBe('off')
 
     // Outside the resources directory — see the note on the UAT case above (#371).
-    const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-egress-hints-'))
+    const dist = tmpDir('ccc-egress-hints-')
     fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><html><body>u</body></html>')
     expect(store.registerCanvasUatRoot(SID, dist)).toBe(true)
     const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })

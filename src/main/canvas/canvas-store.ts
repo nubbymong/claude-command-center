@@ -217,24 +217,89 @@ function isResourcesDirOrAround(p: string): boolean {
  * Over-denial is the intended direction: a refused root costs a canvas render,
  * an accepted one costs a credential.
  */
-export function registerCanvasUatRoot(sessionId: string, baseDir: string): boolean {
-  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return false
-  if (typeof baseDir !== 'string' || !path.isAbsolute(baseDir)) return false
+/**
+ * WHY a directory cannot be a canvas root, or null when it can.
+ *
+ * Split out so a refusal can SAY which floor it hit (#371). The floor is
+ * correct, but a refusal that reaches the user as nothing at all — and reaches
+ * the agent as "write the html inside the project folder", which is where it
+ * already wrote it — is an undiagnosable dead end. ADR-017's own words: being
+ * locked out of your own canvas is a bug this app has already shipped once.
+ */
+export type CanvasRootRefusal =
+  | 'bad-session-id'
+  | 'not-absolute'
+  | 'unresolvable'
+  | 'not-a-directory'
+  | 'home-or-ancestor'
+  | 'volume-root'
+  | 'dot-dir-under-home'
+  | 'resources-dir'
+
+export function canvasRootRefusalReason(sessionId: string, baseDir: string): CanvasRootRefusal | null {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return 'bad-session-id'
+  if (typeof baseDir !== 'string' || !path.isAbsolute(baseDir)) return 'not-absolute'
   let real: string
   try {
     real = fs.realpathSync.native(path.resolve(baseDir))
   } catch {
-    return false // an unresolvable base is simply not added
+    return 'unresolvable'
   }
   try {
-    if (!fs.statSync(real).isDirectory()) return false
+    if (!fs.statSync(real).isDirectory()) return 'not-a-directory'
   } catch {
-    return false
+    return 'not-a-directory'
   }
-  if (isHomeOrAncestor(real)) return false
-  if (isVolumeRoot(real)) return false
-  if (isDotDirUnderHome(real)) return false
-  if (isResourcesDirOrAround(real)) return false
+  if (isHomeOrAncestor(real)) return 'home-or-ancestor'
+  if (isVolumeRoot(real)) return 'volume-root'
+  if (isDotDirUnderHome(real)) return 'dot-dir-under-home'
+  if (isResourcesDirOrAround(real)) return 'resources-dir'
+  return null
+}
+
+/** One sentence a user or an agent can act on, for each refusal. */
+export function describeCanvasRootRefusal(reason: CanvasRootRefusal, dir: string): string {
+  switch (reason) {
+    case 'resources-dir':
+      return `the canvas cannot serve ${dir} because the app's own resources directory (which holds your saved credentials and accounts) is inside it, or is it. Point this session at a project folder that does not contain the resources directory, or move the resources directory somewhere else in Settings.`
+    case 'home-or-ancestor':
+      return `the canvas cannot serve ${dir} because it is your home directory or a folder above it. Set this session's working directory to the specific project folder.`
+    case 'volume-root':
+      return `the canvas cannot serve ${dir} because it is a whole drive. Set this session's working directory to the specific project folder.`
+    case 'dot-dir-under-home':
+      return `the canvas cannot serve ${dir} because it is inside a hidden folder in your home directory (where credentials live).`
+    case 'not-a-directory':
+      return `the canvas cannot serve ${dir} because it is not a directory.`
+    case 'unresolvable':
+      return `the canvas cannot serve ${dir} because that path could not be resolved on disk.`
+    case 'not-absolute':
+      return `the canvas cannot serve ${dir} because it is not an absolute path.`
+    case 'bad-session-id':
+      return 'the canvas cannot serve this session (its id is not usable).'
+  }
+}
+
+/**
+ * Why this session has no project root, in words, for the surfaces that have to
+ * tell somebody (#371). Without it the refusal reaches the agent as the generic
+ * "write the html inside the project folder" — which is where it already wrote
+ * it — and reaches the user as nothing at all.
+ */
+const rootRefusalBySession = new Map<string, string>()
+
+export function setCanvasRootRefusal(sessionId: string, explanation: string): void {
+  if (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId)) return
+  rootRefusalBySession.set(sessionId, explanation)
+}
+
+export function canvasRootRefusalFor(sessionId: string): string | null {
+  return rootRefusalBySession.get(sessionId) ?? null
+}
+
+export function registerCanvasUatRoot(sessionId: string, baseDir: string): boolean {
+  if (canvasRootRefusalReason(sessionId, baseDir) !== null) return false
+  rootRefusalBySession.delete(sessionId) // it registered; there is nothing to explain
+  const real = fs.realpathSync.native(path.resolve(baseDir))
   let roots = uatRootsBySession.get(sessionId)
   if (!roots) {
     roots = new Set<string>()
@@ -354,6 +419,7 @@ export function canvasRootsForSession(
 export function revokeCanvasUatRoots(sessionId: string): void {
   uatRootsBySession.delete(sessionId)
   designatedRootsBySession.delete(sessionId)
+  rootRefusalBySession.delete(sessionId)
 }
 
 /** True iff `candidate` physically resolves at/under a base registered for

@@ -79,12 +79,25 @@ beforeEach(() => {
   fs.rmSync(path.join(getResourcesDirectory(), 'canvas'), { recursive: true, force: true })
   // Outside the resources directory: the floor now refuses a served root under
   // it, and served content has no business living beside CONFIG anyway (#371).
-  distDir = path.join(os.tmpdir(), 'ccc-prov-planted-dist')
-  fs.mkdirSync(distDir, { recursive: true })
+  // mkdtemp rather than a fixed name — this repo mandates parallel sessions, and
+  // two concurrent runs writing one `<tmp>/ccc-prov-planted-dist/index.html` is
+  // an EPERM window on Windows.
+  distDir = tmpDir('ccc-prov-planted-dist-')
   fs.writeFileSync(path.join(distDir, 'index.html'), '<!doctype html><html><body>planted</body></html>')
 })
 
+/** Temp dirs outside the mocked resources directory, swept below. */
+const extraTempDirs: string[] = []
+function tmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  extraTempDirs.push(dir)
+  return dir
+}
+
 afterAll(() => {
+  for (const d of extraTempDirs.splice(0)) {
+    try { fs.rmSync(d, { recursive: true, force: true }) } catch { /* best-effort */ }
+  }
   try {
     fs.rmSync(getResourcesDirectory(), { recursive: true, force: true })
   } catch {
@@ -174,7 +187,7 @@ describe('a record CCC wrote', () => {
   })
 
   it('stops verifying when a version\'s distRoot is edited', () => {
-    const dist = path.join(os.tmpdir(), 'ccc-prov-real-dist')
+    const dist = tmpDir('ccc-prov-real-dist-')
     fs.mkdirSync(dist, { recursive: true })
     fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><p>ok</p>')
     expect(store.registerCanvasUatRoot(VICTIM, dist)).toBe(true)
