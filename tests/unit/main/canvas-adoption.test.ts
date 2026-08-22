@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 import { vi } from 'vitest'
 
 vi.mock('../../../src/main/ipc/setup-handlers', () => {
@@ -343,8 +344,11 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
 
 describe('resolveInsideCanvasRoot (the htmlPath confinement)', () => {
   it('refuses everything when no root is registered, and confines to a registered one', () => {
-    const projectDir = path.join(getResourcesDirectory(), 'confine-proj')
-    const outsideDir = path.join(getResourcesDirectory(), 'confine-outside')
+    // Outside the resources directory: the floor now refuses a served root
+    // under it (#371). Both dirs move together so the "outside" one stays
+    // outside the registered root, which is what this test is about.
+    const projectDir = path.join(os.tmpdir(), 'ccc-adopt-confine-proj')
+    const outsideDir = path.join(os.tmpdir(), 'ccc-adopt-confine-outside')
     fs.mkdirSync(projectDir, { recursive: true })
     fs.mkdirSync(outsideDir, { recursive: true })
     const inside = path.join(projectDir, 'mockup.html')

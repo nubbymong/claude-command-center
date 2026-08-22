@@ -135,6 +135,57 @@ function isDotDirUnderHome(p: string): boolean {
   return segments.some((s) => s.startsWith('.'))
 }
 
+/** True when `a` contains `b` (b lives somewhere under a). Case-insensitive on
+ *  win32, because `path.relative` is. */
+function contains(a: string, b: string): boolean {
+  const rel = path.relative(a, b)
+  if (rel === '' || path.isAbsolute(rel)) return false
+  const first = rel.split(/[\\/]/).filter((s) => s.length > 0)[0]
+  return first !== undefined && first !== '..'
+}
+
+/**
+ * True when `p` is the app's own RESOURCES directory, anything under it, or any
+ * ancestor of it (#371).
+ *
+ * The existing floor refuses the home directory, a volume root and the dot
+ * directories under home — the places a user's credentials live. It did not
+ * refuse the place THIS APP keeps credentials. The resources directory holds
+ * `CONFIG/` (`ssh-credentials.json`, the DPAPI-encrypted SSH and sudo passwords
+ * and secret arguments; `conductor-secret.json`, the MCP HMAC key),
+ * `account-profiles/` and `account-homes/` (Claude OAuth tokens), plus the
+ * canvas store itself. Served as a canvas root, all of it becomes readable over
+ * the canvas HTTP surface.
+ *
+ * All three directions are refused, matching what `isHomeOrAncestor` already
+ * does for home:
+ *   - the directory itself,
+ *   - anything UNDER it (`<resources>/CONFIG` named directly),
+ *   - anything that CONTAINS it — serving a parent serves the resources dir,
+ *     which is the case that bites when someone points their resources
+ *     directory inside a project they actually work in.
+ *
+ * Same-user hardening, not a privilege boundary: the agent already runs as the
+ * user. What it removes is the canvas turning "read a file" into "serve a
+ * credential store over HTTP" without anyone deciding to.
+ */
+function isResourcesDirOrAround(p: string): boolean {
+  let configured: string
+  try {
+    configured = getResourcesDirectory()
+  } catch {
+    return false // not resolvable this run — the other floors still apply
+  }
+  if (typeof configured !== 'string' || configured.length === 0) return false
+  let res: string
+  try {
+    res = fs.realpathSync.native(configured)
+  } catch {
+    res = path.resolve(configured) // not on disk yet; the lexical answer still holds
+  }
+  return sameFsPath(res, p) || contains(res, p) || contains(p, res)
+}
+
 /**
  * Register a directory under which one session's canvas paths may live.
  *
@@ -183,6 +234,7 @@ export function registerCanvasUatRoot(sessionId: string, baseDir: string): boole
   if (isHomeOrAncestor(real)) return false
   if (isVolumeRoot(real)) return false
   if (isDotDirUnderHome(real)) return false
+  if (isResourcesDirOrAround(real)) return false
   let roots = uatRootsBySession.get(sessionId)
   if (!roots) {
     roots = new Set<string>()
@@ -208,6 +260,7 @@ export function designateCanvasWorktreeRoot(sessionId: string, dir: string): boo
   if (isHomeOrAncestor(lexical)) return false
   if (isVolumeRoot(lexical)) return false
   if (isDotDirUnderHome(lexical)) return false
+  if (isResourcesDirOrAround(lexical)) return false
   // Refuse a path already designated for a DIFFERENT session. Distinct tiles
   // derive distinct segments, so this only fires on a segment collision — and
   // there the FIRST tile owns the directory it populated; serving it to a second
@@ -258,6 +311,7 @@ function liveDesignatedRoot(lexical: string): string | null {
   if (isHomeOrAncestor(real)) return null
   if (isVolumeRoot(real)) return null
   if (isDotDirUnderHome(real)) return null
+  if (isResourcesDirOrAround(real)) return null
   return real
 }
 

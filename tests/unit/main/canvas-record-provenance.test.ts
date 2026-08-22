@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 
 vi.mock('../../../src/main/ipc/setup-handlers', () => {
   const nodeFs = require('node:fs') as typeof import('node:fs')
@@ -76,7 +77,9 @@ let distDir: string
 beforeEach(() => {
   restart()
   fs.rmSync(path.join(getResourcesDirectory(), 'canvas'), { recursive: true, force: true })
-  distDir = path.join(getResourcesDirectory(), 'planted-dist')
+  // Outside the resources directory: the floor now refuses a served root under
+  // it, and served content has no business living beside CONFIG anyway (#371).
+  distDir = path.join(os.tmpdir(), 'ccc-prov-planted-dist')
   fs.mkdirSync(distDir, { recursive: true })
   fs.writeFileSync(path.join(distDir, 'index.html'), '<!doctype html><html><body>planted</body></html>')
 })
@@ -171,7 +174,7 @@ describe('a record CCC wrote', () => {
   })
 
   it('stops verifying when a version\'s distRoot is edited', () => {
-    const dist = path.join(getResourcesDirectory(), 'real-dist')
+    const dist = path.join(os.tmpdir(), 'ccc-prov-real-dist')
     fs.mkdirSync(dist, { recursive: true })
     fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><p>ok</p>')
     expect(store.registerCanvasUatRoot(VICTIM, dist)).toBe(true)

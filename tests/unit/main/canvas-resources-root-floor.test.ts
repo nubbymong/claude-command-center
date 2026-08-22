@@ -1,0 +1,160 @@
+/**
+ * The canvas served-root floor refuses the app's own resources directory (#371).
+ *
+ * The floor already refused the home directory, a volume root and the dot
+ * directories under home — the places a USER's credentials live. It did not
+ * refuse the place THIS APP keeps credentials: the resources directory holds
+ * `CONFIG/` (`ssh-credentials.json`, the DPAPI-encrypted SSH and sudo passwords
+ * and secret arguments; `conductor-secret.json`, the MCP HMAC key),
+ * `account-profiles/` and `account-homes/` (Claude OAuth tokens).
+ *
+ * Same-user hardening rather than a privilege boundary — the agent already runs
+ * as the user. What it removes is the canvas turning "read a file" into "serve
+ * a credential store over HTTP" because a working directory happened to point
+ * there.
+ *
+ * Real filesystem throughout: every layer under test is a realpath/stat
+ * containment layer, which is exactly what a mocked fs cannot exercise. The
+ * resources directory is MUTABLE here so the floor can be watched being
+ * re-applied on a later resolution, not just at registration.
+ */
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+
+const h = vi.hoisted(() => ({ resourcesDir: '' }))
+
+vi.mock('../../../src/main/ipc/setup-handlers', () => ({
+  getResourcesDirectory: () => h.resourcesDir,
+}))
+
+const store = await import('../../../src/main/canvas/canvas-store')
+
+const SID = 'aaaa1111aaaa1111aaaa1111'
+
+const tempDirs: string[] = []
+function tmp(prefix: string): string {
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)))
+  tempDirs.push(dir)
+  return dir
+}
+
+let resources = ''
+
+beforeEach(() => {
+  store._resetCanvasStoreForTest()
+  store.revokeCanvasUatRoots(SID)
+  resources = tmp('ccc-res-')
+  h.resourcesDir = resources
+})
+
+afterAll(() => {
+  for (const d of tempDirs) {
+    try { fs.rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+})
+
+describe('a live root is refused anywhere near the resources directory', () => {
+  it('refuses the resources directory itself', () => {
+    expect(store.registerCanvasUatRoot(SID, resources)).toBe(false)
+    expect(store.canvasRootsForSession(SID).project).toBeNull()
+  })
+
+  it('refuses the credential directories UNDER it', () => {
+    for (const name of ['CONFIG', 'account-profiles', 'account-homes', 'canvas']) {
+      const dir = path.join(resources, name)
+      fs.mkdirSync(dir, { recursive: true })
+      expect(store.registerCanvasUatRoot(SID, dir), name).toBe(false)
+    }
+    // …and something nested deeper still.
+    const deep = path.join(resources, 'CONFIG', '_backups', '2026-08-22')
+    fs.mkdirSync(deep, { recursive: true })
+    expect(store.registerCanvasUatRoot(SID, deep)).toBe(false)
+  })
+
+  it('refuses a directory that CONTAINS it — serving a parent serves the resources dir', () => {
+    // The case that bites: resources pointed inside a directory you work in.
+    const project = tmp('ccc-proj-')
+    h.resourcesDir = path.join(project, 'resources')
+    fs.mkdirSync(h.resourcesDir, { recursive: true })
+    expect(store.registerCanvasUatRoot(SID, project)).toBe(false)
+  })
+
+  it('refuses a case-variant spelling on a case-insensitive filesystem', () => {
+    const variant = process.platform === 'win32' ? resources.toUpperCase() : resources
+    expect(store.registerCanvasUatRoot(SID, variant)).toBe(false)
+  })
+
+  it('refuses a path that reaches it through ..', () => {
+    const sibling = path.join(resources, 'CONFIG', '..')
+    fs.mkdirSync(path.join(resources, 'CONFIG'), { recursive: true })
+    expect(store.registerCanvasUatRoot(SID, sibling)).toBe(false)
+  })
+
+  it('still accepts an ordinary project directory — the refusal is scoped, not a blanket deny', () => {
+    const project = tmp('ccc-proj-')
+    expect(store.registerCanvasUatRoot(SID, project)).toBe(true)
+    expect(store.canvasRootsForSession(SID).project).toBe(project)
+  })
+
+  it('accepts a sibling of the resources directory', () => {
+    const sibling = path.join(path.dirname(resources), `${path.basename(resources)}-work`)
+    fs.mkdirSync(sibling, { recursive: true })
+    tempDirs.push(sibling)
+    expect(store.registerCanvasUatRoot(SID, sibling)).toBe(true)
+  })
+})
+
+describe('a designated worktree root gets the same floor', () => {
+  it('refuses one under the resources directory at designation time', () => {
+    expect(store.designateCanvasWorktreeRoot(SID, path.join(resources, 'CONFIG', 'wt'))).toBe(false)
+    expect(store.designateCanvasWorktreeRoot(SID, resources)).toBe(false)
+  })
+
+  it('accepts an ordinary worktree path that does not exist yet', () => {
+    const wt = path.join(tmp('ccc-wt-'), 'branch-a')
+    expect(store.designateCanvasWorktreeRoot(SID, wt)).toBe(true)
+    expect(store.canvasRootsForSession(SID).worktreePending).toBe(true)
+    fs.mkdirSync(wt, { recursive: true })
+    expect(store.canvasRootsForSession(SID).worktree).toBe(fs.realpathSync.native(wt))
+  })
+
+  /**
+   * The floor is re-applied on EVERY resolution, not just at designation — a
+   * directory that was fine yesterday and is inside the resources dir today
+   * stops serving today. Driven here by moving the resources directory onto an
+   * already-designated, already-serving root.
+   */
+  it('stops serving a designated root the moment the resources directory moves onto it', () => {
+    const wt = path.join(tmp('ccc-wt-'), 'branch-b')
+    fs.mkdirSync(wt, { recursive: true })
+    expect(store.designateCanvasWorktreeRoot(SID, wt)).toBe(true)
+    expect(store.canvasRootsForSession(SID).worktree).toBe(fs.realpathSync.native(wt))
+
+    h.resourcesDir = wt
+    expect(store.canvasRootsForSession(SID).worktree).toBeNull()
+
+    // …and comes back when it moves away again: this is a live check, not a latch.
+    h.resourcesDir = resources
+    expect(store.canvasRootsForSession(SID).worktree).toBe(fs.realpathSync.native(wt))
+  })
+})
+
+describe('an unresolvable resources directory does not take the floor down with it', () => {
+  it('falls back to the other refusals rather than accepting everything', () => {
+    h.resourcesDir = ''
+    const project = tmp('ccc-proj-')
+    // The resources check cannot answer, so it abstains — and the pre-existing
+    // floors still hold.
+    expect(store.registerCanvasUatRoot(SID, project)).toBe(true)
+    expect(store.registerCanvasUatRoot(SID, os.homedir())).toBe(false)
+  })
+
+  it('refuses a resources directory that is not on disk yet, lexically', () => {
+    const ghost = path.join(tmp('ccc-ghost-'), 'not-created')
+    h.resourcesDir = ghost
+    fs.mkdirSync(ghost, { recursive: true })
+    expect(store.registerCanvasUatRoot(SID, ghost)).toBe(false)
+  })
+})

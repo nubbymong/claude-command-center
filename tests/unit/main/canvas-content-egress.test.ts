@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 import type { CanvasFrameNavigationDetails } from '../../../src/main/canvas/ccc-ux-protocol'
 
 vi.mock('../../../src/main/ipc/setup-handlers', () => {
@@ -81,7 +82,9 @@ describe('served CSP blocks WebRTC', () => {
   })
 
   it('carries webrtc \'block\' on a UAT document too', async () => {
-    const dist = fs.mkdtempSync(path.join(getResourcesDirectory(), 'dist-'))
+    // Outside the resources directory: served content may not live inside it,
+    // and the floor now refuses a root under it (#371).
+    const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-egress-dist-'))
     fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><html><body>u</body></html>')
     expect(store.registerCanvasUatRoot(SID, dist)).toBe(true)
     const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
@@ -342,7 +345,8 @@ describe('resource hints cannot carry data out', () => {
     const { res } = await serveDesign('<!doctype html><html><body>x</body></html>')
     expect(res.headers.get('X-DNS-Prefetch-Control')).toBe('off')
 
-    const dist = fs.mkdtempSync(path.join(getResourcesDirectory(), 'dist-hints-'))
+    // Outside the resources directory — see the note on the UAT case above (#371).
+    const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-egress-hints-'))
     fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><html><body>u</body></html>')
     expect(store.registerCanvasUatRoot(SID, dist)).toBe(true)
     const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
