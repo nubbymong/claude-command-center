@@ -95,6 +95,13 @@ describe('every --model emission in src/main is a known, safe site (#385)', () =
         const trimmed = line.trim()
         if (trimmed.startsWith('*') || trimmed.startsWith('//')) return
         if (/'--model'/.test(line)) return                    // argv array element
+        // String CONCATENATION is an emission too: `'--model ' + m` carries the
+        // same glob hazard as a template literal and would otherwise slip past
+        // a scan that only looks for `${`.
+        if (/--model[^'"]*['"]\s*\+/.test(line) || /--model\s*['"]\s*\+/.test(line)) {
+          offenders.push(`${path.relative(MAIN_DIR, file)}:${i + 1}  ${trimmed}`)
+          return
+        }
         if (!line.includes('${')) return                      // no interpolation at all
         // Interpolating sites must quote. Two forms are allowed:
         //   modelFlag()'s own `--model ${quoteArgForShell(...)}`  (POSIX/PowerShell)

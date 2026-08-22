@@ -15,8 +15,8 @@ import {
   buildEffortRows,
   groupPickerRows,
   resolveModelInfo,
+  normalizeModelLabel,
   type ModelRegistry,
-  type EffortLevelSpec,
   type ModelPickerRow,
 } from '../../shared/model-registry'
 
@@ -35,21 +35,12 @@ export interface ModelOptionGroup {
 // Registry-derived model and effort lists. Components should derive these via
 // useRegistryStore((s) => s.registry) so dropdowns hot-reload on registry updates.
 
-/** Flat ordered rows (alias rows first, then pinned versions). */
-export function modelsFromRegistry(reg: ModelRegistry): OptionItem[] {
-  return buildModelPickerRows(reg).map((r) => ({ label: r.label, value: r.value, hint: r.hint }))
-}
-
-/** The same rows, grouped for a popover or a <select> with <optgroup>s. */
+/** Picker rows grouped for a popover or a <select> with <optgroup>s. */
 export function modelGroupsFromRegistry(reg: ModelRegistry): ModelOptionGroup[] {
   return groupPickerRows(buildModelPickerRows(reg)).map((g) => ({
     title: g.title,
     items: g.rows.map((r: ModelPickerRow) => ({ label: r.label, value: r.value, hint: r.hint })),
   }))
-}
-
-export function effortsFromRegistry(reg: ModelRegistry): OptionItem[] {
-  return reg.effortLevels.map((e: EffortLevelSpec) => ({ label: e.label, value: e.value, hint: e.hint }))
 }
 
 /**
@@ -118,16 +109,6 @@ export function shortModelName(name?: string, registry?: ModelRegistry): string 
   return [familyCap, version, contextHint].filter(Boolean).join(' ')
 }
 
-/** Family + version a model string describes, for comparing two spellings of it. */
-function familyAndVersion(s: string): { family: string | null; version: string | null } {
-  const lower = s.toLowerCase()
-  const fam = lower.match(/(opus|sonnet|haiku|fable)/)
-  // "4.6" / "4-6" / " 5" / "-5" all reduce to the same canonical form.
-  const ver = lower.match(/(\d+)[.-](\d+)/) ?? lower.match(/[\s-](\d+)(?![\d.-])/)
-  const version = ver ? (ver[2] ? `${ver[1]}.${ver[2]}` : ver[1]) : null
-  return { family: fam ? fam[1] : null, version }
-}
-
 /**
  * Match a picker row against the active statusline reading so the dropdown can
  * mark the currently-running model.
@@ -155,11 +136,15 @@ export function isModelActive(optionValue: string, activeModel: string, registry
       // Both sides pinned to a real entry: compare canonical ids.
       if (act.known && act.matchKind !== 'pattern') return opt.id === act.id
       // The active reading is a display name we can only fuzzily place
-      // ("Opus 4.6"): compare the version each side describes.
-      const a = familyAndVersion(opt.label)
-      const b = familyAndVersion(activeModel)
-      if (b.version === null) return opt.matchKind === 'alias'   // "Opus" alone only ticks the alias row
-      return a.version === b.version
+      // ("Opus 4.6"). Compare it to the row's label as a whole rather than by
+      // family+version: "Opus 4.8 Fast" carries version 4.8 too, and matching
+      // on the version alone ticked both Opus 4.8 and Opus 4.8 Fast — two
+      // different models (review Q6).
+      const reading = normalizeModelLabel(activeModel)
+      // A reading with no version at all ("Opus") names a family, not a
+      // release, so only the family alias row can claim it.
+      if (!/\d/.test(reading)) return opt.matchKind === 'alias'
+      return normalizeModelLabel(opt.label) === reading
     }
   }
 

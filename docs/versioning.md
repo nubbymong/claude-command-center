@@ -100,10 +100,8 @@ Run it by hand at any time: `node scripts/release-gate.mjs [--version X]`
 
 ### The model configuration article is the reference
 
-**That article is the reference whenever the model/effort options are set for a
-release** — aliases, `--model` values, 1M variants, effort levels, and which
-versions the picker offers. Before cutting, re-read it and refresh the snapshot
-if it has moved:
+**That article is the reference whenever the model options are set for a
+release.** Before cutting, re-read it and refresh the snapshot if it has moved:
 
 1. Open <https://support.claude.com/en/articles/11940350-claude-code-model-configuration>.
 2. Rewrite `models` in `resources/claude-code-model-configuration.json` from its
@@ -114,12 +112,41 @@ if it has moved:
    `dropdown` holds only the family *alias* rows ("Opus" = the newest Opus).
 4. Run `node scripts/release-gate.mjs` until the model check passes.
 
-The same comparison runs at **runtime** as a Sentinel check
-(`src/main/sentinel/sentinel-models.ts`) against the same snapshot, so an
-installed build whose registry has fallen behind tells the user: a model the
-article added but we do not offer, or one we still offer that the article has
-dropped (possibly retired). It needs no network and no working `claude` binary,
-and it reports the snapshot itself as stale after 90 days.
+#### What the article does and does not govern
+
+**Scope honesty:** the article documents **model ids only** — how to set
+`--model`, `/model` and `ANTHROPIC_MODEL`, plus a Supported models list. It
+carries **no alias list, no 1M-variant syntax and no effort levels**. So:
+
+| Surface | Source of truth | Guarded? |
+|---|---|---|
+| Model ids / versions | the article | yes — release gate + Sentinel |
+| Family aliases (`opus`, `sonnet`), 1M variants (`opus[1m]`) | CCC-maintained, from `claude --help` | no |
+| Effort levels, and which models accept which | CCC-maintained | no |
+| `fallbackPricing` | CCC-maintained, from published rates | no (see #411) |
+
+The per-model `efforts` list gates the effort pickers (unsupported levels are
+shown disabled), so it is load-bearing but **unguarded** — keep it honest by
+hand. An **absent** `efforts` means "unknown, assume every level is valid"; an
+**empty** one means "this model rejects effort". Do not guess: leave it absent
+rather than invent a list.
+
+#### The same check at runtime
+
+The comparison also runs as a Sentinel check
+(`src/main/sentinel/sentinel-models.ts`) so an installed build whose registry has
+fallen behind tells the user. It has two modes, because the snapshot and the
+registry ship together and the gate guarantees they agree at cut time — meaning
+"Anthropic added a model" is empty by construction from the snapshot alone:
+
+- **live** — it fetches the article and compares against what it lists *now*.
+- **snapshot** — offline or unreadable: it compares against the shipped snapshot
+  and reports it as stale after 90 days.
+
+Every finding states which mode produced it, so a claim about what Anthropic
+"currently" offers is never made from a file baked in months earlier. The
+"possibly retired" arm always uses the human-verified snapshot: a thin HTML
+parse that quietly stopped matching would otherwise accuse every model we ship.
 `tests/unit/model-coverage-parity.test.ts` holds the gate's standalone copy of
 the comparison and the app's shared one to identical verdicts.
 

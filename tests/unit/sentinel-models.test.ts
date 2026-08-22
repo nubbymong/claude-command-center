@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
   modelCoverageFindings,
+  modelCheckFailedFinding,
   fixtureAgeDays,
   FIXTURE_STALE_DAYS,
   EXPECTED_MODEL_SET,
 } from '../../src/main/sentinel/sentinel-models'
+import { parseArticleModelIds, MIN_PLAUSIBLE_IDS } from '../../src/main/sentinel/sentinel-model-article'
 import type { ModelRegistry, ExpectedModelSet } from '../../src/shared/model-registry'
 import baselineJson from '../../resources/model-registry.json'
 
@@ -90,6 +92,69 @@ describe('Sentinel model-coverage check (#385)', () => {
     expect(f[0].kind).toBe('info')
   })
 
+  // ── S1: the live arm, which is the only way "Anthropic added a model" can
+  //    ever fire on a released build (registry + snapshot ship together and the
+  //    release gate guarantees they agree at cut time).
+  it('LIVE mode reports a model the article lists that the shipped snapshot does not', () => {
+    const f = modelCoverageFindings(
+      registryOf(['claude-opus-5']),
+      expectedOf(['claude-opus-5']),                 // snapshot agrees with the registry
+      NOW,
+      ['claude-opus-5', 'claude-opus-6'],            // the article has moved on
+    )
+    expect(f).toHaveLength(1)
+    expect(f[0].id).toBe('models:missing:claude-opus-6')
+    expect(f[0].evidence).toContain('just now')      // says the claim is first-hand
+  })
+
+  it('a snapshot-mode finding never claims to be current', () => {
+    const f = modelCoverageFindings(registryOf([]), expectedOf(['claude-opus-5']), NOW, null)
+    expect(f[0].id).toBe('models:missing:claude-opus-5')
+    expect(f[0].evidence).toContain('shipped with this build')
+    expect(f[0].evidence).not.toContain('just now')
+  })
+
+  it('a successful live read suppresses the staleness note — it just answered first-hand', () => {
+    const old = { ...expectedOf(['claude-opus-5']), fetchedAt: '2026-01-01' }
+    const f = modelCoverageFindings(registryOf(['claude-opus-5']), old, NOW, ['claude-opus-5'])
+    expect(f).toEqual([])
+  })
+
+  it('the RETIRED arm stays on the human-verified snapshot, never on the live parse', () => {
+    // A thin HTML parse that silently stops matching must not accuse every
+    // model we ship of having been retired.
+    const f = modelCoverageFindings(
+      registryOf(['claude-opus-5', 'claude-opus-4-8']),
+      expectedOf(['claude-opus-5', 'claude-opus-4-8']),
+      NOW,
+      ['claude-opus-5'],                             // live parse came back short
+    )
+    expect(f.filter((x) => x.id.startsWith('models:retired:'))).toEqual([])
+  })
+
+  // ── Q4: an overlay-added model must not be called "possibly retired".
+  it('does not report a Sentinel- or user-added overlay model as retired', () => {
+    const withOverlay: ModelRegistry = {
+      ...reg,
+      models: [
+        { id: 'claude-opus-5', patterns: ['opus'], family: 'opus', label: 'Opus 5' },
+        {
+          id: 'claude-opus-9', patterns: ['opus-9'], family: 'opus', label: 'Opus 9',
+          provenance: { addedBy: 'sentinel', date: '2026-09-01' },
+        } as ModelRegistry['models'][number],
+      ],
+    }
+    const f = modelCoverageFindings(withOverlay, expectedOf(['claude-opus-5']), NOW)
+    expect(f).toEqual([])
+  })
+
+  it('surfaces a finding when the check itself fails, rather than vanishing into a log', () => {
+    const f = modelCheckFailedFinding('boom', NOW)
+    expect(f.id).toBe('models:check-failed')
+    expect(f.severity).toBe('warn')
+    expect(f.evidence).toContain('boom')
+  })
+
   it('does not report a freshly-fetched snapshot as stale', () => {
     expect(modelCoverageFindings(registryOf(['claude-opus-5']), expectedOf(['claude-opus-5']), NOW)).toEqual([])
   })
@@ -105,6 +170,41 @@ describe('Sentinel model-coverage check (#385)', () => {
     // offline and when `claude --version` is unavailable.
     expect(typeof modelCoverageFindings).toBe('function')
     expect(modelCoverageFindings.length).toBeLessThanOrEqual(3)
+  })
+})
+
+describe('parseArticleModelIds (#385 S1)', () => {
+  it('pulls the model ids out of article markup, in order, deduped', () => {
+    const html = `
+      <h2>Supported models</h2>
+      <p>claude-opus-5</p><p>claude-sonnet-5</p><p>claude-opus-4-5-20251101</p>
+      <p>claude-opus-5</p>
+    `
+    expect(parseArticleModelIds(html)).toEqual([
+      'claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-5-20251101',
+    ])
+  })
+
+  it('does not mistake "claude-code" for a model — a digit must follow the family', () => {
+    const html = 'Claude Code (claude-code) docs. Use claude-code-router. Try claude-opus-5.'
+    expect(parseArticleModelIds(html)).toEqual(['claude-opus-5'])
+  })
+
+  it('is case-insensitive and trims a trailing hyphen', () => {
+    expect(parseArticleModelIds('CLAUDE-OPUS-5- and claude-haiku-4-5')).toEqual([
+      'claude-opus-5', 'claude-haiku-4-5',
+    ])
+  })
+
+  it('finds nothing in a page with no model ids, so the caller falls back', () => {
+    expect(parseArticleModelIds('<html><body>Sorry, page moved.</body></html>').length)
+      .toBeLessThan(MIN_PLAUSIBLE_IDS)
+  })
+
+  it('reads the shipped snapshot ids out of article-shaped markup', () => {
+    // Round-trip: the ids we ship must be exactly what this parser would find.
+    const html = EXPECTED_MODEL_SET.models.map((m) => `<td>${m.label}</td><td>${m.id}</td>`).join('\n')
+    expect(parseArticleModelIds(html)).toEqual(EXPECTED_MODEL_SET.models.map((m) => m.id))
   })
 })
 

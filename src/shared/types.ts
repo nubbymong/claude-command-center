@@ -258,9 +258,10 @@ export interface StatuslineData {
 
 // ── Agent Templates ──
 
-// Valid values are registry dropdown entries (e.g. 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku')
-// plus the special sentinel 'inherit' (use the parent session model). Widened to string so the
-// type does not hard-code the set of models — the registry is the authority.
+// Valid values are model-picker rows: a family alias ('opus', 'opus[1m]', 'fable', 'sonnet',
+// 'haiku') or a PINNED versioned id ('claude-opus-4-6'), plus the special sentinel 'inherit'
+// (use the parent session model). Widened to string so the type does not hard-code the set of
+// models — the registry is the authority (see buildModelPickerRows, #385).
 export type AgentModelOverride = string
 
 export interface AgentTemplate {

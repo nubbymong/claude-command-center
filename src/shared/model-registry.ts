@@ -220,7 +220,46 @@ export const ALIAS_GROUP_LABEL = 'Latest'
 /** Family display label ("opus" -> "Opus"), falling back to the family key. */
 export function familyDisplayLabel(registry: ModelRegistry, family: string): string {
   const raw = registry.families?.[family]?.label ?? family
+  if (typeof raw !== 'string' || !raw) return 'Other'
   return raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+/**
+ * A model label/reading reduced to a comparable form: trailing parentheticals
+ * dropped ("Opus 4.7 (1M context)" -> "opus 4.7"), trimmed, lowercased.
+ */
+export function normalizeModelLabel(s: string): string {
+  return s.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase()
+}
+
+/**
+ * The registry id a set of readings refers to, or undefined when none of them
+ * can be placed on a specific entry.
+ *
+ * Callers pass the readings they have in preference order — typically the live
+ * statusline `display_name` first, then the id the session was spawned with.
+ * A reading is accepted when it matches an entry VERSION-faithfully (exact id /
+ * alias / id-prefix) or when it is exactly an entry's label: the statusline
+ * reports "Opus 4.6", which can only ever `pattern`-match and is therefore
+ * distrusted everywhere else, but as a label it names its entry precisely.
+ * That is what keeps per-model effort gating working after a mid-session
+ * /model change, when the spawn-time id has gone stale (review Q2).
+ */
+export function resolvePickedModelId(
+  registry: ModelRegistry,
+  ...readings: (string | null | undefined)[]
+): string | undefined {
+  for (const reading of readings) {
+    if (!reading) continue
+    const info = resolveModelInfo(registry, reading)
+    if (info.known && info.matchKind !== 'pattern') return info.id
+    const norm = normalizeModelLabel(reading)
+    const byLabel = (registry.models ?? []).find(
+      (m) => typeof m.label === 'string' && normalizeModelLabel(m.label) === norm,
+    )
+    if (byLabel) return byLabel.id
+  }
+  return undefined
 }
 
 /**
@@ -242,8 +281,19 @@ export function buildModelPickerRows(registry: ModelRegistry): ModelPickerRow[] 
 
   const pinsByFamily = new Map<string, ModelPickerRow[]>()
   for (const m of registry.models ?? []) {
-    if (m.pickable === false) continue
-    if (!m.id || seen.has(m.id)) continue
+    if (!m || m.pickable === false) continue
+    // `registry-overlay.json` is a hand-editable user file: loadOverlay only
+    // fails open on invalid JSON and validateProposal runs on APPLY, not on
+    // load, so a malformed entry reaches here intact. Before #385 the pickers
+    // read `dropdown` only and never touched `models`, so a missing `family`
+    // was harmless; now it would throw and take both pickers down with it.
+    // Skip the entry and say so rather than crash the render (review Q3).
+    if (typeof m.id !== 'string' || !m.id || typeof m.family !== 'string' || !m.family) {
+      // eslint-disable-next-line no-console
+      console.warn('[model-registry] skipping malformed model entry (needs a string id and family):', m)
+      continue
+    }
+    if (seen.has(m.id)) continue
     seen.add(m.id)
     const row: ModelPickerRow = {
       value: m.id,
@@ -335,6 +385,11 @@ export interface ModelCoverageResult {
   covered: { id: string; by: string }[]
 }
 
+/** True for an entry that came from the overlay (Sentinel- or user-added). */
+export function isOverlaySourced(entry: ModelEntry): boolean {
+  return !!(entry as Partial<OverlayModelEntry>).provenance
+}
+
 /** An article id is covered by a registry id when equal, or equal minus a -YYYYMMDD suffix. */
 export function registryIdCovers(registryId: string, expectedId: string): boolean {
   if (registryId === expectedId) return true
@@ -369,11 +424,16 @@ export function evaluateModelCoverage(
     if (hit) { covered.push({ id: exp.id, by: hit.id }); usedRegistryIds.add(hit.id) }
     else missing.push({ id: exp.id, label: exp.label })
   }
-  // Claude models we carry that the article no longer names. Non-Claude entries
-  // (the codex catch-all) and `articleExempt` entries are not the article's business.
+  // Claude models we carry that the article no longer names. Excluded:
+  //  - non-Claude entries (the codex catch-all) — not the article's business
+  //  - `articleExempt` entries — carried deliberately
+  //  - OVERLAY entries (they carry `provenance`) — a model Sentinel or the user
+  //    just added is necessarily absent from a snapshot frozen before it, and
+  //    reporting it as "possibly retired" the moment it is added contradicts
+  //    the whole point of letting an overlay add one (review Q4).
   const extra = registryModels
     .filter((m) => typeof m.id === 'string' && m.id.startsWith('claude-')
-      && !usedRegistryIds.has(m.id) && m.articleExempt !== true)
+      && !usedRegistryIds.has(m.id) && m.articleExempt !== true && !isOverlaySourced(m))
     .map((m) => ({ id: m.id, label: m.label }))
   return {
     ok: missing.length === 0,

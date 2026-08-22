@@ -102,22 +102,72 @@ The gate is dependency-free ESM that runs before `npm ci`, so it keeps its own
 copy of the logic. `tests/unit/model-coverage-parity.test.ts` runs both over ten
 shared fixtures and requires identical verdicts, so the two cannot drift.
 
+## Review round (independent Opus double review, NEEDS-WORK → addressed)
+
+- **S1 — the runtime guard could never fire the arm the owner asked for.** The
+  registry and the snapshot ship in one build and the release gate refuses a cut
+  while anything is missing, so "Anthropic added a model" was empty *by
+  construction*. The check now reads the **live article** when the network
+  allows (`sentinel-model-article.ts`, fetch pattern mirrored from
+  `sentinel-changelog.ts`, `catch -> null`), falling back to the snapshot plus
+  the staleness note. Every finding says which mode produced it. The *retired*
+  arm deliberately stays on the human-verified snapshot: a thin HTML parse that
+  silently stopped matching would otherwise accuse every model we ship.
+- **S2 — effort data was load-bearing but unsourced.** The article documents ids
+  only. Corrected `claude-opus-4-6`/`claude-sonnet-4-6` (dropped `xhigh`, which
+  arrived with Opus 4.7), gave `claude-opus-4-5` low/medium/high, and gave
+  `claude-sonnet-4-5` an explicitly **empty** list (rejects effort) — distinct
+  from absent, which means unknown. Opus 5 / Sonnet 5 stay absent: only the
+  `ultracode` dimension is uncertain and inventing it is worse than the
+  documented permissive default. `docs/versioning.md` now carries a table of
+  what the article governs (ids) versus what is CCC-maintained (aliases, 1M,
+  efforts, pricing).
+- **S3 / Q2 — the pill and the effort gating used the statusline name.**
+  `session.modelName` is undefined at spawn and reset on every restart, so the
+  pill showed the placeholder until the first tick; and a display name like
+  "Opus 4.6" can only `pattern`-match, which `buildEffortRows` distrusts, so
+  gating in the footer was inert. Pill falls back to `session.model`;
+  `resolvePickedModelId` places a reading via exact/alias/prefix **or label**,
+  which also survives a mid-session `/model` change.
+- **Q3 — a malformed overlay entry crashed both pickers.** `familyDisplayLabel`
+  threw on a missing `family`. Overlay JSON is hand-editable and only validated
+  on *apply*, and before this PR the pickers never touched `models` at all.
+  Skipped + logged.
+- **Q4 — an overlay-added model was instantly reported "possibly retired"**,
+  contradicting the acceptance criterion. Entries carrying `provenance` are
+  excluded from the retired arm, in both copies of the comparison.
+- **Q5 — the check swallowed a throw into a log line.** Now raises
+  `models:check-failed` so the guard cannot stop running invisibly.
+- **Q6 — "Opus 4.8 Fast" ticked two rows**, because family+version matching made
+  it look like 4.8. Display-name comparison is now whole-label.
+- **Q7 — the pricing fix was order-independent by value, not by construction.**
+  Added a tie invariant: any two fallback keys collapsing to the same base must
+  price identically. **It failed immediately** on `claude-opus-4-6` (15/75 vs
+  its siblings' 5/25), which is exactly the out-of-scope bug — so a dated
+  `claude-opus-4-6-*` prefix-resolves to a sibling's rate. Carried as a
+  documented, issue-linked exception (#411) rather than a silent pass.
+- **Q8** — removed `modelsFromRegistry`/`effortsFromRegistry` (no production
+  callers after the grouping change) and corrected the stale `AgentModelOverride`
+  comment, which still said "registry dropdown entries".
+- Also closed the reviewer's note that the emission scan only looked for `${`:
+  it now flags string-concatenation forms too.
+- **Q1** — the `UNSAFE_ARGV` bracket change had no test. Added, and **verified
+  red** by reverting the character class (`expected [Function] to throw`).
+
 ## Left for the owner
 
-- **`efforts` omitted on the four new entries.** The support article documents
-  no effort levels at all, so rather than guess I left them absent — the
-  registry contract says absent = unknown = all levels valid (spec §3), which is
-  exactly today's behaviour. If Claude Code's `/effort` list per model is known,
-  fill them in and the UI will gate on it automatically.
-- **Per-model effort gating is live but data-driven.** `buildEffortRows` marks
-  unsupported levels `disabled` (greyed, not hidden) using each entry's existing
-  `efforts`. Today that only bites Haiku 4.5 (no `xhigh`/`max`/`ultracode`) and
-  Opus 4.6 / Sonnet 4.6 (no `ultracode`). Answers the issue's open question
-  "does the effort list change per model?" visibly and reversibly.
-- **Two pre-existing `fallbackPricing` numbers look wrong** against Anthropic's
-  published rates: `claude-opus-4-6` is 15/75 (published 5/25) and
-  `claude-haiku-4-5` is 0.8/4 (published 1/5). Left untouched — changing them
-  moves tokenomics totals and is not this issue. Worth a separate look.
+- **`efforts` still absent on Opus 5 / Sonnet 5.** Their low–max ladder is
+  certain, but whether `ultracode` applies is not, and an explicit list would
+  silently *disable* it. Absent = unknown = all valid (spec §3) is the honest
+  default. Fill it in when Claude Code's per-model `/effort` list is known and
+  the UI gates automatically.
+- **The effort surface has no guard.** Unlike model ids, nothing checks it
+  against an external source, because no published source exists. Documented as
+  such in `docs/versioning.md` rather than left implicit.
+- **Two wrong `fallbackPricing` numbers → #411.** `claude-opus-4-6` is 15/75
+  (published 5/25) and `claude-haiku-4-5` is 0.8/4 (published 1/5). Still out of
+  scope here, but no longer only in a PR body: the tie-invariant test carries
+  `claude-opus-4-6` as a named exception that must be deleted when #411 lands.
 - **A pinned 1M variant is not offered.** Only `opus[1m]` exists today; whether
   the CLI accepts `claude-opus-4-6[1m]` is unverified, so no such row is
   invented. The quoting handles it if one ever appears.

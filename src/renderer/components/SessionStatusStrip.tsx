@@ -20,6 +20,7 @@ import {
   shortModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
+import { resolvePickedModelId } from '../../shared/model-registry'
 import { useRegistryStore } from '../stores/registryStore'
 import AiUsageChip from './github/AiUsageChip'
 
@@ -175,14 +176,23 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
 
   // Model pill label: the real short model name, never a bare confusing
   // "default". Falls back to a muted "model" placeholder when unknown.
-  // The registry is passed so a PINNED selection shows its curated name
-  // ("Opus 4.8 Fast", not a regex-flattened "Opus 4.8") — #385.
-  const rawModelLabel = shortModelName(session.modelName, registry)
-  const hasModelLabel = !!session.modelName && rawModelLabel !== 'default'
+  //
+  // `session.modelName` is the statusline display_name, which is undefined at
+  // spawn and reset to undefined on every restart — so on its own the pill
+  // showed the placeholder until the first tick even though session.model
+  // already held the exact id the user picked. Fall back to it, as
+  // SessionRow.tsx:56 does. The registry is passed so a PINNED selection shows
+  // its curated name ("Opus 4.8 Fast", not a regex-flattened "Opus 4.8") — #385.
+  const activeModelReading = session.modelName ?? session.model ?? ''
+  const rawModelLabel = shortModelName(activeModelReading, registry)
+  const hasModelLabel = !!activeModelReading && rawModelLabel !== 'default'
   const modelLabel = hasModelLabel ? rawModelLabel : 'model'
-  // What the picker compares rows against: the live statusline reading, else
-  // the id the session was spawned with.
-  const activeModelReading = session.modelName || session.model || ''
+  // Effort gating needs a model the registry can place EXACTLY. The statusline
+  // reading ("Opus 4.6") only ever pattern-matches, which buildEffortRows
+  // deliberately distrusts, so gating would be inert here; the spawn-time id
+  // resolves exactly, and the label lookup keeps it right after a mid-session
+  // /model change (#385).
+  const effortModelId = resolvePickedModelId(registry, session.modelName, session.model)
 
   // Account chip (always-on when the session has a resolved account). Name
   // and colour are resolved by live email: a mid-session /login that updates
@@ -448,7 +458,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
                     // Levels the running model does not support come back
                     // `disabled` — greyed and unselectable rather than hidden.
                     title: 'Effort',
-                    items: effortsForModel(registry, activeModelReading).map((e) => ({ ...e, active: e.value === lastEffort })),
+                    items: effortsForModel(registry, effortModelId).map((e) => ({ ...e, active: e.value === lastEffort })),
                   },
                 ]}
                 onSelect={onModel}

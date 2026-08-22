@@ -1,14 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import baselineJson from '../../resources/model-registry.json'
 import type { ModelRegistry } from '../../src/shared/model-registry'
+import { buildModelPickerRows } from '../../src/shared/model-registry'
 import {
-  modelsFromRegistry,
   modelGroupsFromRegistry,
-  effortsFromRegistry,
   effortsForModel,
 } from '../../src/renderer/lib/claude-cli-options'
 
 const reg = baselineJson as unknown as ModelRegistry
+
+/** Flat ordered row values, the way the pickers consume them via the groups. */
+const modelsFromRegistry = (r: ModelRegistry) =>
+  buildModelPickerRows(r).map((row) => ({ label: row.label, value: row.value, hint: row.hint }))
 
 describe('registry-derived option lists', () => {
   it('opens with the alias rows, in the curated dropdown order', () => {
@@ -52,8 +55,8 @@ describe('registry-derived option lists', () => {
     expect(opus.items.find((i) => i.value === 'claude-opus-4-6')!.label).toBe('Opus 4.6')
   })
 
-  it('efforts match the old EFFORTS rows in order, hints included', () => {
-    const efforts = effortsFromRegistry(reg)
+  it('effort levels keep their order and hints', () => {
+    const efforts = effortsForModel(reg, undefined)
     expect(efforts.map((e) => e.value)).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     expect(efforts.find((e) => e.value === 'ultracode')!.hint).toContain('dynamic workflows')
   })
@@ -64,14 +67,25 @@ describe('registry-derived option lists', () => {
     expect(haiku).toHaveLength(6)
     expect(haiku.filter((e) => !e.disabled).map((e) => e.value)).toEqual(['low', 'medium', 'high'])
     expect(haiku.find((e) => e.value === 'ultracode')!.disabled).toBe(true)
-    // Opus 4.6 has no ultracode.
-    expect(effortsForModel(reg, 'claude-opus-4-6').find((e) => e.value === 'ultracode')!.disabled).toBe(true)
-    expect(effortsForModel(reg, 'claude-opus-4-6').find((e) => e.value === 'max')!.disabled).toBeUndefined()
+    // xhigh arrived with Opus 4.7, so 4.6 is low/medium/high/max.
+    const opus46 = effortsForModel(reg, 'claude-opus-4-6')
+    expect(opus46.filter((e) => !e.disabled).map((e) => e.value)).toEqual(['low', 'medium', 'high', 'max'])
+    expect(opus46.find((e) => e.value === 'xhigh')!.disabled).toBe(true)
+    expect(effortsForModel(reg, 'claude-sonnet-4-6').find((e) => e.value === 'xhigh')!.disabled).toBe(true)
+    // Opus 4.5 predates xhigh AND max.
+    expect(effortsForModel(reg, 'claude-opus-4-5').filter((e) => !e.disabled).map((e) => e.value))
+      .toEqual(['low', 'medium', 'high'])
+  })
+
+  it('disables every level for a model that rejects effort outright', () => {
+    // Sonnet 4.5 carries an explicitly EMPTY effort list — distinct from an
+    // absent one, which means "unknown, assume valid".
+    expect(effortsForModel(reg, 'claude-sonnet-4-5').every((e) => e.disabled)).toBe(true)
   })
 
   it('enables everything when the model is unknown or only fuzzily matched', () => {
     // spec §3: unknown efforts = assume valid.
-    for (const id of ['some-future-model', 'Opus 4.6', 'claude-opus-5', '']) {
+    for (const id of ['some-future-model', 'claude-opus-5', '']) {
       expect(effortsForModel(reg, id).every((e) => !e.disabled)).toBe(true)
     }
   })

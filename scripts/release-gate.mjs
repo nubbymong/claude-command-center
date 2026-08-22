@@ -145,11 +145,15 @@ export function evaluateModels({ registry, expected }) {
     else missing.push({ id: exp.id, label: exp.label })
   }
   // Claude models we carry that the article no longer names — flagged, not fatal.
-  // Non-Claude entries (the codex family) are not the article's business, and
-  // neither are entries marked `articleExempt` (carried deliberately, #385).
+  // Excluded: non-Claude entries (the codex family, not the article's business),
+  // `articleExempt` entries (carried deliberately), and overlay entries carrying
+  // `provenance` (Sentinel/user additions, necessarily absent from a snapshot
+  // frozen before them). Mirrors evaluateModelCoverage in
+  // src/shared/model-registry.ts — tests/unit/model-coverage-parity.test.ts
+  // holds the two to identical verdicts (#385).
   const extra = registryModels
     .filter((m) => typeof m.id === 'string' && m.id.startsWith('claude-')
-      && !usedRegistryIds.has(m.id) && m.articleExempt !== true)
+      && !usedRegistryIds.has(m.id) && m.articleExempt !== true && !m.provenance)
     .map((m) => ({ id: m.id, label: m.label }))
   return {
     ok: missing.length === 0,

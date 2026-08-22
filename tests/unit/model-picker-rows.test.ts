@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   buildModelPickerRows,
   groupPickerRows,
   buildEffortRows,
   familyDisplayLabel,
+  resolvePickedModelId,
   mergeRegistry,
   ALIAS_GROUP_LABEL,
   type ModelRegistry,
@@ -71,6 +72,28 @@ describe('buildModelPickerRows (#385)', () => {
     expect(row!.group).toBe('Nova')       // falls back to the family key, capitalised
   })
 
+  // Q3: registry-overlay.json is hand-editable and only validated on APPLY, so
+  // a malformed entry reaches the pickers intact.
+  it('skips a malformed overlay entry instead of crashing both pickers', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const broken = {
+      ...reg,
+      models: [
+        ...reg.models,
+        { id: 'claude-broken-1', patterns: ['b'], label: 'Broken' } as unknown as ModelRegistry['models'][number],
+        { patterns: ['c'], family: 'opus', label: 'No id' } as unknown as ModelRegistry['models'][number],
+        { id: '', patterns: ['d'], family: 'opus', label: 'Empty id' } as ModelRegistry['models'][number],
+      ],
+    }
+    expect(() => buildModelPickerRows(broken)).not.toThrow()
+    const rows = buildModelPickerRows(broken)
+    expect(rows.some((r) => r.value === 'claude-broken-1')).toBe(false)
+    // The healthy entries are unaffected.
+    expect(rows.some((r) => r.value === 'claude-opus-4-6')).toBe(true)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
   it('survives a registry with no dropdown and no models', () => {
     const empty = { models: [], families: {}, effortLevels: [], dropdown: [] } as ModelRegistry
     expect(buildModelPickerRows(empty)).toEqual([])
@@ -127,6 +150,42 @@ describe('shortModelName with a registry (footer pill shows the pinned name)', (
   })
 })
 
+// Q2: the footer popover only gets the statusline display name, which can never
+// match version-faithfully — without this the effort gating there is inert.
+describe('resolvePickedModelId (#385)', () => {
+  it('places a statusline display name on its exact entry', () => {
+    expect(resolvePickedModelId(reg, 'Opus 4.6')).toBe('claude-opus-4-6')
+    expect(resolvePickedModelId(reg, 'Opus 4.8 Fast')).toBe('claude-opus-4-8-fast')
+    expect(resolvePickedModelId(reg, 'Opus 4.7 (1M context)')).toBe('claude-opus-4-7')
+  })
+
+  it('prefers the first reading that can be placed, and falls through', () => {
+    // Statusline silent at spawn -> the id the session was launched with.
+    expect(resolvePickedModelId(reg, undefined, 'claude-opus-4-6')).toBe('claude-opus-4-6')
+    expect(resolvePickedModelId(reg, 'Opus 4.5', 'claude-opus-4-6')).toBe('claude-opus-4-5')
+    expect(resolvePickedModelId(reg, 'something else', 'claude-haiku-4-5')).toBe('claude-haiku-4-5')
+  })
+
+  it('resolves aliases and exact ids too', () => {
+    expect(resolvePickedModelId(reg, 'opus')).toBe('claude-opus-5')
+    expect(resolvePickedModelId(reg, 'claude-sonnet-4-6')).toBe('claude-sonnet-4-6')
+  })
+
+  it('returns undefined when nothing can be placed, so gating stays permissive', () => {
+    expect(resolvePickedModelId(reg, 'who knows')).toBeUndefined()
+    expect(resolvePickedModelId(reg, undefined, null, '')).toBeUndefined()
+    expect(buildEffortRows(reg, resolvePickedModelId(reg, 'who knows')).every((r) => r.supported)).toBe(true)
+  })
+
+  it('makes the footer effort gating actually bite', () => {
+    // The regression this fixes: 'Opus 4.6' alone left every level enabled.
+    const viaDisplayName = buildEffortRows(reg, 'Opus 4.6')
+    expect(viaDisplayName.every((r) => r.supported)).toBe(true)
+    const viaResolved = buildEffortRows(reg, resolvePickedModelId(reg, 'Opus 4.6'))
+    expect(viaResolved.find((r) => r.value === 'xhigh')!.supported).toBe(false)
+  })
+})
+
 describe('isModelActive with pinned rows (#385)', () => {
   it('ticks the pinned row that is actually running', () => {
     expect(isModelActive('claude-opus-4-6', 'Opus 4.6', reg)).toBe(true)
@@ -153,6 +212,14 @@ describe('isModelActive with pinned rows (#385)', () => {
   it('does not cross families', () => {
     expect(isModelActive('claude-sonnet-4-6', 'Opus 4.6', reg)).toBe(false)
     expect(isModelActive('haiku', 'Sonnet 4.6', reg)).toBe(false)
+  })
+
+  // Q6: "Opus 4.8 Fast" carries version 4.8 too, so a family+version comparison
+  // ticked both Opus 4.8 and Opus 4.8 Fast — two different models.
+  it('does not tick the plain variant when the Fast variant is running', () => {
+    expect(isModelActive('claude-opus-4-8-fast', 'Opus 4.8 Fast', reg)).toBe(true)
+    expect(isModelActive('claude-opus-4-8', 'Opus 4.8 Fast', reg)).toBe(false)
+    expect(isModelActive('claude-opus-4-8-fast', 'Opus 4.8', reg)).toBe(false)
   })
 
   it('keeps the old family-level behaviour when no registry is passed', () => {
