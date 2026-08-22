@@ -13,6 +13,11 @@
 // and its contrast rule may briefly toggle inline styles while probing a hit
 // stack. Nothing the page RENDERS is changed; page globals are.
 //
+// The one request that is not a question is `hoverReporting` (x-ray Off, #367),
+// and it only ever makes this script quieter: with it false the bridge does no
+// per-mousemove work and emits no pointer/click events. There is no value of it
+// that makes the bridge report more, draw, or touch the document.
+//
 // Trust model: requests are accepted ONLY from the direct parent window
 // (event.source === window.parent). The parent's origin cannot be pinned —
 // the packaged app renderer is a file:// document whose origin serializes to
@@ -62,6 +67,23 @@ declare global {
 
 const NS = CANVAS_BRIDGE_NS
 const MAX_BOXMAP_NODES = 2000
+
+/**
+ * Whether the unsolicited hover surface is live — x-ray Off (#367).
+ *
+ * The host flips this with a `hoverReporting` request. While it is false the
+ * bridge emits no `pointer` and no `contentClick`, so a page under review does
+ * ZERO per-mousemove work: no hit test, no measurement, no structured clone
+ * across postMessage. That is what "view it as a normal browser tab" costs to
+ * mean, and it cannot be had host-side — the host can drop what it hears, but
+ * only the content can decline to do the work.
+ *
+ * True by default: a frame that loads before the host has said anything behaves
+ * exactly as it always did, and the host tells it otherwise on `ready`.
+ * Viewport, ready and the RPC replies are unaffected — the pane still needs to
+ * know where the page is scrolled to in every mode.
+ */
+let hoverReporting = true
 
 // Real browsers always have rAF; the setTimeout fallback keeps the script
 // inert-safe in DOM-less harnesses.
@@ -207,6 +229,7 @@ interface IncomingRequest {
   scope?: unknown
   analysis?: unknown
   anchors?: unknown
+  enabled?: unknown
 }
 
 function handle(msg: IncomingRequest): Promise<unknown> {
@@ -220,6 +243,12 @@ function handle(msg: IncomingRequest): Promise<unknown> {
   if (msg.type === 'resolveAnchors') {
     const anchors = Array.isArray(msg.anchors) ? (msg.anchors.slice(0, MAX_RESOLVE_ANCHORS) as AnchorRef[]) : []
     return Promise.resolve({ results: resolveAnchors(anchors) })
+  }
+  if (msg.type === 'hoverReporting') {
+    // Anything that is not an explicit `false` leaves the hover surface live:
+    // a malformed request must not be able to silently blind the pane.
+    hoverReporting = msg.enabled !== false
+    return Promise.resolve({ enabled: hoverReporting })
   }
   return Promise.reject(new Error('unknown request: ' + String(msg.type)))
 }
@@ -259,11 +288,23 @@ function install(): void {
   }
 
   function queuePointer(pageX: number, pageY: number): void {
+    // x-ray Off. Two checks, and they do different jobs: this one avoids the
+    // WORK (no bookkeeping, no frame scheduled per mouse move — the point of
+    // Off is that the page does nothing, and only the content can decline to),
+    // the one on the frame below decides what is SENT. Only the second is
+    // separately observable from outside, which is why only it has a test of
+    // its own; deleting this one costs a scheduled frame per move, not a
+    // leaked report. Checked in queuePointer rather than at the listener so
+    // the mouseleave path goes through the same gate.
+    if (!hoverReporting) return
     lastPointer = { x: pageX, y: pageY }
     if (rafPending.pointer) return
     rafPending.pointer = true
     raf(() => {
       rafPending.pointer = false
+      // Re-checked on the frame: a move queued a moment before the host
+      // switched x-ray off must not land after it.
+      if (!hoverReporting) return
       if (!lastPointer) {
         send({ ns: NS, type: 'pointer', pageX: 0, pageY: 0, hit: null })
         return
@@ -299,9 +340,15 @@ function install(): void {
   // the bridge REPORTS them. Capture phase, so a page handler that stops
   // propagation cannot make a click invisible to review; nothing is prevented
   // or retargeted — the page's own behaviour is untouched (D8).
+  //
+  // Silent under x-ray Off (#367): a click in a browser tab selects nothing, so
+  // there is nothing for the host to be told about. The listener stays attached
+  // — it never prevented or retargeted anything, and re-adding it on a mode
+  // change would move it later in the capture order than the page's own.
   document.addEventListener(
     'click',
     (event: MouseEvent) => {
+      if (!hoverReporting) return
       send({ ns: NS, type: 'contentClick', pageX: event.pageX, pageY: event.pageY, hit: hitAt(event.pageX, event.pageY) })
     },
     { capture: true, passive: true },

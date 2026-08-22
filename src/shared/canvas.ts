@@ -427,6 +427,29 @@ export type CanvasBridgeRequest =
   | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'elementAtPoint'; x: number; y: number }
   | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'inspect'; x: number; y: number }
   | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'resolveAnchors'; anchors: AnchorRef[] }
+  /**
+   * Ask the content to stop (or resume) emitting its unsolicited `pointer` and
+   * `contentClick` events — x-ray Off (#367).
+   *
+   * The only request that is not a question, and it is worth being precise
+   * about why it does not breach D8 ("content is never commanded to draw"): it
+   * can only make the bridge QUIETER. No value of `enabled` makes the page
+   * report more than it already would, draw anything, or change what it
+   * renders. Off means the page does no per-mousemove work at all, which is
+   * what "view it as a normal browser tab" has to mean to be worth having.
+   *
+   * It is not a security boundary in either direction. The bridge shares a
+   * realm with the page and may ignore this, so the HOST gates on the same mode
+   * (AgentCanvasPane's onPointer/onContentClick), and that gate is the one that
+   * decides what reaches the review store.
+   */
+  | { ns: typeof CANVAS_BRIDGE_NS; id: number; type: 'hoverReporting'; enabled: boolean }
+
+/** Reply to 'hoverReporting': what the bridge says it is now doing. Advisory —
+ *  the host enforces the mode itself and never needs this to be true. */
+export interface CanvasHoverReportingResult {
+  enabled: boolean
+}
 
 export interface CanvasSnapshotNode extends CanvasHitInfo {
   children: CanvasSnapshotNode[]

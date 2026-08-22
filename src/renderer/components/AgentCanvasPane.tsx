@@ -7,7 +7,9 @@ import { CanvasLibrary } from './CanvasLibrary'
 import CanvasSubjectPicker from './CanvasSubjectPicker'
 import CanvasFiledStrip from './CanvasFiledStrip'
 import CanvasNotesPanel from './CanvasNotesPanel'
+import CanvasXrayReadout from './CanvasXrayReadout'
 import { useCanvasStore } from '../stores/canvasStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import {
   MAX_RESOLVE_ANCHORS,
@@ -16,13 +18,23 @@ import {
   CanvasVersion,
   canvasContentUrl,
   type AnchorRef,
+  type CanvasHoverReportingResult,
 } from '../../shared/canvas'
 import { contentPageRectToStage, stageToContentPagePoint, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
 import { safeAnchorResolutions, safeInspectResult } from '../utils/canvas-geometry-guard'
 import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
-import { askCanvasFrame } from '../canvas/canvas-frame-rpc'
+import { askCanvasFrame, framesInFlight, MAX_FRAME_REQUESTS_IN_FLIGHT } from '../canvas/canvas-frame-rpc'
 import { createCanvasInboundChannel } from '../canvas/canvas-inbound-channel'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
+import {
+  CANVAS_XRAY_MODE_OPTIONS,
+  resolveCanvasXrayMode,
+  xrayClickSelects,
+  xrayDrawsOnPage,
+  xrayHoverIsLive,
+  xrayReadsOutInPanel,
+  type CanvasXrayMode,
+} from '../canvas/xray-mode'
 import { openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 import { relativeTime } from '../utils/relativeTime'
@@ -35,6 +47,44 @@ const MONO = "'JetBrains Mono', ui-monospace, monospace"
  *  loading. A 404, a CSP-blocked bridge script and a crashed page otherwise
  *  look exactly like a slow one — forever. */
 const FRAME_READY_TIMEOUT_MS = 8000
+
+/** How long the frame gets to acknowledge an x-ray mode change (#367). Short:
+ *  nothing waits on the answer — the host's own gate is what enforces the mode,
+ *  and this request only asks the page to stop doing work it need not do. */
+const HOVER_REPORTING_TIMEOUT_MS = 3000
+
+/** How many times one intent may be re-sent to a frame that will not confirm
+ *  it. The reconcile retries whenever a request settles without the frame
+ *  agreeing, so without a cap a page that answers wrongly (or a saturated RPC
+ *  cap) would set the host's call rate. A new document and a new intent each
+ *  reset it, so this bounds futile retries, never the feature. */
+const MAX_HOVER_REPORTING_ATTEMPTS = 3
+
+/** How long the reconcile waits before looking again when the request could not
+ *  be SENT at all — the frame's request channel was full, or the send window
+ *  below was spent. Both conditions clear on their own in well under a second,
+ *  so this is a pause, not a backoff. */
+const HOVER_REPORTING_RETRY_MS = 250
+
+/** How many times one attempt may be deferred that way before the pane stops
+ *  looking. Bounded because the timer is the HOST's own loop: without a cap a
+ *  frame that stays saturated would be polled for the life of the document. */
+const MAX_HOVER_REPORTING_DEFERRALS = 12
+
+/**
+ * The ceiling on hoverReporting requests actually posted to a frame in one
+ * rolling window — the flood budget for this channel.
+ *
+ * The per-intent attempt budget bounds futile RETRIES; it cannot bound a page
+ * that manufactures new intents. `ready` is a page-authored message and every
+ * `ready` is a new document with a fresh budget, so a page that simply re-emits
+ * it multiplied the host's send rate by the attempt budget — three requests
+ * became eighteen after five extra readys (independent review of #405). This
+ * bounds the rate whatever drives it; over the ceiling the reconcile waits for
+ * the window rather than spending an attempt.
+ */
+const MAX_HOVER_REPORTING_SENDS_PER_WINDOW = 12
+const HOVER_REPORTING_SEND_WINDOW_MS = 1000
 
 /** Wall-clock of a render, or null when the stored stamp will not parse. */
 function versionClock(iso: string): string | null {
@@ -216,6 +266,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
   const setActiveVersion = useCanvasStore((s) => s.setActiveVersion)
 
+  // X-ray hover mode (#367) — PER USER, so it comes from settings rather than
+  // from the canvas store where the per-canvas interaction mode lives. Every
+  // read goes through the resolver: an absent or hand-edited value is 'on'.
+  const xrayMode = resolveCanvasXrayMode(useSettingsStore((s) => s.settings.canvasXrayMode))
+
   const focus = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.focus ?? null)
   const marqueeArmed = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.marqueeArmed ?? false)
   const panelHighlight = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.panelHighlight ?? null)
@@ -227,7 +282,64 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const repinPendingRef = useRef(false)
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
   const modeRef = useRef(mode)
+  const xrayModeRef = useRef(xrayMode)
   const versionIdRef = useRef(version.id)
+  /**
+   * What the CURRENT document says it is doing about hover reporting. A bridge
+   * starts reporting, so a freshly loaded frame is `true` and only a mode that
+   * disagrees costs a round-trip. Written from the frame's ANSWER, never from
+   * the send.
+   *
+   * `'unknown'` is a real third state, not a spelling of `true`. A request that
+   * settles without a boolean — refused, timed out, answered with something the
+   * frame did not have to mean — leaves the host with NO account of what the
+   * frame is doing, and leaving the last belief standing there is a lie the
+   * reconcile then acts on: the bridge applies hoverReporting and only then
+   * replies (canvas/bridge), so an Off whose ack is dropped has quieted a frame
+   * the host still believes is loud. Flip to On and desire (true) matched
+   * belief (true), the reconcile short-circuited, and the frame stayed quiet for
+   * the life of the document — x-ray On drawing nothing and clicks selecting
+   * nothing, with no report left to repair from (fix-delta verification, #405).
+   * Unknown never equals what is wanted, so it always re-sends.
+   */
+  const frameHoverReportingRef = useRef<boolean | 'unknown'>(true)
+  /** One hoverReporting request in flight at a time. */
+  const hoverReportingPendingRef = useRef(false)
+  /**
+   * Which document the in-flight request is about.
+   *
+   * Bumped on every `ready`. An answer is only believed about the document it
+   * was asked of: an in-frame navigation replaces the bridge while a request is
+   * parked, and letting the old document's answer land on the new one's state
+   * re-opened the exact bug e608cf32 closed, through the other door (independent
+   * review of #405).
+   */
+  const frameGenerationRef = useRef(0)
+  /**
+   * Attempts spent on the current intent. A frame can refuse (the RPC's
+   * in-flight cap), time out, or answer something other than what it was asked
+   * — and the reconcile below retries — so something has to stop a page that
+   * will never comply from choosing the host's call rate. The budget belongs to
+   * one intent, so it bounds futile retries rather than the feature.
+   */
+  const hoverReportingAttemptsRef = useRef(0)
+  /** Which intent that budget belongs to: `<document generation>:<wanted>`. A
+   *  new document or a new answer to want is a new intent and a fresh budget.
+   *  Kept as one derived key so there is a single place that decides, rather
+   *  than a reset at each call site — `ready` and the effect that follows it
+   *  are the same intent, and resetting in both handed it a double budget. */
+  const hoverReportingIntentRef = useRef('')
+  /** How many times the CURRENT attempt has been deferred because the request
+   *  could not be posted at all. Reset when one is actually dispatched, and
+   *  with the intent. */
+  const hoverReportingDeferralsRef = useRef(0)
+  /** The one outstanding deferral timer, so a deferral cannot fan out. */
+  const hoverReportingRetryTimerRef = useRef<number | null>(null)
+  /** The rolling send window: requests posted since `start`. */
+  const hoverReportingWindowRef = useRef({ start: 0, sent: 0 })
+  /** Self-reference for the post-settle reconcile, held in a ref so the
+   *  recursion does not depend on which render's binding was captured. */
+  const syncHoverReportingRef = useRef<() => void>(() => {})
   /** One outstanding inspect per frame — a page-driven click cannot open a
    *  second one while the first is unanswered. */
   const inspectPendingRef = useRef(false)
@@ -256,6 +368,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
 
   viewportRef.current = viewport
   modeRef.current = mode
+  xrayModeRef.current = xrayMode
   versionIdRef.current = version.id
 
   // Keep the glass pinned to the content: scene scroll ≡ −content scroll at
@@ -301,6 +414,145 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     [canvasId, sessionId],
   )
 
+  /**
+   * Look again shortly, because the request could not be POSTED — not because
+   * the frame said anything. Deliberately not an attempt: an attempt is a thing
+   * the frame was actually asked, and spending the budget on a condition inside
+   * the HOST clears it in three microtasks and wedges the intent (see the
+   * dispatch checks below).
+   */
+  const deferHoverReconcile = useCallback(() => {
+    if (hoverReportingRetryTimerRef.current !== null) return
+    if (hoverReportingDeferralsRef.current >= MAX_HOVER_REPORTING_DEFERRALS) return
+    hoverReportingDeferralsRef.current += 1
+    hoverReportingRetryTimerRef.current = window.setTimeout(() => {
+      hoverReportingRetryTimerRef.current = null
+      syncHoverReportingRef.current()
+    }, HOVER_REPORTING_RETRY_MS)
+  }, [])
+
+  /** Requests still postable in the current send window, rolling it over when
+   *  it has expired. Reading it is what advances the window; posting is what
+   *  spends it. */
+  const hoverReportingSendBudget = useCallback((now: number) => {
+    const w = hoverReportingWindowRef.current
+    if (now - w.start >= HOVER_REPORTING_SEND_WINDOW_MS) {
+      w.start = now
+      w.sent = 0
+    }
+    return MAX_HOVER_REPORTING_SENDS_PER_WINDOW - w.sent
+  }, [])
+
+  // A deferral timer must not outlive the pane: it holds the reconcile, which
+  // would post into a frame the user has closed.
+  useEffect(() => {
+    return () => {
+      if (hoverReportingRetryTimerRef.current !== null) {
+        window.clearTimeout(hoverReportingRetryTimerRef.current)
+        hoverReportingRetryTimerRef.current = null
+      }
+    }
+  }, [])
+
+  /**
+   * Bring the frame's belief about hover reporting in line with the x-ray mode
+   * (#367).
+   *
+   * The host already ignores what it does not want, so this is not the gate —
+   * it is what makes Off free for the PAGE: a bridge told to stop does no hit
+   * test, no measurement and no postMessage per mousemove. Sent only when the
+   * frame's belief disagrees, so the common case (x-ray on, the bridge's own
+   * default) costs no round-trip at all.
+   *
+   * What the frame is doing is recorded from its ANSWER, never from the send. A
+   * request can be refused before it is ever posted — canvas-frame-rpc caps
+   * requests in flight at four, and a snapshot, an inspect and a resolveAnchors
+   * can already be outstanding when the user reaches for the switch — and
+   * marking it sent anyway left the host permanently certain it had quieted a
+   * frame that was never told (Copilot review, #405).
+   *
+   * And the reconcile happens when the request SETTLES, not when the page next
+   * reports. An earlier revision repaired from the symptom — a report arriving
+   * in a mode that wants none — which cannot see the failure that matters:
+   * flip the mode while a request is parked and the flip is dropped by the
+   * in-flight guard, the parked answer lands, and the frame stays quiet for the
+   * life of the document with x-ray showing nothing at all. Silence is not a
+   * symptom, so nothing is allowed to wait for one (independent review, #405).
+   */
+  const syncHoverReporting = useCallback(() => {
+    const enabled = xrayHoverIsLive(xrayModeRef.current)
+    // Recorded BEFORE the nothing-to-do check, so that passing through a mode
+    // the frame already agrees with still counts as changing the intent. Keyed
+    // after it, "Off (gave up) -> On -> Off" read as the same intent as the
+    // first Off and the second one got no attempts at all — the user asking
+    // again is the clearest signal there is that they want it to work.
+    const intent = `${frameGenerationRef.current}:${enabled}`
+    if (hoverReportingIntentRef.current !== intent) {
+      hoverReportingIntentRef.current = intent
+      hoverReportingAttemptsRef.current = 0
+      hoverReportingDeferralsRef.current = 0
+    }
+    // Unknown is never equal to what is wanted, so a frame the host has no
+    // account of is always asked again rather than short-circuited here.
+    if (frameHoverReportingRef.current === enabled) return
+    if (hoverReportingPendingRef.current) return
+    if (hoverReportingAttemptsRef.current >= MAX_HOVER_REPORTING_ATTEMPTS) return
+    const target = iframeRef.current?.contentWindow
+    if (!target) return
+    // ── Two ways the request cannot be posted AT ALL, neither of which is the
+    //    frame's doing, and neither of which spends an attempt.
+    //
+    // The first is the RPC's in-flight cap: over it the request is refused
+    // before a listener exists, and that refusal is a synchronous rejection —
+    // which the post-settle reconcile below then fires on, spending the whole
+    // budget in three microtasks on a condition that clears in milliseconds.
+    // (Reachable: the resolution pass has no in-flight guard of its own, so a
+    // few note edits inside its ten-second window saturate the cap.) The
+    // second is this channel's own send window. Both clear on their own, so the
+    // reconcile waits for them instead of counting them against the frame
+    // (fix-delta verification, #405).
+    if (framesInFlight(target) >= MAX_FRAME_REQUESTS_IN_FLIGHT || hoverReportingSendBudget(Date.now()) <= 0) {
+      deferHoverReconcile()
+      return
+    }
+    const generation = frameGenerationRef.current
+    hoverReportingPendingRef.current = true
+    hoverReportingAttemptsRef.current += 1
+    hoverReportingDeferralsRef.current = 0
+    hoverReportingWindowRef.current.sent += 1
+    askCanvasFrame(target, canvasId, { type: 'hoverReporting', enabled }, HOVER_REPORTING_TIMEOUT_MS)
+      .then(
+        (raw) => {
+          // Believed only about the document it was asked of, and only as the
+          // frame's own account of itself — the reply is page-authored, so a
+          // non-boolean is no answer at all and the host is left not knowing.
+          if (generation !== frameGenerationRef.current) return
+          const answered = (raw as CanvasHoverReportingResult | null | undefined)?.enabled
+          frameHoverReportingRef.current = typeof answered === 'boolean' ? answered : 'unknown'
+        },
+        () => {
+          /* Never landed: refused by the in-flight cap, a frame mid-navigation,
+             a page that answers nothing, an ack lost or too late. The bridge
+             APPLIES the change and only then replies, so a request that does
+             not come back leaves the host with no account of the frame at all —
+             recorded as exactly that, because carrying the old belief forward is
+             what let a dropped ack strand the frame quiet for the life of the
+             document. The mode still holds meanwhile: the host-side gate is what
+             enforces it, not this request. */
+          if (generation !== frameGenerationRef.current) return
+          frameHoverReportingRef.current = 'unknown'
+        },
+      )
+      .finally(() => {
+        // Cleared for EVERY generation: a stale answer that is no longer
+        // believed must still release the in-flight slot, or one navigation
+        // mid-request would wedge the switch for the life of the pane.
+        hoverReportingPendingRef.current = false
+        syncHoverReportingRef.current()
+      })
+  }, [canvasId, deferHoverReconcile, hoverReportingSendBudget])
+  syncHoverReportingRef.current = syncHoverReporting
+
   const handleReportedKey = useCallback(
     (key: string) => {
       const store = useCanvasReviewStore.getState()
@@ -332,6 +584,20 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         onReady: () => {
           bridgeReadyRef.current = true
           setBridgeReady(true)
+          // Every `ready` is a NEW document with a NEW bridge, and a new bridge
+          // reports by default. An in-frame navigation (a link inside the
+          // content) replaces the document without changing `contentUrl` or the
+          // reload nonce, so this is the ONLY signal that the frame has
+          // forgotten what it was told — without the reset, x-ray Off stopped
+          // quieting the page after the first link click, and the pane looked
+          // right only because the host gate was still dropping the reports
+          // (Copilot review, #405).
+          //
+          // The generation bump is what stops the PREVIOUS document's parked
+          // answer from landing on this one's state and undoing this reset.
+          frameGenerationRef.current += 1
+          frameHoverReportingRef.current = true
+          syncHoverReporting()
         },
         onViewport: (vp) => {
           setViewport(vp)
@@ -339,17 +605,31 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           viewportRef.current = vp
           repinGlass()
         },
-        onPointer: (hit) => setHover(hit ? { hit } : null),
+        // X-ray Off is enforced HERE, not only by the request that asked the
+        // bridge to go quiet (#367). The bridge shares a realm with the page it
+        // reports on and may ignore that request — or never have received it —
+        // so the mode the user chose is applied to what actually arrives.
+        onPointer: (hit) => {
+          if (!xrayHoverIsLive(xrayModeRef.current)) {
+            setHover(null)
+            return
+          }
+          setHover(hit ? { hit } : null)
+        },
         onContentClick: (pageX, pageY) => {
           // Click-to-lock (spec §6 step 3) — browse mode only; in draw mode the
           // glass owns the pointer and a frame click cannot happen anyway.
+          // Under x-ray Off a click selects nothing: the page was asked for as a
+          // normal browser tab, and a tab does not turn a click into a selection
+          // (#367 left this open; see xrayClickSelects).
+          if (!xrayClickSelects(xrayModeRef.current)) return
           if (modeRef.current === 'browse') void inspectAndLock(pageX, pageY)
         },
         onContentKey: handleReportedKey,
         onFlood: () => setBridgeFlooded(true),
       },
     })
-  }, [repinGlass, canvasId, inspectAndLock, handleReportedKey])
+  }, [repinGlass, canvasId, inspectAndLock, handleReportedKey, syncHoverReporting])
 
   // The same two keys, host-side, for when the HOST document has keyboard
   // focus (after touching the panel or the chrome). Never while typing.
@@ -368,9 +648,28 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     return () => window.removeEventListener('keydown', onKey)
   }, [sessionId, handleReportedKey])
 
+  // The user changed the mode: bring the frame in line with it. (A frame that
+  // is not ready yet is told on its `ready` instead — see the channel above.)
+  useEffect(() => {
+    if (!bridgeReady) return
+    syncHoverReporting()
+  }, [xrayMode, bridgeReady, syncHoverReporting])
+
+  // Switching x-ray off drops whatever was hovered at that instant, so nothing
+  // is left painted over a page the user just asked to see plainly.
+  useEffect(() => {
+    if (!xrayHoverIsLive(xrayMode)) setHover(null)
+  }, [xrayMode])
+
   // New version (or a retry) → the frame reloads; bridge state starts over.
   useEffect(() => {
     bridgeReadyRef.current = false
+    // Bumped for the same reason `ready` bumps it: this is a NEW document, and
+    // the request parked against the old one must not land on the reset below
+    // and undo it. (The reset without the bump was the one place the two were
+    // not kept together — fix-delta verification, #405.)
+    frameGenerationRef.current += 1
+    frameHoverReportingRef.current = true
     setBridgeReady(false)
     setViewport(null)
     setHover(null)
@@ -526,6 +825,17 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     return contentPageRectToStage(hover.hit.box, viewport)
   }, [hover, viewport])
 
+  /** Which layer the pointer is on — the same three-way the glass and marquee
+   *  layers are wired from, named once so the stealth readout can tell the user
+   *  why hovering the content is doing nothing. */
+  const pointerOwner = marqueeArmed ? 'marquee' : mode === 'draw' ? 'glass' : 'content'
+
+  /** The hover box AS PAINTED on the stage. Null in every posture that must
+   *  leave the content alone — the glass owning the pointer, a marquee being
+   *  dragged, and now x-ray Stealth and Off (#367), where the hover is either
+   *  read out beside the stage or not resolved at all. */
+  const stageHoverRect = mode === 'browse' && !marqueeArmed && xrayDrawsOnPage(xrayMode) ? hoverStageRect : null
+
   const focusStageRect = useMemo(() => {
     if (!focus || !viewport) return null
     return contentPageRectToStage(focus.bboxPage, viewport)
@@ -560,11 +870,29 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // review); the leftover chrome is hidden by the glass-scoped CSS.
   const glassUIOptions = useMemo(() => ({ welcomeScreen: false, tools: { image: false } }), [])
 
+  // What Browse actually does depends on the x-ray mode now, and the strip is
+  // the only thing that says so — a user who switched x-ray off and still read
+  // "hover to inspect, click to select" would reasonably think it had failed.
+  const browseHint =
+    xrayMode === 'off'
+      ? 'the page is live and plain — x-ray is off, so hovering and clicking do nothing here'
+      : xrayMode === 'stealth'
+        ? 'the page is live — hovering names the element in the panel and draws nothing · click to select · ↑ parent · Esc clear'
+        : 'the page is live — hover to inspect, click to select · ↑ parent · Esc clear'
+
   const modeStrip = marqueeArmed
     ? { color: 'text-peach', label: 'Region', hint: 'drag a rectangle over the area — Esc cancels' }
     : mode === 'draw'
       ? { color: 'text-mauve', label: 'Draw', hint: 'sketch on the glass; select strokes, then attach them to a note' }
-      : { color: 'text-blue', label: 'Browse', hint: 'the page is live — hover to inspect, click to select · ↑ parent · Esc clear' }
+      : { color: 'text-blue', label: 'Browse', hint: browseHint }
+
+  /** Per USER, so it is written straight to settings rather than to any canvas
+   *  state (#367). Fire-and-forget: the store applies the change synchronously
+   *  and the persist is the config saver's problem, exactly as every other
+   *  settings toggle in the app does it. */
+  const setXrayMode = (next: CanvasXrayMode) => {
+    void useSettingsStore.getState().updateSettings({ canvasXrayMode: next })
+  }
 
   const segmentClass = (active: boolean) =>
     `px-2.5 py-[5px] rounded text-[11.5px] font-medium leading-none transition-colors focus-ring disabled:opacity-40 ${
@@ -706,6 +1034,32 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             Region
           </button>
         </div>
+        {/* X-ray (#367) — whether pointing at the page marks it up, names it
+            quietly beside the stage, or does nothing at all. Beside the mode
+            switch because the two together are the whole answer to "what
+            happens when I move the mouse over this". */}
+        <span className="shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]" aria-hidden="true">
+          X-ray
+        </span>
+        <div
+          className="shrink-0 flex items-center gap-[2px] p-[2px] rounded-md bg-[var(--surface-panel)] border border-[var(--border-subtle)]"
+          role="group"
+          aria-label="Canvas x-ray hover"
+          data-testid="canvas-xray-mode"
+        >
+          {CANVAS_XRAY_MODE_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => setXrayMode(option.value)}
+              aria-pressed={xrayMode === option.value}
+              className={segmentClass(xrayMode === option.value)}
+              title={option.title}
+              data-testid={`canvas-xray-${option.value}`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
         <button
           onClick={() => togglePane(sessionId)}
           aria-label="Close Agent Canvas"
@@ -790,14 +1144,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               Clipped to the stage so a box for offscreen page coords cannot
               paint over the surrounding chrome. */}
           <div className="absolute inset-0 pointer-events-none overflow-hidden" data-canvas-layer="overlay">
-            {mode === 'browse' && !marqueeArmed && hoverStageRect && (
+            {stageHoverRect && (
               <div
                 className="absolute border-2 border-blue rounded-sm"
                 style={{
-                  left: hoverStageRect.x,
-                  top: hoverStageRect.y,
-                  width: hoverStageRect.width,
-                  height: hoverStageRect.height,
+                  left: stageHoverRect.x,
+                  top: stageHoverRect.y,
+                  width: stageHoverRect.width,
+                  height: stageHoverRect.height,
                   background: 'color-mix(in srgb, var(--color-blue) 12%, transparent)',
                 }}
               />
@@ -862,12 +1216,12 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 }}
               />
             )}
-            {mode === 'browse' && !marqueeArmed && hoverStageRect && (
+            {stageHoverRect && (
               <div
                 className="absolute px-1.5 py-0.5 text-[10px] rounded bg-crust text-text border border-surface1 whitespace-nowrap max-w-[60%] overflow-hidden text-ellipsis"
                 style={{
-                  left: Math.max(0, hoverStageRect.x),
-                  top: Math.max(0, hoverStageRect.y - 22),
+                  left: Math.max(0, stageHoverRect.x),
+                  top: Math.max(0, stageHoverRect.y - 22),
                 }}
                 // Every word of this chip — role, name, tag, ux-id — is the
                 // frame's `pointer` report about itself, so it is marked like
@@ -962,14 +1316,30 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           </div>
         </div>
 
-        {/* Notes panel — docked (spec D3). */}
-        <CanvasNotesPanel
-          sessionId={sessionId}
-          version={version}
-          getGlassApi={() => glassApiRef.current}
-          onReturnToTerminal={() => togglePane(sessionId)}
-          isActive={isActive}
-        />
+        {/* Notes panel — docked (spec D3) — with the stealth x-ray readout
+            below it when that mode is on (#367). The readout is a SIBLING, not
+            a section of the panel: it belongs to the stage's pointer, not to
+            the review, and keeping it out means the panel's own file is
+            untouched by this change. The panel keeps its own width and left
+            border; this column just stacks the two. */}
+        <div className="shrink-0 flex flex-col min-h-0">
+          <div className="flex-1 min-h-0 flex">
+            <CanvasNotesPanel
+              sessionId={sessionId}
+              version={version}
+              getGlassApi={() => glassApiRef.current}
+              onReturnToTerminal={() => togglePane(sessionId)}
+              isActive={isActive}
+            />
+          </div>
+          {xrayReadsOutInPanel(xrayMode) && (
+            <CanvasXrayReadout
+              hit={pointerOwner === 'content' ? (hover?.hit ?? null) : null}
+              label={hoverLabel}
+              pointerOwner={pointerOwner}
+            />
+          )}
+        </div>
       </div>
     </div>
   )
