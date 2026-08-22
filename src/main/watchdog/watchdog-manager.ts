@@ -180,14 +180,18 @@ export class WatchdogManager {
   // not further loaded by every session ticking at the base rate. Bounded curve:
   // 0 stalls -> base (5s); each stall adds half the base; capped at 30s.
   private computeTickMs(stalls: number): number {
-    const widened = TICK_INTERVAL_MS * (1 + Math.min(Math.max(stalls, 0), 12) * 0.5)
+    // Guard a non-finite stall count (NaN/Infinity from a misbehaving reader):
+    // Math.min/max would propagate NaN and produce a bad delay, so treat it as 0.
+    const s = Number.isFinite(stalls) ? stalls : 0
+    const widened = TICK_INTERVAL_MS * (1 + Math.min(Math.max(s, 0), 12) * 0.5)
     return Math.min(MAX_TICK_INTERVAL_MS, Math.round(widened))
   }
 
   // Returns true when the silent state flipped, so the tick can fire one
-  // onHealthChange for the whole pass.
-  private evaluateSilence(entry: Entry): boolean {
-    const window = this.silenceWindowMs()
+  // onHealthChange for the whole pass. The window is read ONCE per tick pass by
+  // the caller (run) and passed in, so a busy tick does not re-read+parse the
+  // settings file per session per tick (which would undercut the throttle).
+  private evaluateSilence(entry: Entry, window: number): boolean {
     const next = window > 0 && (this.now() - entry.lastDataAt) > window
     if (next === entry.silent) return false
     entry.silent = next
@@ -219,23 +223,29 @@ export class WatchdogManager {
     const run = () => {
       this.tickTimer = null
       let silenceChanged = false
+      // Read the silence window ONCE per pass (fix #4): evaluateSilence must not
+      // re-read+parse the settings file per session per tick.
+      const window = this.silenceWindowMs()
       for (const [sessionId, entry] of this.entries) {
+        // Guard the WHOLE per-entry body (tick + silence) so one session's throw
+        // cannot kill the shared tick for every other session (fix #5).
         try {
           entry.wd.tick()
+          if (this.evaluateSilence(entry, window)) silenceChanged = true
         } catch (err) {
           logError(`[watchdog] tick() threw for ${sessionId}`, err)
         }
-        if (this.evaluateSilence(entry)) silenceChanged = true
       }
       if (silenceChanged) { try { this.host.onHealthChange?.() } catch { /* host gone */ } }
-      this.lastStalls = this.readStalls()
+      // A throwing stall reader must not kill the tick either (fix #5).
+      try { this.lastStalls = this.readStalls() } catch { /* keep the last value */ }
       this.currentTickMs = this.computeTickMs(this.lastStalls)
       if (this.entries.size > 0) {
         this.tickTimer = this.setTimer(run, this.currentTickMs)
         this.tickTimer.unref?.()
       }
     }
-    this.lastStalls = this.readStalls()
+    try { this.lastStalls = this.readStalls() } catch { /* keep the last value */ }
     this.currentTickMs = this.computeTickMs(this.lastStalls)
     this.tickTimer = this.setTimer(run, this.currentTickMs)
     this.tickTimer.unref?.()

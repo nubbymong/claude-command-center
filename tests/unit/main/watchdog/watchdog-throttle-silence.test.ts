@@ -44,6 +44,7 @@ vi.mock('../../../../src/main/hooks/index', () => ({
 }))
 
 const { WatchdogManager } = await import('../../../../src/main/watchdog/watchdog-manager')
+const { readConfig } = await import('../../../../src/main/config-manager')
 
 let stalls = 0
 function makeHost() {
@@ -83,6 +84,35 @@ describe('watchdog throttle (loop-stall driven)', () => {
     const snap = m.getMonitorSnapshot()
     expect(snap.throttle.stallsLastMin).toBe(12)
     expect(snap.throttle.tickMs).toBe(30000) // 5000*(1+12*0.5)=35000 -> capped
+  })
+
+  it('guards a non-finite stall count so the delay stays finite (fix #6)', () => {
+    const m = new WatchdogManager({ ...makeHost(), getStalls: () => NaN })
+    m.startWatchdog('s1')
+    vi.advanceTimersByTime(5000)
+    const tickMs = m.getMonitorSnapshot().throttle.tickMs
+    expect(Number.isFinite(tickMs)).toBe(true)
+    expect(tickMs).toBe(5000) // NaN -> treated as 0 stalls -> base cadence
+  })
+
+  it('a throwing stall reader does not kill the shared tick (fix #5)', () => {
+    watchdogSettings = { enabled: true, silenceWindowMs: 7000 }
+    const m = new WatchdogManager({ ...makeHost(), getStalls: () => { throw new Error('boom') } })
+    m.startWatchdog('s1')          // setup readStalls is guarded -> must not throw
+    m.feedData('s1', 'x')         // lastDataAt = 0
+    vi.advanceTimersByTime(5000)  // tick1: 5000<7000 not silent; readStalls throws (caught)
+    vi.advanceTimersByTime(5000)  // tick2 must still fire -> silent at t=10000
+    expect(m.getMonitorSnapshot().sessions[0].silent).toBe(true)
+  })
+
+  it('reads the silence window once per tick pass, not per session (fix #4)', () => {
+    watchdogSettings = { enabled: true, silenceWindowMs: 1000 }
+    const m = new WatchdogManager(makeHost())
+    m.startWatchdog('s1'); m.startWatchdog('s2'); m.startWatchdog('s3')
+    ;(readConfig as unknown as { mockClear: () => void }).mockClear()
+    vi.advanceTimersByTime(5000) // one tick pass over 3 sessions
+    // fix: the window is read ONCE for the pass; the reverted per-session read is 3.
+    expect((readConfig as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(1)
   })
 })
 
