@@ -622,6 +622,19 @@ step(6, TOTAL_STEPS, 'Checking for stale GitHub release...')
 try {
   const existing = run(`gh release view ${tag} --json tagName -q .tagName 2>&1 || echo ""`)
   if (existing.trim() === tag) {
+    // Re-run the gate IMMEDIATELY before the destructive delete. The gate ran at
+    // Step 2, but commit/tag/push happened since; a milestone issue opened in
+    // that window would let us delete the last good release for this tag and
+    // then have CI's own gate refuse to build a replacement, leaving no release
+    // at all (#375 review). Re-checking here closes that window to ~zero — and
+    // CI's gate job is still the authoritative backstop before any build.
+    console.log(`      Re-checking the release gate before deleting ${tag}...`)
+    try {
+      runInherit(`node scripts/release-gate.mjs --version ${version}`)
+    } catch {
+      fail(`RELEASE GATE REFUSED v${version} before the stale-release delete — the existing ${tag} release is left intact.\n      ` +
+        'Resolve the open milestone issues (or label them "excluded") and re-run.')
+    }
     warn(`A release for ${tag} already exists — deleting so the workflow can recreate cleanly`)
     run(`gh release delete ${tag} --yes`)
     ok('Stale release deleted (tag preserved)')

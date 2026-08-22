@@ -46,11 +46,33 @@ jobs:
         with:
           node-version: '20'
 
+      # The milestone the gate checks is the one for the tag actually being cut,
+      # not the bare package.json version. Same tag logic as the build job's
+      # "Determine version" step, so on a rolling re-release (bare version +
+      # channel) the gate checks the channel-suffixed milestone rather than a
+      # different one — kept in lockstep with that step (#375 review).
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          CHANNEL="${{ inputs.channel }}"
+          if [[ "$VERSION" == *-* ]]; then
+            TAG="v${VERSION}"
+          else
+            case "$CHANNEL" in
+              beta) TAG="v${VERSION}-beta" ;;
+              dev)  TAG="v${VERSION}-dev"  ;;
+              *)    TAG="v${VERSION}"      ;;
+            esac
+          fi
+          echo "milestone=${TAG#v}" >> $GITHUB_OUTPUT
+
       - name: Refuse to cut with open milestone issues or a stale model registry
         continue-on-error: ${{ inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/release-gate.mjs
+        run: node scripts/release-gate.mjs --version ${{ steps.version.outputs.milestone }}
 
   # ── Build Windows installer ──
   build-windows:
