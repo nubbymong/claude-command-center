@@ -1,8 +1,8 @@
 # ADR-018 — One-row command bar: Core · Global · Session, sections on the row, Notes in Core, hideable Core tools, a small Custom Commands settings page
 
-- **Status:** Draft — design approved by the owner on the Agent Canvas ("Command bar — one row", v7, 2026-08-21); finalised with the first PR
-- **Date:** 2026-08-21
-- **Issues:** #358 (bar), #359 (dialog look), #380 (Notes in Core), #381 (hide + Settings)
+- **Status:** Accepted — design approved by the owner on the Agent Canvas ("Command bar — one row", v8, 2026-08-21: R2 "OK this is good enough now", R3 "Approved"); built on `feat/command-bar-one-row` (2026-08-22)
+- **Date:** 2026-08-21 (finalised 2026-08-22)
+- **Issues:** #358 (bar), #359 (dialog look), #380 (Notes in Core), #381 (hide + Settings), #382 (welcome page for the upgrade)
 - **Supersedes:** the row model shipped in #345 ("the row is the truth") — the truth moves from the row to the chip
 
 ## Context
@@ -36,7 +36,7 @@ Ground truth established by the read-only multi-agent investigation (file:line a
 
 **D7 — Drag.** `reorderCommands(movedId, band, beforeId|null)` rewrites one band's ordinals and saves immediately. Four drops: within a band = reorder (explicit end-of-band slot); Session→Global = widening scope change, confirmed; Global→Session = narrowing (keep only here), confirmed with the count; onto a section = the only path that writes `sectionId`. Core is a no-drop zone; Core tools are not draggable into bands. Bar height is frozen while dragging. Keyboard parity: Alt+←/→ within, Alt+Shift+←/→ across (same confirm); mirrored in the menu as Move ▸.
 
-**D8 — Overflow.** A persisted user setting `overflow = 'fold' | 'wrap2'`, default `'fold'` (one row; the remainder folds into a per-band "N more" pill with a filterable popover; Global folds first, Session last, pinned never). `'wrap2'` wraps to at most a second row, bands contiguous, then folds. No "wrap freely", no horizontal scroll. Layout recomputed only on resize and add/delete/pin/drop, with hysteresis.
+**D8 — Overflow.** A persisted user setting `overflow = 'fold' | 'wrap2'`, default `'fold'` (one row; the remainder folds into a per-band "N more" pill with a filterable popover; Global folds first, Session last, pinned never). `'wrap2'` wraps to at most a second row, bands contiguous, then folds. No "wrap freely", no horizontal scroll. Layout recomputed only on resize and add/delete/pin/drop, with hysteresis. *Priority is by band, not geometry:* when the row overflows, the room is taken from the Global band's end even when its own chips fit, and the pill's width is reserved — the first cut measured every band against the same un-folded layout and never unfolded, so the band meant to fold last folded first.
 
 **D9 — Sections on the row + hiding.** A user section is an inline chip group (coloured label + chips), renameable in place, movable by dragging its label, deletable (keeps its buttons); "Collapse to a chip" is an option backed by the existing `collapsedSectionIds`. Sections created in the Global band are scope `global` (possible for the first time). Core tools get their own context menu (own actions first · Hide this tool ▸ In this session / Everywhere · Move); "In this session" = the live session; "Everywhere" persists; a confirm for Partner and for Canvas/Browser while their pane is open (the pane closes first); "Show hidden tools ▸" in the empty-bar menu; `loggingEnabled` takes precedence over a hide of Logs.
 
@@ -63,15 +63,19 @@ Ground truth established by the read-only multi-agent investigation (file:line a
 - M2 Sections: a section named "Global" (case-insensitive) whose members are all global-scope is dissolved (members keep order, `sectionId` cleared); otherwise renamed "Global (yours)" with a one-time line; `target` ignored from this release, removed from the type one release later.
 - M3 `commandBarUi`: existing fields carry forward; new fields default (`overflow: 'fold'`, `hiddenCoreTools` empty); hydration cast widened; `reconcile()` drops dead `sess:` keys.
 - M4 Snap settings keep their store; Settings becomes the editor; Snap's right-click deep-links.
-- M5 Notes: no store change; the header chips and lock-plus are removed.
+- M5 Notes: no store change; the header chips and lock-plus are removed. The popover says "added …", not "edited …": the notes index keeps only `createdAt` (preserved on save); an `updatedAt` would be a main/IPC change for cosmetics and is deferred.
 - M6 Upgrade review (D13): run once after M1–M2, tags written to `commands.json` as `needsReview`; cleared per command on fix or dismiss; a fresh install has nothing to review.
 
 ## Security notes
 
 - No change to how a command line is built or typed (`buildCommandLine`, PTY argv) — not ADR-009 territory by itself.
-- ADR-009 applies only if the work touches `src/main/ipc/**` / `src/preload/**` (the optional removal of the unused plaintext `credentials.load` bridge, or any names-only list channel if a secrets tidy list is ever added) — run once over the finished stack, bounded to those files plus the dialog's secret path and the deletion sweeps.
+- ADR-009 applies because the work removes the unused plaintext `credentials:load` bridge (`src/preload/index.ts`, `src/main/index.ts`, `src/shared/ipc-channels.ts`, `src/renderer/types/electron.d.ts`) — one pass over the finished branch, bounded to those files plus the dialog's secret path (the review banner's "Make this argument a secret" moves a value into the keychain and `{secret}` into the line) and the deletion sweeps (a deleted command's keychain entry).
 - The secret toggle is hidden wherever `canDeliverSecret(target)` is false, so a command never runs with an empty credential unannounced.
 - Notes: content is decrypted only inside the open dialog, exactly as today; the count and the popover use the existing names-only `notes.list`.
+
+## Delivery note (2026-08-22)
+
+One PR carries #358 + #359 + #380 + #381 as three logical commits (bar + dialog · Notes · Settings/hide) instead of three stacked PRs: `CommandBar.tsx` holds the Notes and Snap wiring, so a stack could not be built without hand-splitting one file. Review is per commit; one ADR-009 pass; #382 (the welcome page) rides the same PR.
 
 ## Owner decisions (taken 2026-08-21, first option of each unless the owner says otherwise)
 
