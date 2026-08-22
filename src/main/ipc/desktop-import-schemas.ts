@@ -19,6 +19,19 @@ import { MAX_TRANSCRIPT_CHARS } from '../../shared/desktop-import'
 export const pasteSchema = z.string().min(1).max(MAX_TRANSCRIPT_CHARS + 1024)
 export const urlSchema = z.string().min(1).max(2048)
 
+// The account whose authenticated claude.ai partition a share fetch runs on
+// (#216). Must match webPartitionForProfile's own guard exactly — the value is
+// interpolated into the partition name `persist:claude-web-<profileId>`, so a
+// loose id would be a partition-name injection. Optional: the default account
+// has no per-profile web session and fetches public shares only.
+export const profileIdSchema = z.string().regex(/^profile-[a-z0-9-]{1,64}$/)
+
+/** Args for the share-import IPC channel: the link, plus the optional account. */
+export const fromShareArgsSchema = z.object({
+  url: urlSchema,
+  profileId: profileIdSchema.optional(),
+})
+
 /**
  * The transcript the renderer hands back for brief generation. It came FROM us,
  * but it round-tripped through the renderer, so it is re-validated as untrusted.

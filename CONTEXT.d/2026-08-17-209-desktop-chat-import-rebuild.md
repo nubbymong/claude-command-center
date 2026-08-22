@@ -86,3 +86,35 @@ sync. A fresh re-attack against the patched code is still owed before merge.
 
 Moved from release-2.1 to release-2.2 (#224/#209): the feature is being extended for 2.2 to reuse
 #216's per-account claude.ai web session for org-scoped share import (see the follow-up below).
+
+## 2026-08-22 -- leverage #216: org-scoped share import on the authenticated session
+
+The share-link import fetched on a FIXED partition `persist:claude-web-import` that nothing
+ever signs into -- a dead partition -- so it could only ever pull PUBLIC shares, and the UI
+told users org shares were impossible ("tracked in #216"). #216 landed a per-account claude.ai
+web session in `persist:claude-web-<profileId>`. This rewires the import onto it.
+
+- `fetchText(url, partition, timeoutMs)` now takes the partition explicitly (was hardcoded).
+- `importFromShareLink(url, profileId?)` runs on `webPartitionForProfile(profileId)` when an
+  account is given (org-scoped share resolves as that member), else the neutral public
+  partition. `partitionForImport` is the exported chooser; webPartitionForProfile's
+  `^profile-[a-z0-9-]{1,64}$` guard is the sink against partition-name injection.
+- IPC: `DESKTOP_IMPORT_FROM_SHARE` now takes `{url, profileId?}`, validated by
+  `fromShareArgsSchema` (profileId is charset-gated). preload `fromShare(url, profileId?)`.
+- Renderer: the in-session DesktopImportDialog passes `session.profileId` to DesktopImportTab,
+  which forwards it to the fetch and tailors the share-tab copy (org shares now work when the
+  account is signed in; the default account stays public-only). The sign-in hint now points at
+  the real #216 sign-in (right-click session -> Authenticate claude.ai) instead of "not yet
+  possible".
+
+Security note: the fetch now carries the member's REAL claude.ai cookies, so the `redirect:'error'`
+guard added earlier is load-bearing (tested) and profileId is strictly validated before it can
+reach a partition name (tested). This grew the attack surface -> the owed re-attack MUST cover it.
+
+DELIBERATELY NOT DONE (own follow-up ticket): a "fetch a conversation by id" capture mode via
+claude.ai's private API. That is net-new, undocumented-API, ToS-adjacent surface -- not a
+rewiring -- and "artifacts" support is only a viewer window (openArtifacts opens a claude.ai
+tab; there is no fetch/list primitive to reuse). So the leverage here is the authenticated
+PARTITION, not any artifact-fetch code.
+
+Gate: typecheck clean (3 tsconfigs), 6196 unit tests pass, changelog in sync.

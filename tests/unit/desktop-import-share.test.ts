@@ -18,6 +18,7 @@ const {
   isShareUrl,
   looksSignedOut,
   parseSharePage,
+  partitionForImport,
   shareUuid,
   textOf,
 } = await import('../../src/main/desktop-import/share-link')
@@ -145,18 +146,38 @@ describe('the share fetch runs on the claude.ai partition, not the default sessi
   // removed because it cannot complete SSO in a managed environment. #216 fills
   // it from a system-browser handoff, and when it does, org-scoped shares start
   // working through this same code path with no change here.
-  it('names the claude.ai import partition and sends its cookies', () => {
+  it('runs on the partition it is handed, sends its cookies, and refuses redirects', () => {
     netRequest.mockReturnValue({ on: vi.fn(), end: vi.fn(), abort: vi.fn() })
-    void fetchText('https://claude.ai/share/' + UUID)
+    void fetchText('https://claude.ai/share/' + UUID, 'persist:claude-web-profile-x')
 
     expect(netRequest).toHaveBeenCalledTimes(1)
     const opts = netRequest.mock.calls[0][0]
-    expect(opts.partition).toBe(CLAUDE_WEB_PARTITION)
+    expect(opts.partition).toBe('persist:claude-web-profile-x')
     expect(opts.useSessionCookies).toBe(true)
+    // #209 hardening: a cookie-bearing fetch must not follow a redirect.
+    expect(opts.redirect).toBe('error')
+  })
+})
+
+// #216: the share fetch runs on the account's authenticated partition when a
+// profileId is supplied, so an org-scoped share resolves as the signed-in member;
+// without one it falls back to the neutral public partition.
+describe('partitionForImport (#216 web-session reuse)', () => {
+  it('uses the per-account authenticated partition for a valid profileId', () => {
+    expect(partitionForImport('profile-abc123')).toBe('persist:claude-web-profile-abc123')
   })
 
-  it('pins the partition name #216 will populate', () => {
+  it('falls back to the neutral public partition with no account', () => {
+    expect(partitionForImport()).toBe(CLAUDE_WEB_PARTITION)
     expect(CLAUDE_WEB_PARTITION).toBe('persist:claude-web-import')
+  })
+
+  it('throws on a malformed profileId rather than building a partition name from it', () => {
+    // The value is interpolated into the partition name; a loose id would be a
+    // partition-name injection. webPartitionForProfile's guard is the sink.
+    for (const bad of ['../evil', 'profile-BAD', 'notaprofile', 'profile-', 'profile-x/y']) {
+      expect(() => partitionForImport(bad)).toThrow()
+    }
   })
 })
 

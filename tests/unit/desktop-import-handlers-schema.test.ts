@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest'
 // The schemas live in their own electron-free module (desktop-import-schemas.ts)
 // exactly so this boundary is testable without the handler's subprocess/electron
 // import graph (#209 adversarial review).
-import { transcriptSchema, writeBriefArgsSchema } from '../../src/main/ipc/desktop-import-schemas'
+import { transcriptSchema, writeBriefArgsSchema, fromShareArgsSchema } from '../../src/main/ipc/desktop-import-schemas'
 import { MAX_TRANSCRIPT_CHARS } from '../../src/shared/desktop-import'
 
 function msg(text: string) {
@@ -90,5 +90,23 @@ describe('writeBriefArgsSchema absolute-path requirement (#209 wrong-root guard)
   it('rejects markdown over the 4MB cap', () => {
     const p = process.platform === 'win32' ? 'C:\\x' : '/x'
     expect(writeBriefArgsSchema.safeParse({ workingDirectory: p, markdown: 'a'.repeat(4_000_001) }).success).toBe(false)
+  })
+})
+
+describe('fromShareArgsSchema profileId validation (#216 partition-injection guard)', () => {
+  const url = 'https://claude.ai/share/11111111-2222-3333-4444-555555555555'
+
+  it('accepts a bare url (public, default account)', () => {
+    expect(fromShareArgsSchema.safeParse({ url }).success).toBe(true)
+  })
+
+  it('accepts a well-formed profileId', () => {
+    expect(fromShareArgsSchema.safeParse({ url, profileId: 'profile-abc-123' }).success).toBe(true)
+  })
+
+  it('rejects a malformed profileId (it is interpolated into a partition name)', () => {
+    for (const bad of ['../evil', 'profile-BAD', 'notaprofile', 'profile-', 'profile-x/y', 'profile- space']) {
+      expect(fromShareArgsSchema.safeParse({ url, profileId: bad }).success).toBe(false)
+    }
   })
 })

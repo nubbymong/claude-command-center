@@ -28,7 +28,7 @@ export interface ElectronAPI {
       | { ok: true; transcript: import('../shared/desktop-import').ParsedTranscript }
       | { ok: false; error: string }
     >
-    fromShare: (url: string) => Promise<
+    fromShare: (url: string, profileId?: string) => Promise<
       | { ok: true; transcript: import('../shared/desktop-import').ParsedTranscript }
       | { ok: false; error: string }
     >
@@ -586,7 +586,7 @@ const electronAPI: ElectronAPI = {
   appIsDev: () => ipcRenderer.invoke(IPC.APP_IS_DEV),
   desktopImport: {
     parsePaste: (raw) => ipcRenderer.invoke(IPC.DESKTOP_IMPORT_PARSE_PASTE, raw),
-    fromShare: (url) => ipcRenderer.invoke(IPC.DESKTOP_IMPORT_FROM_SHARE, url),
+    fromShare: (url, profileId) => ipcRenderer.invoke(IPC.DESKTOP_IMPORT_FROM_SHARE, { url, profileId }),
     buildBrief: (args) => ipcRenderer.invoke(IPC.DESKTOP_IMPORT_BUILD_BRIEF, args),
     writeBrief: (args) => ipcRenderer.invoke(IPC.DESKTOP_IMPORT_WRITE_BRIEF, args),
   },

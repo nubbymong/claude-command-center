@@ -22,7 +22,7 @@ import { parsePastedTranscript } from '../desktop-import/parse-transcript'
 import { importFromShareLink } from '../desktop-import/share-link'
 import { generateBrief } from '../desktop-import/brief'
 import { writeBriefFile } from '../desktop-import/brief-file'
-import { pasteSchema, urlSchema, transcriptSchema, writeBriefArgsSchema } from './desktop-import-schemas'
+import { pasteSchema, transcriptSchema, writeBriefArgsSchema, fromShareArgsSchema } from './desktop-import-schemas'
 
 type Ok<T> = { ok: true } & T
 type Err = { ok: false; error: string }
@@ -54,9 +54,10 @@ export function registerDesktopImportHandlers(): void {
     }
   })
 
-  ipcMain.handle(IPC.DESKTOP_IMPORT_FROM_SHARE, async (_e, url: unknown) => {
+  ipcMain.handle(IPC.DESKTOP_IMPORT_FROM_SHARE, async (_e, args: unknown) => {
     try {
-      return { ok: true, transcript: await importFromShareLink(urlSchema.parse(url)) }
+      const { url, profileId } = fromShareArgsSchema.parse(args)
+      return { ok: true, transcript: await importFromShareLink(url, profileId) }
     } catch (err) {
       return fail('fromShare', err)
     }

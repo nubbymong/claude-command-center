@@ -70,6 +70,7 @@ export default function DesktopImportDialog({ session, onClose }: Props) {
           written={written}
           onWritten={(w) => { setWritten(w); setError('') }}
           target="running-session"
+          profileId={session.profileId}
         />
 
         {error && (

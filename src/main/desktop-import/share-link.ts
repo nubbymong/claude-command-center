@@ -22,7 +22,25 @@
 
 import { net } from 'electron'
 import { CLAUDE_WEB_PARTITION, SHARE_URL_RE, type ImportRole, type ParsedTranscript } from '../../shared/desktop-import'
+import { webPartitionForProfile } from '../../shared/account-web-session'
 import { parseStructuredTranscript } from './parse-transcript'
+
+/**
+ * Which Electron partition the share fetch runs on (#209 + #216).
+ *
+ * With a profileId, the fetch runs on that account's authenticated claude.ai
+ * partition (`persist:claude-web-<profileId>`, the one #216 signs into) so an
+ * ORG-SCOPED share resolves as the member. webPartitionForProfile validates the
+ * id against `^profile-[a-z0-9-]{1,64}$` and throws on anything else, so a
+ * malformed id can never be interpolated into the partition name.
+ *
+ * Without one (the default account has no per-profile web session), it falls back
+ * to the neutral, never-signed-in partition — public shares only, exactly the
+ * pre-#216 behaviour.
+ */
+export function partitionForImport(profileId?: string): string {
+  return profileId ? webPartitionForProfile(profileId) : CLAUDE_WEB_PARTITION
+}
 
 /** Max bytes we will pull from a share page. */
 const MAX_PAGE_BYTES = 12 * 1024 * 1024
@@ -198,7 +216,11 @@ export function parseSharePage(html: string): ParsedTranscript {
  * partition's cookies to a `net.request` without it, so naming the partition
  * alone would have changed nothing.
  */
-export function fetchText(url: string, timeoutMs = 20_000): Promise<{ status: number; body: string }> {
+export function fetchText(
+  url: string,
+  partition: string,
+  timeoutMs = 20_000,
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     let settled = false
     const done = (fn: () => void): void => { if (!settled) { settled = true; fn() } }
@@ -206,7 +228,7 @@ export function fetchText(url: string, timeoutMs = 20_000): Promise<{ status: nu
     const req = net.request({
       method: 'GET',
       url,
-      partition: CLAUDE_WEB_PARTITION,
+      partition,
       useSessionCookies: true,
       // Fail closed on a redirect rather than following it (adversarial review,
       // #209, defence-in-depth). The URL is already reconstructed from a strict
@@ -254,12 +276,27 @@ export function fetchText(url: string, timeoutMs = 20_000): Promise<{ status: nu
  * requested — this is not a general-purpose fetcher the renderer can point
  * anywhere.
  */
-/** Told to the user whenever the likeliest cause is "not signed in on this partition". */
-const SIGN_IN_HINT =
-  'Only PUBLICLY shared conversations can be imported this way today. A conversation shared ' +
-  'inside an organisation needs CCC to hold a claude.ai session, which it cannot yet acquire ' +
-  '(tracked in #216). Use the Paste tab: copy the conversation out of the Claude desktop app ' +
-  'and paste it here — that path needs no sign-in at all.'
+/**
+ * Told to the user whenever the likeliest cause is "not signed in on this
+ * partition". Two variants: with an account we can point them at the sign-in that
+ * now exists (#216); without one (default account) the authenticated path is not
+ * available and paste is the answer.
+ */
+function signInHint(profileId?: string): string {
+  if (profileId) {
+    return (
+      'That conversation is not publicly shared, and this account is not signed in to ' +
+      'claude.ai — so CCC cannot see it. Sign in for this account (right-click the session -> ' +
+      'Authenticate claude.ai, or Settings -> Accounts), then try the link again. Or use the ' +
+      'Paste tab, which needs no sign-in at all.'
+    )
+  }
+  return (
+    'Only PUBLICLY shared conversations can be imported on the default account. To import an ' +
+    'organisation-scoped share, run the session under a signed-in account, or use the Paste tab: ' +
+    'copy the conversation out of the Claude desktop app and paste it here — that needs no sign-in.'
+  )
+}
 
 /**
  * True when a 2xx body looks like the signed-out shell rather than a conversation.
@@ -276,22 +313,25 @@ export function looksSignedOut(html: string): boolean {
   return /\/(login|sign-in)\b/i.test(html) || /\bsign in to (claude|continue)\b/i.test(html)
 }
 
-export async function importFromShareLink(url: string): Promise<ParsedTranscript> {
+export async function importFromShareLink(url: string, profileId?: string): Promise<ParsedTranscript> {
   const uuid = shareUuid(url)
   if (!uuid) throw new Error('Not a claude.ai share link. Expected https://claude.ai/share/<uuid>')
 
-  const { status, body } = await fetchText(`https://claude.ai/share/${uuid}`)
+  // #216: run the fetch on the account's authenticated partition when we have a
+  // profileId, so an org-scoped share resolves as the signed-in member.
+  const hint = signInHint(profileId)
+  const { status, body } = await fetchText(`https://claude.ai/share/${uuid}`, partitionForImport(profileId))
 
   // 404 is what claude.ai returns for "exists but you may not see it" as well as
   // for "gone" -- it does not distinguish, so neither may the message.
   if (status === 404) {
     throw new Error(
       'claude.ai returned 404 for that link. That means either the conversation was unshared, ' +
-      `or it is shared somewhere this app cannot see. ${SIGN_IN_HINT}`,
+      `or it is shared somewhere this app cannot see. ${hint}`,
     )
   }
   if (status === 401 || status === 403) {
-    throw new Error(`claude.ai refused that link (${status}) — it is not publicly shared. ${SIGN_IN_HINT}`)
+    throw new Error(`claude.ai refused that link (${status}) — it is not publicly shared. ${hint}`)
   }
   if (status < 200 || status >= 300) throw new Error(`claude.ai returned HTTP ${status} for that share link.`)
 
@@ -300,7 +340,7 @@ export async function importFromShareLink(url: string): Promise<ParsedTranscript
   } catch (err) {
     // A 200 that parsed to nothing is usually the login shell, not a format change.
     if (looksSignedOut(body)) {
-      throw new Error(`claude.ai served a sign-in page for that link rather than the conversation. ${SIGN_IN_HINT}`)
+      throw new Error(`claude.ai served a sign-in page for that link rather than the conversation. ${hint}`)
     }
     throw err
   }

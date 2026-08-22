@@ -39,6 +39,12 @@ interface Props {
    * is the point of sharing this component between them.
    */
   target?: 'new-session' | 'running-session'
+  /**
+   * The account whose signed-in claude.ai session the share fetch should use
+   * (#216). When set, an ORG-SCOPED share resolves as that member; undefined (the
+   * default account) means public shares only. Drives the share-tab guidance too.
+   */
+  profileId?: string
 }
 
 const MODES: { id: Mode; label: string; hint: string }[] = [
@@ -46,7 +52,7 @@ const MODES: { id: Mode; label: string; hint: string }[] = [
   { id: 'share', label: 'Share link', hint: 'Paste a https://claude.ai/share/… link. Publicly shared conversations only, for now.' },
 ]
 
-export function DesktopImportTab({ workingDirectory, written, onWritten, target = 'new-session' }: Props) {
+export function DesktopImportTab({ workingDirectory, written, onWritten, target = 'new-session', profileId }: Props) {
   const [mode, setMode] = useState<Mode>('paste')
   const [pasteText, setPasteText] = useState('')
   const [shareUrl, setShareUrl] = useState('')
@@ -88,7 +94,9 @@ export function DesktopImportTab({ workingDirectory, written, onWritten, target 
   const captureShare = () =>
     run('Fetching…', async () => {
       reset()
-      const res = await api.fromShare(shareUrl.trim())
+      // #216: pass the account so an org-scoped share resolves on that member's
+      // signed-in claude.ai session. Undefined (default account) => public only.
+      const res = await api.fromShare(shareUrl.trim(), profileId)
       if (!res.ok) { setError(res.error); return }
       setTranscript(res.transcript)
     })
@@ -172,10 +180,20 @@ export function DesktopImportTab({ workingDirectory, written, onWritten, target 
       {mode === 'share' && (
         <div className="space-y-2">
         <div className="rounded border border-surface1 bg-mantle px-3 py-2 text-[11px] text-subtext0 leading-snug">
-          A <span className="text-text">publicly</span> shared link works straight away. One shared only inside
-          your organisation is not public, and CCC cannot yet hold a claude.ai session to see it — use the{' '}
-          <span className="text-text">Paste</span> tab for those: copy the conversation out of the Claude
-          desktop app and paste it here. No sign-in needed.
+          A <span className="text-text">publicly</span> shared link works straight away.{' '}
+          {profileId ? (
+            <>
+              An <span className="text-text">organisation-scoped</span> share works too when this account is
+              signed in to claude.ai — if the fetch reports a sign-in page, authenticate this account
+              (right-click the session → <span className="text-text">Authenticate claude.ai</span>) and retry.
+            </>
+          ) : (
+            <>
+              An organisation-scoped share needs a signed-in account; the default account cannot hold a
+              claude.ai session, so use the <span className="text-text">Paste</span> tab for those — copy the
+              conversation out of the Claude desktop app and paste it here. No sign-in needed.
+            </>
+          )}
         </div>
         <div className="flex gap-2">
           <input

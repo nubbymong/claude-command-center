@@ -105,7 +105,7 @@ export interface ElectronAPI {
       | { ok: true; transcript: import('../../shared/desktop-import').ParsedTranscript }
       | { ok: false; error: string }
     >
-    fromShare: (url: string) => Promise<
+    fromShare: (url: string, profileId?: string) => Promise<
       | { ok: true; transcript: import('../../shared/desktop-import').ParsedTranscript }
       | { ok: false; error: string }
     >
