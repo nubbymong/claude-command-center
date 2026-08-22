@@ -63,6 +63,15 @@ describe('app knowledge is publishable', () => {
     }
   })
 
+  it('carries no "not affiliated with Anthropic" line (#383)', () => {
+    // Owner call 2026-08-22: the disclaimer is gone from the app and docs, and
+    // this text is pasted into the Ask Conductor session, so it must not keep
+    // repeating it from there.
+    for (const s of APP_KNOWLEDGE_SECTIONS) {
+      expect(`${s.title} ${s.body}`, `${s.id} affiliation line`).not.toMatch(/affiliated|endorsed by/i)
+    }
+  })
+
   it('explains which settings file wins, and that a running session keeps its own', () => {
     // The concept behind #314: a setting that appears to do nothing is
     // usually being overridden, and a change never reaches a session that is

@@ -15,7 +15,7 @@
 
 Claude Code is a remarkable CLI. But the moment you have more than one project, more than one account, or more than one machine, the experience fragments: you lose track of which terminal is which, which sessions are paused, what they have spent, and where their attention is going. AI Code Conductor wraps Claude Code and Codex in a desktop app that treats **the session as the first-class object**. Every session has a colour, a name, an account, a working directory and a saved config; every spawn surfaces its tokens, model, rate-limit window and identity; every cent is captured and pivotable. It does not replace Claude Code. It conducts it.
 
-> Formerly **Claude Command Center**. Same app, same data — the rename is cosmetic and updates carry across on their own. An independent, community-built project, not affiliated with Anthropic — see [Disclaimer](#disclaimer-and-trademarks).
+> Formerly **Claude Command Center**. Same app, same data — the rename is cosmetic and updates carry across on their own. An independent, community-built project — see [Trademarks](#trademarks).
 
 ---
 
@@ -147,9 +147,9 @@ Report vulnerabilities privately via [GitHub Security Advisories](../../security
 
 Developed privately from late 2025 and open-sourced in April 2026 as Claude Command Center; everything from v1.0 forward is in the open. Per-release detail lives in [`src/renderer/changelog.ts`](src/renderer/changelog.ts), which also drives the in-app What's New. See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR process, and [AGENTS.md](AGENTS.md) if you are pointing an AI agent at this repository.
 
-## Disclaimer and trademarks
+## Trademarks
 
-Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. This project is an independent, community-built tool. It is **not affiliated with, endorsed by, sponsored by, or supported by Anthropic or OpenAI**. All references to "Claude", "Claude Code", "Codex", "Anthropic" or "OpenAI" are nominative, used solely to identify the third-party software this tool interoperates with. AI Code Conductor wraps and orchestrates the official Claude Code and Codex CLIs; it does not include, modify or redistribute their code, and it requires you to install and authenticate those tools yourself under their own terms. If you are a rights holder with a concern about this project's use of a name or mark, please open a [GitHub issue](../../issues) or contact the maintainer and it will be addressed promptly.
+Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. This project is an independent, community-built tool. All references to "Claude", "Claude Code", "Codex", "Anthropic" or "OpenAI" are nominative, used solely to identify the third-party software this tool interoperates with. AI Code Conductor wraps and orchestrates the official Claude Code and Codex CLIs; it does not include, modify or redistribute their code, and it requires you to install and authenticate those tools yourself under their own terms. If you are a rights holder with a concern about this project's use of a name or mark, please open a [GitHub issue](../../issues) or contact the maintainer and it will be addressed promptly.
 
 ---
 

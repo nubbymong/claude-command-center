@@ -141,8 +141,8 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
 
       {/* Multi-account usage readout, centred along the footer (Bug 3). Renders
           only when >=2 accounts are live (else null). The flex-1 spacer centres
-          it between the runtime band and the disclaimer, and keeps the disclaimer
-          pinned right when single-account. Pure render over session-store data. */}
+          it in the space to the right of the runtime band. Pure render over
+          session-store data. */}
       {/* No overflow-hidden here. It used to clip the cluster instead of letting
           it wrap, which is what cut the leading account pill in half against the
           runtime band -- `justify-center` spills an over-wide child out of BOTH
@@ -153,15 +153,9 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
         <MultiAccountStatusline />
       </div>
 
-      {/* Independent-project disclaimer, pinned bottom-right. Nominative use of
-          "Anthropic"/"Claude" only; this app is not an Anthropic product. */}
-      <span
-        className="shrink truncate italic text-[10px]"
-        style={{ color: 'var(--text-muted)' }}
-        title="Claude and Claude Code are trademarks of Anthropic, PBC. This is an independent community project."
-      >
-        Not affiliated with or endorsed by Anthropic
-      </span>
+      {/* The independent-project disclaimer that used to be pinned bottom-right
+          was removed on the owner's call (#383): the app is AI Code Conductor
+          now, and the trademark attribution lives in the README. */}
 
       {/* CLI help modal -- ported verbatim from StatusBar so the
           "CLI not found -- click for help" path still works. */}

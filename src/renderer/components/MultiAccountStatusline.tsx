@@ -104,8 +104,8 @@ export function liveAccountUsage(
 }
 
 /** Never more than 3 account pills side by side -- three full pills (dot + email
- *  + two meters) is already the most that fits between the runtime band and the
- *  disclaimer at the 1280px minimum window width (src/main/index.ts minWidth). */
+ *  + two meters) is already the most that fits to the right of the runtime band
+ *  at the 1280px minimum window width (src/main/index.ts minWidth). */
 export const FOOTER_MAX_PER_ROW = 3
 /** The footer grows to at most two rows; past that the tail goes behind the
  *  overflow control rather than eating more of the terminal's height. */

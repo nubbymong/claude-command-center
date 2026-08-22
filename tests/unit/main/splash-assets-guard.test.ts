@@ -47,6 +47,11 @@ describe('splash assets guard', () => {
     }
   })
 
+  it('the splash page carries no "not affiliated with Anthropic" line (#383)', () => {
+    const html = readFileSync(join(splashDir, 'index.html'), 'utf-8')
+    expect(html).not.toMatch(/affiliated|endorsed by/i)
+  })
+
   it('the splash page carries its own strict CSP meta', () => {
     const html = readFileSync(join(splashDir, 'index.html'), 'utf-8')
     expect(html).toMatch(/http-equiv="Content-Security-Policy"/)

@@ -553,7 +553,7 @@ jobs:
             echo "---"
             echo "Upgrading from 2.1.0-beta.5 or earlier? Download the installer from this page — that build's updater looked for the old file name."
             echo ""
-            echo "AI Code Conductor is an independent community project — not affiliated with or endorsed by Anthropic. Claude and Claude Code are Anthropic trademarks."
+            echo "Claude and Claude Code are Anthropic trademarks."
             echo ""
             echo "SHA-256 checksums are in CHECKSUMS.txt attached to this release."
           } > RELEASE_BODY.md
