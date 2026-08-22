@@ -74,7 +74,6 @@ export interface ElectronAPI {
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
-    load: (configId: string) => Promise<string | null>
     delete: (configId: string) => Promise<boolean>
   }
   pty: {
@@ -634,9 +633,11 @@ const electronAPI: ElectronAPI = {
     enabled: () => ipcRenderer.invoke(IPC.DEBUG_INPUT_ENABLED),
     log: (line: string) => ipcRenderer.send(IPC.DEBUG_LOG_INPUT, line)
   },
+  // Deliberately no `load`: the renderer never needs a credential's VALUE --
+  // main injects it into the shell's environment at spawn (ADR-018 security
+  // notes). The plaintext read bridge had zero callers and was removed.
   credentials: {
     save: (configId, password) => ipcRenderer.invoke(IPC.CREDENTIALS_SAVE, configId, password),
-    load: (configId) => ipcRenderer.invoke(IPC.CREDENTIALS_LOAD, configId),
     delete: (configId) => ipcRenderer.invoke(IPC.CREDENTIALS_DELETE, configId)
   },
   pty: {

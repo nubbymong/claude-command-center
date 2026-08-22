@@ -147,7 +147,6 @@ export interface ElectronAPI {
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
-    load: (configId: string) => Promise<string | null>
     delete: (configId: string) => Promise<boolean>
   }
   pty: {
