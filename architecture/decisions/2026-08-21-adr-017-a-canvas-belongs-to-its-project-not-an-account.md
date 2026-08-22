@@ -74,6 +74,25 @@ Records written before this ADR keep their `profileId` field. Nothing reads it.
 It is not validated and not stripped — rewriting every record on disk to remove a
 field nothing consults would be the riskier change.
 
+> **Amendment, 2026-08-22 (#371).** The sentence above is wrong about "not
+> stripped", and is corrected here rather than rewritten so the original
+> reasoning stays readable. What the ADR *decided* was that there would be no
+> migration pass rewriting every record on disk, and that remains true. What the
+> code does is narrower and stricter: `sanitizeRecord` builds a record field by
+> field rather than spreading what was on disk, so `profileId` — like any other
+> retired or unknown field — does not survive a READ, and is therefore absent
+> from the file the next write produces. Nothing is rewritten eagerly; the field
+> simply stops travelling the first time a record is loaded and saved.
+>
+> "Not validated" is accurate: the field is ignored rather than checked, which
+> is why a pre-ADR record with any value in it still loads.
+>
+> This matters because a test now asserts the strip
+> (`tests/unit/main/canvas-adoption.test.ts`, "does not carry an unknown or
+> retired field back out of a record"), and an accepted ADR saying the opposite
+> about the same field would leave the next reader with no way to tell which is
+> authoritative.
+
 ## Consequences
 
 - A tile that switches accounts keeps full access to the canvases it drew. This

@@ -63,7 +63,12 @@ let project = ''
  * What the main process actually does to canvas state when a tile switches
  * account: the PTY is killed, and its exit handler — once no newer PTY has
  * taken the session over — runs `cleanupSessionResources`, whose canvas half is
- * these two calls. Nothing in it touches the session→canvas index.
+ * this ONE call (`pty-manager.ts`, `revokeCanvasUatRoots`). Nothing in it
+ * touches the session→canvas index.
+ *
+ * `forgetSessionForCanvas` fires from the same handler but is not modelled
+ * here: it clears `spawnInfo` in `canvas-session-link`, not canvas-store state,
+ * so it is out of scope for a store-level test.
  */
 function tearDownForSwitch(): void {
   store.revokeCanvasUatRoots(SID)
@@ -112,14 +117,17 @@ describe('a tile that switches account keeps the canvas it drew', () => {
       .toEqual({ canvasId, versionId: 'v2' })
   })
 
-  it('never needs a reclaim click — the canvas is not orphaned by the switch', () => {
+  it('is not offered its own canvas back as a reclaim candidate', () => {
     store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>mine</p>' })
     tearDownForSwitch()
     respawnAfterSwitch()
 
-    // `listOrphanCandidateCanvases` returns nothing for a session that already
-    // owns one. Offering the user their own live canvas to "reclaim" is the
-    // symptom the ADR-017 lockout produced.
+    // NOT a binding assertion, and labelled so rather than left to look like
+    // one: `isReclaimCandidate` excludes own-session records independently of
+    // `sessionIndex`, so this stays green under the `sessionIndex.delete`
+    // mutation the other three tests are pinned by. It is here because
+    // offering the user their own live canvas to "reclaim" is the visible
+    // symptom of the ADR-017 lockout, not because it guards the index.
     expect(store.listOrphanCandidateCanvases(SID, { isSessionCurrent: () => true })).toEqual([])
   })
 })
@@ -144,10 +152,18 @@ describe('the account decides nothing (ADR-017), and cannot start deciding by ac
     expect(JSON.parse(fs.readFileSync(file, 'utf8'))).not.toHaveProperty('profileId')
   })
 
-  it('re-opening your own canvas by id is allowed whatever account stamp it carries', () => {
-    // The exact ADR-017 regression: the "re-opening your own canvas is not an
-    // adoption" fast path used to sit behind an account comparison, so a tile
-    // that had switched accounts was refused its own work.
+  /**
+   * Retitled: the record here carries NO stamp, because this build never writes
+   * `profileId` at all, so "whatever stamp it carries" was not what was being
+   * tested. The stamp-mismatch shape is in fact unreachable now — `sanitizeRecord`
+   * strips the field at read, so no in-memory record can carry a foreign one —
+   * which makes "the strip must keep happening" the honest pin, and that is
+   * covered more strongly in `canvas-adoption.test.ts` ("does not carry an
+   * unknown or retired field back out of a record", which plants `profileId`
+   * AND `hostileExtra`). What is left worth asserting here is the fast path
+   * itself.
+   */
+  it('re-opening your own canvas by id is an allowed fast path, not an adoption', () => {
     const { canvasId } = store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>mine</p>' })
     store._resetCanvasStoreForTest()
 
