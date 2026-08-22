@@ -1084,7 +1084,7 @@ export function runCanvasVerdict(
  */
 function describeVerdictFailure(err: unknown): string {
   const msg = err instanceof Error ? err.message : ''
-  const counts = err as { openNotes?: number; addressedNotes?: number; freshNotes?: number }
+  const counts = err as { openNotes?: number; addressedNotes?: number; unseenNotes?: number; selfAddressed?: boolean }
   if (msg === 'no canvas for session') return 'this session has no canvas.'
   if (msg === 'review not on this canvas') {
     return "that round is not on this session's current canvas. If your last render named a different subject, the canvas changed under you — re-render the subject the round belongs to, then close it."
@@ -1101,13 +1101,16 @@ function describeVerdictFailure(err: unknown): string {
   if (msg === 'review has nothing waiting on the user') {
     return 'that round has nothing left waiting on the user — every note on it has already been ruled on.'
   }
-  if (msg === 'review was addressed just now') {
-    const n = typeof counts.freshNotes === 'number' ? counts.freshNotes : 0
+  if (msg === 'review has not reached the user') {
+    const n = typeof counts.unseenNotes === 'number' ? counts.unseenNotes : 0
+    const cause = counts.selfAddressed
+      ? `you marked ${n} of those note(s) addressed yourself, and the user has not seen them in that state since`
+      : `the user has not seen ${n} of those note(s) in their addressed state`
     return (
-      `you marked ${n} of those note(s) addressed moments ago, so the user cannot have seen them yet — ` +
-      'and a round you both did and closed in one pass never reaches them at all. ' +
+      `${cause}. Marking a note addressed is your own claim of work; it is not the user's permission to clear it, ` +
+      'and a round you both addressed and closed never reaches them at all — however long you wait in between. ' +
       'Hand back, tell them in plain words what you changed, and close the round only if they then ask you to. ' +
-      'They can also close it themselves from the Canvas pane in one click.'
+      'Once they have the round on screen this call will go through; they can also close it themselves from the Canvas pane in one click.'
     )
   }
   if (msg === 'invalid verdict') {
@@ -1271,7 +1274,7 @@ export function registerCanvasTools(
 
   server.tool(
     'canvas_verdict',
-    'Close out a round of canvas notes BECAUSE THE USER TOLD YOU TO — "mark those stale", "we shipped that, clear them", "drop the rest". Only ever call this on an explicit instruction from the user in this conversation; never to tidy up a board you think is finished. Pass the review id and a verdict: "stale" when the work the notes asked about has shipped, "dismissed" when they are being dropped without action. Leave annotationIds out to close the whole round, or name specific notes. It can NEVER approve — approval is a click only the user can make, and the app refuses any other verdict rather than trusting this description. It can also only close a round that is already waiting on the user (every note on it addressed); if notes are still waiting on you, do that work and canvas_resolve them first — and a round you marked addressed moments ago is refused, because the user has not seen it yet. Hand back between the two. What you close is recorded as "closed by the agent on your instruction", listed separately from the user\'s own approvals, and the user can reopen any of it in one click. Nothing is deleted: the canvas, its versions and the note text all stay.',
+    'Close out a round of canvas notes BECAUSE THE USER TOLD YOU TO — "mark those stale", "we shipped that, clear them", "drop the rest". Only ever call this on an explicit instruction from the user in this conversation; never to tidy up a board you think is finished. Pass the review id and a verdict: "stale" when the work the notes asked about has shipped, "dismissed" when they are being dropped without action. Leave annotationIds out to close the whole round, or name specific notes. It can NEVER approve — approval is a click only the user can make, and the app refuses any other verdict rather than trusting this description. It can also only close a round that is already waiting on the user (every note on it addressed); if notes are still waiting on you, do that work and canvas_resolve them first — and a round the user has not yet SEEN in that addressed state is refused however long ago you addressed it, because marking your own work addressed is not their permission to clear it. Hand back between the two: the refusal lifts once they have had the round on screen. What you close is recorded as "closed by the agent on your instruction", listed separately from the user\'s own approvals, and the user can reopen any of it in one click. Nothing is deleted: the canvas, its versions and the note text all stay.',
     {
       reviewId: zMod.string().describe('The round the user asked you to close, e.g. "R3" — the same id you passed to canvas_review.'),
       verdict: zMod

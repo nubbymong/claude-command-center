@@ -272,11 +272,16 @@ export interface ElectronAPI {
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) => Promise<CanvasReviewState>
     annotationResolve: (args: {
       sessionId: string
+      /** The canvas the panel was showing. Refused if the session has moved on. */
+      canvasId: string
       annotationId: string
       action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
     }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
     /** The user puts a closed note back in play — the undo half of close-out. */
     annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The user has these addressed notes on screen. The only input to the agent
+     *  close-out barrier that no MCP tool can produce — renderer-only by design. */
+    reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
     /** Bulk close-out for one canvas whose work has shipped. Clears the rounds
      *  already waiting on the user; deletes nothing. `ok: false` means the
      *  review store could not be read — never "there was nothing to clear". */
@@ -844,10 +849,12 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_DELETE, args),
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
-    annotationResolve: (args: { sessionId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' | 'stale' }) =>
+    annotationResolve: (args: { sessionId: string; canvasId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' | 'stale' }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_RESOLVE, args),
     annotationReopen: (args: { sessionId: string; annotationId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_REOPEN, args),
+    reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_REVIEW_MARK_SEEN, args),
     reviewCloseOut: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_CLOSE_OUT, args),
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
       const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)

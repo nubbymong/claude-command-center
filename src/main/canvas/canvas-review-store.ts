@@ -24,6 +24,7 @@ import {
   CANVAS_ID_RE,
   CANVAS_REVIEW_ID_RE,
   CANVAS_VERSION_ID_RE,
+  type AddressedBy,
   type AgentCloseVerdict,
   type AnchorRef,
   type Annotation,
@@ -198,6 +199,7 @@ const ANNOTATION_SCOPES = new Set(['element', 'region', 'general'])
 const REOPENABLE_STATES = new Set(['approved', 'dismissed', 'stale'])
 const CLOSED_BY_VALUES = new Set(['user', 'agent'])
 const CLOSED_FROM_VALUES = new Set(['open', 'addressed'])
+const ADDRESSED_ACTORS = new Set(['agent', 'user'])
 /**
  * Verdict → the state it writes.
  *
@@ -237,6 +239,24 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // barrier as "just now", i.e. it refuses the close — the fail-closed
   // direction, since the barrier exists to withhold permission.
   if (a.addressedAt !== undefined && !isCleanString(a.addressedAt, 64)) return false
+  // The close-out barrier's two inputs, validated hardest of anything here: a
+  // hand-edited record that could name a non-agent actor, or set the user's
+  // seen flag, would hand `canvas_verdict` the permission it is meant to have
+  // to earn. Anything malformed fails the whole record rather than being
+  // dropped to undefined, because undefined is a PASS for neither but a
+  // half-read record is worse than a refused one.
+  if (a.addressedBy !== undefined) {
+    const by = a.addressedBy as Partial<AddressedBy> & Record<string, unknown>
+    if (typeof by !== 'object' || by === null) return false
+    if (typeof by.actor !== 'string' || !ADDRESSED_ACTORS.has(by.actor)) return false
+    if (typeof by.sessionId !== 'string' || !SESSION_ID_RE.test(by.sessionId)) return false
+  }
+  if (a.userSawAddressed !== undefined && typeof a.userSawAddressed !== 'boolean') return false
+  // A note waiting on the AGENT cannot carry a claim that the user saw it
+  // addressed. Belt and braces next to `markAnnotationsAddressed`, which clears
+  // the flag on every open -> addressed move: it stops the flag being smuggled
+  // onto an open note through the file in the first place.
+  if (a.userSawAddressed === true && a.state === 'open') return false
   // 'approved' is the user's alone, so a record claiming the agent set it is
   // corrupt by definition — refuse it rather than render it.
   if (a.state === 'approved' && a.closedBy === 'agent') return false
@@ -650,35 +670,47 @@ function notesOfReview(record: ReviewFileRecord, review: Review): Annotation[] {
 }
 
 /**
- * How long a note must have been `addressed` before the AGENT may close it.
+ * THE CLOSE-OUT BARRIER: may the agent close this addressed note?
  *
  * The scope rule ("every note on this round is addressed") is a precondition
- * the agent writes itself: `canvas_resolve` moves notes open -> addressed with
- * no user involvement, so an agent can call resolve and then verdict back to
- * back, satisfy the rule, and take the round off the pill without the user ever
- * being asked. Nothing in the store can see the chat instruction that is
- * supposed to authorise the close, so nothing in the store can verify it.
+ * the agent writes ITSELF. `canvas_resolve` moves notes open -> addressed with
+ * no user involvement, so resolve-then-verdict satisfies the rule in one
+ * unattended pass and takes the round off the pill that would have sent the
+ * user to look at it — every note closed as "on your instruction" with no
+ * instruction anywhere.
  *
- * What the store CAN see is the shape of that chain: the legitimate flow has a
- * human in it — the agent finishes, hands back, the user reads the summary and
- * says "close them" — and that turnaround is never instant. The mechanical
- * chain is. A dwell time does not make the close authorised, but it does stop
- * the unattended one-pass version, and it costs the real flow nothing.
+ * The first cut answered that with a 60s dwell on `addressedAt`. That is a
+ * DELAY, not an authorisation: an autonomous agent does other work for 61s and
+ * the same chain completes. Time cannot express intent, and the barrier has to.
  *
- * Deliberately generous. Erring long fails toward "the user closes it in the
- * pane in one click", which is a working path, rather than toward an agent
- * clearing a round nobody looked at.
+ * So the gate is provenance, not the clock. A note is closeable by the agent
+ * only when one of these is true of it:
+ *
+ *   - the USER HAS SEEN IT ADDRESSED (`userSawAddressed`) — the one bit on the
+ *     record no MCP tool can write. It is set from the renderer, and only when
+ *     the note's addressed state has actually been on the user's screen in the
+ *     active session of a visible window. An agent cannot manufacture it: it
+ *     has no way to make the panel visible, and nothing it can call sets it.
+ *   - the note was addressed by somebody who is NOT an agent (`addressedBy`),
+ *     i.e. the precondition was not the closing party's own work. No such path
+ *     exists today; the check is here so that if one is ever added the barrier
+ *     reads the fact instead of inheriting an assumption.
+ *
+ * ABSENT PROVENANCE IS A REFUSAL. A note with no `addressedBy` — every note in
+ * the pre-upgrade backlog, which is exactly the backlog this feature exists to
+ * clear — is treated as agent-addressed, so the agent may close it only once
+ * the user has seen it. Failing open there would have handed the whole existing
+ * corpus to the very chain this function refuses.
+ *
+ * What this deliberately does NOT claim: it is not proof the user SAID "close
+ * it". Nothing in the store can see chat. It is proof that the round reached
+ * the user's eyes before the agent cleared it — which is the property that
+ * makes the refusal path ("hand back, let them rule") reachable at all, and the
+ * strongest one the store can verify on its own.
  */
-export const MIN_ADDRESSED_DWELL_MS = 60_000
-
-/** Milliseconds since a note was addressed. `null` when it carries no stamp
- *  (a record written before the stamp existed); 0 when the stamp is unreadable,
- *  which refuses the close. */
-function addressedAgeMs(a: Annotation, now: number): number | null {
-  if (a.addressedAt === undefined) return null
-  const at = Date.parse(a.addressedAt)
-  if (!Number.isFinite(at)) return 0
-  return Math.max(0, now - at)
+function isAgentCloseable(a: Annotation): boolean {
+  if (a.userSawAddressed === true) return true
+  return a.addressedBy !== undefined && a.addressedBy.actor !== 'agent'
 }
 
 /**
@@ -919,10 +951,23 @@ export function resolveAnnotation(
   sessionId: string,
   annotationId: string,
   action: ResolveAction,
+  expectedCanvasId: string,
 ): { state: CanvasReviewState; reannotationId?: string } {
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  // The canvas the CALLER meant. Annotation ids restart at a1 on every canvas
+  // and the session's canvas is mutable — an agent's `canvas_render` naming a
+  // different subject files the current one — so an id alone names a note only
+  // as long as the canvas holds still. The panel re-checks between notes in a
+  // bulk pass, but the last check and the write it authorises are separated by
+  // an await, and one note can slip through that gap: it lands on whichever a4
+  // happens to exist on the NEW canvas and closes it under the user's own name.
+  // Naming the canvas closes the gap, because the check is now inside the same
+  // synchronous mutation as the write.
+  if (typeof expectedCanvasId !== 'string' || canvas.canvasId !== expectedCanvasId) {
+    throw new Error('canvas changed under this resolve')
+  }
   if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
   if (typeof action !== 'string' || !RESOLVE_ACTIONS.has(action)) throw new Error('invalid action')
 
@@ -1120,9 +1165,16 @@ export function markAnnotationsAddressed(
     if (!wanted.has(a.id)) continue
     if (a.state === 'open' && members.has(a.id)) {
       a.state = 'addressed'
-      // When, so the agent's own close-out barrier can tell a round the user
-      // has had a chance to see from one this same pass just manufactured.
+      // When, as provenance for the panel and the record.
       a.addressedAt = new Date().toISOString()
+      // WHO, which is what the close-out barrier actually reads: this write is
+      // the agent creating its own precondition for `canvas_verdict`, and the
+      // record has to say so or the two are indistinguishable later.
+      a.addressedBy = { actor: 'agent', sessionId }
+      // A fresh claim of work is a fresh thing to be seen. Whatever the user
+      // saw before was the previous round of this note, not this one — so the
+      // barrier starts closed again.
+      delete a.userSawAddressed
       addressed.push(a.id)
     } else {
       skipped.push(a.id)
@@ -1131,6 +1183,64 @@ export function markAnnotationsAddressed(
   for (const id of wanted) if (!addressed.includes(id) && !skipped.includes(id)) skipped.push(id)
   if (addressed.length > 0) commit(next)
   return { state: toState(addressed.length > 0 ? next : base), addressed, skipped }
+}
+
+/**
+ * The USER has seen these notes in their addressed state (the close-out
+ * barrier's release).
+ *
+ * Reached ONLY from the renderer, over `canvas:reviewMarkSeen`, and only after
+ * the panel has actually had the addressed rows on screen — active session,
+ * visible window, long enough to read. No MCP tool reaches this function, and
+ * that is the whole point: `userSawAddressed` is the one bit on the record the
+ * agent cannot write, which is what makes it usable as an authorisation input
+ * where `addressedAt` (which the agent writes, and can simply outwait) is not.
+ *
+ * Narrow on purpose:
+ *  - the caller must NAME THE CANVAS it saw. The renderer's ids were captured
+ *    against one canvas, and an agent's `canvas_render` can file that canvas
+ *    mid-flight; without the check a stale in-flight "I saw these" would land
+ *    on whichever a1/a2 exist on the new canvas and unlock notes nobody has
+ *    ever looked at.
+ *  - only a note that is 'addressed' RIGHT NOW on a SUBMITTED review moves. A
+ *    seen flag on anything else is meaningless at best.
+ *  - nothing is written when nothing changed, so the panel's steady-state
+ *    re-render does not turn into a commit/emit loop.
+ */
+export function markAddressedNotesSeen(
+  sessionId: string,
+  canvasId: string,
+  annotationIds: readonly string[],
+): { state: CanvasReviewState; seen: string[] } {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  requireHealthy(canvas.canvasId)
+  if (typeof canvasId !== 'string' || canvas.canvasId !== canvasId) throw new Error('canvas changed under this session')
+
+  const wanted = new Set<string>()
+  for (const id of annotationIds) {
+    if (typeof id === 'string' && CANVAS_ANNOTATION_ID_RE.test(id)) wanted.add(id)
+  }
+  const base = recordFor(sessionId, canvas)
+  if (wanted.size === 0) return { state: toState(base), seen: [] }
+
+  const submitted = new Set(base.reviews.filter((r) => r.status === 'submitted').map((r) => r.id))
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+  const seen: string[] = []
+  for (const a of next.annotations) {
+    if (!wanted.has(a.id)) continue
+    if (a.state !== 'addressed' || !submitted.has(a.reviewId)) continue
+    if (a.userSawAddressed === true) continue
+    a.userSawAddressed = true
+    seen.push(a.id)
+  }
+  if (seen.length === 0) return { state: toState(base), seen }
+  commit(next)
+  return { state: toState(next), seen }
 }
 
 // ── Close-out (#365) ────────────────────────────────────────────────────────
@@ -1158,8 +1268,12 @@ export interface CloseOutResult {
 interface ScopeError extends Error {
   openNotes?: number
   addressedNotes?: number
-  /** How many notes were addressed too recently to be closeable yet. */
-  freshNotes?: number
+  /** How many notes the user has not seen in their addressed state, and so may
+   *  not be closed by the agent (the close-out barrier). */
+  unseenNotes?: number
+  /** True when the session being refused is the one that addressed those notes
+   *  — the resolve-then-verdict chain, rather than an inherited backlog. */
+  selfAddressed?: boolean
 }
 
 function scopeError(message: string, counts: { openNotes: number; addressedNotes: number }): ScopeError {
@@ -1231,21 +1345,19 @@ export function closeAnnotationsByAgent(
   // Nothing to do, and saying so beats reporting a successful close of zero.
   if (addressedNotes === 0) throw scopeError('review has nothing waiting on the user', { openNotes, addressedNotes })
 
-  // The chaining barrier. The scope rule above is satisfied by the agent's OWN
-  // write (canvas_resolve), so on its own it does not distinguish "the user
-  // told me to close the round we finished" from "I marked everything
-  // addressed a moment ago and am now removing it from the pill". A note the
-  // agent addressed seconds ago cannot have been seen, let alone ruled on, by
-  // anybody — so it is not closeable yet, and the refusal says to hand back.
-  const now = Date.now()
-  const tooFresh = memberNotes.filter((a) => {
-    if (a.state !== 'addressed') return false
-    const age = addressedAgeMs(a, now)
-    return age !== null && age < MIN_ADDRESSED_DWELL_MS
-  })
-  if (tooFresh.length > 0) {
-    const err = scopeError('review was addressed just now', { openNotes, addressedNotes }) as ScopeError
-    err.freshNotes = tooFresh.length
+  // THE BARRIER (see isAgentCloseable). Whole-round, not per-note: a partial
+  // close would leave the user a round stripped of everything except the notes
+  // the agent could not justify closing, which reads as "these were handled"
+  // about the ones that vanished. Either the round reached the user or none of
+  // it closes this way.
+  const unseen = memberNotes.filter((a) => a.state === 'addressed' && !isAgentCloseable(a))
+  if (unseen.length > 0) {
+    const err = scopeError('review has not reached the user', { openNotes, addressedNotes })
+    err.unseenNotes = unseen.length
+    // Whether the refusing session is the same one that created the
+    // precondition. Both cases are refused; they are told apart only so the
+    // refusal can name what actually happened.
+    err.selfAddressed = unseen.some((a) => a.addressedBy?.sessionId === sessionId)
     throw err
   }
 
@@ -1334,7 +1446,16 @@ export function reopenAnnotation(sessionId: string, annotationId: string): Canva
   // A note back to 'open' is one nobody has claimed to have acted on, so the
   // addressed stamp is no longer true of it. One returning to 'addressed' keeps
   // its stamp: the agent really did act, at that time.
-  if (nextTarget.state === 'open') delete nextTarget.addressedAt
+  if (nextTarget.state === 'open') {
+    delete nextTarget.addressedAt
+    delete nextTarget.addressedBy
+  }
+  // The seen flag does NOT survive a reopen either way. Reopening is the user
+  // putting the note back in play, and letting the agent re-close it on the
+  // strength of a look that happened before that would make Reopen a one-shot
+  // the agent could immediately undo. The panel re-marks it the moment the user
+  // has the round on screen again, which is the same user in the same breath.
+  delete nextTarget.userSawAddressed
   settleReviewStatus(next, owner.id)
 
   commit(next)

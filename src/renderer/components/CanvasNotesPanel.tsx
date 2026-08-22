@@ -20,7 +20,34 @@ interface Props {
   getGlassApi: () => ExcalidrawImperativeAPI | null
   /** One-click return to the terminal after submit (spec D3). */
   onReturnToTerminal: () => void
+  /**
+   * Is this panel the one the user is actually looking at?
+   *
+   * Every session renders its own pane and the inactive ones are hidden with
+   * CSS, so being MOUNTED proves nothing about being seen. This is the session
+   * being the active one on the sessions view — and it is load-bearing, not
+   * cosmetic: it gates the "the user has seen this round addressed" report that
+   * releases the agent's close-out barrier. Defaults to false at every call
+   * site that does not know, which fails closed (the barrier stays shut and the
+   * user closes the round themselves).
+   */
+  isActive: boolean
 }
+
+/**
+ * How long an addressed round must be ON SCREEN before it counts as SEEN.
+ *
+ * The close-out barrier's release is a claim about the user's eyes, so the
+ * report has to be worth something: a note that appeared for one frame during a
+ * re-render, or while the pane was mounted behind another view, has not been
+ * read by anybody. A second and a half of continuous visibility in the active,
+ * visible window is a modest claim that is actually true.
+ *
+ * Note where this dwell lives — on the USER's side, measuring the user's
+ * exposure. The dwell it replaces sat on the agent's side and measured the
+ * agent's patience, which an unattended agent simply spends.
+ */
+const SEEN_DWELL_MS = 1500
 
 /** Scene-coord bbox of a set of glass elements. The glass is pinned 1:1 over
  *  the content (scene ≡ page coords), so this IS the sketch's page bbox. */
@@ -110,9 +137,10 @@ function FocusLabel({ focus, className }: { focus: FocusObject; className?: stri
  * from earlier reviews, the composer for the note being written, the draft
  * list, and Submit. GitHub-review vocabulary throughout.
  */
-export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onReturnToTerminal }: Props) {
+export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onReturnToTerminal, isActive }: Props) {
   const state = useCanvasReviewStore((s) => s.bySessionId[sessionId])
   const refresh = useCanvasReviewStore((s) => s.refresh)
+  const markAddressedSeen = useCanvasReviewStore((s) => s.markAddressedSeen)
   const upsertNote = useCanvasReviewStore((s) => s.upsertNote)
   const deleteNote = useCanvasReviewStore((s) => s.deleteNote)
   const submitReview = useCanvasReviewStore((s) => s.submitReview)
@@ -247,13 +275,87 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     async (ids: string[], action: 'approve' | 'dismiss' | 'stale') => {
       const canvasNow = () => useCanvasReviewStore.getState().bySessionId[sessionId]?.canvasId ?? null
       const startedOn = canvasNow()
+      // No canvas, nothing this pass could have been composed against.
+      if (!startedOn) return
       for (const id of ids) {
+        // The pre-flight check stops the REST of the pass. It cannot stop the
+        // one note already in flight when the canvas changes — the check and
+        // the write it authorises are separated by an await. So the canvas the
+        // pass started on travels WITH each call, and main refuses any write
+        // that arrives after the session has moved on; the residual one-note
+        // window closes there, inside the same synchronous mutation.
         if (canvasNow() !== startedOn) break
-        await resolveNote(sessionId, id, action)
+        await resolveNote(sessionId, id, action, startedOn)
       }
     },
     [resolveNote, sessionId],
   )
+
+  /** One note, one click. The canvas is read at CLICK time — that is the one
+   *  the user is looking at — and travels with the call so main can refuse the
+   *  write if the session moves between the click and the handler. */
+  const resolveOne = useCallback(
+    (annotationId: string, action: 'approve' | 'dismiss' | 'reannotate' | 'stale') => {
+      const on = useCanvasReviewStore.getState().bySessionId[sessionId]?.canvasId ?? null
+      if (!on) return
+      void resolveNote(sessionId, annotationId, action, on)
+    },
+    [resolveNote, sessionId],
+  )
+
+  /**
+   * Report to main that the user has these addressed notes ON SCREEN.
+   *
+   * This is the release side of the agent's close-out barrier: until the user
+   * has seen a note in its addressed state, `canvas_verdict` refuses to close
+   * it and the agent is told to hand back. The report is therefore a claim
+   * about the user's eyes, and every condition here exists to keep that claim
+   * honest:
+   *
+   *   - `isActive`: every session mounts its own pane, hidden with CSS. Mounted
+   *     is not seen.
+   *   - the document being VISIBLE: a minimised or background window shows
+   *     nobody anything.
+   *   - `SEEN_DWELL_MS` of both, uninterrupted: a row that flashed past during
+   *     a re-render was not read.
+   *
+   * Only notes not already marked are sent, so the steady state is an empty
+   * list and no IPC — the effect cannot feed itself through the refresh its own
+   * write triggers.
+   */
+  const unseenAddressedIds = useMemo(
+    () =>
+      (state?.annotations ?? [])
+        .filter((a) => a.state === 'addressed' && a.userSawAddressed !== true)
+        .map((a) => a.id),
+    [state?.annotations],
+  )
+  /** Identity that changes only when the SET does, so the dwell is not restarted
+   *  by every unrelated store commit. */
+  const unseenKey = unseenAddressedIds.join(',')
+  const canvasId = state?.canvasId ?? null
+
+  /** Window visibility as state, so a window hidden mid-dwell RESTARTS the dwell
+   *  when it comes back rather than leaving a cancelled timer nobody re-arms. */
+  const [windowVisible, setWindowVisible] = useState(
+    () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
+  )
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const onVisibility = (): void => setWindowVisible(document.visibilityState !== 'hidden')
+    document.addEventListener('visibilitychange', onVisibility)
+    onVisibility()
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
+
+  useEffect(() => {
+    if (!isActive || !windowVisible || !canvasId || unseenKey === '') return
+    const ids = unseenKey.split(',')
+    const timer = setTimeout(() => {
+      void markAddressedSeen(sessionId, canvasId, ids)
+    }, SEEN_DWELL_MS)
+    return () => clearTimeout(timer)
+  }, [isActive, windowVisible, canvasId, unseenKey, sessionId, markAddressedSeen])
 
   /**
    * Close a whole round in one action.
@@ -613,7 +715,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                   <div className="text-text/90 mt-0.5 line-clamp-3 whitespace-pre-wrap">{note.note}</div>
                   <div className="flex gap-1.5 mt-1.5">
                     <button
-                      onClick={() => void resolveNote(sessionId, note.id, 'approve')}
+                      onClick={() => resolveOne(note.id, 'approve')}
                       disabled={actionsLocked}
                       className="px-1.5 py-0.5 text-[10px] rounded border border-green/40 text-green hover:bg-green/10 disabled:opacity-40"
                       title="The agent addressed this note"
@@ -621,7 +723,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                       Approve
                     </button>
                     <button
-                      onClick={() => void resolveNote(sessionId, note.id, 'reannotate')}
+                      onClick={() => resolveOne(note.id, 'reannotate')}
                       disabled={actionsLocked}
                       className="px-1.5 py-0.5 text-[10px] rounded border border-peach/40 text-peach hover:bg-peach/10 disabled:opacity-40"
                       title="Not addressed — write a follow-up note linked to this one"
@@ -633,7 +735,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                         different claim from "I checked it and it is right",
                         and only the second is an approval. */}
                     <button
-                      onClick={() => void resolveNote(sessionId, note.id, 'stale')}
+                      onClick={() => resolveOne(note.id, 'stale')}
                       disabled={actionsLocked}
                       className="px-1.5 py-0.5 text-[10px] rounded border border-peach/40 text-peach hover:bg-peach/10 disabled:opacity-40"
                       title="The work this note was about has shipped — close it without calling it approved"
@@ -642,7 +744,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                       Close
                     </button>
                     <button
-                      onClick={() => void resolveNote(sessionId, note.id, 'dismiss')}
+                      onClick={() => resolveOne(note.id, 'dismiss')}
                       disabled={actionsLocked}
                       className="px-1.5 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:bg-surface0 disabled:opacity-40"
                       title="Drop this note without action"

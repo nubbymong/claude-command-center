@@ -1036,7 +1036,14 @@ export default function App() {
                   ) : isShowingWebview ? (
                     <WebviewPane sessionId={session.id} isActive={session.id === activeSessionId} />
                   ) : isShowingExcalidraw ? (
-                    <AgentCanvasPane sessionId={session.id} />
+                    <AgentCanvasPane
+                      sessionId={session.id}
+                      // Load-bearing, not cosmetic: the notes panel reports "the
+                      // user has seen this round addressed" only from the pane
+                      // that is actually on screen, and that report is what lets
+                      // the agent close a round at all.
+                      isActive={session.id === activeSessionId && view === 'sessions'}
+                    />
                   ) : null}
                 </div>
               )

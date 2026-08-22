@@ -26,6 +26,7 @@ import {
   dropReviewsForCanvas,
   getReviewCountsForCanvas,
   getReviewStateForSession,
+  markAddressedNotesSeen,
   onReviewChanged,
   reopenAnnotation,
   resolveAnnotation,
@@ -218,14 +219,35 @@ const reviewSubmitSchema = z
   })
   .strict()
 
+/** The canvas a renderer call was composed against. Same charset bound as the
+ *  library's close-out id. Required, not optional: a call that cannot say which
+ *  canvas it meant is exactly the one the mismatch check exists to refuse. */
+const canvasIdSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/)
+
 const annotationResolveSchema = z
   .object({
     sessionId: sessionIdSchema,
+    // The canvas the panel had on screen when the user clicked. The store
+    // refuses the call if the session has since moved to another canvas —
+    // annotation ids restart at a1 on every one, so without it a verdict aimed
+    // at the round the user was reading can land on a stranger's note.
+    canvasId: canvasIdSchema,
     annotationId: annotationIdSchema,
     // 'stale' is the close-out verdict: the work shipped, so the note is no
     // longer live. Deliberately distinct from 'approve' — the user is saying
     // "this went out", not "I checked it and it is right".
     action: z.enum(['approve', 'dismiss', 'reannotate', 'stale']),
+  })
+  .strict()
+
+/** "The user has these addressed notes on screen." The release side of the
+ *  close-out barrier, and renderer-only by construction: there is no MCP tool
+ *  that reaches this channel. */
+const reviewMarkSeenSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: canvasIdSchema,
+    annotationIds: z.array(annotationIdSchema).max(500),
   })
   .strict()
 
@@ -353,8 +375,16 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   })
 
   ipcMain.handle(IPC.CANVAS_ANNOTATION_RESOLVE, async (_e, args: unknown) => {
-    const { sessionId, annotationId, action } = annotationResolveSchema.parse(args)
-    return resolveAnnotation(sessionId, annotationId, action)
+    const { sessionId, canvasId, annotationId, action } = annotationResolveSchema.parse(args)
+    return resolveAnnotation(sessionId, annotationId, action, canvasId)
+  })
+
+  // The user's eyes on an addressed round — the one input to the close-out
+  // barrier that no agent can produce. Renderer-only: the MCP surface has no
+  // path here, and must never be given one.
+  ipcMain.handle(IPC.CANVAS_REVIEW_MARK_SEEN, async (_e, args: unknown) => {
+    const { sessionId, canvasId, annotationIds } = reviewMarkSeenSchema.parse(args)
+    return markAddressedNotesSeen(sessionId, canvasId, annotationIds)
   })
 
   // The undo half of close-out. Cheap and one click away, which is what makes

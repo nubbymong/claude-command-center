@@ -96,6 +96,16 @@ function versionOptionLabel(version: CanvasVersion, now: number): string {
 
 interface Props {
   sessionId: string
+  /**
+   * Is this the pane the user is looking at? Every session mounts its own and
+   * the rest are hidden with CSS, so the component cannot tell on its own.
+   *
+   * Only the notes panel uses it, and only to decide whether an addressed round
+   * has actually been SEEN — the signal that releases the agent's close-out
+   * barrier. Defaults to false, which fails closed: a caller that does not know
+   * never claims the user saw anything.
+   */
+  isActive?: boolean
 }
 
 /**
@@ -113,7 +123,7 @@ interface Props {
  * content's scroll — so marks stay on what they annotate while the page
  * scrolls.
  */
-export default function AgentCanvasPane({ sessionId }: Props) {
+export default function AgentCanvasPane({ sessionId, isActive = false }: Props) {
   const canvasState = useCanvasStore((s) => s.bySessionId[sessionId])
   const refresh = useCanvasStore((s) => s.refresh)
   const clearUnseenRender = useCanvasStore((s) => s.clearUnseenRender)
@@ -162,6 +172,7 @@ export default function AgentCanvasPane({ sessionId }: Props) {
         version={activeVersion}
         versions={canvasState.versions}
         onOpenLibrary={() => setLibraryOpen(true)}
+        isActive={isActive}
       />
       {libraryOpen && (
         <CanvasLibrary sessionId={sessionId} onClose={() => setLibraryOpen(false)} onOpened={() => setLibraryOpen(false)} />
@@ -180,6 +191,8 @@ interface SurfaceProps {
   /** Owned by the pane, not by this surface: the library has to outlive a
    *  delete that empties the pane. */
   onOpenLibrary: () => void
+  /** Straight through to the notes panel — see AgentCanvasPane's Props. */
+  isActive: boolean
 }
 
 interface HoverState {
@@ -197,7 +210,7 @@ interface MarqueeDrag {
  *  click, not a drag. */
 const MARQUEE_MIN_PX = 8
 
-function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versions, onOpenLibrary }: SurfaceProps) {
+function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versions, onOpenLibrary, isActive }: SurfaceProps) {
   const togglePane = useExcalidrawStore((s) => s.togglePane)
   const mode = useCanvasStore((s) => s.bySessionId[sessionId]?.interactionMode ?? 'browse')
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
@@ -955,6 +968,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           version={version}
           getGlassApi={() => glassApiRef.current}
           onReturnToTerminal={() => togglePane(sessionId)}
+          isActive={isActive}
         />
       </div>
     </div>

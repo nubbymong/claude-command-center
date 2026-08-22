@@ -72,8 +72,10 @@ let current: CanvasReviewState
 let container: HTMLDivElement
 let root: Root
 /** Every resolve the panel sent, in order. */
-let resolves: Array<{ annotationId: string; action: string }>
+let resolves: Array<{ annotationId: string; action: string; canvasId: string }>
 let reopens: string[]
+/** Every "the user has these on screen" report the panel sent, in order. */
+let seenReports: Array<{ canvasId: string; annotationIds: string[] }>
 
 /** Apply the transition main would apply, so the panel sees a real mirror. */
 function applyResolve(annotationId: string, action: string): CanvasReviewState {
@@ -97,9 +99,21 @@ function applyResolve(annotationId: string, action: string): CanvasReviewState {
   canvas: {
     ...((globalThis as any).window?.electronAPI?.canvas ?? {}),
     reviewGetState: vi.fn(async () => current),
-    annotationResolve: vi.fn(async ({ annotationId, action }: { annotationId: string; action: string }) => {
-      resolves.push({ annotationId, action })
+    annotationResolve: vi.fn(async ({ annotationId, action, canvasId }: { annotationId: string; action: string; canvasId: string }) => {
+      resolves.push({ annotationId, action, canvasId })
       return { state: applyResolve(annotationId, action) }
+    }),
+    // The release side of the agent's close-out barrier. Mocked here because
+    // the panel fires it on its own, from an effect, whenever the user is
+    // actually looking at an addressed round.
+    reviewMarkSeen: vi.fn(async ({ canvasId, annotationIds }: { canvasId: string; annotationIds: string[] }) => {
+      seenReports.push({ canvasId, annotationIds })
+      const marked = new Set(annotationIds)
+      current = {
+        ...current,
+        annotations: current.annotations.map((a) => (marked.has(a.id) ? { ...a, userSawAddressed: true } : a)),
+      }
+      return { state: current, seen: annotationIds }
     }),
     annotationReopen: vi.fn(async ({ annotationId }: { annotationId: string }) => {
       reopens.push(annotationId)
@@ -117,9 +131,20 @@ function applyResolve(annotationId: string, action: string): CanvasReviewState {
   },
 }
 
-async function render(): Promise<void> {
+/** `isActive` defaults to FALSE — the value that claims the user has seen
+ *  nothing. Every test about the close-out barrier's release passes it
+ *  explicitly, so no other test can grant that release by accident. */
+async function render(isActive = false): Promise<void> {
   await act(async () => {
-    root.render(<CanvasNotesPanel sessionId={SID} version={VERSION} getGlassApi={() => null} onReturnToTerminal={() => {}} />)
+    root.render(
+      <CanvasNotesPanel
+        sessionId={SID}
+        version={VERSION}
+        getGlassApi={() => null}
+        onReturnToTerminal={() => {}}
+        isActive={isActive}
+      />,
+    )
   })
 }
 
@@ -155,6 +180,7 @@ beforeEach(async () => {
   current = boardWithMixedRounds()
   resolves = []
   reopens = []
+  seenReports = []
   useCanvasReviewStore.getState().reset()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -296,7 +322,7 @@ describe('closed work stays visible, and reopens in one click', () => {
     expect(closeBtn).toBeTruthy()
     expect(closeBtn!.textContent).toBe('Close')
     await click(closeBtn)
-    expect(resolves).toEqual([{ annotationId: 'a1', action: 'stale' }])
+    expect(resolves).toEqual([{ annotationId: 'a1', action: 'stale', canvasId: 'canvas-a' }])
   })
 
   it('says out loud when the agent both did the work and closed the note', async () => {
@@ -333,8 +359,8 @@ describe('a bulk pass cannot land on the wrong canvas, or race itself', () => {
     // the user's own name.
     let calls = 0
     ;(window as any).electronAPI.canvas.annotationResolve = vi.fn(
-      async ({ annotationId, action }: { annotationId: string; action: string }) => {
-        resolves.push({ annotationId, action })
+      async ({ annotationId, action, canvasId }: { annotationId: string; action: string; canvasId: string }) => {
+        resolves.push({ annotationId, action, canvasId })
         const state = applyResolve(annotationId, action)
         calls++
         // The agent files this canvas and starts a new one, right after the
@@ -351,6 +377,12 @@ describe('a bulk pass cannot land on the wrong canvas, or race itself', () => {
     // One resolve landed on the canvas the ids belonged to; the pass then
     // stopped rather than continuing against canvas-b.
     expect(resolves).toHaveLength(1)
+    // And it NAMED that canvas. The pre-flight check above stops the rest of
+    // the pass, but it cannot stop the write already in flight when the canvas
+    // changes — main refuses that one by comparing the id the pass started on
+    // against the canvas the session is on now, inside the same synchronous
+    // mutation as the write. Sending the id is this side of that guard.
+    expect(resolves[0].canvasId).toBe('canvas-a')
   })
 
   it('locks every other verdict control while the bulk pass runs (Q-6)', async () => {
@@ -358,8 +390,8 @@ describe('a bulk pass cannot land on the wrong canvas, or race itself', () => {
     // on a note the other has already consumed.
     let release: (() => void) | null = null
     ;(window as any).electronAPI.canvas.annotationResolve = vi.fn(
-      async ({ annotationId, action }: { annotationId: string; action: string }) => {
-        resolves.push({ annotationId, action })
+      async ({ annotationId, action, canvasId }: { annotationId: string; action: string; canvasId: string }) => {
+        resolves.push({ annotationId, action, canvasId })
         const state = applyResolve(annotationId, action)
         if (!release) await new Promise<void>((r) => { release = r })
         return { state }

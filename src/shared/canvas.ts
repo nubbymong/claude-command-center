@@ -170,6 +170,27 @@ export type AgentCloseVerdict = (typeof AGENT_CLOSE_VERDICTS)[number]
  *  apart from the user's own approvals. */
 export type AnnotationClosedBy = 'user' | 'agent'
 
+/**
+ * Who moved a note into `addressed` — the state the agent's close-out
+ * precondition is entirely made of.
+ *
+ * Only 'agent' is reachable today (`canvas_resolve` is the single writer of
+ * that state), and that is exactly the point: the close-out barrier has to be
+ * able to READ the fact rather than assume it, so that if a user-side "mark
+ * addressed" ever exists the barrier treats it correctly instead of inheriting
+ * a hole from an assumption nobody re-checked.
+ */
+export type AnnotationAddressedActor = 'agent' | 'user'
+
+/** The provenance of one open -> addressed transition. */
+export interface AddressedBy {
+  actor: AnnotationAddressedActor
+  /** The session that made the write. `canvas_verdict` compares it against its
+   *  own session so the record can say "you addressed these yourself" rather
+   *  than the vaguer "somebody did". */
+  sessionId: string
+}
+
 /** A sketch attached to a note (D6). The glass is never the data model: this
  *  RECORD references glass elements; the PNG is exported once, at submit. */
 export interface AnnotationSketch {
@@ -223,16 +244,42 @@ export interface Annotation {
   /**
    * When the AGENT marked this note addressed (`canvas_resolve`).
    *
-   * Recorded because the agent's close-out precondition — "every note on this
-   * round is addressed" — is a state the agent itself writes. Without a stamp,
-   * `canvas_resolve` followed straight away by `canvas_verdict` satisfies the
-   * scope rule in one unattended pass and takes the round off the pill that
-   * would have sent the user to look at it. The timestamp is what lets the
-   * store tell that chain apart from a round the user has had a chance to see.
+   * Provenance for the panel and for anyone reading the record: the moment the
+   * agent claimed to have acted. It is NOT what authorises a close — a delay is
+   * not permission, and an unattended agent can wait — so the close-out barrier
+   * reads `addressedBy`/`userSawAddressed` instead. See `closeAnnotationsByAgent`.
    *
    * Absent on a note nobody has addressed, and on records written before this.
    */
   addressedAt?: string
+  /**
+   * WHO moved this note into `addressed`, and from which session.
+   *
+   * Half of the close-out barrier. The agent's precondition for closing a round
+   * ("every note on it is addressed") is a state the agent writes ITSELF, so on
+   * its own it proves nothing: `canvas_resolve` then `canvas_verdict` satisfies
+   * it in one unattended pass with no user anywhere in the chain. Recording the
+   * actor is what lets the store refuse to let one party be both the hand that
+   * created the precondition and the hand that spends it.
+   *
+   * Absent on records written before this — and absent is NOT a pass: a note
+   * with no provenance is treated as agent-addressed, because the backlog this
+   * feature exists to clear was all addressed by agents.
+   */
+  addressedBy?: AddressedBy
+  /**
+   * Whether the USER has actually seen this note in its addressed state.
+   *
+   * The other half of the barrier, and the only thing on this record an agent
+   * cannot write. It is set from the renderer — and only when the note's
+   * addressed state has been on the user's screen, in the active session, in a
+   * visible window, long enough to read — never by any MCP tool, and never by
+   * the main process on an agent's behalf.
+   *
+   * Cleared every time the note is re-addressed: seeing an OLD claim of work is
+   * not seeing the new one.
+   */
+  userSawAddressed?: boolean
 }
 
 export interface Review {

@@ -112,14 +112,32 @@ interface CanvasReviewStoreState {
   upsertNote: (sessionId: string, draft: CanvasAnnotationDraft) => Promise<string | null>
   deleteNote: (sessionId: string, annotationId: string) => Promise<void>
   submitReview: (sessionId: string, reviewId: string, sketches: CanvasSketchExport[]) => Promise<Review | null>
+  /**
+   * The user's verdict on one note. `canvasId` is the canvas the caller composed
+   * the verdict against — for a bulk pass, the one it STARTED on — and main
+   * refuses the write if the session has moved to another canvas since. Note ids
+   * restart at a1 on every canvas, so without it a verdict can land on a
+   * stranger's note under the user's own name.
+   */
   resolveNote: (
     sessionId: string,
     annotationId: string,
     action: 'approve' | 'dismiss' | 'reannotate' | 'stale',
+    canvasId: string,
   ) => Promise<void>
   /** Put a closed note back in play. Returns nothing to decide — the mirror
    *  main returns is the answer, as with every other mutation here. */
   reopenNote: (sessionId: string, annotationId: string) => Promise<void>
+  /**
+   * Tell main the user has these addressed notes ON SCREEN.
+   *
+   * The release side of the agent's close-out barrier: until the user has seen
+   * a note in its addressed state, `canvas_verdict` may not close it. Only the
+   * panel calls this, and only after the rows have been visible long enough to
+   * read — it is a report of what the user saw, so anything that would let it
+   * fire without them looking makes it a lie.
+   */
+  markAddressedSeen: (sessionId: string, canvasId: string, annotationIds: string[]) => Promise<void>
   reset: () => void
 }
 
@@ -266,9 +284,9 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
     }
   },
 
-  resolveNote: async (sessionId, annotationId, action) => {
+  resolveNote: async (sessionId, annotationId, action, canvasId) => {
     try {
-      const { state, reannotationId } = await window.electronAPI.canvas.annotationResolve({ sessionId, annotationId, action })
+      const { state, reannotationId } = await window.electronAPI.canvas.annotationResolve({ sessionId, canvasId, annotationId, action })
       set((s) => ({
         bySessionId: {
           ...s.bySessionId,
@@ -292,6 +310,23 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
       }))
     } catch (err) {
       console.error('[canvasReviewStore] reopenNote failed:', err)
+    }
+  },
+
+  markAddressedSeen: async (sessionId, canvasId, annotationIds) => {
+    if (annotationIds.length === 0) return
+    try {
+      const { state, seen } = await window.electronAPI.canvas.reviewMarkSeen({ sessionId, canvasId, annotationIds })
+      // Nothing moved (already seen, or the canvas changed under the report) —
+      // don't touch the mirror, so a steady-state panel cannot loop.
+      if (seen.length === 0) return
+      set((s) => ({
+        bySessionId: { ...s.bySessionId, [sessionId]: fromMain(s.bySessionId[sessionId], state) },
+      }))
+    } catch (err) {
+      // A refused report is not a user-visible failure: the barrier simply
+      // stays closed, and the user closes the round from the panel instead.
+      console.error('[canvasReviewStore] markAddressedSeen failed:', err)
     }
   },
 
