@@ -219,6 +219,13 @@ export function clearSessionState(): boolean {
       unlinkSync(file)
       logInfo('[session-state] Cleared saved state')
     }
+    // #397 N1: remove the previous-good mirror too. Leaving it behind would keep a
+    // copy of the discarded set (cwds, machine names, GitHub config) on disk, and a
+    // later corrupt-primary load could recover the PRE-clear set the user discarded.
+    try {
+      const bak = getSessionStateBakFile()
+      if (existsSync(bak)) unlinkSync(bak)
+    } catch { /* best effort; recovery also re-parses + re-sanitizes before any use */ }
     return true
   } catch (err) {
     console.error('[session-state] Failed to clear:', err)

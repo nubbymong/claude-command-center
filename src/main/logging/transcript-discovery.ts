@@ -198,9 +198,29 @@ export function canonicalizeTranscriptPath(p: string): string | null {
  *  uuid before it is interpolated into a spawn shell command (defense-in-depth). */
 export const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
+// #397 N2: the cwd this resolver needs is written into the transcript's FIRST
+// entries, so read only a bounded HEAD, not the whole file. Enrichment now runs on
+// the MAIN process on every debounced autosave; a full sync read of a multi-MB
+// transcript there stalls all IPC. A head read keeps it O(constant). Fail-safe: any
+// error (or a missing file) yields '' → the resolver returns null → prior behaviour.
+const RESUME_HEAD_BYTES = 131072
+function readTranscriptHead(p: string): string {
+  let fd: number | null = null
+  try {
+    fd = fs.openSync(p, 'r')
+    const buf = Buffer.alloc(RESUME_HEAD_BYTES)
+    const n = fs.readSync(fd, buf, 0, RESUME_HEAD_BYTES, 0)
+    return buf.toString('utf-8', 0, n)
+  } catch {
+    return ''
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd) } catch { /* ignore */ } }
+  }
+}
+
 export function resolveResumeTargetFromTranscript(
   transcriptPath: string,
-  readFile: (p: string, enc: 'utf-8') => string = (p, enc) => fs.readFileSync(p, enc),
+  readFile: (p: string, enc: 'utf-8') => string = (p, _enc) => readTranscriptHead(p),
 ): { uuid: string; cwd: string } | null {
   if (!transcriptPath) return null
 

@@ -153,4 +153,12 @@ describe('an absent file and an unparseable file are NOT read failures', () => {
     expect(aside.length).toBeGreaterThanOrEqual(1)
     expect(JSON.parse(readFileSync(file(), 'utf-8')).sessions).toHaveLength(2)
   })
+
+  it('#397 N1: clear removes the .bak previous-good mirror as well as the primary', () => {
+    expect(saveSessionState(saved)).toBe(true)
+    expect(existsSync(file() + '.bak')).toBe(true)
+    expect(clearSessionState()).toBe(true)
+    expect(existsSync(file())).toBe(false)
+    expect(existsSync(file() + '.bak')).toBe(false)
+  })
 })

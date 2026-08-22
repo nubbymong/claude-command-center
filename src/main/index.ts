@@ -89,7 +89,7 @@ import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
-import { enrichSessionStateWithResumeTargets } from './session-resume-enrich'
+import { createSessionDurability } from './session-durability'
 import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
 import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
@@ -108,44 +108,22 @@ import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVer
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
 
-// #397: the most recent session state pushed from the renderer, already enriched
-// with exact-conversation resume targets. Cached so a durable flush on a
-// non-graceful exit (before-quit / signal / power event) can write it even when
-// the renderer never reached its graceful Save-&-Close path.
-let lastKnownSessionState: SessionState | null = null
-
-// Enrich a renderer-supplied SessionState from the live transcript binder, then
-// persist it. This is the SINGLE session-state write choke point: every renderer
-// writer (autosave, account flush, GitHub flush, Save-&-Close) routes through the
-// `session:save` IPC into here, so EVERY persisted file carries a resumable target
-// — not just the graceful-close one. That closes #397 Group 1 (a non-graceful exit
-// left a non-enriched file → next launch fell back to the resume picker) and the
-// autosave-clobber race (there is no longer a non-enriched writer). Also caches the
-// enriched state for the exit-time durable flush (#397 Group 2).
-function saveEnrichedSessionState(state: SessionState): boolean {
-  const binder = getTranscriptBinder()
-  const enriched = enrichSessionStateWithResumeTargets(state, {
-    getLatestTranscriptPath: (id) => binder?.getLatestTranscriptPath(id) ?? null,
+// #397: the cross-exit session-state durability core. `session:save` routes every
+// renderer writer (autosave, account flush, GitHub flush, Save-&-Close) through
+// saveEnriched — enriching each Claude session's exact resume target from the live
+// transcript binder — so EVERY persisted file is resumable, not only the graceful
+// close (Group 1), and the old autosave-clobber race dissolves. flushOnExit persists
+// the cached state on any non-graceful exit (Group 2); noteCleared drops the cache
+// on an intentional clear so the flush never resurrects a discarded set (F1). The
+// binder is read lazily per call — it may init after this module loads.
+const sessionDurability = createSessionDurability({
+  enrichDeps: {
+    getLatestTranscriptPath: (id) => getTranscriptBinder()?.getLatestTranscriptPath(id) ?? null,
     resolveResumeTargetFromTranscript,
-  })
-  lastKnownSessionState = enriched
-  return saveSessionState(enriched)
-}
-
-// #397 Group 2: write the last-known session state on ANY exit path — not only the
-// renderer's graceful Save-&-Close. Re-enriches from the still-live binder so the
-// freshest resume target is written. saveSessionState is atomic and idempotent, so
-// being called from several exit hooks in one teardown is harmless. A no-op until
-// the renderer has pushed at least one state this run.
-function flushSessionStateOnExit(reason: string): void {
-  if (!lastKnownSessionState) return
-  try {
-    saveEnrichedSessionState(lastKnownSessionState)
-    logInfo(`[session-state] durable flush on ${reason}`)
-  } catch (err) {
-    logError(`[session-state] durable flush on ${reason} failed: ${(err as Error)?.message ?? err}`)
-  }
-}
+  },
+  save: saveSessionState,
+  log: logInfo,
+})
 
 // Multi-instance (dev alongside prod): a dev build must NOT share prod's data
 // dir (CONFIG/sessions/transcripts/profiles). Point it at a dedicated dev root
@@ -501,7 +479,7 @@ function createWindow(): void {
   // #397 Group 2: a renderer crash / OOM kills the window before it can run its
   // graceful save. Persist the last-known session state so the sessions survive.
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
-    flushSessionStateOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
+    sessionDurability.flushOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
   })
 
   // Renderer calls this after saving sessions and graceful exit
@@ -531,7 +509,7 @@ function createWindow(): void {
   ipcMain.on('window:forceClose', () => {
     // #397 Group 2: destroy() bypasses the 'close' event and the graceful save;
     // persist the last-known session state before the window is torn down.
-    flushSessionStateOnExit('window:forceClose')
+    sessionDurability.flushOnExit('window:forceClose')
     if (mainWindow) {
       mainWindow.destroy()  // Force close without triggering close event
     }
@@ -624,7 +602,7 @@ function createWindow(): void {
 
   // Session state persistence IPC handlers
   ipcMain.handle('session:save', async (_event, state: SessionState) => {
-    return saveEnrichedSessionState(state)
+    return sessionDurability.saveEnriched(state)
   })
 
   ipcMain.handle('session:load', async () => {
@@ -632,7 +610,12 @@ function createWindow(): void {
   })
 
   ipcMain.handle('session:clear', async () => {
-    return clearSessionState()
+    const ok = clearSessionState()
+    // #397 F1: a successful clear is the user intentionally discarding the saved set
+    // (Don't-open / Close-without-saving). Drop the cache so the exit-time flush
+    // cannot resurrect it on the next launch.
+    if (ok) sessionDurability.noteCleared()
+    return ok
   })
 
   ipcMain.handle('session:hasSaved', async () => {
@@ -754,11 +737,11 @@ if (!gotTheLock) {
     // console Ctrl+C on a dev run or a task-manager terminate) can end the app
     // without the window-close flow running. Persist sessions first, then quit
     // gracefully so before-quit's own teardown still runs.
-    powerMonitor.on('shutdown', () => flushSessionStateOnExit('powerMonitor shutdown'))
-    powerMonitor.on('suspend', () => flushSessionStateOnExit('powerMonitor suspend'))
+    powerMonitor.on('shutdown', () => sessionDurability.flushOnExit('powerMonitor shutdown'))
+    powerMonitor.on('suspend', () => sessionDurability.flushOnExit('powerMonitor suspend'))
     for (const sig of ['SIGTERM', 'SIGINT'] as const) {
       process.on(sig, () => {
-        flushSessionStateOnExit(sig)
+        sessionDurability.flushOnExit(sig)
         app.quit()
       })
     }
@@ -1211,7 +1194,7 @@ if (!gotTheLock) {
     logInfo('App quitting...')
     // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
     // transcript binder down — flushing after that would lose the resume targets.
-    flushSessionStateOnExit('before-quit')
+    sessionDurability.flushOnExit('before-quit')
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
     try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
