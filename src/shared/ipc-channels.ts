@@ -301,6 +301,7 @@ export const IPC = {
   WEBVIEW_CHECK: 'webview:check',                 // HEAD probe (CORS-bypass)
   WEBVIEW_OPEN: 'webview:open',                   // create+attach view at bounds
   WEBVIEW_CLOSE: 'webview:close',                 // detach+destroy view
+  WEBVIEW_FORGET: 'webview:forget',               // destroy view AND wipe its persist:webview-<id> profile (session closed for good)
   WEBVIEW_SET_BOUNDS: 'webview:setBounds',        // re-position on resize/scroll
   WEBVIEW_SET_VISIBLE: 'webview:setVisible',      // attach/detach without destroying
   WEBVIEW_RELOAD: 'webview:reload',               // force-reload bypassing cache

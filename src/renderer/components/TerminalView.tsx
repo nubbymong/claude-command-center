@@ -20,6 +20,7 @@ import { useRestartSession } from '../hooks/useRestartSession'
 import { persistLastUsedAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountGateStore, GATE_CANCELLED } from '../stores/accountGateStore'
+import { forgetSessionBrowserProfile } from '../stores/sshCloseStore'
 import { hasSpawned, markSpawned, clearSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
@@ -782,7 +783,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               .then((chosen) => {
                 if (chosen === GATE_CANCELLED) {
                   // User aborted the launch: no PTY exists yet (the gate blocks
-                  // before doSpawn), so closing is just removing the tab.
+                  // before doSpawn), so closing is just removing the tab. The
+                  // tab is gone for good, so its browser profile goes with it —
+                  // a no-op for a session that never opened a pane (#371).
+                  forgetSessionBrowserProfile(sessionId)
                   useSessionStore.getState().removeSession(sessionId)
                   return
                 }

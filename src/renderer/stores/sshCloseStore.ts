@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useSessionStore } from './sessionStore'
+import { useWebviewStore } from './webviewStore'
 import { killSessionPty } from '../ptyTracker'
 
 // SSH tmux enhancement (item 4): a one-slot store for the "you're closing a
@@ -32,6 +33,33 @@ export const useSshCloseStore = create<SshCloseState>((set) => ({
   clear: () => set({ pending: null }),
 }))
 
+/**
+ * Drop everything the browser pane kept for a session that is going away (#371).
+ *
+ * A pane runs in `persist:webview-<sessionId>`, which Chromium turns into a
+ * profile directory holding that pane's cookies, localStorage and cache.
+ * Session ids are minted per tile and never reused, so nothing ever came back
+ * for one: every closed tile left a populated profile on disk for the life of
+ * the install, with logged-in cookies for whatever had been browsed in it.
+ * (`webviewStore.reset` had no callers at all, so even the in-memory pane state
+ * leaked.)
+ *
+ * Call this ONLY where the user is closing a session for good. It is
+ * deliberately NOT inside `sessionStore.removeSession`, which the Restart button
+ * and an in-tile account switch also call — those re-add the SAME id a moment
+ * later, and signing the user out of every site in the pane on a restart would
+ * be its own bug.
+ */
+export function forgetSessionBrowserProfile(sessionId: string): void {
+  useWebviewStore.getState().reset(sessionId)
+  // Fire and forget: a profile that will not clear must never block a tab close.
+  try {
+    void Promise.resolve(window.electronAPI?.webview?.forget?.(sessionId)).catch(() => {})
+  } catch {
+    /* preload not available (tests, early boot) — the tab still closes */
+  }
+}
+
 /** Close a session, first checking whether it is a persistent SSH session that
  *  warrants the End-vs-Leave-running choice. Non-persistent / non-SSH sessions
  *  close immediately (kill the local PTY + drop the tab). */
@@ -51,6 +79,7 @@ export function requestCloseSession(sessionId: string): void {
     return
   }
   killSessionPty(sessionId)
+  forgetSessionBrowserProfile(sessionId)
   store.removeSession(sessionId)
 }
 
@@ -64,6 +93,7 @@ export async function endRemoteAndClose(sessionId: string): Promise<void> {
     // local tab (the remote at worst detaches, exactly the pre-enhancement path).
   }
   killSessionPty(sessionId)
+  forgetSessionBrowserProfile(sessionId)
   useSessionStore.getState().removeSession(sessionId)
   useSshCloseStore.getState().clear()
 }
@@ -72,6 +102,7 @@ export async function endRemoteAndClose(sessionId: string): Promise<void> {
  *  reattach. Identical to a plain close (which, for a live SSH PTY, detaches). */
 export function leaveRunningAndClose(sessionId: string): void {
   killSessionPty(sessionId)
+  forgetSessionBrowserProfile(sessionId)
   useSessionStore.getState().removeSession(sessionId)
   useSshCloseStore.getState().clear()
 }

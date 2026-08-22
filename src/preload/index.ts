@@ -321,6 +321,8 @@ export interface ElectronAPI {
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
     /** Detach + destroy the session's view. */
     close: (sessionId: string) => Promise<boolean>
+    /** Session closed for good: destroy the view AND wipe its browser profile. */
+    forget: (sessionId: string) => Promise<boolean>
     /** Re-position on resize/scroll. */
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
     /** Attach/detach without destroying — used to hide on session switch. */
@@ -931,6 +933,8 @@ const electronAPI: ElectronAPI = {
     check: (url: string) => ipcRenderer.invoke(IPC.WEBVIEW_CHECK, url),
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_OPEN, sessionId, url, bounds),
     close: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE, sessionId),
+    /** Session closed for good: destroy the view AND wipe its browser profile. */
+    forget: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_FORGET, sessionId),
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_SET_BOUNDS, sessionId, bounds),
     setVisible: (sessionId: string, visible: boolean) => ipcRenderer.invoke(IPC.WEBVIEW_SET_VISIBLE, sessionId, visible),
     reload: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_RELOAD, sessionId),

@@ -437,6 +437,8 @@ export interface ElectronAPI {
     check: (url: string) => Promise<{ reachable: boolean; status?: number }>
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
     close: (sessionId: string) => Promise<boolean>
+    /** Session closed for good: destroy the view AND wipe its browser profile. */
+    forget: (sessionId: string) => Promise<boolean>
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
     setVisible: (sessionId: string, visible: boolean) => Promise<void>
     reload: (sessionId: string) => Promise<void>

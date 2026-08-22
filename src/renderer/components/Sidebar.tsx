@@ -11,7 +11,7 @@ import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import { useAccountAuthStore } from '../stores/accountAuthStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
-import { requestCloseSession } from '../stores/sshCloseStore'
+import { requestCloseSession, forgetSessionBrowserProfile } from '../stores/sshCloseStore'
 import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
@@ -531,7 +531,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     }
   }
   const handleBulkClose = () => {
-    selectedSessionIds.forEach(id => { killSessionPty(id); removeSession(id) })
+    selectedSessionIds.forEach(id => { killSessionPty(id); forgetSessionBrowserProfile(id); removeSession(id) })
     setSelectedSessionIds(new Set())
   }
 
@@ -1202,7 +1202,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                   ...sectionGroups.flatMap((g) => g.sessions),
                   ...looseSessions
                 ]
-                allSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) })
+                allSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) })
               }}
             />
             {!sessionSectionCollapsed[section.id] && (
@@ -1213,7 +1213,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                       name={group.name}
                       collapsed={sessionGroupCollapsed[group.id]}
                       onToggleCollapse={() => setSessionGroupCollapsed((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
-                      onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
+                      onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
                     />
                     {!sessionGroupCollapsed[group.id] && (
                       <div className="space-y-0.5">
@@ -1230,7 +1230,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                     <UngroupedSessionsHeader
                       collapsed={ungroupedSessionsCollapsed[section.id]}
                       onToggleCollapse={() => toggleUngroupedSessionsCollapsed(section.id)}
-                      onCloseAll={() => { looseSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
+                      onCloseAll={() => { looseSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
                     />
                     {!ungroupedSessionsCollapsed[section.id] && (
                       <div className="space-y-0.5">
@@ -1253,7 +1253,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
               name={group.name}
               collapsed={sessionGroupCollapsed[group.id]}
               onToggleCollapse={() => setSessionGroupCollapsed((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
-              onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
+              onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
             />
             {!sessionGroupCollapsed[group.id] && (
               <div className="space-y-0.5">
@@ -1274,7 +1274,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             <UngroupedSessionsHeader
               collapsed={ungroupedSessionsCollapsed['']}
               onToggleCollapse={() => toggleUngroupedSessionsCollapsed('')}
-              onCloseAll={() => { unsectionedUngroupedSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
+              onCloseAll={() => { unsectionedUngroupedSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
             />
             {!ungroupedSessionsCollapsed[''] && (
               <div className="space-y-0.5">
