@@ -3378,7 +3378,8 @@ export function spawnPty(
       // per-session bind state so a reused sessionId (restart) binds fresh.
       getTranscriptBinder()?.endRun(sessionId)
       getPtyIntegrityMonitor()?.endSession(sessionId)
-      try { getWatchdogManager()?.stopWatchdog(sessionId) } catch { /* best-effort teardown */ }
+      // (watchdog teardown now lives UNCONDITIONALLY in cleanupSessionResources
+      //  below — see FINDING 1 — so the restart-race stale exit tears it down too)
       try {
         const gwExit = getGateway()
         if (gwExit) gwExit.unregisterSession(sessionId)
@@ -3648,6 +3649,17 @@ function cleanupSessionResources(sessionId: string): void {
   // it re-registers), so a session that restarts into a home-rooted, SSH,
   // shell-only or Codex state inherits nothing.
   revokeCanvasUatRoots(sessionId)
+  // SECURITY (adversarial review, FINDING 1): tear the session watchdog down
+  // here too, for the identical per-spawn isolation invariant. This runs from
+  // BOTH killPty (restart / deliberate close) and the natural-exit cleanup, and
+  // UNCONDITIONALLY — unlike onExit's own stopWatchdog, which sat under the
+  // weAreCurrent guard that a restart's stale exit skips. Without this, a
+  // watchdog armed by a local-Claude spawn survived a same-sessionId restart
+  // into a Codex / SSH / shell-only session and could send() its retry into that
+  // new PTY (shell-only + a custom retryMessage = arbitrary command execution).
+  // spawnPty calls killPty → here before the new spawn arms its own, so the new
+  // session inherits no watcher. Idempotent (no-op when none was running).
+  try { getWatchdogManager()?.stopWatchdog(sessionId) } catch { /* best-effort teardown */ }
 }
 
 // U8: grace before killing an SSH PTY so the in-band remote-cleanup command has

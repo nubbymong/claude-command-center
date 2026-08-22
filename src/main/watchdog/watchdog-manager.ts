@@ -259,18 +259,19 @@ export class WatchdogManager {
   }
 
   startWatchdog(sessionId: string, info?: WatchdogSessionInfo): void {
+    // A restart reuses the sessionId. Tear down any watchdog tracked for it
+    // FIRST — BEFORE the eligibility/enabled gates — so a restart into an
+    // ineligible session type (Codex / SSH / shell-only) or with the feature
+    // since disabled cannot leave the OLD watcher armed and able to send() into
+    // the just-respawned PTY (adversarial FINDING 1, defense-in-depth alongside
+    // pty-manager's cleanupSessionResources teardown). The prior code ran the
+    // gates first, so a disabled/ineligible restart returned early and LEFT the
+    // stale watcher in place.
+    if (this.entries.has(sessionId)) this.stopWatchdog(sessionId)
+
     if (!isLocalClaudeSession(info)) return
     const settings = readWatchdogSettings()
     if (settings.enabled !== true) return // default OFF — feature is inert unless explicitly opted in
-
-    // A restart can kill+respawn the PTY under the SAME sessionId (see the
-    // restart-race comment on pty-manager.ts's onExit). If a watchdog is
-    // already tracked for this sessionId, it is watching the OLD session's
-    // stale state/config — tear it down before building a fresh one so it
-    // can't send() into the just-respawned session. Never early-return on
-    // has(): every gate above (isLocalClaudeSession, enabled) must still run
-    // first so a since-disabled/ineligible session doesn't get re-armed.
-    if (this.entries.has(sessionId)) this.stopWatchdog(sessionId)
 
     const adapter: WatchdogAdapter = {
       getTail: () => this.entries.get(sessionId)?.tail ?? '',

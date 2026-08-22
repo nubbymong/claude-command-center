@@ -175,20 +175,37 @@ describe('WatchdogManager — start/stop lifecycle', () => {
     expect(fresh.tick).toHaveBeenCalledTimes(1)
   })
 
-  it('gating (disabled / ineligible session) is still checked before tearing down a stale entry', () => {
+  it('a restart with the feature since-disabled TEARS DOWN the stale entry (does not re-arm) (fix #1)', () => {
     const { host } = makeHost()
     const mgr = new WatchdogManager(host)
     mgr.startWatchdog('s1', { provider: 'claude' })
     expect(instances).toHaveLength(1)
 
-    // Feature gets disabled between the two starts — the stale entry must be
-    // left alone (still running) rather than torn down by a call that itself
-    // fails the enabled gate.
+    // Feature disabled between the two starts. The teardown now runs BEFORE the
+    // enabled gate, so the stale watcher is disposed and no new one is armed —
+    // it must NOT be left running able to send() into the respawned session.
     watchdogSettings = {}
     mgr.startWatchdog('s1', { provider: 'claude' })
-    expect(instances).toHaveLength(1)
-    expect(instances[0].dispose).not.toHaveBeenCalled()
+    expect(instances).toHaveLength(1)               // no fresh instance (gate fails)
+    expect(instances[0].dispose).toHaveBeenCalledTimes(1) // stale one torn down
+    expect(mgr.isActive('s1')).toBe(false)
+  })
+
+  it('a restart into a shell-only session tears down the claude watchdog and never sends (fix #1)', () => {
+    const { host, send } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
     expect(mgr.isActive('s1')).toBe(true)
+
+    // Same sessionId respawned as shell-only: ineligible -> not armed, and the
+    // prior claude watchdog is torn down rather than left able to send() a retry
+    // (shell-only + a custom retryMessage would be command execution).
+    mgr.startWatchdog('s1', { shellOnly: true })
+    expect(mgr.isActive('s1')).toBe(false)
+    expect(instances[0].dispose).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(5000)
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('disposeAll tears down every active watchdog and the hook subscription', () => {
