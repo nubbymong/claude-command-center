@@ -173,19 +173,73 @@ describe('the library row (#364)', () => {
 })
 
 describe('drafts do not leak into the rows the user reads', () => {
-  it('a draft bumps neither the row recency, the version count, nor the mode chip', () => {
+  it('a draft bumps neither the row recency nor the mode chip; the count stays total (it labels delete)', () => {
     const ready = render('round one', true)
     const before = store.listAllCanvases([], undefined, SID)[0]
 
-    // A uat-mode draft: the strongest leak case (it would flip the chip too).
     store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>wip</p>', title: 'Queue states', ready: false })
     const after = store.listAllCanvases([], undefined, SID)[0]
 
-    expect(after.versionCount).toBe(before.versionCount)
+    // Recency and the chip describe what the user can SEE...
     expect(after.lastRenderedAt).toBe(before.lastRenderedAt)
     expect(after.latestMode).toBe(before.latestMode)
+    // ...but the count labels the destructive delete, which removes drafts
+    // too — it must never under-count what the button destroys.
+    expect(after.versionCount).toBe(before.versionCount + 1)
     // ...while the owed round from the ready render stays visible.
     expect(after.awaitingReview).toBe(true)
     expect(ready.canvasId).toBe(after.canvasId)
+  })
+})
+
+describe('a subject-change draft defers the whole hand-over (#366, review round 2)', () => {
+  it('drafting a NEW subject moves neither the session binding nor files anything', () => {
+    const old = render('login page', true) // subject: Queue states
+    const draft = store.renderVersion(SID, {
+      mode: 'design', html: '<!doctype html><p>checkout wip</p>', title: 'Checkout flow', ready: false,
+    })
+
+    expect(draft.canvasId).not.toBe(old.canvasId)
+    expect(draft.filed, 'a deferred draft files nothing').toBeUndefined()
+    // The USER-facing binding stays put: the pane, note writes and review
+    // reads all keep resolving the canvas the user can see.
+    expect(store.getCanvasStateForSession(SID)?.canvasId).toBe(old.canvasId)
+    // The AGENT-facing binding follows the draft, so the self-check loop can
+    // snapshot it.
+    expect(store.getAgentCanvasStateForSession(SID)?.canvasId).toBe(draft.canvasId)
+  })
+
+  it('further drafts of the new subject supersede on the drafting canvas; the ready-mark performs the repoint and reports the filing', () => {
+    const old = render('login page', true)
+    const d1 = store.renderVersion(SID, {
+      mode: 'design', html: '<!doctype html><p>wip one</p>', title: 'Checkout flow', ready: false,
+    })
+    const d2 = store.renderVersion(SID, {
+      mode: 'design', html: '<!doctype html><p>wip two</p>', title: 'Checkout flow', ready: false,
+    })
+    expect(d2.canvasId).toBe(d1.canvasId)
+    expect(d2.versionId).toBe(d1.versionId)
+    expect(store.getCanvasStateForSession(SID)?.canvasId).toBe(old.canvasId)
+
+    const ready = store.renderVersion(SID, {
+      mode: 'design', html: '<!doctype html><p>checkout final</p>', title: 'Checkout flow', ready: true,
+    })
+    expect(ready.canvasId).toBe(d1.canvasId)
+    expect(ready.versionId).toBe(d1.versionId)
+    // NOW the session moves and the filing of the old canvas is reported —
+    // with this event, so the renderer announces it against the right prev.
+    expect(ready.filed?.canvasId).toBe(old.canvasId)
+    expect(store.getCanvasStateForSession(SID)?.canvasId).toBe(ready.canvasId)
+    expect(store.getCanvasStateForSession(SID)?.awaitingReview?.versionId).toBe(ready.versionId)
+    // The agent pointer collapses back onto the session binding.
+    expect(store.getAgentCanvasStateForSession(SID)?.canvasId).toBe(ready.canvasId)
+  })
+
+  it('the old canvas keeps its own owed round while the agent drafts elsewhere', () => {
+    const old = render('login page', true)
+    store.renderVersion(SID, {
+      mode: 'design', html: '<!doctype html><p>checkout wip</p>', title: 'Checkout flow', ready: false,
+    })
+    expect(store.getCanvasStateForSession(SID)?.awaitingReview?.versionId).toBe(old.versionId)
   })
 })

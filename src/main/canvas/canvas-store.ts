@@ -603,6 +603,20 @@ export interface ServableVersion {
 
 const canvases = new Map<string, CanvasRecord>()
 const sessionIndex = new Map<string, string>()
+/**
+ * The AGENT-side pointer for a subject-change draft in flight (#366).
+ *
+ * A draft that names a new subject writes to a NEW canvas, but the session's
+ * user-facing binding (`sessionIndex`) must not move until the ready-mark:
+ * moving it mid-draft sent the user's note writes and review reads to a canvas
+ * they had never seen, while the renderer (correctly) kept their pane on the
+ * old one (adversarial review, 2026-08-23). So the repoint and the filing are
+ * DEFERRED — this map remembers where the agent is drafting so canvas_snapshot
+ * can reach it, and the ready-mark performs the hand-over. In-memory only: an
+ * abandoned draft pointer costs nothing, and the next draft re-finds its
+ * canvas by subject.
+ */
+const draftIndex = new Map<string, string>()
 let diskScanned = false
 
 type CanvasChangedListener = (event: CanvasChangedEvent) => void
@@ -994,6 +1008,24 @@ export function getCanvasStateForSession(sessionId: string): CanvasState | null 
   return record ? toState(record) : null
 }
 
+/**
+ * The canvas the AGENT is working on: the drafting canvas while a
+ * subject-change draft is in flight (#366), else the session's own. Feeds
+ * `canvas_snapshot` ONLY, so the self-check loop can read the draft — review
+ * reads and note writes stay on the user-facing binding, because reviews live
+ * where the user can see.
+ */
+export function getAgentCanvasStateForSession(sessionId: string): CanvasState | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null
+  const draftingId = draftIndex.get(sessionId)
+  if (draftingId) {
+    const record = canvases.get(draftingId)
+    if (record) return toState(record)
+    draftIndex.delete(sessionId)
+  }
+  return getCanvasStateForSession(sessionId)
+}
+
 /** The next linear version id: one past the highest number already present.
  *  Identical to `length + 1` for a contiguous list, and correct for one with a
  *  gap (a version dropped by sanitizeRecord). */
@@ -1108,7 +1140,7 @@ function findFiledCanvas(sessionId: string, title: string): CanvasRecord | undef
 export function renderVersion(
   sessionId: string,
   source: CanvasRenderSource,
-): { canvasId: string; versionId: string; filed?: { canvasId: string; returnedToExisting: boolean } } {
+): { canvasId: string; versionId: string; draft?: boolean; filed?: { canvasId: string; returnedToExisting: boolean } } {
   if (!SESSION_ID_RE.test(sessionId)) throw new Error('invalid session id')
 
   const held = getRecordForSession(sessionId)
@@ -1282,14 +1314,28 @@ export function renderVersion(
   }
   persist(nextRecord)
   canvases.set(canvasId, nextRecord)
-  sessionIndex.set(sessionId, canvasId)
+  // A subject-change DRAFT defers the whole hand-over (#366): the user-facing
+  // binding stays on the canvas the user is on, nothing is filed, and only
+  // the agent-side draft pointer moves — so the pane, the user's note writes
+  // and the review reads all keep resolving the canvas the user can SEE for
+  // the whole drafting loop. The ready-mark (or a legacy render) performs the
+  // repoint and reports the filing — which is also what lets the renderer
+  // announce it against that event's own `prev`.
+  const deferRepoint = isDraft && subjectChanged
+  if (deferRepoint) {
+    draftIndex.set(sessionId, canvasId)
+  } else {
+    sessionIndex.set(sessionId, canvasId)
+    draftIndex.delete(sessionId)
+  }
   emitChanged(nextRecord, { draft: isDraft })
   // Report a FILING to the caller. `subjectChanged` was a local boolean that
   // never left this function, so nothing downstream could tell that the canvas
   // the user was reviewing had just been moved aside -- taking any unresolved
   // notes on it out of view. The ID only: the filed canvas's title is
   // agent-authored text, and the tool reply it feeds is operator voice.
-  const filedId = subjectChanged && held && held.canvasId !== canvasId ? held.canvasId : undefined
+  // A deferred draft files NOTHING: the held canvas is still the session's.
+  const filedId = !deferRepoint && subjectChanged && held && held.canvasId !== canvasId ? held.canvasId : undefined
   // Whether the canvas now active is BRAND NEW or one this session filed
   // earlier and has just come back to. The tool reply said "this is a new
   // canvas" either way, which is false on the returnedTo path -- and that path
@@ -1627,16 +1673,18 @@ export function listAllCanvases(
     // foreclosing is not, so own rows are always kept and the picker sorts them
     // to the top.
     if (!mine && projectCwd && record.cwd && !sameProjectDir(record.cwd, projectCwd)) continue
-    // Rows describe what the USER can see. Drafts (#366) are invisible by
-    // contract, so a draft must not bump the row's recency (re-sorting the
-    // picker under the user), its count, or its mode chip — the shape of
-    // invisible work must not leak into a surface the user reads.
+    // Row RECENCY and the mode chip describe what the USER can see: a draft
+    // (#366) must not re-sort the picker under them or flip the chip — the
+    // shape of invisible work must not leak into a surface the user reads.
+    // versionCount stays the TOTAL, drafts included, because it labels the
+    // delete button, and delete destroys the whole directory — a label that
+    // under-counts a destructive action is worse than a one-off leak.
     const shown = record.versions.filter((v) => !v.draft)
     const latest = shown[shown.length - 1]
     const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
     out.push({
       canvasId: record.canvasId,
-      versionCount: shown.length,
+      versionCount: record.versions.length,
       createdAt: clampToNow(record.createdAt),
       lastRenderedAt: clampToNow(latest?.createdAt ?? record.createdAt),
       ...(latest?.source.mode ? { latestMode: latest.source.mode } : {}),
@@ -1841,6 +1889,9 @@ export function deleteCanvas(canvasId: string): boolean {
   for (const [sessionId, id] of sessionIndex) {
     if (id === canvasId) sessionIndex.delete(sessionId)
   }
+  for (const [sessionId, id] of draftIndex) {
+    if (id === canvasId) draftIndex.delete(sessionId)
+  }
   // Tell any pane still showing this canvas that it is gone: the event carries
   // a null active version, which is the same shape the pane already handles for
   // "this session has no canvas".
@@ -1955,6 +2006,7 @@ export function _canvasRecordMacForTest(record: unknown): string {
 export function _resetCanvasStoreForTest(): void {
   canvases.clear()
   sessionIndex.clear()
+  draftIndex.clear()
   uatRootsBySession.clear()
   designatedRootsBySession.clear()
   diskScanned = false

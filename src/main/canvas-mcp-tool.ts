@@ -42,6 +42,16 @@ const MAX_DESIGN_HTML_BYTES = 2 * 1024 * 1024
 
 export interface CanvasToolDeps {
   getCanvasState: (sessionId: string) => CanvasState | null
+  /**
+   * The canvas the AGENT is working on (#366): while a subject-change draft
+   * is in flight this is the drafting canvas, so canvas_snapshot can
+   * self-check it; every other tool keeps resolving the USER-facing binding
+   * through getCanvasState, because reviews live where the user can see.
+   * Optional so existing wirings keep working; absent falls back to
+   * getCanvasState (drafting canvases are then unreachable to snapshot,
+   * which fails safe: the agent is told there is no such version).
+   */
+  getAgentCanvasState?: (sessionId: string) => CanvasState | null
   requestSnapshot: (args: {
     sessionId: string
     canvasId: string
@@ -701,7 +711,10 @@ export async function runCanvasSnapshot(
   // one call sat above the net.
   let state: CanvasState | null
   try {
-    state = deps.getCanvasState(sessionId)
+    // The AGENT's binding, not the user's: while a subject-change draft is in
+    // flight (#366) the self-check must reach the drafting canvas, which the
+    // user-facing binding deliberately does not follow until the ready-mark.
+    state = (deps.getAgentCanvasState ?? deps.getCanvasState)(sessionId)
   } catch {
     return { text: 'Could not capture the canvas: this session’s canvas could not be read.', isError: true }
   }
