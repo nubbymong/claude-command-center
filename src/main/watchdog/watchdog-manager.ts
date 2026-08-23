@@ -189,6 +189,41 @@ export interface WatchdogSettings {
   /** Silence window (ms). A session with no PTY output for this long is marked
    *  "silent". 0 disables. Absent = DEFAULT_SILENCE_WINDOW_MS. */
   silenceWindowMs?: number
+  /** #419 F13 — the rest of the WatchdogConfig knobs, reachable from
+   *  settings.json. Typed loosely on purpose: `resolveWatchdogConfig` is the
+   *  one validator/sanitizer, and it fail-safes every field. The per-block
+   *  `patterns` lists are stripped before threading (see
+   *  threadedWatchdogConfig) and stay compiled-in. */
+  marginSeconds?: number
+  fallbackWaitHours?: number
+  overload?: unknown
+  safeguard?: unknown
+}
+
+/**
+ * The settings keys threaded into a SessionWatchdog's config (#419 F13).
+ * `resolveWatchdogConfig` remains the validator — this only decides WHAT is
+ * reachable from settings.json. The overload/safeguard `patterns` lists are
+ * deliberately NOT threaded: settings.json is renderer-writable, and the
+ * patterns decide WHEN the watchdog types into the user's PTY — a hostile but
+ * regex-valid pattern list could turn ordinary output into a retry storm.
+ * They stay compiled-in (the #266 review counted that unreachability as a
+ * security property; keep it).
+ */
+function threadedWatchdogConfig(settings: WatchdogSettings): Record<string, unknown> {
+  const dropPatterns = (block: unknown): unknown => {
+    if (typeof block !== 'object' || block === null || Array.isArray(block)) return block
+    const { patterns: _patterns, ...rest } = block as Record<string, unknown>
+    return rest
+  }
+  return {
+    retryMessage: settings.retryMessage,
+    maxRetries: settings.maxRetries,
+    marginSeconds: settings.marginSeconds,
+    fallbackWaitHours: settings.fallbackWaitHours,
+    ...(settings.overload !== undefined ? { overload: dropPatterns(settings.overload) } : {}),
+    ...(settings.safeguard !== undefined ? { safeguard: dropPatterns(settings.safeguard) } : {}),
+  }
 }
 
 export interface WatchdogHostOptions {
@@ -482,10 +517,7 @@ export class WatchdogManager {
       onStateChange: (state: WatchdogPublicState) => this.pushState(state),
     }
 
-    const wd = new SessionWatchdog(sessionId, adapter, {
-      retryMessage: settings.retryMessage,
-      maxRetries: settings.maxRetries,
-    })
+    const wd = new SessionWatchdog(sessionId, adapter, threadedWatchdogConfig(settings))
     const term = new Terminal({
       cols: info?.cols ?? DEFAULT_COLS,
       rows: info?.rows ?? DEFAULT_ROWS,

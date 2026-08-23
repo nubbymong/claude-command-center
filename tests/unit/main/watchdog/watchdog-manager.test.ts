@@ -574,6 +574,45 @@ describe('WatchdogManager — StopFailure hook forwarding', () => {
   })
 })
 
+describe('WatchdogManager — config threading (#419 F13)', () => {
+  it('threads every knob from settings into the SessionWatchdog config', () => {
+    watchdogSettings = {
+      enabled: true,
+      retryMessage: 'keep going',
+      maxRetries: 7,
+      marginSeconds: 90,
+      fallbackWaitHours: 2,
+      overload: { backoffSeconds: [10, 20], jitterPct: 5, patterns: ['EVIL('] },
+      safeguard: { retryDelaySeconds: 3, patterns: ['ALSO EVIL'] },
+    }
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    const cfg = instances[0].config as Record<string, any>
+    expect(cfg.retryMessage).toBe('keep going')
+    expect(cfg.maxRetries).toBe(7)
+    expect(cfg.marginSeconds).toBe(90)
+    expect(cfg.fallbackWaitHours).toBe(2)
+    expect(cfg.overload).toMatchObject({ backoffSeconds: [10, 20], jitterPct: 5 })
+    expect(cfg.safeguard).toMatchObject({ retryDelaySeconds: 3 })
+    // The pattern lists are NEVER threaded — they decide when the watchdog
+    // types into the user's PTY and stay compiled-in (#266 review, security
+    // property). resolveWatchdogConfig then fills the defaults.
+    expect(cfg.overload).not.toHaveProperty('patterns')
+    expect(cfg.safeguard).not.toHaveProperty('patterns')
+  })
+
+  it('threads nothing surprising when the extra knobs are absent', () => {
+    watchdogSettings = { enabled: true, retryMessage: 'continue', maxRetries: 3 }
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    const cfg = instances[0].config as Record<string, any>
+    expect(cfg.overload).toBeUndefined()
+    expect(cfg.safeguard).toBeUndefined()
+  })
+})
+
 describe('WatchdogManager — adapter wiring', () => {
   it('adapter.send/isSessionAlive delegate to the host, scoped to the session id', () => {
     const { host, send, isSessionAlive } = makeHost()
