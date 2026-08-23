@@ -864,7 +864,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
         readAttachment: (absPath) => fs.readFileSync(absPath),
-        markAddressed: (sessionId, reviewId, ids) => markAnnotationsAddressed(sessionId, reviewId, ids),
+        markAddressed: (sessionId, reviewId, ids, variantsByNote) => markAnnotationsAddressed(sessionId, reviewId, ids, variantsByNote),
         // canvas_verdict. The store is what refuses 'approved' and what refuses
         // a round still waiting on the agent — this is a pass-through on
         // purpose, so there is exactly one place either rule can be read or

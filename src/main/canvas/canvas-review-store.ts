@@ -24,12 +24,15 @@ import {
   CANVAS_ID_RE,
   CANVAS_REVIEW_ID_RE,
   CANVAS_VERSION_ID_RE,
+  MAX_ANNOTATION_VARIANTS,
+  isCleanVariantLabel,
   type AddressedBy,
   type AgentCloseVerdict,
   type AnchorRef,
   type Annotation,
   type AnnotationSketch,
   type AnnotationState,
+  type AnnotationVariant,
   type CanvasAnnotationDraft,
   type CanvasReviewChangedEvent,
   type CanvasReviewState,
@@ -228,6 +231,24 @@ function isValidAnnotation(value: unknown): value is Annotation {
   } else if (!isValidFocus(a.focus)) return false
   if (a.sketch !== undefined && !isValidStoredSketch(a.sketch)) return false
   if (a.supersededBy !== undefined && (typeof a.supersededBy !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(a.supersededBy))) return false
+  // Alternatives (#373): OUR minted shape or absent — keys are positional
+  // 'A'…, labels are held to note cleanliness, and a hand-edited set that
+  // breaks either drops the whole note rather than rendering as chips the
+  // verdict path would then trust.
+  if (a.variants !== undefined) {
+    if (!Array.isArray(a.variants) || a.variants.length === 0 || a.variants.length > MAX_ANNOTATION_VARIANTS) return false
+    for (let i = 0; i < a.variants.length; i++) {
+      const v = a.variants[i] as Partial<AnnotationVariant> | undefined
+      if (v?.key !== String.fromCharCode(65 + i)) return false
+      if (!isCleanVariantLabel(v.label)) return false
+    }
+  }
+  // A choice exists only as part of an approval, and only of a variant the
+  // note actually carries.
+  if (a.chosenVariantKey !== undefined) {
+    if (a.state !== 'approved') return false
+    if (!Array.isArray(a.variants) || !a.variants.some((v) => (v as AnnotationVariant).key === a.chosenVariantKey)) return false
+  }
   // Close-out provenance. Validated even though this store is the only writer,
   // for the same reason pngPath is: a hand-edited record must not be able to
   // present an agent-set closure as the user's, which is the one claim on the
@@ -992,6 +1013,10 @@ export function resolveAnnotation(
   annotationId: string,
   action: ResolveAction,
   expectedCanvasId: string,
+  /** The alternative the user approved (#373). Only 'approve' may carry one,
+   *  and it must name a variant that exists on the note — the choice is part
+   *  of the approval, never a side channel. */
+  variantKey?: string,
 ): { state: CanvasReviewState; reannotationId?: string } {
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
@@ -1010,6 +1035,12 @@ export function resolveAnnotation(
   }
   if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
   if (typeof action !== 'string' || !RESOLVE_ACTIONS.has(action)) throw new Error('invalid action')
+  // A variant choice is PART OF an approval (#373): any other action carrying
+  // one is a caller mistake, refused rather than silently dropped.
+  if (variantKey !== undefined && action !== 'approve') throw new Error('a variant choice rides an approval only')
+  if (variantKey !== undefined && (typeof variantKey !== 'string' || !/^[A-D]$/.test(variantKey))) {
+    throw new Error('invalid variant key')
+  }
 
   const base = recordFor(sessionId, canvas)
   const target = base.annotations.find((a) => a.id === annotationId)
@@ -1035,6 +1066,12 @@ export function resolveAnnotation(
   const closedFrom: 'open' | 'addressed' = nextTarget.state === 'addressed' ? 'addressed' : 'open'
 
   if (action === 'approve') {
+    if (variantKey !== undefined) {
+      // The choice must name an alternative this note actually carries — a key
+      // for a set the agent replaced (or never attached) approves nothing.
+      if (!nextTarget.variants?.some((v) => v.key === variantKey)) throw new Error('unknown variant')
+      nextTarget.chosenVariantKey = variantKey
+    }
     nextTarget.state = 'approved'
     nextTarget.closedBy = 'user'
     nextTarget.closedFrom = closedFrom
@@ -1169,6 +1206,15 @@ export function markAnnotationsAddressed(
   sessionId: string,
   reviewId: string,
   annotationIds: readonly string[],
+  /**
+   * Alternatives per note (#373): "addressed, three ways — pick which ships".
+   * Keyed by annotation id; each entry is the LABELS in order, and the store
+   * mints the keys ('A'…) from position so the agent can never forge or
+   * collide one. Validated here as well as at the MCP ingress: labels are held
+   * to note cleanliness and the variant caps, and an entry for a note this
+   * call does not address is refused — variants only ever ride an address.
+   */
+  variantsByNote?: Readonly<Record<string, readonly string[]>>,
 ): { state: CanvasReviewState; addressed: string[]; skipped: string[] } {
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
@@ -1177,6 +1223,28 @@ export function markAnnotationsAddressed(
   const wanted = new Set<string>()
   for (const id of annotationIds) {
     if (typeof id === 'string' && CANVAS_ANNOTATION_ID_RE.test(id)) wanted.add(id)
+  }
+  const variantEntries = new Map<string, AnnotationVariant[]>()
+  if (variantsByNote !== undefined) {
+    if (typeof variantsByNote !== 'object' || variantsByNote === null || Array.isArray(variantsByNote)) {
+      throw new Error('invalid variants')
+    }
+    for (const [noteId, labels] of Object.entries(variantsByNote)) {
+      if (!wanted.has(noteId)) throw new Error('variants name a note this call does not address')
+      if (!Array.isArray(labels) || labels.length === 0 || labels.length > MAX_ANNOTATION_VARIANTS) {
+        throw new Error('invalid variants')
+      }
+      const minted: AnnotationVariant[] = labels.map((label, i) => {
+        // Stricter than a note: a label is a single serializer FIELD beside
+        // `chosen-variant:` — a newline in it would let the agent forge the
+        // user's decision line, so every control character is banned.
+        if (!isCleanVariantLabel(label)) {
+          throw new Error('invalid variant label')
+        }
+        return { key: String.fromCharCode(65 + i), label }
+      })
+      variantEntries.set(noteId, minted)
+    }
   }
   const base = recordFor(sessionId, canvas)
   // Scoped to ONE review, and it has to be. Annotation ids restart per canvas
@@ -1223,6 +1291,13 @@ export function markAnnotationsAddressed(
       // saw before was the previous round of this note, not this one — so the
       // barrier starts closed again.
       delete a.userSawAddressed
+      // Alternatives ride the address they came with (#373): a fresh address
+      // replaces the previous set whole, and a stale choice must not survive
+      // a new set it may not even name.
+      const minted = variantEntries.get(a.id)
+      if (minted) a.variants = minted
+      else delete a.variants
+      delete a.chosenVariantKey
       addressed.push(a.id)
     } else {
       skipped.push(a.id)
@@ -1497,7 +1572,14 @@ export function reopenAnnotation(sessionId: string, annotationId: string): Canva
   if (nextTarget.state === 'open') {
     delete nextTarget.addressedAt
     delete nextTarget.addressedBy
+    // ...and the alternatives rode that address (#373): back to 'open' they
+    // describe work nobody currently claims.
+    delete nextTarget.variants
   }
+  // The CHOICE never survives a reopen: it was part of the approval being
+  // undone. The variants themselves stay on an 'addressed' note — the
+  // alternatives still exist; the user simply has not re-ruled.
+  delete nextTarget.chosenVariantKey
   // The seen flag does NOT survive a reopen either way. Reopening is the user
   // putting the note back in play, and letting the agent re-close it on the
   // strength of a look that happened before that would make Reopen a one-shot

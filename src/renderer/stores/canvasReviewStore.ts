@@ -127,6 +127,9 @@ interface CanvasReviewStoreState {
     annotationId: string,
     action: 'approve' | 'dismiss' | 'reannotate' | 'stale',
     canvasId: string,
+    /** The alternative being approved, when the note offers variants. Rides an
+     *  approval only — main refuses it on any other action. */
+    variantKey?: string,
   ) => Promise<void>
   /** Put a closed note back in play. Returns nothing to decide — the mirror
    *  main returns is the answer, as with every other mutation here. */
@@ -300,9 +303,15 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
     }
   },
 
-  resolveNote: async (sessionId, annotationId, action, canvasId) => {
+  resolveNote: async (sessionId, annotationId, action, canvasId, variantKey) => {
     try {
-      const { state, reannotationId } = await window.electronAPI.canvas.annotationResolve({ sessionId, canvasId, annotationId, action })
+      const { state, reannotationId } = await window.electronAPI.canvas.annotationResolve({
+        sessionId,
+        canvasId,
+        annotationId,
+        action,
+        ...(variantKey ? { variantKey } : {}),
+      })
       set((s) => ({
         bySessionId: {
           ...s.bySessionId,

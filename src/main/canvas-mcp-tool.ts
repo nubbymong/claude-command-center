@@ -10,7 +10,7 @@
 // arguments are advertised, validated, and then overruled by the bound id — a
 // mismatch is refused rather than silently redirected.
 
-import { AGENT_CLOSE_VERDICTS } from '../shared/canvas'
+import { AGENT_CLOSE_VERDICTS, MAX_ANNOTATION_VARIANTS, MAX_VARIANT_LABEL_CHARS, isCleanVariantLabel } from '../shared/canvas'
 import type {
   AgentCloseVerdict,
   CanvasRenderSource,
@@ -126,8 +126,15 @@ export interface CanvasToolDeps {
    *  the caller decides what a path means. */
   readAttachment: (absPath: string) => Buffer
   /** Mark notes the agent has acted on. The agent's one write into the review
-   *  store, and it can only ever say "addressed" — see canvas_resolve. */
-  markAddressed: (sessionId: string, reviewId: string, annotationIds: readonly string[]) => { addressed: string[]; skipped: string[] }
+   *  store, and it can only ever say "addressed" — see canvas_resolve.
+   *  `variantsByNote` (#373) attaches labelled alternatives to notes this call
+   *  addresses; the STORE mints the keys and re-validates every label. */
+  markAddressed: (
+    sessionId: string,
+    reviewId: string,
+    annotationIds: readonly string[],
+    variantsByNote?: Readonly<Record<string, readonly string[]>>,
+  ) => { addressed: string[]; skipped: string[] }
   /**
    * Close notes on the USER's explicit instruction — see canvas_verdict.
    *
@@ -938,6 +945,7 @@ export async function runCanvasReview(
 interface RawResolveArgs {
   reviewId?: unknown
   annotationIds?: unknown
+  variants?: unknown
   cccSessionId?: unknown
 }
 
@@ -987,14 +995,54 @@ export function runCanvasResolve(
     }
     ids.push(v)
   }
+  // Alternatives (#373). Fail closed on every shape: the labels become chips
+  // the USER clicks and the record their approval names, so nothing malformed
+  // may be silently trimmed into place. The store mints the keys and
+  // re-validates — this is the untrusted ingress and carries its own bound.
+  let variantsByNote: Record<string, readonly string[]> | undefined
+  if (rawArgs.variants !== undefined) {
+    const rawVariants = rawArgs.variants
+    if (typeof rawVariants !== 'object' || rawVariants === null || Array.isArray(rawVariants)) {
+      return { text: '`variants` must be an object keyed by note id, e.g. {"a3": ["thin rule", "no rule", "smaller title"]}.', isError: true }
+    }
+    const idSet = new Set(ids)
+    variantsByNote = {}
+    for (const [noteId, labels] of Object.entries(rawVariants as Record<string, unknown>)) {
+      if (!idSet.has(noteId)) {
+        return { text: 'Every key in `variants` must be one of the note ids this call marks addressed.', isError: true }
+      }
+      if (!Array.isArray(labels) || labels.length === 0 || labels.length > MAX_ANNOTATION_VARIANTS) {
+        return { text: `Each \`variants\` entry must be 1 to ${MAX_ANNOTATION_VARIANTS} labels — the alternatives the user will pick between.`, isError: true }
+      }
+      for (const label of labels) {
+        // Same rule the store enforces, refused here BEFORE the store is
+        // touched: one line of visibly-plain text — no control characters
+        // (newline included: a label is a serializer field, and a newline in
+        // one could forge the `chosen-variant:` line), no bidi or zero-width
+        // characters.
+        if (!isCleanVariantLabel(label)) {
+          return { text: `Every variant label must be one line of plain text, 1 to ${MAX_VARIANT_LABEL_CHARS} characters, with no control or invisible characters.`, isError: true }
+        }
+      }
+      variantsByNote[noteId] = labels as string[]
+    }
+  }
   let result: { addressed: string[]; skipped: string[] }
   try {
-    result = deps.markAddressed(sessionId, rawArgs.reviewId, ids)
+    result = deps.markAddressed(sessionId, rawArgs.reviewId, ids, variantsByNote)
   } catch (err) {
     return { text: `Could not mark notes: ${describeResolveFailure(err)}`, isError: true }
   }
   const parts: string[] = []
   if (result.addressed.length > 0) parts.push(`Marked ${result.addressed.length} note(s) as addressed: ${result.addressed.join(', ')}.`)
+  if (variantsByNote && result.addressed.length > 0) {
+    const attached = Object.keys(variantsByNote).filter((id) => result.addressed.includes(id))
+    if (attached.length > 0) {
+      parts.push(
+        `Attached alternatives to ${attached.length} note(s): the user picks the winner when they approve, and the next canvas_review shows it as chosen-variant.`,
+      )
+    }
+  }
   if (result.skipped.length > 0) parts.push(`Left ${result.skipped.length} unchanged (already resolved by the user, still a draft, or unknown): ${result.skipped.join(', ')}.`)
   parts.push('The user still gives the final verdict from the Canvas pane; addressed notes stay visible there until they approve or dismiss them.')
   // What is LEFT. Read after the write, so it reflects what actually persisted
@@ -1023,6 +1071,8 @@ function describeResolveFailure(err: unknown): string {
   if (msg === 'no canvas for session') return 'this session has no canvas.'
   if (msg === 'review not on this canvas') return 'that review is not on this session\'s current canvas. If your last render named a different subject, the canvas changed under you — re-render the subject the review belongs to, then resolve.'
   if (msg === 'review is still a draft') return 'that review has not been submitted yet.'
+  if (msg === 'variants name a note this call does not address') return 'variants may only be attached to notes this call marks addressed.'
+  if (msg === 'invalid variant label' || msg === 'invalid variants') return 'those variants are not a valid set of plain-text labels.'
   if (msg.includes('review store')) return 'the review store for this canvas is unreadable.'
   return 'the review store refused the change.'
 }
@@ -1337,6 +1387,12 @@ export function registerCanvasTools(
       annotationIds: zMod
         .array(zMod.string())
         .describe('The note ids you acted on, exactly as canvas_review reported them ("a2", "a3", …). At most 100.'),
+      variants: zMod
+        .record(zMod.array(zMod.string()))
+        .optional()
+        .describe(
+          'Alternatives you built for a note, keyed by its id — e.g. {"a3": ["thin rule", "no rule, more air", "smaller title"]} (1–4 short labels each; every key must be in annotationIds). Use when your fix genuinely offers options: render ALL of them in the version, attach the labels here, and the user picks the winner when they approve — the next canvas_review shows it as chosen-variant, and you build only that one.',
+        ),
       cccSessionId: zMod
         .string()
         .optional()

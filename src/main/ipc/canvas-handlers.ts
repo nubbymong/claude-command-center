@@ -239,6 +239,13 @@ const annotationResolveSchema = z
     // longer live. Deliberately distinct from 'approve' — the user is saying
     // "this went out", not "I checked it and it is right".
     action: z.enum(['approve', 'dismiss', 'reannotate', 'stale']),
+    // Which of the note's offered alternatives the user is approving. Rides an
+    // approval only — the store throws on any other action — and must name a
+    // variant that exists on the note.
+    variantKey: z
+      .string()
+      .regex(/^[A-D]$/)
+      .optional(),
   })
   .strict()
 
@@ -380,8 +387,8 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   })
 
   ipcMain.handle(IPC.CANVAS_ANNOTATION_RESOLVE, async (_e, args: unknown) => {
-    const { sessionId, canvasId, annotationId, action } = annotationResolveSchema.parse(args)
-    return resolveAnnotation(sessionId, annotationId, action, canvasId)
+    const { sessionId, canvasId, annotationId, action, variantKey } = annotationResolveSchema.parse(args)
+    return resolveAnnotation(sessionId, annotationId, action, canvasId, variantKey)
   })
 
   // The user's eyes on an addressed round — the one input to the close-out

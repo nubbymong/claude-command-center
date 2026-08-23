@@ -79,6 +79,42 @@ describe('serializeReviewPayload', () => {
     expect(serializeReviewPayload(payload([], []), []).text).toContain('no notes')
   })
 
+  it('emits the variants line and, once approved, the chosen winner (#373)', () => {
+    const offered = note({
+      id: 'a4',
+      state: 'addressed',
+      variants: [
+        { key: 'A', label: 'thin rule' },
+        { key: 'B', label: 'no rule' },
+      ],
+    })
+    const picked = note({
+      id: 'a5',
+      state: 'approved',
+      variants: [
+        { key: 'A', label: 'left' },
+        { key: 'B', label: 'right' },
+      ],
+      chosenVariantKey: 'B',
+    })
+    const { text } = serializeReviewPayload(payload([], [offered, picked]), [])
+    expect(text).toContain('variants: A=thin rule; B=no rule')
+    expect(text).toMatch(/- a5[\s\S]*chosen-variant: B/)
+    // The unapproved note carries no chosen line.
+    expect(text.split('- a5')[0]).not.toContain('chosen-variant')
+    // A note with no variants emits neither line.
+    expect(serializeReviewPayload(payload([], [note({})]), []).text).not.toContain('variants:')
+  })
+
+  it('suppresses the variants line once the offer is no longer live', () => {
+    // A superseded / dismissed / stale note advertising alternatives would
+    // read as a question still open — only addressed and approved emit.
+    for (const state of ['reannotated', 'dismissed', 'stale'] as const) {
+      const stale = note({ id: 'a6', state, variants: [{ key: 'A', label: 'thin rule' }] })
+      expect(serializeReviewPayload(payload([], [stale]), []).text).not.toContain('variants:')
+    }
+  })
+
   it('numbers images by the attachment order it is HANDED, not by note order', () => {
     const first = note({ id: 'a1', sketch: { excalidrawElementIds: ['e'], pngPath: 'p1', bboxPage: { x: 0, y: 0, width: 1, height: 1 } } })
     const second = note({ id: 'a2', sketch: { excalidrawElementIds: ['e'], pngPath: 'p2', bboxPage: { x: 0, y: 0, width: 1, height: 1 } } })

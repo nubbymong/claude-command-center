@@ -232,6 +232,50 @@ export interface AnnotationSketch {
   bboxPage: Rect
 }
 
+/** One alternative the agent attached when it ADDRESSED a note (#373): "I did
+ *  it three ways — pick which ships". Keys are minted by the store from
+ *  position ('A'…'D'), never accepted from the agent; the label is agent
+ *  prose, held to the same cleanliness rules as a note. */
+export interface AnnotationVariant {
+  key: string
+  label: string
+}
+
+/** Most alternatives one note may carry — A through D. */
+export const MAX_ANNOTATION_VARIANTS = 4
+
+/** Longest variant label kept. A label names an alternative; it is not the
+ *  explanation (that belongs in the version itself). */
+export const MAX_VARIANT_LABEL_CHARS = 80
+
+/**
+ * The one shape a variant label may have, enforced at BOTH ingresses (the MCP
+ * tool and the store) and again by the file validator.
+ *
+ * Stricter than a note on purpose. A note is the user's multi-line prose; a
+ * label is agent-authored text that becomes (a) a chip the USER clicks and
+ * (b) a single serializer FIELD (`variants: A=…`) the agent reads back beside
+ * `chosen-variant:` — the line that carries the user's decision. A newline in
+ * a label would let the agent forge that line onto a note nobody approved, so
+ * every control character is banned (tab and newline included), along with the
+ * bidi overrides and zero-width characters that could make a chip read
+ * differently than it acts.
+ */
+export function isCleanVariantLabel(label: unknown): label is string {
+  if (typeof label !== 'string') return false
+  if (label.trim().length === 0 || label.length > MAX_VARIANT_LABEL_CHARS) return false
+  // C0 + DEL + C1 controls — tab, newline, and carriage return among them.
+  if (/[\u0000-\u001F\u007F-\u009F]/.test(label)) return false
+  // Every invisible FORMAT character as a property, not a spelling list \u2014 bidi
+  // overrides, the zero-width family, BOM, ALM, the tag block \u2014 plus the line
+  // and paragraph separators (category Z, so outside Cf). A denylist here
+  // would repeat the chase-the-spelling mistake the untrusted envelope already
+  // paid for. Composite emoji (ZWJ sequences) lose too; a label is a name, not
+  // a place for glue characters.
+  if (/[\p{Cf}\u2028\u2029]/u.test(label)) return false
+  return true
+}
+
 export interface Annotation {
   /** 'a1', 'a2', … — minted by the store, never accepted from a caller. */
   id: string
@@ -248,6 +292,19 @@ export interface Annotation {
    *  each note remembers its own). */
   versionId: string
   state: AnnotationState
+  /**
+   * The alternatives the agent attached when addressing this note (#373).
+   * Present only alongside an agent address; replaced whole on a re-address;
+   * cleared when the note goes back to 'open'. Display data plus one choice —
+   * they change no state machine.
+   */
+  variants?: AnnotationVariant[]
+  /**
+   * The variant the USER approved (#373). Only the user's own Approve can set
+   * it — it rides the same IPC the verdict does, and no tool can write it —
+   * and it only ever names a key that exists in `variants`. Cleared on reopen.
+   */
+  chosenVariantKey?: string
   /** Id of the re-annotation that replaced this note (state 'reannotated'). */
   supersededBy?: string
   /**
