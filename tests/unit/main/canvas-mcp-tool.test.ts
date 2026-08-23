@@ -372,7 +372,7 @@ describe('registration', () => {
     expect(name).toBe('canvas_resolve')
     // It must say what it is NOT: the agent never approves for the user.
     expect(String(description)).toMatch(/never approves/i)
-    expect(Object.keys(shape as object).sort()).toEqual(['annotationIds', 'cccSessionId', 'reviewId'])
+    expect(Object.keys(shape as object).sort()).toEqual(['annotationIds', 'cccSessionId', 'reviewId', 'variants'])
     expect(typeof handler).toBe('function')
   })
 })
@@ -449,6 +449,75 @@ describe('runCanvasResolve', () => {
     )
     expect(out.isError).toBe(true)
     expect(out.text).not.toMatch(/ENOENT|Users|secret/)
+  })
+})
+
+// Variants (#373) arrive through the same model-generated argument surface, so
+// every malformed shape must be refused BEFORE the store is touched — these
+// labels become chips the USER clicks, and the record their approval names.
+describe('runCanvasResolve variants', () => {
+  it('refuses malformed variants before the store is touched', () => {
+    let touched = false
+    const spy = { markAddressed: () => { touched = true; return { addressed: [], skipped: [] } } }
+    const bad: unknown[] = [
+      'a3=thin rule', // not an object
+      ['thin rule'], // an array
+      { a9: ['thin rule'] }, // names a note this call does not address
+      { a1: [] }, // no labels
+      { a1: ['1', '2', '3', '4', '5'] }, // over the 4-variant cap
+      { a1: ['ok', 'x'.repeat(81)] }, // over the 80-char label cap
+      { a1: ['   '] }, // whitespace-only
+      { a1: [42] }, // not a string
+    ]
+    for (const variants of bad) {
+      const out = runCanvasResolve({ reviewId: 'R1', annotationIds: ['a1', 'a2'], variants }, 'sess-mine', spy)
+      expect(out.isError).toBe(true)
+    }
+    expect(touched).toBe(false)
+  })
+
+  it('threads well-formed variants through to the store and says it attached them', () => {
+    let got: unknown
+    const out = runCanvasResolve(
+      { reviewId: 'R2', annotationIds: ['a1', 'a2'], variants: { a2: ['thin rule', 'no rule'] } },
+      'sess-mine',
+      {
+        markAddressed: (_sid, _rid, _ids, variantsByNote) => {
+          got = variantsByNote
+          return { addressed: ['a1', 'a2'], skipped: [] }
+        },
+      },
+    )
+    expect(out.isError).toBe(false)
+    expect(got).toEqual({ a2: ['thin rule', 'no rule'] })
+    expect(out.text).toMatch(/Attached alternatives to 1 note/)
+    expect(out.text).toMatch(/chosen-variant/)
+  })
+
+  it('omits the attached line when the variant-bearing note did not move', () => {
+    const out = runCanvasResolve(
+      { reviewId: 'R2', annotationIds: ['a1', 'a2'], variants: { a2: ['thin rule'] } },
+      'sess-mine',
+      { markAddressed: () => ({ addressed: ['a1'], skipped: ['a2'] }) },
+    )
+    expect(out.isError).toBe(false)
+    expect(out.text).not.toMatch(/Attached alternatives/)
+  })
+
+  it('maps the store refusals to agent-readable text without relaying them verbatim', () => {
+    for (const [msg, expected] of [
+      ['variants name a note this call does not address', /only be attached to notes this call marks addressed/],
+      ['invalid variant label', /not a valid set of plain-text labels/],
+      ['invalid variants', /not a valid set of plain-text labels/],
+    ] as const) {
+      const out = runCanvasResolve(
+        { reviewId: 'R1', annotationIds: ['a1'], variants: { a1: ['ok'] } },
+        'sess-mine',
+        { markAddressed: () => { throw new Error(msg) } },
+      )
+      expect(out.isError).toBe(true)
+      expect(out.text).toMatch(expected)
+    }
   })
 })
 

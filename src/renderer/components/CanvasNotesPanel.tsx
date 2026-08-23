@@ -107,6 +107,13 @@ export function closedLabel(note: Annotation): string {
   return verdict
 }
 
+/** "picked B — thin rule", or null when the approval named no variant. */
+export function pickedVariantLabel(note: Annotation): string | null {
+  if (!note.chosenVariantKey) return null
+  const chosen = note.variants?.find((v) => v.key === note.chosenVariantKey)
+  return chosen ? `picked ${chosen.key} — ${chosen.label}` : `picked ${note.chosenVariantKey}`
+}
+
 const SCOPE_BADGE: Record<Annotation['scope'], string> = {
   element: 'text-blue',
   region: 'text-peach',
@@ -295,10 +302,10 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
    *  the user is looking at — and travels with the call so main can refuse the
    *  write if the session moves between the click and the handler. */
   const resolveOne = useCallback(
-    (annotationId: string, action: 'approve' | 'dismiss' | 'reannotate' | 'stale') => {
+    (annotationId: string, action: 'approve' | 'dismiss' | 'reannotate' | 'stale', variantKey?: string) => {
       const on = useCanvasReviewStore.getState().bySessionId[sessionId]?.canvasId ?? null
       if (!on) return
-      void resolveNote(sessionId, annotationId, action, on)
+      void resolveNote(sessionId, annotationId, action, on, variantKey)
     },
     [resolveNote, sessionId],
   )
@@ -723,6 +730,27 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                   </div>
                   {note.focus && <FocusLabel focus={note.focus} className="text-subtext1 truncate mt-0.5 block" />}
                   <div className="text-text/90 mt-0.5 line-clamp-3 whitespace-pre-wrap">{note.note}</div>
+                  {/* The agent offered labelled alternatives for this note — all
+                      of them rendered in the version on screen. Picking one IS
+                      the approval, and names the winner the agent builds next
+                      round. The plain Approve below stays: it approves without
+                      choosing, and the agent decides for itself. */}
+                  {note.state === 'addressed' && note.variants && note.variants.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-1.5" data-testid="note-variant-chips">
+                      {note.variants.map((variant) => (
+                        <button
+                          key={variant.key}
+                          onClick={() => resolveOne(note.id, 'approve', variant.key)}
+                          disabled={actionsLocked}
+                          className="px-1.5 py-0.5 text-[10px] rounded border border-green/40 text-green hover:bg-green/10 disabled:opacity-40 max-w-full truncate"
+                          title={`Approve this note and pick alternative ${variant.key} — the agent builds only this one`}
+                          data-testid={`note-variant-${variant.key}`}
+                        >
+                          {variant.key} · {variant.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex gap-1.5 mt-1.5">
                     <button
                       onClick={() => resolveOne(note.id, 'approve')}
@@ -865,6 +893,11 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                       </button>
                     </div>
                     <div className="text-text/60 mt-0.5 line-clamp-2 whitespace-pre-wrap">{note.note}</div>
+                    {pickedVariantLabel(note) && (
+                      <div className="text-[9.5px] text-green/80 mt-0.5 truncate" data-testid="review-closed-picked-variant">
+                        {pickedVariantLabel(note)}
+                      </div>
+                    )}
                     {/* The residual risk, said out loud on the row it applies to.
                         The agent's close-out precondition is a state the agent
                         itself writes (canvas_resolve), so on an agent-closed

@@ -146,6 +146,15 @@ submitted a review. Then:
    acted on — including notes the user answered in chat instead of the pane
    ("C is fine", "option B") — so they stop showing as untouched. Do this
    even if you handled all of them: it is how the pane learns you are done.
+   When a fix genuinely has more than one defensible answer, offer ALTERNATIVES
+   instead of picking silently: render every one of them in the new version
+   (side by side or labelled A/B/C on the page), and attach
+   \`variants: { "<noteId>": ["thin rule", "boxed callout"] }\` to the same
+   call — up to 4 short labels per note, in the order they appear on the page
+   (keys A-D are assigned by position). The user's Approve on a chip names the
+   winner; the next \`canvas_review\` shows it as \`chosen-variant: B\` — then
+   build ONLY that one and drop the others. Never attach variants when one
+   answer is plainly right.
 5. Hand back with one line per note: what you changed, or — if a note
    conflicts with another note or with something load-bearing — say so
    plainly instead of silently skipping it.

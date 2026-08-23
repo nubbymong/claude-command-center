@@ -298,6 +298,8 @@ export interface ElectronAPI {
       canvasId: string
       annotationId: string
       action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
+      /** The alternative being approved, when the note offers variants. Approve only. */
+      variantKey?: string
     }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
     /** The user puts a closed note back in play — the undo half of close-out. */
     annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
@@ -894,7 +896,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_DELETE, args),
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
-    annotationResolve: (args: { sessionId: string; canvasId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' | 'stale' }) =>
+    annotationResolve: (args: { sessionId: string; canvasId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' | 'stale'; variantKey?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_RESOLVE, args),
     annotationReopen: (args: { sessionId: string; annotationId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_REOPEN, args),
