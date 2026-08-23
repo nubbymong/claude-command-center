@@ -17,7 +17,7 @@
       "fallbackPricing": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 } },
     { "id": "claude-opus-4-6", "patterns": ["opus-4-6"], "family": "opus", "label": "Opus 4.6",
       "efforts": ["low", "medium", "high", "max"],
-      "fallbackPricing": { "input": 15, "output": 75, "cacheRead": 1.5, "cacheWrite": 18.75 } },
+      "fallbackPricing": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 } },
     { "id": "claude-opus-4-5", "patterns": ["opus-4-5"], "family": "opus", "label": "Opus 4.5",
       "efforts": ["low", "medium", "high"],
       "fallbackPricing": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 } },
@@ -31,7 +31,7 @@
       "fallbackPricing": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 } },
     { "id": "claude-haiku-4-5", "patterns": ["haiku"], "aliases": ["haiku"], "family": "haiku", "label": "Haiku 4.5",
       "efforts": ["low", "medium", "high"],
-      "fallbackPricing": { "input": 0.8, "output": 4, "cacheRead": 0.08, "cacheWrite": 1 } },
+      "fallbackPricing": { "input": 1, "output": 5, "cacheRead": 0.1, "cacheWrite": 1.25 } },
     { "id": "codex-family", "patterns": ["^gpt-", "codex", "^o"], "family": "codex", "label": "Codex", "pickable": false }
   ],
   "families": {

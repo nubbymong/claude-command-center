@@ -20,8 +20,11 @@ describe('getPricingWithSource', () => {
     expect(r.source).toBe('guess')
     expect(r.pricing.input).toBe(3)
   })
-  it('legacy getPricing(model) keeps returning the same numbers', () => {
-    expect(getPricing('claude-haiku-4-5').input).toBe(0.8)
+  it('legacy getPricing(model) keeps returning the registry numbers', () => {
+    // haiku-4-5 moved 0.8 → 1 with #411 (the published rate); the point of
+    // this test is that the legacy entry point reads the SAME registry as the
+    // new one, not that the numbers are frozen forever.
+    expect(getPricing('claude-haiku-4-5').input).toBe(1)
     expect(getPricing('claude-thinking-7').input).toBe(3)
   })
 
@@ -86,14 +89,9 @@ describe('getPricingWithSource', () => {
   // is only safe while every tie is price-identical. Adding a differently-priced
   // member to an existing family would otherwise silently re-price sibling
   // models according to where the entry was pasted. Fail here instead (#385 Q7).
-  //
-  // KNOWN EXCEPTION, tracked in #411: claude-opus-4-6 carries 15/75 where the
-  // published rate is 5/25, which makes it the one tie whose value depends on
-  // order (a dated `claude-opus-4-6-*` prefix-resolves to a sibling's 5/25).
-  // Correcting the price removes the exception — DELETE this list when #411
-  // lands, so the invariant becomes unconditional.
-  const KNOWN_PRICE_DISCREPANCIES = new Set(['claude-opus-4-6'])
-
+  // UNCONDITIONAL since #411: the one documented exception (opus-4-6 at the
+  // wrong 15/75) was corrected to the published rate, so nothing may hide
+  // behind an exception list any more.
   it('every base-length tie is price-identical, so registry order cannot move a price', () => {
     const fallback = registryFallbackPricing()
     const byBase = new Map<string, string[]>()
@@ -104,10 +102,9 @@ describe('getPricingWithSource', () => {
     const offenders: string[] = []
     for (const [base, keys] of byBase) {
       if (keys.length < 2) continue
-      const reference = keys.find((k) => !KNOWN_PRICE_DISCREPANCIES.has(k))
-      if (!reference) continue
+      const reference = keys[0]
       for (const k of keys) {
-        if (k === reference || KNOWN_PRICE_DISCREPANCIES.has(k)) continue
+        if (k === reference) continue
         if (JSON.stringify(fallback[k]) !== JSON.stringify(fallback[reference])) {
           offenders.push(`${reference} vs ${k} (base "${base}")`)
         }
@@ -116,15 +113,13 @@ describe('getPricingWithSource', () => {
     expect(
       offenders,
       'these keys collapse to the same base but price differently, so the prefix match would depend on ' +
-      'registry order. Give one a more specific key, align the prices, or record it in KNOWN_PRICE_DISCREPANCIES.',
+      'registry order. Give one a more specific key or align the prices.',
     ).toEqual([])
   })
 
-  it('the known price discrepancies are exactly the ones #411 tracks', () => {
-    // Guards the exception list itself: a NEW wrong price must not be able to
-    // hide behind it, and the list must shrink to empty when #411 is fixed.
+  it('the #411 corrections hold: opus-4-6 and haiku-4-5 carry the published rates', () => {
     const fallback = registryFallbackPricing()
-    expect(fallback['claude-opus-4-6'].input).toBe(15)     // published 5 — see #411
-    expect([...KNOWN_PRICE_DISCREPANCIES]).toEqual(['claude-opus-4-6'])
+    expect(fallback['claude-opus-4-6']).toEqual({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 })
+    expect(fallback['claude-haiku-4-5']).toEqual({ input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 })
   })
 })
