@@ -10,6 +10,7 @@ vi.mock('../../../../src/main/watchdog/patterns', () => ({
   isWorking: vi.fn(),
   isInternalRetry: vi.fn(),
   resumedAfterLimit: vi.fn(),
+  canSendNow: vi.fn(),
 }))
 vi.mock('../../../../src/main/watchdog/time-parser', () => ({
   parseResetTime: vi.fn(),
@@ -28,6 +29,7 @@ const detectSafeguard = vi.mocked(patterns.detectSafeguard)
 const isWorking = vi.mocked(patterns.isWorking)
 const isInternalRetry = vi.mocked(patterns.isInternalRetry)
 const resumedAfterLimit = vi.mocked(patterns.resumedAfterLimit)
+const canSendNow = vi.mocked(patterns.canSendNow)
 const parseResetTime = vi.mocked(timeParser.parseResetTime)
 const calculateWaitMs = vi.mocked(timeParser.calculateWaitMs)
 
@@ -66,6 +68,7 @@ beforeEach(() => {
   isWorking.mockReturnValue(false)
   isInternalRetry.mockReturnValue(false)
   resumedAfterLimit.mockReturnValue(false)
+  canSendNow.mockReturnValue({ ok: true })
   findRateLimitMessage.mockReturnValue(null)
   parseResetTime.mockReturnValue(null)
   calculateWaitMs.mockReturnValue(3_600_000)
@@ -669,5 +672,85 @@ describe('SessionWatchdog — fire-time re-verification (overload/safeguard)', (
     wd.tick()
     expect(t.sent).toHaveLength(2)
     expect(wd.getState().safeguardAttempts).toBe(2) // incremented from 1, not from a reset 0
+  })
+})
+
+describe('the send gate (#266 BLOCKER-2 / MAJOR-3) — no automated line into a menu or a draft', () => {
+  function armWaiting(t: ReturnType<typeof makeAdapter>) {
+    const wd = new SessionWatchdog('s1', t.adapter)
+    isRateLimited.mockReturnValue(true)
+    findRateLimitMessage.mockReturnValue('resets 3pm')
+    calculateWaitMs.mockReturnValue(60_000)
+    t.setTail('You have hit your limit, resets 3pm')
+    wd.feed()
+    return wd
+  }
+
+  it('waiting: an open menu defers the retry — nothing sent, NO attempt consumed', () => {
+    const t = makeAdapter()
+    const wd = armWaiting(t)
+    canSendNow.mockReturnValue({ ok: false, reason: 'menu' })
+
+    t.setNow(60_001)
+    wd.tick()
+    expect(t.sent).toHaveLength(0)
+    expect(wd.getState().attempts).toBe(0)
+    // Deferred, not dead: the wait was pushed out and the deferral logged.
+    expect(wd.getState().waitUntil).toBe(60_001 + 30_000)
+    expect(t.logs.some((l) => l.level === 'info' && /deferred/i.test(l.msg) && /menu/i.test(l.msg))).toBe(true)
+
+    // The menu resolves; the next expiry fires normally.
+    canSendNow.mockReturnValue({ ok: true })
+    t.setNow(60_001 + 30_001)
+    wd.tick()
+    expect(t.sent).toEqual(['continue'])
+    expect(wd.getState().attempts).toBe(1)
+  })
+
+  it("waiting: the user's draft defers the retry the same way", () => {
+    const t = makeAdapter()
+    const wd = armWaiting(t)
+    canSendNow.mockReturnValue({ ok: false, reason: 'draft' })
+    t.setNow(60_001)
+    wd.tick()
+    expect(t.sent).toHaveLength(0)
+    expect(wd.getState().attempts).toBe(0)
+    expect(t.logs.some((l) => /draft/i.test(l.msg))).toBe(true)
+  })
+
+  it('overload: a refused send consumes neither an attempt nor cumulative budget', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s1', t.adapter, undefined, noJitterRand)
+    detectOverload.mockReturnValue(true)
+    t.setTail('API Error: overloaded')
+    wd.feed()
+    const armed = wd.getState()
+    expect(armed.status).toBe('overload')
+
+    canSendNow.mockReturnValue({ ok: false, reason: 'menu' })
+    t.setNow((armed.waitUntil as number) + 1)
+    wd.tick()
+    expect(t.sent).toHaveLength(0)
+    expect(wd.getState().overloadAttempts).toBe(0)
+
+    canSendNow.mockReturnValue({ ok: true })
+    t.setNow((wd.getState().waitUntil as number) + 1)
+    wd.tick()
+    expect(t.sent).toHaveLength(1)
+    expect(wd.getState().overloadAttempts).toBe(1)
+  })
+
+  it('safeguard: a refused send consumes no attempt', () => {
+    const t = makeAdapter()
+    const wd = new SessionWatchdog('s1', t.adapter)
+    detectSafeguard.mockReturnValue(true)
+    t.setTail('flagged for potential policy violation')
+    wd.feed()
+
+    canSendNow.mockReturnValue({ ok: false, reason: 'draft' })
+    t.setNow((wd.getState().waitUntil as number) + 1)
+    wd.tick()
+    expect(t.sent).toHaveLength(0)
+    expect(wd.getState().safeguardAttempts).toBe(0)
   })
 })

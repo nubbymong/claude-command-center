@@ -155,12 +155,16 @@ describe('watchdog services-view snapshots', () => {
     expect(snap.services[0].state).toBe('stopped')
   })
 
-  it('counts state-change events into eventsTotal', () => {
+  it('counts state-change events into eventsTotal (the arm-time push included)', () => {
     const m = new WatchdogManager(makeHost())
     m.startWatchdog('s1')
+    // startWatchdog pushes the fresh 'monitoring' state immediately (#266
+    // MAJOR-4: a restart must not leave the previous run's badge painted), so
+    // one event is already counted before anything is driven.
+    expect(m.getDiagnosticsSnapshot().services[0].eventsTotal).toBe(1)
     // Drive a state change through the adapter the manager handed the watchdog.
     instances[0].adapter.onStateChange({ sessionId: 's1', status: 'waiting_usage', gaveUp: false, waitUntil: 1 })
-    expect(m.getDiagnosticsSnapshot().services[0].eventsTotal).toBe(1)
+    expect(m.getDiagnosticsSnapshot().services[0].eventsTotal).toBe(2)
   })
 
   it('routes manualRestart by id', () => {

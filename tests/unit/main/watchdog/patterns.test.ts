@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   stripAnsi,
+  canSendNow,
   isRateLimited,
   findRateLimitMessage,
   isRateLimitOptionsPrompt,
@@ -445,5 +446,89 @@ describe('interactive rate-limit-options menu', () => {
   it('ignores a menu only quoted above live work (tail-scoped)', () => {
     const pane = [...MENU_UPGRADE_FIRST.split('\n'), ...Array(10).fill('● unrelated work'), '❯ '].join('\n')
     expect(isRateLimitOptionsPrompt(pane, 6)).toBe(false)
+  })
+})
+
+describe('canSendNow (#266 BLOCKER-2 / MAJOR-3) — the send gate', () => {
+  it('refuses a numbered selection menu (a permission prompt would be auto-approved)', () => {
+    const tail = [
+      'Do you want to run this command?',
+      '  npm run deploy',
+      '',
+      '❯ 1. Yes',
+      '  2. Yes, and don\'t ask again',
+      '  3. No (esc)',
+      '',
+    ].join('\n')
+    expect(canSendNow(tail)).toEqual({ ok: false, reason: 'menu' })
+  })
+
+  it('refuses the /rate-limit-options menu shape', () => {
+    const tail = [
+      'You\'ve reached your usage limit.',
+      '',
+      '  1. Wait for the limit to reset',
+      '  2. Upgrade your plan',
+      '',
+    ].join('\n')
+    expect(canSendNow(tail)).toEqual({ ok: false, reason: 'menu' })
+  })
+
+  it('refuses a boxed input row carrying the user\'s draft', () => {
+    const tail = [
+      'Claude usage limit reached. Your limit resets at 4:30pm.',
+      '╭──────────────────────────────╮',
+      '│ > fix the failing test first │',
+      '╰──────────────────────────────╯',
+    ].join('\n')
+    expect(canSendNow(tail)).toEqual({ ok: false, reason: 'draft' })
+  })
+
+  it('allows an EMPTY input box under a live banner (the normal retry posture)', () => {
+    const tail = [
+      'Claude usage limit reached. Your limit resets at 4:30pm.',
+      '╭──────────────────────────────╮',
+      '│ >                            │',
+      '╰──────────────────────────────╯',
+      '  ? for shortcuts',
+    ].join('\n')
+    expect(canSendNow(tail)).toEqual({ ok: true })
+  })
+
+  it('does not read a markdown blockquote as a draft', () => {
+    const tail = [
+      'The reviewer wrote:',
+      '> the fix looks right to me',
+      'Claude usage limit reached. Your limit resets at 4:30pm.',
+      '╭──────────────────────────────╮',
+      '│ >                            │',
+      '╰──────────────────────────────╯',
+    ].join('\n')
+    expect(canSendNow(tail)).toEqual({ ok: true })
+  })
+
+  it('does not read one numbered list item in prose as a menu', () => {
+    const tail = [
+      'Plan:',
+      '1. Refactor the parser first',
+      'then everything else as discussed.',
+      'Claude usage limit reached. Your limit resets at 4:30pm.',
+    ].join('\n')
+    expect(canSendNow(tail)).toEqual({ ok: true })
+  })
+
+  it('a quoted menu in old scrollback does not gate — only the live window counts', () => {
+    const menuFarUp = [
+      '❯ 1. Yes',
+      '  2. No',
+      ...Array.from({ length: 30 }, (_, i) => `output line ${i}`),
+      'Claude usage limit reached. Your limit resets at 4:30pm.',
+    ].join('\n')
+    expect(canSendNow(menuFarUp)).toEqual({ ok: true })
+  })
+
+  it('a bare-prompt draft as the last line refuses; the same text higher up does not', () => {
+    expect(canSendNow('banner\n> half-typed thought')).toEqual({ ok: false, reason: 'draft' })
+    expect(canSendNow('> quoted earlier\nClaude usage limit reached.')).toEqual({ ok: true })
   })
 })

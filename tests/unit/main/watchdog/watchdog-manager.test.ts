@@ -246,45 +246,66 @@ describe('WatchdogManager — feedData debounce', () => {
     expect(instances).toHaveLength(0)
   })
 
-  it('strips ANSI and caps the tail buffer at 200 lines', () => {
+  // #266 BLOCKER-1: the tail is a RENDERED PANE now, not an append-only strip
+  // log. The headless terminal's write queue drains on the event loop, so
+  // these tests flush timers before reading.
+  it('renders ANSI instead of appending it, and caps how far back getTail reads', () => {
     const { host } = makeHost()
     const mgr = new WatchdogManager(host)
     mgr.startWatchdog('s1', { provider: 'claude' })
     const wd = instances[0]
-    mgr.feedData('s1', '\x1b[31mred\x1b[0m\n')
-    expect(wd.adapter.getTail()).toBe('red\n')
+    mgr.feedData('s1', '\x1b[31mred\x1b[0m\r\n')
+    vi.advanceTimersByTime(50)
+    expect(wd.adapter.getTail()).toContain('red')
+    expect(wd.adapter.getTail()).not.toContain('\x1b')
 
-    for (let i = 0; i < 250; i++) mgr.feedData('s1', `line${i}\n`)
+    for (let i = 0; i < 400; i++) mgr.feedData('s1', `line${i}\r\n`)
+    vi.advanceTimersByTime(200)
     const tail = wd.adapter.getTail() as string
-    const lines = tail.split('\n').filter(Boolean)
-    expect(lines.length).toBeLessThanOrEqual(200)
+    const lines = tail.split('\n')
+    // Bounded read: the 200-line window plus at most a viewport of rows.
+    expect(lines.length).toBeLessThanOrEqual(260)
     expect(tail).not.toContain('line0\n')
-    expect(tail).toContain('line249')
+    expect(tail).toContain('line399')
   })
 
-  // FINDING 3 (MAJOR — unbounded tail growth / O(n^2)): appendTail's line cap
-  // splits on /\r?\n/, so lone-\r output (spinners/progress redraws with no
-  // \n) never trips the 200-line cap and the tail grows unbounded — each
-  // chunk then re-splits an ever-larger string (quadratic). A char-length
-  // backstop must bound entry.tail regardless of newlines.
-  it('bounds the tail by character length even when output never contains a newline (lone \\r spinner redraws)', () => {
+  // The defect BLOCKER-1 names: Claude's TUI redraws IN PLACE (cursor moves +
+  // erases, lone-\r spinner frames). The old append-only strip log kept every
+  // overwritten frame — a stale "esc to interrupt" pinned isWorking() true and
+  // the primary retry never fired. The rendered pane keeps only what is ON
+  // SCREEN: an overwritten row is gone the moment the TUI erased it.
+  it('text a redraw overwrote leaves the tail — a stale working footer cannot pin detection', () => {
     const { host } = makeHost()
     const mgr = new WatchdogManager(host)
     mgr.startWatchdog('s1', { provider: 'claude' })
     const wd = instances[0]
 
-    // 20,000 chunks of lone-\r redraw text, no \n anywhere — the line-based
-    // cap (split on /\r?\n/) treats this whole feed as a single "line" and
-    // never trims it.
-    for (let i = 0; i < 20_000; i++) mgr.feedData('s1', `spinner frame ${i}\r`)
+    mgr.feedData('s1', 'Cogitating… (esc to interrupt)')
+    vi.advanceTimersByTime(50)
+    expect(wd.adapter.getTail()).toContain('esc to interrupt')
+
+    // The turn ends: the TUI returns to column 0, erases the row, and renders
+    // the limit banner in its place — exactly Ink's in-place redraw shape.
+    mgr.feedData('s1', '\r\x1b[2KClaude usage limit reached. Your limit resets at 4:30pm.')
+    vi.advanceTimersByTime(50)
+    const tail = wd.adapter.getTail() as string
+    expect(tail).toContain('usage limit reached')
+    expect(tail).not.toContain('esc to interrupt')
+  })
+
+  it('lone-\\r spinner redraws overwrite one row instead of growing without bound', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    const wd = instances[0]
+
+    for (let i = 0; i < 2_000; i++) mgr.feedData('s1', `\r\x1b[2Kspinner frame ${i}`)
+    vi.advanceTimersByTime(500)
 
     const tail = wd.adapter.getTail() as string
-    // Un-bounded, this would be ~20_000 * ~19 chars ≈ 380KB+. It must instead
-    // be capped to a small, fixed backstop.
-    expect(tail.length).toBeLessThan(100_000)
-    // The most recent output should still be present (trailing-slice retained).
-    expect(tail).toContain('spinner frame 19999')
-    // The earliest output must have been evicted.
+    // One row of pane, not 2,000 appended frames.
+    expect(tail.length).toBeLessThan(10_000)
+    expect(tail).toContain('spinner frame 1999')
     expect(tail).not.toContain('spinner frame 0\r')
   })
 })

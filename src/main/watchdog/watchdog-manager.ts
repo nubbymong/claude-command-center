@@ -12,9 +12,9 @@
 // PtyIntegrityMonitorOptions.emit. pty-manager.ts only ever calls
 // getWatchdogManager()?.<method>(), so there is no import cycle.
 import type { BrowserWindow } from 'electron'
+import { Terminal } from '@xterm/headless'
 import { SessionWatchdog } from './session-watchdog'
 import type { WatchdogAdapter, WatchdogPublicState } from './session-watchdog'
-import { stripAnsi } from './patterns'
 import { getGateway } from '../hooks/index'
 import { readConfig } from '../config-manager'
 import { logInfo, logWarn, logError } from '../debug-logger'
@@ -26,18 +26,25 @@ import type { DiagnosticsSnapshot, WatchdogMonitorSnapshot, WatchdogSessionMonit
 
 // Only a usage-limit-scale tail is needed for detection (mirrors
 // session-watchdog's own USAGE_TAIL_LINES ceiling) — 200 lines is generous
-// headroom while keeping the per-session buffer bounded.
+// headroom while keeping the per-session read bounded.
 const TAIL_MAX_LINES = 200
 
-// Hard backstop on tail length, in characters, independent of the line-based
-// cap above. appendTail's line cap splits on /\r?\n/ — output that only ever
-// uses a lone \r (spinners/progress redraws with no \n) never produces a
-// second "line" by that split, so the line cap never trips and the tail (and
-// the cost of re-splitting it on every chunk) grows without bound. 64,000
-// chars is generous headroom for 200 real lines while bounding the lone-\r
-// case; the slice is O(1) relative to the capped size, keeping this backstop
-// itself cheap regardless of how much lone-\r output has arrived.
-const TAIL_MAX_CHARS = 64_000
+// The detection substrate is a RENDERED PANE, not an append-only log (#266
+// BLOCKER-1). Claude Code's TUI (Ink) redraws IN PLACE with cursor moves and
+// erases; stripping the ANSI and appending the text kept every partial redraw
+// forever, so a stale "esc to interrupt" (or a long-cleared banner) pinned
+// isWorking()/isRateLimited() true for the life of the window and the primary
+// retry never fired in the common mid-turn case. Each watched session now owns
+// a headless xterm Terminal (@xterm/headless — the same parser the visible
+// terminal runs) fed the RAW bytes; getTail() reads what is actually ON
+// SCREEN, plus genuinely scrolled-off lines up to the scrollback cap. Text a
+// redraw overwrote never enters scrollback, so it is gone the moment the TUI
+// erased it — exactly the pane semantics the detectors were written against.
+const HEADLESS_SCROLLBACK = 200
+// Viewport fallback before the first resize report arrives; noteResize keeps
+// it matched to the real session so wrapping matches what the user sees.
+const DEFAULT_COLS = 120
+const DEFAULT_ROWS = 40
 
 // The PTY fires onData per chunk (sometimes per byte under heavy output).
 // Debounce feed() so a busy render doesn't run the detection regex ladder on
@@ -67,6 +74,12 @@ export interface WatchdogSessionInfo {
   provider?: string
   ssh?: boolean
   shellOnly?: boolean
+  /** Ask Conductor sessions are ephemeral one-shot surfaces: a watchdog badge
+   *  on one confuses more than it helps, so they never arm one (#266 MAJOR-5). */
+  ask?: boolean
+  /** Initial viewport for the rendered pane; kept live via noteResize. */
+  cols?: number
+  rows?: number
 }
 
 export interface WatchdogSettings {
@@ -101,12 +114,29 @@ export interface WatchdogHostOptions {
 
 interface Entry {
   wd: SessionWatchdog
-  tail: string
+  /** The rendered pane (#266 BLOCKER-1): a headless terminal fed the raw PTY
+   *  bytes, so getTail() reads the SCREEN, not an append-only strip log. */
+  term: Terminal
   feedTimer: ReturnType<typeof setTimeout> | null
   /** now() of the last PTY chunk seen — reset on each feedData; drives silence. */
   lastDataAt: number
   /** Latched silence state (no output for the silence window). */
   silent: boolean
+}
+
+/** Serialize the pane's last `maxLines` rendered lines (screen + genuinely
+ *  scrolled-off scrollback), trailing blank rows trimmed. */
+function readPane(term: Terminal, maxLines: number): string {
+  const buf = term.buffer.active
+  const total = buf.length
+  const start = Math.max(0, total - maxLines)
+  const out: string[] = []
+  for (let i = start; i < total; i++) {
+    const line = buf.getLine(i)
+    out.push(line ? line.translateToString(true) : '')
+  }
+  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop()
+  return out.join('\n')
 }
 
 function readWatchdogSettings(): WatchdogSettings {
@@ -126,6 +156,7 @@ function isLocalClaudeSession(info?: WatchdogSessionInfo): boolean {
   if (!info) return true
   if (info.ssh) return false
   if (info.shellOnly) return false
+  if (info.ask) return false
   return (info.provider ?? 'claude') === 'claude'
 }
 
@@ -274,7 +305,10 @@ export class WatchdogManager {
     if (settings.enabled !== true) return // default OFF — feature is inert unless explicitly opted in
 
     const adapter: WatchdogAdapter = {
-      getTail: () => this.entries.get(sessionId)?.tail ?? '',
+      getTail: () => {
+        const e = this.entries.get(sessionId)
+        return e ? readPane(e.term, TAIL_MAX_LINES) : ''
+      },
       isSessionAlive: () => this.host.isSessionAlive(sessionId),
       send: (text: string) => this.host.send(sessionId, text),
       now: () => this.now(),
@@ -297,11 +331,42 @@ export class WatchdogManager {
       retryMessage: settings.retryMessage,
       maxRetries: settings.maxRetries,
     })
-    this.entries.set(sessionId, { wd, tail: '', feedTimer: null, lastDataAt: this.now(), silent: false })
+    const term = new Terminal({
+      cols: info?.cols ?? DEFAULT_COLS,
+      rows: info?.rows ?? DEFAULT_ROWS,
+      scrollback: HEADLESS_SCROLLBACK,
+      allowProposedApi: true,
+    })
+    this.entries.set(sessionId, { wd, term, feedTimer: null, lastDataAt: this.now(), silent: false })
     if (this.startedAt === null) this.startedAt = this.now()
     this.ensureTickTimer()
     this.ensureHookSubscription()
+    // Push the fresh 'monitoring' state immediately (#266 MAJOR-4): a restart
+    // reuses the sessionId, and without this the renderer kept painting the
+    // PREVIOUS run's give-up badge until the new run's first state change.
+    adapter.onStateChange(wd.getState())
     logInfo(`[watchdog] started for session ${sessionId}`)
+  }
+
+  /** Keep the headless pane's viewport matched to the real session's, so line
+   *  wrapping (and therefore every line-anchored detector) matches what the
+   *  user actually sees. No-op for untracked sessions. */
+  noteResize(sessionId: string, cols: number, rows: number): void {
+    const entry = this.entries.get(sessionId)
+    if (!entry) return
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2) return
+    try {
+      entry.term.resize(cols, rows)
+    } catch { /* a mid-write resize throw must not kill the PTY data path */ }
+  }
+
+  /** Re-read settings after a save (#266 MAJOR-2): unticking the feature must
+   *  tear down RUNNING watchdogs, not only stop future ones arming. */
+  applySettings(): void {
+    if (readWatchdogSettings().enabled === true) return
+    if (this.entries.size === 0) return
+    logInfo('[watchdog] disabled in settings — tearing down running watchdogs')
+    this.disposeAll()
   }
 
   stopWatchdog(sessionId: string): void {
@@ -309,6 +374,7 @@ export class WatchdogManager {
     if (!entry) return
     if (entry.feedTimer) clearTimeout(entry.feedTimer)
     entry.wd.dispose()
+    try { entry.term.dispose() } catch { /* already disposed */ }
     this.entries.delete(sessionId)
     this.maybeStopTimer()
   }
@@ -321,18 +387,6 @@ export class WatchdogManager {
     }
   }
 
-  private appendTail(entry: Entry, data: string): void {
-    const stripped = stripAnsi(data)
-    const combined = entry.tail + stripped
-    const lines = combined.split(/\r?\n/)
-    const lineTrimmed = lines.length > TAIL_MAX_LINES ? lines.slice(lines.length - TAIL_MAX_LINES).join('\n') : combined
-    // Char-length backstop: bounds lone-\r output (no \n, so the line-based
-    // trim above never fires) and keeps entry.tail itself from growing
-    // unbounded, which is what keeps the split() cost above bounded per call
-    // rather than quadratic over the life of the session.
-    entry.tail = lineTrimmed.length > TAIL_MAX_CHARS ? lineTrimmed.slice(lineTrimmed.length - TAIL_MAX_CHARS) : lineTrimmed
-  }
-
   feedData(sessionId: string, data: string): void {
     const entry = this.entries.get(sessionId)
     if (!entry) return // no watchdog running for this session (off, or not a local Claude session)
@@ -340,7 +394,13 @@ export class WatchdogManager {
     // latched silent state immediately on the first byte after a silence.
     entry.lastDataAt = this.now()
     entry.silent = false
-    this.appendTail(entry, data)
+    // RAW bytes into the rendered pane — the terminal's parser is the tail
+    // discipline now (#266 BLOCKER-1); no stripping, no manual line caps.
+    try {
+      entry.term.write(data)
+    } catch (err) {
+      logError(`[watchdog] headless write threw for ${sessionId}`, err)
+    }
     if (entry.feedTimer) return // a feed is already scheduled for this burst
     entry.feedTimer = setTimeout(() => {
       entry.feedTimer = null

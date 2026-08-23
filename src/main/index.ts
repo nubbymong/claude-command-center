@@ -943,7 +943,10 @@ if (!gotTheLock) {
         void sentinelStartupCheck()
       }
     }
-    registerConfigHandlers()
+    registerConfigHandlers({
+      // #266 MAJOR-2: unticking the watchdog must tear down RUNNING watchers.
+      onSettingsSaved: () => getWatchdogManager()?.applySettings(),
+    })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
     // app.log) so field issues are captured. NEVER on stable. This enables only
     // the verbose level, NOT the per-event hot-path TRACE logs and NOT the heavy

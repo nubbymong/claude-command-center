@@ -3272,9 +3272,18 @@ export function spawnPty(
   ptySessions.set(sessionId, { ptyProcess, sessionId })
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
   // Watchdog (#235): local, interactive Claude sessions only — never SSH,
-  // Codex, or a bare shell (shellOnly). No-op when the feature is off.
+  // Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
+  // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op
+  // when the feature is off.
   if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
-    getWatchdogManager()?.startWatchdog(sessionId, { provider: options?.provider, ssh: false, shellOnly: false })
+    getWatchdogManager()?.startWatchdog(sessionId, {
+      provider: options?.provider,
+      ssh: false,
+      shellOnly: false,
+      ask: typeof options?.askPrompt === 'string' && options.askPrompt.length > 0,
+      cols: options?.cols,
+      rows: options?.rows,
+    })
   }
 
   // Replay any buffered writes (from commands sent before PTY was ready). When a
@@ -3580,6 +3589,8 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
   try {
     ptySessions.get(sessionId)?.ptyProcess.resize(cols, rows)
     getPtyIntegrityMonitor()?.recordResizeApplied(sessionId, cols, rows)
+    // Keep the watchdog's rendered pane wrapping like the real one (#266).
+    getWatchdogManager()?.noteResize(sessionId, cols, rows)
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EPIPE' || code === 'EIO') {

@@ -19,6 +19,7 @@ import {
   isWorking,
   isInternalRetry,
   resumedAfterLimit,
+  canSendNow,
 } from './patterns'
 import { parseResetTime, calculateWaitMs } from './time-parser'
 import { resolveWatchdogConfig } from './config'
@@ -397,11 +398,35 @@ export class SessionWatchdog {
       return
     }
 
+    // The pane must be SENDABLE, not merely idle (#266 BLOCKER-2/MAJOR-3): a
+    // retry typed into an open menu SELECTS (a permission prompt's "1. Yes"
+    // auto-approves), and typed beside the user's draft it mangles and submits
+    // their text. Refusal defers without consuming an attempt — a pane waiting
+    // on a human stays theirs, re-checked next tick.
+    const gate = this.sendGate(tail, now, WAITING_RESEND_COOLDOWN_MS)
+    if (!gate) return
+
     this.attempts++
     this.waitUntil = now + WAITING_RESEND_COOLDOWN_MS
     this.adapter.log('info', `Sending retry after rate limit reset (attempt ${this.attempts}).`)
     this.adapter.send(this.config.retryMessage)
     this.emit(`sent retry after rate limit reset (attempt ${this.attempts})`)
+  }
+
+  /** Shared refusal path for the three send sites: false = deferred (the tail
+   *  shows a menu or the user's draft), with the wait pushed out by `deferMs`
+   *  and no attempt consumed. */
+  private sendGate(tail: string, now: number, deferMs: number): boolean {
+    const gate = canSendNow(tail)
+    if (gate.ok) return true
+    this.waitUntil = now + deferMs
+    this.adapter.log(
+      'info',
+      gate.reason === 'menu'
+        ? 'Retry deferred: an interactive menu/prompt is open — an automated line would select in it.'
+        : "Retry deferred: the input box carries the user's unsubmitted draft.",
+    )
+    return false
   }
 
   // ---- overload ----
@@ -485,6 +510,10 @@ export class SessionWatchdog {
       return
     }
 
+    // Same sendability gate as the waiting path (#266 BLOCKER-2/MAJOR-3);
+    // deferred at the base backoff, no attempt consumed, no cumulative spend.
+    if (!this.sendGate(tail, now, this.overloadBaseWaitMs(0))) return
+
     this.overloadAttempts++
     const w = this.nextOverloadWaitMs(this.overloadAttempts)
     this.overloadTotalWaitMs += w
@@ -544,6 +573,9 @@ export class SessionWatchdog {
       return
     }
     if (!this.adapter.isSessionAlive()) return
+
+    // Same sendability gate as the waiting path (#266 BLOCKER-2/MAJOR-3).
+    if (!this.sendGate(tail, now, this.config.safeguard.retryDelaySeconds * 1000)) return
 
     this.safeguardAttempts++
     this.waitUntil = now + this.config.safeguard.retryDelaySeconds * 1000

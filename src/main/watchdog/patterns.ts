@@ -547,3 +547,73 @@ export function findRateLimitMessage(text: string, customPatterns: Array<string 
 
   return null
 }
+
+// --- Send gate (#266 BLOCKER-2 / MAJOR-3) ---
+// A retry write lands WHEREVER the pane's focus is. Three panes it must never
+// land in:
+//   - a NUMBERED SELECTION (a permission prompt, /rate-limit-options, the
+//     resume picker): `continue\r` there SELECTS — a permission prompt's
+//     "1. Yes" auto-approves whatever was asked;
+//   - an explicit interactive ask awaiting keys;
+//   - an input box already carrying the USER'S OWN DRAFT: the write would
+//     concatenate onto their unsubmitted text and submit the mangled line.
+// The gate answers "may an automated line be typed into this pane RIGHT NOW",
+// from the same rendered tail every other detector reads. Refusal defers the
+// retry (never consumes an attempt) — a pane waiting on a human stays theirs.
+// Bottom-anchored like the chrome walk: only the live lines near the input can
+// gate, so a menu quoted in scrollback does not freeze retries forever.
+const SEND_GATE_TAIL_LINES = 14
+
+// A selectable option row as Claude Code actually renders one: optional
+// selection caret, a small integer, a dot, then the label. Anchored to the row
+// shape (not "a digit and a dot anywhere") so ordinary prose ("2. see above")
+// inside content does not read as a menu; the ❯/> caret alone also counts,
+// because an unnumbered picker row is still a selection.
+const MENU_ROW = /^\s*(?:[❯>]\s*)?\d{1,2}\.\s+\S/
+// The caret'd row of an unnumbered picker ("❯ Continue with …").
+const CARET_ROW = /^\s*❯\s+\S/
+// The boxed input row CARRYING TEXT — the same anchored shape the chrome walk
+// uses for the EMPTY row, but requiring content after the prompt glyph.
+const BOXED_DRAFT_ROW = /^\s*│\s*[>❯]\s*\S[^│]*│\s*$/
+// The bare (unboxed) prompt carrying text. Prose-shaped ("> quoted line" in a
+// markdown blockquote), so it counts ONLY as the very last non-blank line —
+// where the live prompt sits and a blockquote never does.
+const BARE_DRAFT_ROW = /^\s*[❯>]\s+\S/
+
+export interface SendGateResult {
+  ok: boolean
+  reason?: 'menu' | 'draft'
+}
+
+export function canSendNow(text: string): SendGateResult {
+  // The purpose-built /rate-limit-options detector first (chrome-aware): that
+  // menu is the one a rate-limit retry is MOST likely to collide with, and
+  // typing into it confirms whatever option the cursor sits on.
+  if (isRateLimitOptionsPrompt(text, SEND_GATE_TAIL_LINES)) return { ok: false, reason: 'menu' }
+  const lines = stripAnsi(text).split('\n')
+  // Raw last-N window, deliberately NOT chrome-stripped: the things this gate
+  // looks for (menus, the input row) ARE chrome, and stripping them first is
+  // how the earlier revision ended up blind at exactly the wrong moment.
+  const tail = lines.slice(Math.max(0, lines.length - SEND_GATE_TAIL_LINES))
+  let menuRows = 0
+  for (const l of tail) {
+    if (MENU_ROW.test(l)) menuRows++
+  }
+  // Two option rows = a menu is open (one lone "1. …" can be a list item in
+  // content; a real selector always renders the alternatives too). A caret'd
+  // picker row is a menu on its own — carets are not prose.
+  if (menuRows >= 2 || tail.some((l) => CARET_ROW.test(l) && MENU_ROW.test(l))) {
+    return { ok: false, reason: 'menu' }
+  }
+  // The user's draft. The boxed form is unambiguous and may sit a couple of
+  // rows above the footer hints; the bare form is prose-shaped and counts only
+  // as the very last non-blank line.
+  for (const l of tail.slice(-6)) {
+    if (BOXED_DRAFT_ROW.test(l) && !isWorkingLine(l)) return { ok: false, reason: 'draft' }
+  }
+  const lastNonBlank = [...tail].reverse().find((l) => l.trim() !== '')
+  if (lastNonBlank && BARE_DRAFT_ROW.test(lastNonBlank) && !isWorkingLine(lastNonBlank)) {
+    return { ok: false, reason: 'draft' }
+  }
+  return { ok: true }
+}

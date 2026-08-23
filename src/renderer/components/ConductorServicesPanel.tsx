@@ -199,14 +199,14 @@ function PtySection({ pty }: { pty: PtyIntegritySnapshot }) {
 function WatchdogSection({ watchdog }: { watchdog: WatchdogMonitorSnapshot }) {
   const tickSec = Math.round(watchdog.throttle.tickMs / 1000)
   return (
-    <div className="rounded border border-surface0 bg-crust/50 p-2.5">
+    <div className={CARD_CLASS} style={CARD_STYLE}>
       <div
         className="flex items-center gap-1.5 mb-2"
         title="Session Watchdog. Waiting = sessions in a retry backoff; Silent = sessions whose provider stopped streaming; Tick = current scan cadence (widens when the main loop is under load); Stalls = main-loop stalls in the last minute."
       >
-        <span className="w-2 h-2 rounded-full bg-overlay0" />
-        <span className="text-[12px] font-semibold text-text">Session Watchdog</span>
-        <span className="text-[10px] text-subtext0">{watchdog.activeSessions} watched</span>
+        <span className="w-2 h-2 rounded-full" style={{ background: 'var(--text-muted)' }} />
+        <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>Session Watchdog</span>
+        <span className="text-[10px]" style={{ color: 'var(--text-secondary)' }}>{watchdog.activeSessions} watched</span>
       </div>
       <div className="grid grid-cols-4 gap-x-2 gap-y-1.5 mb-2">
         <Metric label="Watched" value={watchdog.activeSessions} />
@@ -215,10 +215,10 @@ function WatchdogSection({ watchdog }: { watchdog: WatchdogMonitorSnapshot }) {
         <Metric label="Tick" value={`${tickSec}s`} />
       </div>
       {watchdog.sessions.length > 0 && (
-        <div className="font-mono text-[10px] leading-snug text-subtext0 max-h-24 overflow-y-auto">
+        <div className="font-mono text-[10px] leading-snug max-h-24 overflow-y-auto" style={{ color: 'var(--text-secondary)' }}>
           {watchdog.sessions.map((s) => (
             <div key={s.sessionId} className="whitespace-pre-wrap break-words">
-              <span className="text-overlay1">{s.sessionId.slice(0, 8)} </span>
+              <span style={{ color: 'var(--text-muted)' }}>{s.sessionId.slice(0, 8)} </span>
               {s.gaveUp ? 'gave-up' : s.status}{s.silent ? ' · silent' : ''} idle:{Math.round(s.idleMs / 1000)}s
             </div>
           ))}

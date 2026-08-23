@@ -7,7 +7,14 @@ import { loadAllConfig, saveConfig, migrateFromLocalStorage, isRendererConfigKey
 import { logInfo, logWarn } from '../debug-logger'
 import { refreshTokenomicsConfigs } from '../tokenomics/tokenomics-service'
 
-export function registerConfigHandlers(): void {
+export interface ConfigHandlerHooks {
+  /** Fired after the 'settings' config persists, so main-side services whose
+   *  behaviour is settings-gated can re-read them mid-run (#266 MAJOR-2: the
+   *  watchdog must tear down when unticked, not only stop arming). */
+  onSettingsSaved?: () => void
+}
+
+export function registerConfigHandlers(hooks: ConfigHandlerHooks = {}): void {
   // Load all config in one round-trip. loadAllConfig returns the RENDERER keys
   // only (RENDERER_CONFIG_KEYS) -- the secret configs never cross this boundary.
   ipcMain.handle('config:loadAll', async () => {
@@ -30,6 +37,9 @@ export function registerConfigHandlers(): void {
     // config wouldn't attribute until the next app restart).
     if (key === 'configs') {
       try { refreshTokenomicsConfigs() } catch { /* non-fatal */ }
+    }
+    if (result && key === 'settings') {
+      try { hooks.onSettingsSaved?.() } catch { /* non-fatal */ }
     }
     return result
   })
