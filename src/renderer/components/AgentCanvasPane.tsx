@@ -21,7 +21,7 @@ import {
   type CanvasHoverReportingResult,
 } from '../../shared/canvas'
 import { contentPageRectToStage, stageToContentPagePoint, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
-import { formatCanvasZoom, stepCanvasZoom } from '../utils/canvas-zoom'
+import { formatCanvasZoom, frameStyleForZoom, stepCanvasZoom } from '../utils/canvas-zoom'
 import { safeAnchorResolutions, safeInspectResult } from '../utils/canvas-geometry-guard'
 import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
 import { askCanvasFrame, framesInFlight, MAX_FRAME_REQUESTS_IN_FLIGHT } from '../canvas/canvas-frame-rpc'
@@ -352,6 +352,12 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   /** The zoom the last successful resolution pass ran under (#368): a pass
    *  belongs to a layout, and a zoom step changes the layout. */
   const resolvedZoomRef = useRef(1)
+  /** ONE resolveAnchors in flight from the resolution effect (A1); the skip
+   *  flag records that the guard turned something away, so the settle can
+   *  schedule the retry. */
+  const resolvePendingRef = useRef(false)
+  const resolveSkippedRef = useRef(false)
+  const [resolveRetryNonce, setResolveRetryNonce] = useState(0)
 
   const [bridgeReady, setBridgeReady] = useState(false)
   const bridgeReadyRef = useRef(false)
@@ -406,9 +412,16 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     })
   }, [])
 
-  /** Walk the zoom ladder (+in / −out); `reset` snaps to 1. */
+  /** Walk the zoom ladder (+in / −out); `reset` snaps to 1. The one choke
+   *  point for every zoom source — host wheel, host chords, the chip, and the
+   *  frame relay — so the guards here bind all of them. A zoom step reflows
+   *  the content, so it is refused while a marquee drag is in flight: the
+   *  drag's corners were sampled against the old layout and committing them
+   *  against the new one places the region wrong, with no fingerprint to
+   *  recover from (independent review, C3). */
   const applyZoom = useCallback(
     (intent: { steps: number; reset: boolean }) => {
+      if (marqueeDragRef.current) return
       setZoom((z) => (intent.reset ? 1 : stepCanvasZoom(z, intent.steps)))
     },
     [],
@@ -692,11 +705,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     if (!root) return
     let accum = 0
     const onWheel = (e: WheelEvent) => {
-      // altKey excluded: AltGr on Windows layouts reports ctrl+alt together.
+      // ctrlKey on every platform: a trackpad pinch reports as ctrl+wheel on
+      // macOS too. altKey excluded: AltGr on Windows layouts reports ctrl+alt.
       if (!e.ctrlKey || e.altKey) return
       e.preventDefault()
       e.stopPropagation()
-      const notch = e.deltaMode === 1 ? 3 : 100
+      // DOM_DELTA_LINE counts lines (~3/notch), DOM_DELTA_PAGE counts pages
+      // (~1/notch); anything else is pixels.
+      const notch = e.deltaMode === 1 ? 3 : e.deltaMode === 2 ? 1 : 100
       accum += e.deltaY
       let steps = 0
       while (accum >= notch) {
@@ -713,14 +729,20 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     return () => root.removeEventListener('wheel', onWheel, { capture: true })
   }, [applyZoom])
 
-  // The zoom chords, host side: Ctrl+= / Ctrl+- / Ctrl+0 while the pane is
-  // hovered or holds focus. The app registers no zoom accelerators of its own
-  // (no View menu), so there is nothing to fight — the scope check exists so a
-  // future shortcut elsewhere stays unaffected, and typing in the notes
-  // composer is unaffected because these are ctrl-chords, not text.
+  // The zoom chords, host side: Ctrl+= / Ctrl+- / Ctrl+0 (Cmd on macOS, the
+  // platform's own zoom chord). The app registers no zoom accelerators of its
+  // own (no View menu), so nothing is contested today; the scope rule is what
+  // keeps it that way. Focus INSIDE the pane always claims the chord (typing
+  // in the notes composer included — a browser zooms while you type). Hover
+  // claims it only while nothing OUTSIDE the pane holds focus: Chromium keeps
+  // `:hover` on the last pointer position, so a pointer parked over the pane
+  // must not eat a chord the user is typing into the terminal (independent
+  // review, C6).
   useEffect(() => {
+    const isMac = navigator.platform.startsWith('Mac')
     const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey || e.metaKey) return
+      const chord = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+      if (!chord || e.altKey) return
       const intent =
         e.key === '=' || e.key === '+'
           ? { steps: 1, reset: false }
@@ -732,8 +754,9 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
       if (!intent) return
       const root = paneRootRef.current
       if (!root) return
-      let engaged = root.contains(document.activeElement)
-      if (!engaged) {
+      const active = document.activeElement
+      let engaged = root.contains(active)
+      if (!engaged && (!active || active === document.body)) {
         try {
           engaged = root.matches(':hover')
         } catch {
@@ -828,22 +851,40 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const openNotesKey = useMemo(() => openNotes.map((n) => n.id).join(','), [openNotes])
 
   useEffect(() => {
-    if (!bridgeReady || openNotes.length === 0) return
+    if (!bridgeReady) return
     const target = iframeRef.current?.contentWindow
     if (!target) return
     const store = useCanvasReviewStore.getState()
     const current = store.bySessionId[sessionId]?.resolution
     // A zoom step reflows the content (#368) — the CSS viewport narrows or
     // widens like a browser tab's — so page-space boxes measured under another
-    // zoom are stale: the whole pass runs again, same-version notes included,
-    // which is what lets a note placed at 150 % re-anchor at 100 %.
+    // zoom are stale: the pass runs again, same-version notes AND the live
+    // locked focus included, which is what lets a note placed at 150 %
+    // re-anchor at 100 %.
     const zoomChanged = resolvedZoomRef.current !== zoom
-    const done = !zoomChanged && current?.versionId === version.id ? current.byAnnotation : {}
+    const prior = current?.versionId === version.id ? current.byAnnotation : {}
+    const done = zoomChanged ? {} : prior
     const pending = openNotes.filter(
       (n) => (zoomChanged || n.versionId !== version.id) && n.focus && n.focus.targets.length > 0 && !(n.id in done),
     )
-    if (pending.length === 0) {
+    // The live element lock goes stale under the same reflow; its box is
+    // re-pointed through the same pass (S3). Read at arm time and guarded by
+    // reference on the way back, so a lock the user changed meanwhile is
+    // never touched.
+    const liveFocus = zoomChanged ? (store.bySessionId[sessionId]?.focus ?? null) : null
+    const liveFocusTargets = liveFocus && liveFocus.targets.length > 0 ? liveFocus.targets : null
+    if (pending.length === 0 && !liveFocusTargets) {
       resolvedZoomRef.current = zoom
+      return
+    }
+    // ONE resolve in flight from this effect, ever (A1). The RPC layer caps a
+    // frame at four requests; without this guard a page that provokes passes
+    // (zoom intents are page-relayable) and never answers them could hold all
+    // four slots and starve inspect, hover reporting and snapshots. With it,
+    // this path holds at most one — the retry nonce below picks up whatever
+    // was skipped once the outstanding call settles.
+    if (resolvePendingRef.current) {
+      resolveSkippedRef.current = true
       return
     }
 
@@ -857,7 +898,17 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         spans.push({ id: note.id, start: flat.length, count: targets.length })
         flat.push(...targets)
       }
-      if (flat.length === 0) return
+      // The live focus rides along after the notes; '~focus' cannot collide
+      // with a note id (ids are uuid-shaped).
+      if (liveFocusTargets && flat.length + liveFocusTargets.length <= MAX_RESOLVE_ANCHORS) {
+        spans.push({ id: '~focus', start: flat.length, count: liveFocusTargets.length })
+        flat.push(...liveFocusTargets)
+      }
+      if (flat.length === 0) {
+        resolvedZoomRef.current = zoom
+        return
+      }
+      resolvePendingRef.current = true
       try {
         const raw = await askCanvasFrame(target, canvasId, { type: 'resolveAnchors', anchors: flat }, 10_000)
         if (cancelled) return
@@ -865,15 +916,33 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         // the page writes this reply and it decides what the checklist tells
         // the reviewer about their own open notes.
         const results = safeAnchorResolutions(raw, flat)
-        const merged = { ...done }
+        // Merged over the PRIOR entries, never over a wiped map: a pass the
+        // anchor cap truncated must not demote the tail's notes from a located
+        // box to "locating…" — past the cap they keep their previous (old-zoom)
+        // boxes, which is exactly the pre-#368 behaviour for them (C1).
+        const merged = { ...prior }
         for (const span of spans) {
           const slice = results.slice(span.start, span.start + span.count)
-          merged[span.id] = slice.find((r) => r.found) ?? null
+          const hit = slice.find((r) => r.found) ?? null
+          if (span.id === '~focus') {
+            if (hit && liveFocus) useCanvasReviewStore.getState().updateFocusBox(sessionId, liveFocus, hit.box)
+          } else {
+            merged[span.id] = hit
+          }
         }
         resolvedZoomRef.current = zoom
         useCanvasReviewStore.getState().setResolution(sessionId, { versionId: version.id, byAnnotation: merged })
       } catch {
         /* frame gone or slow — the checklist keeps its ghosts */
+      } finally {
+        resolvePendingRef.current = false
+        // Whatever this run could not cover — a pass the in-flight guard
+        // skipped, or a zoom that moved again while it was out — gets one more
+        // look. Fires only on recorded drift or a recorded skip, so it cannot
+        // loop on a quiet pane.
+        const skipped = resolveSkippedRef.current
+        resolveSkippedRef.current = false
+        if (!cancelled && (skipped || resolvedZoomRef.current !== zoomRef.current)) setResolveRetryNonce((n) => n + 1)
       }
     }
     // Debounced only when the zoom moved it: rapid ladder steps supersede each
@@ -883,7 +952,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [bridgeReady, version.id, openNotesKey, sessionId, canvasId, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bridgeReady, version.id, openNotesKey, sessionId, canvasId, zoom, resolveRetryNonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGlassScrolled = useCallback(() => {
     const vp = viewportRef.current
@@ -1254,12 +1323,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             // arrived. (The Excalidraw glass below stays theme="light" — that
             // one is deliberate, see the comment on glassInitialData.)
             className="absolute left-0 top-0 border-0 bg-[var(--surface-stage)]"
-            // Content zoom (#368): CSS zoom scales the element's box and paint
-            // together, so the layout size is compensated to keep the frame
-            // filling the stage exactly — the content lays out to a
-            // narrower/wider CSS viewport and paints scaled, which is what a
-            // browser tab's own Ctrl+wheel does.
-            style={{ zoom, width: `${100 / zoom}%`, height: `${100 / zoom}%` }}
+            // Content zoom (#368): percentage sizes self-compensate under
+            // standardized CSS zoom, so 100% keeps the frame filling the stage
+            // at every zoom while the content reflows to stage/zoom and paints
+            // scaled — see frameStyleForZoom for the measured rule.
+            style={frameStyleForZoom(zoom)}
           />
           {/* Glass — Excalidraw over the content, transparent board, pointer
               only in draw mode. A sibling overlay, never injected (D7). */}

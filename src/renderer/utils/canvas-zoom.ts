@@ -45,3 +45,21 @@ export function stepCanvasZoom(current: number, steps: number): number {
 export function formatCanvasZoom(zoom: number): string {
   return `${Math.round(zoom * 100)}%`
 }
+
+/**
+ * The iframe's inline style at a given content zoom.
+ *
+ * Standardized CSS `zoom` (Chromium 128+) resolves a PERCENTAGE length against
+ * the containing block divided by the element's effective zoom, so the zoom
+ * cancels: a percentage-sized box paints the same size at every zoom, and only
+ * absolute lengths are multiplied. Plain `width/height: 100%` therefore already
+ * gives the browser-tab behaviour this feature wants — the frame keeps filling
+ * the stage, the content's CSS viewport becomes stage/zoom, and the paint
+ * scales by zoom. Compensating the size (100/zoom %) double-applies the rule
+ * and shrinks or overflows the frame (measured on Electron 43 / Chromium 150 —
+ * independent review of PR #417, finding S1). Kept as a pure helper so a unit
+ * test pins the semantics jsdom cannot lay out.
+ */
+export function frameStyleForZoom(zoom: number): { zoom: number; width: '100%'; height: '100%' } {
+  return { zoom, width: '100%', height: '100%' }
+}

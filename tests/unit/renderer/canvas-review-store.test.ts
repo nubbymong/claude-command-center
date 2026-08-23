@@ -51,6 +51,32 @@ describe('focus construction', () => {
   })
 })
 
+describe('updateFocusBox (#368) — re-pointing the live lock after a zoom reflow', () => {
+  it('moves ONLY the box, and only while the exact lock it was resolved for still stands', () => {
+    const store = useCanvasReviewStore.getState()
+    store.lockFocus(SID, [entry()], 'v3')
+    const locked = useCanvasReviewStore.getState().bySessionId[SID].focus!
+
+    store.updateFocusBox(SID, locked, { x: 5, y: 6, width: 70, height: 20 })
+    const moved = useCanvasReviewStore.getState().bySessionId[SID].focus!
+    expect(moved.bboxPage).toEqual({ x: 5, y: 6, width: 70, height: 20 })
+    expect(moved.label).toBe(locked.label)
+    expect(moved.targets).toBe(locked.targets)
+
+    // The user re-locked while the resolve was in flight: the stale answer is
+    // a claim about the OLD lock and must not land on the new one.
+    store.lockFocus(SID, [entry({ name: 'Cancel' })], 'v3')
+    const relocked = useCanvasReviewStore.getState().bySessionId[SID].focus!
+    store.updateFocusBox(SID, moved, { x: 999, y: 999, width: 1, height: 1 })
+    expect(useCanvasReviewStore.getState().bySessionId[SID].focus).toBe(relocked)
+
+    // A cleared lock is not resurrected by a late answer.
+    store.clearFocus(SID)
+    store.updateFocusBox(SID, relocked, { x: 1, y: 1, width: 1, height: 1 })
+    expect(useCanvasReviewStore.getState().bySessionId[SID].focus).toBeNull()
+  })
+})
+
 describe('the focus ladder', () => {
   it('locks the deepest entry, expands one parent per step, and stops at the top', () => {
     const chain = [entry({ name: 'Save' }), entry({ role: 'form', name: '' }), entry({ role: 'main', name: '' })]

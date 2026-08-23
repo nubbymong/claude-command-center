@@ -104,6 +104,9 @@ interface CanvasReviewStoreState {
   expandFocus: (sessionId: string) => void
   clearFocus: (sessionId: string) => void
   setRegionFocus: (sessionId: string, bboxPage: Rect, versionId: string) => void
+  /** Re-point the LIVE locked focus after a layout change (#368): applied only
+   *  while `forFocus` is still the focus, by reference — see the action. */
+  updateFocusBox: (sessionId: string, forFocus: FocusObject, bboxPage: Rect) => void
   setMarqueeArmed: (sessionId: string, armed: boolean) => void
   setEditingAnnotation: (sessionId: string, annotationId: string | null) => void
   setResolution: (sessionId: string, pass: ResolutionPass | null) => void
@@ -213,6 +216,19 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
         marqueeArmed: false,
       }),
     )
+  },
+
+  updateFocusBox: (sessionId, forFocus, bboxPage) => {
+    // Guarded by REFERENCE equality with the focus the box was resolved for:
+    // a lock the user changed, expanded or cleared while the resolve was in
+    // flight is a different claim and the stale answer is dropped, never
+    // applied to it. Only the box moves — the identity (targets, label,
+    // versionId) is the user's lock and stays theirs (#368, S3).
+    set((s) => {
+      const session = s.bySessionId[sessionId]
+      if (!session || session.focus !== forFocus) return s
+      return patch(s, sessionId, { focus: { ...forFocus, bboxPage } })
+    })
   },
 
   setMarqueeArmed: (sessionId, armed) => {

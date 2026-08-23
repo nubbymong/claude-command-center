@@ -382,11 +382,13 @@ function install(): void {
   document.addEventListener(
     'wheel',
     (event: WheelEvent) => {
-      // altKey excluded: AltGr on Windows layouts reports ctrl+alt together.
+      // ctrlKey on every platform — a macOS trackpad pinch reports as
+      // ctrl+wheel too. altKey excluded: AltGr on Windows reports ctrl+alt.
       if (!event.ctrlKey || event.altKey) return
       event.preventDefault()
-      // DOM_DELTA_LINE (1) counts lines (~3 per notch); anything else is pixels.
-      const notch = event.deltaMode === 1 ? 3 : 100
+      // DOM_DELTA_LINE (1) counts lines (~3/notch), DOM_DELTA_PAGE (2) counts
+      // pages (~1/notch); anything else is pixels.
+      const notch = event.deltaMode === 1 ? 3 : event.deltaMode === 2 ? 1 : 100
       wheelAccum += event.deltaY
       while (wheelAccum >= notch) {
         wheelAccum -= notch
@@ -401,13 +403,16 @@ function install(): void {
   )
 
   // The zoom CHORDS, for when the frame owns keyboard focus (the user clicked
-  // the page): Ctrl+= / Ctrl+- / Ctrl+0, relayed as the same closed intents.
-  // Never from an editable target (consistent with the key relay above) and
-  // never the key value itself — there is no path from here to arbitrary keys.
+  // the page): Ctrl+= / Ctrl+- / Ctrl+0 — Cmd on macOS, the platform's own
+  // zoom chord — relayed as the same closed intents. Never from an editable
+  // target (consistent with the key relay above) and never the key value
+  // itself — there is no path from here to arbitrary keys.
+  const zoomChordIsMac = navigator.platform.startsWith('Mac')
   document.addEventListener(
     'keydown',
     (event: KeyboardEvent) => {
-      if (!event.ctrlKey || event.altKey || event.metaKey) return
+      const chord = zoomChordIsMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+      if (!chord || event.altKey) return
       const action =
         event.key === '=' || event.key === '+'
           ? ('in' as const)

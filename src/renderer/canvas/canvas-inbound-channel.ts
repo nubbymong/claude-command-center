@@ -9,11 +9,16 @@
 // Three of the six inbound types are paint-only (`ready`, `viewport`,
 // `pointer`): the worst a forgery does is move a highlight box, and the geometry
 // guards bound it. `contentZoom` (#368) sits between the classes: it steps the
-// pane's clamped zoom ladder — visible in the chrome, reversible with Ctrl+0,
-// and unable to reach the review store — and is honoured only with host-side
-// evidence the frame plausibly owns the gesture (pointer hover or keyboard
-// focus; see reportedZoomIsPlausible for why not user activation). Two MUTATE
-// HOST STATE and are handled differently here:
+// pane's clamped, chrome-visible zoom ladder — it cannot reach the review store
+// or the locked selection — and is honoured only with host-side evidence the
+// frame plausibly owns the gesture (pointer hover or keyboard focus; see
+// reportedZoomIsPlausible for why not user activation). What a hostile page CAN
+// do with it is fight the user for the camera (re-zooming after every Ctrl+0)
+// and provoke the host work a zoom change triggers (a reflow, a re-anchor
+// pass); its own budget exists for exactly that — past CONTENT_ZOOM_BUDGET the
+// channel is dropped whole, and the host's resolve path holds one RPC slot at
+// most however often the zoom moves. Two MUTATE HOST STATE and are handled
+// differently here:
 //
 //   `contentKey`  clears the user's locked focus / disarms an armed marquee. It
 //                 is honoured only when the host can see for itself that the
@@ -117,6 +122,22 @@ export const INBOUND_OVERSIZE_COST = 60
  * caps sit orders of magnitude above anything legitimate and still refuse a
  * megabyte.
  */
+/**
+ * How many contentZoom intents the frame may have HONOURED per rolling window
+ * (#368). The flood budget bounds message COUNT and is far too generous to
+ * bound this event's EFFECT: sixty accepted intents a second is 10 % of the
+ * flood budget and enough to pin the zoom at an end of the ladder faster than
+ * the user can reset it, indefinitely. A human's heaviest plausible input — a
+ * full-ladder sweep is ten notches, a hard continuous spin a few dozen — sits
+ * well under sixty in ten seconds; a page over it is fighting the user for the
+ * pane's camera on purpose, and the answer is the one the flood budget already
+ * gives: stop listening to that page. Charged only for intents that PASS the
+ * plausibility gate — refused forgeries never count against a page the user is
+ * not even hovering.
+ */
+export const CONTENT_ZOOM_BUDGET = 60
+export const CONTENT_ZOOM_WINDOW_MS = 10_000
+
 export const MAX_INBOUND_STRING_CHARS = 4096
 export const MAX_INBOUND_TOTAL_CHARS = 16_384
 /** Values (and keys) looked at before a message is refused for being a graph
@@ -323,12 +344,16 @@ export function reportedClickIsPlausible(facts: HostInputFacts): boolean {
  * own evidence for that is `:hover` on its iframe element; the zoom chords need
  * the frame to own keyboard focus, exactly as `contentKey` does. Either
  * suffices. Deliberately weaker than the key/click gates — no user-activation
- * requirement — because a wheel is not an activation-triggering input, so that
- * gate would drop every genuine first gesture; and unlike those two, a forged
- * zoom cannot touch the review store or the locked selection. It can only step
- * the pane's own zoom ladder: clamped, painted in the chrome, and reversible
- * with Ctrl+0 — nothing a page cannot already do to its own rendering with a
- * stylesheet.
+ * requirement (a wheel is not an activation-triggering input, so that gate
+ * would drop every genuine first gesture) and no editable-target refusal (the
+ * pointer resting on the frame while the user types a note is a REAL zoom
+ * posture — wheel over the page, draft open — and refusing it breaks the
+ * feature where it is most used).
+ *
+ * What that buys an attacker is stated where it is bounded: the header above
+ * and CONTENT_ZOOM_BUDGET. A forged intent moves a clamped, chrome-visible
+ * camera and provokes bounded host work; it cannot touch the review store, the
+ * locked selection's identity, or anything persisted.
  */
 export function reportedZoomIsPlausible(facts: Pick<HostInputFacts, 'activeElement' | 'frameElement'>): boolean {
   if (!facts.frameElement) return false
@@ -356,6 +381,9 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
 
   let windowStartedAt = Date.now()
   let windowCount = 0
+  // contentZoom's own rolling window (#368) — see CONTENT_ZOOM_BUDGET.
+  let zoomWindowStartedAt = Date.now()
+  let zoomWindowCount = 0
 
   let pendingViewport: CanvasViewportInfo | null = null
   let pendingPointer: { hit: CanvasHitInfo | null } | null = null
@@ -532,6 +560,20 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
       ) {
         return
       }
+      // This event's own budget (#368): past it the page is not zooming, it is
+      // fighting the user for the camera — a pinned zoom outlives every Ctrl+0
+      // — or farming the host work a zoom change triggers. Same answer as the
+      // flood budget, because it is the same offence at a rate that budget
+      // cannot see.
+      const now = Date.now()
+      if (now - zoomWindowStartedAt >= CONTENT_ZOOM_WINDOW_MS) {
+        zoomWindowStartedAt = now
+        zoomWindowCount = 0
+      }
+      if (++zoomWindowCount > CONTENT_ZOOM_BUDGET) {
+        dropFlooded()
+        return
+      }
       const current = pendingZoom ?? { steps: 0, reset: false }
       if (action === 'reset') {
         // Reset wins over whatever steps were queued beside it this frame.
@@ -543,6 +585,7 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
         pendingZoom = { steps, reset: false }
       }
       queueFlush()
+      return
     }
   }
 

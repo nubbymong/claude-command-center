@@ -19,7 +19,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   createCanvasInboundChannel,
   reportedKeyIsPlausible,
+  reportedZoomIsPlausible,
   withinInboundSizeBounds,
+  CONTENT_ZOOM_BUDGET,
   INBOUND_FLOOD_BUDGET,
   INBOUND_OVERSIZE_COST,
   MAX_INBOUND_STRING_CHARS,
@@ -325,7 +327,9 @@ describe('contentZoom (#368) is gated, closed-vocabulary and coalesced', () => {
   it('bounds the net movement a chatty frame can queue in one animation frame', async () => {
     arm()
     setFrameHovered(true)
-    for (let i = 0; i < 200; i++) fromFrame({ type: 'contentZoom', action: 'in' })
+    // Under the zoom budget (so the channel survives) but far over the walk
+    // bound — the clamp, not the budget, is what this test pins.
+    for (let i = 0; i < 40; i++) fromFrame({ type: 'contentZoom', action: 'in' })
     await flushFrame()
     expect(handlers.onContentZoom).toHaveBeenCalledTimes(1)
     const [intent] = (handlers.onContentZoom as ReturnType<typeof vi.fn>).mock.calls[0] as [
@@ -341,6 +345,40 @@ describe('contentZoom (#368) is gated, closed-vocabulary and coalesced', () => {
     fromFrame({ type: 'contentZoom', action: 'out' })
     await flushFrame()
     expect(handlers.onContentZoom).not.toHaveBeenCalled()
+  })
+
+  it('the gate fails closed on a missing frame element even when nothing holds focus', () => {
+    // `null === null` must not pass the focus branch — the null-frame check is
+    // load-bearing (independent review, A4).
+    expect(reportedZoomIsPlausible({ activeElement: null, frameElement: null })).toBe(false)
+  })
+
+  it('a page over the contentZoom budget loses the channel — pinning the camera is not a right', async () => {
+    // Sixty honoured intents per rolling window is beyond any human's wheel;
+    // a page past it is re-zooming against the user (a pinned zoom would
+    // outlive every Ctrl+0) or farming the host work a zoom change triggers.
+    arm()
+    setFrameHovered(true)
+    for (let i = 0; i < CONTENT_ZOOM_BUDGET; i++) fromFrame({ type: 'contentZoom', action: 'in' })
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    expect(handlers.onFlood).toHaveBeenCalledTimes(1)
+    // Dropped whole: nothing later is heard.
+    fromFrame({ type: 'ready' })
+    expect(handlers.onReady).not.toHaveBeenCalled()
+  })
+
+  it('refused forgeries do not spend the zoom budget — only honoured intents count', async () => {
+    arm()
+    composer.focus()
+    setFrameHovered(false)
+    for (let i = 0; i < CONTENT_ZOOM_BUDGET * 3; i++) fromFrame({ type: 'contentZoom', action: 'in' })
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    // The user hovers; a genuine gesture still gets through.
+    setFrameHovered(true)
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    await flushFrame()
+    expect(handlers.onContentZoom).toHaveBeenCalledWith({ steps: 1, reset: false })
   })
 })
 

@@ -7,6 +7,7 @@ import {
   CANVAS_ZOOM_MAX,
   CANVAS_ZOOM_MIN,
   formatCanvasZoom,
+  frameStyleForZoom,
   stepCanvasZoom,
 } from '../../../src/renderer/utils/canvas-zoom'
 
@@ -69,5 +70,18 @@ describe('formatCanvasZoom', () => {
     expect(formatCanvasZoom(1)).toBe('100%')
     expect(formatCanvasZoom(0.67)).toBe('67%')
     expect(formatCanvasZoom(2)).toBe('200%')
+  })
+})
+
+describe('frameStyleForZoom', () => {
+  it('never compensates the percentage size — percentages self-compensate under standardized CSS zoom', () => {
+    // Measured on Electron 43 / Chromium 150 (PR #417 review, S1): a
+    // percentage length resolves against the containing block divided by the
+    // effective zoom, so `100%` fills the stage at EVERY zoom, and a
+    // 100/zoom% "compensation" double-applies the rule and breaks the layout.
+    // jsdom cannot lay this out, so this test pins the helper instead.
+    for (const zoom of CANVAS_ZOOM_LADDER) {
+      expect(frameStyleForZoom(zoom)).toEqual({ zoom, width: '100%', height: '100%' })
+    }
   })
 })
