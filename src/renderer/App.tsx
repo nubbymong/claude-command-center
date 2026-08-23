@@ -36,7 +36,7 @@ import SessionDialog from './components/SessionDialog'
 import GuidedTour from './components/GuidedTour'
 import FeatureGuidePage from './components/FeatureGuidePage'
 import AccountUsagePanel from './components/AccountUsagePanel'
-import TipModal from './components/TipModal'
+import TipCard from './components/TipCard'
 import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
@@ -197,7 +197,7 @@ export default function App() {
   // The Feature Guide is a page tab (ViewType 'help'), opened from the sidebar ?
   // button — it opens in the main tab strip like any other page, no longer a
   // portal modal that covered whatever page was open.
-  const [showTipModal, setShowTipModal] = useState(false)
+  const [showTipCard, setShowTipCard] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   // Sessions whose partner terminal has been opened at least once — gates the
   // lazy mount of the partner TerminalView (see togglePartner).
@@ -1205,7 +1205,7 @@ export default function App() {
             }}
           />
         )}
-        {showTipModal && bootGate === null && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showTipCard && bootGate === null && <TipCard onClose={() => setShowTipCard(false)} onNavigate={(v) => setView(v)} sidebarCollapsed={!sidebarOpen} />}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -1353,7 +1353,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} onShowTip={() => setShowTipModal(true)} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowAccountUsage={() => setView('account-usage')} onShowTip={() => setShowTipCard((v) => !v)} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             {/* One tab strip for the whole main window: session tabs + any open
                 page tabs (Tokenomics, Logs, Feature Guide, …). Always visible so

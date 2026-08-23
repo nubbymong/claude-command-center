@@ -16,9 +16,13 @@ import React from 'react'
  * overlay-surface secondary one.
  *
  * House rules baked in (AGENTS.md):
- *  - the modal overlay has NO click-to-close. Ctrl+C in a terminal fires click
+ *  - the modal overlay NEVER closes on click. Ctrl+C in a terminal fires click
  *    events, so a backdrop that closed on click ate the user's dialog. Escape,
- *    Cancel and the close glyph are the ways out.
+ *    Cancel and the close glyph are the ways out. (#361 briefly added a
+ *    mousedown-rule `onBackdropDismiss` opt-in for its modal; the tip became a
+ *    backdrop-less anchored card, so the opt-in left with it. If a light
+ *    informational dialog ever needs one, it is the MOUSEDOWN rule the bar's
+ *    popovers use (#386) -- never a click handler.)
  *  - colours are tokens only; no palette class on any element here.
  */
 
@@ -70,8 +74,8 @@ export function scrim(dim: number): string {
 }
 
 /**
- * The dimmed full-window backdrop. It centres its child and does NOT close on
- * click — deliberately no `onClick`/`onMouseDown` prop exists on it.
+ * The dimmed full-window backdrop. It centres its child and never closes on
+ * CLICK — deliberately no `onClick` prop exists on it.
  */
 export function DialogOverlay({ children, position = 'fixed', z = 'z-50', dim = 0.6, className = '', style, testId, onKeyDown, id }: DialogOverlayProps) {
   return (
@@ -138,6 +142,10 @@ export interface DialogHeaderProps {
   subtitle?: React.ReactNode
   /** A small glyph tile drawn left of the title (an SVG or a mark). */
   glyph?: React.ReactNode
+  /** Accent for the glyph tile. Defaults to `var(--brand)`; a feature with its
+   *  own identity passes its token (tips pass `var(--accent-tip)`) so the
+   *  dialog matches the control that opened it. */
+  glyphAccent?: string
   /** Something on the right of the title row (a chip, a secondary action). */
   right?: React.ReactNode
   /** Renders the close glyph (×) on the right; Escape/Cancel are the other exits. */
@@ -150,12 +158,12 @@ export interface DialogHeaderProps {
   plain?: boolean
 }
 
-export function DialogHeader({ title, titleId, subtitle, glyph, right, onClose, closeLabel = 'Close', closeTestId, className = '', children, plain }: DialogHeaderProps) {
+export function DialogHeader({ title, titleId, subtitle, glyph, glyphAccent = 'var(--brand)', right, onClose, closeLabel = 'Close', closeTestId, className = '', children, plain }: DialogHeaderProps) {
   return (
     <div className={`px-[18px] pt-4 pb-3 shrink-0 ${className}`} style={plain ? undefined : { borderBottom: '1px solid var(--border-subtle)' }}>
       <div className="flex items-start gap-3">
         {glyph && (
-          <div className="shrink-0 w-8 h-8 rounded-[9px] flex items-center justify-center mt-px" style={{ background: 'color-mix(in srgb, var(--brand) 14%, transparent)', color: 'var(--brand)' }} aria-hidden>
+          <div className="shrink-0 w-8 h-8 rounded-[9px] flex items-center justify-center mt-px" style={{ background: `color-mix(in srgb, ${glyphAccent} 14%, transparent)`, color: glyphAccent }} aria-hidden>
             {glyph}
           </div>
         )}
@@ -247,7 +255,7 @@ export function DialogButton({ variant = 'secondary', size = 'sm', block, classN
 
 /* ---- callout --------------------------------------------------------------- */
 
-export type DialogCalloutTone = 'warning' | 'danger' | 'info' | 'success' | 'neutral'
+export type DialogCalloutTone = 'warning' | 'danger' | 'info' | 'success' | 'neutral' | 'tip'
 
 const TONE_TOKEN: Record<DialogCalloutTone, string> = {
   warning: 'var(--status-warning)',
@@ -255,6 +263,9 @@ const TONE_TOKEN: Record<DialogCalloutTone, string> = {
   info: 'var(--status-info)',
   success: 'var(--status-success)',
   neutral: 'var(--text-muted)',
+  // Not a status: the tips feature's own accent, so the "where to look" note in
+  // the tip dialog reads as part of tips rather than as a warning (#361).
+  tip: 'var(--accent-tip)',
 }
 
 /** The bordered tinted note the command dialog uses for its review banner and

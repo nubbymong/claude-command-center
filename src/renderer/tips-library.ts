@@ -91,14 +91,14 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['security.encrypted-notes'],
     variants: {
       primary: {
-        shortText: '🔒 Stash secrets alongside your session',
+        shortText: 'Stash secrets alongside your session',
         title: 'Encrypted Notes',
         body: 'Every session can hold **encrypted notes** -- API keys, SQL snippets, DB connection strings, URLs, anything you want one-click access to without committing it to the repo.\n\nClick the small **lock+ icon** in the session header (next to Restart) to add a note. You can create multiple notes per config with different colors to tell them apart at a glance.\n\nContent is encrypted at rest using your OS credential store -- DPAPI on Windows, Keychain on macOS. The renderer never sees plaintext; decryption happens in the main process only.',
         actionLabel: 'Got it',
         focusHint: 'Session header -- small lock icon with a + next to it',
       },
       postUse: {
-        shortText: '🔒 Right-click a note to edit or delete',
+        shortText: 'Right-click a note to edit or delete',
         title: 'Organize Your Notes',
         body: 'Nice -- you already use notes. A few things you might not know:\n\n• **Right-click a note** to edit or delete it (change its colour inside the edit dialog)\n• **Drag notes** to reorder them in the bar\n• Notes can be **config-scoped** (only shown for one config) or **global** (shown in every session)\n• Each note shows a **lock icon** indicating encrypted-at-rest status',
       },
@@ -113,7 +113,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['memory.memory-page'],
     variants: {
       primary: {
-        shortText: '🧠 Browse what Claude remembers about your projects',
+        shortText: 'Browse what Claude remembers about your projects',
         title: 'Memory',
         body: 'Claude Code writes **auto-memory** files to remember things across sessions: your preferences, past feedback, project context, references to external systems.\n\nClick the **Memory icon** in the sidebar to open the dashboard: a **KPI strip** (memories, projects, total size, stale entries, index health), an **activity chart** and **type donut** for the whole store, and a **ranked project list** with staleness dots and live-session chips.\n\nClick a project to drill in: a sortable memory table plus a sessions rail (live sessions jump straight to the terminal; recent sessions deep-link into Logs). Open any memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search spans the whole store.',
         actionLabel: 'Open Memory',
@@ -134,7 +134,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['commands.ctrl-click-args'],
     variants: {
       primary: {
-        shortText: '⌨ Ctrl+click a command button to customize args',
+        shortText: 'Ctrl+click a command button to customize args',
         title: 'Customize Command Arguments',
         body: 'You\'ve got commands set up -- here\'s a power move: **Ctrl+click** any command button to pop open an arguments editor. Override the defaults for one run without changing the command itself.\n\nThe last custom args are remembered, so next time you Ctrl+click the same button they pre-fill.\n\nPerfect for a `run tests` command where sometimes you want `--watch`, sometimes `--filter foo`, sometimes nothing.',
         bodyMac: 'You\'ve got commands set up -- here\'s a power move: **Ctrl+click** any command button to pop open an arguments editor (on Mac this is still Ctrl, not Cmd -- the app uses the same binding on both platforms). Override the defaults for one run without changing the command itself.\n\nThe last custom args are remembered, so next time you Ctrl+click the same button they pre-fill.\n\nPerfect for a `run tests` command where sometimes you want `--watch`, sometimes `--filter foo`, sometimes nothing.',
@@ -151,12 +151,12 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['commands.command-sections'],
     variants: {
       primary: {
-        shortText: '📂 Group command buttons into named sections',
+        shortText: 'Group command buttons into named sections',
         title: 'Command Sections',
         body: 'Once you have more than 4-5 command buttons they start to get cluttered. Organize them into **named sections**:\n\n• **Right-click** the command bar and choose **Add Section**\n• **Drag any command button** onto a section header to assign it\n• **Drag it back out** to the unsectioned area to unassign\n• **Right-click a command** and use **Move to Section** to assign without dragging\n• **Click a section header** to collapse/expand it\n• **Right-click a section header** to rename, change text color, or delete it\n• **Drag section headers** to reorder them\n\nExamples: "Testing", "Deploy", "DB Ops", "Claude prompts".',
       },
       postUse: {
-        shortText: '🎨 Customize section colors and reorder by dragging',
+        shortText: 'Customize section colors and reorder by dragging',
         title: 'Section Power Tips',
         body: 'You\'re using sections -- here are some extras:\n\n• **Right-click a section header** to rename it or change the **text color** -- great for visual grouping\n• **Drag section headers** to reorder entire groups\n• **Right-click a command** > **Move to Section** to quickly reassign without dragging\n• Collapsed sections show a **count badge** so you know how many commands are hidden',
       },
@@ -171,7 +171,7 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['commands.create-command'],
     variants: {
       primary: {
-        shortText: '🎯 Target commands at your partner terminal',
+        shortText: 'Target commands at your partner terminal',
         title: 'Command Targeting',
         body: 'You use partner terminals -- did you know **each command button can target a specific terminal**?\n\nWhen editing a command, set **Target** to:\n• **Claude** -- always runs in the Claude pane\n• **Partner** -- always runs in your partner shell\n• **Any** (default) -- runs in whichever pane is active\n\nGreat for `git status`, `npm test`, `docker ps` -- commands you want in the shell, not typed into Claude\'s prompt.',
       },
@@ -189,7 +189,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['sessions.pin-config'],
     variants: {
       primary: {
-        shortText: '📌 Pin your most-used configs to the top',
+        shortText: 'Pin your most-used configs to the top',
         title: 'Pinned Configs',
         body: 'Right-click any config in the sidebar and choose **Pin** to move it to a dedicated pinned panel at the top. Pinned configs stay visible even when you scroll through dozens of others.\n\nPerfect for your main project that you launch a dozen times a day. You can also access pinned configs from the Sessions view when the sidebar is collapsed.',
       },
@@ -205,12 +205,12 @@ export const TIPS_LIBRARY: Tip[] = [
     
     variants: {
       primary: {
-        shortText: '🔀 Add a partner shell next to Claude',
+        shortText: 'Add a partner shell next to Claude',
         title: 'Partner Terminal',
         body: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click on the Partner button in the command bar toggles between them — every session has one, no setup needed.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nIt opens in the session\'s working directory (home for SSH sessions).',
       },
       postUse: {
-        shortText: '🎯 Route command buttons to your partner shell',
+        shortText: 'Route command buttons to your partner shell',
         title: 'Target Commands at Partner',
         body: 'Now that you use partner terminals: **each command button can target a specific terminal**. When editing a command, set **Target: Partner** and it\'ll always run in the partner shell.\n\nGreat for `git status`, `npm test`, `docker ps` -- anything you want in the shell instead of sent as a Claude prompt.',
       },
@@ -226,7 +226,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['sessions.effort-level'],
     variants: {
       primary: {
-        shortText: '🧠 Dial Claude\'s thinking depth with /effort',
+        shortText: 'Dial Claude\'s thinking depth with /effort',
         title: 'Effort Level',
         body: '**Effort** controls how hard Claude thinks before responding. Set a **Starting effort** on the saved config, and change it live inside Claude with **`/effort`**.\n\nLevels, lightest to heaviest: **low**, **medium**, **high**, **xhigh**, **max**, **ultracode** (ultracode also turns on dynamic workflows). Higher effort means deeper thinking, slower replies, and more cost.\n\nThe Conductor shows the current level as a colour-coded pill on the session card and in the statusline, tinted green through red as effort rises, so you can read it at a glance without opening the session.',
       },
@@ -241,12 +241,12 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['sessions.session-type'],
     variants: {
       primary: {
-        shortText: '🌐 Run Claude on a remote machine over SSH',
+        shortText: 'Run Claude on a remote machine over SSH',
         title: 'SSH Sessions',
         body: 'Create a config with **SSH** as the session type, enter host/port/user/remote path, and Claude runs on the remote with full file access. Your terminal stays local.\n\nWhen the session connects, an in-pane overlay shows **Launch Claude / Skip** -- your click triggers the statusline injection and runs Claude. No prompt-detection magic, no setup blobs accidentally pasted into a running Claude.\n\nPasswords (if you don\'t use key auth) are encrypted with your OS credential store and only decrypted in the main process, never in the renderer.',
       },
       postUse: {
-        shortText: '🐳 Run Claude inside a Docker container via SSH',
+        shortText: 'Run Claude inside a Docker container via SSH',
         title: 'Docker-in-SSH (post-connect command)',
         body: 'Edit your SSH config and set a **Post-connect command** like `sudo docker exec -it claude-dev bash`. After SSH login the overlay shows **Run post-connect command / Skip**; click it, and once the inner shell is ready a second overlay offers **Launch Claude / Skip**.\n\nGreat for reproducible builds and isolating Claude\'s file access from the host.',
       },
@@ -262,7 +262,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['sessions.duplicate-config'],
     variants: {
       primary: {
-        shortText: '📋 Duplicate a config instead of recreating it',
+        shortText: 'Duplicate a config instead of recreating it',
         title: 'Duplicate Config',
         body: 'Right-click any config in the sidebar and choose **Duplicate** to create a copy with all its settings. Useful for:\n\n• Creating a "Quick" + "Deep" pair of the same project\n• Testing a config change without losing the original\n• Making dev/staging/prod variants\n\nThe duplicate gets `(copy)` appended to the label -- rename it from the context menu.',
       },
@@ -279,7 +279,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['vision.toggle-vision'],
     variants: {
       primary: {
-        shortText: '👁 Give Claude a browser to drive',
+        shortText: 'Give Claude a browser to drive',
         title: 'Conductor MCP',
         body: '**Conductor MCP** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that Claude can drive via CDP.\n\nEach Conductor-spawned session gets its own `~/.claude/mcp-<sid>.json`, passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup). When you stop the browser, the MCP server stays up so the other sub-tools (codex_review, host transfer) remain available.',
         actionLabel: 'Open Conductor MCP',
@@ -299,7 +299,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['tokenomics.dashboard'],
     variants: {
       primary: {
-        shortText: '💰 See where your Claude money is going',
+        shortText: 'See where your Claude money is going',
         title: 'Tokenomics',
         body: 'The **Tokenomics** page is a spend dashboard for every Claude and Codex session: today, this week, all time.\n\nA background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the page opens instantly. You get:\n\n• A **KPI row** with total spend, tokens, sessions, and daily burn\n• **Charts** for daily spend and per-model breakdown\n• A **sessions table** with cost, model, and config attribution\n• **Filters** for config, date range (7d / 30d / all) and a free-text search over model and project\n\nModel pricing is fetched from BerriAI\'s LiteLLM repo on GitHub (cached for 24h) so costs stay accurate.',
         actionLabel: 'Open Tokenomics',
@@ -318,7 +318,7 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['sessions.create-config'],
     variants: {
       primary: {
-        shortText: '⌨ Ctrl+Tab to flip between sessions',
+        shortText: 'Ctrl+Tab to flip between sessions',
         title: 'Session Shortcuts',
         body: 'Fast switching between sessions:\n\n• **Ctrl+Tab** -- next session\n• **Ctrl+Shift+Tab** -- previous session\n• **Ctrl+1** through **Ctrl+9** -- jump directly to session N\n• **Ctrl+T** -- new config\n• **Ctrl+W** -- close current session\n• **Ctrl+B** -- toggle sidebar\n\nAll customizable in Settings > Shortcuts. Learn Ctrl+Tab and Ctrl+1-9 and you\'ll rarely touch the mouse.',
         bodyMac: 'Fast switching between sessions (note: on Mac, these still use **Ctrl**, not Cmd -- the app keeps the same bindings on both platforms):\n\n• **Ctrl+Tab** -- next session\n• **Ctrl+Shift+Tab** -- previous session\n• **Ctrl+1** through **Ctrl+9** -- jump directly to session N\n• **Ctrl+T** -- new config\n• **Ctrl+W** -- close current session\n• **Ctrl+B** -- toggle sidebar\n\nAll customizable in Settings > Shortcuts.',
@@ -333,7 +333,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 45,
     variants: {
       primary: {
-        shortText: '🖼 Paste clipboard images with Alt+V',
+        shortText: 'Paste clipboard images with Alt+V',
         title: 'Paste Image from Clipboard',
         body: 'Image on your clipboard? Press **Alt+V** in any session and the app saves it to a temp file and pastes the file path into Claude\'s prompt.\n\nWorks with screenshots, images copied from browser, diagrams from Excalidraw, anything in clipboard image format. No more "let me save this to disk first and drag it in".',
       },
@@ -347,7 +347,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 50,
     variants: {
       primary: {
-        shortText: '✏️ Sketch ideas in the Canvas scratchpad',
+        shortText: 'Sketch ideas in the Canvas scratchpad',
         title: 'Excalidraw Scratchpad',
         body: 'The **Canvas** button next to Snap opens the Agent Canvas — an empty one is a full Excalidraw scratchpad. Sketch architecture, annotate flowcharts, draw selectors over a screenshot -- anything you\'d normally reach for a tablet for.\n\n• **Copy to clipboard** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session -- no per-config setup.\n• Close it with the **Close** button, or press **Canvas** again.',
       },
@@ -361,7 +361,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 55,
     variants: {
       primary: {
-        shortText: '🌐 A browser pane beside every session',
+        shortText: 'A browser pane beside every session',
         title: 'The Browser Pane',
         body: 'Every session has a **Browser** button next to Snap, Canvas and Logs. It opens a real Chrome view in place of the terminal, with an address bar, back/forward, a home page, saved **favourites** (the star) and **open in your real browser** for anything that needs more than a sandbox.\n\nA command button can point it at a page too:\n• Tick **Watch for a page** on a command that starts a server and give it the URL. The poll starts the moment the command is sent and runs for up to 30 s -- the Browser button pulses **blue** while waiting, turns **green** the moment the page answers, **red** on timeout. Any other command press re-checks the URL, so a stopped server goes red without background polling.\n• Make an **Open a page** button -- the one kind that types nothing. Click it and the browser goes there.\n\nPages load in a sandbox with every permission off (no camera, microphone, location or notifications). The **Freeze** button snapshots the page into Excalidraw for annotation.',
       },
@@ -376,7 +376,7 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['webview.opened'],
     variants: {
       primary: {
-        shortText: '❄️ Freeze + annotate a browser page for screenshots',
+        shortText: 'Freeze + annotate a browser page for screenshots',
         title: 'Freeze the Browser + Annotate',
         body: 'Inside the browser pane, the **Freeze** button captures the current page as an image and opens it in Excalidraw. Draw arrows, circle bugs, redact PII -- then **Copy to clipboard** and paste into Claude with **Alt+V**.\n\nFaster than a separate screenshot tool because the snapshot bypasses the OS clipboard until you\'re ready.',
       },
@@ -391,7 +391,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['productivity.statusline-config'],
     variants: {
       primary: {
-        shortText: '📊 Customize which metrics show in the status line',
+        shortText: 'Customize which metrics show in the status line',
         title: 'Status Line Customization',
         body: 'The status line at the bottom of the screen shows session metrics -- model, context %, tokens, cost, lines changed, duration, and rate limits. You can toggle each one individually.\n\nGo to **Settings > Status Line** and enable just the metrics you care about. Minimalists can hide everything but model + cost. Power users can show all seven fields.',
         actionLabel: 'Open Settings',
@@ -410,7 +410,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['agents.cloud-agent-dispatch'],
     variants: {
       primary: {
-        shortText: '☁ Dispatch Claude to work in the background',
+        shortText: 'Dispatch Claude to work in the background',
         title: 'Agent Hub',
         body: '**Agent Hub** runs headless Claude sessions in the background. You give them a task, they run, you come back later for the result.\n\nPerfect for:\n• Running tests across a large codebase\n• Generating documentation for every file\n• Security audits\n• Long refactors\n\nClick the **Agent Hub icon** in the sidebar and press "New Agent". Monitor progress from the dashboard: status, elapsed time, token usage, and output for each.',
         actionLabel: 'Open Agent Hub',
@@ -428,7 +428,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['agents.agent-teams'],
     variants: {
       primary: {
-        shortText: '🤖 Chain agents into multi-step pipelines',
+        shortText: 'Chain agents into multi-step pipelines',
         title: 'Agent pipelines',
         body: 'You\'ve used cloud agents -- ready for the next level? **Pipelines** orchestrate multiple agents in sequence or parallel, like a mini CI/CD pipeline for Claude.\n\nExample team: [analyze codebase] → [write tests] → [run tests] → [fix failures]. Each step uses a different agent template with different tools.\n\nOpen **Agent Hub** and pick **Pipelines** in the left rail to create your first one.',
       },
@@ -444,7 +444,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 25,
     variants: {
       primary: {
-        shortText: '📈 AI-powered analysis of your Claude usage',
+        shortText: 'AI-powered analysis of your Claude usage',
         title: 'Insights',
         body: '**Insights** runs a Claude-powered analysis of your session history to find big wins, friction points, and regressions over time.\n\nClick the **pulse icon** in the sidebar. You\'ll get KPI trends (sessions/day, avg cost, lines changed) plus qualitative analysis of what\'s working and what\'s not in your Claude usage patterns.\n\nReports are saved to `resources/insights/` so you can look back at past runs.',
         actionLabel: 'Open Insights',
@@ -462,7 +462,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 20,
     variants: {
       primary: {
-        shortText: 'ℹ How we power the statusline metrics',
+        shortText: 'How we power the statusline metrics',
         title: 'Statusline Script Injection',
         body: 'Heads up, you should know how the rich statusline (tokens, cost, rate limits, context %) actually works:\n\n1. The app keeps a small Node.js statusline script in its own resources folder\n2. Each session the Conductor launches gets a `statusLine` entry in its per-session Claude settings pointing at that script. Your global `~/.claude/settings.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code runs the script and displays its output beneath the session\n4. The script reads your Claude OAuth token from `~/.claude/.credentials.json` to fetch rate limits from `api.anthropic.com/api/oauth/usage`\n\n**What the app does NOT do**: store your token, send data anywhere else, or modify anything in the Claude CLI itself. Turn the status line off in Settings → Status Line and new sessions launch without it.',
       },
@@ -477,7 +477,7 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['vision.toggle-vision'],
     variants: {
       primary: {
-        shortText: 'ℹ How the Conductor MCP server injects into Claude settings',
+        shortText: 'How the Conductor MCP server injects into Claude settings',
         title: 'Conductor MCP Registration',
         body: 'The Conductor MCP server hosts four sub-tools (Vision, Codex review, Host transfer, Agent Canvas) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at app boot\n2. Registration is per session only: each Conductor-spawned session gets `~/.claude/mcp-<sid>.json` passed via `--mcp-config`. Your global `~/.claude.json` is never modified (an entry written there by older versions is cleaned up at startup)\n3. Claude Code picks up the tool list automatically (18 browser-vision tools plus `codex_review`, `fetch_host_screenshot` and the `canvas_*` tools)\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
       },
@@ -491,7 +491,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 17,
     variants: {
       primary: {
-        shortText: 'ℹ Your session output is logged locally',
+        shortText: 'Your session output is logged locally',
         title: 'Session Activity Logging',
         body: 'The Logs, Memory and Tokenomics pages are powered by an index of **Claude\'s own conversation transcripts** (the files Claude Code already writes under `~/.claude/projects`). The Conductor does not record terminal output itself.\n\n• The index is a local SQLite database in the app\'s data folder\n• It stays **100% local** -- never uploaded or transmitted\n• Turning off "Index conversation logs" in Settings only stops the index; your conversations stay in Claude\'s own files either way\n\nTo clean up: Settings → General → Clear index (removes the app\'s index only, never your conversations).',
       },
@@ -505,7 +505,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 16,
     variants: {
       primary: {
-        shortText: 'ℹ How your SSH passwords are encrypted',
+        shortText: 'How your SSH passwords are encrypted',
         title: 'Credential Storage',
         body: 'SSH passwords and OAuth account tokens are encrypted using **Electron\'s `safeStorage` API**, which wraps your OS credential store:\n\n• **Windows** -- DPAPI (Data Protection API), tied to your Windows user account\n• **macOS** -- Keychain\n• **Linux** -- libsecret (Secret Service)\n\nEncrypted blobs are stored in `resources/CONFIG/ssh-credentials.json` with an `enc:` prefix. The renderer process **never** sees plaintext -- decryption happens only in the main process, right before the credential is needed.\n\nIf you move the app to a new machine, encrypted credentials won\'t work there -- you\'ll need to re-enter them (they\'re tied to the old OS\'s credential store).',
         bodyMac: 'SSH passwords and OAuth account tokens are encrypted using **Electron\'s `safeStorage` API** which wraps macOS **Keychain**.\n\nEncrypted blobs are stored in `~/Library/Application Support/Claude Conductor/resources/CONFIG/ssh-credentials.json` with an `enc:` prefix. The renderer process **never** sees plaintext -- decryption happens only in the main process.\n\nIf you move the app to a new machine, encrypted credentials won\'t work there -- you\'ll need to re-enter them (they\'re tied to the old Keychain).',
@@ -521,7 +521,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 15,
     variants: {
       primary: {
-        shortText: 'ℹ Where the app stores everything',
+        shortText: 'Where the app stores everything',
         title: 'Resources Folder',
         body: 'The app uses a **Resources Directory** for all user data. Configurable at first-run setup.\n\nContents:\n• `CONFIG/` -- JSON files for your configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` -- per-session JSONL activity logs\n• `screenshots/` -- any screenshots captured by the Snap features\n• `insights/` -- AI-generated usage reports\n• `status/` -- real-time session metrics (written by the statusline script)\n• `scripts/` -- deployed helper scripts like the statusline\n• `claude-versions/` -- installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (note: encrypted credentials won\'t transfer -- see the credential tip).',
         bodyMac: 'The app stores everything under `~/Library/Application Support/Claude Conductor/resources/`:\n\n• `CONFIG/` -- JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` -- per-session JSONL activity logs\n• `screenshots/` -- captured by Snap features\n• `insights/` -- AI usage reports\n• `status/` -- real-time session metrics (from statusline script)\n• `scripts/` -- deployed helper scripts\n• `claude-versions/` -- installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to Keychain).',
@@ -540,7 +540,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['github.signed-in'],
     variants: {
       primary: {
-        shortText: '🐙 Sign in with GitHub to light up the sidebar',
+        shortText: 'Sign in with GitHub to light up the sidebar',
         title: 'Sign in with GitHub',
         body: 'The GitHub sidebar shows the PR, CI runs, reviews, linked issues, and local git state for your current session. Sign in to unlock it.\n\nYou can use **OAuth device flow** (recommended), **paste a fine-grained PAT** if your org requires it, or let the app auto-detect a **gh CLI** login.\n\nFind it in **Settings > GitHub**. Nothing runs until you opt in per session.',
         actionLabel: 'Open Status Line settings',
@@ -559,7 +559,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['github.panel-toggled'],
     variants: {
       primary: {
-        shortText: '⌨ Ctrl+/ toggles the GitHub panel',
+        shortText: 'Ctrl+/ toggles the GitHub panel',
         title: 'Toggle the GitHub panel',
         body: 'Press **Ctrl+/** to show or hide the GitHub panel from anywhere in the app.',
         bodyMac: 'Press **⌘+/** to show or hide the GitHub panel from anywhere in the app.',
@@ -576,7 +576,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['github.session-enabled'],
     variants: {
       primary: {
-        shortText: '🔛 Enable GitHub on a session to start syncing',
+        shortText: 'Enable GitHub on a session to start syncing',
         title: 'Enable GitHub per session',
         body: 'Integration is **off by default per session** so nothing hits your API budget until you opt in.\n\nFor a session with a detected GitHub repo, click **Configure** on the collapsed rail and toggle **Enable**. The panel will start populating PR, CI, reviews, and issues automatically.',
       },
@@ -591,7 +591,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['github.rate-limit-seen'],
     variants: {
       primary: {
-        shortText: 'ℹ How the sidebar respects your GitHub rate limit',
+        shortText: 'How the sidebar respects your GitHub rate limit',
         title: 'GitHub Rate-Limit Handling',
         body: 'The sidebar polls conservatively and falls back gracefully when you hit a rate limit:\n\n• **Tiered intervals** -- active session polls faster, background sessions slower\n• **304-aware** -- unchanged responses cost 0 against your quota\n• **Per-bucket shields** -- REST vs GraphQL counted separately\n• **Automatic pause + resume** -- when a bucket is exhausted, sync pauses until the reset time, then auto-resumes\n\nYou can lengthen intervals further in **Settings > GitHub > Sync**.',
         actionLabel: 'Open sync settings',
@@ -608,7 +608,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['github.ai-usage-enabled'],
     variants: {
       primary: {
-        shortText: '📊 Track your GitHub Copilot AI-credit spend in the repo strip',
+        shortText: 'Track your GitHub Copilot AI-credit spend in the repo strip',
         title: 'AI Usage Meter',
         body: 'Turn on the **AI usage meter** to watch your GitHub Copilot AI-credit spend without leaving the terminal.\n\nA compact chip sits in the **session status strip**. It shows credits used (and your cap, once you set one). The instant GitHub bills you past your included credits the chip turns **amber** and shows the billed amount, for example +$11.69.\n\nClick the chip for a read-only popover: a **per-model GitHub breakdown** (credits, covered, billed) plus the **Claude and Codex** 5h / 7d rate-limit windows side by side.\n\nEnable it under **Settings, GitHub**; set your included-credit cap under **Settings, Status Line**. It is best-effort and never changes anything.',
         actionLabel: 'Open Status Line settings',
@@ -627,7 +627,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['github.session-context-seen'],
     variants: {
       primary: {
-        shortText: '🔎 The panel figures out which issue you are on',
+        shortText: 'The panel figures out which issue you are on',
         title: 'Session Context',
         body: 'The **Session Context** section infers which issue your current session is actually working on.\n\nIt checks (in priority order): issue numbers in your current **branch name**, most-recent issue referenced in your **Claude transcript**, first issue referenced in the active **PR body**. Recent file edits show alongside as additional signal.\n\nYou can opt in to transcript scanning under **Settings > GitHub > Privacy** -- it stays entirely local; the transcript never leaves your machine.',
       },
@@ -665,13 +665,13 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['canvas.opened'],
     variants: {
       primary: {
-        shortText: '🎨 Have your agent SHOW you the work',
+        shortText: 'Have your agent SHOW you the work',
         title: 'Agent Canvas',
-        body: 'The **Canvas** button in the session toolbar -- next to Snap and Web -- opens a pane your agent can draw into. Ask for a mockup, a design or a look at the site it just built and it arrives as something you can see, instead of a wall of markdown describing it.\n\nIt is a two-way surface. Click anywhere on the render to leave a **note**, then send the round back as a **review**. The agent reads the notes, changes the work and renders the next version.\n\nThe button **pulses** when the agent has rendered something you have not opened yet -- that is the hand-back moment -- and carries a count once two or more of your reviews are still open.',
-        focusHint: 'Session toolbar -- the Canvas button, beside Snap and Web',
+        body: 'The **Canvas** button in the session toolbar -- next to Browser -- opens a pane your agent can draw into. Ask for a mockup, a design or a look at the site it just built and it arrives as something you can see, instead of a wall of markdown describing it.\n\nIt is a two-way surface. Click anywhere on the render to leave a **note**, then send the round back as a **review**. The agent reads the notes, changes the work and renders the next version.\n\nThe button **pulses** when the agent has rendered something you have not opened yet -- that is the hand-back moment -- and carries a count once two or more of your reviews are still open.',
+        focusHint: 'Session toolbar -- the Canvas button, beside Browser',
       },
       postUse: {
-        shortText: '🎨 Every canvas version is kept -- walk back through them',
+        shortText: 'Every canvas version is kept -- walk back through them',
         title: 'Canvas: Versions, Reviews and the Library',
         body: 'You already use the canvas. A few things it does that are easy to miss:\n\n• **Nothing is overwritten.** Each render is a new version; the version picker walks back through every one of them.\n• **A review closes only when every note in it has a verdict**, which is why the button counts open reviews from two rather than one -- a single outstanding note would sit there forever and stop meaning anything.\n• **Library** lists the canvases for this project, so a mockup from last week is two clicks away rather than lost with the session.\n• The pane **replaces the terminal** while it is open -- the button is tinted so you can see you have left the terminal without hovering anything.',
       },
@@ -686,7 +686,7 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['canvas.opened'],
     variants: {
       primary: {
-        shortText: '🗺 Ask for the plan as a flow, not a document',
+        shortText: 'Ask for the plan as a flow, not a document',
         title: 'Plan Mode on the Canvas',
         body: 'Nobody reads a long markdown plan. Ask your agent to **put the plan on the canvas** and it comes back as a visual flow with a summary: the steps, what each one touches, and what has to happen before what.\n\nA plan is stored and served exactly like a design, so everything you already know still works on it -- click a step to leave a **note**, send the round as a **review**, and walk the versions as the plan changes.\n\nUse it before a big change rather than after: correcting a step on the canvas costs a click, correcting it in the code costs an afternoon.',
         focusHint: 'Session toolbar -- the Canvas button, once your agent has rendered a plan',
@@ -701,7 +701,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 84,
     variants: {
       primary: {
-        shortText: '💬 Ask the Conductor how this app works',
+        shortText: 'Ask the Conductor how this app works',
         title: 'Ask Conductor',
         body: '**Ask Conductor** sits at the foot of the sidebar. It opens a real session -- its own tab, its own history, resumable like any other -- whose subject is this app rather than your code.\n\nIt is the right place for "how do I...", "what does this button do" and "why did that happen". It is not a saved config and it does not clutter your project list: it is docked below the divider, apart from your work.\n\nThe same session is what **Discuss** opens from any tip, and what the Feature Guide links to -- one conversation, not three.',
         focusHint: 'Bottom of the sidebar -- the Ask Conductor pill, under the session list',
@@ -716,7 +716,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 44,
     variants: {
       primary: {
-        shortText: '🙈 Right-click the dock to hide tips or Ask Conductor',
+        shortText: 'Right-click the dock to hide tips or Ask Conductor',
         title: 'Hiding a Dock Row',
         body: 'The two rows at the foot of the sidebar -- **Ask Conductor** and the **tip of the day** -- can each be sent away. Right-click either one and choose **Hide**.\n\nIt is worth knowing what that does: it switches the FEATURE off, not just its row. With tips hidden nothing is picked at launch and no tip is raised anywhere; with Ask Conductor hidden there is no way to start one. A dialog says so before anything happens.\n\nBoth come back in **Settings > General** -- "Show intelligent tips" and "Show Ask Conductor".',
         focusHint: 'Bottom of the sidebar -- right-click either dock row',
@@ -731,7 +731,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 66,
     variants: {
       primary: {
-        shortText: '🗂 Tokenomics, Logs and Settings open as tabs',
+        shortText: 'Tokenomics, Logs and Settings open as tabs',
         title: 'Pages Are Tabs',
         body: 'Opening Tokenomics, Logs, Memory or Settings does not take the window away from your sessions -- each opens as a **tab in the same strip**, beside them.\n\nSo you can leave Tokenomics open while you work, keep Logs a click away, and have several pages open at once.\n\n**Ctrl+Tab** cycles the whole strip -- sessions and pages together -- and **Ctrl+W** closes whichever tab is in front (a session tab routes through the usual close question first).',
       },
@@ -746,7 +746,7 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['sessions.session-type'],
     variants: {
       primary: {
-        shortText: '🔌 Keep a remote session alive when the link drops',
+        shortText: 'Keep a remote session alive when the link drops',
         title: 'Detachable SSH Sessions',
         body: 'You run sessions over SSH -- so you have met the failure: the laptop sleeps, the VPN blinks, and the work on the other end dies with the connection.\n\nTurn on **Detachable** in the SSH config and the remote Claude runs inside a tmux session instead. The link dropping no longer kills it: reconnect and the session is reattached where it was, output and all.\n\nClosing a persistent session asks what you actually meant -- **End it** on the host, or **Leave it running** and come back later. The sidebar marks which of your sessions are persistent.',
         focusHint: 'Session config -- SSH section, the "Detachable" toggle',
@@ -762,7 +762,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['sessions.codex-config'],
     variants: {
       primary: {
-        shortText: '🔷 Run OpenAI Codex sessions beside Claude',
+        shortText: 'Run OpenAI Codex sessions beside Claude',
         title: 'Codex Sessions',
         body: 'A saved config does not have to run Claude Code. Switch **Settings > Codex** on, and the session dialog grows a provider choice: **Claude** or **Codex**, with its own account and its own sign-in.\n\nEverything else is the same session model you already use -- tabs, notes, commands, logs -- so a Codex session sits in the sidebar next to a Claude one and behaves like it.\n\n**Tokenomics counts Codex too**, so the spend comparison is in one place rather than two. Local sessions only for now: SSH configs stay on Claude.',
         actionLabel: 'Open Settings',
@@ -779,7 +779,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['accounts.switch-session-account'],
     variants: {
       primary: {
-        shortText: '👥 Run more than one Claude account, session by session',
+        shortText: 'Run more than one Claude account, session by session',
         title: 'Multi-Account',
         body: 'Each session runs as **one account**, and different sessions can run as different ones -- work on one, personal on another, a spare for when the first hits its weekly limit.\n\n**Right-click a session** and pick an account to move it. The footer strip shows every live account with its usage, so you can see which one has room before you choose.\n\nEach account keeps its own credentials, its own browser session and its own limits -- switching a session is not switching your whole app.',
         focusHint: 'Right-click a session in the sidebar -- the account list is in the menu',
@@ -795,7 +795,7 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['accounts.switch-session-account'],
     variants: {
       primary: {
-        shortText: '🚦 Turn the account strip into traffic lights',
+        shortText: 'Turn the account strip into traffic lights',
         title: 'A Minimal Account Strip',
         body: 'With several accounts live the footer strip gets busy. **Settings > Status Line > "Multi-account footer style"** turns the bars into dots: one for usage -- the worse of your time windows -- and one per model.\n\nGreen under 70%, amber to 89%, red at 90% and above: the same points at which the bars change colour, so a dot can never disagree with the meter it replaced. The exact figures move into the tooltip.\n\nWhichever buckets you switched off above stay off here -- it is the same list, drawn smaller.',
         actionLabel: 'Open Settings',
@@ -811,7 +811,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 62,
     variants: {
       primary: {
-        shortText: '📚 The Feature Guide is the map of this app',
+        shortText: 'The Feature Guide is the map of this app',
         title: 'Feature Guide',
         body: 'Tips arrive one at a time and in no particular order. The **Feature Guide** is the same material laid out properly: Getting started, Integrations, Admin & data and Productivity, each with what the feature is for rather than only where it lives.\n\nIt also carries **What\'s New** -- the full release history, the same notes you are shown after an update, browsable any time rather than only in the moment they appear.\n\nWorth ten minutes on a quiet afternoon; most of what people ask Ask Conductor is answered there.',
         actionLabel: 'Open Feature Guide',
@@ -828,7 +828,7 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['advanced.log-viewer'],
     variants: {
       primary: {
-        shortText: '📜 Every session\'s output is kept -- read it in Logs',
+        shortText: 'Every session\'s output is kept -- read it in Logs',
         title: 'Logs',
         body: 'Terminal scrollback is finite and a closed session takes its history with it. **Logs** keeps the output anyway: what ran, in which session, and when.\n\nUse it for the thing you saw twenty minutes ago and cannot scroll back to, for what a session did while you were in another tab, and for handing an exact error to someone else.\n\nIt stays on your machine -- the log files live in your resources folder and nothing is uploaded.',
         actionLabel: 'Open Logs',
@@ -844,7 +844,7 @@ export const TIPS_LIBRARY: Tip[] = [
     priority: 14,
     variants: {
       primary: {
-        shortText: 'ℹ What the app sends over the network',
+        shortText: 'What the app sends over the network',
         title: 'Network Activity',
         body: 'In the interest of transparency, here\'s every network call the app makes:\n\n• **Rate limits** (`api.anthropic.com/api/oauth/usage`) -- once per Claude Code command, only when statusline is enabled. Uses YOUR Claude OAuth token (read from `~/.claude/.credentials.json`).\n\n• **Update check** (`api.github.com`) -- via `gh` CLI, checks for new releases when you explicitly trigger an update check or on app start.\n\n• **Model pricing** (`raw.githubusercontent.com/BerriAI/litellm`) -- once per 24 hours, to get current Claude model pricing for cost calculations. Cached locally.\n\n• **Vision MCP server** -- listens on `127.0.0.1:19333` only. Localhost-only, never exposed to the network.\n\n**The app sends NO telemetry, analytics, or usage data.** Everything else stays on your machine.',
       },
