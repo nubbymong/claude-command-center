@@ -151,4 +151,15 @@ describe('session-persistence — resumeUuid/resumeCwd (T8b)', () => {
     const state = await buildSessionStateWithResumeTargets()
     expect(state.sessions[0].resumeUuid).toBe('r')
   })
+
+  it('#397: round-trips permissionMode/extraArgs through claudeOptions', () => {
+    useSessionStore.setState({
+      sessions: [makeSession({ permissionMode: 'plan', extraArgs: '--verbose' })],
+      activeSessionId: 'sess-resume-1',
+      isRestoring: false,
+    })
+    const co = buildSessionState().sessions[0].claudeOptions
+    expect(co?.permissionMode).toBe('plan')
+    expect(co?.extraArgs).toBe('--verbose')
+  })
 })

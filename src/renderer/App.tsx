@@ -83,7 +83,7 @@ import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
-import { useSessionAutosave } from './hooks/useSessionAutosave'
+import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -619,11 +619,11 @@ export default function App() {
     try {
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
-      // Idempotent session colour migration (no guard). session.clear() below wipes
-      // the on-disk copy right after restore, and migrated keys only reach disk on a
-      // graceful close (buildSessionState). So this recomputes each launch until then
-      // -- harmless: it is a no-op once keyed, raw `color` is always preserved, and the
-      // notice guard below prevents re-notifying.
+      // Idempotent session colour migration (no guard). The restore SAVES the live
+      // set right after this (#397 -- the clear that used to sit there left a gap
+      // where a crash lost everything), so migrated keys reach disk immediately.
+      // Still safe to recompute each launch: it is a no-op once keyed, raw `color` is
+      // always preserved, and the notice guard below prevents re-notifying.
       const { records: migratedSaved, summary: sessionSummary } = migrateColorRecords(savedState.sessions || [])
       console.log('[colourMigration] sessions', sessionSummary)
 
@@ -657,6 +657,10 @@ export default function App() {
           disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
           enableCodexReview: claude?.enableCodexReview,
           loggingEnabled: claude?.loggingEnabled,
+          // #397 Group 4: these were dropped on save+restore, so a restored session
+          // came back with the wrong permission mode / without its extra CLI args.
+          permissionMode: claude?.permissionMode,
+          extraArgs: claude?.extraArgs,
           machineName: saved.machineName,
           githubIntegration: saved.githubIntegration,
           status: 'idle' as const,
@@ -696,7 +700,17 @@ export default function App() {
       // Per-session "hide this tool" entries key on session ids, which persist
       // across restarts; drop the ones whose session did not come back (ADR-018 M3).
       useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
-      await window.electronAPI.session.clear()
+      // #397 Group 4: previously session.clear() unlinked the file here and relied on
+      // the ~1s debounced autosave to rewrite it -- a crash in that window lost every
+      // session. Instead persist the restored (live) set immediately so the on-disk
+      // copy is always current, with no empty gap. main enriches on save, and the
+      // restored resumeUuid/resumeCwd are still on the records (TerminalView clears
+      // them only at spawn), so the exact-resume targets are preserved.
+      try {
+        await window.electronAPI.session.save(buildSessionState())
+      } catch {
+        /* best-effort: the debounced autosave rewrites on the next session-set change */
+      }
 
       if (sessionSummary.changed > 0) {
         const s = useSettingsStore.getState()
@@ -752,6 +766,9 @@ export default function App() {
     if (isUpdate) setIsUpdating(true)
     try {
       await flushPendingConfigSaves()
+      // #397 round-2: kill any pending debounced autosave first, so it cannot fire
+      // after the clear and rewrite the set the user just chose to discard.
+      cancelSessionAutosave()
       await window.electronAPI.session.clear()
       console.log('[App] Session state cleared')
       if (isUpdate) {
@@ -790,9 +807,15 @@ export default function App() {
       if (state.sessions.length === 0) {
         // No dialog on the zero-session path, so drain pending debounced
         // config saves here before letting the window die.
-        void flushPendingConfigSaves().finally(() => {
-          window.electronAPI.window.allowClose()
-        })
+        // #397 round-2: the user has closed every card. Cancel any pending autosave
+        // and clear the saved set so the exit-time flush cannot re-assert sessions
+        // the user closed (the file/cache could still hold the last non-empty set
+        // in the sub-second window before the empty autosave would have fired).
+        cancelSessionAutosave()
+        void flushPendingConfigSaves()
+          .then(() => window.electronAPI.session.clear())
+          .catch(() => { /* best-effort: the empty store still yields no card next launch */ })
+          .finally(() => window.electronAPI.window.allowClose())
         return
       }
       setCloseDialog('close')
@@ -1239,6 +1262,9 @@ export default function App() {
               useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
               // Discard the saved cards so the next boot doesn't re-prompt; the
               // conversations themselves stay resumable from inside Claude.
+              // #397 round-2: cancel a pending autosave first so it can't rewrite
+              // the discarded set into the file after the clear.
+              cancelSessionAutosave()
               void window.electronAPI.session.clear()
             }}
             onRefresh={async () => {

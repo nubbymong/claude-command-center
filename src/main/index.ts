@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
 import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
@@ -89,6 +89,8 @@ import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
+import { createSessionDurability } from './session-durability'
+import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
 import { getConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
@@ -105,6 +107,23 @@ import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVer
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
+
+// #397: the cross-exit session-state durability core. `session:save` routes every
+// renderer writer (autosave, account flush, GitHub flush, Save-&-Close) through
+// saveEnriched — enriching each Claude session's exact resume target from the live
+// transcript binder — so EVERY persisted file is resumable, not only the graceful
+// close (Group 1), and the old autosave-clobber race dissolves. flushOnExit persists
+// the cached state on any non-graceful exit (Group 2); noteCleared drops the cache
+// on an intentional clear so the flush never resurrects a discarded set (F1). The
+// binder is read lazily per call — it may init after this module loads.
+const sessionDurability = createSessionDurability({
+  enrichDeps: {
+    getLatestTranscriptPath: (id) => getTranscriptBinder()?.getLatestTranscriptPath(id) ?? null,
+    resolveResumeTargetFromTranscript,
+  },
+  save: saveSessionState,
+  log: logInfo,
+})
 
 // Multi-instance (dev alongside prod): a dev build must NOT share prod's data
 // dir (CONFIG/sessions/transcripts/profiles). Point it at a dedicated dev root
@@ -457,6 +476,12 @@ function createWindow(): void {
     }
   })
 
+  // #397 Group 2: a renderer crash / OOM kills the window before it can run its
+  // graceful save. Persist the last-known session state so the sessions survive.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    sessionDurability.flushOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
+  })
+
   // Renderer calls this after saving sessions and graceful exit
   ipcMain.on('window:allowClose', () => {
     allowClose = true
@@ -482,6 +507,9 @@ function createWindow(): void {
   // then calls 'window:forceClose' to actually close
   ipcMain.on('window:close', () => mainWindow?.close())
   ipcMain.on('window:forceClose', () => {
+    // #397 Group 2: destroy() bypasses the 'close' event and the graceful save;
+    // persist the last-known session state before the window is torn down.
+    sessionDurability.flushOnExit('window:forceClose')
     if (mainWindow) {
       mainWindow.destroy()  // Force close without triggering close event
     }
@@ -574,7 +602,7 @@ function createWindow(): void {
 
   // Session state persistence IPC handlers
   ipcMain.handle('session:save', async (_event, state: SessionState) => {
-    return saveSessionState(state)
+    return sessionDurability.saveEnriched(state)
   })
 
   ipcMain.handle('session:load', async () => {
@@ -582,7 +610,12 @@ function createWindow(): void {
   })
 
   ipcMain.handle('session:clear', async () => {
-    return clearSessionState()
+    const ok = clearSessionState()
+    // #397 F1: a successful clear is the user intentionally discarding the saved set
+    // (Don't-open / Close-without-saving). Drop the cache so the exit-time flush
+    // cannot resurrect it on the next launch.
+    if (ok) sessionDurability.noteCleared()
+    return ok
   })
 
   ipcMain.handle('session:hasSaved', async () => {
@@ -699,6 +732,21 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(() => {
+    // #397 Group 2: exit paths that skip app 'before-quit'. An OS shutdown/logoff
+    // (powerMonitor; macOS/Linux) and SIGTERM (task-manager terminate / OS teardown)
+    // can end the app without the window-close flow running. Persist sessions first.
+    powerMonitor.on('shutdown', () => sessionDurability.flushOnExit('powerMonitor shutdown'))
+    powerMonitor.on('suspend', () => sessionDurability.flushOnExit('powerMonitor suspend'))
+    // Only SIGTERM. SIGINT is intentionally LEFT to Node's default so a console
+    // Ctrl+C on a dev run still terminates in one press — a SIGINT handler here
+    // re-entered the vetoable graceful-close dialog and left the app alive
+    // (adversarial-review round-2). Flush, then exit HARD: app.quit() would be
+    // vetoed by that same dialog, so a signal must not route through it.
+    process.on('SIGTERM', () => {
+      sessionDurability.flushOnExit('SIGTERM')
+      app.exit(0)
+    })
+
     // Set up application menu with Edit roles so Ctrl+C/V/X/A work in frameless window
     // On macOS, include the app name menu (About, Hide, Quit) and Window menu (macOS convention)
     const menuTemplate: Electron.MenuItemConstructorOptions[] = []
@@ -956,7 +1004,12 @@ if (!gotTheLock) {
       loadSessions: async () => loadSessionState()?.sessions ?? [],
       saveSessions: async (sessions) => {
         const existing = loadSessionState()
-        saveSessionState({
+        // Through the durability core, never saveSessionState directly: a
+        // direct write leaves the exit-flush cache stale, so the flush on
+        // quit would overwrite this very patch with the pre-patch state —
+        // reverting the GitHub binding (or a cleanup that removed one) on
+        // the next launch (independent review of #413, R3).
+        sessionDurability.saveEnriched({
           sessions,
           activeSessionId: existing?.activeSessionId ?? null,
           savedAt: Date.now(),
@@ -1145,6 +1198,9 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     logInfo('App quitting...')
+    // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
+    // transcript binder down — flushing after that would lose the resume targets.
+    sessionDurability.flushOnExit('before-quit')
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
     try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
