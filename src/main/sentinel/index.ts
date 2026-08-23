@@ -53,14 +53,28 @@ async function headlessRunner(): Promise<typeof import('../claude-headless')> {
  * hangs at auth / carries stale rate-limit state (live repro: both analysis
  * attempts timed out at 180s on 2026-06-12).
  */
-async function analysisHome(): Promise<string | null> {
+async function analysisHome(): Promise<{ home: string | null; accountLabel: string | null }> {
   try {
     const { readConfig } = await import('../config-manager')
-    const { resolveHeadlessProfileHome } = await import('../account-profiles')
+    const { resolveHeadlessProfileHome, listProfiles } = await import('../account-profiles')
     const settings = readConfig<{ sentinelAccountProfileId?: string | null }>('settings')
-    return resolveHeadlessProfileHome(settings?.sentinelAccountProfileId).home
+    const chosen = settings?.sentinelAccountProfileId ?? null
+    const { home, profileId } = resolveHeadlessProfileHome(chosen)
+    // Name the account the analysis actually ran under, so a failure message can
+    // say WHICH account to change (#430). When the chosen account no longer
+    // resolves and we fell back to another, say so — otherwise the user sees a
+    // limit on an account they never picked and has no idea why.
+    let accountLabel: string | null = null
+    if (profileId) {
+      const email = listProfiles().find((p) => p.id === profileId)?.accountEmail ?? null
+      const fellBack = !!chosen && chosen !== profileId
+      accountLabel = fellBack
+        ? `${email ?? profileId}; auto-picked — your chosen analysis account is no longer available`
+        : email ?? profileId
+    }
+    return { home, accountLabel }
   } catch {
-    return null // fail-open: bare global is still better than no analysis
+    return { home: null, accountLabel: null } // fail-open: bare global is still better than no analysis
   }
 }
 
@@ -96,7 +110,7 @@ export async function sentinelStartupCheck(): Promise<void> {
   await runModelCoverageCheck()
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
-    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, await analysisHome())
+    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, (await analysisHome()).home)
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
     if (!version) { logInfo('[sentinel] claude --version unavailable; skipping (fail-open)'); return }
     for (const f of minVersionFindings(version, manifest)) state.upsertFinding(f)
@@ -126,11 +140,11 @@ async function analyzeVersionChange(last: string, version: string): Promise<void
     return
   }
   const { spawnClaudeHeadless } = await headlessRunner()
-  const home = await analysisHome()
+  const { home, accountLabel } = await analysisHome()
   const result = await runAnalysis({
     runner: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home, ac.signal),
     changelog: sliceChangelog(md, last, version),
-    from: last, to: version,
+    from: last, to: version, accountLabel,
   })
   if (currentAnalysis === ac) currentAnalysis = null
   if (ac.signal.aborted) return                        // superseded / cancelled: drop the result
@@ -154,7 +168,7 @@ export async function sentinelRerun(): Promise<void> {
   if (!state) return
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
-    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, await analysisHome())
+    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, (await analysisHome()).home)
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
     if (!version) { state.setAnalyzing(false, 'claude --version unavailable'); return }
     const last = state.snapshot().lastSeenCcVersion ?? version
