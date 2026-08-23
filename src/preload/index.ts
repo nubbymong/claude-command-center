@@ -19,6 +19,21 @@ import type {
   CanvasState,
 } from '../shared/canvas'
 
+/** Mirrors src/main/watchdog/session-watchdog.ts's WatchdogPublicState — kept
+ *  as a structural copy (not imported) so preload never pulls in main-only
+ *  code, matching this file's existing convention for other main-side types. */
+export interface WatchdogPublicState {
+  sessionId: string
+  status: 'monitoring' | 'waiting' | 'overload' | 'safeguard'
+  attempts: number
+  overloadAttempts: number
+  safeguardAttempts: number
+  waitUntil: number | null
+  gaveUp: boolean
+  lastAction: string | null
+  updatedAt: number
+}
+
 export interface ElectronAPI {
   /** True when this is a dev build (npm run dev / ccc), false for a packaged
    *  prod install. Drives DEV window labeling (title + badge + accent). */
@@ -115,6 +130,8 @@ export interface ElectronAPI {
        *  CCC_ASK_PROMPT; the launch line carries only the env reference, never
        *  the text. Claude + local + non-shell only. */
       askPrompt?: string
+      /** Session kind: an Ask Conductor one-shot. Keeps a watchdog off it (#266). */
+      isAsk?: boolean
       resume?: { uuid: string; cwd: string }
       model?: string
       profileId?: string
@@ -159,6 +176,11 @@ export interface ElectronAPI {
   }
   effort: {
     onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
+  /** Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard. */
+  watchdog: {
+    getStates: () => Promise<WatchdogPublicState[]>
+    onUpdate: (callback: (state: WatchdogPublicState) => void) => () => void
   }
   registry: {
     get: () => Promise<ModelRegistry>
@@ -740,6 +762,14 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; effortLevel: string })
       ipcRenderer.on(IPC.HOOKS_EFFORT_UPDATE, handler)
       return () => ipcRenderer.removeListener(IPC.HOOKS_EFFORT_UPDATE, handler)
+    },
+  },
+  watchdog: {
+    getStates: () => ipcRenderer.invoke(IPC.WATCHDOG_GET_STATES),
+    onUpdate: (callback) => {
+      const handler = (_: unknown, data: unknown) => callback(data as WatchdogPublicState)
+      ipcRenderer.on(IPC.WATCHDOG_STATE, handler)
+      return () => ipcRenderer.removeListener(IPC.WATCHDOG_STATE, handler)
     },
   },
   registry: {

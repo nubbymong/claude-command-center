@@ -11,9 +11,10 @@
 //      scene transform entry points; nothing here re-derives their math.
 //
 // The glass is LOCKED to the content: scene scroll is bound to the negated
-// content scroll at zoom 1 (glassScrollForContent), which makes scene coords
-// coincide with content page coords — a mark drawn on an element stays on it
-// through content scrolling. All functions are pure; unit tests cover them.
+// content scroll, and scene zoom to the pane's content zoom (#368; 1 when
+// unzoomed), which makes scene coords coincide with content page coords — a
+// mark drawn on an element stays on it through content scrolling and through
+// Ctrl+wheel zoom. All functions are pure; unit tests cover them.
 
 import { sceneCoordsToViewportCoords, viewportCoordsToSceneCoords } from '@excalidraw/excalidraw'
 import type { CanvasViewportInfo, Rect } from '../../shared/canvas'
@@ -118,25 +119,31 @@ export function sceneToContentPagePoint(
 
 /**
  * The appState scroll/zoom that pins the glass 1:1 over the content: scene
- * scroll = −content scroll at zoom 1. Under this binding (and the glass
- * canvas's own offset equal to the stage origin), scene coords coincide with
- * content page coords — verified by the round-trip unit tests.
+ * scroll = −content scroll, scene zoom = the pane's content zoom (#368; 1 when
+ * unzoomed). Excalidraw paints a scene point at (scene + scroll) × zoom, so
+ * under this binding scene coords coincide with CONTENT PAGE coords at every
+ * zoom — a mark drawn on an element stays on it through both content scrolling
+ * and Ctrl+wheel — verified by the round-trip unit tests.
  */
-export function glassScrollForContent(viewport: CanvasViewportInfo): {
+export function glassScrollForContent(
+  viewport: CanvasViewportInfo,
+  zoom = 1,
+): {
   scrollX: number
   scrollY: number
   zoom: { value: number }
 } {
-  return { scrollX: -viewport.scrollX, scrollY: -viewport.scrollY, zoom: { value: 1 } }
+  return { scrollX: -viewport.scrollX, scrollY: -viewport.scrollY, zoom: { value: zoom } }
 }
 
 /** Whether the glass has drifted from its content binding enough to re-pin. */
 export function glassNeedsRepin(
   appState: Pick<GlassAppState, 'scrollX' | 'scrollY' | 'zoom'>,
   viewport: CanvasViewportInfo,
+  zoom = 1,
   tolerance = 0.5,
 ): boolean {
-  const target = glassScrollForContent(viewport)
+  const target = glassScrollForContent(viewport, zoom)
   return (
     Math.abs(appState.scrollX - target.scrollX) > tolerance ||
     Math.abs(appState.scrollY - target.scrollY) > tolerance ||

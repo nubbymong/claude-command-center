@@ -37,6 +37,30 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   fontSize: 12
 }
 
+// ── Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard ──
+export interface WatchdogSettings {
+  /** Default OFF: watchdog auto-types into the session PTY, so it must be an
+   *  explicit opt-in (mirrors sentinelEnabled's shape). Applies to newly
+   *  spawned local Claude sessions only — see main/watchdog/watchdog-manager.ts. */
+  enabled?: boolean
+  /** Text auto-typed (+ Enter) to resume after a usage-limit reset clears. */
+  retryMessage?: string
+  /** Max usage-limit retry attempts before the watchdog gives up on this incident. */
+  maxRetries?: number
+  /** Silence window in MS: a watched session with no PTY output for this long is
+   *  reported "silent" (provider stopped streaming) in the services view. STATUS
+   *  ONLY — never triggers a retry. 0 disables silence detection. Absent = the
+   *  manager default (see main/watchdog/watchdog-manager.ts). */
+  silenceWindowMs?: number
+}
+
+export const DEFAULT_WATCHDOG_SETTINGS: WatchdogSettings = {
+  enabled: false,
+  retryMessage: 'continue',
+  maxRetries: 5,
+  silenceWindowMs: 120_000,
+}
+
 // ── UI typography (Font & Size settings page, spec 2026-07-04) ──
 // Global scale drives the <html> root font-size (rem-based Tailwind utilities
 // scale in lockstep; the canvas terminal is immune). Each region factor is a
@@ -322,6 +346,8 @@ export interface AppSettings {
    *  the frozen global hangs at auth or carries stale usage limits). Switchable
    *  in Settings when the chosen account hits its usage limit. */
   sentinelAccountProfileId?: string | null
+  /** Session Watchdog (#235). Opt-in, default off — see WatchdogSettings. */
+  watchdog?: WatchdogSettings
 }
 
 interface SettingsState {
@@ -362,6 +388,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sentinelEnabled: false,
   sentinelAutoOpen: true,
   githubAiUsageEnabled: false,
+  watchdog: { ...DEFAULT_WATCHDOG_SETTINGS },
 }
 
 // V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains
@@ -416,6 +443,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       statusLine: { ...DEFAULT_STATUS_LINE, ...(settings.statusLine || {}) },
       terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(settings.terminal || {}) },
       conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, ...(settings.conductorTools || {}) },
+      watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}) },
       typography: migrateTypography(settings),
     }
     const font = migrateV2Font(merged)

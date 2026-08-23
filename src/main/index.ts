@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
 import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
@@ -9,7 +9,7 @@ import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, resolveClaudeForPty } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, resolveClaudeForPty, isSessionWritable, writePty } from './pty-manager'
 import { spawnClaudeHeadless } from './claude-headless'
 import { parseClaudeVersion } from './sentinel/sentinel-version'
 import { registerResumeHandlers } from './ipc/resume-handlers'
@@ -65,6 +65,8 @@ import { registerRegistryHandlers } from './ipc/registry-handlers'
 import { initSentinel, reconcileOnUpdate, sentinelStartupCheck } from './sentinel/index'
 import { registerSentinelHandlers } from './ipc/sentinel-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
+import { registerWatchdogHandlers } from './ipc/watchdog-handlers'
+import { initWatchdogManager, getWatchdogManager } from './watchdog/watchdog-manager'
 import { startRulesEngine } from './channel-rules'
 import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
@@ -89,6 +91,8 @@ import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
+import { createSessionDurability } from './session-durability'
+import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
 import { getConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
@@ -105,6 +109,23 @@ import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVer
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
+
+// #397: the cross-exit session-state durability core. `session:save` routes every
+// renderer writer (autosave, account flush, GitHub flush, Save-&-Close) through
+// saveEnriched — enriching each Claude session's exact resume target from the live
+// transcript binder — so EVERY persisted file is resumable, not only the graceful
+// close (Group 1), and the old autosave-clobber race dissolves. flushOnExit persists
+// the cached state on any non-graceful exit (Group 2); noteCleared drops the cache
+// on an intentional clear so the flush never resurrects a discarded set (F1). The
+// binder is read lazily per call — it may init after this module loads.
+const sessionDurability = createSessionDurability({
+  enrichDeps: {
+    getLatestTranscriptPath: (id) => getTranscriptBinder()?.getLatestTranscriptPath(id) ?? null,
+    resolveResumeTargetFromTranscript,
+  },
+  save: saveSessionState,
+  log: logInfo,
+})
 
 // Multi-instance (dev alongside prod): a dev build must NOT share prod's data
 // dir (CONFIG/sessions/transcripts/profiles). Point it at a dedicated dev root
@@ -457,6 +478,12 @@ function createWindow(): void {
     }
   })
 
+  // #397 Group 2: a renderer crash / OOM kills the window before it can run its
+  // graceful save. Persist the last-known session state so the sessions survive.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    sessionDurability.flushOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
+  })
+
   // Renderer calls this after saving sessions and graceful exit
   ipcMain.on('window:allowClose', () => {
     allowClose = true
@@ -482,6 +509,9 @@ function createWindow(): void {
   // then calls 'window:forceClose' to actually close
   ipcMain.on('window:close', () => mainWindow?.close())
   ipcMain.on('window:forceClose', () => {
+    // #397 Group 2: destroy() bypasses the 'close' event and the graceful save;
+    // persist the last-known session state before the window is torn down.
+    sessionDurability.flushOnExit('window:forceClose')
     if (mainWindow) {
       mainWindow.destroy()  // Force close without triggering close event
     }
@@ -574,7 +604,7 @@ function createWindow(): void {
 
   // Session state persistence IPC handlers
   ipcMain.handle('session:save', async (_event, state: SessionState) => {
-    return saveSessionState(state)
+    return sessionDurability.saveEnriched(state)
   })
 
   ipcMain.handle('session:load', async () => {
@@ -582,7 +612,12 @@ function createWindow(): void {
   })
 
   ipcMain.handle('session:clear', async () => {
-    return clearSessionState()
+    const ok = clearSessionState()
+    // #397 F1: a successful clear is the user intentionally discarding the saved set
+    // (Don't-open / Close-without-saving). Drop the cache so the exit-time flush
+    // cannot resurrect it on the next launch.
+    if (ok) sessionDurability.noteCleared()
+    return ok
   })
 
   ipcMain.handle('session:hasSaved', async () => {
@@ -699,6 +734,21 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(() => {
+    // #397 Group 2: exit paths that skip app 'before-quit'. An OS shutdown/logoff
+    // (powerMonitor; macOS/Linux) and SIGTERM (task-manager terminate / OS teardown)
+    // can end the app without the window-close flow running. Persist sessions first.
+    powerMonitor.on('shutdown', () => sessionDurability.flushOnExit('powerMonitor shutdown'))
+    powerMonitor.on('suspend', () => sessionDurability.flushOnExit('powerMonitor suspend'))
+    // Only SIGTERM. SIGINT is intentionally LEFT to Node's default so a console
+    // Ctrl+C on a dev run still terminates in one press — a SIGINT handler here
+    // re-entered the vetoable graceful-close dialog and left the app alive
+    // (adversarial-review round-2). Flush, then exit HARD: app.quit() would be
+    // vetoed by that same dialog, so a signal must not route through it.
+    process.on('SIGTERM', () => {
+      sessionDurability.flushOnExit('SIGTERM')
+      app.exit(0)
+    })
+
     // Set up application menu with Edit roles so Ctrl+C/V/X/A work in frameless window
     // On macOS, include the app name menu (About, Hide, Quit) and Window menu (macOS convention)
     const menuTemplate: Electron.MenuItemConstructorOptions[] = []
@@ -893,7 +943,10 @@ if (!gotTheLock) {
         void sentinelStartupCheck()
       }
     }
-    registerConfigHandlers()
+    registerConfigHandlers({
+      // #266 MAJOR-2: unticking the watchdog must tear down RUNNING watchers.
+      onSettingsSaved: () => getWatchdogManager()?.applySettings(),
+    })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
     // app.log) so field issues are captured. NEVER on stable. This enables only
     // the verbose level, NOT the per-event hot-path TRACE logs and NOT the heavy
@@ -956,7 +1009,12 @@ if (!gotTheLock) {
       loadSessions: async () => loadSessionState()?.sessions ?? [],
       saveSessions: async (sessions) => {
         const existing = loadSessionState()
-        saveSessionState({
+        // Through the durability core, never saveSessionState directly: a
+        // direct write leaves the exit-flush cache stale, so the flush on
+        // quit would overwrite this very patch with the pre-patch state —
+        // reverting the GitHub binding (or a cleanup that removed one) on
+        // the next launch (independent review of #413, R3).
+        sessionDurability.saveEnriched({
           sessions,
           activeSessionId: existing?.activeSessionId ?? null,
           savedAt: Date.now(),
@@ -981,7 +1039,8 @@ if (!gotTheLock) {
     // push carries BOTH snapshots (else one source would wipe the other in the UI).
     const getSup = () => getHooksSupervisor()
     const getPtyDiag = () => getPtyIntegrityMonitor()?.diagnostics() ?? null
-    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag))
+    const getWatchdogDiag = () => getWatchdogManager()
+    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag, getWatchdogDiag))
     const ptyMonitor = new PtyIntegrityMonitor({ emit: pushDiagnostics })
     setPtyIntegrityMonitor(ptyMonitor)
     // Redirect ONLY SERVICE_HEALTH_UPDATE through the merge; every other channel
@@ -1041,9 +1100,29 @@ if (!gotTheLock) {
     // every service). Stopped in before-quit.
     startLoopStallMonitor()
     registerHooksHandlers(getGateway()!)   // B1: handlers get whatever gateway backs the singleton
+    // Session Watchdog (#235): wired after the gateway singleton exists so its
+    // StopFailure subscription binds immediately. send() submits the retry the
+    // same way the command-button / launch paths do — writePty(text + '\r') —
+    // which is the proven way to submit into the Claude TUI. (The channel-bus
+    // paste envelope does NOT submit: formatTier1 ends at the bracketed-paste
+    // close with no trailing Enter, so it only drafts. A bracketed paste with a
+    // fused Enter is also swallowed by the Ink/React TUI.) The retry text is
+    // already sanitized in config.ts to a single control-char-free line, so the
+    // lone appended '\r' is the only submit and cannot be broken out of.
+    initWatchdogManager({
+      getWindow,
+      isSessionAlive: isSessionWritable,
+      send: (sessionId, text) => {
+        writePty(sessionId, `${text}\r`)
+      },
+      // Refresh the services view live when a watchdog state changes; routed
+      // through the same merge so the push carries every source (#235).
+      onHealthChange: () => pushDiagnostics(),
+    })
+    registerWatchdogHandlers()
     // D1b: diagnostics IPC. The getter returns null in the hooks-disabled branch
     // (supervisor never set) -> the handler serves an honest synthetic "hooks off" snapshot.
-    registerServiceHealthHandlers(getSup, getPtyDiag)
+    registerServiceHealthHandlers(getSup, getPtyDiag, getWatchdogDiag)
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }
@@ -1145,6 +1224,9 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     logInfo('App quitting...')
+    // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
+    // transcript binder down — flushing after that would lose the resume targets.
+    sessionDurability.flushOnExit('before-quit')
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
     try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
@@ -1153,6 +1235,7 @@ if (!gotTheLock) {
     try { shutdownLogging() } catch { /* never init / disabled */ }
     // Tear down the tokenomics indexing worker. No-op when never init.
     try { shutdownTokenomics() } catch { /* never init */ }
+try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     // Kill any GUI-subsystem tool still being captured (#379). Its stdio is
     // piped to us, so leaving it running orphans a process nobody can see.
     try { stopAllCapturedRuns() } catch { /* never started */ }

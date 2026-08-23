@@ -513,8 +513,18 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
    */
   const checklistStatus = useCallback(
     (note: Annotation): { text: string; kind: 'reported' | 'ghost' | 'current'; rect: Rect | null } => {
-      // A note written against the version on screen needs no re-anchoring.
+      // A note written against the version on screen needs no re-anchoring —
+      // unless the pane's zoom moved since (#368): a zoom step reflows the
+      // page, so the box recorded at note time belongs to another layout. The
+      // resolution pass re-measures same-version notes on a zoom change, and
+      // when it has, its box wins; like every re-anchor result it is the
+      // page's own answer, so it wears the page-reported kind, never the
+      // solid green that means the app measured it.
       if (note.versionId === version.id) {
+        const zoomEntry = resolution?.versionId === version.id ? resolution.byAnnotation[note.id] : undefined
+        if (zoomEntry && zoomEntry.found) {
+          return { text: 'on this version — page-located', kind: 'reported', rect: zoomEntry.box }
+        }
         return { text: 'on this version', kind: 'current', rect: note.focus?.bboxPage ?? null }
       }
       if (!note.focus) return { text: 'general', kind: 'current', rect: null }

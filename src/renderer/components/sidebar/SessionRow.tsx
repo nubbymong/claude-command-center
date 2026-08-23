@@ -1,6 +1,6 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { SessionTypeBadge, SshBadge, SshPersistentBadge } from './Badges'
+import { SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge } from './Badges'
 import { type SessionState } from '../ui/StatusDot'
 import { EffortPill } from '../ui/EffortPill'
 import { FastBolt } from '../ui/FastBolt'
@@ -155,6 +155,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
             full width back. */}
         {session.sessionType === 'ssh' && (session.sshTmuxPersistent === true ? <SshPersistentBadge /> : <SshBadge />)}
         <SessionTypeBadge kind={session.shellOnly ? 'shell' : (session.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'} />
+        <WatchdogBadge watchdog={session.watchdog} />
         {/* Graceful-fail: show effort ONLY once a live tick (statusline / hooks)
             has confirmed it. A spawn-time or persisted guess (e.g. a default
             xhigh) is suppressed until effortLive flips, so the card never shows

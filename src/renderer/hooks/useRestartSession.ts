@@ -66,6 +66,10 @@ export function useRestartSession(
         // (which routes through this same remount) until a later tick overwrote
         // it. Clear them like the rateLimit* siblings.
         usageBuckets: undefined,
+        // #266 MAJOR-4: the watchdog badge (waiting/gave-up) belongs to the
+        // PREVIOUS run's watcher, which the restart tears down; main pushes a
+        // fresh 'monitoring' state when the new run arms one.
+        watchdog: undefined,
       })
     },
     [session],

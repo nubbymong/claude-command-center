@@ -514,12 +514,29 @@ export type CanvasBridgeResponse =
  */
 export const CANVAS_REPORTED_KEYS = ['Escape', 'ArrowUp'] as const
 
+/**
+ * Zoom intents the bridge REPORTS from inside the content frame ('contentZoom',
+ * #368).
+ *
+ * Ctrl+wheel and the Ctrl+= / Ctrl+- / Ctrl+0 chords are the browser's zoom
+ * gesture, and in the pane they belong to the HOST — but while the pointer or
+ * keyboard focus is on the content, those events land in the frame and the host
+ * never sees them. So the bridge relays the INTENT ('in' / 'out' / 'reset'),
+ * never raw deltas or key values: the host owns the ladder, the clamp and the
+ * application, and treats each report as a request it may ignore (D8). The
+ * worst a forgery achieves is stepping a clamped, visible, Ctrl+0-reversible
+ * visual zoom.
+ */
+export const CANVAS_ZOOM_ACTIONS = ['in', 'out', 'reset'] as const
+export type CanvasZoomAction = (typeof CANVAS_ZOOM_ACTIONS)[number]
+
 export type CanvasBridgeEvent =
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'ready' }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'viewport'; viewport: CanvasViewportInfo }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'pointer'; pageX: number; pageY: number; hit: CanvasHitInfo | null }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'contentClick'; pageX: number; pageY: number; hit: CanvasHitInfo | null }
   | { ns: typeof CANVAS_BRIDGE_NS; type: 'contentKey'; key: string }
+  | { ns: typeof CANVAS_BRIDGE_NS; type: 'contentZoom'; action: CanvasZoomAction }
 
 // ── Semantic snapshot (P2, spec §4) ─────────────────────────────────────────
 // The richer tree the P2 bridge produces (dom-accessibility-api + aria-query +
