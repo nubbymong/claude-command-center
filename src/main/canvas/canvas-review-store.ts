@@ -42,7 +42,7 @@ import {
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { logInfo } from '../debug-logger'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
-import { getCanvasStateForSession } from './canvas-store'
+import { clearAwaitingReview, getCanvasStateForSession } from './canvas-store'
 
 // ── Bounds (shared intent with the IPC schemas; the store re-checks because it
 //    is the last line, and the MCP tool reads through it) ────────────────────
@@ -428,6 +428,11 @@ interface SessionCanvas {
   canvasId: string
   activeVersionId: string | null
   versionIds: Set<string>
+  /** Version ids the agent is still drafting (#366) — a review must never
+   *  freeze against one; the user has not seen it. In render order. */
+  draftVersionIds: string[]
+  /** Non-draft version ids, in render order — what the pane can show. */
+  readyVersionIds: string[]
 }
 
 function canvasForSession(sessionId: string): SessionCanvas | null {
@@ -438,6 +443,8 @@ function canvasForSession(sessionId: string): SessionCanvas | null {
     canvasId: state.canvasId,
     activeVersionId: state.activeVersionId,
     versionIds: new Set(state.versions.map((v) => v.id)),
+    draftVersionIds: state.versions.filter((v) => v.draft).map((v) => v.id),
+    readyVersionIds: state.versions.filter((v) => !v.draft).map((v) => v.id),
   }
 }
 
@@ -510,6 +517,9 @@ export interface CanvasReviewCounts {
   openNotes: number
   /** Notes the agent has marked addressed and the user has not ruled on. */
   addressedNotes: number
+  /** Rounds waiting on the USER: submitted reviews with no open notes and at
+   *  least one addressed one. The queue's verdict-owed input (#364). */
+  verdictRounds: number
   /**
    * What a bulk close-out on this canvas would ACTUALLY clear.
    *
@@ -568,11 +578,16 @@ export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts |
   // it whole. Read by `a.reviewId` rather than membership, which the validator
   // now proves is the same set.
   let closeableNotes = 0
+  let verdictRounds = 0
   for (const r of record.reviews) {
     if (r.status !== 'submitted') continue
     if (withOpenNotes.has(r.id)) openReviewIds.push(r.id)
     if ((openByReview.get(r.id) ?? 0) > 0) continue
     closeableNotes += addressedByReview.get(r.id) ?? 0
+    // A round waiting on the USER: nothing left for the agent, and at least
+    // one addressed note wants a verdict. The queue's second input (#364),
+    // derived from the same per-review tallies the close-out gate uses.
+    if ((addressedByReview.get(r.id) ?? 0) > 0) verdictRounds++
   }
   return {
     draftNotes: draftIds.size,
@@ -581,6 +596,7 @@ export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts |
     openNotes,
     addressedNotes,
     closeableNotes,
+    verdictRounds,
   }
 }
 
@@ -743,6 +759,12 @@ function validateDraft(draft: CanvasAnnotationDraft, canvas: SessionCanvas): voi
   if (!ANNOTATION_SCOPES.has(draft.scope)) throw new Error('invalid draft scope')
   if (!isCleanNote(draft.note)) throw new Error('invalid draft note')
   if (typeof draft.versionId !== 'string' || !canvas.versionIds.has(draft.versionId)) throw new Error('draft names an unknown version')
+  // A user note can only be about a version the user was SHOWN. Agent drafts
+  // (#366) are invisible by contract — and after a subject change their ids
+  // restart at v1, so an id from the pane's canvas can collide with a draft
+  // on the session's new one. Refusing here keeps a note from silently
+  // anchoring to a page the user has never seen.
+  if (canvas.draftVersionIds.includes(draft.versionId)) throw new Error('draft names a version the user has not been shown')
   if (draft.scope === 'general') {
     if (draft.focus !== undefined) throw new Error('a general note carries no focus')
   } else {
@@ -918,8 +940,17 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
 
   nextReview.status = 'submitted'
   nextReview.submittedAt = new Date().toISOString()
-  // D12: the review freezes against the version the user was looking at.
-  nextReview.versionId = canvas.activeVersionId
+  // D12: the review freezes against the version the user was LOOKING at. With
+  // drafts (#366) that is not always the active version: the agent may already
+  // be drafting the next round, which moves activeVersionId onto a version the
+  // pane deliberately does not show. Freezing against the draft would anchor
+  // the user's notes to a document they never saw.
+  const activeIsDraft = canvas.activeVersionId !== null && canvas.draftVersionIds.includes(canvas.activeVersionId)
+  const frozenVersionId = activeIsDraft
+    ? canvas.readyVersionIds[canvas.readyVersionIds.length - 1]
+    : canvas.activeVersionId
+  if (!frozenVersionId) throw new Error('no active version to submit against')
+  nextReview.versionId = frozenVersionId
 
   // PNGs first, record second, memory last. A failure anywhere leaves the
   // draft intact in memory and on disk; at worst orphaned PNG files that no
@@ -929,6 +960,15 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
     for (const write of pngWrites) atomicWriteSecure(write.absPath, write.bytes)
   }
   commit(next)
+  // Submitting IS responding: the ready-marked round leaves the review queue
+  // (#366). After the commit, so a failed submit never clears what is owed;
+  // and never the other way to fail — a clear that throws must not undo a
+  // submit that persisted.
+  try {
+    clearAwaitingReview(canvas.canvasId)
+  } catch (err) {
+    logInfo(`[canvas-review] clearAwaitingReview failed for ${canvas.canvasId}: ${err}`)
+  }
   return toState(next)
 }
 
@@ -1007,14 +1047,22 @@ export function resolveAnnotation(
     nextTarget.closedBy = 'user'
     nextTarget.closedFrom = closedFrom
   } else {
-    if (!canvas.activeVersionId) throw new Error('no active version to re-annotate against')
+    // The version the re-annotation is ABOUT: the one the user is looking at.
+    // With drafts (#366) the ACTIVE version can be agent work-in-progress the
+    // pane deliberately does not show — the same rule submitReview applies, so
+    // a note minted here can never anchor to a page the user has not seen.
+    const activeIsDraft = canvas.activeVersionId !== null && canvas.draftVersionIds.includes(canvas.activeVersionId)
+    const shownVersionId = activeIsDraft
+      ? canvas.readyVersionIds[canvas.readyVersionIds.length - 1]
+      : canvas.activeVersionId
+    if (!shownVersionId) throw new Error('no active version to re-annotate against')
     let draft = draftReviewOf(next)
     if (!draft) {
       if (next.reviews.length >= MAX_REVIEWS_PER_CANVAS) throw new Error('review cap reached for this canvas')
       draft = {
         id: `R${next.nextReview}`,
         canvas: { sessionId, canvasId: canvas.canvasId },
-        versionId: canvas.activeVersionId,
+        versionId: shownVersionId,
         annotationIds: [],
         status: 'draft',
         createdAt: new Date().toISOString(),
@@ -1031,7 +1079,7 @@ export function resolveAnnotation(
       scope: nextTarget.scope,
       // The old wording carries over as the starting point for the new one.
       note: nextTarget.note,
-      versionId: canvas.activeVersionId,
+      versionId: shownVersionId,
       state: 'open',
       // The focus carries over so the new note points where the old one did;
       // the sketch does not — its glass elements belong to the old turn.

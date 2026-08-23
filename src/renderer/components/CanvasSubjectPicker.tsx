@@ -80,7 +80,12 @@ export default function CanvasSubjectPicker({ sessionId, canvasId, title, onOpen
 
   useEffect(() => { setConfirmDelete(null) }, [open])
 
-  const mine = (entries ?? []).filter((e) => e.ownedByThisSession || e.canvasId === canvasId)
+  // Rows that owe the user something sort ABOVE recency (#364): the queue is
+  // action-first everywhere it appears. Stable sort, so the store's banding
+  // (current canvas, then own, newest first) survives inside each band.
+  const mine = (entries ?? [])
+    .filter((e) => e.ownedByThisSession || e.canvasId === canvasId)
+    .sort((a, b) => (owedRounds(b) > 0 ? 1 : 0) - (owedRounds(a) > 0 ? 1 : 0))
   const others = mine.filter((e) => e.canvasId !== canvasId).length
 
   const switchTo = useCallback(async (target: string) => {
@@ -203,8 +208,11 @@ export default function CanvasSubjectPicker({ sessionId, canvasId, title, onOpen
                     disabled={isCurrent || busy !== null}
                     className="min-w-0 flex-1 text-left disabled:cursor-default focus-ring rounded"
                   >
-                    <span className="block text-[11.5px] truncate" style={{ color: 'var(--text-primary)' }}>
-                      {e.title || 'Untitled canvas'}
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <span className="block text-[11.5px] truncate" style={{ color: 'var(--text-primary)' }}>
+                        {e.title || 'Untitled canvas'}
+                      </span>
+                      <QueueBadge entry={e} />
                     </span>
                     <span className="block text-[9.5px] truncate" style={{ color: 'var(--text-muted)' }}>
                       {e.latestMode === 'uat' ? 'Live site' : 'Mockup'} · {e.versionCount} version{e.versionCount === 1 ? '' : 's'}
@@ -251,6 +259,40 @@ export default function CanvasSubjectPicker({ sessionId, canvasId, title, onOpen
       )}
     </div>
   )
+}
+
+/** Rounds this canvas has waiting on the USER (#364): a ready-marked render
+ *  plus rounds awaiting verdicts. Drives the badge and the action-first sort. */
+function owedRounds(e: CanvasLibraryEntry): number {
+  return (e.awaitingReview ? 1 : 0) + (e.verdictRounds ?? 0)
+}
+
+/** The row's waiting-on-you badge — REVIEW (warning) outranks VERDICT (peach)
+ *  when a canvas owes both; quiet rows carry no chip at all. */
+function QueueBadge({ entry }: { entry: CanvasLibraryEntry }) {
+  if (entry.awaitingReview) {
+    return (
+      <span
+        className="shrink-0 text-[8.5px] font-bold uppercase tracking-[0.05em] rounded px-1 py-px"
+        style={{ color: 'var(--status-warning)', background: 'color-mix(in srgb, var(--status-warning) 14%, transparent)' }}
+        data-testid="canvas-row-badge-review"
+      >
+        Review
+      </span>
+    )
+  }
+  if (entry.verdictRounds) {
+    return (
+      <span
+        className="shrink-0 text-[8.5px] font-bold uppercase tracking-[0.05em] rounded px-1 py-px"
+        style={{ color: 'var(--accent-tip)', background: 'color-mix(in srgb, var(--accent-tip) 14%, transparent)' }}
+        data-testid="canvas-row-badge-verdict"
+      >
+        Verdict
+      </span>
+    )
+  }
+  return null
 }
 
 /** " · 2 open, 3 unsubmitted" — or nothing. Counts are undefined, never zero,

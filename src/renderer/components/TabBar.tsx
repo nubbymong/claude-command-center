@@ -7,6 +7,8 @@ import { useRegionTypography } from '../hooks/useTypography'
 import { ViewType } from '../types/views'
 import { PAGE_TAB_META } from '../page-tab-meta'
 import { BrandMark } from './BrandMark'
+import { useCanvasQueue } from '../lib/canvasQueue'
+import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 
 // Inject keyframes for attention pulse animation
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -29,6 +31,37 @@ function injectAttentionStyles() {
 /** The session's display name: user-assigned work name, else the config label. */
 function displayNameOf(s: { customName?: string; label: string }): string {
   return s.customName?.trim() || s.label
+}
+
+/**
+ * The waiting-on-you mark (#364/#366, owner pick B): a small warning-colour
+ * dot on the session tab while that session's canvas review queue is
+ * non-empty — the same number the Canvas button wears, so the tab can be
+ * found from across the app. Its own component because the queue is a hook
+ * and tabs render in a loop; it hydrates the cross-canvas sweep lazily so a
+ * background session's owed rounds count without its pane ever having opened.
+ */
+function TabCanvasQueueMark({ sessionId }: { sessionId: string }) {
+  const queue = useCanvasQueue(sessionId)
+  const totalsLoaded = useCanvasTotalsStore((s) => !!s.bySessionId[sessionId]?.loaded)
+  const scheduleRefresh = useCanvasTotalsStore((s) => s.scheduleRefresh)
+  // Debounced, not immediate: every tab hydrates its own session's sweep and
+  // each sweep is synchronous file reads in main, so a window full of tabs
+  // must coalesce with the push-driven refreshes instead of stampeding at
+  // mount. Boot-time cost is bounded (canvases per session are capped).
+  React.useEffect(() => {
+    if (!totalsLoaded) scheduleRefresh(sessionId)
+  }, [sessionId, totalsLoaded, scheduleRefresh])
+  if (queue === 0) return null
+  return (
+    <span
+      className="shrink-0 w-[7px] h-[7px] rounded-full relative z-10"
+      style={{ background: 'var(--status-warning)' }}
+      title={`${queue} canvas round${queue === 1 ? '' : 's'} waiting on you`}
+      aria-label={`${queue} canvas round${queue === 1 ? '' : 's'} waiting on you`}
+      data-testid="tab-canvas-queue-mark"
+    />
+  )
 }
 
 /**
@@ -235,6 +268,7 @@ export default function TabBar({ activeView, openPageTabs, onActivateSession, on
                     background. The Ask session wears the app monogram here. */}
                 <TabGlyph kind={session.kind} color={color} />
                 <span className="truncate max-w-[120px] relative z-10">{name}</span>
+                <TabCanvasQueueMark sessionId={session.id} />
               </button>
             )}
             {/* Close button is a sibling of the tab button, absolutely positioned

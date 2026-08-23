@@ -40,6 +40,20 @@ export interface CanvasVersion {
   createdAt: string
   source: CanvasVersionSource
   restoredFrom?: string
+  /** A DRAFT: the agent is still reviewing its own work (#366). Invisible to
+   *  the user — the pane keeps showing the last ready version, nothing pulses
+   *  or counts — and the next draft render SUPERSEDES it in place rather than
+   *  appending. Absent = ready (every version written before this field). */
+  draft?: true
+}
+
+/** The round the user owes a first review on: set when the agent deliberately
+ *  marks a render ready (#366), cleared when the user submits a review on the
+ *  canvas. This is one of the two inputs to the queue number (#364); the other
+ *  is rounds awaiting the user's verdicts, derived from the review store. */
+export interface CanvasAwaitingReview {
+  versionId: string
+  at: string
 }
 
 /** What the renderer holds per session (IPC `canvas:getState` result). */
@@ -52,6 +66,8 @@ export interface CanvasState {
    *  placement", "Checkout flow". Label only: sanitized in main, shown to the
    *  user, and never a key for serving or authorizing anything. */
   title?: string
+  /** Present while a ready-marked render awaits the user's first review. */
+  awaitingReview?: CanvasAwaitingReview
 }
 
 /** Longest canvas title kept. A title names a subject; it is not a description. */
@@ -62,6 +78,9 @@ export interface CanvasChangedEvent {
   sessionId: string
   canvasId: string
   activeVersionId: string | null
+  /** True when this change is a DRAFT render (#366): the mirrors refresh, but
+   *  nothing may surface to the user — no pulse, no count, no pane switch. */
+  draft?: boolean
 }
 
 /** Renderer → main render request (dev/test ingress; the `canvas_render` MCP
@@ -72,9 +91,21 @@ export interface CanvasChangedEvent {
  *  new one, so a fresh topic never inherits the previous topic's versions or
  *  its unresolved review notes. See renderVersion. */
 export type CanvasRenderSource =
-  | { mode: 'design'; html: string; title?: string }
-  | { mode: 'plan'; html: string; title?: string }
-  | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string; title?: string }
+  | { mode: 'design'; html: string; title?: string; ready?: boolean }
+  | { mode: 'plan'; html: string; title?: string; ready?: boolean }
+  | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string; title?: string; ready?: boolean }
+
+/**
+ * The `ready` flag (#366), three-valued on purpose:
+ * - `false`: a DRAFT — the agent is still checking its own work. Nothing
+ *   surfaces; a draft supersedes the previous draft in place.
+ * - `true`: the deliberate ready-mark. The latest draft is promoted (or a new
+ *   ready version appended), the round enters the review queue, and the
+ *   agent's turn ends.
+ * - absent: a render from a flow that has not learned the flag. Behaves as
+ *   every render did before drafts existed — it surfaces immediately AND
+ *   counts as ready, so an old-style agent's hand-off is never invisible.
+ */
 
 /**
  * A plan version is STORED AND SERVED exactly as a design version: an
@@ -839,6 +870,14 @@ export interface CanvasLibraryEntry {
    * library must never offer "close 0 notes" when the truth is "could not tell".
    */
   closeableNoteCount?: number
+  /** A ready-marked render on this canvas awaits the user's first review
+   *  (#366). From the canvas record, so it is always present when true. */
+  awaitingReview?: boolean
+  awaitingReviewAt?: string
+  /** Rounds on this canvas waiting on the USER's verdicts — submitted reviews
+   *  where every remaining note is addressed (#364). `undefined` when the
+   *  review store could not be read, same rule as openReviewCount. */
+  verdictRounds?: number
 }
 
 export interface CanvasSnapshotRequestEvent {

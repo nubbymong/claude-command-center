@@ -20,6 +20,7 @@ import * as path from 'path'
 import { randomId } from '../../shared/id'
 import {
   CANVAS_ID_RE,
+  type CanvasAwaitingReview,
   type CanvasLibraryEntry,
   CANVAS_VERSION_ID_RE,
   CanvasChangedEvent,
@@ -602,6 +603,20 @@ export interface ServableVersion {
 
 const canvases = new Map<string, CanvasRecord>()
 const sessionIndex = new Map<string, string>()
+/**
+ * The AGENT-side pointer for a subject-change draft in flight (#366).
+ *
+ * A draft that names a new subject writes to a NEW canvas, but the session's
+ * user-facing binding (`sessionIndex`) must not move until the ready-mark:
+ * moving it mid-draft sent the user's note writes and review reads to a canvas
+ * they had never seen, while the renderer (correctly) kept their pane on the
+ * old one (adversarial review, 2026-08-23). So the repoint and the filing are
+ * DEFERRED — this map remembers where the agent is drafting so canvas_snapshot
+ * can reach it, and the ready-mark performs the hand-over. In-memory only: an
+ * abandoned draft pointer costs nothing, and the next draft re-finds its
+ * canvas by subject.
+ */
+const draftIndex = new Map<string, string>()
 let diskScanned = false
 
 type CanvasChangedListener = (event: CanvasChangedEvent) => void
@@ -613,11 +628,12 @@ export function onCanvasChanged(listener: CanvasChangedListener): () => void {
   return () => changeListeners.delete(listener)
 }
 
-function emitChanged(record: CanvasRecord): void {
+function emitChanged(record: CanvasRecord, opts?: { draft?: boolean }): void {
   const event: CanvasChangedEvent = {
     sessionId: record.sessionId,
     canvasId: record.canvasId,
     activeVersionId: record.activeVersionId,
+    ...(opts?.draft ? { draft: true } : {}),
   }
   for (const listener of changeListeners) {
     try {
@@ -757,6 +773,11 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   // whose mode is not one of the three is dropped rather than shown as a chip
   // naming whatever the file said.
   if (ver.mode !== 'uat' && ver.mode !== 'design' && ver.mode !== 'plan') return false
+  // The draft flag is a BOOLEAN or absent — a hand-edited truthy string must
+  // not survive into a field the queue derivation reads. `false` is accepted
+  // (it means what absence means), so a future writer spelling ready-ness as
+  // draft:false cannot silently destroy versions on load.
+  if (ver.draft !== undefined && typeof ver.draft !== 'boolean') return false
   // A hand-edited record must not smuggle a traversing/colon/device `entry`
   // past the live-render normalizer (the empty-path + SPA branches serve the
   // entry WITHOUT re-running the URL segment filter). distRoot containment is
@@ -822,6 +843,20 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     activeVersionId = versions[versions.length - 1]?.id ?? null
   }
 
+  // The review-needed stamp (#366) is dropped, never repaired, when it is not
+  // OUR shape or names a version that did not survive — and a stamp pointing
+  // at a DRAFT is contradictory (a draft has not been offered for review), so
+  // it is dropped too rather than surfacing a round the user cannot open.
+  let awaitingReview: CanvasAwaitingReview | undefined
+  const rawAwaiting = (r as { awaitingReview?: unknown }).awaitingReview
+  if (rawAwaiting && typeof rawAwaiting === 'object') {
+    const a = rawAwaiting as Partial<CanvasAwaitingReview>
+    const target = typeof a.versionId === 'string' ? versions.find((v) => v.id === a.versionId) : undefined
+    if (target && !target.draft && typeof a.at === 'string') {
+      awaitingReview = { versionId: target.id, at: a.at }
+    }
+  }
+
   // Built field by field, not spread from what was on disk.
   //
   // The MAC is the envelope rather than part of the record, so it has to come
@@ -842,6 +877,7 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     ...(r.title !== undefined ? { title: r.title } : {}),
     versions,
     activeVersionId,
+    ...(awaitingReview ? { awaitingReview } : {}),
   }
 }
 
@@ -961,6 +997,7 @@ function toState(record: CanvasRecord): CanvasState {
     activeVersionId: record.activeVersionId,
     versions: record.versions.map((v) => ({ ...v, source: { ...v.source } })),
     ...(record.title ? { title: record.title } : {}),
+    ...(record.awaitingReview ? { awaitingReview: { ...record.awaitingReview } } : {}),
   }
 }
 
@@ -969,6 +1006,24 @@ export function getCanvasStateForSession(sessionId: string): CanvasState | null 
   if (!SESSION_ID_RE.test(sessionId)) return null
   const record = getRecordForSession(sessionId)
   return record ? toState(record) : null
+}
+
+/**
+ * The canvas the AGENT is working on: the drafting canvas while a
+ * subject-change draft is in flight (#366), else the session's own. Feeds
+ * `canvas_snapshot` ONLY, so the self-check loop can read the draft — review
+ * reads and note writes stay on the user-facing binding, because reviews live
+ * where the user can see.
+ */
+export function getAgentCanvasStateForSession(sessionId: string): CanvasState | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null
+  const draftingId = draftIndex.get(sessionId)
+  if (draftingId) {
+    const record = canvases.get(draftingId)
+    if (record) return toState(record)
+    draftIndex.delete(sessionId)
+  }
+  return getCanvasStateForSession(sessionId)
 }
 
 /** The next linear version id: one past the highest number already present.
@@ -1085,7 +1140,7 @@ function findFiledCanvas(sessionId: string, title: string): CanvasRecord | undef
 export function renderVersion(
   sessionId: string,
   source: CanvasRenderSource,
-): { canvasId: string; versionId: string; filed?: { canvasId: string; returnedToExisting: boolean } } {
+): { canvasId: string; versionId: string; draft?: boolean; filed?: { canvasId: string; returnedToExisting: boolean } } {
   if (!SESSION_ID_RE.test(sessionId)) throw new Error('invalid session id')
 
   const held = getRecordForSession(sessionId)
@@ -1116,7 +1171,17 @@ export function renderVersion(
   const returnedTo = subjectChanged && title ? findFiledCanvas(sessionId, title) : undefined
   const existing = subjectChanged ? returnedTo : held
 
-  if (existing && existing.versions.length >= MAX_VERSIONS_PER_CANVAS) {
+  // The ready flag (#366). `false` = a DRAFT that supersedes the previous
+  // draft in place; `true` = the deliberate ready-mark that promotes it;
+  // absent = the pre-draft behaviour (append, surface, count as ready).
+  const isDraft = source.ready === false
+  const latest = existing?.versions[existing.versions.length - 1]
+  // A draft replaces the previous DRAFT; the ready-mark promotes it. Both
+  // reuse the version id, so an agent's self-review loop cannot burn the
+  // version cap — only content the user can actually be shown consumes ids.
+  const reuseLatest = latest?.draft === true && (isDraft || source.ready === true)
+
+  if (!reuseLatest && existing && existing.versions.length >= MAX_VERSIONS_PER_CANVAS) {
     throw new Error(`canvas ${existing.canvasId} is at its version cap (${MAX_VERSIONS_PER_CANVAS})`)
   }
   // A subject change that starts a NEW canvas is the one thing that can grow
@@ -1137,8 +1202,9 @@ export function renderVersion(
   // Highest existing number + 1, not `length + 1`. A record loaded from disk may
   // legitimately have gaps now that sanitizeRecord drops individual versions
   // ([v1, v3] has length 2), and `length + 1` would mint a SECOND 'v3' — two
-  // versions with one serve key.
-  const versionId = nextVersionId(existing?.versions ?? [])
+  // versions with one serve key. A superseding draft (or the promote of one)
+  // keeps the id it already holds.
+  const versionId = reuseLatest ? latest!.id : nextVersionId(existing?.versions ?? [])
   const createdAt = nextRenderStamp()
   let version: CanvasVersion
 
@@ -1151,10 +1217,19 @@ export function renderVersion(
     // design mode did not already reach.
     if (typeof source.html !== 'string' || source.html.length === 0) throw new Error('design render requires html')
     if (Buffer.byteLength(source.html, 'utf8') > MAX_DESIGN_HTML_BYTES) throw new Error('design document too large')
+    // A superseding draft (and the ready-mark that promotes one) writes into
+    // the SAME version directory — atomicWriteSecure replaces the file whole,
+    // so a reader never sees a half-written document.
     const dir = versionDir(canvasId, versionId)
     mkdirSecure(dir)
     atomicWriteSecure(path.join(dir, 'index.html'), source.html)
-    version = { id: versionId, mode: source.mode, createdAt, source: { mode: 'design', entry: 'index.html' } }
+    version = {
+      id: versionId,
+      mode: source.mode,
+      createdAt,
+      source: { mode: 'design', entry: 'index.html' },
+      ...(isDraft ? { draft: true as const } : {}),
+    }
   } else if (source.mode === 'uat') {
     const distRoot = path.resolve(source.distRoot)
     let stat: fs.Stats
@@ -1174,6 +1249,7 @@ export function renderVersion(
       mode: 'uat',
       createdAt,
       source: { mode: 'uat', distRoot, entry, ...(source.buildLabel ? { buildLabel: source.buildLabel } : {}) },
+      ...(isDraft ? { draft: true as const } : {}),
     }
   } else {
     throw new Error('unknown render mode')
@@ -1216,6 +1292,11 @@ export function renderVersion(
       : undefined
 
   const base: CanvasRecord = existing ?? { canvasId, sessionId, createdAt, activeVersionId: null, versions: [] }
+  // Not-a-draft means READY — a deliberate ready-mark, or a render from a flow
+  // that has not learned the flag (which must never be invisible). Either way
+  // the round now awaits the user's first review; a draft leaves whatever was
+  // already owed exactly as it stood.
+  const awaitingReview = isDraft ? base.awaitingReview : { versionId, at: createdAt }
   const nextRecord: CanvasRecord = {
     ...base,
     ...(cwdStamp && !base.cwd ? { cwd: cwdStamp } : {}),
@@ -1227,19 +1308,34 @@ export function renderVersion(
     // overwrite a readable one — that would relabel "Checkout flow" as "🔥🔥🔥"
     // in the library while the notes underneath stayed about checkout.
     ...(title && (comparable || !base.title) ? { title } : {}),
-    versions: [...base.versions, version],
+    versions: reuseLatest ? [...base.versions.slice(0, -1), version] : [...base.versions, version],
     activeVersionId: versionId,
+    ...(awaitingReview ? { awaitingReview } : {}),
   }
   persist(nextRecord)
   canvases.set(canvasId, nextRecord)
-  sessionIndex.set(sessionId, canvasId)
-  emitChanged(nextRecord)
+  // A subject-change DRAFT defers the whole hand-over (#366): the user-facing
+  // binding stays on the canvas the user is on, nothing is filed, and only
+  // the agent-side draft pointer moves — so the pane, the user's note writes
+  // and the review reads all keep resolving the canvas the user can SEE for
+  // the whole drafting loop. The ready-mark (or a legacy render) performs the
+  // repoint and reports the filing — which is also what lets the renderer
+  // announce it against that event's own `prev`.
+  const deferRepoint = isDraft && subjectChanged
+  if (deferRepoint) {
+    draftIndex.set(sessionId, canvasId)
+  } else {
+    sessionIndex.set(sessionId, canvasId)
+    draftIndex.delete(sessionId)
+  }
+  emitChanged(nextRecord, { draft: isDraft })
   // Report a FILING to the caller. `subjectChanged` was a local boolean that
   // never left this function, so nothing downstream could tell that the canvas
   // the user was reviewing had just been moved aside -- taking any unresolved
   // notes on it out of view. The ID only: the filed canvas's title is
   // agent-authored text, and the tool reply it feeds is operator voice.
-  const filedId = subjectChanged && held && held.canvasId !== canvasId ? held.canvasId : undefined
+  // A deferred draft files NOTHING: the held canvas is still the session's.
+  const filedId = !deferRepoint && subjectChanged && held && held.canvasId !== canvasId ? held.canvasId : undefined
   // Whether the canvas now active is BRAND NEW or one this session filed
   // earlier and has just come back to. The tool reply said "this is a new
   // canvas" either way, which is false on the returnedTo path -- and that path
@@ -1249,8 +1345,29 @@ export function renderVersion(
   return {
     canvasId,
     versionId,
+    ...(isDraft ? { draft: true as const } : {}),
     ...(filedId ? { filed: { canvasId: filedId, returnedToExisting } } : {}),
   }
+}
+
+/**
+ * The user has responded to the ready-marked round on this canvas — clear the
+ * "review needed" entry (#366). Called by the review store on submit (it
+ * already imports this store, so the dependency points the existing way).
+ * Idempotent, and a no-op for a canvas that owes nothing.
+ */
+export function clearAwaitingReview(canvasId: string): void {
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return
+  ensureDiskScanned()
+  const record = canvases.get(canvasId)
+  if (!record?.awaitingReview) return
+  const { awaitingReview: _cleared, ...rest } = record
+  const next: CanvasRecord = rest
+  // Same persist-before-commit discipline as renderVersion: a failed write
+  // leaves the owed state standing rather than clearing it in memory only.
+  persist(next)
+  canvases.set(canvasId, next)
+  emitChanged(next)
 }
 
 /** Windows reserved device basenames — a request for `CON`/`NUL`/`COM1`/… can
@@ -1556,7 +1673,14 @@ export function listAllCanvases(
     // foreclosing is not, so own rows are always kept and the picker sorts them
     // to the top.
     if (!mine && projectCwd && record.cwd && !sameProjectDir(record.cwd, projectCwd)) continue
-    const latest = record.versions[record.versions.length - 1]
+    // Row RECENCY and the mode chip describe what the USER can see: a draft
+    // (#366) must not re-sort the picker under them or flip the chip — the
+    // shape of invisible work must not leak into a surface the user reads.
+    // versionCount stays the TOTAL, drafts included, because it labels the
+    // delete button, and delete destroys the whole directory — a label that
+    // under-counts a destructive action is worse than a one-off leak.
+    const shown = record.versions.filter((v) => !v.draft)
+    const latest = shown[shown.length - 1]
     const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
     out.push({
       canvasId: record.canvasId,
@@ -1572,6 +1696,9 @@ export function listAllCanvases(
       // exactly one, so these two are different questions and both are asked.
       ...(mine ? { ownedByThisSession: true } : {}),
       ...(mine && activeForAsking === record.canvasId ? { isActiveForThisSession: true } : {}),
+      // From the record itself, not the review sweep, so it is present on every
+      // row — a "review needed" round must never hide behind the sweep bound.
+      ...(record.awaitingReview ? { awaitingReview: true, awaitingReviewAt: clampToNow(record.awaitingReview.at) } : {}),
     })
   }
   // Banded, then newest-first inside each band: the canvas you are looking at,
@@ -1762,6 +1889,9 @@ export function deleteCanvas(canvasId: string): boolean {
   for (const [sessionId, id] of sessionIndex) {
     if (id === canvasId) sessionIndex.delete(sessionId)
   }
+  for (const [sessionId, id] of draftIndex) {
+    if (id === canvasId) draftIndex.delete(sessionId)
+  }
   // Tell any pane still showing this canvas that it is gone: the event carries
   // a null active version, which is the same shape the pane already handles for
   // "this session has no canvas".
@@ -1876,6 +2006,7 @@ export function _canvasRecordMacForTest(record: unknown): string {
 export function _resetCanvasStoreForTest(): void {
   canvases.clear()
   sessionIndex.clear()
+  draftIndex.clear()
   uatRootsBySession.clear()
   designatedRootsBySession.clear()
   diskScanned = false

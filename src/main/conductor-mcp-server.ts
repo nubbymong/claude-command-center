@@ -42,7 +42,7 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
-import { canvasRootsForSession, canvasRootRefusalFor, getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
+import { canvasRootsForSession, canvasRootRefusalFor, getAgentCanvasStateForSession, getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
 import {
   closeAnnotationsByAgent,
   getReviewCountsForCanvas,
@@ -856,6 +856,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     if (source !== 'codex' && toolOn('canvas')) {
       registerCanvasTools(server, z, () => boundSessionId, {
         getCanvasState: (sessionId: string) => getCanvasStateForSession(sessionId),
+        // canvas_snapshot only: follows the agent's drafting canvas while a
+        // subject-change draft is in flight (#366); every other tool stays on
+        // the user-facing binding above.
+        getAgentCanvasState: (sessionId: string) => getAgentCanvasStateForSession(sessionId),
         requestSnapshot: (args) => requestCanvasSnapshot(args),
         renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),

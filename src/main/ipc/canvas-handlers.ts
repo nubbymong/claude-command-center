@@ -71,6 +71,7 @@ const renderSourceSchema = z.discriminatedUnion('mode', [
       mode: z.literal('design'),
       html: z.string().min(1).max(DESIGN_HTML_MAX),
       title: titleSchema,
+      ready: z.boolean().optional(),
     })
     .strict(),
   z
@@ -80,6 +81,7 @@ const renderSourceSchema = z.discriminatedUnion('mode', [
       entry: z.string().min(1).max(512).optional(),
       buildLabel: z.string().max(120).optional(),
       title: titleSchema,
+      ready: z.boolean().optional(),
     })
     .strict(),
 ])
@@ -327,6 +329,9 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
       // button's label and the button's effect cannot disagree. Left undefined
       // with the other two when the store is unreadable.
       e.closeableNoteCount = counts.closeableNotes
+      // Rounds waiting on the user's verdicts — the queue's second input
+      // (#364). Same sweep bound and same undefined-when-unreadable rule.
+      e.verdictRounds = counts.verdictRounds
     }
     return entries
   })

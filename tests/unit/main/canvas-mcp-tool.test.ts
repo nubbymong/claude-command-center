@@ -344,7 +344,7 @@ describe('registration', () => {
     // seeing it, or the agent renders and then reports a screen nobody opened.
     expect(String(description)).toMatch(/hand back/i)
     expect(Object.keys(shape as object).sort()).toEqual([
-      'buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'mode', 'title',
+      'buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'mode', 'ready', 'title',
     ])
     // `title` names the subject, and the description has to ask for it on every
     // render: without one, unrelated work piles into a single canvas and the
@@ -917,5 +917,97 @@ describe('capture notes survive the envelope', () => {
     const emitted = envelope.split('\n').filter((l) => l.startsWith('note: '))
     expect(emitted).toHaveLength(notes.length)
     for (const note of notes) expect(envelope).toContain(`note: ${note}`)
+  })
+})
+
+describe('canvas_render -- the ready flag (#366)', () => {
+  it('threads ready: false through to the store and answers in draft voice', async () => {
+    const reached: unknown[] = []
+    const out = await runCanvasRender(
+      { mode: 'design', html: '<!doctype html><p>wip</p>', ready: false },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          reached.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v3', draft: true }
+        },
+      }),
+    )
+    expect(out.isError).toBe(false)
+    expect((reached[0] as { ready?: boolean }).ready).toBe(false)
+    expect(out.text).toContain('Draft v3')
+    expect(out.text).toContain('Nothing has surfaced')
+    expect(out.text).toContain('ready: true')
+    // The draft reply must NOT carry the hand-back line -- there is nothing
+    // for the user to open yet.
+    expect(out.text).not.toContain('hand back and tell them')
+  })
+
+  it('threads ready: true through and says the turn ends', async () => {
+    const reached: unknown[] = []
+    const out = await runCanvasRender(
+      { mode: 'design', html: '<!doctype html><p>done</p>', ready: true },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          reached.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v3' }
+        },
+      }),
+    )
+    expect(out.isError).toBe(false)
+    expect((reached[0] as { ready?: boolean }).ready).toBe(true)
+    expect(out.text).toContain('READY')
+    expect(out.text).toContain('ends your turn')
+  })
+
+  it('an omitted flag reaches the store OMITTED -- absence is the legacy contract, not false', async () => {
+    const reached: unknown[] = []
+    await runCanvasRender(
+      { mode: 'design', html: '<!doctype html><p>x</p>' },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          reached.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v3' }
+        },
+      }),
+    )
+    expect('ready' in (reached[0] as object)).toBe(false)
+  })
+
+  it('fails closed on a non-boolean ready -- a string "false" must not surface a draft', async () => {
+    for (const bad of ['false', 'true', 1, 0, [true], { ready: true }]) {
+      const reached: unknown[] = []
+      const out = await runCanvasRender(
+        { mode: 'design', html: '<!doctype html><p>x</p>', ready: bad },
+        'sess-mine',
+        deps({
+          renderVersion: (_s, src) => {
+            reached.push(src)
+            return { canvasId: 'canvas-abc', versionId: 'v3' }
+          },
+        }),
+      )
+      expect(out.isError, `ready=${JSON.stringify(bad)} must be refused`).toBe(true)
+      expect(reached, 'the store must not be reached').toHaveLength(0)
+    }
+  })
+
+  it('the ready flag rides the uat mode too', async () => {
+    const reached: unknown[] = []
+    const out = await runCanvasRender(
+      { mode: 'uat', distRoot: 'C:/proj/dist', ready: false },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          reached.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v4', draft: true }
+        },
+      }),
+    )
+    expect(out.isError).toBe(false)
+    expect((reached[0] as { ready?: boolean }).ready).toBe(false)
+    expect(out.text).toContain('Draft v4')
   })
 })

@@ -32,7 +32,7 @@ describe('totalsFromEntries', () => {
       entry({ canvasId: 'x', openReviewCount: 7 }),                       // someone else's
       entry({ canvasId: 'y', ownedByOpenSession: true, openReviewCount: 3 }), // another open tile's
     ])
-    expect(t).toEqual({ loaded: true, canvases: 3, openReviews: 3, withOpenReviews: 2, unknown: 0, onActive: 2 })
+    expect(t).toEqual({ loaded: true, canvases: 3, openReviews: 3, withOpenReviews: 2, unknown: 0, onActive: 2, queue: 0, queueOnActive: 0, queueRows: [] })
   })
   it('keeps "could not tell" apart from "nothing owed": an undefined count is unknown, never zero', () => {
     const t = totalsFromEntries([
@@ -48,7 +48,52 @@ describe('totalsFromEntries', () => {
     expect(t).toMatchObject({ canvases: 1, openReviews: 4, onActive: 4 })
   })
   it('empty listing -> loaded, all zeros', () => {
-    expect(totalsFromEntries([])).toEqual({ loaded: true, canvases: 0, openReviews: 0, withOpenReviews: 0, unknown: 0, onActive: 0 })
+    expect(totalsFromEntries([])).toEqual({ loaded: true, canvases: 0, openReviews: 0, withOpenReviews: 0, unknown: 0, onActive: 0, queue: 0, queueOnActive: 0, queueRows: [] })
+  })
+})
+
+describe('the queue (#364): review-needed + verdict-owed, one derivation', () => {
+  it('counts a ready-marked canvas once and a verdict canvas per round, and rows them newest first', () => {
+    const t = totalsFromEntries([
+      entry({ canvasId: 'a', title: 'Tips', ownedByThisSession: true, isActiveForThisSession: true, openReviewCount: 1, awaitingReview: true, awaitingReviewAt: '2026-08-23T10:00:00Z' }),
+      entry({ canvasId: 'b', title: 'Sidebar', ownedByThisSession: true, openReviewCount: 1, verdictRounds: 2, lastRenderedAt: '2026-08-23T11:00:00Z' }),
+      entry({ canvasId: 'c', ownedByThisSession: true, openReviewCount: 0, verdictRounds: 0 }),
+    ])
+    expect(t.queue).toBe(3) // 1 review-needed + 2 verdict rounds
+    expect(t.queueOnActive).toBe(1)
+    expect(t.queueRows.map((r) => `${r.canvasId}:${r.kind}`)).toEqual(['b:verdict', 'a:review'])
+    expect(t.queueRows[0]).toMatchObject({ rounds: 2, title: 'Sidebar', onActive: false })
+    expect(t.queueRows[1]).toMatchObject({ kind: 'review', at: '2026-08-23T10:00:00Z', onActive: true })
+  })
+
+  it('a canvas can owe BOTH: a fresh ready round and an older verdict round', () => {
+    const t = totalsFromEntries([
+      entry({ canvasId: 'a', ownedByThisSession: true, isActiveForThisSession: true, openReviewCount: 1, awaitingReview: true, awaitingReviewAt: '2026-08-23T10:00:00Z', verdictRounds: 1 }),
+    ])
+    expect(t.queue).toBe(2)
+    expect(t.queueOnActive).toBe(2)
+    expect(t.queueRows).toHaveLength(2)
+  })
+
+  it("someone else's canvas never enters the queue", () => {
+    const t = totalsFromEntries([entry({ canvasId: 'x', awaitingReview: true, verdictRounds: 3 })])
+    expect(t.queue).toBe(0)
+    expect(t.queueRows).toEqual([])
+  })
+
+  it('review-needed counts even when the review store is unreadable — it comes from the canvas record', () => {
+    const t = totalsFromEntries([
+      entry({ canvasId: 'a', ownedByThisSession: true, awaitingReview: true, awaitingReviewAt: '2026-08-23T10:00:00Z' }), // no counts joined
+    ])
+    expect(t.queue).toBe(1)
+    expect(t.unknown).toBe(1)
+  })
+
+  it('rounds waiting on the AGENT do not count: openReviewCount alone moves nothing', () => {
+    const t = totalsFromEntries([
+      entry({ canvasId: 'a', ownedByThisSession: true, openReviewCount: 3, verdictRounds: 0 }),
+    ])
+    expect(t.queue).toBe(0)
   })
 })
 

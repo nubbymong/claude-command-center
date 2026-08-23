@@ -36,6 +36,31 @@ export interface CanvasTotals {
   unknown: number
   /** Open reviews on the canvas the session is currently showing (0 when unreadable). */
   onActive: number
+  /**
+   * THE queue number (#364): rounds waiting on the user across every canvas
+   * this session owns — ready-marked renders awaiting a first review, plus
+   * rounds whose notes all await verdicts. One derivation feeds the Canvas
+   * button, the queue list, the tab mark and the pane lead, so the numbers can
+   * never disagree.
+   */
+  queue: number
+  /** The sweep's view of the on-screen canvas's share of `queue` — subtracted
+   *  by consumers that read that canvas from the fresher live mirrors. */
+  queueOnActive: number
+  /** The owed rounds, one row per kind per canvas, newest first. */
+  queueRows: CanvasQueueRow[]
+}
+
+/** One owed round in the queue list. */
+export interface CanvasQueueRow {
+  canvasId: string
+  title?: string
+  kind: 'review' | 'verdict'
+  /** verdict rows: how many rounds on this canvas await verdicts. */
+  rounds?: number
+  /** When it became owed (review) or the canvas last rendered (verdict). */
+  at: string
+  onActive: boolean
 }
 
 interface State {
@@ -51,6 +76,7 @@ interface Actions {
 
 const defaultTotals = (): CanvasTotals => ({
   loaded: false, canvases: 0, openReviews: 0, withOpenReviews: 0, unknown: 0, onActive: 0,
+  queue: 0, queueOnActive: 0, queueRows: [],
 })
 
 /** Fold a library listing into the session's totals. Exported for tests. */
@@ -59,11 +85,43 @@ export function totalsFromEntries(entries: CanvasLibraryEntry[]): CanvasTotals {
   for (const e of entries) {
     if (!e.ownedByThisSession && !e.isActiveForThisSession) continue
     t.canvases++
+    // The review-needed half comes from the canvas RECORD, so it counts even
+    // when the review store is unreadable — a hand-over must never disappear
+    // behind a broken reviews.json.
+    if (e.awaitingReview) {
+      t.queue++
+      if (e.isActiveForThisSession) t.queueOnActive++
+      t.queueRows.push({
+        canvasId: e.canvasId,
+        ...(e.title ? { title: e.title } : {}),
+        kind: 'review',
+        at: e.awaitingReviewAt ?? e.lastRenderedAt,
+        onActive: !!e.isActiveForThisSession,
+      })
+    }
+    if (e.verdictRounds && e.verdictRounds > 0) {
+      t.queue += e.verdictRounds
+      if (e.isActiveForThisSession) t.queueOnActive += e.verdictRounds
+      t.queueRows.push({
+        canvasId: e.canvasId,
+        ...(e.title ? { title: e.title } : {}),
+        kind: 'verdict',
+        rounds: e.verdictRounds,
+        at: e.lastRenderedAt,
+        onActive: !!e.isActiveForThisSession,
+      })
+    }
     if (e.openReviewCount === undefined) { t.unknown++; continue }
     t.openReviews += e.openReviewCount
     if (e.openReviewCount > 0) t.withOpenReviews++
     if (e.isActiveForThisSession) t.onActive = e.openReviewCount
   }
+  t.queueRows.sort((a, b) => {
+    const at = Date.parse(a.at)
+    const bt = Date.parse(b.at)
+    if (Number.isFinite(at) && Number.isFinite(bt) && at !== bt) return bt - at
+    return a.canvasId < b.canvasId ? -1 : a.canvasId > b.canvasId ? 1 : 0
+  })
   return t
 }
 

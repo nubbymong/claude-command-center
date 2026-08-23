@@ -110,6 +110,10 @@ export function CanvasLibrary({
     }
   }, [load])
 
+  /** Rounds a row has waiting on the user (#364) — drives the owed-first sort. */
+  const libraryOwed = (e: CanvasLibraryEntry): number =>
+    (e.awaitingReview ? 1 : 0) + (e.verdictRounds ?? 0)
+
   const openHere = useCallback(async (canvasId: string) => {
     setBusy(canvasId)
     setError(null)
@@ -152,7 +156,13 @@ export function CanvasLibrary({
             Nothing here yet. Ask for a mockup, or point the canvas at a built site, and it will show up.
           </p>
         )}
-        {(entries ?? []).map((e) => (
+        {/* Rows that owe the user something sort above recency (#364) — the
+            same action-first rule as the picker; stable, so the store's
+            banding survives inside each half. */}
+        {(entries ?? [])
+          .slice()
+          .sort((a, b) => (libraryOwed(b) > 0 ? 1 : 0) - (libraryOwed(a) > 0 ? 1 : 0))
+          .map((e) => (
           <div
             key={e.canvasId}
             className="flex items-center gap-3 px-3 py-2 border-b border-[var(--border-subtle)]/60"
@@ -165,7 +175,22 @@ export function CanvasLibrary({
                   delete, and several canvases from one project look identical
                   without it. The project drops to the second line in that case
                   rather than disappearing. */}
-              <div className="text-[12px] text-[var(--text-primary)] truncate" title={e.title || e.cwd}>
+              <div className="flex items-center gap-1.5 text-[12px] text-[var(--text-primary)] truncate" title={e.title || e.cwd}>
+                {e.awaitingReview ? (
+                  <span
+                    className="shrink-0 text-[8.5px] font-bold uppercase tracking-[0.05em] rounded px-1 py-px"
+                    style={{ color: 'var(--status-warning)', background: 'color-mix(in srgb, var(--status-warning) 14%, transparent)' }}
+                  >
+                    Review
+                  </span>
+                ) : e.verdictRounds ? (
+                  <span
+                    className="shrink-0 text-[8.5px] font-bold uppercase tracking-[0.05em] rounded px-1 py-px"
+                    style={{ color: 'var(--accent-tip)', background: 'color-mix(in srgb, var(--accent-tip) 14%, transparent)' }}
+                  >
+                    Verdict
+                  </span>
+                ) : null}
                 {e.title || projectName(e.cwd)}
                 {!e.title && e.conversationShortId && (
                   <span className="ml-1.5 text-[10.5px] text-[var(--text-secondary)]">· {e.conversationShortId}</span>
