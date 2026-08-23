@@ -657,6 +657,8 @@ describe('canSendNow (#266 BLOCKER-2 / MAJOR-3) — the send gate, against REAL 
       // ink check would start past 'x' and send over a real draft.
       const raw = [BANNER, RULE, '❯ x', RULE, FOOTER].join('\n')
       expect(canSendNow(raw, raw)).toEqual({ ok: false, reason: 'draft' })
+      // Same pin for the bare ASCII locator (/^\s*>/).
+      expect(canSendNow('banner\n> x', 'banner\n> x')).toEqual({ ok: false, reason: 'draft' })
     })
 
     it('an ALL-DIM unnumbered picker still reads as a menu — raw caret rows count', () => {
