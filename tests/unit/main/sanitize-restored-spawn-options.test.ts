@@ -67,4 +67,43 @@ describe('sanitizeRestoredSpawnOptions', () => {
     expect(input.resume).toEqual({ uuid: 'bad', cwd: 'C:/p' }) // original untouched
     expect(out).not.toBe(input)
   })
+
+  // #413 review S2: Phase 5 persists permissionMode/extraArgs, so a
+  // corrupt-but-parseable file can carry values the strict parse rejects —
+  // they must be dropped here (never coerced), or the spawn this helper
+  // exists to rescue is wedged by the exact corruption it guards against.
+
+  it('drops an invalid persisted permissionMode and logs; the session launches with the default', () => {
+    const log = vi.fn()
+    const out = sanitizeRestoredSpawnOptions({ permissionMode: 'acceptEdit' }, log) // pre-rename spelling
+    expect(out.permissionMode).toBeUndefined()
+    expect(log).toHaveBeenCalledOnce()
+  })
+
+  it('keeps every valid permissionMode, the empty string included', () => {
+    for (const mode of ['default', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions', 'manual', '']) {
+      expect(sanitizeRestoredSpawnOptions({ permissionMode: mode }).permissionMode).toBe(mode)
+    }
+  })
+
+  it('drops extraArgs that the strict parse would reject, for each of its rules', () => {
+    const bad = [
+      '--flag; rm -rf /', // charset (metacharacters)
+      'x'.repeat(513), // over the cap
+      '--setting\\s', // managed flag via backslash collapse
+      '--model opus', // managed flag, literal
+      'C:\\path\\', // trailing backslash (SSH line continuation)
+      42 as unknown as string, // not a string at all
+    ]
+    for (const value of bad) {
+      const out = sanitizeRestoredSpawnOptions({ extraArgs: value })
+      expect(out.extraArgs, String(value).slice(0, 40)).toBeUndefined()
+    }
+  })
+
+  it('keeps extraArgs the strict parse would accept', () => {
+    for (const value of ['', '--verbose', '--add-dir C:\\work\\repo', '--flag=a,b']) {
+      expect(sanitizeRestoredSpawnOptions({ extraArgs: value }).extraArgs).toBe(value)
+    }
+  })
 })

@@ -25,11 +25,11 @@
  *
  * Boundaries (NOT covered here, and why):
  *   - The per-field fail-open repair of a restored SPAWN (invalid resume uuid /
- *     codex preset) is unit-tested (sanitize-restored-spawn-options.spec.ts): it is
+ *     codex preset) is unit-tested (sanitize-restored-spawn-options.test.ts): it is
  *     pure argv-construction logic with no DOM surface, and exercising it E2E would
  *     need a real resumable Claude conversation on disk.
  *   - The read-failure latch (EBUSY/EACCES makes a load a non-absence) is unit-
- *     tested (session-state-read-failure.spec.ts): reliably holding a file
+ *     tested (session-state-read-failure.test.ts): reliably holding a file
  *     unreadable mid-launch is not scriptable cross-platform.
  */
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test'

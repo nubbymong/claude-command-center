@@ -107,10 +107,14 @@ export function saveSessionState(state: SessionState): boolean {
  * Parse session-state JSON text into a SessionState, tolerating the two content
  * defects that used to lose the WHOLE saved set (#397 Group 3):
  *   - a missing/non-array `sessions` (it reached the renderer and threw on
- *     `.length`, silently dropping the Resume prompt) -- coerced to [];
+ *     `.length`, silently dropping the Resume prompt);
  *   - the top-level value not being an object at all.
- * Returns null ONLY when the JSON itself does not parse (the caller then tries the
- * .bak). A single malformed session ENTRY is handled later, per-entry, not here.
+ * Both are treated as UNPARSEABLE (null), not coerced: the caller then tries
+ * the .bak, which either recovers the last-good set or moves the corrupt file
+ * aside — so downstream consumers (the canvas session-link's fail-closed
+ * "cannot tell whose canvases are current" contract included) never see a
+ * shape-corrupt file dressed up as an empty one (#413 review, R4). A single
+ * malformed session ENTRY is handled later, per-entry, not here.
  */
 function parseSessionStateText(text: string): SessionState | null {
   let state: SessionState
@@ -120,7 +124,7 @@ function parseSessionStateText(text: string): SessionState | null {
     return null
   }
   if (!state || typeof state !== 'object') return null
-  if (!Array.isArray(state.sessions)) state.sessions = []
+  if (!Array.isArray(state.sessions)) return null
   return state
 }
 

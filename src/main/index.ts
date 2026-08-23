@@ -91,7 +91,7 @@ import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { createSessionDurability } from './session-durability'
 import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
-import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
+import { getConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
@@ -1004,7 +1004,12 @@ if (!gotTheLock) {
       loadSessions: async () => loadSessionState()?.sessions ?? [],
       saveSessions: async (sessions) => {
         const existing = loadSessionState()
-        saveSessionState({
+        // Through the durability core, never saveSessionState directly: a
+        // direct write leaves the exit-flush cache stale, so the flush on
+        // quit would overwrite this very patch with the pre-patch state —
+        // reverting the GitHub binding (or a cleanup that removed one) on
+        // the next launch (independent review of #413, R3).
+        sessionDurability.saveEnriched({
           sessions,
           activeSessionId: existing?.activeSessionId ?? null,
           savedAt: Date.now(),

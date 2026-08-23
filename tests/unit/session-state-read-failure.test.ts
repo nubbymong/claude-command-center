@@ -154,6 +154,27 @@ describe('an absent file and an unparseable file are NOT read failures', () => {
     expect(JSON.parse(readFileSync(file(), 'utf-8')).sessions).toHaveLength(2)
   })
 
+  it('SHAPE-corrupt JSON (sessions not an array) is unparseable, not coerced: the .bak recovers it (#413 R4)', () => {
+    // Parses as JSON but the shape is wrong. Coercing it to an empty set used
+    // to dress a corrupt file up as "genuinely no sessions", which flipped the
+    // canvas session-link's fail-closed "cannot tell" contract to fail-open.
+    // It now routes through the same recovery as garbage content.
+    expect(saveSessionState(saved)).toBe(true)
+    writeFileSync(file(), JSON.stringify({ sessions: { not: 'an array' }, activeSessionId: null, savedAt: 1 }))
+    const loaded = loadSessionState()
+    expect(loaded?.sessions.length).toBe(2) // recovered from .bak, not coerced to []
+    expect(sessionStateReadFailed()).toBe(false)
+  })
+
+  it('SHAPE-corrupt JSON with no .bak: moved aside, clean start — never an invented empty set (#413 R4)', () => {
+    rmSync(file() + '.bak', { force: true })
+    writeFileSync(file(), JSON.stringify({ sessions: 42 }))
+    expect(loadSessionState()).toBeNull()
+    expect(sessionStateReadFailed()).toBe(false)
+    const aside = readdirSync(join(tmp, 'CONFIG')).filter((f) => f.startsWith('session-state.json.corrupt-'))
+    expect(aside.length).toBeGreaterThanOrEqual(1)
+  })
+
   it('#397 N1: clear removes the .bak previous-good mirror as well as the primary', () => {
     expect(saveSessionState(saved)).toBe(true)
     expect(existsSync(file() + '.bak')).toBe(true)

@@ -12,7 +12,13 @@ import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
 import { noteSessionSpawnForCanvas } from '../canvas/canvas-session-link'
-import { sanitizeRestoredSpawnOptions } from '../sanitize-restored-spawn-options'
+import {
+  sanitizeRestoredSpawnOptions,
+  PERMISSION_MODES,
+  EXTRA_ARGS_MAX,
+  EXTRA_ARGS_CHARSET_RE,
+  extraArgsRefineOk,
+} from '../sanitize-restored-spawn-options'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -139,7 +145,10 @@ export const spawnOptionsSchema = z.object({
   // Shell-interpolated UNQUOTED at spawn. Constrained to the CLI's own --permission-mode
   // choices (+ 'default'/'' meaning "emit no flag") so an arbitrary string can never
   // reach the shell. 'default'/'' are accepted but not emitted.
-  permissionMode: z.enum(['default', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions', 'manual']).optional().or(z.literal('')),
+  // The value list lives in sanitize-restored-spawn-options.ts so the fail-open
+  // sanitizer drops exactly what this parse would reject — never more, never
+  // less (#413 review, S2).
+  permissionMode: z.enum(PERMISSION_MODES).optional().or(z.literal('')),
   // Advanced escape hatch, shell-interpolated UNQUOTED at spawn. Charset guard blocks
   // every shell metacharacter (; | & $ ` ( ) < > ' " * ? ~ ! % ^ newline), leaving only
   // characters that make up ordinary flags/paths. The refine rejects CCC-managed flags
@@ -177,14 +186,15 @@ export const spawnOptionsSchema = z.object({
   // already excluded), dropping `[` and `]` removes pathname expansion from
   // this hatch entirely. A literal bracket in a path is the cost; nothing in
   // an ordinary flag or path needs one.
-  extraArgs: z.string().max(512).regex(/^[A-Za-z0-9 _\-=.\/\\:@,+]*$/).refine(
+  // Cap, charset and refine are shared with the fail-open sanitizer (see the
+  // permissionMode note above) — the collapse/trailing-backslash analysis
+  // stays here, the values live in sanitize-restored-spawn-options.ts.
+  extraArgs: z.string().max(EXTRA_ARGS_MAX).regex(EXTRA_ARGS_CHARSET_RE).refine(
     // Collapse backslashes before matching -- see the note above. Also reject a
     // trailing backslash outright: it turns the SSH launch line into a shell
     // line continuation, which hangs the session on a `>` prompt waiting for
     // input that never comes.
-    (v) => !v.endsWith('\\')
-      && !/(^|\s)--(model|effort|permission-mode|settings|mcp-config|agents|resume)\b/
-        .test(v.replace(/\\/g, '')),
+    (v) => extraArgsRefineOk(v),
     { message: 'extraArgs must not include a CCC-managed flag (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/--resume), nor end in a backslash' },
   ).optional(),
   disableAutoMemory: z.boolean().optional(),
