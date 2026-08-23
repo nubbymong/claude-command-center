@@ -66,7 +66,11 @@ async function analysisHome(): Promise<{ home: string | null; accountLabel: stri
     // limit on an account they never picked and has no idea why.
     let accountLabel: string | null = null
     if (profileId) {
-      const email = listProfiles().find((p) => p.id === profileId)?.accountEmail ?? null
+      // `|| null`, not `?? null`: a not-yet-signed-in profile has accountEmail
+      // '' (account-profiles), and an empty string must fall back to the
+      // profileId — otherwise the fallback label reads "; auto-picked …" with
+      // no identifier, defeating the "which account to change" goal.
+      const email = listProfiles().find((p) => p.id === profileId)?.accountEmail || null
       const fellBack = !!chosen && chosen !== profileId
       accountLabel = fellBack
         ? `${email ?? profileId}; auto-picked — your chosen analysis account is no longer available`
