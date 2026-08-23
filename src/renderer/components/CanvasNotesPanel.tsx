@@ -170,6 +170,10 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   const returnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => () => { if (returnTimerRef.current) clearTimeout(returnTimerRef.current) }, [])
 
+  /** Notes with a variant approval in flight — one marker per click, never one
+   *  per state-read (see resolveOne). */
+  const variantMarkerInFlight = useRef<Set<string>>(new Set())
+
   useEffect(() => {
     void refresh(sessionId)
   }, [sessionId, refresh])
@@ -316,15 +320,27 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
       // line: one chat line carries the pointer, the agent fetches the payload
       // itself. Written only after the store confirms the pick landed — a
       // refused write must not announce a decision that was not recorded.
+      // One flight per note: the landed-check reads STATE, not "did my write
+      // cause it", so a second click racing the first would re-announce the
+      // same pick.
+      if (variantMarkerInFlight.current.has(annotationId)) return
+      variantMarkerInFlight.current.add(annotationId)
       void (async () => {
-        await resolveNote(sessionId, annotationId, action, on, variantKey)
-        const after = useCanvasReviewStore.getState().bySessionId[sessionId]
-        const landed = after?.annotations.find((a) => a.id === annotationId)
-        if (landed?.state === 'approved' && landed.chosenVariantKey === variantKey) {
-          window.electronAPI.pty.write(
-            sessionId,
-            `Picked ${variantKey} on ${annotationId} — approved · canvas_review ${landed.reviewId}\r`,
-          )
+        try {
+          await resolveNote(sessionId, annotationId, action, on, variantKey)
+          const after = useCanvasReviewStore.getState().bySessionId[sessionId]
+          // The canvas may have changed under the await; a same-id note on the
+          // NEW canvas approving the same key is a different decision.
+          if (after?.canvasId !== on) return
+          const landed = after.annotations.find((a) => a.id === annotationId)
+          if (landed?.state === 'approved' && landed.chosenVariantKey === variantKey) {
+            window.electronAPI.pty.write(
+              sessionId,
+              `Picked ${variantKey} on ${annotationId} — approved · canvas_review ${landed.reviewId}\r`,
+            )
+          }
+        } finally {
+          variantMarkerInFlight.current.delete(annotationId)
         }
       })()
     },

@@ -231,7 +231,10 @@ describe('file validator refuses variant tampering', () => {
         }))
       },
       (rec) => {
-        rec.annotations.find((a: any) => a.id === 'a1').variants = 'A=x'
+        // Array-LIKE, so every per-element check passes — only Array.isArray
+        // refuses it. A plain string would fail the positional-key check and
+        // pin nothing.
+        rec.annotations.find((a: any) => a.id === 'a1').variants = { 0: { key: 'A', label: 'x' }, length: 1 }
       },
     ]
     for (const mutate of cases) {

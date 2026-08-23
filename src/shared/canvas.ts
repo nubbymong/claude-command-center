@@ -266,9 +266,13 @@ export function isCleanVariantLabel(label: unknown): label is string {
   if (label.trim().length === 0 || label.length > MAX_VARIANT_LABEL_CHARS) return false
   // C0 + DEL + C1 controls — tab, newline, and carriage return among them.
   if (/[\u0000-\u001F\u007F-\u009F]/.test(label)) return false
-  // Zero-width and directionality controls (bidi overrides, the ZWSP family,
-  // line/paragraph separators, BOM).
-  if (/[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/.test(label)) return false
+  // Every invisible FORMAT character as a property, not a spelling list \u2014 bidi
+  // overrides, the zero-width family, BOM, ALM, the tag block \u2014 plus the line
+  // and paragraph separators (category Z, so outside Cf). A denylist here
+  // would repeat the chase-the-spelling mistake the untrusted envelope already
+  // paid for. Composite emoji (ZWJ sequences) lose too; a label is a name, not
+  // a place for glue characters.
+  if (/[\p{Cf}\u2028\u2029]/u.test(label)) return false
   return true
 }
 
