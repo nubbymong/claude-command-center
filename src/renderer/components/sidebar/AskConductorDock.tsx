@@ -4,6 +4,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { useTipsStore, countUnseenTips } from '../../stores/tipsStore'
 import { launchAskConductor, useAskErrorStore, ASK_LABEL, askSessionIsLive } from '../../lib/askConductor'
 import { BrandMark } from '../BrandMark'
+import { LightbulbMark } from '../ui/LightbulbMark'
 import DockRowMenu from './DockRowMenu'
 import HideDockFeatureDialog, { type DockFeature } from '../HideDockFeatureDialog'
 
@@ -40,24 +41,6 @@ interface Props {
    *  which case the tip row is not rendered at all -- a trigger that does
    *  nothing is worse than no trigger. */
   onShowTip?: () => void
-}
-
-function LightbulbMark({ className, style }: { className?: string; style?: React.CSSProperties }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      style={style}
-      aria-hidden
-    >
-      <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.74V17h8v-2.26A7 7 0 0 0 12 2z" />
-    </svg>
-  )
 }
 
 export default function AskConductorDock({ collapsed, onOpened, isActive, onShowTip }: Props) {
@@ -205,13 +188,13 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
             data-ux-id="sidebar-tip-pill"
             onClick={onShowTip}
             onContextMenu={openMenu('tips')}
-            title={`Tip of the day -- ${currentTip!.content.shortText}`}
-            aria-label={`Tip of the day. ${currentTip!.content.shortText}`}
+            title={`Tip -- ${currentTip!.content.shortText}`}
+            aria-label={`Tip. ${currentTip!.content.shortText}`}
             className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors focus-ring relative"
             style={{
-              background: 'color-mix(in srgb, var(--color-peach) 13%, transparent)',
-              border: '1px solid color-mix(in srgb, var(--color-peach) 42%, transparent)',
-              color: 'var(--color-peach)',
+              background: 'color-mix(in srgb, var(--accent-tip) 13%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--accent-tip) 42%, transparent)',
+              color: 'var(--accent-tip)',
             }}
           >
             <LightbulbMark className="w-4 h-4" />
@@ -220,7 +203,7 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
               // a presence dot -- the number is in the expanded row.
               <span
                 className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
-                style={{ background: 'var(--color-peach)' }}
+                style={{ background: 'var(--accent-tip)' }}
                 aria-hidden
               />
             )}
@@ -285,32 +268,37 @@ export default function AskConductorDock({ collapsed, onOpened, isActive, onShow
           title={currentTip!.content.shortText}
           className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors focus-ring"
           style={{
-            background: 'color-mix(in srgb, var(--color-peach) 13%, transparent)',
-            border: '1px solid color-mix(in srgb, var(--color-peach) 42%, transparent)',
+            background: 'color-mix(in srgb, var(--accent-tip) 13%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--accent-tip) 42%, transparent)',
           }}
         >
-          <LightbulbMark className="w-[17px] h-[17px] shrink-0" style={{ color: 'var(--color-peach)' }} />
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-              Tip of the day
-            </span>
-            {/* The reason the trigger moved: the header pill had room for an icon,
-                this has room for the tip. */}
-            <span className="block text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
-              {currentTip!.content.shortText}
-            </span>
+          <LightbulbMark className="w-[17px] h-[17px] shrink-0" style={{ color: 'var(--accent-tip)' }} />
+          {/* The row IS the tip (#361). It used to carry a "Tip of the day"
+              header over the tip in 10px muted text, which spent the widest line
+              of a 256px rail on a label the lightbulb already says -- and left
+              the tip itself one truncated line. Two lines at 11px fit the
+              longest headline in the library without an ellipsis. */}
+          <span
+            data-ux-id="sidebar-tip-text"
+            className="min-w-0 flex-1 block text-[11px] leading-[1.35] line-clamp-2"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {currentTip!.content.shortText}
           </span>
           {unseen > 0 && (
+            // A counter, not a worded pill: "3 new" cost more of the row than the
+            // tip could spare, and the tooltip carries the wording.
             <span
               data-ux-id="sidebar-tip-count"
-              className="shrink-0 text-[9.5px] tabular-nums rounded-full px-1.5 py-px"
+              className="shrink-0 min-w-[16px] h-4 px-1 inline-flex items-center justify-center text-[9.5px] tabular-nums rounded-full"
               style={{
-                color: 'var(--text-secondary)',
+                color: 'var(--text-muted)',
                 border: '1px solid var(--border-strong)',
               }}
               title={`${unseen} tip${unseen === 1 ? '' : 's'} you have not been shown yet`}
+              aria-label={`${unseen} new tip${unseen === 1 ? '' : 's'}`}
             >
-              {unseen} new
+              {unseen}
             </span>
           )}
         </button>

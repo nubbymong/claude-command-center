@@ -91,6 +91,13 @@
      black. One token instead of the three hand-rolled scrims (bg-black/50,
      bg-black/60, bg-base/80) the dialogs had before #360. */
   --scrim: #000000;
+  /* The tips identity (#361). Ask Conductor is --brand, tips are peach, so the
+     two dock rows read as a pair rather than as duplicates -- and the tip
+     dialog now carries the SAME accent as the row that opened it. A semantic
+     token rather than the raw `var(--color-peach)`: dialogs are policed for the
+     pre-rename palette (`dialog-palette-retired.test.ts`), and the theme owns
+     the value in one place instead of at every call site. */
+  --accent-tip: #e8915c;
 
   --status-success: #7bd88f;
   --status-warning: #ecc14e;
@@ -211,6 +218,9 @@
   /* The light theme washes toward its own substrate, not to black -- this is
      the `bg-base/80` behaviour dialogs had before #360. */
   --scrim: #d6d4d0;
+  /* Tips accent, darkened for contrast as text/border on the light substrate
+     (same value the light theme already gives --color-peach). */
+  --accent-tip: #9a4f29;
 
   --status-success: #2d8349;
   --status-warning: #946a12;

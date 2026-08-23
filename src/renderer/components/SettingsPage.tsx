@@ -224,7 +224,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                     className="rounded border-surface1"
                   />
                   Show intelligent tips
-                  <span className="text-[10px] text-overlay0">(Tip of the day, in the sidebar under Ask Conductor)</span>
+                  <span className="text-[10px] text-overlay0">(the tip row in the sidebar, under Ask Conductor)</span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-2">
                   <input

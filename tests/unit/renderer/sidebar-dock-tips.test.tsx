@@ -81,7 +81,23 @@ describe('sidebar dock -- the tip row', () => {
     const row = q('sidebar-tip-pill')
     expect(row).not.toBeNull()
     expect(row!.textContent).toContain(tip.variants.primary.shortText)
-    expect(row!.textContent).toContain('Tip of the day')
+  })
+
+  it('the row IS the tip -- no "Tip of the day" header eating the width (#361)', () => {
+    armTip()
+    render()
+    expect(q('sidebar-tip-pill')!.textContent).not.toContain('Tip of the day')
+  })
+
+  it('gives the headline two lines rather than truncating it to one', () => {
+    // 256px rail, minus the mark and the counter, is about 30 characters at
+    // 11px -- and the longest headline in the library is 59. One line meant an
+    // ellipsis on nearly half the library; the clamp is what buys the room.
+    armTip()
+    render()
+    const text = q('sidebar-tip-text')!
+    expect(text.className).toContain('line-clamp-2')
+    expect(text.className).not.toContain('truncate')
   })
 
   it('sits after the Ask Conductor pill, not before it', () => {
@@ -102,6 +118,17 @@ describe('sidebar dock -- the tip row', () => {
     expect(count!.textContent).toContain(String(countUnseenTips(useTipsStore.getState().tracking)))
     expect(countUnseenTips({ ...EMPTY, tipsShown: { [tip.id]: 1 } }))
       .toBe(countUnseenTips(EMPTY) - 1)
+  })
+
+  it('counts with a badge, not a worded pill (#361)', () => {
+    armTip()
+    render()
+    const count = q('sidebar-tip-count')!
+    const n = countUnseenTips(useTipsStore.getState().tracking)
+    // The number alone. "N new" spent room the tip needed; the wording lives in
+    // the tooltip and the accessible name, where it costs nothing.
+    expect(count.textContent!.trim()).toBe(String(n))
+    expect(count.getAttribute('aria-label')).toContain('new tip')
   })
 
   it('drops a dismissed tip out of the count', () => {
