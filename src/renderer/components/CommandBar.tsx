@@ -61,7 +61,7 @@ function CodexModelDropdown({ value, onChange }: { value: string; onChange: (nex
       <select
         value={value}
         onChange={(e) => { setDirty(true); onChange(e.target.value) }}
-        className="bg-base border border-surface1 rounded px-1.5 h-[22px] py-0 text-xs text-text"
+        className="bg-base border border-surface1 rounded px-1.5 h-7 text-xs text-text"
       >
         {CODEX_MODELS.map((m) => (<option key={m} value={m}>{m}</option>))}
       </select>
@@ -77,7 +77,7 @@ function PermissionsPresetDropdown({ value, onChange }: { value: CodexPreset; on
       <select
         value={value}
         onChange={(e) => { setDirty(true); onChange(e.target.value as CodexPreset) }}
-        className="bg-base border border-surface1 rounded px-1.5 h-[22px] py-0 text-xs text-text"
+        className="bg-base border border-surface1 rounded px-1.5 h-7 text-xs text-text"
       >
         {CODEX_PRESETS.map((p) => (<option key={p} value={p}>{p}</option>))}
       </select>
