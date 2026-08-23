@@ -133,6 +133,44 @@ describe('glass binding', () => {
     expect(glassNeedsRepin({ scrollX: -140, scrollY: 0, zoom: { value: 1 } }, viewport)).toBe(true)
     expect(glassNeedsRepin({ scrollX: -100, scrollY: 0, zoom: { value: 1.2 } }, viewport)).toBe(true)
   })
+
+  it('pinned glass at content zoom (#368) ⇒ scene coords STILL coincide with page coords', () => {
+    // The pane zooms the content (#368): 1 content px paints as `zoom` stage
+    // px, and the glass binding carries the same factor as its scene zoom.
+    // Scene coords must keep coinciding with content page coords — that is
+    // what keeps a mark on its element through Ctrl+wheel.
+    const zoom = 1.5
+    const viewport = vp({ scrollX: 480, scrollY: 1500 })
+    const pinned = glassScrollForContent(viewport, zoom)
+    expect(pinned.zoom.value).toBe(zoom)
+    const state = appState({
+      scrollX: pinned.scrollX,
+      scrollY: pinned.scrollY,
+      zoom: pinned.zoom,
+      offsetLeft: STAGE.left,
+      offsetTop: STAGE.top,
+    })
+    const pagePoint = { x: 640, y: 1730 }
+    // Content → stage under zoom folds the factor into the scale slot, exactly
+    // as the pane's stageViewport does.
+    const stagePoint = contentPageToStagePoint(pagePoint, { ...viewport, scale: viewport.scale * zoom })
+    const scene = stageToScenePoint(stagePoint, STAGE, state)
+    expect(scene.x).toBeCloseTo(pagePoint.x, 6)
+    expect(scene.y).toBeCloseTo(pagePoint.y, 6)
+    const back = sceneToStagePoint(scene, STAGE, state)
+    expect(back.x).toBeCloseTo(stagePoint.x, 6)
+    expect(back.y).toBeCloseTo(stagePoint.y, 6)
+  })
+
+  it('repin detection watches the zoom axis of the binding too (#368)', () => {
+    const viewport = vp({ scrollX: 100, scrollY: 0 })
+    // Glass already at the content zoom: pinned.
+    expect(glassNeedsRepin({ scrollX: -100, scrollY: 0, zoom: { value: 1.5 } }, viewport, 1.5)).toBe(false)
+    // Excalidraw wandered off the content zoom (wheel on the glass): repin.
+    expect(glassNeedsRepin({ scrollX: -100, scrollY: 0, zoom: { value: 1 } }, viewport, 1.5)).toBe(true)
+    // The pane stepped its zoom while the glass still holds the old one: repin.
+    expect(glassNeedsRepin({ scrollX: -100, scrollY: 0, zoom: { value: 1.5 } }, viewport, 1.75)).toBe(true)
+  })
 })
 
 describe('stageRectIsVisible', () => {
