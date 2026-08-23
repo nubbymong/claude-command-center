@@ -386,6 +386,45 @@ describe('WatchdogManager — feedData debounce', () => {
     expect(tail).not.toContain('esc to interrupt')
   })
 
+  // #418: the styled read. The placeholder in an empty input arrives as SGR
+  // dim (\x1b[2m); getTailNonDim() blanks those cells so the send gate can
+  // tell the empty prompt wearing a hint from a real draft.
+  it('getTailNonDim blanks DIM cells and stays line-aligned with getTail', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    const wd = instances[0]
+
+    mgr.feedData(
+      's1',
+      'Claude usage limit reached. Your limit resets at 4:30pm.\r\n❯ \x1b[2mPress up to edit queued messages\x1b[22m\r\n  footer',
+    )
+    vi.advanceTimersByTime(50)
+
+    const text = wd.adapter.getTail() as string
+    const nonDim = wd.adapter.getTailNonDim() as string
+    expect(text).toContain('Press up to edit queued messages')
+    expect(nonDim).not.toContain('Press up')
+    expect(nonDim.split('\n').length).toBe(text.split('\n').length)
+    // The caret row carries no ink after the caret in the styled read…
+    const caretRow = nonDim.split('\n').find((l) => l.includes('❯'))!
+    expect(caretRow.trim()).toBe('❯')
+    // …while non-dim rows come through intact.
+    expect(nonDim).toContain('usage limit reached')
+    expect(nonDim).toContain('footer')
+  })
+
+  it('getTailNonDim keeps NON-dim input text — a real draft is never blanked', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    const wd = instances[0]
+
+    mgr.feedData('s1', 'banner\r\n❯ fix the failing test\r\n  footer')
+    vi.advanceTimersByTime(50)
+    expect(wd.adapter.getTailNonDim() as string).toContain('❯ fix the failing test')
+  })
+
   it('lone-\\r spinner redraws overwrite one row instead of growing without bound', () => {
     const { host } = makeHost()
     const mgr = new WatchdogManager(host)

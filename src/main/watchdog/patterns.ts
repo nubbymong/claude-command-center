@@ -603,7 +603,7 @@ export interface SendGateResult {
  * consuming an attempt. An empty prompt under a live banner is the one
  * sendable state and returns ok.
  */
-export function canSendNow(text: string): SendGateResult {
+export function canSendNow(text: string, nonDimText?: string): SendGateResult {
   // The purpose-built /rate-limit-options detector first (chrome-aware): the
   // menu a rate-limit retry is most likely to collide with.
   if (isRateLimitOptionsPrompt(text, SEND_GATE_TAIL_LINES)) return { ok: false, reason: 'menu' }
@@ -613,11 +613,33 @@ export function canSendNow(text: string): SendGateResult {
   // how the earlier revision ended up blind at exactly the wrong moment.
   const tail = lines.slice(Math.max(0, lines.length - SEND_GATE_TAIL_LINES))
 
+  // The styled companion of the same pane (#418): every DIM cell blanked to a
+  // space, lines aligned 1:1 with `text`. Claude Code renders the placeholder
+  // in an EMPTY input dim — "Press up to edit queued messages" whenever the
+  // queue is non-empty, "Message @agent…" in an agent view, "Comment on N
+  // selected lines…" over an IDE selection — states that coexist with a live
+  // rate limit indefinitely, so reading text alone made the gate defer forever
+  // and the retry silently never fired. A DRAFT row must show NON-DIM ink
+  // after its prompt glyph; a row whose after-caret text is all placeholder is
+  // the sendable empty prompt wearing a hint. Two deliberate asymmetries:
+  //   - menu rows are counted on the RAW text (a selector's unfocused rows may
+  //     render dim, and losing them would weaken the menu guard);
+  //   - no styled read, or line counts that do not match, means the styled
+  //     read is IGNORED and every caret row gates as before — the fail-closed
+  //     posture this gate has always had.
+  const nonDimLines = nonDimText !== undefined ? stripAnsi(nonDimText).split('\n') : null
+  const nonDimTail =
+    nonDimLines !== null && nonDimLines.length === lines.length
+      ? nonDimLines.slice(Math.max(0, nonDimLines.length - SEND_GATE_TAIL_LINES))
+      : null
+  const hasInk = (rowIndex: number, re: RegExp): boolean => (nonDimTail ? re.test(nonDimTail[rowIndex] ?? '') : true)
+
   let numberRows = 0
   let caretTextRows = 0
-  for (const l of tail) {
+  for (let i = 0; i < tail.length; i++) {
+    const l = tail[i]
     if (MENU_NUMBER_ROW.test(l)) numberRows++
-    if (CARET_TEXT_ROW.test(l)) caretTextRows++
+    if (CARET_TEXT_ROW.test(l) && hasInk(i, CARET_TEXT_ROW)) caretTextRows++
   }
 
   // A menu: two+ numbered rows (a selector always lists its alternatives; one
@@ -632,15 +654,27 @@ export function canSendNow(text: string): SendGateResult {
   if (caretTextRows >= 1) return { ok: false, reason: 'draft' }
 
   // The boxed form, anywhere in the window.
-  for (const l of tail) {
-    if (BOXED_DRAFT_ROW.test(l) && !isWorkingLine(l)) return { ok: false, reason: 'draft' }
+  for (let i = 0; i < tail.length; i++) {
+    const l = tail[i]
+    if (BOXED_DRAFT_ROW.test(l) && hasInk(i, BOXED_DRAFT_ROW) && !isWorkingLine(l)) {
+      return { ok: false, reason: 'draft' }
+    }
   }
 
   // The bare ASCII prompt: only as the last non-blank line, so a markdown
   // blockquote in content is never mistaken for a draft.
-  const lastNonBlank = [...tail].reverse().find((l) => l.trim() !== '')
-  if (lastNonBlank && BARE_ASCII_DRAFT_ROW.test(lastNonBlank) && !isWorkingLine(lastNonBlank)) {
-    return { ok: false, reason: 'draft' }
+  let lastNonBlankIndex = -1
+  for (let i = tail.length - 1; i >= 0; i--) {
+    if (tail[i].trim() !== '') {
+      lastNonBlankIndex = i
+      break
+    }
+  }
+  if (lastNonBlankIndex >= 0) {
+    const l = tail[lastNonBlankIndex]
+    if (BARE_ASCII_DRAFT_ROW.test(l) && hasInk(lastNonBlankIndex, BARE_ASCII_DRAFT_ROW) && !isWorkingLine(l)) {
+      return { ok: false, reason: 'draft' }
+    }
   }
   return { ok: true }
 }

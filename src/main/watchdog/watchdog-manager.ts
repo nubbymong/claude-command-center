@@ -228,18 +228,48 @@ interface Entry {
 }
 
 /** Serialize the pane's last `maxLines` rendered lines (screen + genuinely
- *  scrolled-off scrollback), trailing blank rows trimmed. */
-function readPane(term: Terminal, maxLines: number): string {
+ *  scrolled-off scrollback), trailing blank rows trimmed — plus a DIM-BLANKED
+ *  companion of the same lines for the send gate (#418).
+ *
+ *  `translateToString` discards attributes, and the gate needs exactly one:
+ *  Claude Code renders the placeholder text in an EMPTY input dim ("Press up
+ *  to edit queued messages", "Message @agent…"), so text-only reading cannot
+ *  tell that `❯ <placeholder>` is the sendable empty prompt, not a draft —
+ *  which made the gate defer forever whenever a queue/agent-view placeholder
+ *  coexisted with a live rate limit. `nonDim` is the same rows with every dim
+ *  cell blanked to a space, trimmed in LOCKSTEP with `text` so the two stay
+ *  aligned line-for-line (canSendNow ignores the styled read if they are not). */
+function readPanePair(term: Terminal, maxLines: number): { text: string; nonDim: string } {
   const buf = term.buffer.active
   const total = buf.length
   const start = Math.max(0, total - maxLines)
   const out: string[] = []
+  const outNonDim: string[] = []
+  const work = buf.getNullCell()
   for (let i = start; i < total; i++) {
     const line = buf.getLine(i)
-    out.push(line ? line.translateToString(true) : '')
+    if (!line) {
+      out.push('')
+      outNonDim.push('')
+      continue
+    }
+    out.push(line.translateToString(true))
+    let masked = ''
+    for (let x = 0; x < line.length; x++) {
+      const cell = line.getCell(x, work)
+      if (!cell) continue
+      if (cell.getWidth() === 0) continue // the hidden tail cell of a wide glyph
+      const chars = cell.getChars()
+      if (cell.isDim()) masked += ' '.repeat(Math.max(1, chars.length))
+      else masked += chars.length > 0 ? chars : ' '
+    }
+    outNonDim.push(masked.replace(/\s+$/, ''))
   }
-  while (out.length > 0 && out[out.length - 1].trim() === '') out.pop()
-  return out.join('\n')
+  while (out.length > 0 && out[out.length - 1].trim() === '') {
+    out.pop()
+    outNonDim.pop()
+  }
+  return { text: out.join('\n'), nonDim: outNonDim.join('\n') }
 }
 
 function readWatchdogSettings(): WatchdogSettings {
@@ -410,7 +440,11 @@ export class WatchdogManager {
     const adapter: WatchdogAdapter = {
       getTail: () => {
         const e = this.entries.get(sessionId)
-        return e ? readPane(e.term, TAIL_MAX_LINES) : ''
+        return e ? readPanePair(e.term, TAIL_MAX_LINES).text : ''
+      },
+      getTailNonDim: () => {
+        const e = this.entries.get(sessionId)
+        return e ? readPanePair(e.term, TAIL_MAX_LINES).nonDim : ''
       },
       isSessionAlive: () => this.host.isSessionAlive(sessionId),
       send: (text: string) => this.host.send(sessionId, text),
