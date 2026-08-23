@@ -68,3 +68,36 @@ map's own staleness guard is what forced the removal.
 backdrop scan); putting an emoji back on a headline and restoring the "Tip of
 the day" header each fail their guard. Full suite 7808 passed / 16 skipped /
 2 todo across 703 files; `npm run typecheck` clean.
+
+## 2026-08-23 (later) -- the owner picked C: the modal became an anchored card
+
+The A/B/C mock went on the agent canvas and the owner picked **C**, so the
+option-A modal above was reworked the same day: `TipModal` -> `TipCard`
+(`git mv`, history intact). What changed and why it is shaped that way:
+
+- **No overlay, no backdrop, no `aria-modal`.** The card floats up from the
+  "Tip of the day" pill (`position: fixed`, z-40 so real dialogs still cover
+  it) and the app stays live behind it. The Ctrl+C-fires-click trap is retired
+  by construction -- there is no backdrop to eat, and a stray click outside the
+  card does nothing at all. Ways out: Escape, the close glyph, any action.
+- **Anchoring.** The pill is found by `data-ux-id="sidebar-tip-pill"`, which
+  both sidebar variants carry, so collapsed-vs-expanded is just a different
+  rect; a ResizeObserver on the pill re-anchors the card when the sidebar
+  collapses under it, and a missing/unlaid-out pill falls back to the
+  bottom-left corner. Clicking the pill while the card is open now TOGGLES it.
+- **The ... menu moved to the header** (mock C), keeping the footer at three
+  nowrap buttons. Same mousedown-not-click backdrop rule for the menu itself.
+- **"Next tip" advances IN PLACE** instead of closing -- the whole point of a
+  non-blocking card -- and the card closes itself when the rotation runs dry
+  (`currentTipId` goes null). The card stamps `markTipShown` for each tip it
+  draws (idempotent), since the stamp belongs to whatever renders the tip.
+- The header carries a live "N more you have not seen" line from
+  `countUnseenTips`, hidden at zero, rather than a snapshot "i of n" counter
+  that would renumber itself as the stamps land.
+
+Tests: `tip-dialog-e5.test.tsx` -> `tip-card-e5.test.tsx`. The backdrop suite
+became a does-not-block suite (no overlay in the DOM, outside clicks inert),
+plus anchor math against a stubbed pill rect and the advance-in-place suite.
+`dialog-palette-retired.test.ts` now polices `TipCard.tsx` via its
+`role="dialog"` (the NAME heuristic no longer matches -- "Card" is not a
+dialog word -- which is fine: jsx-role catches it).

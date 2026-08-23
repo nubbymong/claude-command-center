@@ -37,9 +37,9 @@ interface Props {
   onOpened: () => void
   /** True when the sessions view is showing and the Ask session is the active tab. */
   isActive: boolean
-  /** Raise the tip modal. Absent means the host has no tip modal to raise, in
-   *  which case the tip row is not rendered at all -- a trigger that does
-   *  nothing is worse than no trigger. */
+  /** Toggle the tip card anchored to this pill. Absent means the host has no
+   *  tip card to raise, in which case the tip row is not rendered at all -- a
+   *  trigger that does nothing is worse than no trigger. */
   onShowTip?: () => void
 }
 

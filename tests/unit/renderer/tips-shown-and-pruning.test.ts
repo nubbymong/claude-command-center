@@ -172,7 +172,7 @@ describe('the gates the library depends on', () => {
   })
 
   it('every actionTarget is a view the app can actually navigate to', () => {
-    // TipModal casts actionTarget straight to ViewType and hands it to
+    // TipCard casts actionTarget straight to ViewType and hands it to
     // onNavigate, so a plausible-looking name that is not a view -- the Feature
     // Guide is `help`, not `feature-guide` -- gives the user a button that does
     // nothing at all. TypeScript cannot catch it: the field is a string.

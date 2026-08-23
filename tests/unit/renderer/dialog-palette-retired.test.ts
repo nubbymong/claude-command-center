@@ -93,8 +93,8 @@ const hitsOf = (file: string) =>
 
 /** Dialogs owned by another issue. They ARE dialogs and they DO still grep.
  *
- *  `components/TipModal.tsx` left this map in #361: the tip dialog is now built
- *  on the primitives, so it is policed by the scan below like any other. */
+ *  `components/TipCard.tsx` (né TipModal) left this map in #361: the tip card
+ *  is now built on the primitives, so it is policed by the scan like any other. */
 const TRACKED_ELSEWHERE: Record<string, string> = {
   'components/CommandBar.tsx': 'the command bar — issue #359',
   'components/command-bar/ArgsPopover.tsx': 'the command bar — issue #359',
@@ -205,10 +205,11 @@ describe('#360 — the exclusion lists stay honest', () => {
 
   it('the dialogs deferred to other issues are named, not silently skipped', () => {
     expect(TRACKED_ELSEWHERE['components/CommandBar.tsx']).toMatch(/#359/)
-    // #361 migrated the tip dialog, so it must NOT be deferred any more — it is
-    // in the policed set, and the scan above is what proves it stays clean.
-    expect(TRACKED_ELSEWHERE['components/TipModal.tsx']).toBeUndefined()
-    expect(scanned.map((s) => s.rel)).toContain('components/TipModal.tsx')
+    // #361 migrated the tip dialog (now the anchored TipCard), so it must NOT
+    // be deferred any more — it is in the policed set, and the scan above is
+    // what proves it stays clean.
+    expect(TRACKED_ELSEWHERE['components/TipCard.tsx']).toBeUndefined()
+    expect(scanned.map((s) => s.rel)).toContain('components/TipCard.tsx')
     // Every exclusion carries a human reason, not just a path.
     for (const reason of [...Object.values(TRACKED_ELSEWHERE), ...Object.values(NOT_A_DIALOG)]) {
       expect(reason.length).toBeGreaterThan(20)
