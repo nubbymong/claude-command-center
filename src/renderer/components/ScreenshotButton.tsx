@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useMagicButtonStore } from '../stores/magicButtonStore'
-import MagicButtonSettingsDialog from './MagicButtonSettingsDialog'
 import WindowPickerModal from './WindowPickerModal'
 import { sendImageToSession } from '../utils/imageTransfer'
 
@@ -15,7 +14,6 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
   const color = useMagicButtonStore((s) => s.settings.screenshotColor)
   const [showDropdown, setShowDropdown] = useState(false)
   const [dropdownPos, setDropdownPos] = useState<{ left: number; bottom: number } | null>(null)
-  const [showSettings, setShowSettings] = useState(false)
   const [showWindowPicker, setShowWindowPicker] = useState(false)
   const [capturing, setCapturing] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -68,22 +66,19 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
     }
   }
 
-  const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault()
-    setShowDropdown(false)
-    setShowSettings(true)
-  }
-
+  // Right-click is the command bar's: Snap is a Core tool and gets the shared
+  // Core menu (Screenshot settings… → Settings → Custom Commands, Hide this
+  // tool). Its colour / auto-delete live on that Settings page now (ADR-018 M4).
   return (
     <>
       <div className="relative">
         <button
           ref={buttonRef}
           onClick={toggleDropdown}
-          onContextMenu={handleContextMenu}
           disabled={capturing}
           className="flex items-center gap-1.5 px-2 py-0.5 text-xs rounded bg-surface0/60 border border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
-          title="Take Screenshot (right-click for settings)"
+          title="Take a screenshot and send it to the agent"
+          data-testid="snap-button"
         >
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <rect x="2" y="2" width="5" height="5" rx="0.5" />
@@ -97,23 +92,23 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
         {showDropdown && dropdownPos && (
           <div
             ref={dropdownRef}
-            className="fixed bg-mantle border border-surface0 rounded shadow-lg py-1 min-w-[160px] z-50"
-            style={{ left: dropdownPos.left, bottom: dropdownPos.bottom }}
+            className="fixed rounded shadow-lg py-1 min-w-[160px] z-50"
+            style={{ left: dropdownPos.left, bottom: dropdownPos.bottom, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
           >
             <button
               onClick={handleRectangle}
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface0 flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-overlay)] flex items-center gap-2"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-overlay1 shrink-0">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-[var(--text-muted)] shrink-0">
                 <rect x="2" y="2" width="12" height="12" rx="1" strokeDasharray="3 2" />
               </svg>
               Rectangle
             </button>
             <button
               onClick={() => { setShowDropdown(false); setShowWindowPicker(true) }}
-              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface0 flex items-center gap-2"
+              className="w-full text-left px-3 py-1.5 text-xs text-[var(--text-primary)] hover:bg-[var(--surface-overlay)] flex items-center gap-2"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-overlay1 shrink-0">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-[var(--text-muted)] shrink-0">
                 <rect x="1" y="3" width="14" height="10" rx="1.5" />
                 <line x1="1" y1="6" x2="15" y2="6" />
               </svg>
@@ -128,10 +123,6 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
           onCapture={handleWindowCapture}
           onCancel={() => setShowWindowPicker(false)}
         />
-      )}
-
-      {showSettings && (
-        <MagicButtonSettingsDialog onClose={() => setShowSettings(false)} />
       )}
     </>
   )

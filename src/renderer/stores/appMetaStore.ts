@@ -4,6 +4,10 @@ import { saveConfigNow } from '../utils/config-saver'
 export interface AppMeta {
   setupVersion?: string
   lastSeenVersion?: string
+  /** The version that last RAN: stamped with __APP_VERSION__ at every boot, after the launch
+   *  decision has read the previous value. The witness that a "seen" stamp was written by the
+   *  build it names (#369); `lastRunVersionOf` falls back to setupVersion on metas older than it. */
+  lastRunVersion?: string
   lastTrainingVersion?: string
   commandsSeeded?: boolean
   colorMigrated?: boolean

@@ -75,6 +75,8 @@ We cut a dedicated RC branch for every release cycle so that `beta` stays open f
 - **`release/vX.Y.Z`:** bug fixes and stabilization only — **no features**. The RC branch is the proposed stable release; merging a feature into it invalidates the candidate.
 - Fixes made on the RC branch are back-ported to `beta` so the next cycle keeps them.
 - When the RC is accepted, merge `release/vX.Y.Z` → `main`, then delete the RC branch.
+- **Every cut is gated** (`scripts/release-gate.mjs`, run by `release.js` and as the first job of `release.yml`): the GitHub milestone titled after the version must have no open issue without the `excluded` label, and the model registry must cover every model in Anthropic's Claude Code model configuration article. No bypass — see [`docs/versioning.md`](docs/versioning.md#release-gate-the-cut-is-refused-until-it-passes).
+- **Before a cut, re-read the [Claude Code model configuration](https://support.claude.com/en/articles/11940350-claude-code-model-configuration) article** and refresh `resources/claude-code-model-configuration.json` if it moved. That article is the reference for the model/effort options the app offers (aliases, `--model` values, 1M variants, effort levels) — see [`docs/versioning.md`](docs/versioning.md#the-model-configuration-article-is-the-reference).
 
 For the versioning scheme, prerelease suffixes (`-beta.N`/`-rc.N`), update channels, and when a rebuild ships to users vs. requires a version bump, see [`docs/versioning.md`](docs/versioning.md).
 

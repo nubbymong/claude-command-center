@@ -14,17 +14,22 @@ import GitHubConfigTab from './github/config/GitHubConfigTab'
 import CopilotMeterSettings from './settings/CopilotMeterSettings'
 import { isSentinelEnabled } from '../../shared/sentinel-enabled'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
+import { CustomCommandsTab } from './settings/CustomCommandsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import { SectionLabel } from './ui/SectionLabel'
+import { SAVED_CONFIGS_VIEW_OPTIONS, resolveSavedConfigsView, type SavedConfigsView } from './sidebar/savedConfigsView'
 import { Kbd } from './ui/Kbd'
 import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
+import { BuildIdentityLine } from './BuildIdentityLine'
+import { shortSha } from '../../shared/build-identity'
 declare const __BUILD_TIME__: string
+declare const __BUILD_SHA__: string
 declare const __APP_VERSION__: string
 
-export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
+export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'commands', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
 
 const TABS: { id: SettingsTab; label: string }[] = [
@@ -35,6 +40,7 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'github', label: 'GitHub' },
   { id: 'codex', label: 'Codex' },
+  { id: 'commands', label: 'Custom Commands' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'about', label: 'About' }
 ]
@@ -230,6 +236,20 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   Show Ask Conductor
                   <span className="text-[10px] text-overlay0">(The button at the bottom of the sidebar)</span>
                 </label>
+                {/* #362: the Saved Configs panel's layout. One choice, next to
+                    the other sidebar settings; the list stays the default. */}
+                <Field label="Saved Configs layout">
+                  <select
+                    value={resolveSavedConfigsView(settings.savedConfigsView)}
+                    onChange={(e) => save({ savedConfigsView: e.target.value as SavedConfigsView })}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    data-ux-id="settings-saved-configs-view"
+                  >
+                    {SAVED_CONFIGS_VIEW_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </Field>
               </Section>
 
               <Section title="Security" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
@@ -466,7 +486,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     GPU rendering
-                    <span className="block text-[10px] text-overlay0">Draws terminals on the GPU, which is faster with several busy sessions. OFF by default and experimental. The GPU renderer shares one cache of character images across every open terminal, so when one session rebuilds that cache the others lose their text until you scroll, resize or switch to them. A fix was attempted and does not hold, so the setting stays opt-in. Turn it on only if you run a single session, or can live with that. Applies to terminals opened after the change.</span>
+                    <span className="block text-[10px] text-overlay0">Draws terminals on the GPU, which is faster with several busy sessions. ON by default. The GPU renderer shares one cache of character images across every open terminal; when one session rebuilds that cache, each other session now redraws its own view the way a window resize does, so the text no longer drops out. If you ever do see characters go missing while backgrounds stay, press Ctrl+Alt+G to save a diagnostic (an event log plus a screenshot) and send it over. Turn this off to fall back to the plain renderer. Applies to terminals opened after the change.</span>
                   </span>
                 </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
@@ -599,6 +619,8 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
 
           {activeTab === 'codex' && <CodexSettingsTab />}
 
+          {activeTab === 'commands' && <CustomCommandsTab />}
+
           {activeTab === 'hooks' && <HooksGatewaySection />}
 
           {activeTab === 'about' && (
@@ -612,8 +634,13 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text">Build</span>
-                  <span className="text-xs text-overlay0 font-mono tabular-nums">{formatBuildTime(__BUILD_TIME__)}</span>
+                  <span className="text-xs text-overlay0 font-mono tabular-nums">
+                    {/* #384: commit short sha first, then the build time. */}
+                    {shortSha(__BUILD_SHA__)} · {formatBuildTime(__BUILD_TIME__)}
+                  </span>
                 </div>
+                {/* #384: the one-line build identity — identical to the splash. */}
+                <BuildIdentityLine className="pt-0.5" />
                 <div className="pt-1 flex items-center gap-1.5">
                   <button
                     onClick={() => setShowWhatsNew(true)}

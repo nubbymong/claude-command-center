@@ -43,7 +43,7 @@ import {
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { ensureCanvasPlugin } from './canvas/canvas-plugin'
-import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot } from './canvas/canvas-store'
+import { registerCanvasUatRoot, revokeCanvasUatRoots, designateCanvasWorktreeRoot, canvasRootRefusalReason, describeCanvasRootRefusal, setCanvasRootRefusal } from './canvas/canvas-store'
 import { designatedWorktreeDir } from './canvas/canvas-worktree'
 import { forgetSessionForCanvas } from './canvas/canvas-session-link'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
@@ -3034,19 +3034,35 @@ export function spawnPty(
       // pre-allowed tool reading the bytes back). It is flagged, not changed.
       if (isHomeOrAncestor(resolvedCwd)) {
         logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the configured project directory resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home).`)
+        setCanvasRootRefusal(sessionId, describeCanvasRootRefusal('home-or-ancestor', resolvedCwd))
       } else if (!registerCanvasUatRoot(sessionId, resolvedCwd)) {
         // Floor-checked again inside the store (absolute, real, a directory, not
-        // home, not a volume root, not a dot-dir under home) — two independent
-        // refusals rather than one, because this is the only thing standing
-        // between a prompt-injected agent and a file read with the app's
-        // privileges.
-        logWarn(`[pty] canvas serving root NOT registered for ${sessionId}: the configured project directory was refused by the canvas store.`)
-      } else if (designatedWorktree) {
-        // The project is servable, so the worktree CCC designated beside it is
-        // too — PENDING: the store consults it only once it exists as a real,
-        // un-linked directory (canvas-store.designateCanvasWorktreeRoot). The
-        // path is CCC's, the contents are the agent's own; nothing an agent can
-        // write moves it (ADR-016).
+        // home, not a volume root, not a dot-dir under home, not the resources
+        // directory) — two independent refusals rather than one, because this is
+        // the only thing standing between a prompt-injected agent and a file
+        // read with the app's privileges.
+        //
+        // NAME the floor that refused (#371). "Refused by the canvas store" in a
+        // log file, with the agent told to write where it already wrote, is an
+        // undiagnosable dead end for the one configuration the resources-dir
+        // floor exists for.
+        const reason = canvasRootRefusalReason(sessionId, resolvedCwd)
+        const explanation = reason ? describeCanvasRootRefusal(reason, resolvedCwd) : 'the canvas store refused it.'
+        logWarn(`[pty] canvas serving root NOT registered for ${sessionId} (${reason ?? 'unknown'}): ${explanation}`)
+        setCanvasRootRefusal(sessionId, explanation)
+      }
+
+      // The worktree designation is INDEPENDENT of the project root (#371). It
+      // used to sit in the same else-if chain, so a project directory refused
+      // by any floor also cost the session its worktree root — even though
+      // `<parent>/ccc-wt/<sid>` neither contains nor sits under the resources
+      // directory and would have been accepted. One refusal, not two.
+      //
+      // PENDING: the store consults it only once it exists as a real, un-linked
+      // directory (canvas-store.designateCanvasWorktreeRoot). The path is CCC's,
+      // the contents are the agent's own; nothing an agent can write moves it
+      // (ADR-016).
+      if (designatedWorktree) {
         if (designateCanvasWorktreeRoot(sessionId, designatedWorktree)) {
           logInfo(`[pty] canvas: designated session worktree ${designatedWorktree} for ${sessionId} (served once it exists)`)
         } else {

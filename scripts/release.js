@@ -10,7 +10,9 @@
  * Local steps (fast feedback before pushing):
  *   1. Pre-flight checks (gh auth, npm audit, git status)
  *   2. Channel selection (stable / beta / dev)
- *   3. Version bump
+ *   3. Version bump — gated by scripts/release-gate.mjs (#375/#385): the
+ *      milestone named after the new version must have no open issues (bar
+ *      `excluded`) and the model registry must match Anthropic's article
  *   4. Update changelog.ts version + date of the newest entry, regenerate CHANGELOG.md
  *   5. Typecheck + unit tests + build smoke test
  *   6. Git commit + tag + push
@@ -367,6 +369,10 @@ console.log('  │    new features were added this release      │')
 console.log('  │  □ Added trackUsage() calls for new features │')
 console.log('  │  □ Updated changelog.ts with release notes   │')
 console.log('  │  □ Tested new features visually in dev mode  │')
+console.log('  │  □ Re-read the Claude Code model config      │')
+console.log('  │    article; refresh resources/claude-code-   │')
+console.log('  │    model-configuration.json if it moved      │')
+console.log('  │    (#385) — the release gate below checks it │')
 console.log('  │                                              │')
 console.log('  └─────────────────────────────────────────────┘')
 console.log('')
@@ -466,6 +472,28 @@ if (NO_BUMP) {
   } catch (err) {
     fail(err.message)
   }
+}
+
+// --- Release gate (#375, #385) — BEFORE anything is written ---
+// Refuses the cut while the milestone titled `version` has open issues without
+// the `excluded` label, or while resources/model-registry.json lacks a model
+// Anthropic's Claude Code model configuration article lists. Runs here, before
+// package.json / changelog are touched, so a refused cut leaves the tree clean.
+// There is deliberately NO --skip flag: release.yml runs the same gate on every
+// dispatch, so a local bypass would only move the refusal to CI.
+console.log(`      Release gate for v${version}...`)
+try {
+  // `version` came from parseVersion/nextVersion (or package.json), so it is a
+  // plain semver string — safe to place on the command line.
+  runInherit(`node scripts/release-gate.mjs --version ${version}`)
+  ok(`Release gate passed for v${version}`)
+} catch {
+  fail(`RELEASE GATE REFUSED v${version} — see the FAIL lines above.\n      ` +
+    'Close or move the open milestone issues (or have the owner label them "excluded"),\n      ' +
+    'and align resources/model-registry.json with the Claude Code model configuration article.')
+}
+
+if (!NO_BUMP) {
   pkg.version = version
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8')
 
@@ -595,6 +623,19 @@ step(6, TOTAL_STEPS, 'Checking for stale GitHub release...')
 try {
   const existing = run(`gh release view ${tag} --json tagName -q .tagName 2>&1 || echo ""`)
   if (existing.trim() === tag) {
+    // Re-run the gate IMMEDIATELY before the destructive delete. The gate ran at
+    // Step 2, but commit/tag/push happened since; a milestone issue opened in
+    // that window would let us delete the last good release for this tag and
+    // then have CI's own gate refuse to build a replacement, leaving no release
+    // at all (#375 review). Re-checking here closes that window to ~zero — and
+    // CI's gate job is still the authoritative backstop before any build.
+    console.log(`      Re-checking the release gate before deleting ${tag}...`)
+    try {
+      runInherit(`node scripts/release-gate.mjs --version ${version}`)
+    } catch {
+      fail(`RELEASE GATE REFUSED v${version} before the stale-release delete — the existing ${tag} release is left intact.\n      ` +
+        'Resolve the open milestone issues (or label them "excluded") and re-run.')
+    }
     warn(`A release for ${tag} already exists — deleting so the workflow can recreate cleanly`)
     run(`gh release delete ${tag} --yes`)
     ok('Stale release deleted (tag preserved)')

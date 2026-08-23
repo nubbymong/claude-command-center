@@ -39,7 +39,8 @@ async function measure(accounts: number, footerWidth: number, wrap: boolean) {
       const host = document.createElement('div')
       host.setAttribute('data-probe', 'footer-wrap')
       host.style.cssText = `position:fixed;left:0;bottom:0;width:${footerWidth}px;font-size:12px;`
-      // The footer: runtime band | centred cluster | disclaimer.
+      // The footer: runtime band | centred cluster. (The bottom-right
+      // disclaimer was removed in #383; nothing sits after the cluster now.)
       host.innerHTML = `
         <div class="min-h-7 shrink-0 flex items-center gap-3 px-3 py-0.5 text-xs border-t" data-probe-bar>
           <div class="flex items-center gap-3 shrink-0" style="white-space:nowrap">CLI v2.1.0-beta.16 Beta</div>
@@ -48,7 +49,6 @@ async function measure(accounts: number, footerWidth: number, wrap: boolean) {
               <div class="flex ${wrap ? 'flex-wrap' : ''} items-center justify-center min-w-0 gap-x-2 gap-y-1" data-probe-row></div>
             </div>
           </div>
-          <span class="shrink truncate italic text-[10px]">Not affiliated with or endorsed by Anthropic</span>
         </div>`
       document.body.appendChild(host)
 

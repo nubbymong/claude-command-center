@@ -1,4 +1,6 @@
-import { BrowserWindow, WebContentsView, net, session } from 'electron'
+import { app, BrowserWindow, WebContentsView, net, session } from 'electron'
+import * as fs from 'fs'
+import * as path from 'path'
 import type { Session as ElectronSession } from 'electron'
 import { logInfo, logError } from './debug-logger'
 import { IPC } from '../shared/ipc-channels'
@@ -303,6 +305,128 @@ export function closeWebview(sessionId: string): boolean {
   views.delete(sessionId)
   return true
 }
+
+/** A partition wipe must not be able to hang the close path (#371). The
+ *  account-web sign-out learned this the hard way — a `clearStorageData()` that
+ *  never settles left sign-out stuck forever. */
+const CLEAR_TIMEOUT_MS = 5_000
+
+/** Cancellable race, so a fast clear does not leave a 5 s timer holding a
+ *  reject closure. "Close all" across 50 tiles scheduled 100 of them. */
+function withClearTimeout<T>(p: Promise<T>, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const guard = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out`)), CLEAR_TIMEOUT_MS)
+  })
+  return Promise.race([p, guard]).finally(() => { if (timer) clearTimeout(timer) }) as Promise<T>
+}
+
+/** The on-disk directory name Chromium gives `persist:webview-<id>`. Our ids
+ *  are `[A-Za-z0-9_-]` so nothing is percent-encoded. */
+const WEBVIEW_PARTITION_PREFIX = 'webview-'
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
+
+/**
+ * Empty a session's browser profile, and remove its directory.
+ *
+ * Each pane gets `persist:webview-<sessionId>`, which Chromium turns into a
+ * profile directory under `sessionData/Partitions/webview-<id>` holding that
+ * pane's cookies, localStorage and cache. Nothing ever removed one: a session
+ * id is minted per tile and never reused, so every closed tile left a fully
+ * populated profile on disk for the life of the install — logged-in cookies for
+ * whatever the user browsed, unreachable through the app and invisible in it.
+ *
+ * `clearStorageData()` EMPTIES the stores; Chromium leaves the directory in
+ * place with its scaffolding, so the directory is removed afterwards too (#371
+ * review MINOR-2 — the doc used to say "delete" while the code only emptied,
+ * and an auditor looking at `Partitions/` would have concluded the fix never
+ * ran). The clear still comes first: it is what releases the open handles, and
+ * it is the part that must succeed.
+ *
+ * Called when a session is CLOSED BY THE USER, which in this app is the same
+ * act as deleting it: the tile is gone from the saved-tile file and its id
+ * never comes back. It is deliberately NOT wired to the store's
+ * `removeSession`, which a restart and an in-tile account switch also call —
+ * those re-add the SAME id and must keep their cookies (a restart that signed
+ * you out of every site in the pane would be its own bug).
+ */
+export async function forgetWebviewProfile(sessionId: string): Promise<boolean> {
+  // Same gate as `openWebview`: this id names an on-disk partition.
+  if (!SESSION_ID_RE.test(sessionId)) {
+    logError(`[webview] refused profile wipe: session id is not path-safe`)
+    return false
+  }
+  const entry = views.get(sessionId)
+  // Do not MATERIALISE a partition just to clear it (#371 review MINOR-5).
+  // `session.fromPartition` creates a persist-backed session, so calling this
+  // for a tile that never opened a pane — the launch-gate cancel does exactly
+  // that — could leave behind the very empty profile directory the sweep is
+  // here to remove. Nothing open and nothing on disk means nothing to do.
+  if (!entry && !partitionDirExists(sessionId)) return true
+
+  // Destroy the view first: clearing a partition a live WebContents is still
+  // writing to races the wipe and can leave the cookie jar behind. `close()`
+  // only INITIATES that, so wait for the WebContents to actually go — the
+  // previous cut asserted call order, which cannot detect the race it names
+  // (#371 review MINOR-3).
+  const wc = entry?.view.webContents
+  closeWebview(sessionId)
+  if (wc && !wc.isDestroyed?.()) {
+    try {
+      await withClearTimeout(
+        new Promise<void>((resolve) => {
+          if (wc.isDestroyed?.()) return resolve()
+          wc.once('destroyed', () => resolve())
+        }),
+        'webContents destroy',
+      )
+    } catch {
+      // It did not confirm in time; clear anyway rather than leaving the jar.
+      logError(`[webview] view for ${sessionId} did not confirm destruction; clearing regardless`)
+    }
+  }
+  const partition = `persist:webview-${sessionId}`
+  try {
+    const ses = session.fromPartition(partition)
+    // Storage first (cookies, localStorage, IndexedDB, service workers), then
+    // the HTTP cache — a wipe that left the cache holds page content.
+    await withClearTimeout(Promise.resolve(ses.clearStorageData()), 'clearStorageData')
+    await withClearTimeout(Promise.resolve(ses.clearCache()), 'clearCache')
+    removePartitionDir(sessionId)
+    logInfo(`[webview] cleared browser profile for closed session ${sessionId}`)
+    return true
+  } catch (err) {
+    // Best effort: a session that will not clear must not block the tab close.
+    logError(`[webview] could not clear profile for ${sessionId}: ${(err as Error)?.message ?? err}`)
+    return false
+  }
+}
+
+/** Where Chromium keeps the `persist:` partition directories. */
+function partitionsRoot(): string {
+  return path.join(app.getPath('sessionData'), 'Partitions')
+}
+
+
+/** True when this session has a profile directory on disk. */
+function partitionDirExists(sessionId: string): boolean {
+  try {
+    return fs.existsSync(path.join(partitionsRoot(), `${WEBVIEW_PARTITION_PREFIX}${sessionId}`))
+  } catch {
+    return false
+  }
+}
+
+/** Remove one partition directory. Best-effort: Chromium may still hold a
+ *  handle, and an emptied-but-present directory is not a leak. */
+function removePartitionDir(sessionId: string): void {
+  try {
+    fs.rmSync(path.join(partitionsRoot(), `${WEBVIEW_PARTITION_PREFIX}${sessionId}`), { recursive: true, force: true })
+  } catch {
+    /* the clear is what matters; the directory is scaffolding */
+  }
+}
+
 
 export function setWebviewBounds(sessionId: string, bounds: WebviewBounds): void {
   const entry = views.get(sessionId)

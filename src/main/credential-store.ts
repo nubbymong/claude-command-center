@@ -39,17 +39,34 @@ function getCredentialsFile(): string {
   return join(getConfigDir(), 'ssh-credentials.json')
 }
 
-export function loadAllCredentials(): Record<string, string> {
+/**
+ * The credentials file, read. `null` means the file EXISTS but could not be
+ * read or parsed (a scanner holding it, a permissions hiccup, a torn write,
+ * corruption) -- which is NOT the same as "no credentials yet". The writers
+ * below refuse to touch a file they could not read: before the ADR-009 pass on
+ * #386 an unreadable file read as `{}` and the next save or delete wrote that
+ * `{}` back, destroying every stored SSH password, sudo password and command
+ * secret in one go (the class the beta.16 config hardening closed elsewhere).
+ */
+export function readCredentialsFile(): Record<string, string> | null {
+  const file = getCredentialsFile()
+  if (!existsSync(file)) return {}
   try {
-    const file = getCredentialsFile()
-    if (existsSync(file)) {
-      return JSON.parse(readFileSync(file, 'utf-8'))
-    }
-  } catch { /* ignore */ }
-  return {}
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf-8'))
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed as Record<string, string>
+  } catch {
+    return null
+  }
 }
 
-export function saveAllCredentials(creds: Record<string, string>): void {
+/** Every stored credential, or `{}` when there are none or the file is unreadable (read-only callers). */
+export function loadAllCredentials(): Record<string, string> {
+  return readCredentialsFile() ?? {}
+}
+
+/** Write the whole file; false when the write failed. */
+export function saveAllCredentials(creds: Record<string, string>): boolean {
   try {
     ensureConfigDir()
     // ssh-credentials.json holds the per-config safeStorage ciphertext. Write it
@@ -58,7 +75,10 @@ export function saveAllCredentials(creds: Record<string, string>): void {
     // at the path — the world-readable / link-redirect class the pwfw/58r3
     // hardening closed for the other credential writers.
     atomicWriteSecure(getCredentialsFile(), JSON.stringify(creds), 0o600)
-  } catch { /* ignore */ }
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -76,23 +96,27 @@ export function loadCredential(configId: string): string | null {
 }
 
 /**
- * Encrypt and save a credential.
+ * Encrypt and save a credential. False when encryption is unavailable, when the
+ * existing file could not be read (never write over what we could not read),
+ * or when the write failed -- the caller must not claim the secret is stored.
  */
 export function saveCredential(configId: string, password: string): boolean {
   if (!safeStorage.isEncryptionAvailable()) return false
+  const creds = readCredentialsFile()
+  if (creds === null) return false
   const encrypted = safeStorage.encryptString(password).toString('base64')
-  const creds = loadAllCredentials()
   creds[configId] = encrypted
-  saveAllCredentials(creds)
-  return true
+  return saveAllCredentials(creds)
 }
 
 /**
- * Delete a credential.
+ * Delete a credential. False when the file could not be read (nothing is
+ * written) or the write failed; true when the key is gone (or was never there).
  */
 export function deleteCredential(configId: string): boolean {
-  const creds = loadAllCredentials()
+  const creds = readCredentialsFile()
+  if (creds === null) return false
+  if (!(configId in creds)) return true
   delete creds[configId]
-  saveAllCredentials(creds)
-  return true
+  return saveAllCredentials(creds)
 }

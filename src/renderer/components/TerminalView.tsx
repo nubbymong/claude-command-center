@@ -20,6 +20,7 @@ import { useRestartSession } from '../hooks/useRestartSession'
 import { persistLastUsedAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountGateStore, GATE_CANCELLED } from '../stores/accountGateStore'
+import { forgetSessionBrowserProfile } from '../stores/sshCloseStore'
 import { hasSpawned, markSpawned, clearSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
@@ -30,6 +31,7 @@ import TerminalContextMenu from './TerminalContextMenu'
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
+import { registerRepainter } from './terminal/repaintRegistry'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostics'
@@ -321,7 +323,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     })
     webglHandleRef.current = handle
     const resync = atlasResyncRef.current
-    const unregister = resync ? atlasCoordinator.register(resync) : null
+    const unregister = resync ? atlasCoordinator.register(resync, sessionId) : null
 
     return () => {
       unregister?.()
@@ -422,6 +424,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     // term.refresh) on the triggers that correlate with the ghosting — scroll and
     // streaming output — throttled so a firehose costs at most a few repaints/sec.
     let repainter: StaleGlyphRepainter | null = null
+    /** Undo the #379 fix-E registration; see registerRepainter below. */
+    let unregisterRepainter: (() => void) | null = null
     let lastWheelAt = Number.NEGATIVE_INFINITY
 
     // PTY-integrity instrumentation (scoped to this session's mount; resets on
@@ -599,6 +603,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       })
       repainterRef.current = repainter
 
+      // #379 fix E: publish this terminal's repainter so the command bar can ask
+      // for a full repaint after a GUI-subsystem tool has written over the pane.
+      // That text never passes through the pty stream, so xterm cannot know its
+      // model is stale — only an unconditional repaint puts the two back in
+      // agreement.
+      unregisterRepainter = registerRepainter(sessionId, {
+        settleStrong: (quietMs, intervalMs) => repainter?.settleStrong(quietMs, intervalMs),
+      })
+
       // #119: cursor options passed to the Terminal constructor do NOT reliably
       // initialize the WebGL renderer's cursor layer — the caret stays absent
       // even while focused/typing (xterm.js #1194 "initial cursorBlink has no
@@ -772,7 +785,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               .then((chosen) => {
                 if (chosen === GATE_CANCELLED) {
                   // User aborted the launch: no PTY exists yet (the gate blocks
-                  // before doSpawn), so closing is just removing the tab.
+                  // before doSpawn), so closing is just removing the tab. The
+                  // tab is gone for good, so its browser profile goes with it —
+                  // a no-op for a session that never opened a pane (#371).
+                  forgetSessionBrowserProfile(sessionId)
                   useSessionStore.getState().removeSession(sessionId)
                   return
                 }
@@ -1228,6 +1244,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
+      unregisterRepainter?.()
       repainter?.dispose()
       if (repainterRef.current === repainter) repainterRef.current = null
       resizeObserver?.disconnect()

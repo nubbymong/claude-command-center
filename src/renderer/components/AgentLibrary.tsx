@@ -189,8 +189,8 @@ export default function AgentLibrary() {
       {contextMenu && (
         <div
           ref={menuRef}
-          className="fixed z-50 bg-surface0 border border-surface1 rounded-xl shadow-2xl py-1.5 min-w-[160px]"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          className="fixed z-50 rounded-xl shadow-2xl py-1.5 min-w-[160px]"
+          style={{ left: contextMenu.x, top: contextMenu.y, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
         >
           {!contextMenu.isBuiltIn && (
             <button
@@ -199,7 +199,8 @@ export default function AgentLibrary() {
                 if (t) { setEditingTemplate(t); setShowDialog(true) }
                 setContextMenu(null)
               }}
-              className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 text-text hover:bg-surface1 transition-colors"
+              className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 hover:bg-[var(--surface-overlay)] transition-colors"
+              style={{ color: 'var(--text-primary)' }}
             >
               Edit
             </button>
@@ -209,7 +210,8 @@ export default function AgentLibrary() {
               duplicateTemplate(contextMenu.templateId)
               setContextMenu(null)
             }}
-            className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 text-text hover:bg-surface1 transition-colors"
+            className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 hover:bg-[var(--surface-overlay)] transition-colors"
+            style={{ color: 'var(--text-primary)' }}
           >
             Duplicate
           </button>
@@ -219,7 +221,8 @@ export default function AgentLibrary() {
                 removeTemplate(contextMenu.templateId)
                 setContextMenu(null)
               }}
-              className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 text-red hover:bg-red/10 transition-colors"
+              className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2.5 hover:bg-[color-mix(in_srgb,var(--status-danger)_10%,transparent)] transition-colors"
+              style={{ color: 'var(--status-danger)' }}
             >
               Remove
             </button>

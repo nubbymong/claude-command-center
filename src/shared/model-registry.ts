@@ -20,6 +20,15 @@ export interface ModelEntry {
   color?: string                             // optional per-model override of families[family].color
   efforts?: string[]
   fallbackPricing?: ModelPricingSpec
+  /** false = never offer this entry as a pinned model-picker row (#385). For
+   *  catch-all entries whose `id` is not a launchable model id (`codex-family`).
+   *  Absent means pickable, so a Sentinel/user overlay entry shows up in both
+   *  pickers with no code change. */
+  pickable?: boolean
+  /** true = we carry this model deliberately even though Anthropic's Claude Code
+   *  model-configuration article does not list it, so neither the release gate
+   *  nor the Sentinel check reports it as possibly-retired (#385). */
+  articleExempt?: boolean
 }
 
 export interface OverlayProvenance {
@@ -38,7 +47,11 @@ export interface ModelRegistry {
   models: ModelEntry[]
   families: Record<string, FamilySpec>
   effortLevels: EffortLevelSpec[]
-  dropdown: DropdownOptionSpec[]             // ordered model-picker rows incl. variants ("Opus 1M" → 'opus[1m]')
+  /** Ordered ALIAS rows ("Opus 1M" → 'opus[1m]'). These are the family aliases
+   *  that always follow the newest model; the pinned per-version rows are
+   *  DERIVED from `models` by buildModelPickerRows() (#385) so a Sentinel or
+   *  user overlay entry reaches both pickers without a code change. */
+  dropdown: DropdownOptionSpec[]
 }
 
 export interface RegistryOverlay {
@@ -116,28 +129,53 @@ export function hashUnknownModelColor(modelId: string): string {
 
 export type ModelMatchKind = 'exact' | 'alias' | 'prefix' | 'pattern'
 
+/**
+ * Entries this matcher will consider: those with a usable string `id`.
+ *
+ * `registry-overlay.json` is a hand-editable user file and validateProposal runs
+ * on APPLY, not on load, so an entry that satisfies none of `ModelEntry` reaches
+ * here intact — as does an entry that is legitimately alias-only (id + aliases,
+ * no `patterns`), which is a shape a user may reasonably write. Neither may
+ * throw: resolvePickedModelId() runs on EVERY render of the session status strip
+ * with a statusline-supplied model name, so one bad entry — or one model name
+ * the registry cannot place — used to take the whole footer down with a
+ * `TypeError: m.patterns is not iterable` (ADR-009 MAJOR-2 on #404).
+ */
+function usableEntries(registry: ModelRegistry): ModelEntry[] {
+  return (registry?.models ?? []).filter(
+    (m): m is ModelEntry => !!m && typeof m.id === 'string' && m.id.length > 0,
+  )
+}
+
 function matchEntry(
   registry: ModelRegistry,
   modelId: string,
 ): { entry: ModelEntry; kind: ModelMatchKind } | null {
-  const raw = modelId.trim()
+  const raw = typeof modelId === 'string' ? modelId.trim() : ''
   if (!raw) return null
+  const models = usableEntries(registry)
   // 1. exact id
-  const exact = registry.models.find((m) => m.id === raw)
+  const exact = models.find((m) => m.id === raw)
   if (exact) return { entry: exact, kind: 'exact' }
-  // 2. exact alias (CLI alias values like 'opus', 'opus[1m]')
-  const alias = registry.models.find((m) => m.aliases?.includes(raw))
+  // 2. exact alias (CLI alias values like 'opus', 'opus[1m]').
+  //    Array.isArray, not `?.includes`: a hand-edited overlay whose `aliases` is
+  //    a bare STRING would otherwise substring-match via String.prototype.includes.
+  const alias = models.find((m) => Array.isArray(m.aliases) && m.aliases.includes(raw))
   if (alias) return { entry: alias, kind: 'alias' }
   // 3. longest id-prefix (date-suffixed ids: claude-opus-4-7-20260101)
   let prefix: ModelEntry | null = null
-  for (const m of registry.models) {
+  for (const m of models) {
     if (raw.startsWith(m.id) && (!prefix || m.id.length > prefix.id.length)) prefix = m
   }
   if (prefix) return { entry: prefix, kind: 'prefix' }
-  // 4. first pattern match in registry order (substring unless anchored regex)
+  // 4. first pattern match in registry order (substring unless anchored regex).
+  //    A missing/!Array `patterns` degrades this entry to "unmatchable by
+  //    pattern" — it stays reachable by id, alias and prefix above.
   const lower = raw.toLowerCase()
-  for (const m of registry.models) {
-    for (const p of m.patterns) {
+  for (const m of models) {
+    const patterns = Array.isArray(m.patterns) ? m.patterns : []
+    for (const p of patterns) {
+      if (typeof p !== 'string' || !p) continue
       let hit = false
       try {
         hit = p.startsWith('^') || p.endsWith('$')
@@ -162,7 +200,19 @@ export function resolveModelInfo(registry: ModelRegistry, modelId: string): Reso
     }
   }
   const entry = match.entry
-  const fam = registry.families[entry.family]
+  // ResolvedModelInfo declares `label` and `chartLabel` as `string`, and every
+  // consumer believes that — isModelActive() and shortModelName() both call
+  // string methods on `label` unguarded. `label` and `family` are only
+  // TYPE-required, though: matchEntry admits any entry with a usable `id`, so a
+  // hand-edited registry-overlay.json entry with no `label` used to make this
+  // function RETURN undefined in a string field, which crashed the whole
+  // SessionStatusStrip render as soon as the model picker opened (a second
+  // ADR-009 MAJOR-2 entry point, found re-verifying #404). Fixed here, at the
+  // source, so no present or future consumer has to re-derive the guard.
+  const family = typeof entry.family === 'string' && entry.family ? entry.family : null
+  const fam = family ? registry.families?.[family] : undefined
+  const label = typeof entry.label === 'string' && entry.label ? entry.label : entry.id
+  const famLabel = typeof fam?.label === 'string' && fam.label ? fam.label : null
   const base = entry.color ?? fam?.color ?? hashUnknownModelColor(modelId)
   const colors = {
     default: base,
@@ -170,8 +220,265 @@ export function resolveModelInfo(registry: ModelRegistry, modelId: string): Reso
     agentPill: fam?.colorOverrides?.agentPill ?? base,
   }
   return {
-    known: true, id: entry.id, family: entry.family, label: entry.label,
-    chartLabel: fam?.label ?? entry.family, matchKind: match.kind, colors,
+    known: true, id: entry.id, family, label,
+    chartLabel: famLabel ?? family ?? entry.id, matchKind: match.kind, colors,
     efforts: entry.efforts ?? null, fallbackPricing: entry.fallbackPricing,
+  }
+}
+
+// ── Model-picker rows (#385) ────────────────────────────────────────
+//
+// The pickers used to render `dropdown` verbatim, so only the five family
+// aliases were ever offered and a pinned version (Opus 4.6) could not be chosen
+// even though the registry knew it. Rows are now built as:
+//
+//   1. the curated ALIAS rows from `dropdown`, first, under one "Latest" group
+//      ("Opus" -> always the newest Opus), then
+//   2. PINNED rows derived from `models`, grouped under their family
+//      ("Opus 4.6" -> 'claude-opus-4-6').
+//
+// Deriving (2) from `models` is what makes a Sentinel/user overlay entry
+// selectable with no code change: mergeRegistry() puts it in `models`, and it
+// appears in both pickers on the next render.
+
+export type ModelPickerRowKind = 'alias' | 'pinned'
+
+export interface ModelPickerRow {
+  value: string                              // the exact string handed to `--model` / `/model`
+  label: string
+  hint?: string
+  group: string                              // 'Latest' for alias rows, else the family display label
+  kind: ModelPickerRowKind
+  family?: string                            // pinned rows only
+}
+
+export const ALIAS_GROUP_LABEL = 'Latest'
+
+/** Family display label ("opus" -> "Opus"), falling back to the family key. */
+export function familyDisplayLabel(registry: ModelRegistry, family: string): string {
+  const raw = registry.families?.[family]?.label ?? family
+  if (typeof raw !== 'string' || !raw) return 'Other'
+  return raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+/**
+ * A model label/reading reduced to a comparable form: trailing parentheticals
+ * dropped ("Opus 4.7 (1M context)" -> "opus 4.7"), trimmed, lowercased.
+ */
+export function normalizeModelLabel(s: string): string {
+  return s.replace(/\s*\([^)]*\)\s*$/, '').trim().toLowerCase()
+}
+
+/**
+ * The registry id a set of readings refers to, or undefined when none of them
+ * can be placed on a specific entry.
+ *
+ * Callers pass the readings they have in preference order — typically the live
+ * statusline `display_name` first, then the id the session was spawned with.
+ * A reading is accepted when it matches an entry VERSION-faithfully (exact id /
+ * alias / id-prefix) or when it is exactly an entry's label: the statusline
+ * reports "Opus 4.6", which can only ever `pattern`-match and is therefore
+ * distrusted everywhere else, but as a label it names its entry precisely.
+ * That is what keeps per-model effort gating working after a mid-session
+ * /model change, when the spawn-time id has gone stale (review Q2).
+ */
+export function resolvePickedModelId(
+  registry: ModelRegistry,
+  ...readings: (string | null | undefined)[]
+): string | undefined {
+  for (const reading of readings) {
+    if (!reading) continue
+    const info = resolveModelInfo(registry, reading)
+    if (info.known && info.matchKind !== 'pattern') return info.id
+    const norm = normalizeModelLabel(reading)
+    // usableEntries, not `registry.models` — the label scan returns an `id`, and
+    // a null/id-less entry in a hand-edited overlay threw here too (#404 MAJOR-2).
+    const byLabel = usableEntries(registry).find(
+      (m) => typeof m.label === 'string' && normalizeModelLabel(m.label) === norm,
+    )
+    if (byLabel) return byLabel.id
+  }
+  return undefined
+}
+
+/**
+ * Ordered picker rows: alias rows first, then pinned versions grouped by family.
+ *
+ * Family order follows the alias rows (so the Opus pins sit under the Opus
+ * alias), with any family that has no alias row appended in `models` order.
+ * Within a family, pins keep `models` order (newest first by convention).
+ * Entries with `pickable === false` are skipped: their `id` is a matcher, not a
+ * launchable model.
+ */
+export function buildModelPickerRows(registry: ModelRegistry): ModelPickerRow[] {
+  const aliasRows: ModelPickerRow[] = (registry.dropdown ?? []).map((d) => ({
+    value: d.value, label: d.label, hint: d.hint, group: ALIAS_GROUP_LABEL, kind: 'alias' as const,
+  }))
+
+  // Never offer the same string twice: an alias row wins over an identical pin.
+  const seen = new Set(aliasRows.map((r) => r.value))
+
+  const pinsByFamily = new Map<string, ModelPickerRow[]>()
+  for (const m of registry.models ?? []) {
+    if (!m || m.pickable === false) continue
+    // `registry-overlay.json` is a hand-editable user file: loadOverlay only
+    // fails open on invalid JSON and validateProposal runs on APPLY, not on
+    // load, so a malformed entry reaches here intact. Before #385 the pickers
+    // read `dropdown` only and never touched `models`, so a missing `family`
+    // was harmless; now it would throw and take both pickers down with it.
+    // Skip the entry and say so rather than crash the render (review Q3).
+    if (typeof m.id !== 'string' || !m.id || typeof m.family !== 'string' || !m.family) {
+      // eslint-disable-next-line no-console
+      console.warn('[model-registry] skipping malformed model entry (needs a string id and family):', m)
+      continue
+    }
+    if (seen.has(m.id)) continue
+    seen.add(m.id)
+    const row: ModelPickerRow = {
+      value: m.id,
+      label: m.label || m.id,
+      group: familyDisplayLabel(registry, m.family),
+      kind: 'pinned',
+      family: m.family,
+    }
+    const list = pinsByFamily.get(m.family)
+    if (list) list.push(row)
+    else pinsByFamily.set(m.family, [row])
+  }
+
+  const familyOrder: string[] = []
+  const pushFamily = (f: string | null | undefined): void => {
+    if (f && pinsByFamily.has(f) && !familyOrder.includes(f)) familyOrder.push(f)
+  }
+  for (const row of aliasRows) pushFamily(resolveModelInfo(registry, row.value).family)
+  for (const f of pinsByFamily.keys()) pushFamily(f)
+
+  const pinned: ModelPickerRow[] = []
+  for (const f of familyOrder) pinned.push(...(pinsByFamily.get(f) ?? []))
+  return [...aliasRows, ...pinned]
+}
+
+/** Group consecutive rows into ordered { title, rows } sections for a popover. */
+export function groupPickerRows(rows: ModelPickerRow[]): { title: string; rows: ModelPickerRow[] }[] {
+  const out: { title: string; rows: ModelPickerRow[] }[] = []
+  for (const row of rows) {
+    const last = out[out.length - 1]
+    if (last && last.title === row.group) last.rows.push(row)
+    else out.push({ title: row.group, rows: [row] })
+  }
+  return out
+}
+
+export interface EffortRow { value: string; label: string; hint?: string; supported: boolean }
+
+/**
+ * Effort levels for a model, each marked `supported`.
+ *
+ * A model's `efforts` list is only trusted when the registry matched the model
+ * VERSION-faithfully (exact id / alias / id-prefix). A `pattern` hit is the
+ * fuzzy family catch-all -- a statusline reading of "Opus 4.6" pattern-matches
+ * the newest Opus entry, whose effort list may differ -- so those, and unknown
+ * models, fall back to "all supported" (spec §3: null efforts = assume valid).
+ * Unsupported levels are DISABLED by callers rather than hidden, so the list
+ * never silently changes shape under the user.
+ */
+export function buildEffortRows(
+  registry: ModelRegistry,
+  modelId: string | undefined | null,
+): EffortRow[] {
+  const levels = registry.effortLevels ?? []
+  const info = modelId ? resolveModelInfo(registry, modelId) : null
+  const trustworthy = !!info && info.known && info.matchKind !== 'pattern'
+  const allowed = trustworthy && info!.efforts ? new Set(info!.efforts) : null
+  return levels.map((l) => ({
+    value: l.value, label: l.label, hint: l.hint,
+    supported: allowed ? allowed.has(l.value) : true,
+  }))
+}
+
+// ── Model coverage vs. the published Claude Code model configuration (#385) ──
+//
+// Anthropic's Claude Code model configuration support article is the reference
+// for the model options we offer (owner, #385).
+// `resources/claude-code-model-configuration.json` is a hand-refreshed snapshot
+// of its Supported models table, and this comparison runs in TWO places so the
+// registry cannot quietly drift from it:
+//   - the Sentinel check (src/main/sentinel/sentinel-models.ts), at runtime, and
+//   - the release gate (scripts/release-gate.mjs), which refuses the cut.
+// The gate is dependency-free ESM that runs before `npm ci`, so it carries its
+// own copy of this logic; tests/unit/model-coverage-parity.test.ts asserts the
+// two implementations agree on every fixture.
+
+export interface ExpectedModelSpec { id: string; label?: string }
+export interface ExpectedModelSet {
+  source?: string
+  fetchedAt?: string                         // ISO date the article was last read
+  models: ExpectedModelSpec[]
+}
+
+export interface ModelCoverageResult {
+  ok: boolean
+  reason: string | null
+  missing: ExpectedModelSpec[]               // article lists it, the registry does not
+  extra: ExpectedModelSpec[]                 // registry carries it, the article does not (retired/renamed?)
+  covered: { id: string; by: string }[]
+}
+
+/** True for an entry that came from the overlay (Sentinel- or user-added). */
+export function isOverlaySourced(entry: ModelEntry): boolean {
+  return !!(entry as Partial<OverlayModelEntry>).provenance
+}
+
+/** An article id is covered by a registry id when equal, or equal minus a -YYYYMMDD suffix. */
+export function registryIdCovers(registryId: string, expectedId: string): boolean {
+  if (registryId === expectedId) return true
+  const m = /^(.*)-(\d{8})$/.exec(expectedId)
+  return !!m && m[1] === registryId
+}
+
+/**
+ * Compare the registry against the article snapshot.
+ *
+ * Fails closed on an empty/missing expected set: a check that passes because it
+ * had nothing to compare is worse than no check.
+ */
+export function evaluateModelCoverage(
+  registry: ModelRegistry,
+  expected: ExpectedModelSet | null | undefined,
+): ModelCoverageResult {
+  const registryModels = registry?.models ?? []
+  const expectedModels = expected?.models ?? []
+  if (expectedModels.length === 0) {
+    return {
+      ok: false,
+      reason: 'the expected-models fixture is empty or missing — cannot verify the registry (fail closed)',
+      missing: [], extra: [], covered: [],
+    }
+  }
+  const missing: ExpectedModelSpec[] = []
+  const covered: { id: string; by: string }[] = []
+  const usedRegistryIds = new Set<string>()
+  for (const exp of expectedModels) {
+    const hit = registryModels.find((m) => registryIdCovers(m.id, exp.id))
+    if (hit) { covered.push({ id: exp.id, by: hit.id }); usedRegistryIds.add(hit.id) }
+    else missing.push({ id: exp.id, label: exp.label })
+  }
+  // Claude models we carry that the article no longer names. Excluded:
+  //  - non-Claude entries (the codex catch-all) — not the article's business
+  //  - `articleExempt` entries — carried deliberately
+  //  - OVERLAY entries (they carry `provenance`) — a model Sentinel or the user
+  //    just added is necessarily absent from a snapshot frozen before it, and
+  //    reporting it as "possibly retired" the moment it is added contradicts
+  //    the whole point of letting an overlay add one (review Q4).
+  const extra = registryModels
+    .filter((m) => typeof m.id === 'string' && m.id.startsWith('claude-')
+      && !usedRegistryIds.has(m.id) && m.articleExempt !== true && !isOverlaySourced(m))
+    .map((m) => ({ id: m.id, label: m.label }))
+  return {
+    ok: missing.length === 0,
+    reason: missing.length === 0
+      ? null
+      : `${missing.length} model(s) from the Claude Code model configuration article are not in the registry`,
+    missing, extra, covered,
   }
 }

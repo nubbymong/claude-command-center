@@ -1,13 +1,34 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { startGlobalVision, stopGlobalVision, getGlobalVisionStatus, launchBrowser, tryReconnectGlobalVision, resetVisionRelaunchBreaker, isGlobalVisionRunning } from '../vision-manager'
-import { readConfig, writeConfig } from '../config-manager'
+import { createReadFailureLatch, loadConfigLatched, saveConfigLatched } from '../persist-latch'
 import { isPackagedApp } from '../update-watcher'
 import { resolveCdpPort } from '../../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../../shared/types'
 
+/**
+ * #371. `vision:getConfig` answering null for a read FAILURE is what makes this
+ * one dangerous: the settings form renders its defaults for "not configured
+ * yet", the user touches one control, and `vision:saveConfig` writes those
+ * defaults over the config it never read. The old handler then returned
+ * `{ ok: true }` unconditionally — it discarded `writeConfig`'s boolean — so a
+ * failed save was reported to the user as a successful one either way.
+ */
+const visionLatch = createReadFailureLatch('vision-config')
+
+/** Test seam — the latch is module state and outlives a test file otherwise. */
+export function _resetVisionLatchForTest(): void {
+  visionLatch.reset()
+}
+
 export function registerVisionHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('vision:start', async () => {
-    const config = readConfig<GlobalVisionConfig>('visionGlobal')
+    const config = loadConfigLatched<GlobalVisionConfig>('visionGlobal', visionLatch)
+    // Say WHICH kind of nothing this is. "Not configured" sends the user to the
+    // settings panel, which — on a read failure — is exactly where they would
+    // overwrite the config they still have (#371 MINOR-5).
+    if (!config && visionLatch.failed()) {
+      return { ok: false, error: 'Vision settings could not be read this time, so vision was not started. They are still on disk — try again in a moment.' }
+    }
     if (!config?.enabled) return { ok: false, error: 'Vision not configured' }
     try {
       await startGlobalVision(config, getWindow)
@@ -46,7 +67,7 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
       if (isGlobalVisionRunning()) {
         tryReconnectGlobalVision()
       } else {
-        const saved = readConfig<GlobalVisionConfig>('visionGlobal')
+        const saved = loadConfigLatched<GlobalVisionConfig>('visionGlobal', visionLatch)
         await startGlobalVision({ ...(saved ?? {}), browser, debugPort, headless } as GlobalVisionConfig, getWindow)
       }
       return { ok: true, ...result }
@@ -55,12 +76,63 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
     }
   })
 
-  ipcMain.handle('vision:saveConfig', async (_event, config: GlobalVisionConfig) => {
-    writeConfig('visionGlobal', config)
-    return { ok: true }
+  /**
+   * `generation` is the token `vision:getConfig` handed out with the config the
+   * form was built from (#371 MAJOR-5).
+   *
+   * The latch alone is not enough here, because the stale state lives in the
+   * RENDERER: `getConfig` fails, the panel renders defaults, then something
+   * else — `vision:start`, the launch path — reads the file successfully and
+   * clears the latch. A save arriving after that looks perfectly healthy and
+   * writes the defaults over the real config. The token closes that window: it
+   * changes on recovery, so a form built while the file was unreadable can
+   * never save over the file once it is readable again.
+   */
+  ipcMain.handle('vision:saveConfig', async (_event, config: GlobalVisionConfig, generation?: number) => {
+    // The token is MANDATORY (#371, ADR-009 pass). Accepting a save without one
+    // left the whole guard opt-in: any caller that omitted it — an older
+    // renderer, a future one, a bug — got the unguarded path back.
+    if (typeof generation !== 'number') {
+      return {
+        ok: false,
+        error: 'Vision settings were not saved: this panel did not say which reading of the settings file it was built from. Reopen it and try again.',
+      }
+    }
+    if (generation !== visionLatch.generation()) {
+      return {
+        ok: false,
+        stale: true,
+        error: 'Vision settings were not saved: these settings were shown before the settings file could be read, so saving them would overwrite the real ones. Reopen this panel to see what is actually saved.',
+      }
+    }
+    // `retry: false`: a vision config is ONE object, so there is nothing to
+    // merge. Letting the shared retry recover the file and then write would put
+    // the renderer's defaults over the settings it had just rescued — the very
+    // clobber the generation token is here to stop (#371, ADR-009 pass). A
+    // latched save refuses, and the user reopens the panel to see what is really
+    // stored.
+    //
+    // Report the real outcome. A refused save (the last read FAILED) and a
+    // failed write both come back as ok:false rather than a false reassurance.
+    const saved = saveConfigLatched('visionGlobal', config, visionLatch, { retry: false })
+    if (saved) return { ok: true }
+    return {
+      ok: false,
+      error: visionLatch.failed()
+        ? 'Vision settings were not saved: the existing settings file could not be read, so it was left alone. Try again once it is readable.'
+        : 'Vision settings could not be saved.',
+    }
   })
 
   ipcMain.handle('vision:getConfig', async () => {
-    return readConfig<GlobalVisionConfig>('visionGlobal')
+    const config = loadConfigLatched<GlobalVisionConfig>('visionGlobal', visionLatch)
+    return {
+      config,
+      generation: visionLatch.generation(),
+      /** True when `config` is null because the file could not be READ, rather
+       *  than because there is none. The panel must not offer defaults as if
+       *  this were a fresh install. */
+      readFailed: visionLatch.failed(),
+    }
   })
 }

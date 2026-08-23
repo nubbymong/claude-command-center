@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 /**
- * P4b: CommandBar collapsible quick-actions strip + neutral chips.
+ * CommandBar: the one-row bar's session controls and chip look (ADR-018 D1, D3, D6).
  *
- * Verifies the Phase-4 cleanup of the transitional CommandBar:
  *  1. The Claude Mode picker + Claude Model/Effort picker are GONE
- *     (BottomBar owns those now -- this strip is Claude-mode-agnostic).
+ *     (BottomBar owns those now -- this bar is Claude-mode-agnostic).
  *  2. The Codex inline dropdowns STAY (BottomBar is Claude-only there).
- *  3. A collapse toggle exists and hides the command rows when collapsed.
- *  4. Command chips are neutral -- colour is a dot, not a button tint.
+ *  3. There is NO collapse toggle on the bar. "Hide the command bar" lives in
+ *     the bar's right-click menu and the restore in Settings; when
+ *     `barCollapsed` is set the bar renders nothing but a marker.
+ *  4. A user chip is neutral -- the command's colour lives in its ICON (the
+ *     monogram tile, or the chosen glyph), never on the chip surface.
  *
  * React.createElement (not JSX) so the file stays *.test.ts under the
  * vitest include glob -- matches the sibling commandbar-codex-toolbar test.
@@ -34,8 +36,10 @@ vi.mock('../../../src/renderer/stores/sessionStore', () => ({
     }),
 }))
 
-// One custom Claude command so a chip renders.
-const mockCommand = {
+// One custom Claude command so a chip renders. Mutable so a test can give it
+// an icon before rendering.
+let mockCommand: Record<string, unknown> = {}
+const baseCommand = {
   id: 'cmd-1',
   label: 'Deploy',
   prompt: '/deploy',
@@ -63,15 +67,14 @@ vi.mock('../../../src/renderer/stores/commandStore', () => ({
 
 // Mutable bar-collapse state so a test can flip it between renders.
 let mockBarCollapsed = false
-const mockToggleBar = vi.fn(() => { mockBarCollapsed = !mockBarCollapsed })
+const mockSetBarCollapsed = vi.fn((v: boolean) => { mockBarCollapsed = v })
 
 vi.mock('../../../src/renderer/stores/commandBarStore', () => ({
   useCommandBarStore: (sel: any) =>
     sel({
       state: { collapsedSectionIds: [], barCollapsed: mockBarCollapsed },
       toggleSection: vi.fn(),
-      toggleBar: mockToggleBar,
-      setBarCollapsed: vi.fn(),
+      setBarCollapsed: mockSetBarCollapsed,
     }),
 }))
 
@@ -140,12 +143,12 @@ const mkCodex = () => ({
 function buttons(container: HTMLElement): HTMLButtonElement[] {
   return Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
 }
-function buttonByAccessibleName(container: HTMLElement, needle: string): HTMLButtonElement | undefined {
-  const n = needle.toLowerCase()
-  return buttons(container).find((b) => {
-    const title = (b.getAttribute('title') ?? '').toLowerCase()
-    const aria = (b.getAttribute('aria-label') ?? '').toLowerCase()
-    return title.includes(n) || aria.includes(n)
+const byTestId = (container: HTMLElement, id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`)
+const chipNamed = (container: HTMLElement, label: string) =>
+  Array.from(container.querySelectorAll<HTMLButtonElement>('[data-testid="command-chip"]')).find((b) => (b.textContent ?? '').includes(label))
+const renderBar = (root: Root) => {
+  act(() => {
+    root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
   })
 }
 
@@ -159,8 +162,9 @@ beforeEach(() => {
   document.body.appendChild(container)
   root = createRoot(container)
   mockUpdate.mockClear()
-  mockToggleBar.mockClear()
+  mockSetBarCollapsed.mockClear()
   mockBarCollapsed = false
+  mockCommand = { ...baseCommand }
 })
 
 afterEach(() => {
@@ -170,13 +174,11 @@ afterEach(() => {
 
 // --- Tests ---
 
-describe('CommandBar quick-actions strip (P4b)', () => {
+describe('CommandBar session controls and chip look', () => {
   it('does NOT render the Claude Mode button or the Claude model-picker trigger', () => {
     mockSessions = [mkClaude()]
     mockActiveSessionId = 's-1'
-    act(() => {
-      root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
-    })
+    renderBar(root)
     // No button whose trimmed text is exactly "Mode".
     const modeBtn = buttons(container).find((b) => (b.textContent ?? '').trim() === 'Mode')
     expect(modeBtn).toBeUndefined()
@@ -189,9 +191,7 @@ describe('CommandBar quick-actions strip (P4b)', () => {
   it('keeps the Codex inline dropdowns for a codex session', () => {
     mockSessions = [mkCodex()]
     mockActiveSessionId = 's-1'
-    act(() => {
-      root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
-    })
+    renderBar(root)
     const text = container.textContent ?? ''
     // CodexModelDropdown exposes the gpt-5.x option list.
     expect(text).toContain('gpt-5.5')
@@ -200,57 +200,70 @@ describe('CommandBar quick-actions strip (P4b)', () => {
     expect(hasPreset).toBe(true)
   })
 
-  it('has a collapse toggle that hides the command rows when barCollapsed flips', () => {
+  it('has no collapse toggle; when barCollapsed is set the bar renders only a hidden marker', () => {
     mockSessions = [mkClaude()]
     mockActiveSessionId = 's-1'
 
-    // Expanded: the command chip is present.
-    act(() => {
-      root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
-    })
-    const expandedHasChip = buttons(container).some((b) => (b.textContent ?? '').includes('Deploy'))
-    expect(expandedHasChip).toBe(true)
+    // Shown: the row and the chip are present, and nothing on the bar is a
+    // disclosure toggle (the old "⌄ Commands N" control is gone).
+    renderBar(root)
+    expect(byTestId(container, 'command-row')).not.toBeNull()
+    expect(chipNamed(container, 'Deploy')).toBeDefined()
+    // The only disclosure on the row is the Notes tool's own popover; nothing
+    // named for the command bar / "Commands" collapses the row any more.
+    const disclosures = Array.from(container.querySelectorAll<HTMLElement>('[aria-expanded]'))
+    expect(disclosures.filter((el) => el.getAttribute('data-testid') !== 'notes-tool')).toHaveLength(0)
+    expect(disclosures.some((el) => /command/i.test(el.getAttribute('aria-label') ?? el.getAttribute('title') ?? ''))).toBe(false)
+    expect(byTestId(container, 'command-bar-hidden')).toBeNull()
 
-    // The toggle has an accessible name mentioning "command".
-    const toggle = buttonByAccessibleName(container, 'command')
-    expect(toggle).toBeDefined()
-    expect(toggle!.getAttribute('aria-expanded')).toBe('true')
-
-    // Collapse and re-render: the command chip is gone.
+    // Hidden (the bar's right-click "Hide the command bar"; Settings restores):
+    // no row, no chip, no Add -- only the marker the restore path keys on.
     mockBarCollapsed = true
-    act(() => {
-      root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
-    })
-    const collapsedHasChip = buttons(container).some((b) => (b.textContent ?? '').includes('Deploy'))
-    expect(collapsedHasChip).toBe(false)
-    // Toggle still present and now reports collapsed.
-    const toggle2 = buttonByAccessibleName(container, 'command')
-    expect(toggle2).toBeDefined()
-    expect(toggle2!.getAttribute('aria-expanded')).toBe('false')
+    renderBar(root)
+    expect(byTestId(container, 'command-bar-hidden')).not.toBeNull()
+    expect(byTestId(container, 'command-row')).toBeNull()
+    expect(chipNamed(container, 'Deploy')).toBeUndefined()
+    expect(byTestId(container, 'command-add')).toBeNull()
   })
 
-  it('renders the command colour as a dot, not as a chip background/border tint', () => {
+  it('keeps the chip surface neutral and puts the colour in the monogram tile', () => {
     mockSessions = [mkClaude()]
     mockActiveSessionId = 's-1'
-    act(() => {
-      root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
-    })
-    const chip = buttons(container).find((b) => (b.textContent ?? '').includes('Deploy'))
+    renderBar(root)
+    const chip = chipNamed(container, 'Deploy')
     expect(chip).toBeDefined()
 
-    // UAT R2: the chip is a neutral token-driven pill. Its background/border
-    // must NOT be tinted with the command colour -- they use semantic surface
-    // and border tokens instead, so the colour reads only as a leading dot.
+    // The chip is a neutral token-driven pill: background and border use the
+    // semantic surface and border tokens, never the command colour.
     expect(chip!.style.background).toBe('var(--surface-raised)')
     expect(chip!.style.borderColor).toBe('var(--border-subtle)')
     expect(chip!.style.background).not.toContain('243')
 
-    // A descendant dot carries the colour as inline backgroundColor.
-    const dot = Array.from(chip!.querySelectorAll<HTMLElement>('span')).find(
-      (s) => s.style.backgroundColor !== '',
-    )
-    expect(dot).toBeDefined()
-    // #f38ba8 -> rgb(243, 139, 168)
-    expect(dot!.style.backgroundColor.replace(/\s/g, '')).toBe('rgb(243,139,168)')
+    // No icon chosen -> the monogram tile: the label's first letter in the
+    // command colour on a 15% tint of it. (#f38ba8 -> rgb(243, 139, 168).)
+    const tile = chip!.querySelector<HTMLElement>('[data-testid="command-icon-monogram"]')
+    expect(tile).not.toBeNull()
+    expect(tile!.textContent).toBe('D')
+    expect(tile!.style.color.replace(/\s/g, '')).toBe('rgb(243,139,168)')
+    const tint = tile!.style.background.replace(/\s/g, '')
+    expect(tint).toContain('color-mix(')
+    expect(tint).toContain('rgb(243,139,168)15%')
+    // No glyph when no icon key is stored.
+    expect(chip!.querySelector('[data-testid="command-icon-glyph"]')).toBeNull()
+  })
+
+  it('draws the chosen glyph in the command colour instead of the monogram', () => {
+    mockSessions = [mkClaude()]
+    mockActiveSessionId = 's-1'
+    mockCommand = { ...baseCommand, icon: 'rocket' }
+    renderBar(root)
+    const chip = chipNamed(container, 'Deploy')!
+    const glyph = chip.querySelector<SVGElement>('[data-testid="command-icon-glyph"]')
+    expect(glyph).not.toBeNull()
+    expect(glyph!.getAttribute('data-icon')).toBe('rocket')
+    expect(glyph!.getAttribute('stroke')).toBe('#f38ba8')
+    expect(chip.querySelector('[data-testid="command-icon-monogram"]')).toBeNull()
+    // The surface stays neutral either way.
+    expect(chip.style.background).toBe('var(--surface-raised)')
   })
 })

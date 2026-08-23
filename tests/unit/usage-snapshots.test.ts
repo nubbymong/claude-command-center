@@ -16,11 +16,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const store: Record<string, unknown> = {}
 let readThrows = false
 let writeThrows = false
+/** #371: the file is THERE and cannot be read — distinct from "not there". */
+let readFails = false
 
 vi.mock('../../src/main/config-manager', () => ({
   readConfig: (key: string) => {
     if (readThrows) throw new Error('unreadable')
     return store[key] ?? null
+  },
+  readConfigChecked: (key: string) => {
+    if (readThrows) throw new Error('unreadable')
+    if (readFails) return { value: null, outcome: 'failed' }
+    return key in store ? { value: store[key], outcome: 'ok' } : { value: null, outcome: 'absent' }
   },
   writeConfig: (key: string, data: unknown) => {
     if (writeThrows) throw new Error('read-only volume')
@@ -29,7 +36,7 @@ vi.mock('../../src/main/config-manager', () => ({
   },
 }))
 
-const { parseSnapshots, loadSnapshots, saveSnapshots } = await import('../../src/main/usage/usage-snapshots')
+const { parseSnapshots, loadSnapshots, saveSnapshots, _resetSnapshotsLatchForTest } = await import('../../src/main/usage/usage-snapshots')
 import type { UsageSnapshot } from '../../src/main/usage/usage-snapshots'
 
 const bucket = (over: Record<string, unknown> = {}) => ({
@@ -44,6 +51,49 @@ beforeEach(() => {
   for (const k of Object.keys(store)) delete store[k]
   readThrows = false
   writeThrows = false
+  readFails = false
+  _resetSnapshotsLatchForTest()
+})
+
+/**
+ * #371 — an unreadable file is NOT "no snapshots".
+ *
+ * The old comment on `loadSnapshots` said it was, and every caller rebuilds the
+ * whole map and saves it back, so one EBUSY read at the wrong moment dropped
+ * every OTHER profile's snapshot too.
+ */
+describe('a read failure is not an absence', () => {
+  it('refuses to save over a file it could not read', () => {
+    store.usageSnapshots = { p1: good(), p2: good({ fetchedAt: 2_000 }) }
+    readFails = true
+
+    // The caller sees an empty map and does the ordinary thing with it.
+    expect(loadSnapshots().size).toBe(0)
+    expect(saveSnapshots(new Map())).toBe(false)
+
+    // Both profiles are still on disk.
+    readFails = false
+    const back = loadSnapshots()
+    expect(back.size).toBe(2)
+    expect(back.get('p2')!.fetchedAt).toBe(2_000)
+  })
+
+  it('resumes saving once a load succeeds', () => {
+    store.usageSnapshots = { p1: good() }
+    readFails = true
+    loadSnapshots()
+    expect(saveSnapshots(new Map())).toBe(false)
+
+    readFails = false
+    expect(loadSnapshots().size).toBe(1)
+    expect(saveSnapshots(new Map([['p9', good({ fetchedAt: 9_000 }) as UsageSnapshot]]))).toBe(true)
+    expect(loadSnapshots().get('p9')!.fetchedAt).toBe(9_000)
+  })
+
+  it('an ABSENT file still saves — a fresh install must be able to write its first snapshot', () => {
+    expect(loadSnapshots().size).toBe(0)
+    expect(saveSnapshots(new Map([['p1', good() as UsageSnapshot]]))).toBe(true)
+  })
 })
 
 describe('parseSnapshots -- what it accepts', () => {

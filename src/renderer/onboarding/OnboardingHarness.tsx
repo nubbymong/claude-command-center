@@ -5,6 +5,7 @@ import { OnboardingShell } from './OnboardingShell'
 import { stepsNewSince } from './gate'
 import { WhatsNewV2Step } from './WhatsNewV2Step'
 import { WelcomeStep } from './WelcomeStep'
+import { CommandBarStep } from './CommandBarStep'
 import { FindClaudeStep } from './FindClaudeStep'
 import { CompatibilityStep } from './CompatibilityStep'
 import { AccountsStep } from './AccountsStep'
@@ -16,6 +17,7 @@ import { CodexSignInStep } from './CodexSignInStep'
 import { TransparencyStep } from './TransparencyStep'
 import { FinishStep } from './FinishStep'
 import { settleOnboardingFinish, settleWhatsNewOnly } from './settle'
+import { seenVersion } from './whats-new-gate'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 
@@ -83,6 +85,14 @@ const PAGES: BuiltStep[] = [
     ),
   },
   { id: 'welcome', phase: 0, render: (nav) => <WelcomeStep onNext={nav.onNext} /> },
+  // The one-row command bar (#382): new in 2.1.0-beta.17, so an upgrader's
+  // notes run shows it right after the release notes; the full flow shows it
+  // after Welcome. Back is offered only when there is a page before it.
+  {
+    id: 'commandBar',
+    phase: 0,
+    render: (nav, _ctx, _done, run) => <CommandBarStep onNext={nav.onNext} onBack={run.whatsNewOnly ? undefined : nav.onBack} />,
+  },
   {
     id: 'findClaude',
     phase: 0,
@@ -152,7 +162,10 @@ export function OnboardingHarness({
   // is where that reshuffle is wanted.
   const [pages] = useState<BuiltStep[]>(() => {
     if (!whatsNewOnly) return PAGES
-    const lastSeen = useAppMetaStore.getState().meta.lastSeenVersion
+    // The stamp clamped to the last build that ran, not the raw stamp — the
+    // same origin the launch decision used (#369), so a stamp written ahead of
+    // its build cannot hide a page that is new in this one.
+    const lastSeen = seenVersion()
     const settings = { codexEnabled: useSettingsStore.getState().settings.codexEnabled }
     const newIds = new Set(stepsNewSince(lastSeen, settings).map((s) => s.id))
     return PAGES.filter((p) => p.id === 'whatsNewV2' || newIds.has(p.id))

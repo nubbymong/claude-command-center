@@ -119,12 +119,17 @@ describe('ConductorServicesPanel', () => {
     expect(findButton(r.container, /Copied/i)).toBeTruthy()
   })
 
-  it('styles Restart with a warning (red) tone (BUG-3)', async () => {
+  it('styles Restart with a destructive (danger) tone (BUG-3)', async () => {
     mockApi(mkSnap('listening'))
     const r = await renderPanel({ onClose: () => {} })
     unmount = r.unmount
     const restartBtn = findButton(r.container, /Restart/i)
-    expect(restartBtn.className).toMatch(/red/)
+    // Since #360 the panel paints from the E5 semantic tokens, so the
+    // destructive read lives in --status-danger rather than in a `red`
+    // palette class name. Assert the tone, not the old class.
+    const style = restartBtn.getAttribute('style') || ''
+    expect(style).toMatch(/--status-danger/)
+    expect(style).not.toMatch(/--status-(success|info)\b/)
   })
 
   it('Restart calls serviceHealth.restart("hooks") in utility mode', async () => {

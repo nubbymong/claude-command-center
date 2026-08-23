@@ -6,9 +6,20 @@
 // Any claim that "everything arriving here is a report about the content, never
 // an instruction" is therefore only true of the events the host merely PAINTS.
 //
-// Three of the five inbound types are paint-only (`ready`, `viewport`,
+// Three of the six inbound types are paint-only (`ready`, `viewport`,
 // `pointer`): the worst a forgery does is move a highlight box, and the geometry
-// guards bound it. Two MUTATE HOST STATE and are handled differently here:
+// guards bound it. `contentZoom` (#368) sits between the classes: it steps the
+// pane's clamped, chrome-visible zoom ladder — it cannot write a note, a
+// review, or the locked selection's IDENTITY — and is honoured only with
+// host-side evidence the frame plausibly owns the gesture (pointer hover or
+// keyboard focus; see reportedZoomIsPlausible for why not user activation).
+// What a hostile page CAN do with it: fight the user for the camera
+// (re-zooming after a Ctrl+0 — briefly; sustained fighting trips
+// CONTENT_ZOOM_BUDGET and drops the channel whole) and provoke the re-anchor
+// pass a real zoom would provoke — which writes page-authored, page-labelled
+// BOXES into the resolution map and the live lock, exactly as any reflow does,
+// under the pane's single-flight and per-intent attempt budget. Two MUTATE
+// HOST STATE and are handled differently here:
 //
 //   `contentKey`  clears the user's locked focus / disarms an armed marquee. It
 //                 is honoured only when the host can see for itself that the
@@ -45,6 +56,7 @@ import {
   type CanvasBridgeEvent,
   type CanvasHitInfo,
   type CanvasViewportInfo,
+  type CanvasZoomAction,
   canvasOrigin,
 } from '../../shared/canvas'
 import { finite, safeHit, safeViewport } from '../utils/canvas-geometry-guard'
@@ -111,6 +123,32 @@ export const INBOUND_OVERSIZE_COST = 60
  * caps sit orders of magnitude above anything legitimate and still refuse a
  * megabyte.
  */
+/**
+ * How many contentZoom intents the frame may have HONOURED per rolling window
+ * (#368). The flood budget bounds message COUNT and is too generous to bound
+ * this event's EFFECT: sixty intents a second is 10 % of the flood budget and
+ * enough to re-pin the zoom after every Ctrl+0, indefinitely.
+ *
+ * The ceiling is set the way INBOUND_FLOOD_BUDGET's is — several times the
+ * heaviest REAL rate, not just above the average one. One intent is one wheel
+ * notch (the bridge accumulates deltas to notches before relaying), a hard
+ * continuous spin is a handful of notches a second, and a free-spin wheel's
+ * flick lands a dozen-plus at once — so a frustrated user riding the clamp can
+ * genuinely produce ~100 notches in ten seconds. Three hundred is ~3× that;
+ * nothing human clears it (independent review, N2). What it bounds is THRASH
+ * — a page spending intents wholesale gets the flood budget's answer, the
+ * channel drops whole. What this deliberately does NOT bound is a patient
+ * fight (re-pinning after a user reset costs the page only a few intents, so
+ * the window funds a number of them); the chrome chip, Ctrl+0 and the drop
+ * are the answer there,
+ * and the resolve path it can provoke holds one RPC slot inside its own
+ * attempt budget regardless. Charged only for intents that PASS the
+ * plausibility gate — refused forgeries never count against a page the user
+ * is not even hovering.
+ */
+export const CONTENT_ZOOM_BUDGET = 300
+export const CONTENT_ZOOM_WINDOW_MS = 10_000
+
 export const MAX_INBOUND_STRING_CHARS = 4096
 export const MAX_INBOUND_TOTAL_CHARS = 16_384
 /** Values (and keys) looked at before a message is refused for being a graph
@@ -216,6 +254,9 @@ export interface CanvasInboundHandlers {
   /** A click the host could verify was a real user click inside the frame. */
   onContentClick: (pageX: number, pageY: number) => void
   onContentKey: (key: 'Escape' | 'ArrowUp') => void
+  /** Zoom intent relayed from the frame (#368), coalesced per animation frame:
+   *  `steps` is the net ladder movement (+in / −out), `reset` wins over steps. */
+  onContentZoom: (intent: { steps: number; reset: boolean }) => void
   /** The page exceeded the flood budget: the channel is gone for this frame. */
   onFlood: () => void
 }
@@ -307,6 +348,36 @@ export function reportedClickIsPlausible(facts: HostInputFacts): boolean {
   return facts.userActivation === true
 }
 
+/**
+ * Could this reported zoom intent have been a real gesture in the frame (#368)?
+ *
+ * A wheel needs the POINTER over the frame, not keyboard focus, and the host's
+ * own evidence for that is `:hover` on its iframe element; the zoom chords need
+ * the frame to own keyboard focus, exactly as `contentKey` does. Either
+ * suffices. Deliberately weaker than the key/click gates — no user-activation
+ * requirement (a wheel is not an activation-triggering input, so that gate
+ * would drop every genuine first gesture) and no editable-target refusal (the
+ * pointer resting on the frame while the user types a note is a REAL zoom
+ * posture — wheel over the page, draft open — and refusing it breaks the
+ * feature where it is most used).
+ *
+ * What that buys an attacker is stated where it is bounded: the header above
+ * and CONTENT_ZOOM_BUDGET. A forged intent moves a clamped, chrome-visible
+ * camera and provokes bounded host work — the re-anchor pass, whose
+ * page-authored boxes land in the resolution map and the live lock's box,
+ * labelled as the page's word; it cannot write a note, a review, the lock's
+ * identity, or anything persisted.
+ */
+export function reportedZoomIsPlausible(facts: Pick<HostInputFacts, 'activeElement' | 'frameElement'>): boolean {
+  if (!facts.frameElement) return false
+  if (facts.activeElement === facts.frameElement) return true
+  try {
+    return facts.frameElement.matches(':hover')
+  } catch {
+    return false
+  }
+}
+
 function nextFrame(run: () => void): void {
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => run())
   else setTimeout(run, 16)
@@ -323,10 +394,14 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
 
   let windowStartedAt = Date.now()
   let windowCount = 0
+  // contentZoom's own rolling window (#368) — see CONTENT_ZOOM_BUDGET.
+  let zoomWindowStartedAt = Date.now()
+  let zoomWindowCount = 0
 
   let pendingViewport: CanvasViewportInfo | null = null
   let pendingPointer: { hit: CanvasHitInfo | null } | null = null
   let pendingClick: { pageX: number; pageY: number } | null = null
+  let pendingZoom: { steps: number; reset: boolean } | null = null
   let flushQueued = false
 
   const dispose = () => {
@@ -336,6 +411,7 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
     pendingViewport = null
     pendingPointer = null
     pendingClick = null
+    pendingZoom = null
   }
 
   // Latest wins. A page that reports twice inside one frame gets one delivery,
@@ -350,12 +426,15 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
       const viewport = pendingViewport
       const pointer = pendingPointer
       const click = pendingClick
+      const zoom = pendingZoom
       pendingViewport = null
       pendingPointer = null
       pendingClick = null
+      pendingZoom = null
       if (viewport) handlers.onViewport(viewport)
       if (pointer) handlers.onPointer(pointer.hit)
       if (click) handlers.onContentClick(click.pageX, click.pageY)
+      if (zoom && (zoom.reset || zoom.steps !== 0)) handlers.onContentZoom(zoom)
     })
   }
 
@@ -476,6 +555,50 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
         return
       }
       handlers.onContentKey(key)
+      return
+    }
+    if (msg.type === 'contentZoom') {
+      // A closed vocabulary, checked on arrival like every other field the
+      // page authors; anything else in `action` is not a report this protocol
+      // emits and is dropped unread.
+      const action = (msg as { action?: unknown }).action as CanvasZoomAction | unknown
+      if (action !== 'in' && action !== 'out' && action !== 'reset') return
+      // Gated on arrival (like the click gate): hover/focus is evidence about
+      // NOW, and a later tick is a different claim.
+      if (
+        !reportedZoomIsPlausible({
+          activeElement: document.activeElement,
+          frameElement: options.getFrameElement(),
+        })
+      ) {
+        return
+      }
+      // This event's own budget (#368): past it the page is not zooming, it is
+      // fighting the user for the camera — a pinned zoom outlives every Ctrl+0
+      // — or farming the host work a zoom change triggers. Same answer as the
+      // flood budget, because it is the same offence at a rate that budget
+      // cannot see.
+      const now = Date.now()
+      if (now - zoomWindowStartedAt >= CONTENT_ZOOM_WINDOW_MS) {
+        zoomWindowStartedAt = now
+        zoomWindowCount = 0
+      }
+      if (++zoomWindowCount > CONTENT_ZOOM_BUDGET) {
+        dropFlooded()
+        return
+      }
+      const current = pendingZoom ?? { steps: 0, reset: false }
+      if (action === 'reset') {
+        // Reset wins over whatever steps were queued beside it this frame.
+        pendingZoom = { steps: 0, reset: true }
+      } else if (!current.reset) {
+        // Net movement, bounded well past the ladder's full sweep — the frame
+        // chooses how often it speaks, not how far the host walks.
+        const steps = Math.max(-16, Math.min(16, current.steps + (action === 'in' ? 1 : -1)))
+        pendingZoom = { steps, reset: false }
+      }
+      queueFlush()
+      return
     }
   }
 

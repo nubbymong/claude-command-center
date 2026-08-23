@@ -19,7 +19,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   createCanvasInboundChannel,
   reportedKeyIsPlausible,
+  reportedZoomIsPlausible,
   withinInboundSizeBounds,
+  CONTENT_ZOOM_BUDGET,
   INBOUND_FLOOD_BUDGET,
   INBOUND_OVERSIZE_COST,
   MAX_INBOUND_STRING_CHARS,
@@ -45,8 +47,15 @@ function makeHandlers(): CanvasInboundHandlers {
     onPointer: vi.fn(),
     onContentClick: vi.fn(),
     onContentKey: vi.fn(),
+    onContentZoom: vi.fn(),
     onFlood: vi.fn(),
   }
+}
+
+/** jsdom has no real hover state, so the host's `:hover` evidence is stubbed on
+ *  the element the channel actually consults. */
+function setFrameHovered(hovered: boolean): void {
+  iframe.matches = ((selector: string) => (selector === ':hover' ? hovered : false)) as typeof iframe.matches
 }
 
 function arm(): void {
@@ -250,6 +259,128 @@ describe('a forged contentClick cannot lock a focus', () => {
     fromFrame({ type: 'contentClick', pageX: Number.NaN, pageY: 'boom' })
     await flushFrame()
     expect(handlers.onContentClick).toHaveBeenCalledWith(0, 0)
+  })
+})
+
+describe('contentZoom (#368) is gated, closed-vocabulary and coalesced', () => {
+  it('is dropped when the pointer is not over the frame and the frame has no focus', async () => {
+    arm()
+    composer.focus()
+    setFrameHovered(false)
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    await flushFrame()
+    expect(handlers.onContentZoom).not.toHaveBeenCalled()
+  })
+
+  it('is honoured on the host evidence of hover, focus not required, activation not required', async () => {
+    arm()
+    composer.focus()
+    setUserActivation(false)
+    setFrameHovered(true)
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    await flushFrame()
+    expect(handlers.onContentZoom).toHaveBeenCalledWith({ steps: 1, reset: false })
+  })
+
+  it('is honoured on frame keyboard focus, hover not required (the zoom chords)', async () => {
+    arm()
+    iframe.focus()
+    setFrameHovered(false)
+    fromFrame({ type: 'contentZoom', action: 'out' })
+    await flushFrame()
+    expect(handlers.onContentZoom).toHaveBeenCalledWith({ steps: -1, reset: false })
+  })
+
+  it('refuses anything outside the closed action vocabulary', async () => {
+    arm()
+    iframe.focus()
+    for (const action of ['zoom', 5, null, undefined, { steps: 99 }, 'IN', 'reset ']) {
+      fromFrame({ type: 'contentZoom', action })
+    }
+    await flushFrame()
+    expect(handlers.onContentZoom).not.toHaveBeenCalled()
+  })
+
+  it('coalesces a burst to ONE delivery carrying the net movement', async () => {
+    arm()
+    setFrameHovered(true)
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    fromFrame({ type: 'contentZoom', action: 'out' })
+    await flushFrame()
+    expect(handlers.onContentZoom).toHaveBeenCalledTimes(1)
+    expect(handlers.onContentZoom).toHaveBeenCalledWith({ steps: 2, reset: false })
+  })
+
+  it('reset wins over steps queued beside it, in either order', async () => {
+    arm()
+    setFrameHovered(true)
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    fromFrame({ type: 'contentZoom', action: 'reset' })
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    await flushFrame()
+    expect(handlers.onContentZoom).toHaveBeenCalledTimes(1)
+    expect(handlers.onContentZoom).toHaveBeenCalledWith({ steps: 0, reset: true })
+  })
+
+  it('bounds the net movement a chatty frame can queue in one animation frame', async () => {
+    arm()
+    setFrameHovered(true)
+    // Under the zoom budget (so the channel survives) but far over the walk
+    // bound — the clamp, not the budget, is what this test pins.
+    for (let i = 0; i < 40; i++) fromFrame({ type: 'contentZoom', action: 'in' })
+    await flushFrame()
+    expect(handlers.onContentZoom).toHaveBeenCalledTimes(1)
+    const [intent] = (handlers.onContentZoom as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      { steps: number; reset: boolean },
+    ]
+    expect(Math.abs(intent.steps)).toBeLessThanOrEqual(16)
+  })
+
+  it('a zero-step frame delivers nothing at all', async () => {
+    arm()
+    setFrameHovered(true)
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    fromFrame({ type: 'contentZoom', action: 'out' })
+    await flushFrame()
+    expect(handlers.onContentZoom).not.toHaveBeenCalled()
+  })
+
+  it('the gate fails closed on a missing frame element even when nothing holds focus', () => {
+    // `null === null` must not pass the focus branch — the null-frame check is
+    // load-bearing (independent review, A4).
+    expect(reportedZoomIsPlausible({ activeElement: null, frameElement: null })).toBe(false)
+  })
+
+  it('a page over the contentZoom budget loses the channel — pinning the camera is not a right', async () => {
+    // Sixty honoured intents per rolling window is beyond any human's wheel;
+    // a page past it is re-zooming against the user (a pinned zoom would
+    // outlive every Ctrl+0) or farming the host work a zoom change triggers.
+    arm()
+    setFrameHovered(true)
+    for (let i = 0; i < CONTENT_ZOOM_BUDGET; i++) fromFrame({ type: 'contentZoom', action: 'in' })
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    expect(handlers.onFlood).toHaveBeenCalledTimes(1)
+    // Dropped whole: nothing later is heard.
+    fromFrame({ type: 'ready' })
+    expect(handlers.onReady).not.toHaveBeenCalled()
+  })
+
+  it('refused forgeries do not spend the zoom budget — only honoured intents count', async () => {
+    arm()
+    composer.focus()
+    setFrameHovered(false)
+    // Past the zoom budget but under the general flood budget — the refusals
+    // must be what saves the channel, not the message count.
+    for (let i = 0; i < CONTENT_ZOOM_BUDGET + 100; i++) fromFrame({ type: 'contentZoom', action: 'in' })
+    expect(handlers.onFlood).not.toHaveBeenCalled()
+    // The user hovers; a genuine gesture still gets through.
+    setFrameHovered(true)
+    fromFrame({ type: 'contentZoom', action: 'in' })
+    await flushFrame()
+    expect(handlers.onContentZoom).toHaveBeenCalledWith({ steps: 1, reset: false })
   })
 })
 

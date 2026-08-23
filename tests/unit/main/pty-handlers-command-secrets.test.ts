@@ -66,10 +66,25 @@ describe('pty:spawn and command secrets', () => {
     expect(spawnPty.mock.calls[0][2].commandSecrets).toBeUndefined()
   })
 
-  it('gives a shell spawn with NO config none -- there is nothing to scope to', async () => {
+  it('gives a shell spawn with NO config its GLOBAL secrets and nothing config-scoped -- a Global button runs in every session it can run in', async () => {
+    // Ask Conductor's partner shell, a resumed folder: no config, but the
+    // Global buttons are on its bar and may carry a secret. Before the ADR-009
+    // pass on #386 this spawn got nothing and the button typed a reference to
+    // an unset variable -- "runs with an empty credential unannounced".
+    commandsOnDisk = [
+      { id: 'aaa111', hasSecretArg: true, scope: 'global' },
+      { id: 'bbb222', hasSecretArg: true, scope: 'config', configId: 'other' },
+    ]
+    vault['aaa111_cmdsecret'] = 'tok-a'
+    vault['bbb222_cmdsecret'] = 'tok-b'
+    await spawn({}, SID, { cwd: 'C:/w', shellOnly: true })
+    expect(spawnPty.mock.calls[0][2].commandSecrets).toEqual({ aaa111: 'tok-a' })
+  })
+
+  it('gives an SSH shell spawn none -- the env never leaves this PC, so nothing is decrypted for it', async () => {
     commandsOnDisk = [{ id: 'aaa111', hasSecretArg: true, scope: 'global' }]
     vault['aaa111_cmdsecret'] = 'tok-a'
-    await spawn({}, SID, { cwd: 'C:/w', shellOnly: true })
+    await spawn({}, SID, { cwd: 'C:/w', shellOnly: true, configId: 'cfg1', ssh: { host: 'box', port: 22, username: 'u', remotePath: '~' } })
     expect(spawnPty.mock.calls[0][2].commandSecrets).toBeUndefined()
   })
 })

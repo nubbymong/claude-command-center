@@ -10,7 +10,9 @@
 // arguments are advertised, validated, and then overruled by the bound id — a
 // mismatch is refused rather than silently redirected.
 
+import { AGENT_CLOSE_VERDICTS } from '../shared/canvas'
 import type {
+  AgentCloseVerdict,
   CanvasRenderSource,
   CanvasSnapshotOptions,
   CanvasSnapshotResult,
@@ -82,6 +84,10 @@ export interface CanvasToolDeps {
     worktree: string | null
     worktreePending: boolean
   }
+  /** Why this session has NO project root, when a floor refused it (#371).
+   *  Optional so existing wirings keep working; without it a refusal falls back
+   *  to the generic message, which is the pre-#371 behaviour. */
+  canvasRootRefusalFor?: (sessionId: string) => string | null
   /**
    * Read a design document the agent wrote to disk (`htmlPath`). Injected so
    * this module touches no filesystem; the caller confines the path to the
@@ -112,6 +118,22 @@ export interface CanvasToolDeps {
   /** Mark notes the agent has acted on. The agent's one write into the review
    *  store, and it can only ever say "addressed" — see canvas_resolve. */
   markAddressed: (sessionId: string, reviewId: string, annotationIds: readonly string[]) => { addressed: string[]; skipped: string[] }
+  /**
+   * Close notes on the USER's explicit instruction — see canvas_verdict.
+   *
+   * The agent's SECOND (and last) write into the review store. Two properties
+   * belong to the implementation, not to this signature, and the tool relies on
+   * both: it refuses any verdict outside `AgentCloseVerdict` (so 'approved' is
+   * unreachable), and it refuses any review that still has notes waiting on the
+   * agent. A tool schema cannot be the enforcement for either — these arguments
+   * are model-generated.
+   */
+  closeByAgent: (
+    sessionId: string,
+    reviewId: string,
+    annotationIds: readonly string[] | null,
+    verdict: AgentCloseVerdict,
+  ) => { closed: string[]; skipped: string[]; reviewClosed: boolean }
 }
 
 function textResult(text: string, isError = false) {
@@ -261,6 +283,7 @@ function captureFailureReason(err: unknown): string {
 function renderFailureReason(
   err: unknown,
   roots?: { project: string | null; worktree: string | null; worktreePending: boolean },
+  refusal?: string | null,
 ): string {
   const message = err instanceof Error ? err.message : ''
   if (/version cap/i.test(message)) {
@@ -276,6 +299,10 @@ function renderFailureReason(
     if (advice) {
       return `that directory is not inside the folders this session serves from: ${advice} Build into one of them (for example <that folder>/dist) and render that path.`
     }
+    // Same half-closed gap the design path had (#371): when a FLOOR emptied the
+    // root list, `rootAdvice` is null and "build inside the project" is advice
+    // the agent has already followed. Name the actual reason.
+    if (refusal) return `${refusal} Nothing can be served for this session until that is changed.`
     return 'that directory is not inside this session’s project folder, which is the only place the canvas serves from. Build inside the project you are working in and render that path.'
   }
   if (/distRoot does not exist|not a directory/i.test(message)) return 'that build directory does not exist.'
@@ -379,6 +406,7 @@ function rootAdvice(
 function designFileFailureReason(
   err: unknown,
   roots?: { project: string | null; worktree: string | null; worktreePending: boolean },
+  refusal?: string | null,
 ): string {
   const message = err instanceof Error ? err.message : ''
   if (/too large/i.test(message)) return 'that html file is too large to render.'
@@ -396,6 +424,14 @@ function designFileFailureReason(
     // happens to run in (that value comes out of a transcript the model can
     // write), and nothing at all when the configured directory is the home
     // directory.
+    // #371: when the root list is EMPTY because a floor refused it, say which
+    // floor. Telling the agent to "write it inside the project folder" is
+    // useless there — that is exactly where it already wrote it — and the
+    // branch above that names the folders which WOULD have worked is
+    // unreachable, because the refusal is what emptied the list.
+    if (refusal) {
+      return `${refusal} Nothing can be rendered by path for this session until that is changed.`
+    }
     return 'that file is outside this session’s project folder, which is the only place the canvas reads from. Write the html inside the project folder configured for this session, then render that path. (A session configured on your home folder has no project folder and cannot render by path.)'
   }
   return 'that html file could not be read. Check the path you wrote it to.'
@@ -448,7 +484,14 @@ export async function runCanvasRender(
         // one the render itself is keyed to — never rawArgs.cccSessionId.
         bytes = deps.readDesignFile(rawArgs.htmlPath, sessionId)
       } catch (err) {
-        return { text: `Could not render the canvas: ${designFileFailureReason(err, safeRoots(deps, sessionId))}`, isError: true }
+        return {
+          text: `Could not render the canvas: ${designFileFailureReason(
+            err,
+            safeRoots(deps, sessionId),
+            (() => { try { return deps.canvasRootRefusalFor?.(sessionId) ?? null } catch { return null } })(),
+          )}`,
+          isError: true,
+        }
       }
       // Re-measured here even though the reader guards too: this is the
       // untrusted ingress and the cap must hold in THIS file's logic.
@@ -511,7 +554,14 @@ export async function runCanvasRender(
     // their own agent's work.
     rendered = deps.renderVersion(sessionId, source)
   } catch (err) {
-    return { text: `Could not render the canvas: ${renderFailureReason(err, safeRoots(deps, sessionId))}`, isError: true }
+    return {
+      text: `Could not render the canvas: ${renderFailureReason(
+        err,
+        safeRoots(deps, sessionId),
+        (() => { try { return deps.canvasRootRefusalFor?.(sessionId) ?? null } catch { return null } })(),
+      )}`,
+      isError: true,
+    }
   }
 
   // Both ids are ours: one minted by the store, one a `v<n>` counter. Nothing
@@ -932,6 +982,177 @@ function describeResolveFailure(err: unknown): string {
   return 'the review store refused the change.'
 }
 
+// ── canvas_verdict — close-out on the user's word (#365) ────────────────────
+
+interface RawVerdictArgs {
+  reviewId?: unknown
+  annotationIds?: unknown
+  verdict?: unknown
+  cccSessionId?: unknown
+}
+
+/**
+ * A FIFTH verb rather than a `verdict` field on canvas_resolve, deliberately.
+ *
+ * canvas_resolve's never-approve guarantee is structural: it has no state
+ * argument at all, and 'addressed' is a constant in its code path. Adding a
+ * verdict field would trade that for a validation check — a strictly weaker
+ * property on the one boundary that most needs the strong one. The two verbs
+ * also carry opposite preconditions (resolve moves notes waiting on the AGENT;
+ * verdict closes notes waiting on the USER), and a single entry point holding
+ * both guards is how a guard ends up on the wrong branch.
+ *
+ * They also mean different things about authority. canvas_resolve is the agent
+ * reporting its OWN work. canvas_verdict is the agent acting as a proxy for
+ * something the user said in chat — so the write is stamped `closedBy: 'agent'`
+ * and surfaced to the user in those words. That provenance deserves its own
+ * verb, its own description, and its own audit.
+ */
+export function runCanvasVerdict(
+  rawArgs: RawVerdictArgs,
+  sessionId: string,
+  deps: Pick<CanvasToolDeps, 'closeByAgent' | 'getCanvasState' | 'getReviewCounts'>,
+): { text: string; isError: boolean } {
+  if (typeof rawArgs.reviewId !== 'string' || !REVIEW_ID_SHAPE.test(rawArgs.reviewId)) {
+    return { text: 'canvas_verdict needs `reviewId` — the round the user asked you to close, as the chat marker gave it (e.g. "R3").', isError: true }
+  }
+
+  // The never-approve gate, stated in the words the agent needs to read. This
+  // is the FIRST check on the verdict and the store re-runs it as the last:
+  // the tool description is a request, the schema is a filter, and neither is
+  // the boundary. Any value that is not one of the two — 'approved',
+  // 'approve', 'Stale', an object — dies here.
+  const verdict = rawArgs.verdict
+  if (typeof verdict !== 'string' || !(AGENT_CLOSE_VERDICTS as readonly string[]).includes(verdict)) {
+    return {
+      text:
+        "canvas_verdict closes a note as 'stale' (the work it asked about has shipped) or 'dismissed' (dropped without action). " +
+        'It cannot approve: approval is the user’s own click in the Canvas pane, and no tool can make it for them. ' +
+        'If they said the work is good, close it as stale and say so — do not claim they approved it.',
+      isError: true,
+    }
+  }
+
+  // Omitted = the whole round, which is the common case ("close the ones
+  // waiting on me"). Present but empty is a mistake worth naming rather than
+  // silently widening into "all of them".
+  let ids: string[] | null = null
+  if (rawArgs.annotationIds != null) {
+    const raw = rawArgs.annotationIds
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return { text: 'Leave `annotationIds` out to close the whole round, or pass the note ids to close, e.g. ["a2","a3"].', isError: true }
+    }
+    if (raw.length > MAX_RESOLVE_IDS) {
+      return { text: `That is more than ${MAX_RESOLVE_IDS} note ids; a review never holds that many.`, isError: true }
+    }
+    ids = []
+    for (const v of raw) {
+      if (typeof v !== 'string' || !ANNOTATION_ID_SHAPE.test(v)) {
+        return { text: 'Every entry in `annotationIds` must be a note id of the shape "a<number>", as canvas_review reported it.', isError: true }
+      }
+      ids.push(v)
+    }
+  }
+
+  let result: { closed: string[]; skipped: string[]; reviewClosed: boolean }
+  try {
+    result = deps.closeByAgent(sessionId, rawArgs.reviewId, ids, verdict as AgentCloseVerdict)
+  } catch (err) {
+    return { text: `Could not close those notes: ${describeVerdictFailure(err)}`, isError: true }
+  }
+
+  if (result.closed.length === 0) {
+    return {
+      text:
+        'Nothing was closed. The note ids you passed are not on that round, or the user has already ruled on them from the Canvas pane. ' +
+        'Fetch the round again with canvas_review to see where it stands.',
+      isError: true,
+    }
+  }
+
+  // Every value below is store-minted — ids the store issued and counts it
+  // returned. This line is operator voice and rides outside any envelope, so
+  // nothing the model supplied is echoed back into it.
+  const parts: string[] = []
+  const word = verdict === 'stale' ? 'stale (the work shipped)' : 'dismissed (dropped without action)'
+  parts.push(`Closed ${result.closed.length} note(s) on ${rawArgs.reviewId} as ${word}, on the user's instruction: ${result.closed.join(', ')}.`)
+  if (result.skipped.length > 0) {
+    parts.push(`Left ${result.skipped.length} unchanged (not on this round, or already ruled on by the user): ${result.skipped.join(', ')}.`)
+  }
+  if (result.reviewClosed) parts.push(`${rawArgs.reviewId} is now closed.`)
+  parts.push(
+    'Recorded as closed by you on their instruction — the Canvas pane lists these under Closed, apart from the user’s own approvals, and Reopen puts any of them back in one click.',
+  )
+  parts.push('This is not approval. Do not tell the user their notes were approved; say you closed them because they asked you to.')
+
+  // What is LEFT, read AFTER the write so it reflects what persisted. Same
+  // discipline as canvas_resolve: this is the line that stops an agent
+  // reporting a clean board over notes still in play.
+  try {
+    const canvas = deps.getCanvasState(sessionId)
+    const counts = canvas ? deps.getReviewCounts(canvas.canvasId) : null
+    if (counts) {
+      if (counts.openReviewIds.length > 0) {
+        parts.push(`${counts.openReviewIds.length} review(s) on this canvas still have notes in play: ${listIds(counts.openReviewIds)}.`)
+      } else {
+        parts.push('Nothing else on this canvas is waiting on either of you.')
+      }
+      if (counts.draftNotes > 0) {
+        parts.push(`The user also has ${counts.draftNotes} unsubmitted note(s) here — more may be coming.`)
+      }
+    }
+  } catch {
+    /* never fail a completed write over a status line */
+  }
+  return { text: parts.join(' '), isError: false }
+}
+
+/**
+ * Operator-authored causes for a refused close-out.
+ *
+ * The scope refusals are the interesting ones: they have to tell the agent WHY
+ * it may not close a round it was told to close, in a way that leads somewhere
+ * (do the work, or hand back), rather than reading as a malfunction.
+ */
+function describeVerdictFailure(err: unknown): string {
+  const msg = err instanceof Error ? err.message : ''
+  const counts = err as { openNotes?: number; addressedNotes?: number; unseenNotes?: number; selfAddressed?: boolean }
+  if (msg === 'no canvas for session') return 'this session has no canvas.'
+  if (msg === 'review not on this canvas') {
+    return "that round is not on this session's current canvas. If your last render named a different subject, the canvas changed under you — re-render the subject the round belongs to, then close it."
+  }
+  if (msg === 'review is still a draft') return 'that round has not been submitted yet, so there is nothing on it to close.'
+  if (msg === 'review is still with the agent') {
+    const n = typeof counts.openNotes === 'number' ? counts.openNotes : 0
+    return (
+      `that round still has ${n} note(s) waiting on YOU, so it is not the user's to close yet. ` +
+      'Do the work and mark them with canvas_resolve first; only a round where every note is addressed can be closed this way. ' +
+      'If the user wants it dropped regardless, they do that from the Canvas pane.'
+    )
+  }
+  if (msg === 'review has nothing waiting on the user') {
+    return 'that round has nothing left waiting on the user — every note on it has already been ruled on.'
+  }
+  if (msg === 'review has not reached the user') {
+    const n = typeof counts.unseenNotes === 'number' ? counts.unseenNotes : 0
+    const cause = counts.selfAddressed
+      ? `you marked ${n} of those note(s) addressed yourself, and the user has not seen them in that state since`
+      : `the user has not seen ${n} of those note(s) in their addressed state`
+    return (
+      `${cause}. Marking a note addressed is your own claim of work; it is not the user's permission to clear it, ` +
+      'and a round you both addressed and closed never reaches them at all — however long you wait in between. ' +
+      'Hand back, tell them in plain words what you changed, and close the round only if they then ask you to. ' +
+      'Once they have the round on screen this call will go through; they can also close it themselves from the Canvas pane in one click.'
+    )
+  }
+  if (msg === 'invalid verdict') {
+    return "the verdict must be 'stale' or 'dismissed'. No tool can approve a note."
+  }
+  if (msg === 'invalid review id') return "that is not a review id. Review ids look like 'R7' — take the one from the chat marker."
+  if (msg.includes('review store')) return 'the review store for this canvas is unreadable.'
+  return 'the review store refused the change.'
+}
+
 export function registerCanvasTools(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   server: any, // McpServer — lazy-typed in conductor-mcp-server.ts
@@ -1079,6 +1300,38 @@ export function registerCanvasTools(
         )
       }
       const result = runCanvasResolve(rawArgs, sessionId, deps)
+      return textResult(result.text, result.isError)
+    },
+  )
+
+  server.tool(
+    'canvas_verdict',
+    'Close out a round of canvas notes BECAUSE THE USER TOLD YOU TO — "mark those stale", "we shipped that, clear them", "drop the rest". Only ever call this on an explicit instruction from the user in this conversation; never to tidy up a board you think is finished. Pass the review id and a verdict: "stale" when the work the notes asked about has shipped, "dismissed" when they are being dropped without action. Leave annotationIds out to close the whole round, or name specific notes. It can NEVER approve — approval is a click only the user can make, and the app refuses any other verdict rather than trusting this description. It can also only close a round that is already waiting on the user (every note on it addressed); if notes are still waiting on you, do that work and canvas_resolve them first — and a round the user has not yet SEEN in that addressed state is refused however long ago you addressed it, because marking your own work addressed is not their permission to clear it. Hand back between the two: the refusal lifts once they have had the round on screen. What you close is recorded as "closed by the agent on your instruction", listed separately from the user\'s own approvals, and the user can reopen any of it in one click. Nothing is deleted: the canvas, its versions and the note text all stay.',
+    {
+      reviewId: zMod.string().describe('The round the user asked you to close, e.g. "R3" — the same id you passed to canvas_review.'),
+      verdict: zMod
+        .enum(AGENT_CLOSE_VERDICTS)
+        .describe(
+          '"stale" — the work these notes were about has shipped, so they are no longer live. "dismissed" — the user is dropping them without action. There is no approve: only the user can approve a note.',
+        ),
+      annotationIds: zMod
+        .array(zMod.string())
+        .optional()
+        .describe('Optional. The specific note ids to close ("a2", "a3", …). Omit to close every note on the round that is waiting on the user. At most 100.'),
+      cccSessionId: zMod
+        .string()
+        .optional()
+        .describe('Ignored — the session is resolved from the MCP connection and cannot be set here. Leave unset.'),
+    },
+    async (rawArgs: RawVerdictArgs) => {
+      const sessionId = getBoundSessionId()
+      if (!sessionId) {
+        return textResult(
+          'Canvas unavailable: this MCP connection has no bound Conductor session. Restart the session from inside AI Code Conductor.',
+          true,
+        )
+      }
+      const result = runCanvasVerdict(rawArgs, sessionId, deps)
       return textResult(result.text, result.isError)
     },
   )

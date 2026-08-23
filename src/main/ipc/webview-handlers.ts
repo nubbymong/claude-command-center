@@ -6,6 +6,7 @@ import {
   checkUrl,
   openWebview,
   closeWebview,
+  forgetWebviewProfile,
   closeAllWebviews,
   setWebviewBounds,
   setWebviewVisible,
@@ -93,6 +94,15 @@ export function registerWebviewHandlers(getWindow: () => BrowserWindow | null): 
   ipcMain.handle(IPC.WEBVIEW_CLOSE, async (_event, sessionId: string) => {
     sessionIdSchema.parse(sessionId)
     return closeWebview(sessionId)
+  })
+
+  // The session is gone for good, so its browser profile goes with it (#371).
+  // Deliberately distinct from WEBVIEW_CLOSE, which only destroys the view: a
+  // hidden tab, a restart and an in-tile account switch all close the view and
+  // must KEEP the cookies — they come back under the same session id.
+  ipcMain.handle(IPC.WEBVIEW_FORGET, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    return forgetWebviewProfile(sessionId)
   })
 
   ipcMain.handle(IPC.WEBVIEW_SET_BOUNDS, async (_event, sessionId: string, bounds: unknown) => {

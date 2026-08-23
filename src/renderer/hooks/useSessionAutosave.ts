@@ -35,8 +35,24 @@ function sessionsKey(sessions: { id: string }[]): string {
   return sessions.map((s) => s.id).join('\n')
 }
 
+// Module-level so the discard paths can cancel a pending autosave (#397 round-2).
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Cancel a pending debounced autosave. Call this on the discard paths
+ * (Close-without-saving / Don't-open) BEFORE `session.clear()`: a timer armed by a
+ * recent session add/remove would otherwise fire in the ~1s gap AFTER the clear and
+ * rewrite the on-disk file (and the main-side cache) with the very set the user
+ * just discarded — which the exit flush then re-asserts on the next launch.
+ */
+export function cancelSessionAutosave(): void {
+  if (autosaveTimer) {
+    clearTimeout(autosaveTimer)
+    autosaveTimer = null
+  }
+}
+
 export function useSessionAutosave(): void {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastKey = useRef<string>(sessionsKey(useSessionStore.getState().sessions))
   useEffect(() => {
     const unsub = useSessionStore.subscribe((state, prev) => {
@@ -46,14 +62,15 @@ export function useSessionAutosave(): void {
       const key = sessionsKey(state.sessions)
       if (key === lastKey.current) return
       lastKey.current = key
-      if (timer.current) clearTimeout(timer.current)
-      timer.current = setTimeout(() => {
+      if (autosaveTimer) clearTimeout(autosaveTimer)
+      autosaveTimer = setTimeout(() => {
+        autosaveTimer = null
         void window.electronAPI?.session?.save(buildSessionState())
       }, DEBOUNCE_MS)
     })
     return () => {
       unsub()
-      if (timer.current) clearTimeout(timer.current)
+      cancelSessionAutosave()
     }
   }, [])
 }

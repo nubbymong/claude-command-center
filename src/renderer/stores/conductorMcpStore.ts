@@ -10,13 +10,24 @@ interface ConductorMcpState {
   visionConfig: GlobalVisionConfig
   browserRunning: boolean
   browserConnected: boolean
+  /**
+   * #371 MAJOR-5. The token main handed out with the config this store is
+   * holding. It goes back with every save so main can refuse a save built from
+   * defaults that were shown while the settings file was unreadable — by then
+   * the read may have recovered elsewhere, so the latch alone cannot tell.
+   * 0 means "never loaded"; the handler treats a mismatch as stale.
+   */
+  visionConfigGeneration: number
+  /** True when the last load could not READ the settings, so `visionConfig`
+   *  holds defaults that are NOT what is on disk. */
+  visionConfigReadFailed: boolean
 
   // Error surface (shared across sub-tools)
   error: string | null
 
   // Actions
   loadConfig: () => Promise<void>
-  saveConfig: (config: GlobalVisionConfig) => Promise<void>
+  saveConfig: (config: GlobalVisionConfig) => Promise<{ ok: boolean; error?: string }>
   launchBrowser: () => Promise<void>
   stopBrowser: () => Promise<void>
   fetchStatus: () => Promise<void>
@@ -40,16 +51,45 @@ export const useConductorMcpStore = create<ConductorMcpState>((set, get) => ({
   visionConfig: { ...DEFAULT_CONFIG },
   browserRunning: false,
   browserConnected: false,
+  visionConfigGeneration: 0,
+  visionConfigReadFailed: false,
   error: null,
 
+  // #371 MINOR-5/MAJOR-5. `config: null` is two different things and they need
+  // opposite handling: "nothing saved yet" (defaults are the honest answer) and
+  // "could not read the file" (defaults are a LIE that the user will then save
+  // over their real settings). Main now says which, so say so too.
   loadConfig: async () => {
-    const config = await window.electronAPI.vision.getConfig()
-    if (config) set({ visionConfig: config })
+    set({ error: null })
+    const result = await window.electronAPI.vision.getConfig()
+    if (result.readFailed) {
+      set({
+        visionConfigGeneration: result.generation,
+        visionConfigReadFailed: true,
+        error: 'Vision settings could not be read, so the values shown are defaults, not your saved settings. Your settings file is untouched — reopen this panel once it is readable.',
+      })
+      return
+    }
+    set({
+      visionConfig: result.config ?? { ...DEFAULT_CONFIG },
+      visionConfigGeneration: result.generation,
+      visionConfigReadFailed: false,
+    })
   },
 
   saveConfig: async (config) => {
-    await window.electronAPI.vision.saveConfig(config)
-    set({ visionConfig: config })
+    set({ error: null })
+    const result = await window.electronAPI.vision.saveConfig(config, get().visionConfigGeneration)
+    if (!result.ok) {
+      // Includes the `stale` case: the form was built from defaults shown while
+      // the file was unreadable, so main refused to write them over the real
+      // settings. Either way the config is NOT on disk — don't commit it here.
+      const error = result.error || 'Vision settings could not be saved.'
+      set({ error })
+      return { ok: false, error }
+    }
+    set({ visionConfig: config, visionConfigReadFailed: false })
+    return { ok: true }
   },
 
   launchBrowser: async () => {

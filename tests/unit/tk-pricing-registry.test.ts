@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getPricingWithSource, getPricing } from '../../src/main/tokenomics/tk-pricing'
+import { getPricingWithSource, getPricing, registryFallbackPricing } from '../../src/main/tokenomics/tk-pricing'
 
 // livePricing is null in unit tests (no fetch), so resolution exercises the
 // registry-fallback chain. The registry service self-initializes on import
@@ -37,10 +37,17 @@ describe('getPricingWithSource', () => {
   // Old key order: fable-5, opus-4-8, opus-4-8-fast, opus-4-7, opus-4-6, ...
   // New key order: fable-5, opus-4-8-fast, opus-4-8, opus-4-7, opus-4-6, ...
   //
-  // For date-suffixed ids the first key whose BASE is a prefix wins:
+  // For date-suffixed ids the LONGEST base that prefixes the model wins (#385
+  // changed this from first-hit; registry order became a UI concern, and a
+  // first-hit rule let `claude-opus-5` — base 'claude-opus' — shadow the far
+  // more specific 'claude-opus-4-8-fast' purely by sitting earlier):
   //   opus-4-8-fast has NO numeric suffix to strip → base stays 'claude-opus-4-8-fast'
   //                 → startsWith check FAILS for all three NON-FAST cases below
-  //   opus-4-8      base → 'claude-opus' → matches all claude-opus-* → SAME first hit
+  //   opus-4-8      base → 'claude-opus' → matches all claude-opus-*
+  //
+  // Ties on base length keep the FIRST key, i.e. registry order — see the
+  // tie-invariant test at the bottom, which requires every tie to be
+  // price-identical so position can never move a number.
   //
   // Therefore old and new produce identical numbers for the three NON-FAST cases.
   // The -fast date-suffixed case is intentionally DIFFERENT — see pinned test below.
@@ -73,5 +80,51 @@ describe('getPricingWithSource', () => {
     const r = getPricingWithSource('claude-opus-4-8-fast-20260601')
     expect(r.source).toBe('prefix')
     expect(r.pricing.input).toBe(10)
+  })
+
+  // The prefix match resolves ties on base length by registry POSITION, which
+  // is only safe while every tie is price-identical. Adding a differently-priced
+  // member to an existing family would otherwise silently re-price sibling
+  // models according to where the entry was pasted. Fail here instead (#385 Q7).
+  //
+  // KNOWN EXCEPTION, tracked in #411: claude-opus-4-6 carries 15/75 where the
+  // published rate is 5/25, which makes it the one tie whose value depends on
+  // order (a dated `claude-opus-4-6-*` prefix-resolves to a sibling's 5/25).
+  // Correcting the price removes the exception — DELETE this list when #411
+  // lands, so the invariant becomes unconditional.
+  const KNOWN_PRICE_DISCREPANCIES = new Set(['claude-opus-4-6'])
+
+  it('every base-length tie is price-identical, so registry order cannot move a price', () => {
+    const fallback = registryFallbackPricing()
+    const byBase = new Map<string, string[]>()
+    for (const key of Object.keys(fallback)) {
+      const base = key.replace(/-\d+[-\d]*$/, '')
+      byBase.set(base, [...(byBase.get(base) ?? []), key])
+    }
+    const offenders: string[] = []
+    for (const [base, keys] of byBase) {
+      if (keys.length < 2) continue
+      const reference = keys.find((k) => !KNOWN_PRICE_DISCREPANCIES.has(k))
+      if (!reference) continue
+      for (const k of keys) {
+        if (k === reference || KNOWN_PRICE_DISCREPANCIES.has(k)) continue
+        if (JSON.stringify(fallback[k]) !== JSON.stringify(fallback[reference])) {
+          offenders.push(`${reference} vs ${k} (base "${base}")`)
+        }
+      }
+    }
+    expect(
+      offenders,
+      'these keys collapse to the same base but price differently, so the prefix match would depend on ' +
+      'registry order. Give one a more specific key, align the prices, or record it in KNOWN_PRICE_DISCREPANCIES.',
+    ).toEqual([])
+  })
+
+  it('the known price discrepancies are exactly the ones #411 tracks', () => {
+    // Guards the exception list itself: a NEW wrong price must not be able to
+    // hide behind it, and the list must shrink to empty when #411 is fixed.
+    const fallback = registryFallbackPricing()
+    expect(fallback['claude-opus-4-6'].input).toBe(15)     // published 5 — see #411
+    expect([...KNOWN_PRICE_DISCREPANCIES]).toEqual(['claude-opus-4-6'])
   })
 })

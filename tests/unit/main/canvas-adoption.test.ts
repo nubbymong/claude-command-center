@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 import { vi } from 'vitest'
 
 vi.mock('../../../src/main/ipc/setup-handlers', () => {
@@ -66,12 +67,25 @@ function restart() {
   reviews._resetCanvasReviewStoreForTest()
 }
 
+/** Temp dirs made outside the mocked resources directory, so `afterAll` can
+ *  still sweep them — the fixtures moved out of it in #371 and nothing was
+ *  removing them. */
+const extraTempDirs: string[] = []
+function tmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  extraTempDirs.push(dir)
+  return dir
+}
+
 beforeEach(() => {
   restart()
   fs.rmSync(path.join(getResourcesDirectory(), 'canvas'), { recursive: true, force: true })
 })
 
 afterAll(() => {
+  for (const d of extraTempDirs.splice(0)) {
+    try { fs.rmSync(d, { recursive: true, force: true }) } catch { /* best-effort */ }
+  }
   try {
     fs.rmSync(getResourcesDirectory(), { recursive: true, force: true })
   } catch {
@@ -343,8 +357,17 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
 
 describe('resolveInsideCanvasRoot (the htmlPath confinement)', () => {
   it('refuses everything when no root is registered, and confines to a registered one', () => {
-    const projectDir = path.join(getResourcesDirectory(), 'confine-proj')
-    const outsideDir = path.join(getResourcesDirectory(), 'confine-outside')
+    // Outside the resources directory: the floor now refuses a served root
+    // under it (#371). Both dirs move together so the "outside" one stays
+    // outside the registered root, which is what this test is about.
+    // mkdtemp, not a fixed name: this repo mandates parallel sessions
+    // (AGENTS.md, ADR-012), and two `npx vitest run`s sharing
+    // `<tmp>/ccc-adopt-confine-proj` is an EPERM window on Windows. Both dirs
+    // live under one parent so `outsideDir` stays a real sibling OUTSIDE the
+    // registered root, which is what this test is about.
+    const confineBase = tmpDir('ccc-adopt-confine-')
+    const projectDir = path.join(confineBase, 'proj')
+    const outsideDir = path.join(confineBase, 'outside')
     fs.mkdirSync(projectDir, { recursive: true })
     fs.mkdirSync(outsideDir, { recursive: true })
     const inside = path.join(projectDir, 'mockup.html')
@@ -360,7 +383,11 @@ describe('resolveInsideCanvasRoot (the htmlPath confinement)', () => {
     // The read that the adversarial pass drove to a private key.
     expect(() => store.resolveInsideCanvasRoot(outside, SID_A)).toThrow(/registered canvas root/i)
     // Traversal out of a registered root, and a relative path.
-    expect(() => store.resolveInsideCanvasRoot(path.join(projectDir, '..', 'confine-outside', 'secret.txt'), SID_A)).toThrow(
+    // `outsideDir`, not a hardcoded basename: the fixtures moved and the literal
+    // stopped naming the real file, so this normalised to a path that does not
+    // exist and passed on the missing-file branch instead of the containment
+    // one — it would have passed with the containment logic deleted (#371).
+    expect(() => store.resolveInsideCanvasRoot(path.join(projectDir, '..', path.basename(outsideDir), 'secret.txt'), SID_A)).toThrow(
       /registered canvas root/i,
     )
     expect(() => store.resolveInsideCanvasRoot('mockup.html', SID_A)).toThrow(/registered canvas root/i)

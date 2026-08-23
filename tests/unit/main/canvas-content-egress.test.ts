@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 import type { CanvasFrameNavigationDetails } from '../../../src/main/canvas/ccc-ux-protocol'
 
 vi.mock('../../../src/main/ipc/setup-handlers', () => {
@@ -57,7 +58,19 @@ beforeEach(() => {
   fs.rmSync(path.join(getResourcesDirectory(), 'canvas'), { recursive: true, force: true })
 })
 
+/** Dist dirs moved OUT of the resources directory in #371, so the wholesale
+ *  sweep below no longer reached them. Tracked and removed here instead. */
+const extraTempDirs: string[] = []
+function tmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  extraTempDirs.push(dir)
+  return dir
+}
+
 afterAll(() => {
+  for (const d of extraTempDirs.splice(0)) {
+    try { fs.rmSync(d, { recursive: true, force: true }) } catch { /* best-effort */ }
+  }
   try {
     fs.rmSync(getResourcesDirectory(), { recursive: true, force: true })
   } catch {
@@ -81,7 +94,9 @@ describe('served CSP blocks WebRTC', () => {
   })
 
   it('carries webrtc \'block\' on a UAT document too', async () => {
-    const dist = fs.mkdtempSync(path.join(getResourcesDirectory(), 'dist-'))
+    // Outside the resources directory: served content may not live inside it,
+    // and the floor now refuses a root under it (#371).
+    const dist = tmpDir('ccc-egress-dist-')
     fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><html><body>u</body></html>')
     expect(store.registerCanvasUatRoot(SID, dist)).toBe(true)
     const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })
@@ -342,7 +357,8 @@ describe('resource hints cannot carry data out', () => {
     const { res } = await serveDesign('<!doctype html><html><body>x</body></html>')
     expect(res.headers.get('X-DNS-Prefetch-Control')).toBe('off')
 
-    const dist = fs.mkdtempSync(path.join(getResourcesDirectory(), 'dist-hints-'))
+    // Outside the resources directory — see the note on the UAT case above (#371).
+    const dist = tmpDir('ccc-egress-hints-')
     fs.writeFileSync(path.join(dist, 'index.html'), '<!doctype html><html><body>u</body></html>')
     expect(store.registerCanvasUatRoot(SID, dist)).toBe(true)
     const { canvasId } = store.renderVersion(SID, { mode: 'uat', distRoot: dist })

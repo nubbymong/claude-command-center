@@ -2,6 +2,16 @@ import { create } from 'zustand'
 import type { TeamTemplate, TeamRun, TeamRunStatus } from '../types/electron'
 import { trackUsage } from './tipsStore'
 
+/**
+ * Outcome of a persisting mutation. `ok:false` means main REFUSED or FAILED the
+ * disk write (#371 BLOCKER-1) — the change is not on disk, so the store must not
+ * pretend it is. Callers show `error` and keep the user's work where it is.
+ */
+export interface TeamMutationResult {
+  ok: boolean
+  error?: string
+}
+
 interface TeamState {
   teams: TeamTemplate[]
   runs: TeamRun[]
@@ -9,12 +19,15 @@ interface TeamState {
   selectedRunId: string | null
   showBuilder: boolean
   editingTeam: TeamTemplate | null
+  /** Why the last save/delete did not land, in words a user can act on. */
+  error: string | null
 
   hydrate: (teams: TeamTemplate[], runs: TeamRun[]) => void
   loadTeams: () => Promise<void>
   loadRuns: () => Promise<void>
-  saveTeam: (team: TeamTemplate) => Promise<TeamTemplate>
-  deleteTeam: (id: string) => Promise<void>
+  saveTeam: (team: TeamTemplate) => Promise<TeamMutationResult>
+  deleteTeam: (id: string) => Promise<TeamMutationResult>
+  clearError: () => void
   runTeam: (teamId: string, projectPath?: string) => Promise<void>
   cancelRun: (runId: string) => Promise<void>
   selectTeam: (id: string | null) => void
@@ -32,6 +45,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   selectedRunId: null,
   showBuilder: false,
   editingTeam: null,
+  error: null,
 
   hydrate: (teams, runs) => {
     set({ teams: teams || [], runs: runs || [] })
@@ -47,8 +61,20 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     set({ runs })
   },
 
+  // #371 BLOCKER-1. Main answers `{ ok:false }` when the write was refused or
+  // failed, and rolls its own in-memory library back, so the ONLY correct
+  // renderer behaviour is to leave local state alone too — otherwise the team
+  // sits on screen until the next restart makes it disappear. The builder also
+  // stays open (showBuilder untouched) so the user's work is not thrown away.
   saveTeam: async (team) => {
-    const saved = await window.electronAPI.team.save(team)
+    set({ error: null })
+    const result = await window.electronAPI.team.save(team)
+    if (!result.ok) {
+      const error = result.error || 'Your team could not be saved to disk.'
+      set({ error })
+      return { ok: false, error }
+    }
+    const saved = result.team
     set(state => {
       const idx = state.teams.findIndex(t => t.id === saved.id)
       const teams = [...state.teams]
@@ -59,16 +85,25 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       }
       return { teams, showBuilder: false, editingTeam: null }
     })
-    return saved
+    return { ok: true }
   },
 
   deleteTeam: async (id) => {
-    await window.electronAPI.team.delete(id)
+    set({ error: null })
+    const result = await window.electronAPI.team.delete(id)
+    if (!result.ok) {
+      const error = result.error || 'Your team could not be deleted from disk.'
+      set({ error })
+      return { ok: false, error }
+    }
     set(state => ({
       teams: state.teams.filter(t => t.id !== id),
       selectedTeamId: state.selectedTeamId === id ? null : state.selectedTeamId,
     }))
+    return { ok: true }
   },
+
+  clearError: () => set({ error: null }),
 
   runTeam: async (teamId, projectPath) => {
     const run = await window.electronAPI.team.run(teamId, projectPath)

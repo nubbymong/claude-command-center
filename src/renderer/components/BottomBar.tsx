@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, useDialogEscape } from './ui/Dialog'
 import { useConfigHealthStore } from '../stores/configHealthStore'
 import { retryFailedConfigSaves } from '../utils/config-saver'
 import { ViewType } from '../types/views'
@@ -38,6 +39,11 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
   const [cliAvailable, setCliAvailable] = useState<boolean | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [showCliHelp, setShowCliHelp] = useState(false)
+
+  // Escape is the third way out of the CLI help modal (Close and Re-check are
+  // the other two); only armed while it is open.
+  const closeCliHelp = useCallback(() => setShowCliHelp(false), [])
+  useDialogEscape(closeCliHelp, showCliHelp)
 
   // Ported from StatusBar: initial check + 30s poll. Keeps the CLI dot live
   // so the user notices if claude drops off PATH mid-session.
@@ -141,8 +147,8 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
 
       {/* Multi-account usage readout, centred along the footer (Bug 3). Renders
           only when >=2 accounts are live (else null). The flex-1 spacer centres
-          it between the runtime band and the disclaimer, and keeps the disclaimer
-          pinned right when single-account. Pure render over session-store data. */}
+          it in the space to the right of the runtime band. Pure render over
+          session-store data. */}
       {/* No overflow-hidden here. It used to clip the cluster instead of letting
           it wrap, which is what cut the leading account pill in half against the
           runtime band -- `justify-center` spills an over-wide child out of BOTH
@@ -153,73 +159,65 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
         <MultiAccountStatusline />
       </div>
 
-      {/* Independent-project disclaimer, pinned bottom-right. Nominative use of
-          "Anthropic"/"Claude" only; this app is not an Anthropic product. */}
-      <span
-        className="shrink truncate italic text-[10px]"
-        style={{ color: 'var(--text-muted)' }}
-        title="Claude and Claude Code are trademarks of Anthropic, PBC. This is an independent community project."
-      >
-        Not affiliated with or endorsed by Anthropic
-      </span>
+      {/* The independent-project disclaimer that used to be pinned bottom-right
+          was removed on the owner's call (#383): the app is AI Code Conductor
+          now, and the trademark attribution lives in the README. */}
 
       {/* CLI help modal -- ported verbatim from StatusBar so the
           "CLI not found -- click for help" path still works. */}
       {showCliHelp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-mantle border border-surface0 rounded-lg shadow-xl p-5 w-[480px] max-h-[80vh] overflow-y-auto">
-            <h2 className="text-lg font-semibold text-text mb-3">Claude CLI Not Found</h2>
-            <p className="text-sm text-subtext0 mb-4">
-              AI Code Conductor requires Claude Code CLI to be installed and on your PATH.
-            </p>
+        <DialogOverlay>
+          <DialogPanel width="w-[480px]" className="max-h-[80vh]" labelledBy="bottombar-cli-help-title">
+            <DialogHeader
+              titleId="bottombar-cli-help-title"
+              title="Claude CLI Not Found"
+              subtitle="AI Code Conductor requires Claude Code CLI to be installed and on your PATH."
+            />
+            <DialogBody>
+              <div className="space-y-3 text-sm">
+                <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
+                  <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Option 1: Native Installer (Recommended)</div>
+                  <p className="mb-2" style={{ color: 'var(--text-secondary)' }}>Run this in any terminal:</p>
+                  <code className="block rounded px-2 py-1 font-mono text-xs select-all" style={{ background: 'var(--surface-base)', color: 'var(--brand)' }}>
+                    claude install
+                  </code>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                    Installs to ~/.local/bin/claude.exe
+                  </p>
+                </div>
 
-            <div className="space-y-3 text-sm">
-              <div className="bg-surface0 rounded p-3">
-                <div className="text-text font-medium mb-1">Option 1: Native Installer (Recommended)</div>
-                <p className="text-subtext0 mb-2">Run this in any terminal:</p>
-                <code className="block bg-base rounded px-2 py-1 text-blue font-mono text-xs select-all">
-                  claude install
-                </code>
-                <p className="text-overlay0 text-xs mt-1">
-                  Installs to ~/.local/bin/claude.exe
-                </p>
+                <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
+                  <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Option 2: npm</div>
+                  <code className="block rounded px-2 py-1 font-mono text-xs select-all" style={{ background: 'var(--surface-base)', color: 'var(--brand)' }}>
+                    npm install -g @anthropic-ai/claude-code
+                  </code>
+                </div>
+
+                <div className="rounded p-3" style={{ background: 'var(--surface-overlay)' }}>
+                  <div className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Already installed?</div>
+                  <p style={{ color: 'var(--text-secondary)' }}>
+                    Make sure the claude binary is on your system PATH. For the native installer,
+                    add <code style={{ color: 'var(--brand)' }}>%USERPROFILE%\.local\bin</code> to your PATH environment variable.
+                  </p>
+                </div>
               </div>
-
-              <div className="bg-surface0 rounded p-3">
-                <div className="text-text font-medium mb-1">Option 2: npm</div>
-                <code className="block bg-base rounded px-2 py-1 text-blue font-mono text-xs select-all">
-                  npm install -g @anthropic-ai/claude-code
-                </code>
-              </div>
-
-              <div className="bg-surface0 rounded p-3">
-                <div className="text-text font-medium mb-1">Already installed?</div>
-                <p className="text-subtext0">
-                  Make sure the claude binary is on your system PATH. For the native installer,
-                  add <code className="text-blue">%USERPROFILE%\.local\bin</code> to your PATH environment variable.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 mt-4">
-              <button
+            </DialogBody>
+            <DialogFooter>
+              <DialogButton variant="ghost" onClick={() => setShowCliHelp(false)}>
+                Close
+              </DialogButton>
+              <DialogButton
+                variant="primary"
                 onClick={() => {
                   setShowCliHelp(false)
                   window.electronAPI.cli.check().then(setCliAvailable)
                 }}
-                className="px-3 py-1.5 text-sm bg-blue text-crust rounded hover:bg-blue/80"
               >
                 Re-check
-              </button>
-              <button
-                onClick={() => setShowCliHelp(false)}
-                className="px-3 py-1.5 text-sm text-overlay1 hover:text-text rounded hover:bg-surface0"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+              </DialogButton>
+            </DialogFooter>
+          </DialogPanel>
+        </DialogOverlay>
       )}
     </div>
   )

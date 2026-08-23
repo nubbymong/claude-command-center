@@ -30,14 +30,15 @@ export default function GroupContextMenu({ x, y, sections, currentSectionId, onM
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 min-w-[180px]"
-      style={{ left: x, top: y }}
+      className="fixed z-50 rounded-lg shadow-xl py-1 min-w-[180px]"
+      style={{ left: x, top: y, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
-      <div className="px-3 py-1.5 text-[10px] text-overlay0 uppercase tracking-wider">Move to Section</div>
+      <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Move to Section</div>
       {currentSectionId && (
         <button
           onClick={() => onMoveToSection(undefined)}
-          className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors"
+          className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+          style={{ color: 'var(--text-primary)' }}
         >
           Remove from section
         </button>
@@ -46,12 +47,13 @@ export default function GroupContextMenu({ x, y, sections, currentSectionId, onM
         <button
           key={s.id}
           onClick={() => onMoveToSection(s.id)}
-          className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors"
+          className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+          style={{ color: 'var(--text-primary)' }}
         >
           {s.name}
         </button>
       ))}
-      <div className="border-t border-surface1 mt-1 pt-1">
+      <div className="border-t mt-1 pt-1" style={{ borderColor: 'var(--border-subtle)' }}>
         {showNewInput ? (
           <div className="px-2 py-1 flex gap-1">
             <input
@@ -63,11 +65,13 @@ export default function GroupContextMenu({ x, y, sections, currentSectionId, onM
                 e.stopPropagation()
               }}
               placeholder="Section name"
-              className="flex-1 bg-base border border-surface1 rounded px-2 py-1 text-xs text-text placeholder:text-overlay0 outline-none focus:border-blue min-w-0"
+              className="flex-1 rounded border border-[var(--border-strong)] px-2 py-1 text-xs placeholder:text-[var(--text-muted)] outline-none focus:border-[var(--brand)] min-w-0"
+              style={{ background: 'var(--surface-base)', color: 'var(--text-primary)' }}
             />
             <button
               onClick={() => { if (newName.trim()) onCreateSection(newName.trim()) }}
-              className="px-2 py-1 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 shrink-0"
+              className="px-2 py-1 rounded text-xs font-medium shrink-0 hover:opacity-90 transition-opacity"
+              style={{ background: 'var(--brand)', color: 'var(--text-on-brand)' }}
             >
               OK
             </button>
@@ -75,7 +79,8 @@ export default function GroupContextMenu({ x, y, sections, currentSectionId, onM
         ) : (
           <button
             onClick={() => setShowNewInput(true)}
-            className="w-full text-left px-3 py-1.5 text-xs text-blue hover:bg-surface1 transition-colors"
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+            style={{ color: 'var(--brand)' }}
           >
             + New Section...
           </button>

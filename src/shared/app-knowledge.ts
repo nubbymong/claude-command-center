@@ -21,7 +21,7 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
   {
     id: 'overview',
     title: 'What is AI Code Conductor?',
-    body: `AI Code Conductor (formerly Claude Command Center) runs the Claude Code you already have, side by side: multiple sessions in one window, with saved configs, live usage in a status line, cost tracking, searchable history, and optional GitHub and Codex integrations. It sits on top of Claude Code; it never replaces it, and Claude Code outside the Conductor keeps working exactly as before. It is an independent community project, not affiliated with or endorsed by Anthropic.`,
+    body: `AI Code Conductor (formerly Claude Command Center) runs the Claude Code you already have, side by side: multiple sessions in one window, with saved configs, live usage in a status line, cost tracking, searchable history, and optional GitHub and Codex integrations. It sits on top of Claude Code; it never replaces it, and Claude Code outside the Conductor keeps working exactly as before. It is an independent community project.`,
   },
   {
     id: 'sessions',
@@ -66,7 +66,7 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
   {
     id: 'ask-conductor',
     title: 'Ask Conductor',
-    body: `Ask Conductor is the help session: a real Claude session that has read this app's documentation, so you can ask about the Conductor in plain English instead of hunting through Settings. It also answers questions about Claude Code itself, and will tell you which of the two you are asking about. Open it from the pill at the bottom of the sidebar, the button in the footer, the Feature Guide's Ask box, or Discuss on any tip. Type your question in the Feature Guide first and the session opens with it already asked. It gets its own tab and behaves like any other session, so you can leave it open, come back to it, and use Past discussions in its header to reopen an earlier conversation. It runs in its own documentation folder rather than your project, which is why it cannot see your code: for a question about your repository, ask in that project's session. It is not a saved config and never appears in your Saved Configs list.`,
+    body: `Ask Conductor is the help session: a real Claude session that has read this app's documentation, so you can ask about the Conductor in plain English instead of hunting through Settings. It also answers questions about Claude Code itself, and will tell you which of the two you are asking about. Open it from the pill at the bottom of the sidebar, the Feature Guide's Ask box, or Discuss on any tip. Type your question in the Feature Guide first and the session opens with it already asked. It gets its own tab and behaves like any other session, so you can leave it open, come back to it, and use Past discussions in its header to reopen an earlier conversation. It runs in its own documentation folder rather than your project, which is why it cannot see your code: for a question about your repository, ask in that project's session. It is not a saved config and never appears in your Saved Configs list.`,
   },
   {
     id: 'draw',

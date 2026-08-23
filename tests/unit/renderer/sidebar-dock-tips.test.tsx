@@ -187,6 +187,28 @@ describe('sidebar dock -- hiding a feature', () => {
   })
 })
 
+describe('sidebar dock -- the Ask row copy (#372)', () => {
+  const SUBTITLE = 'Ask about and customise app functionality'
+
+  it('says what Ask is for under the label, not just "About this app"', () => {
+    render()
+    const ask = q('sidebar-ask-pill')!
+    expect(ask.textContent).toContain(SUBTITLE)
+    expect(ask.textContent).not.toContain('About this app')
+  })
+
+  it('carries the same wording in the tooltip, expanded and collapsed', () => {
+    render()
+    expect(q('sidebar-ask-pill')!.getAttribute('title')).toContain(SUBTITLE.toLowerCase())
+    render({ collapsed: true })
+    const rail = q('sidebar-ask-pill')!
+    // The collapsed rail has no visible subtitle, so the tooltip and the
+    // accessible name are the only places the wording reaches the user.
+    expect(rail.getAttribute('title')).toContain(SUBTITLE.toLowerCase())
+    expect(rail.getAttribute('aria-label')).toContain(SUBTITLE.toLowerCase())
+  })
+})
+
 describe('sidebar dock -- what the settings actually gate', () => {
   it('showTips:false removes the row', () => {
     armTip()

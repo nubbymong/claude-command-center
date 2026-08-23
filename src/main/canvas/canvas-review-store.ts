@@ -24,9 +24,12 @@ import {
   CANVAS_ID_RE,
   CANVAS_REVIEW_ID_RE,
   CANVAS_VERSION_ID_RE,
+  type AddressedBy,
+  type AgentCloseVerdict,
   type AnchorRef,
   type Annotation,
   type AnnotationSketch,
+  type AnnotationState,
   type CanvasAnnotationDraft,
   type CanvasReviewChangedEvent,
   type CanvasReviewState,
@@ -187,9 +190,29 @@ function isValidStoredSketch(value: unknown): value is AnnotationSketch {
   return pngPath === '' || (typeof pngPath === 'string' && PNG_PATH_RE.test(pngPath))
 }
 
-const ANNOTATION_STATES = new Set(['open', 'addressed', 'approved', 'reannotated', 'dismissed'])
+const ANNOTATION_STATES = new Set(['open', 'addressed', 'approved', 'reannotated', 'dismissed', 'stale'])
 const REVIEW_STATUSES = new Set(['draft', 'submitted', 'resolved'])
 const ANNOTATION_SCOPES = new Set(['element', 'region', 'general'])
+/** States a note can be REOPENED from: the three terminal verdicts. Not
+ *  'reannotated' — that one already has a live successor note, and reopening it
+ *  would leave two notes claiming the same issue. */
+const REOPENABLE_STATES = new Set(['approved', 'dismissed', 'stale'])
+const CLOSED_BY_VALUES = new Set(['user', 'agent'])
+const CLOSED_FROM_VALUES = new Set(['open', 'addressed'])
+const ADDRESSED_ACTORS = new Set(['agent', 'user'])
+/**
+ * Verdict → the state it writes.
+ *
+ * A Map, not an object literal, and for the reason SEVERITY_RANK in
+ * shared/canvas.ts is one: the key arrives from a model-generated tool call, and
+ * an object literal answers `VERDICT_STATE['constructor']` with a function
+ * rather than undefined. There is no key on this Map that yields 'approved' —
+ * which is the property the never-approve rule actually rests on.
+ */
+const VERDICT_STATE: ReadonlyMap<string, AnnotationState> = new Map([
+  ['stale', 'stale'],
+  ['dismissed', 'dismissed'],
+])
 
 function isValidAnnotation(value: unknown): value is Annotation {
   if (typeof value !== 'object' || value === null) return false
@@ -205,6 +228,38 @@ function isValidAnnotation(value: unknown): value is Annotation {
   } else if (!isValidFocus(a.focus)) return false
   if (a.sketch !== undefined && !isValidStoredSketch(a.sketch)) return false
   if (a.supersededBy !== undefined && (typeof a.supersededBy !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(a.supersededBy))) return false
+  // Close-out provenance. Validated even though this store is the only writer,
+  // for the same reason pngPath is: a hand-edited record must not be able to
+  // present an agent-set closure as the user's, which is the one claim on the
+  // row a person is being asked to trust.
+  if (a.closedBy !== undefined && (typeof a.closedBy !== 'string' || !CLOSED_BY_VALUES.has(a.closedBy))) return false
+  if (a.closedFrom !== undefined && (typeof a.closedFrom !== 'string' || !CLOSED_FROM_VALUES.has(a.closedFrom))) return false
+  // A timestamp the close-out barrier reads. Bounded and clean like every other
+  // stored string; a value that is present but does not PARSE is treated by the
+  // barrier as "just now", i.e. it refuses the close — the fail-closed
+  // direction, since the barrier exists to withhold permission.
+  if (a.addressedAt !== undefined && !isCleanString(a.addressedAt, 64)) return false
+  // The close-out barrier's two inputs, validated hardest of anything here: a
+  // hand-edited record that could name a non-agent actor, or set the user's
+  // seen flag, would hand `canvas_verdict` the permission it is meant to have
+  // to earn. Anything malformed fails the whole record rather than being
+  // dropped to undefined, because undefined is a PASS for neither but a
+  // half-read record is worse than a refused one.
+  if (a.addressedBy !== undefined) {
+    const by = a.addressedBy as Partial<AddressedBy> & Record<string, unknown>
+    if (typeof by !== 'object' || by === null) return false
+    if (typeof by.actor !== 'string' || !ADDRESSED_ACTORS.has(by.actor)) return false
+    if (typeof by.sessionId !== 'string' || !SESSION_ID_RE.test(by.sessionId)) return false
+  }
+  if (a.userSawAddressed !== undefined && typeof a.userSawAddressed !== 'boolean') return false
+  // A note waiting on the AGENT cannot carry a claim that the user saw it
+  // addressed. Belt and braces next to `markAnnotationsAddressed`, which clears
+  // the flag on every open -> addressed move: it stops the flag being smuggled
+  // onto an open note through the file in the first place.
+  if (a.userSawAddressed === true && a.state === 'open') return false
+  // 'approved' is the user's alone, so a record claiming the agent set it is
+  // corrupt by definition — refuse it rather than render it.
+  if (a.state === 'approved' && a.closedBy === 'agent') return false
   return true
 }
 
@@ -236,10 +291,60 @@ function isValidRecord(value: unknown, canvasId: string): value is ReviewFileRec
   const drafts = rec.reviews.filter((r) => r.status === 'draft')
   if (drafts.length > 1) return false
   const reviewIds = new Set(rec.reviews.map((r) => r.id))
-  return rec.annotations.every((a) => reviewIds.has(a.reviewId))
+  if (!rec.annotations.every((a) => reviewIds.has(a.reviewId))) return false
+
+  /**
+   * The two views of "which notes are on this review" must be THE SAME SET.
+   *
+   * A review lists its members (`annotationIds`) and every note names its owner
+   * (`reviewId`), and nothing used to check that the two agreed. Every mutation
+   * maintains both in lockstep, so drift is unreachable through the API — but
+   * the code reads whichever is convenient, and a record where they disagree
+   * makes the readers disagree too. A note absent from `R1.annotationIds` but
+   * carrying `reviewId: 'R1'` is invisible to the scope rule (which counts
+   * members, sees no open notes, and permits a close) and visible to
+   * `settleReviewStatus` (which counts by `reviewId` and keeps R1 submitted),
+   * leaving a round the agent has "closed" that never resolves.
+   *
+   * Checking it here makes the two provably equal for every record that loads,
+   * which is what lets the readers stop caring which one they use. A record
+   * that fails is BROKEN — preserved evidence, not free space.
+   */
+  const ownedByReview = new Map<string, Set<string>>()
+  for (const a of rec.annotations) {
+    const set = ownedByReview.get(a.reviewId)
+    if (set) set.add(a.id)
+    else ownedByReview.set(a.reviewId, new Set([a.id]))
+  }
+  for (const r of rec.reviews) {
+    const listed = new Set(r.annotationIds)
+    if (listed.size !== r.annotationIds.length) return false // a repeated member
+    const owned = ownedByReview.get(r.id) ?? new Set<string>()
+    if (listed.size !== owned.size) return false
+    for (const id of listed) if (!owned.has(id)) return false
+  }
+  return true
 }
 
 // ── Load / access ───────────────────────────────────────────────────────────
+
+/**
+ * Heal skewed id counters upward. Ids must never repeat.
+ *
+ * Extracted because EVERY path that can reach `commit` has to run it, not just
+ * `loadRecord`. `commit` writes the record into `records`, and every later
+ * `loadRecord` short-circuits on that cached entry — so a record that entered
+ * the cache without this repair keeps its skew for the life of the process. A
+ * `reviews.json` whose `nextAnnotation` sits below `max(id) + 1` (hand-edited,
+ * an older format, a torn write) would then mint a duplicate annotation id on
+ * the very next note.
+ */
+function healCounters(record: ReviewFileRecord): void {
+  const maxReview = record.reviews.reduce((max, r) => Math.max(max, Number(r.id.slice(1))), 0)
+  const maxAnnotation = record.annotations.reduce((max, a) => Math.max(max, Number(a.id.slice(1))), 0)
+  record.nextReview = Math.max(record.nextReview, maxReview + 1)
+  record.nextAnnotation = Math.max(record.nextAnnotation, maxAnnotation + 1)
+}
 
 /** The record re-stamped onto a new owner session — every review's embedded
  *  handle moves with it, so the strict validation stays satisfiable. */
@@ -287,11 +392,7 @@ function loadRecord(canvasId: string, sessionId: string): ReviewFileRecord | nul
            successful mutation persists the re-bound record anyway */
       }
     }
-    // Heal counters upward if skewed; ids must never repeat.
-    const maxReview = record.reviews.reduce((max, r) => Math.max(max, Number(r.id.slice(1))), 0)
-    const maxAnnotation = record.annotations.reduce((max, a) => Math.max(max, Number(a.id.slice(1))), 0)
-    record.nextReview = Math.max(record.nextReview, maxReview + 1)
-    record.nextAnnotation = Math.max(record.nextAnnotation, maxAnnotation + 1)
+    healCounters(record)
     records.set(canvasId, record)
     return record
   } catch {
@@ -409,6 +510,21 @@ export interface CanvasReviewCounts {
   openNotes: number
   /** Notes the agent has marked addressed and the user has not ruled on. */
   addressedNotes: number
+  /**
+   * What a bulk close-out on this canvas would ACTUALLY clear.
+   *
+   * Not the same as `addressedNotes`, and the difference is a real bug that
+   * shipped in the first cut of this feature: `closeOutCanvasReviews` skips a
+   * whole review that still holds an `open` note, so on the routine partial
+   * round (one note handled, one not) `addressedNotes` is 1 while the close-out
+   * clears 0 — a button that promised "Close 1 note", did nothing, and never
+   * went away because the number it was drawn from never moved.
+   *
+   * So the count is computed with the SAME per-review gate the mutation
+   * applies. The label and the mutation share one rule, which is the property
+   * the panel already had via `roundsWaitingOnYou` and the library did not.
+   */
+  closeableNotes: number
 }
 
 export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts | null {
@@ -427,17 +543,36 @@ export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts |
   let addressedNotes = 0
   const withOpenNotes = new Set<string>()
   const draftVersions = new Set<string>()
+  // Per review, so the closeable count below can apply the mutation's own gate.
+  const openByReview = new Map<string, number>()
+  const addressedByReview = new Map<string, number>()
   for (const a of record.annotations) {
     if (draftIds.has(a.id)) {
       draftVersions.add(a.versionId)
       continue
     }
     if (!submitted.has(a.reviewId)) continue
-    if (a.state === 'open') { openNotes++; withOpenNotes.add(a.reviewId) }
-    else if (a.state === 'addressed') { addressedNotes++; withOpenNotes.add(a.reviewId) }
+    if (a.state === 'open') {
+      openNotes++
+      withOpenNotes.add(a.reviewId)
+      openByReview.set(a.reviewId, (openByReview.get(a.reviewId) ?? 0) + 1)
+    } else if (a.state === 'addressed') {
+      addressedNotes++
+      withOpenNotes.add(a.reviewId)
+      addressedByReview.set(a.reviewId, (addressedByReview.get(a.reviewId) ?? 0) + 1)
+    }
   }
+  // The close-out's own rule, restated over the same tallies: a submitted
+  // review with zero open notes contributes all of its addressed ones; a review
+  // still holding an open note contributes NOTHING, because the mutation skips
+  // it whole. Read by `a.reviewId` rather than membership, which the validator
+  // now proves is the same set.
+  let closeableNotes = 0
   for (const r of record.reviews) {
-    if (r.status === 'submitted' && withOpenNotes.has(r.id)) openReviewIds.push(r.id)
+    if (r.status !== 'submitted') continue
+    if (withOpenNotes.has(r.id)) openReviewIds.push(r.id)
+    if ((openByReview.get(r.id) ?? 0) > 0) continue
+    closeableNotes += addressedByReview.get(r.id) ?? 0
   }
   return {
     draftNotes: draftIds.size,
@@ -445,6 +580,7 @@ export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts |
     openReviewIds,
     openNotes,
     addressedNotes,
+    closeableNotes,
   }
 }
 
@@ -503,6 +639,100 @@ function commit(record: ReviewFileRecord): void {
 
 function draftReviewOf(record: ReviewFileRecord): Review | null {
   return record.reviews.find((r) => r.status === 'draft') ?? null
+}
+
+/**
+ * A note is LIVE while it is waiting on somebody: 'open' waits on the agent,
+ * 'addressed' waits on the user. Every other state is a verdict already given.
+ *
+ * One predicate, named once, because close-out adds a third way for a review to
+ * run out of live notes and every one of them has to agree with the counts the
+ * pill is drawn from (`getReviewCountsForCanvas`, which uses the same pair).
+ */
+function isLiveNote(a: Annotation): boolean {
+  return a.state === 'open' || a.state === 'addressed'
+}
+
+/**
+ * The notes on one review — ONE definition, used by every close-out path.
+ *
+ * The record holds the membership twice (`review.annotationIds` and each note's
+ * `reviewId`) and the file used to read whichever was nearer. `isValidRecord`
+ * now proves the two are the same set for any record that loads, so this reads
+ * both and the intersection is exactly either one; requiring both means a
+ * record that somehow reached memory with drift narrows the set rather than
+ * widening it, which is the safe direction for a function that decides what may
+ * be closed.
+ */
+function notesOfReview(record: ReviewFileRecord, review: Review): Annotation[] {
+  const members = new Set(review.annotationIds)
+  return record.annotations.filter((a) => a.reviewId === review.id && members.has(a.id))
+}
+
+/**
+ * THE CLOSE-OUT BARRIER: may the agent close this addressed note?
+ *
+ * The scope rule ("every note on this round is addressed") is a precondition
+ * the agent writes ITSELF. `canvas_resolve` moves notes open -> addressed with
+ * no user involvement, so resolve-then-verdict satisfies the rule in one
+ * unattended pass and takes the round off the pill that would have sent the
+ * user to look at it — every note closed as "on your instruction" with no
+ * instruction anywhere.
+ *
+ * The first cut answered that with a 60s dwell on `addressedAt`. That is a
+ * DELAY, not an authorisation: an autonomous agent does other work for 61s and
+ * the same chain completes. Time cannot express intent, and the barrier has to.
+ *
+ * So the gate is provenance, not the clock. A note is closeable by the agent
+ * only when one of these is true of it:
+ *
+ *   - the USER HAS SEEN IT ADDRESSED (`userSawAddressed`) — the one bit on the
+ *     record no MCP tool can write. It is set from the renderer, and only when
+ *     the note's addressed state has actually been on the user's screen in the
+ *     active session of a visible window. An agent cannot manufacture it: it
+ *     has no way to make the panel visible, and nothing it can call sets it.
+ *   - the note was addressed by somebody who is NOT an agent (`addressedBy`),
+ *     i.e. the precondition was not the closing party's own work. No such path
+ *     exists today; the check is here so that if one is ever added the barrier
+ *     reads the fact instead of inheriting an assumption.
+ *
+ * ABSENT PROVENANCE IS A REFUSAL. A note with no `addressedBy` — every note in
+ * the pre-upgrade backlog, which is exactly the backlog this feature exists to
+ * clear — is treated as agent-addressed, so the agent may close it only once
+ * the user has seen it. Failing open there would have handed the whole existing
+ * corpus to the very chain this function refuses.
+ *
+ * What this deliberately does NOT claim: it is not proof the user SAID "close
+ * it". Nothing in the store can see chat. It is proof that the round reached
+ * the user's eyes before the agent cleared it — which is the property that
+ * makes the refusal path ("hand back, let them rule") reachable at all, and the
+ * strongest one the store can verify on its own.
+ */
+function isAgentCloseable(a: Annotation): boolean {
+  if (a.userSawAddressed === true) return true
+  return a.addressedBy !== undefined && a.addressedBy.actor !== 'agent'
+}
+
+/**
+ * Re-derive one review's status from its notes, BOTH directions.
+ *
+ * Forward: a submitted review with no live notes left is 'resolved'. That half
+ * is what `resolveAnnotation` has always done inline, and it is unchanged.
+ *
+ * Backward: a resolved review that has a live note again is 'submitted'. That
+ * half is new, and it is what makes Reopen honest — without it a reopened note
+ * would sit on a review still marked resolved, so the pill would not come back
+ * and the round would be invisible in every list that keys off 'submitted'.
+ *
+ * A DRAFT is never touched: it has no verdicts on it and its status is the
+ * composer's, not this function's.
+ */
+function settleReviewStatus(record: ReviewFileRecord, reviewId: string): void {
+  const review = record.reviews.find((r) => r.id === reviewId)
+  if (!review || review.status === 'draft') return
+  const live = record.annotations.some((a) => a.reviewId === review.id && isLiveNote(a))
+  if (!live && review.status === 'submitted') review.status = 'resolved'
+  else if (live && review.status === 'resolved') review.status = 'submitted'
 }
 
 /** Validate a renderer-supplied draft against this canvas. Throws on anything
@@ -702,24 +932,44 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
   return toState(next)
 }
 
-export type ResolveAction = 'approve' | 'dismiss' | 'reannotate'
+export type ResolveAction = 'approve' | 'dismiss' | 'reannotate' | 'stale'
+
+const RESOLVE_ACTIONS = new Set<string>(['approve', 'dismiss', 'reannotate', 'stale'])
 
 /**
  * The user's verdict on one open note of a submitted review (spec §6 step 2).
  * 'reannotate' mints the replacement draft note (pre-linked via supersededBy)
  * in the current draft review, creating that review if none is open. When a
- * submitted review runs out of open notes it becomes 'resolved'.
+ * submitted review runs out of live notes it becomes 'resolved'.
+ *
+ * 'stale' is the close-out verdict: the work moved on, so the note is no longer
+ * live. It is deliberately NOT 'approve' — the user is saying "this shipped",
+ * not "I checked it and it is right" — and it is the same state the agent may
+ * set through canvas_verdict, distinguished only by `closedBy`.
  */
 export function resolveAnnotation(
   sessionId: string,
   annotationId: string,
   action: ResolveAction,
+  expectedCanvasId: string,
 ): { state: CanvasReviewState; reannotationId?: string } {
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  // The canvas the CALLER meant. Annotation ids restart at a1 on every canvas
+  // and the session's canvas is mutable — an agent's `canvas_render` naming a
+  // different subject files the current one — so an id alone names a note only
+  // as long as the canvas holds still. The panel re-checks between notes in a
+  // bulk pass, but the last check and the write it authorises are separated by
+  // an await, and one note can slip through that gap: it lands on whichever a4
+  // happens to exist on the NEW canvas and closes it under the user's own name.
+  // Naming the canvas closes the gap, because the check is now inside the same
+  // synchronous mutation as the write.
+  if (typeof expectedCanvasId !== 'string' || canvas.canvasId !== expectedCanvasId) {
+    throw new Error('canvas changed under this resolve')
+  }
   if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
-  if (action !== 'approve' && action !== 'dismiss' && action !== 'reannotate') throw new Error('invalid action')
+  if (typeof action !== 'string' || !RESOLVE_ACTIONS.has(action)) throw new Error('invalid action')
 
   const base = recordFor(sessionId, canvas)
   const target = base.annotations.find((a) => a.id === annotationId)
@@ -739,10 +989,23 @@ export function resolveAnnotation(
   const nextTarget = next.annotations.find((a) => a.id === annotationId)!
   let reannotationId: string | undefined
 
+  // Where the note was when the user ruled on it, so Reopen can put it back
+  // there. Captured before the state moves, and only for the terminal actions —
+  // 're-annotate' keeps its own record through supersededBy.
+  const closedFrom: 'open' | 'addressed' = nextTarget.state === 'addressed' ? 'addressed' : 'open'
+
   if (action === 'approve') {
     nextTarget.state = 'approved'
+    nextTarget.closedBy = 'user'
+    nextTarget.closedFrom = closedFrom
   } else if (action === 'dismiss') {
     nextTarget.state = 'dismissed'
+    nextTarget.closedBy = 'user'
+    nextTarget.closedFrom = closedFrom
+  } else if (action === 'stale') {
+    nextTarget.state = 'stale'
+    nextTarget.closedBy = 'user'
+    nextTarget.closedFrom = closedFrom
   } else {
     if (!canvas.activeVersionId) throw new Error('no active version to re-annotate against')
     let draft = draftReviewOf(next)
@@ -780,12 +1043,10 @@ export function resolveAnnotation(
     nextTarget.supersededBy = reannotationId
   }
 
-  const nextOwner = next.reviews.find((r) => r.id === owner.id)!
-  // A review is done when nothing on it is left OPEN. Addressed notes still
+  // A review is done when nothing on it is left LIVE. Addressed notes still
   // hold it open: the agent has acted, but the user has not yet said whether
   // the action was right, and that verdict is what closes a review.
-  const stillOpen = next.annotations.some((a) => a.reviewId === nextOwner.id && (a.state === 'open' || a.state === 'addressed'))
-  if (!stillOpen && nextOwner.status === 'submitted') nextOwner.status = 'resolved'
+  settleReviewStatus(next, owner.id)
 
   commit(next)
   return { state: toState(next), ...(reannotationId ? { reannotationId } : {}) }
@@ -904,6 +1165,16 @@ export function markAnnotationsAddressed(
     if (!wanted.has(a.id)) continue
     if (a.state === 'open' && members.has(a.id)) {
       a.state = 'addressed'
+      // When, as provenance for the panel and the record.
+      a.addressedAt = new Date().toISOString()
+      // WHO, which is what the close-out barrier actually reads: this write is
+      // the agent creating its own precondition for `canvas_verdict`, and the
+      // record has to say so or the two are indistinguishable later.
+      a.addressedBy = { actor: 'agent', sessionId }
+      // A fresh claim of work is a fresh thing to be seen. Whatever the user
+      // saw before was the previous round of this note, not this one — so the
+      // barrier starts closed again.
+      delete a.userSawAddressed
       addressed.push(a.id)
     } else {
       skipped.push(a.id)
@@ -912,6 +1183,365 @@ export function markAnnotationsAddressed(
   for (const id of wanted) if (!addressed.includes(id) && !skipped.includes(id)) skipped.push(id)
   if (addressed.length > 0) commit(next)
   return { state: toState(addressed.length > 0 ? next : base), addressed, skipped }
+}
+
+/**
+ * The USER has seen these notes in their addressed state (the close-out
+ * barrier's release).
+ *
+ * Reached ONLY from the renderer, over `canvas:reviewMarkSeen`, and only after
+ * the panel has actually had the addressed rows on screen — active session,
+ * visible window, long enough to read. No MCP tool reaches this function, and
+ * that is the whole point: `userSawAddressed` is the one bit on the record the
+ * agent cannot write, which is what makes it usable as an authorisation input
+ * where `addressedAt` (which the agent writes, and can simply outwait) is not.
+ *
+ * Narrow on purpose:
+ *  - the caller must NAME THE CANVAS it saw. The renderer's ids were captured
+ *    against one canvas, and an agent's `canvas_render` can file that canvas
+ *    mid-flight; without the check a stale in-flight "I saw these" would land
+ *    on whichever a1/a2 exist on the new canvas and unlock notes nobody has
+ *    ever looked at.
+ *  - only a note that is 'addressed' RIGHT NOW on a SUBMITTED review moves. A
+ *    seen flag on anything else is meaningless at best.
+ *  - nothing is written when nothing changed, so the panel's steady-state
+ *    re-render does not turn into a commit/emit loop.
+ */
+export function markAddressedNotesSeen(
+  sessionId: string,
+  canvasId: string,
+  annotationIds: readonly string[],
+): { state: CanvasReviewState; seen: string[] } {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  requireHealthy(canvas.canvasId)
+  if (typeof canvasId !== 'string' || canvas.canvasId !== canvasId) throw new Error('canvas changed under this session')
+
+  const wanted = new Set<string>()
+  for (const id of annotationIds) {
+    if (typeof id === 'string' && CANVAS_ANNOTATION_ID_RE.test(id)) wanted.add(id)
+  }
+  const base = recordFor(sessionId, canvas)
+  if (wanted.size === 0) return { state: toState(base), seen: [] }
+
+  const submitted = new Set(base.reviews.filter((r) => r.status === 'submitted').map((r) => r.id))
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+  const seen: string[] = []
+  for (const a of next.annotations) {
+    if (!wanted.has(a.id)) continue
+    if (a.state !== 'addressed' || !submitted.has(a.reviewId)) continue
+    if (a.userSawAddressed === true) continue
+    a.userSawAddressed = true
+    seen.push(a.id)
+  }
+  if (seen.length === 0) return { state: toState(base), seen }
+  commit(next)
+  return { state: toState(next), seen }
+}
+
+// ── Close-out (#365) ────────────────────────────────────────────────────────
+//
+// Three entry points, one rule: a note can be CLEARED but never deleted, and
+// the record always says who cleared it. Approval is not reachable from any of
+// them — `VERDICT_STATE` has no key that yields it, and the agent-facing
+// function re-checks the verdict against that Map before it touches a record.
+
+/** What one close-out call actually did. Ids only — the caller (an MCP tool
+ *  reply, an IPC result) says the words. */
+export interface CloseOutResult {
+  state: CanvasReviewState
+  /** Notes that moved, store-minted ids. */
+  closed: string[]
+  /** Ids asked for that did not move: unknown, not on this review, or already
+   *  ruled on by the user in the meantime. */
+  skipped: string[]
+  /** True when this call was what emptied the review of live notes. */
+  reviewClosed: boolean
+}
+
+/** An error carrying the numbers the caller needs to explain a refusal without
+ *  re-reading the store. */
+interface ScopeError extends Error {
+  openNotes?: number
+  addressedNotes?: number
+  /** How many notes the user has not seen in their addressed state, and so may
+   *  not be closed by the agent (the close-out barrier). */
+  unseenNotes?: number
+  /** True when the session being refused is the one that addressed those notes
+   *  — the resolve-then-verdict chain, rather than an inherited backlog. */
+  selfAddressed?: boolean
+}
+
+function scopeError(message: string, counts: { openNotes: number; addressedNotes: number }): ScopeError {
+  const err = new Error(message) as ScopeError
+  err.openNotes = counts.openNotes
+  err.addressedNotes = counts.addressedNotes
+  return err
+}
+
+/**
+ * The AGENT closes notes it was told to close (the `canvas_verdict` tool).
+ *
+ * The counterpart of `markAnnotationsAddressed`, one step further along: that
+ * one says "I acted on this", this one says "you told me to close it". Both are
+ * writes the agent makes into the user's review record, so both are narrow —
+ * but this one is narrower, because it ENDS a note rather than advancing it.
+ *
+ * THE SCOPE RULE, and why it is here rather than in the tool: only a review
+ * already WAITING ON THE USER may be closed this way — every remaining note on
+ * it is 'addressed', meaning the agent has already claimed the work and the
+ * only thing left is the user's verdict. A review with even one 'open' note is
+ * refused whole. That is the difference between "the user told me to close the
+ * round we finished" and an agent quietly deleting feedback it never acted on,
+ * and it cannot be enforced in the tool layer alone: the tool's arguments are
+ * model-generated, and a second caller (a future surface, a test, a refactor)
+ * would inherit the hole. The store is the single mutation point; the rule
+ * lives with the mutation.
+ *
+ * NEVER APPROVED. `verdict` is looked up in `VERDICT_STATE`, a Map with exactly
+ * two keys, neither of which yields 'approved'. There is no argument, casing or
+ * prototype key that reaches that state through this function.
+ *
+ * `annotationIds` null = the whole round. Named ids that are unknown, on
+ * another review, or already ruled on are SKIPPED and reported rather than
+ * fatal — the user may have clicked one themselves between the agent reading
+ * the review and acting on it, and that should not fail the call.
+ */
+export function closeAnnotationsByAgent(
+  sessionId: string,
+  reviewId: string,
+  annotationIds: readonly string[] | null,
+  verdict: AgentCloseVerdict,
+): CloseOutResult {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  requireHealthy(canvas.canvasId)
+  if (typeof reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(reviewId)) throw new Error('invalid review id')
+  // The never-approve gate, and the FIRST thing that happens: no record is
+  // read, let alone written, for a verdict this function does not offer.
+  const nextState = VERDICT_STATE.get(verdict as string)
+  if (!nextState) throw new Error('invalid verdict')
+
+  const base = recordFor(sessionId, canvas)
+  const review = base.reviews.find((r) => r.id === reviewId)
+  // Same caveat as markAnnotationsAddressed: a review id is an ordinal within
+  // whichever canvas is active RIGHT NOW, not a handle on one particular
+  // review. What bounds this is that it can only ever resolve against the
+  // active canvas, plus the membership check below.
+  if (!review) throw new Error('review not on this canvas')
+  if (review.status === 'draft') throw new Error('review is still a draft')
+
+  const members = new Set(review.annotationIds)
+  const memberNotes = notesOfReview(base, review)
+  const openNotes = memberNotes.filter((a) => a.state === 'open').length
+  const addressedNotes = memberNotes.filter((a) => a.state === 'addressed').length
+
+  // Waiting on the AGENT: not the agent's to close, whatever it was told.
+  if (openNotes > 0) throw scopeError('review is still with the agent', { openNotes, addressedNotes })
+  // Nothing to do, and saying so beats reporting a successful close of zero.
+  if (addressedNotes === 0) throw scopeError('review has nothing waiting on the user', { openNotes, addressedNotes })
+
+  // THE BARRIER (see isAgentCloseable). Whole-round, not per-note: a partial
+  // close would leave the user a round stripped of everything except the notes
+  // the agent could not justify closing, which reads as "these were handled"
+  // about the ones that vanished. Either the round reached the user or none of
+  // it closes this way.
+  const unseen = memberNotes.filter((a) => a.state === 'addressed' && !isAgentCloseable(a))
+  if (unseen.length > 0) {
+    const err = scopeError('review has not reached the user', { openNotes, addressedNotes })
+    err.unseenNotes = unseen.length
+    // Whether the refusing session is the same one that created the
+    // precondition. Both cases are refused; they are told apart only so the
+    // refusal can name what actually happened.
+    err.selfAddressed = unseen.some((a) => a.addressedBy?.sessionId === sessionId)
+    throw err
+  }
+
+  const wanted = new Set<string>()
+  if (annotationIds !== null) {
+    for (const id of annotationIds) {
+      if (typeof id === 'string' && CANVAS_ANNOTATION_ID_RE.test(id)) wanted.add(id)
+    }
+  }
+
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+
+  const closed: string[] = []
+  const skipped: string[] = []
+  // The same membership `notesOfReview` uses — both halves, so a note can only
+  // move if the review lists it AND it names the review.
+  const onReview = (a: Annotation): boolean => a.reviewId === review.id && members.has(a.id)
+  for (const a of next.annotations) {
+    const named = annotationIds === null ? onReview(a) : wanted.has(a.id)
+    if (!named) continue
+    // Only an ADDRESSED note on THIS review moves. `openNotes === 0` above
+    // means no member can be 'open', so anything refused here is either off
+    // this review or already ruled on.
+    if (a.state === 'addressed' && onReview(a)) {
+      a.state = nextState
+      a.closedBy = 'agent'
+      a.closedFrom = 'addressed'
+      closed.push(a.id)
+    } else {
+      skipped.push(a.id)
+    }
+  }
+  for (const id of wanted) if (!closed.includes(id) && !skipped.includes(id)) skipped.push(id)
+
+  if (closed.length === 0) return { state: toState(base), closed, skipped, reviewClosed: false }
+
+  settleReviewStatus(next, review.id)
+  const reviewClosed = next.reviews.find((r) => r.id === review.id)?.status === 'resolved'
+  commit(next)
+  return { state: toState(next), closed, skipped, reviewClosed }
+}
+
+/**
+ * The USER puts a closed note back in play.
+ *
+ * The inverse of a verdict, and the reason close-out is safe to offer in bulk:
+ * nothing here is destroyed, so a wrong bulk click is one click to undo. The
+ * note returns to exactly the state it was closed from (`closedFrom`), so a
+ * note the agent had marked addressed comes back as addressed rather than
+ * landing on the agent as fresh work it already did.
+ *
+ * Its own function rather than another `resolveAnnotation` action because the
+ * PRECONDITION is the inverse: that one requires a live note, this one requires
+ * a closed one. Folding two opposite guards into one entry point is how a guard
+ * ends up applied to the wrong branch.
+ */
+export function reopenAnnotation(sessionId: string, annotationId: string): CanvasReviewState {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  requireHealthy(canvas.canvasId)
+  if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
+
+  const base = recordFor(sessionId, canvas)
+  const target = base.annotations.find((a) => a.id === annotationId)
+  if (!target) throw new Error('unknown annotation')
+  if (!REOPENABLE_STATES.has(target.state)) throw new Error('only a closed note can be reopened')
+  const owner = base.reviews.find((r) => r.id === target.reviewId)
+  if (!owner || owner.status === 'draft') throw new Error('only a submitted note can be reopened')
+
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+  const nextTarget = next.annotations.find((a) => a.id === annotationId)!
+  // Records written before close-out existed carry no `closedFrom`. 'open' is
+  // the honest default for those: it waits on the agent, which is where a note
+  // sits when nobody has claimed to have acted on it.
+  nextTarget.state = nextTarget.closedFrom ?? 'open'
+  delete nextTarget.closedBy
+  delete nextTarget.closedFrom
+  // A note back to 'open' is one nobody has claimed to have acted on, so the
+  // addressed stamp is no longer true of it. One returning to 'addressed' keeps
+  // its stamp: the agent really did act, at that time.
+  if (nextTarget.state === 'open') {
+    delete nextTarget.addressedAt
+    delete nextTarget.addressedBy
+  }
+  // The seen flag does NOT survive a reopen either way. Reopening is the user
+  // putting the note back in play, and letting the agent re-close it on the
+  // strength of a look that happened before that would make Reopen a one-shot
+  // the agent could immediately undo. The panel re-marks it the moment the user
+  // has the round on screen again, which is the same user in the same breath.
+  delete nextTarget.userSawAddressed
+  settleReviewStatus(next, owner.id)
+
+  commit(next)
+  return toState(next)
+}
+
+/**
+ * Read a record by CANVAS id, for a mutation that is not addressed to a
+ * session — the library's per-canvas close-out, where the row the user clicked
+ * may belong to a session that is not theirs and may not be running.
+ *
+ * Unlike `loadRecord` this never re-stamps the owner: the canvas keeps whatever
+ * session owns it, because clearing notes on a canvas is housekeeping and must
+ * not move ownership. Unlike `readRecordNoRebind` the result IS destined for
+ * the cache, but only via `commit` — a read that closes nothing leaves the maps
+ * exactly as it found them.
+ */
+function recordByCanvasId(canvasId: string): ReviewFileRecord | null {
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return null
+  if (broken.has(canvasId)) return null
+  const cached = records.get(canvasId)
+  if (cached) return cached
+  const parsed = readRecordNoRebind(canvasId)
+  if (!parsed) return null
+  // `readRecordNoRebind` deliberately skips loadRecord's repairs because it
+  // serves a REPORTING read that must not write. This path can reach `commit`,
+  // which puts the record in `records` where every later `loadRecord`
+  // short-circuits on it — so the counter repair has to happen here or a skewed
+  // `nextAnnotation` survives the process and mints a duplicate id.
+  healCounters(parsed)
+  return parsed
+}
+
+/**
+ * Bulk close-out for ONE canvas, keyed by canvas id: "the work on this canvas
+ * shipped — clear its notes."
+ *
+ * Keyed by canvasId rather than session for the same reason `deleteCanvas` is:
+ * it is driven from the LIBRARY, where the user is looking at every canvas in
+ * the project, including ones owned by sessions that have since closed. The
+ * user clicked a named row; nothing here is inferred.
+ *
+ * Same scope rule as the agent path, applied per review: only notes ALREADY
+ * WAITING ON THE USER are cleared, and a review still holding open notes is
+ * left entirely alone. So this can never clear feedback the agent has not
+ * claimed to have acted on — the number it reports is exactly the number of
+ * "addressed" notes it found.
+ *
+ * Returns null for an unreadable store, never a zero — "nothing to close" and
+ * "could not tell" must not look the same to the caller.
+ */
+export function closeOutCanvasReviews(canvasId: string): { closed: number; reviews: string[] } | null {
+  const base = recordByCanvasId(canvasId)
+  if (!base) return null
+
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+
+  const touched: string[] = []
+  let closed = 0
+  for (const review of next.reviews) {
+    if (review.status !== 'submitted') continue
+    const memberNotes = notesOfReview(next, review)
+    // A round still with the agent is not "shipped work waiting on you", so it
+    // is skipped whole rather than half-cleared. `getReviewCountsForCanvas`
+    // applies this same gate, so the library's label counts exactly what this
+    // clears — they disagreed once, and the button promised work it never did.
+    if (memberNotes.some((a) => a.state === 'open')) continue
+    const addressed = memberNotes.filter((a) => a.state === 'addressed')
+    if (addressed.length === 0) continue
+    for (const a of addressed) {
+      a.state = 'stale'
+      a.closedBy = 'user'
+      a.closedFrom = 'addressed'
+      closed++
+    }
+    touched.push(review.id)
+  }
+
+  if (closed === 0) return { closed: 0, reviews: [] }
+  for (const id of touched) settleReviewStatus(next, id)
+  commit(next)
+  return { closed, reviews: touched }
 }
 
 /**

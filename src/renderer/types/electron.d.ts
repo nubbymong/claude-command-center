@@ -162,7 +162,6 @@ export interface ElectronAPI {
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
-    load: (configId: string) => Promise<string | null>
     delete: (configId: string) => Promise<boolean>
   }
   pty: {
@@ -401,9 +400,19 @@ export interface ElectronAPI {
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) => Promise<CanvasReviewState>
     annotationResolve: (args: {
       sessionId: string
+      /** The canvas the panel was showing. Refused if the session has moved on. */
+      canvasId: string
       annotationId: string
-      action: 'approve' | 'dismiss' | 'reannotate'
+      action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
     }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
+    /** The user puts a closed note back in play — the undo half of close-out. */
+    annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The user has these addressed notes on screen — the release side of the
+     *  agent close-out barrier. Renderer-only; no MCP tool reaches it. */
+    reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
+    /** Bulk close-out for one canvas whose work has shipped. Clears, never
+     *  deletes. `ok: false` means the store could not be read. */
+    reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {
@@ -434,6 +443,9 @@ export interface ElectronAPI {
     spawnCliSetup: (cols: number, rows: number) => Promise<string>
     killCliSetup: () => Promise<boolean>
   }
+  diagnostics: {
+    captureGlyph: (payload: unknown) => Promise<{ ok: boolean; jsonPath?: string; imagePath?: string; error?: string }>
+  }
   screenshot: {
     captureRectangle: () => Promise<string | null>
     captureWindow: (sourceId: string) => Promise<string | null>
@@ -445,6 +457,8 @@ export interface ElectronAPI {
     check: (url: string) => Promise<{ reachable: boolean; status?: number }>
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
     close: (sessionId: string) => Promise<boolean>
+    /** Session closed for good: destroy the view AND wipe its browser profile. */
+    forget: (sessionId: string) => Promise<boolean>
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
     setVisible: (sessionId: string, visible: boolean) => Promise<void>
     reload: (sessionId: string) => Promise<void>
@@ -491,8 +505,16 @@ export interface ElectronAPI {
     stop: () => Promise<{ ok: boolean }>
     status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
-    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
-    getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
+    /**
+     * #371. `generation` is the token handed out by `getConfig` alongside the
+     * config the form was built from. Pass it back so main can refuse a save
+     * built from defaults it showed while the settings file was unreadable
+     * (`ok:false, stale:true`). `ok:false` means IT IS NOT ON DISK.
+     */
+    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }, generation?: number) => Promise<{ ok: boolean; stale?: boolean; error?: string }>
+    /** `readFailed` distinguishes "no config yet" from "could not read it" — the
+     *  caller must not present defaults as saved settings in the latter case. */
+    getConfig: () => Promise<{ config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null; generation: number; readFailed: boolean }>
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
   }
   legacyVersion: {
@@ -506,18 +528,23 @@ export interface ElectronAPI {
   cloudAgent: {
     dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
     cancel: (id: string) => Promise<boolean>
-    remove: (id: string) => Promise<boolean>
+    /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
+    remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
     retry: (id: string) => Promise<CloudAgent | null>
     list: () => Promise<CloudAgent[]>
     getOutput: (id: string) => Promise<string>
-    clearCompleted: () => Promise<number>
+    /** #371: `ok:false` means nothing was cleared — do not filter the list. */
+    clearCompleted: () => Promise<{ ok: true; removed: number } | { ok: false; error: string }>
     onStatusChanged: (callback: (agent: CloudAgent) => void) => () => void
     onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
   }
   team: {
     list: () => Promise<TeamTemplate[]>
-    save: (team: TeamTemplate) => Promise<TeamTemplate>
-    delete: (id: string) => Promise<boolean>
+    /** #371: `ok:false` means the team is NOT on disk — keep the user's work in
+     *  the editor rather than reporting a save that did not happen. */
+    save: (team: TeamTemplate) => Promise<{ ok: true; team: TeamTemplate } | { ok: false; error: string }>
+    /** #371: `ok:false` means the team is STILL on disk — do not drop the row. */
+    delete: (id: string) => Promise<{ ok: true; deleted: boolean } | { ok: false; error: string }>
     run: (teamId: string, projectPath?: string) => Promise<TeamRun | null>
     cancelRun: (runId: string) => Promise<boolean>
     listRuns: () => Promise<TeamRun[]>
@@ -685,6 +712,17 @@ export interface ElectronAPI {
   codexReview: {
     getUsage: (sessionId: string) => Promise<import('../../shared/types').CodexReviewUsageRecord | null>
     onUsageUpdated: (callback: (payload: { sessionId: string; record: import('../../shared/types').CodexReviewUsageRecord }) => void) => () => void
+  }
+  /** GUI-subsystem executables (#379). See shared/gui-exe.ts. */
+  exe: {
+    probe: (req: { command: string; cwd?: string }) => Promise<import('../../shared/gui-exe').ExeProbeResult>
+    runCaptured: (req: { command: string; cwd?: string }) => Promise<import('../../shared/gui-exe').CapturedRunStart>
+    /** Stop capturing; the program keeps running. */
+    releaseRun: (runId: string) => Promise<boolean>
+    /** Force-stop the program. */
+    cancelRun: (runId: string) => Promise<boolean>
+    onRunData: (callback: (chunk: import('../../shared/gui-exe').CapturedRunChunk) => void) => () => void
+    onRunExit: (callback: (exit: import('../../shared/gui-exe').CapturedRunExit) => void) => () => void
   }
   channels: {
     send: (req: { targetSessionId: string; targetLabel?: string; payload: ChannelPayload; meta: ChannelEnvelopeMeta }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>

@@ -1,8 +1,41 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useCodexAccountStore } from '../../stores/codexAccountStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
+import {
+  DialogOverlay,
+  DialogPanel,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogButton,
+} from '../ui/Dialog'
+
+/* ---- shared token recipes for this tab ------------------------------------ */
+
+/** A neutral action button inside a settings card (Copy, Test connection, …). */
+const NEUTRAL_BTN = 'rounded-lg border transition-colors hover:bg-[var(--surface-overlay)] hover:text-[var(--text-primary)]'
+const NEUTRAL_BTN_STYLE: CSSProperties = {
+  background: 'var(--surface-base)',
+  borderColor: 'var(--border-subtle)',
+  color: 'var(--text-secondary)',
+}
+
+/** A brand-tinted action (the sign-in paths). */
+const BRAND_BTN = 'rounded-lg border transition-colors hover:bg-[color-mix(in_srgb,var(--brand)_25%,transparent)]'
+const BRAND_BTN_STYLE: CSSProperties = {
+  background: 'color-mix(in srgb, var(--brand) 15%, transparent)',
+  borderColor: 'color-mix(in srgb, var(--brand) 40%, transparent)',
+  color: 'var(--brand)',
+}
+
+/** A code/value well sunk into a card. */
+const CODE_WELL_STYLE: CSSProperties = {
+  background: 'var(--surface-sunken)',
+  borderColor: 'var(--border-subtle)',
+  color: 'var(--text-primary)',
+}
 
 export function CodexSettingsTab() {
   // Master "Do you use Codex?" answer — the recovery surface for the
@@ -63,10 +96,12 @@ export function CodexSettingsTab() {
     return 'Not signed in'
   }
 
+  // Returns a token, not a palette class: the status hue has to follow the
+  // theme the same way the rest of the chrome does.
   const statusColor = () => {
-    if (!installed) return 'text-overlay0'
-    if (authMode === 'none') return 'text-yellow'
-    return 'text-green'
+    if (!installed) return 'var(--text-muted)'
+    if (authMode === 'none') return 'var(--status-warning)'
+    return 'var(--status-success)'
   }
 
   return (
@@ -77,16 +112,19 @@ export function CodexSettingsTab() {
           type="checkbox"
           checked={codexEnabled !== false}
           onChange={(e) => void useSettingsStore.getState().updateSettings({ codexEnabled: e.target.checked })}
-          className="rounded border-surface1"
+          className="rounded border-[var(--border-subtle)]"
         />
         <div className="min-w-0">
-          <div className="text-sm text-text leading-tight">
+          <div className="text-sm leading-tight" style={{ color: 'var(--text-primary)' }}>
             Enable Codex{' '}
-            <span className="text-[9px] uppercase tracking-wider text-peach border border-peach/40 rounded-full px-1.5 py-px align-middle">
+            <span
+              className="text-[9px] uppercase tracking-wider border rounded-full px-1.5 py-px align-middle"
+              style={{ color: 'var(--brand)', borderColor: 'color-mix(in srgb, var(--brand) 40%, transparent)' }}
+            >
               Beta
             </span>
           </div>
-          <div className="text-[11px] text-overlay0 leading-tight">
+          <div className="text-[11px] leading-tight" style={{ color: 'var(--text-muted)' }}>
             Off blocks launching Codex configs and removes the code-review tool from new Claude sessions.
           </div>
         </div>
@@ -102,28 +140,35 @@ export function CodexSettingsTab() {
 
       {/* Status section */}
       <div className="settings-card overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
+        <div className="px-4 py-2.5 border-b settings-divider flex items-center gap-2">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0" style={{ color: 'var(--text-muted)' }}>
             <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" fill="none" />
             <path d="M8 5v3.5M8 10v.01" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
           </svg>
-          <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Codex CLI</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Codex CLI</h3>
         </div>
         <div className="p-4 space-y-3">
           <div className="flex items-center justify-between gap-4">
-            <span className="text-sm text-text shrink-0">Status</span>
-            <span className={`text-sm font-medium ${statusColor()}`}>{statusText()}</span>
+            <span className="text-sm shrink-0" style={{ color: 'var(--text-primary)' }}>Status</span>
+            <span className="text-sm font-medium" style={{ color: statusColor() }}>{statusText()}</span>
           </div>
 
           {installed && version && (
             <div className="flex items-center justify-between gap-4">
-              <span className="text-sm text-text shrink-0">Version</span>
-              <span className="text-sm text-subtext0 font-mono">codex-cli {version}</span>
+              <span className="text-sm shrink-0" style={{ color: 'var(--text-primary)' }}>Version</span>
+              <span className="text-sm font-mono" style={{ color: 'var(--text-secondary)' }}>codex-cli {version}</span>
             </div>
           )}
 
           {authMode === 'chatgpt' && hasOpenAiApiKeyEnv && (
-            <div className="rounded-lg bg-yellow/10 border border-yellow/30 px-3 py-2.5 text-xs text-yellow leading-relaxed">
+            <div
+              className="rounded-lg border px-3 py-2.5 text-xs leading-relaxed"
+              style={{
+                background: 'color-mix(in srgb, var(--status-warning) 10%, transparent)',
+                borderColor: 'color-mix(in srgb, var(--status-warning) 40%, transparent)',
+                color: 'var(--status-warning)',
+              }}
+            >
               OPENAI_API_KEY is set in your environment but you are signed in via ChatGPT. Codex prefers env var over auth.json -- billing may go to your API account, not your ChatGPT plan.
             </div>
           )}
@@ -133,21 +178,22 @@ export function CodexSettingsTab() {
       {/* Install hint -- shown only when not installed */}
       {!installed && (
         <div className="settings-card overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
+          <div className="px-4 py-2.5 border-b settings-divider flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0" style={{ color: 'var(--text-muted)' }}>
               <path d="M8 2v8M5 7l3 3 3-3M3 13h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Install</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Install</h3>
           </div>
           <div className="p-4 space-y-3">
-            <p className="text-sm text-subtext0">Install the Codex CLI to use OpenAI Codex sessions in CCC.</p>
+            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Install the Codex CLI to use OpenAI Codex sessions in CCC.</p>
             <div className="flex items-center gap-2">
-              <code className="flex-1 bg-crust/80 border border-surface0/80 rounded-lg px-3 py-2 text-sm font-mono text-text">
+              <code className="flex-1 border rounded-lg px-3 py-2 text-sm font-mono" style={CODE_WELL_STYLE}>
                 npm i -g @openai/codex
               </code>
               <button
                 onClick={() => navigator.clipboard.writeText('npm i -g @openai/codex').catch(() => {})}
-                className="px-3 py-2 rounded-lg bg-surface0/60 border border-surface0/80 text-xs text-overlay1 hover:text-text hover:bg-surface0 transition-colors shrink-0"
+                className={`px-3 py-2 text-xs shrink-0 ${NEUTRAL_BTN}`}
+                style={NEUTRAL_BTN_STYLE}
               >
                 Copy command
               </button>
@@ -159,39 +205,42 @@ export function CodexSettingsTab() {
       {/* Auth actions -- shown when installed */}
       {installed && (
         <div className="settings-card overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
+          <div className="px-4 py-2.5 border-b settings-divider flex items-center gap-2">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0" style={{ color: 'var(--text-muted)' }}>
               <path d="M11 7H5a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zM7 7V5a1 1 0 0 1 2 0v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
             </svg>
-            <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Authentication</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Authentication</h3>
           </div>
           <div className="p-4 space-y-3">
             {/* Login buttons -- shown when not signed in */}
             {authMode === 'none' && (
               <div className="space-y-2">
-                <p className="text-xs text-overlay0">Choose how to authenticate with OpenAI Codex.</p>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Choose how to authenticate with OpenAI Codex.</p>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={handleLoginChatgpt}
-                    className="px-4 py-2 rounded-lg bg-blue/15 border border-blue/30 text-sm text-blue hover:bg-blue/25 transition-colors"
+                    className={`px-4 py-2 text-sm ${BRAND_BTN}`}
+                    style={BRAND_BTN_STYLE}
                   >
                     Sign in with ChatGPT
                   </button>
                   <button
                     onClick={() => setShowApiKey(true)}
-                    className="px-4 py-2 rounded-lg bg-surface0/60 border border-surface0/80 text-sm text-overlay1 hover:text-text hover:bg-surface0 transition-colors"
+                    className={`px-4 py-2 text-sm ${NEUTRAL_BTN}`}
+                    style={NEUTRAL_BTN_STYLE}
                   >
                     Use API key
                   </button>
                   <button
                     onClick={handleLoginDevice}
-                    className="px-4 py-2 rounded-lg bg-surface0/60 border border-surface0/80 text-sm text-overlay1 hover:text-text hover:bg-surface0 transition-colors"
+                    className={`px-4 py-2 text-sm ${NEUTRAL_BTN}`}
+                    style={NEUTRAL_BTN_STYLE}
                   >
                     Use device code
                   </button>
                 </div>
                 {loginError && (
-                  <p className="text-xs text-red mt-2">{loginError}</p>
+                  <p className="text-xs mt-2" style={{ color: 'var(--status-danger)' }}>{loginError}</p>
                 )}
               </div>
             )}
@@ -202,19 +251,25 @@ export function CodexSettingsTab() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={handleTestConnection}
-                    className="px-4 py-2 rounded-lg bg-surface0/60 border border-surface0/80 text-sm text-overlay1 hover:text-text hover:bg-surface0 transition-colors"
+                    className={`px-4 py-2 text-sm ${NEUTRAL_BTN}`}
+                    style={NEUTRAL_BTN_STYLE}
                   >
                     Test connection
                   </button>
                   <button
                     onClick={() => logout()}
-                    className="px-4 py-2 rounded-lg bg-red/10 border border-red/30 text-sm text-red hover:bg-red/20 transition-colors"
+                    className="px-4 py-2 rounded-lg border text-sm transition-colors hover:bg-[color-mix(in_srgb,var(--status-danger)_20%,transparent)]"
+                    style={{
+                      background: 'color-mix(in srgb, var(--status-danger) 10%, transparent)',
+                      borderColor: 'color-mix(in srgb, var(--status-danger) 30%, transparent)',
+                      color: 'var(--status-danger)',
+                    }}
                   >
                     Sign out
                   </button>
                 </div>
                 {testResult && (
-                  <p className="text-xs text-subtext0 pt-1">{testResult}</p>
+                  <p className="text-xs pt-1" style={{ color: 'var(--text-secondary)' }}>{testResult}</p>
                 )}
               </div>
             )}
@@ -238,8 +293,8 @@ export function CodexSettingsTab() {
       )}
 
       {/* Profile-edit note -- always visible */}
-      <p className="text-xs text-overlay0 leading-relaxed px-1">
-        Profiles edited in <code className="text-overlay1 bg-crust/60 px-1 py-0.5 rounded">{'~/.codex/config.toml'}</code> outside CCC are ignored when spawning from here. CCC sets model and reasoning effort per session.
+      <p className="text-xs leading-relaxed px-1" style={{ color: 'var(--text-muted)' }}>
+        Profiles edited in <code className="px-1 py-0.5 rounded" style={{ color: 'var(--text-secondary)', background: 'var(--surface-sunken)' }}>{'~/.codex/config.toml'}</code> outside CCC are ignored when spawning from here. CCC sets model and reasoning effort per session.
       </p>
       </div>
     </div>
@@ -256,6 +311,8 @@ function ApiKeyModal({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // The trap owns Escape here (it also restores focus on close), so this dialog
+  // does not additionally call useDialogEscape.
   useFocusTrap(dialogRef, true, onClose)
 
   // Explicitly focus the password input rather than the first focusable (Cancel button).
@@ -275,24 +332,15 @@ function ApiKeyModal({ onClose }: { onClose: () => void }) {
   }
 
   return createPortal(
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="codex-apikey-modal-title"
-        className="bg-mantle rounded-xl shadow-2xl border border-blue/30 w-full max-w-sm"
-      >
-        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center justify-between">
-          <h3 id="codex-apikey-modal-title" className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Enter API Key</h3>
-          <button
-            onClick={onClose}
-            className="text-overlay0 hover:text-text transition-colors text-xs"
-          >
-            Cancel
-          </button>
-        </div>
-        <div className="p-4 space-y-3">
+    <DialogOverlay>
+      <DialogPanel width="w-[384px]" labelledBy="codex-apikey-modal-title" panelRef={dialogRef}>
+        <DialogHeader
+          titleId="codex-apikey-modal-title"
+          title="Enter API Key"
+          onClose={onClose}
+          closeLabel="Cancel"
+        />
+        <DialogBody className="space-y-3">
           <input
             ref={inputRef}
             type="password"
@@ -300,23 +348,25 @@ function ApiKeyModal({ onClose }: { onClose: () => void }) {
             onChange={(e) => { setApiKey(e.target.value); if (error) setError(null) }}
             onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit() }}
             placeholder="sk-..."
-            className="w-full bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text font-mono focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+            className="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus-ring placeholder:text-[var(--text-muted)] transition-colors"
+            style={{ background: 'var(--surface-base)', borderColor: 'var(--border-strong)', color: 'var(--text-primary)' }}
           />
           {error && (
-            <p className="text-xs text-red">{error}</p>
+            <p className="text-xs" style={{ color: 'var(--status-danger)' }}>{error}</p>
           )}
-          <div className="flex gap-2">
-            <button
-              onClick={handleSubmit}
-              disabled={!apiKey.trim() || pending}
-              className="px-4 py-2 rounded-lg bg-blue/15 border border-blue/30 text-sm text-blue hover:bg-blue/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {pending ? 'Verifying...' : 'Save key'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>,
+        </DialogBody>
+        <DialogFooter>
+          <DialogButton variant="ghost" onClick={onClose}>Cancel</DialogButton>
+          <DialogButton
+            variant="primary"
+            onClick={handleSubmit}
+            disabled={!apiKey.trim() || pending}
+          >
+            {pending ? 'Verifying...' : 'Save key'}
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>,
     document.body,
   )
 }
@@ -328,34 +378,40 @@ function DeviceCodePanel({ code, onDismiss }: { code: string; onDismiss: () => v
   // Settings re-mount picks up the updated auth state. We do not actively poll
   // auth.json in v1.5.0 -- acceptable for the initial release.
   return (
-    <div className="rounded-xl bg-surface0/30 border border-blue/30 overflow-hidden" aria-live="polite">
-      <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center justify-between">
-        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Device Code</h3>
+    <div
+      className="rounded-xl border overflow-hidden"
+      style={{ background: 'var(--surface-raised)', borderColor: 'color-mix(in srgb, var(--brand) 40%, transparent)' }}
+      aria-live="polite"
+    >
+      <div className="px-4 py-2.5 border-b settings-divider flex items-center justify-between">
+        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Device Code</h3>
         <button
           onClick={onDismiss}
-          className="text-overlay0 hover:text-text transition-colors text-xs"
+          className="transition-colors text-xs hover:text-[var(--text-primary)]"
+          style={{ color: 'var(--text-muted)' }}
         >
           Dismiss
         </button>
       </div>
       <div className="p-4 space-y-3">
-        <p className="text-sm text-subtext0">
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
           Enter this code at{' '}
-          <span className="text-blue font-mono">https://chatgpt.com/codex</span>{' '}
+          <span className="font-mono" style={{ color: 'var(--brand)' }}>https://chatgpt.com/codex</span>{' '}
           on a separate device.
         </p>
         <div className="flex items-center gap-3">
-          <code className="flex-1 bg-crust/80 border border-surface0/80 rounded-lg px-4 py-3 text-xl font-mono text-text tracking-widest text-center">
+          <code className="flex-1 border rounded-lg px-4 py-3 text-xl font-mono tracking-widest text-center" style={CODE_WELL_STYLE}>
             {code}
           </code>
           <button
             onClick={() => navigator.clipboard.writeText(code).catch(() => {})}
-            className="px-3 py-2 rounded-lg bg-surface0/60 border border-surface0/80 text-xs text-overlay1 hover:text-text hover:bg-surface0 transition-colors shrink-0"
+            className={`px-3 py-2 text-xs shrink-0 ${NEUTRAL_BTN}`}
+            style={NEUTRAL_BTN_STYLE}
           >
             Copy
           </button>
         </div>
-        <p className="text-xs text-overlay0">
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
           Enter this code on a separate device to complete sign-in.
         </p>
       </div>

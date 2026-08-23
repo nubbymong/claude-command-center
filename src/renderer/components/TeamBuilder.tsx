@@ -3,6 +3,18 @@ import { useTeamStore } from '../stores/teamStore'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
 import type { TeamTemplate, TeamStep, TeamStepMode } from '../types/electron'
 import { generateId } from '../utils/id'
+import {
+  DialogOverlay,
+  DialogPanel,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogButton,
+  DIALOG_INPUT_CLASS,
+  DIALOG_INPUT_STYLE,
+  DIALOG_LABEL_CLASS,
+  DIALOG_LABEL_STYLE,
+} from './ui/Dialog'
 
 function generateStepId(): string {
   return 'ts-' + generateId()
@@ -11,6 +23,14 @@ function generateStepId(): string {
 function generateTeamId(): string {
   return 'team-' + generateId()
 }
+
+/** Placeholder colour: the shared field classes style the value, not the hint. */
+const PLACEHOLDER_CLASS = ' placeholder:text-[var(--text-muted)]'
+
+/** A step running in parallel is flagged with the info token — the same hue the
+ *  connector, the card tint and the mode chip share, so "parallel" reads as one
+ *  state rather than three unrelated accents. */
+const PARALLEL = 'var(--status-info)'
 
 export default function TeamBuilder({ onClose }: { onClose: () => void }) {
   const editingTeam = useTeamStore(s => s.editingTeam)
@@ -22,6 +42,16 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
   const [projectPath, setProjectPath] = useState(editingTeam?.projectPath || '')
   const [steps, setSteps] = useState<TeamStep[]>(editingTeam?.steps || [])
   const [saving, setSaving] = useState(false)
+  // #371 BLOCKER-1: a refused/failed disk write used to close this dialog as if
+  // it had saved, and the pipeline was gone on the next restart. The message
+  // stays here, in front of the work that did not land.
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  // Deliberately NO useDialogEscape: this is a multi-step pipeline with a
+  // per-step prompt in each field, and Escape is a reflex when leaving a
+  // textarea. Losing a whole draft team to one keypress, with no confirm and
+  // no undo, is worse than not having the shortcut. The backdrop deliberately
+  // does not close either; Cancel is the way out.
 
   const handleAddStep = () => {
     const defaultTemplate = allTemplates[0]
@@ -61,6 +91,7 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
   const handleSave = async () => {
     if (!name.trim() || steps.length === 0) return
     setSaving(true)
+    setSaveError(null)
     try {
       const team: TeamTemplate = {
         id: editingTeam?.id || generateTeamId(),
@@ -71,7 +102,13 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
         createdAt: editingTeam?.createdAt || Date.now(),
         updatedAt: Date.now(),
       }
-      await saveTeam(team)
+      const result = await saveTeam(team)
+      if (!result.ok) {
+        // Do NOT close: the pipeline is not on disk, and closing would discard
+        // the only copy of it that exists.
+        setSaveError(result.error || 'Your pipeline could not be saved to disk.')
+        return
+      }
       onClose()
     } finally {
       setSaving(false)
@@ -86,52 +123,51 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
   const isValid = name.trim().length > 0 && steps.length > 0
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-base border border-surface0 rounded-2xl shadow-2xl w-[640px] max-h-[85vh] flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="px-5 py-4 border-b border-surface0/80">
-          <h2 className="text-base font-semibold text-text">
-            {editingTeam ? 'Edit Pipeline' : 'New Pipeline'}
-          </h2>
-          <p className="text-[11px] text-overlay0 mt-0.5">
-            Configure a pipeline of agents that execute in sequence or parallel
-          </p>
-        </div>
+    <DialogOverlay dim={0.5}>
+      <DialogPanel width="w-[640px]" className="max-h-[85vh]" labelledBy="team-builder-title">
+        <DialogHeader
+          titleId="team-builder-title"
+          title={editingTeam ? 'Edit Pipeline' : 'New Pipeline'}
+          subtitle="Configure a pipeline of agents that execute in sequence or parallel"
+          onClose={onClose}
+        />
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+        <DialogBody className="flex-1 space-y-4">
           {/* Name + Description */}
           <div className="space-y-2">
             <div>
-              <label className="text-[11px] text-subtext0 font-medium block mb-1">Pipeline Name</label>
+              <label className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE}>Pipeline Name</label>
               <input
                 value={name}
                 onChange={e => setName(e.target.value)}
                 placeholder="e.g. Full Review Pipeline"
-                className="w-full bg-surface0/40 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text placeholder:text-overlay0 outline-none focus:border-sapphire/40"
+                className={DIALOG_INPUT_CLASS + PLACEHOLDER_CLASS}
+                style={DIALOG_INPUT_STYLE}
               />
             </div>
             <div>
-              <label className="text-[11px] text-subtext0 font-medium block mb-1">Description</label>
+              <label className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE}>Description</label>
               <input
                 value={description}
                 onChange={e => setDescription(e.target.value)}
                 placeholder="What does this pipeline do?"
-                className="w-full bg-surface0/40 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text placeholder:text-overlay0 outline-none focus:border-sapphire/40"
+                className={DIALOG_INPUT_CLASS + PLACEHOLDER_CLASS}
+                style={DIALOG_INPUT_STYLE}
               />
             </div>
             <div>
-              <label className="text-[11px] text-subtext0 font-medium block mb-1">Project Path</label>
+              <label className={DIALOG_LABEL_CLASS} style={DIALOG_LABEL_STYLE}>Project Path</label>
               <div className="flex gap-2">
                 <input
                   value={projectPath}
                   onChange={e => setProjectPath(e.target.value)}
                   placeholder="/path/to/project"
-                  className="flex-1 bg-surface0/40 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text placeholder:text-overlay0 outline-none focus:border-sapphire/40"
+                  className={(DIALOG_INPUT_CLASS + PLACEHOLDER_CLASS).replace('w-full', 'flex-1')}
+                  style={DIALOG_INPUT_STYLE}
                 />
-                <button onClick={handleBrowse} className="px-3 py-2 rounded-lg text-xs bg-surface0/50 text-overlay1 hover:bg-surface1 hover:text-text transition-colors border border-surface0/60">
+                <DialogButton variant="secondary" onClick={handleBrowse} className="shrink-0" style={{ height: 'auto', alignSelf: 'stretch' }}>
                   Browse
-                </button>
+                </DialogButton>
               </div>
             </div>
           </div>
@@ -139,18 +175,22 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
           {/* Steps */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-[11px] text-subtext0 font-medium">Pipeline Steps</label>
+              <label className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>Pipeline Steps</label>
               <button
                 onClick={handleAddStep}
                 disabled={allTemplates.length === 0}
-                className="text-[11px] text-sapphire hover:text-sapphire/80 transition-colors font-medium disabled:opacity-40"
+                className="text-[11px] font-medium transition-opacity hover:opacity-80 disabled:opacity-40"
+                style={{ color: 'var(--brand)' }}
               >
                 + Add Step
               </button>
             </div>
 
             {steps.length === 0 ? (
-              <div className="text-center py-8 text-xs text-overlay0 bg-crust/40 rounded-xl border border-surface0/30">
+              <div
+                className="text-center py-8 text-xs rounded-xl border"
+                style={{ background: 'var(--surface-sunken)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}
+              >
                 No steps yet. Add agent steps to build your pipeline.
               </div>
             ) : (
@@ -172,26 +212,31 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
               </div>
             )}
           </div>
-        </div>
+        </DialogBody>
 
-        {/* Footer */}
-        <div className="px-5 py-3 border-t border-surface0/80 flex items-center justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-1.5 rounded-lg text-xs font-medium bg-surface0/50 text-overlay1 hover:bg-surface1 hover:text-text transition-colors border border-surface0/60"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!isValid || saving}
-            className="px-4 py-1.5 rounded-lg text-xs font-medium bg-sapphire hover:bg-sapphire/85 text-crust transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
+        <DialogFooter>
+          {/* #371: a save that did not reach disk keeps the editor open and says
+              why, so the user's work is not lost behind a closed dialog. */}
+          {saveError && (
+            <div
+              role="alert"
+              className="flex-1 min-w-0 text-[11px] leading-snug rounded-lg px-2.5 py-1.5"
+              style={{
+                color: 'var(--status-danger)',
+                background: 'color-mix(in srgb, var(--status-danger) 12%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)',
+              }}
+            >
+              {saveError}
+            </div>
+          )}
+          <DialogButton variant="ghost" onClick={onClose}>Cancel</DialogButton>
+          <DialogButton variant="primary" onClick={handleSave} disabled={!isValid || saving}>
             {saving ? 'Saving...' : editingTeam ? 'Save Changes' : 'Create Pipeline'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }
 
@@ -211,16 +256,19 @@ function StepRow({ step, index, total, templates, prevMode, onChange, onTemplate
   // Visual connector indicator
   const isParallel = step.mode === 'parallel'
 
+  // The small square icon buttons in the step's toolbar.
+  const iconBtn = 'w-6 h-6 rounded-md transition-colors flex items-center justify-center text-xs hover:text-[var(--text-primary)] hover:bg-[var(--surface-overlay)] disabled:opacity-30'
+
   return (
     <div className="relative">
       {/* Connector line */}
       {index > 0 && (
         <div className="flex items-center justify-center -mt-1 mb-1">
-          <div className="text-[10px] text-overlay0 flex items-center gap-1">
+          <div className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
             {isParallel && prevMode === 'parallel' ? (
-              <span className="text-lavender">|| parallel</span>
+              <span style={{ color: PARALLEL }}>|| parallel</span>
             ) : (
-              <svg width="10" height="12" viewBox="0 0 10 12" className="text-overlay0">
+              <svg width="10" height="12" viewBox="0 0 10 12" style={{ color: 'var(--text-muted)' }}>
                 <line x1="5" y1="0" x2="5" y2="8" stroke="currentColor" strokeWidth="1.5" />
                 <polyline points="2,6 5,10 8,6" fill="none" stroke="currentColor" strokeWidth="1.5" />
               </svg>
@@ -229,16 +277,22 @@ function StepRow({ step, index, total, templates, prevMode, onChange, onTemplate
         </div>
       )}
 
-      <div className={`rounded-xl border p-3 ${isParallel ? 'border-lavender/30 bg-lavender/5' : 'border-surface0/60 bg-surface0/20'}`}>
+      <div
+        className="rounded-xl border p-3"
+        style={isParallel
+          ? { borderColor: `color-mix(in srgb, ${PARALLEL} 40%, transparent)`, background: `color-mix(in srgb, ${PARALLEL} 8%, transparent)` }
+          : { borderColor: 'var(--border-subtle)', background: 'var(--surface-base)' }}
+      >
         <div className="flex items-center gap-2">
           {/* Step number */}
-          <span className="text-[10px] text-overlay0 w-4 text-center shrink-0 font-mono">{index + 1}</span>
+          <span className="text-[10px] w-4 text-center shrink-0 font-mono" style={{ color: 'var(--text-muted)' }}>{index + 1}</span>
 
           {/* Template dropdown */}
           <select
             value={step.templateId}
             onChange={e => onTemplateChange(e.target.value)}
-            className="flex-1 bg-crust/60 border border-surface0/60 rounded-lg px-2 py-1.5 text-xs text-text outline-none focus:border-sapphire/40"
+            className="flex-1 rounded-lg border px-2 py-1.5 text-xs outline-none focus-ring"
+            style={DIALOG_INPUT_STYLE}
           >
             {templates.map(t => (
               <option key={t.id} value={t.id}>{t.name}</option>
@@ -248,11 +302,10 @@ function StepRow({ step, index, total, templates, prevMode, onChange, onTemplate
           {/* Mode toggle */}
           <button
             onClick={() => onChange({ mode: isParallel ? 'sequential' : 'parallel' })}
-            className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors border ${
-              isParallel
-                ? 'bg-lavender/15 text-lavender border-lavender/30'
-                : 'bg-surface0/40 text-overlay1 border-surface0/60 hover:text-text'
-            }`}
+            className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors border ${isParallel ? '' : 'hover:text-[var(--text-primary)]'}`}
+            style={isParallel
+              ? { background: `color-mix(in srgb, ${PARALLEL} 15%, transparent)`, color: PARALLEL, borderColor: `color-mix(in srgb, ${PARALLEL} 40%, transparent)` }
+              : { background: 'var(--surface-overlay)', color: 'var(--text-secondary)', borderColor: 'var(--border-subtle)' }}
             title={isParallel ? 'Runs in parallel with adjacent parallel steps' : 'Runs after previous step completes'}
           >
             {isParallel ? 'Parallel' : 'Sequential'}
@@ -263,14 +316,16 @@ function StepRow({ step, index, total, templates, prevMode, onChange, onTemplate
             <button
               onClick={() => onMove(-1)}
               disabled={index === 0}
-              className="w-6 h-6 rounded-md text-overlay0 hover:text-text hover:bg-surface0/50 transition-colors disabled:opacity-30 flex items-center justify-center text-xs"
+              className={iconBtn}
+              style={{ color: 'var(--text-muted)' }}
             >
               {String.fromCodePoint(0x25B2)}
             </button>
             <button
               onClick={() => onMove(1)}
               disabled={index === total - 1}
-              className="w-6 h-6 rounded-md text-overlay0 hover:text-text hover:bg-surface0/50 transition-colors disabled:opacity-30 flex items-center justify-center text-xs"
+              className={iconBtn}
+              style={{ color: 'var(--text-muted)' }}
             >
               {String.fromCodePoint(0x25BC)}
             </button>
@@ -279,7 +334,8 @@ function StepRow({ step, index, total, templates, prevMode, onChange, onTemplate
           {/* Prompt toggle */}
           <button
             onClick={() => setShowPrompt(!showPrompt)}
-            className="w-6 h-6 rounded-md text-overlay0 hover:text-text hover:bg-surface0/50 transition-colors flex items-center justify-center text-xs"
+            className={iconBtn}
+            style={{ color: 'var(--text-muted)' }}
             title="Custom prompt override"
           >
             {String.fromCodePoint(0x270E)}
@@ -288,7 +344,8 @@ function StepRow({ step, index, total, templates, prevMode, onChange, onTemplate
           {/* Remove */}
           <button
             onClick={onRemove}
-            className="w-6 h-6 rounded-md text-overlay0 hover:text-red hover:bg-red/10 transition-colors flex items-center justify-center text-xs"
+            className="w-6 h-6 rounded-md transition-colors flex items-center justify-center text-xs hover:text-[var(--status-danger)] hover:bg-[color-mix(in_srgb,var(--status-danger)_12%,transparent)]"
+            style={{ color: 'var(--text-muted)' }}
           >
             {String.fromCodePoint(0x2715)}
           </button>
@@ -300,7 +357,8 @@ function StepRow({ step, index, total, templates, prevMode, onChange, onTemplate
             value={step.label}
             onChange={e => onChange({ label: e.target.value })}
             placeholder="Step label"
-            className="w-full bg-crust/40 border border-surface0/40 rounded-md px-2 py-1 text-[11px] text-text placeholder:text-overlay0 outline-none focus:border-sapphire/40"
+            className={'w-full rounded-md border px-2 py-1 text-[11px] outline-none focus-ring' + PLACEHOLDER_CLASS}
+            style={DIALOG_INPUT_STYLE}
           />
         </div>
 
@@ -312,7 +370,8 @@ function StepRow({ step, index, total, templates, prevMode, onChange, onTemplate
               onChange={e => onChange({ promptOverride: e.target.value || undefined })}
               placeholder="Optional: override the template's default prompt..."
               rows={3}
-              className="w-full bg-crust/40 border border-surface0/40 rounded-md px-2 py-1.5 text-[11px] text-text placeholder:text-overlay0 outline-none focus:border-sapphire/40 resize-y"
+              className={'w-full rounded-md border px-2 py-1.5 text-[11px] outline-none focus-ring resize-y' + PLACEHOLDER_CLASS}
+              style={DIALOG_INPUT_STYLE}
             />
           </div>
         )}

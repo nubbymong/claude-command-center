@@ -18,8 +18,10 @@ const splashDir = join(repoRoot, 'resources', 'splash')
 const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8'))
 
 describe('splash assets guard', () => {
-  it('all four splash assets are present', () => {
-    for (const f of ['index.html', 'splash.js', 'three.module.min.js', 'montserrat-italic-600-latin.woff2']) {
+  it('all five splash assets are present', () => {
+    // splash-info.js (#384) prints the build identity line; it is a separate
+    // classic script so the line shows even when the three.js module fails.
+    for (const f of ['index.html', 'splash.js', 'splash-info.js', 'three.module.min.js', 'montserrat-italic-600-latin.woff2']) {
       expect(existsSync(join(splashDir, f)), `resources/splash/${f} missing`).toBe(true)
     }
   })
@@ -34,7 +36,7 @@ describe('splash assets guard', () => {
   })
 
   it('splash html + js reference no remote origin (offline at boot)', () => {
-    for (const f of ['index.html', 'splash.js']) {
+    for (const f of ['index.html', 'splash.js', 'splash-info.js']) {
       const text = readFileSync(join(splashDir, f), 'utf-8')
       for (const line of text.split('\n')) {
         // xmlns namespace tokens and the CSP/comment prose legitimately
@@ -45,6 +47,11 @@ describe('splash assets guard', () => {
         expect(offending, `${f}: remote reference(s) ${offending.join(', ')}`).toEqual([])
       }
     }
+  })
+
+  it('the splash page carries no "not affiliated with Anthropic" line (#383)', () => {
+    const html = readFileSync(join(splashDir, 'index.html'), 'utf-8')
+    expect(html).not.toMatch(/affiliated|endorsed by/i)
   })
 
   it('the splash page carries its own strict CSP meta', () => {

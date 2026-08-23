@@ -11,6 +11,8 @@
  * submitted lines to disk (PSReadLine's ConsoleHost_history.txt on Windows),
  * so a substituted plaintext secret would be written to disk forever.
  */
+import { secretRefCore, substituteSecretToken } from '../shared/command-secret'
+
 export interface TerminalLaunchOptions {
   command?: string
   args?: string
@@ -18,16 +20,29 @@ export interface TerminalLaunchOptions {
 }
 
 /** Shell-appropriate reference to the secret env var. Quoted on POSIX so a
- *  secret containing spaces or globs stays a single argument. On Windows the
- *  reference is bare, and that alone does NOT make the value one argument:
- *  PowerShell 5.1 re-serialises native-command arguments into one line and
- *  never escapes an embedded `"`, so a value holding `"`, a trailing `\`, a
- *  `!name!` pair or `&|^<>%` (through a .cmd shim) breaks the child's argv.
- *  Those values are REFUSED at the dialog by shared/command-secret's
- *  `secretValueProblem` (the same rule the command-button secret uses); what
- *  passes arrives intact -- measured on 5.1, ADR-009 pass, beta.16. */
+ *  secret containing spaces or globs stays a single argument.
+ *
+ *  On Windows the reference is BRACED — `${env:NAME}`, not `$env:NAME`. The
+ *  bare form is unbounded, so an adjacent character runs into the name:
+ *  `{secret}.json` becomes `$env:CCC_ARG_SECRET.json` (a member access on a
+ *  string, yielding nothing) and `{secret}_v2` reads as a longer variable name.
+ *  Either way the argument vanishes and the next flag shifts into its slot.
+ *  The braced form ends where the name ends, on PowerShell 5.1 and 7 alike.
+ *
+ *  This is the fix `shared/command-secret`'s `commandSecretRef` already took
+ *  for command buttons (measured in the ADR-009 pass on #386); the terminal
+ *  config path never had it back-ported, which is the adjacency case the
+ *  beta.16 pass recorded as "handed to the child literally" (#371).
+ *
+ *  A reference alone still does NOT make the value one argument: PowerShell 5.1
+ *  re-serialises native-command arguments into one line and never escapes an
+ *  embedded `"`, so a value holding `"`, a trailing `\`, a `!name!` pair or
+ *  `&|^<>%` (through a .cmd shim) breaks the child's argv. Those values are
+ *  REFUSED at the dialog by shared/command-secret's `secretValueProblem` (the
+ *  same rule the command-button secret uses); what passes arrives intact --
+ *  measured on 5.1, ADR-009 pass, beta.16. */
 export function secretRef(isWindows: boolean): string {
-  return isWindows ? '$env:CCC_ARG_SECRET' : '"$CCC_ARG_SECRET"'
+  return secretRefCore('CCC_ARG_SECRET', isWindows)
 }
 
 /** Shell-appropriate reference to the Ask Conductor opening prompt.
@@ -122,9 +137,29 @@ export function askPromptEnvValue(question: string, isWindows: boolean): string 
  * leaving a dangling variable name the shell would expand to nothing anyway.
  */
 export function buildTerminalLaunchLine(opts: TerminalLaunchOptions | undefined, isWindows: boolean): string {
-  const command = (opts?.command ?? '').trim()
-  if (!command) return ''
-  const ref = opts?.hasSecretArg ? secretRef(isWindows) : ''
-  const args = (opts?.args ?? '').replace(/\{secret\}/g, ref).trim()
-  return args ? `${command} ${args}` : command
+  // `{secret}` is substituted in the COMMAND as well as the arguments (#371).
+  // The two fields become one shell line the moment they are joined, and the
+  // command field is where a user naturally writes a whole invocation
+  // (`curl -H "Bearer {secret}" ...`). Writing it there used to type the
+  // literal token -- the "handed over literally" case the beta.16 pass noted.
+  const command0 = (opts?.command ?? '').trim()
+  if (!command0) return ''
+  // With NO secret stored the token is left LITERAL rather than replaced with
+  // nothing (#371). The two builders disagreed here and this one silently
+  // dropped it: `mytool --token {secret}` became `mytool --token`, which runs
+  // without a credential instead of failing loudly, and a command field holding
+  // only the token vanished entirely. `buildCommandLine`'s rule -- visible and
+  // harmless beats silently typing nothing -- is the right one, so both follow
+  // it now.
+  const ref = opts?.hasSecretArg ? secretRef(isWindows) : null
+  // Join the two fields FIRST, then substitute the whole line once. They become
+  // one shell line the moment they are joined, so a separator ending the command
+  // (`curl ;`) has to make the first argument a command position too — which
+  // substituting the fields SEPARATELY could not see, leaking a secret typed as
+  // the first argument after a trailing `;`. As one line: word 0 is the program
+  // (a command position, blocked); every later word is an argument unless it
+  // follows a `; | &` or newline, which is a command position in any field.
+  const args0 = (opts?.args ?? '').trim()
+  const joined0 = args0 ? `${command0} ${args0}` : command0
+  return (ref ? substituteSecretToken(joined0, ref, { isCommandLine: true }) : joined0).trim()
 }

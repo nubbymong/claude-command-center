@@ -1,4 +1,5 @@
 import React from 'react'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, useDialogEscape } from './ui/Dialog'
 
 interface CloseDialogProps {
   mode: 'close' | 'update'
@@ -9,37 +10,26 @@ interface CloseDialogProps {
 }
 
 export default function CloseDialog({ mode, sessionCount, onSaveAndClose, onCloseWithoutSaving, onCancel }: CloseDialogProps) {
+  useDialogEscape(onCancel)
   return (
-    <div className="absolute inset-0 bg-base/80 z-50 flex items-center justify-center">
-      <div className="bg-surface0 border border-surface1 rounded-lg shadow-2xl p-6 max-w-sm w-full mx-4">
-        <h2 className="text-lg font-semibold text-text mb-2">
-          {mode === 'update' ? 'Update & Restart' : 'Close App'}
-        </h2>
-        <p className="text-sm text-overlay1 mb-3">
-          You have {sessionCount} active session{sessionCount !== 1 ? 's' : ''}.
-          Would you like to save them for next launch?
-        </p>
-        <div className="flex flex-col gap-2">
-          <button
-            onClick={onSaveAndClose}
-            className="w-full py-2 px-4 text-sm font-medium rounded bg-blue hover:bg-blue/80 text-crust transition-colors"
-          >
-            Save Sessions
-          </button>
-          <button
-            onClick={onCloseWithoutSaving}
-            className="w-full py-2 px-4 text-sm font-medium rounded bg-surface1 hover:bg-surface2 text-text transition-colors"
-          >
-            Close Sessions
-          </button>
-          <button
-            onClick={onCancel}
-            className="w-full py-1.5 px-4 text-xs text-overlay0 hover:text-overlay1 transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
+    <DialogOverlay position="absolute" testId="close-dialog">
+      <DialogPanel width="w-[400px]" labelledBy="close-dialog-title">
+        <DialogHeader
+          titleId="close-dialog-title"
+          title={mode === 'update' ? 'Update and restart' : 'Close the app'}
+          subtitle={<>You have {sessionCount} active session{sessionCount !== 1 ? 's' : ''}.</>}
+        />
+        <DialogBody>
+          <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            Save them and they come back at the next launch, in the same tabs; close them and they are gone.
+          </p>
+        </DialogBody>
+        <DialogFooter>
+          <DialogButton variant="ghost" onClick={onCancel} testId="close-dialog-cancel">Cancel</DialogButton>
+          <DialogButton variant="secondary" onClick={onCloseWithoutSaving} testId="close-dialog-discard">Close sessions</DialogButton>
+          <DialogButton variant="primary" onClick={onSaveAndClose} testId="close-dialog-save" autoFocus>Save sessions</DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }

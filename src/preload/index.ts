@@ -89,7 +89,6 @@ export interface ElectronAPI {
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
-    load: (configId: string) => Promise<string | null>
     delete: (configId: string) => Promise<boolean>
   }
   pty: {
@@ -293,9 +292,20 @@ export interface ElectronAPI {
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) => Promise<CanvasReviewState>
     annotationResolve: (args: {
       sessionId: string
+      /** The canvas the panel was showing. Refused if the session has moved on. */
+      canvasId: string
       annotationId: string
-      action: 'approve' | 'dismiss' | 'reannotate'
+      action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
     }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
+    /** The user puts a closed note back in play — the undo half of close-out. */
+    annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The user has these addressed notes on screen. The only input to the agent
+     *  close-out barrier that no MCP tool can produce — renderer-only by design. */
+    reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
+    /** Bulk close-out for one canvas whose work has shipped. Clears the rounds
+     *  already waiting on the user; deletes nothing. `ok: false` means the
+     *  review store could not be read — never "there was nothing to clear". */
+    reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {
@@ -314,6 +324,9 @@ export interface ElectronAPI {
     onSourceConfigured: (callback: (configured: boolean) => void) => () => void
     onServerConnected: (callback: (connected: boolean) => void) => () => void
   }
+  diagnostics: {
+    captureGlyph: (payload: unknown) => Promise<{ ok: boolean; jsonPath?: string; imagePath?: string; error?: string }>
+  }
   screenshot: {
     captureRectangle: () => Promise<string | null>
     captureWindow: (sourceId: string) => Promise<string | null>
@@ -328,6 +341,8 @@ export interface ElectronAPI {
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
     /** Detach + destroy the session's view. */
     close: (sessionId: string) => Promise<boolean>
+    /** Session closed for good: destroy the view AND wipe its browser profile. */
+    forget: (sessionId: string) => Promise<boolean>
     /** Re-position on resize/scroll. */
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
     /** Attach/detach without destroying — used to hide on session switch. */
@@ -398,6 +413,17 @@ export interface ElectronAPI {
     getUsage: (sessionId: string) => Promise<import('../shared/types').CodexReviewUsageRecord | null>
     onUsageUpdated: (callback: (payload: { sessionId: string; record: import('../shared/types').CodexReviewUsageRecord }) => void) => () => void
   }
+  /** GUI-subsystem executables (#379). See shared/gui-exe.ts. */
+  exe: {
+    probe: (req: { command: string; cwd?: string }) => Promise<import('../shared/gui-exe').ExeProbeResult>
+    runCaptured: (req: { command: string; cwd?: string }) => Promise<import('../shared/gui-exe').CapturedRunStart>
+    /** Stop capturing; the program keeps running. */
+    releaseRun: (runId: string) => Promise<boolean>
+    /** Force-stop the program. */
+    cancelRun: (runId: string) => Promise<boolean>
+    onRunData: (callback: (chunk: import('../shared/gui-exe').CapturedRunChunk) => void) => () => void
+    onRunExit: (callback: (exit: import('../shared/gui-exe').CapturedRunExit) => void) => () => void
+  }
   channels: {
     send: (req: unknown) => Promise<unknown>
     retract: (p: unknown) => Promise<unknown>
@@ -439,8 +465,16 @@ export interface ElectronAPI {
     stop: () => Promise<{ ok: boolean }>
     status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
-    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
-    getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
+    /**
+     * #371. `generation` is the token handed out by `getConfig` alongside the
+     * config the form was built from. Pass it back so main can refuse a save
+     * built from defaults it showed while the settings file was unreadable
+     * (`ok:false, stale:true`). `ok:false` means IT IS NOT ON DISK.
+     */
+    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }, generation?: number) => Promise<{ ok: boolean; stale?: boolean; error?: string }>
+    /** `readFailed` distinguishes "no config yet" from "could not read it" — the
+     *  caller must not present defaults as saved settings in the latter case. */
+    getConfig: () => Promise<{ config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null; generation: number; readFailed: boolean }>
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
   }
   legacyVersion: {
@@ -454,18 +488,23 @@ export interface ElectronAPI {
   cloudAgent: {
     dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent>
     cancel: (id: string) => Promise<boolean>
-    remove: (id: string) => Promise<boolean>
+    /** #371: `ok:false` means the agent is STILL on disk — do not drop the row. */
+    remove: (id: string) => Promise<{ ok: true; removed: boolean } | { ok: false; error: string }>
     retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
     list: () => Promise<import('../shared/types').CloudAgent[]>
     getOutput: (id: string) => Promise<string>
-    clearCompleted: () => Promise<number>
+    /** #371: `ok:false` means nothing was cleared — do not filter the list. */
+    clearCompleted: () => Promise<{ ok: true; removed: number } | { ok: false; error: string }>
     onStatusChanged: (callback: (agent: import('../shared/types').CloudAgent) => void) => () => void
     onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
   }
   team: {
     list: () => Promise<import('../shared/types').TeamTemplate[]>
-    save: (team: import('../shared/types').TeamTemplate) => Promise<import('../shared/types').TeamTemplate>
-    delete: (id: string) => Promise<boolean>
+    /** #371: `ok:false` means the team is NOT on disk — keep the user's work in
+     *  the editor rather than reporting a save that did not happen. */
+    save: (team: import('../shared/types').TeamTemplate) => Promise<{ ok: true; team: import('../shared/types').TeamTemplate } | { ok: false; error: string }>
+    /** #371: `ok:false` means the team is STILL on disk — do not drop the row. */
+    delete: (id: string) => Promise<{ ok: true; deleted: boolean } | { ok: false; error: string }>
     run: (teamId: string, projectPath?: string) => Promise<import('../shared/types').TeamRun | null>
     cancelRun: (runId: string) => Promise<boolean>
     listRuns: () => Promise<import('../shared/types').TeamRun[]>
@@ -654,9 +693,11 @@ const electronAPI: ElectronAPI = {
     enabled: () => ipcRenderer.invoke(IPC.DEBUG_INPUT_ENABLED),
     log: (line: string) => ipcRenderer.send(IPC.DEBUG_LOG_INPUT, line)
   },
+  // Deliberately no `load`: the renderer never needs a credential's VALUE --
+  // main injects it into the shell's environment at spawn (ADR-018 security
+  // notes). The plaintext read bridge had zero callers and was removed.
   credentials: {
     save: (configId, password) => ipcRenderer.invoke(IPC.CREDENTIALS_SAVE, configId, password),
-    load: (configId) => ipcRenderer.invoke(IPC.CREDENTIALS_LOAD, configId),
     delete: (configId) => ipcRenderer.invoke(IPC.CREDENTIALS_DELETE, configId)
   },
   pty: {
@@ -851,8 +892,13 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_DELETE, args),
     reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
-    annotationResolve: (args: { sessionId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' }) =>
+    annotationResolve: (args: { sessionId: string; canvasId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' | 'stale' }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_RESOLVE, args),
+    annotationReopen: (args: { sessionId: string; annotationId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_REOPEN, args),
+    reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_REVIEW_MARK_SEEN, args),
+    reviewCloseOut: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_CLOSE_OUT, args),
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
       const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)
       ipcRenderer.on(IPC.CANVAS_REVIEW_CHANGED, handler)
@@ -901,6 +947,9 @@ const electronAPI: ElectronAPI = {
     spawnCliSetup: (cols: number, rows: number) => ipcRenderer.invoke(IPC.SETUP_SPAWN_CLI_SETUP, cols, rows),
     killCliSetup: () => ipcRenderer.invoke(IPC.SETUP_KILL_CLI_SETUP),
   },
+  diagnostics: {
+    captureGlyph: (payload: unknown) => ipcRenderer.invoke(IPC.DIAGNOSTICS_CAPTURE_GLYPH, payload),
+  },
   screenshot: {
     captureRectangle: () => ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE_RECTANGLE),
     captureWindow: (sourceId: string) => ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE_WINDOW, sourceId),
@@ -912,6 +961,8 @@ const electronAPI: ElectronAPI = {
     check: (url: string) => ipcRenderer.invoke(IPC.WEBVIEW_CHECK, url),
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_OPEN, sessionId, url, bounds),
     close: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE, sessionId),
+    /** Session closed for good: destroy the view AND wipe its browser profile. */
+    forget: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_FORGET, sessionId),
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_SET_BOUNDS, sessionId, bounds),
     setVisible: (sessionId: string, visible: boolean) => ipcRenderer.invoke(IPC.WEBVIEW_SET_VISIBLE, sessionId, visible),
     reload: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_RELOAD, sessionId),
@@ -980,7 +1031,8 @@ const electronAPI: ElectronAPI = {
     status: () => ipcRenderer.invoke(IPC.VISION_STATUS),
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) =>
       ipcRenderer.invoke(IPC.VISION_LAUNCH, browser, debugPort, url, headless ?? true),
-    saveConfig: (config: any) => ipcRenderer.invoke(IPC.VISION_SAVE_CONFIG, config),
+    saveConfig: (config: any, generation?: number) =>
+      ipcRenderer.invoke(IPC.VISION_SAVE_CONFIG, config, generation),
     getConfig: () => ipcRenderer.invoke(IPC.VISION_GET_CONFIG),
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => {
       const handler = (_: unknown, data: any) => callback(data)
@@ -1168,6 +1220,22 @@ const electronAPI: ElectronAPI = {
       const wrapped = (_e: Electron.IpcRendererEvent, payload: { sessionId: string; record: import('../shared/types').CodexReviewUsageRecord }) => callback(payload)
       ipcRenderer.on(IPC.CODEX_REVIEW_USAGE_UPDATED, wrapped)
       return () => ipcRenderer.removeListener(IPC.CODEX_REVIEW_USAGE_UPDATED, wrapped)
+    },
+  },
+  exe: {
+    probe: (req) => ipcRenderer.invoke(IPC.EXE_PROBE, req),
+    runCaptured: (req) => ipcRenderer.invoke(IPC.EXE_RUN_START, req),
+    releaseRun: (runId: string) => ipcRenderer.invoke(IPC.EXE_RUN_RELEASE, { runId }),
+    cancelRun: (runId: string) => ipcRenderer.invoke(IPC.EXE_RUN_CANCEL, { runId }),
+    onRunData: (callback) => {
+      const wrapped = (_e: Electron.IpcRendererEvent, payload: import('../shared/gui-exe').CapturedRunChunk) => callback(payload)
+      ipcRenderer.on(IPC.EXE_RUN_DATA, wrapped)
+      return () => ipcRenderer.removeListener(IPC.EXE_RUN_DATA, wrapped)
+    },
+    onRunExit: (callback) => {
+      const wrapped = (_e: Electron.IpcRendererEvent, payload: import('../shared/gui-exe').CapturedRunExit) => callback(payload)
+      ipcRenderer.on(IPC.EXE_RUN_EXIT, wrapped)
+      return () => ipcRenderer.removeListener(IPC.EXE_RUN_EXIT, wrapped)
     },
   },
   channels: {

@@ -41,9 +41,11 @@ import { useTipsStore, trackUsage, VIEW_FEATURE_IDS } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import SshCloseDialog from './components/SshCloseDialog'
+import { DialogOverlay, DialogPanel, DialogHeader, DialogBody, DialogFooter, DialogButton, DIALOG_INPUT_CLASS, DIALOG_INPUT_STYLE } from './components/ui/Dialog'
 import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
 import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
+import { useCommandBarStore } from './stores/commandBarStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
@@ -81,7 +83,7 @@ import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
-import { useSessionAutosave } from './hooks/useSessionAutosave'
+import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -425,13 +427,14 @@ export default function App() {
     async function postConfigInit() {
       const appMeta = useAppMetaStore.getState().meta
 
-      // Re-fire the first-run tour when the VERSION warrants it: every build on
-      // the beta line so testers see the current flow, and on any channel when
-      // the user has crossed a release line (2.0.x → 2.1.x). Clearing
-      // completedSteps + onboardingCompletedVersion flips deriveOnboarding back
-      // to due (the harness re-runs); its finish step re-stamps
-      // onboardingAppVersion so it will not re-fire until the next one that
-      // qualifies. A first install runs through deriveOnboarding already.
+      // Re-fire the first-run tour when the VERSION warrants it: an
+      // ONBOARDING_VERSION bump, or a crossed release line (2.0.x → 2.1.x) on
+      // any channel — see shouldReonboardForVersion; a beta bump alone no
+      // longer does (2026-08-21). Clearing completedSteps +
+      // onboardingCompletedVersion flips deriveOnboarding back to due (the
+      // harness re-runs); its finish step re-stamps onboardingAppVersion so it
+      // will not re-fire until the next one that qualifies. A first install
+      // runs through deriveOnboarding already.
       const reonboard = shouldReonboardForVersion(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)
       if (reonboard) {
         useAppMetaStore.getState().update({ completedSteps: {}, onboardingCompletedVersion: undefined })
@@ -452,6 +455,16 @@ export default function App() {
       // Only arm the notes-only mode when the harness is not already coming up
       // for its own reasons; there, whatsNewV2 is simply its first page.
       if (surface === 'tour' && !alreadyRunning) setWhatsNewOnly(true)
+
+      // Record that THIS build ran — AFTER the decision above has read the
+      // previous value, which is the whole point of it. It is the witness
+      // against a lastSeenVersion that no build of that version ever wrote
+      // (#369): a stamp newer than the last build that ran does not count as
+      // seen. Unconditional, unlike setupVersion below, which waits on config
+      // or the CLI and is only the fallback witness for metas older than this.
+      if (appMeta.lastRunVersion !== __APP_VERSION__) {
+        useAppMetaStore.getState().update({ lastRunVersion: __APP_VERSION__ })
+      }
 
       if (appMeta.setupVersion !== __APP_VERSION__) {
         const hasExistingConfig = useConfigStore.getState().configs.length > 0 ||
@@ -474,6 +487,10 @@ export default function App() {
       try {
         const savedState = await window.electronAPI.session.load() as SessionState | null
         if (savedState && savedState.sessions.length > 0) setPendingRestore(savedState)
+        // Nothing to restore: every per-session tool hide from the last run is
+        // for a session that no longer exists. (The restore path sweeps after
+        // it knows which sessions came back.)
+        else useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
       } catch (err) {
         console.error('[App] Failed to load saved sessions:', err)
       }
@@ -602,11 +619,11 @@ export default function App() {
     try {
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
-      // Idempotent session colour migration (no guard). session.clear() below wipes
-      // the on-disk copy right after restore, and migrated keys only reach disk on a
-      // graceful close (buildSessionState). So this recomputes each launch until then
-      // -- harmless: it is a no-op once keyed, raw `color` is always preserved, and the
-      // notice guard below prevents re-notifying.
+      // Idempotent session colour migration (no guard). The restore SAVES the live
+      // set right after this (#397 -- the clear that used to sit there left a gap
+      // where a crash lost everything), so migrated keys reach disk immediately.
+      // Still safe to recompute each launch: it is a no-op once keyed, raw `color` is
+      // always preserved, and the notice guard below prevents re-notifying.
       const { records: migratedSaved, summary: sessionSummary } = migrateColorRecords(savedState.sessions || [])
       console.log('[colourMigration] sessions', sessionSummary)
 
@@ -640,6 +657,10 @@ export default function App() {
           disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
           enableCodexReview: claude?.enableCodexReview,
           loggingEnabled: claude?.loggingEnabled,
+          // #397 Group 4: these were dropped on save+restore, so a restored session
+          // came back with the wrong permission mode / without its extra CLI args.
+          permissionMode: claude?.permissionMode,
+          extraArgs: claude?.extraArgs,
           machineName: saved.machineName,
           githubIntegration: saved.githubIntegration,
           status: 'idle' as const,
@@ -676,7 +697,20 @@ export default function App() {
       markRestoredSessionsPredetermined(restoredSessions.map((s) => s.id))
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
-      await window.electronAPI.session.clear()
+      // Per-session "hide this tool" entries key on session ids, which persist
+      // across restarts; drop the ones whose session did not come back (ADR-018 M3).
+      useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
+      // #397 Group 4: previously session.clear() unlinked the file here and relied on
+      // the ~1s debounced autosave to rewrite it -- a crash in that window lost every
+      // session. Instead persist the restored (live) set immediately so the on-disk
+      // copy is always current, with no empty gap. main enriches on save, and the
+      // restored resumeUuid/resumeCwd are still on the records (TerminalView clears
+      // them only at spawn), so the exact-resume targets are preserved.
+      try {
+        await window.electronAPI.session.save(buildSessionState())
+      } catch {
+        /* best-effort: the debounced autosave rewrites on the next session-set change */
+      }
 
       if (sessionSummary.changed > 0) {
         const s = useSettingsStore.getState()
@@ -732,6 +766,9 @@ export default function App() {
     if (isUpdate) setIsUpdating(true)
     try {
       await flushPendingConfigSaves()
+      // #397 round-2: kill any pending debounced autosave first, so it cannot fire
+      // after the clear and rewrite the set the user just chose to discard.
+      cancelSessionAutosave()
       await window.electronAPI.session.clear()
       console.log('[App] Session state cleared')
       if (isUpdate) {
@@ -770,9 +807,15 @@ export default function App() {
       if (state.sessions.length === 0) {
         // No dialog on the zero-session path, so drain pending debounced
         // config saves here before letting the window die.
-        void flushPendingConfigSaves().finally(() => {
-          window.electronAPI.window.allowClose()
-        })
+        // #397 round-2: the user has closed every card. Cancel any pending autosave
+        // and clear the saved set so the exit-time flush cannot re-assert sessions
+        // the user closed (the file/cache could still hold the last non-empty set
+        // in the sub-second window before the empty autosave would have fired).
+        cancelSessionAutosave()
+        void flushPendingConfigSaves()
+          .then(() => window.electronAPI.session.clear())
+          .catch(() => { /* best-effort: the empty store still yields no card next launch */ })
+          .finally(() => window.electronAPI.window.allowClose())
         return
       }
       setCloseDialog('close')
@@ -1016,7 +1059,14 @@ export default function App() {
                   ) : isShowingWebview ? (
                     <WebviewPane sessionId={session.id} isActive={session.id === activeSessionId} />
                   ) : isShowingExcalidraw ? (
-                    <AgentCanvasPane sessionId={session.id} />
+                    <AgentCanvasPane
+                      sessionId={session.id}
+                      // Load-bearing, not cosmetic: the notes panel reports "the
+                      // user has seen this round addressed" only from the pane
+                      // that is actually on screen, and that report is what lets
+                      // the agent close a round at all.
+                      isActive={session.id === activeSessionId && view === 'sessions'}
+                    />
                   ) : null}
                 </div>
               )
@@ -1057,6 +1107,7 @@ export default function App() {
             partnerSessionId={activeSession.id + '-partner'}
             parentSessionId={activeSession.id}
             mainPaneIsShell={!!activeSession.shellOnly}
+            configCount={configs.length}
           />
         )}
       </div>
@@ -1208,8 +1259,12 @@ export default function App() {
             }}
             onDontOpen={() => {
               setPendingRestore(null)
+              useCommandBarStore.getState().reconcile(useSessionStore.getState().sessions.map((s) => s.id))
               // Discard the saved cards so the next boot doesn't re-prompt; the
               // conversations themselves stay resumable from inside Claude.
+              // #397 round-2: cancel a pending autosave first so it can't rewrite
+              // the discarded set into the file after the clear.
+              cancelSessionAutosave()
               void window.electronAPI.session.clear()
             }}
             onRefresh={async () => {
@@ -1227,44 +1282,50 @@ export default function App() {
         )}
 
         {bootGate === 'machineName' && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div className="bg-surface0 rounded-lg p-5 w-[360px] shadow-2xl border border-surface1">
-              <h3 className="text-sm font-semibold text-text mb-2">Name this machine</h3>
-              <p className="text-xs text-overlay1 mb-3">Give your local machine a name so sessions and memories can be identified by machine.</p>
-              <input
-                autoFocus
-                value={machineNameInput}
-                onChange={e => setMachineNameInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && machineNameInput.trim()) {
-                    useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
-                    setShowMachineNamePrompt(false)
-                  }
-                }}
-                placeholder="e.g. Desktop, Dev Workstation, Laptop"
-                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue mb-3"
+          <DialogOverlay dim={0.5}>
+            <DialogPanel width="w-[360px]" labelledBy="machine-name-title">
+              <DialogHeader
+                titleId="machine-name-title"
+                title="Name this machine"
+                subtitle="Give your local machine a name so sessions and memories can be identified by machine."
               />
-              <div className="flex justify-end gap-2">
-                <button
+              <DialogBody>
+                <input
+                  autoFocus
+                  value={machineNameInput}
+                  onChange={e => setMachineNameInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && machineNameInput.trim()) {
+                      useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
+                      setShowMachineNamePrompt(false)
+                    }
+                  }}
+                  placeholder="e.g. Desktop, Dev Workstation, Laptop"
+                  className={DIALOG_INPUT_CLASS}
+                  style={DIALOG_INPUT_STYLE}
+                />
+              </DialogBody>
+              <DialogFooter>
+                <DialogButton
+                  variant="ghost"
                   onClick={() => setShowMachineNamePrompt(false)}
-                  className="px-3 py-1.5 rounded text-xs text-subtext0 hover:text-text hover:bg-surface1 transition-colors"
                 >
                   Skip
-                </button>
-                <button
+                </DialogButton>
+                <DialogButton
+                  variant="primary"
                   onClick={() => {
                     if (machineNameInput.trim()) {
                       useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
                     }
                     setShowMachineNamePrompt(false)
                   }}
-                  className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
                 >
                   Save
-                </button>
-              </div>
-            </div>
-          </div>
+                </DialogButton>
+              </DialogFooter>
+            </DialogPanel>
+          </DialogOverlay>
         )}
 
         <SshCloseDialog />
@@ -1279,16 +1340,16 @@ export default function App() {
         )}
 
         {isClosing && (
-          <div className="absolute inset-0 bg-base/90 z-50 flex items-center justify-center">
+          <DialogOverlay position="absolute" dim={0.9}>
             <div className="text-center">
-              <div className="text-2xl font-mono mb-4 text-blue animate-pulse">
+              <div className="text-2xl font-mono mb-4 animate-pulse" style={{ color: 'var(--brand)' }}>
                 {isUpdating ? 'Updating...' : 'Closing...'}
               </div>
-              <p className="text-overlay1 text-sm">
+              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                 {isUpdating ? 'Installing update and restarting' : 'Please wait'}
               </p>
             </div>
-          </div>
+          </DialogOverlay>
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">

@@ -83,6 +83,14 @@
      Code Conductor rename — it was the same orange as the old --ob-deep, which
      is why the Beta pill kept looking like the pre-rename product. */
   --brand: #2f9bff;
+  /* Text sitting ON a --brand fill (primary dialog buttons). Dark on the bright
+     dark-theme blue; flipped light in the light theme, whose brand is deeper. */
+  --text-on-brand: #0a0e13;
+  /* The modal backdrop wash. Dialogs used to dim with `bg-base/80`, which is
+     theme-aware, so the light theme faded to a soft near-white rather than to
+     black. One token instead of the three hand-rolled scrims (bg-black/50,
+     bg-black/60, bg-base/80) the dialogs had before #360. */
+  --scrim: #000000;
 
   --status-success: #7bd88f;
   --status-warning: #ecc14e;
@@ -199,6 +207,10 @@
   --accent: #15808d;
   /* Brand accent, darkened for contrast as text/border on the light substrate. */
   --brand: #1668c4;
+  --text-on-brand: #f6f8fb;
+  /* The light theme washes toward its own substrate, not to black -- this is
+     the `bg-base/80` behaviour dialogs had before #360. */
+  --scrim: #d6d4d0;
 
   --status-success: #2d8349;
   --status-warning: #946a12;

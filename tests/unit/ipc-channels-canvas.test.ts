@@ -16,6 +16,12 @@ describe('canvas IPC channels', () => {
     expect(IPC.CANVAS_ANNOTATION_DELETE).toBe('canvas:annotationDelete')
     expect(IPC.CANVAS_REVIEW_SUBMIT).toBe('canvas:reviewSubmit')
     expect(IPC.CANVAS_ANNOTATION_RESOLVE).toBe('canvas:annotationResolve')
+    // Close-out (#365): the undo half, and the library's per-canvas bulk.
+    expect(IPC.CANVAS_ANNOTATION_REOPEN).toBe('canvas:annotationReopen')
+    expect(IPC.CANVAS_REVIEW_CLOSE_OUT).toBe('canvas:reviewCloseOut')
+    // The seen report — renderer-only, and the one input to the agent's
+    // close-out barrier that no MCP tool can produce.
+    expect(IPC.CANVAS_REVIEW_MARK_SEEN).toBe('canvas:reviewMarkSeen')
     expect(IPC.CANVAS_REVIEW_CHANGED).toBe('canvas:reviewChanged')
   })
 

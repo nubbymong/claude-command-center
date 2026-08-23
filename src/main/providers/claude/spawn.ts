@@ -93,7 +93,7 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   // than a secret sitting in ConsoleHost_history.txt forever.
   if (opts.shellOnly && opts.terminalSecret) env.CCC_ARG_SECRET = opts.terminalSecret
   // Command-button secrets, same contract, one variable per command: the
-  // button types `$env:CCC_CMD_SECRET_<id>` and the shell expands it. Only a
+  // button types `${env:CCC_CMD_SECRET_<id>}` and the shell expands it. Only a
   // SHELL spawn gets them -- typed into Claude's TUI the reference is just
   // text. The id was validated in main before it got here, and is checked
   // again on the way into a variable name because this is the last line of

@@ -1,6 +1,5 @@
 import React from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
-import NotesBar from './NotesBar'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegionTypography } from '../hooks/useTypography'
@@ -388,12 +387,8 @@ export default function SessionHeader({ session }: Props) {
       {/* Right cluster: account · claude.ai · Claude Code | GitHub — styled to
           match the title-bar service pills (GitHub slug shows on hover). */}
       <SessionAuthPills session={session} />
-
-      {/* Separator before notes */}
-      <div className="w-px h-4 bg-surface1 shrink-0" />
-
-      {/* Secret notes */}
-      <NotesBar configId={session.configId} />
+      {/* The encrypted notes left this header for the command bar's Core band
+          (ADR-018 D10): one lock with a count, the notes in its popover. */}
     </div>
   )
 }

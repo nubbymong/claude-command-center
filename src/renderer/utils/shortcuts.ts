@@ -50,6 +50,7 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   toggleSidebar: 'Ctrl+B',
   pasteImage: 'Alt+V',
   renameSession: 'F2',
+  captureGlyphDiagnostic: 'Ctrl+Alt+G',
 }
 
 /** Human-readable labels for shortcut actions */
@@ -61,4 +62,5 @@ export const SHORTCUT_LABELS: Record<string, string> = {
   toggleSidebar: 'Toggle sidebar',
   pasteImage: 'Paste clipboard image',
   renameSession: 'Rename session',
+  captureGlyphDiagnostic: 'Capture glyph diagnostic',
 }

@@ -2,6 +2,8 @@ import React from 'react'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import type { TkSessionDetail } from '../../../shared/types'
 import { getModelColor, getModelShort } from './modelColors'
+import { isContextMenuGesture } from '../../lib/pointer'
+import { scrim } from '../ui/Dialog'
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
 
@@ -126,7 +128,7 @@ function DrawerContent({
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
             <span style={{ color: 'var(--text-muted)' }}>Cost</span>
-            <span className="font-mono" style={{ color: 'var(--color-peach)' }}>{formatCost(detail.costUsd)}</span>
+            <span className="font-mono" style={{ color: 'var(--status-warning)' }}>{formatCost(detail.costUsd)}</span>
             <span style={{ color: 'var(--text-muted)' }}>Input</span>
             <span className="font-mono" style={{ color: 'var(--text-secondary)' }}>{formatTokensCompact(detail.inTok)}</span>
             <span style={{ color: 'var(--text-muted)' }}>Output</span>
@@ -181,7 +183,7 @@ function DrawerContent({
                             {getModelShort(m.model)}
                           </span>
                         </td>
-                        <td className="px-2 py-1.5 font-mono" style={{ color: 'var(--color-peach)' }}>
+                        <td className="px-2 py-1.5 font-mono" style={{ color: 'var(--status-warning)' }}>
                           {formatCost(m.costUsd)}
                         </td>
                         <td className="px-2 py-1.5 font-mono" style={{ color: 'var(--text-secondary)' }}>
@@ -217,11 +219,24 @@ export function SessionDetailDrawer() {
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop. Dismisses on mousedown, never on click: Ctrl+C in a
+          terminal behind the drawer fires a synthetic click, and a
+          click-dismissed scrim made the drawer vanish mid-read. A context-menu
+          gesture dismisses inertly via onContextMenu instead of letting the
+          right-click fall through to xterm's paste. Same rule as
+          MemoryReadingDrawer, its sibling. */}
       <div
         className="fixed inset-0 z-40"
-        style={{ background: 'rgba(0,0,0,0.35)' }}
-        onClick={clearSelected}
+        style={{ background: scrim(0.35) }}
+        onMouseDown={(e) => {
+          if (isContextMenuGesture(e)) return
+          clearSelected()
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          clearSelected()
+        }}
         aria-hidden="true"
       />
       {/* Panel */}

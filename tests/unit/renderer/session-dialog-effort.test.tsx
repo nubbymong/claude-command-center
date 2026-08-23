@@ -184,3 +184,161 @@ describe('SessionDialog starting effort', () => {
     expect(config.claudeOptions?.model).toBeUndefined()
   })
 })
+
+// The model <select> is controlled; set .value through the native setter so
+// React's value-tracker sees the change and the 'change' event drives onChange
+// (the standard controlled-input testing idiom).
+function selectModel(container: HTMLElement, value: string) {
+  const sel = Array.from(container.querySelectorAll('select')).find((s) =>
+    Array.from(s.options).some((o) => o.value === value),
+  )
+  expect(sel, `no <select> offers model ${value}`).toBeTruthy()
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')!.set!
+  act(() => {
+    setter.call(sel, value)
+    sel!.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+}
+
+// #385 Finding #1: effortLevel was not reset when the model changed, so a chip
+// greyed out by the new model still submitted its value (--effort xhigh --model
+// claude-opus-4-6). These pin that switching to a model that disallows the
+// current effort clears it, and that the disallowed value can never reach
+// onConfirm. claude-opus-4-6's registry effort list is ["low","medium","high",
+// "max"] — it disallows "xhigh" and "ultracode".
+describe('SessionDialog effort resets when the model stops supporting it', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(() => {
+    act(() => { root.unmount() })
+    container.remove()
+  })
+
+  it('switching to a model that disallows the current effort clears the chip', () => {
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: CLAUDE_LOCAL,
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    // Default model ('') supports every level, so "Extra high" (xhigh) is live.
+    const xhigh = effortChip(container, 'Extra high')
+    expect(xhigh).not.toBeNull()
+    expect(xhigh!.disabled).toBe(false)
+    act(() => { xhigh!.click() })
+    expect(effortChip(container, 'Extra high')!.checked).toBe(true)
+
+    // Switch to a model that does not offer xhigh.
+    selectModel(container, 'claude-opus-4-6')
+
+    // The chip is now disabled AND deselected; Default is selected instead.
+    expect(effortChip(container, 'Extra high')!.disabled).toBe(true)
+    expect(effortChip(container, 'Extra high')!.checked).toBe(false)
+    expect(effortChip(container, 'Default')!.checked).toBe(true)
+  })
+
+  it('onConfirm cannot submit an --effort the newly-picked model disallows', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: CLAUDE_LOCAL,
+          onConfirm,
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    act(() => { effortChip(container, 'Extra high')!.click() })
+    selectModel(container, 'claude-opus-4-6')
+    submit(container)
+    expect(onConfirm).toHaveBeenCalledOnce()
+    const [config] = onConfirm.mock.calls[0]
+    expect(config.claudeOptions?.model).toBe('claude-opus-4-6')
+    // The unsupported effort was cleared, so no --effort xhigh rides along.
+    expect(config.claudeOptions?.effortLevel).toBeUndefined()
+  })
+
+  // ADR-009 MINOR on #404. handleModelChange only fires when the user TOUCHES
+  // the model select, so a config saved before claude-opus-4-6 dropped "xhigh"
+  // reopened with that chip still selected and re-submitted --effort xhigh on
+  // Save without the model ever being touched. Clamped on load AND on submit.
+  it('a saved effort the saved model no longer supports is clamped on LOAD', () => {
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: { ...CLAUDE_LOCAL, claudeOptions: { model: 'claude-opus-4-6', effortLevel: 'xhigh' } },
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    expect(effortChip(container, 'Extra high')!.disabled).toBe(true)
+    expect(effortChip(container, 'Extra high')!.checked).toBe(false)
+    expect(effortChip(container, 'Default')!.checked).toBe(true)
+  })
+
+  it('and cannot be re-submitted by a Save that touches nothing', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: { ...CLAUDE_LOCAL, claudeOptions: { model: 'claude-opus-4-6', effortLevel: 'xhigh' } },
+          onConfirm,
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    submit(container)
+    expect(onConfirm).toHaveBeenCalledOnce()
+    const [config] = onConfirm.mock.calls[0]
+    expect(config.claudeOptions?.model).toBe('claude-opus-4-6')
+    expect(config.claudeOptions?.effortLevel).toBeUndefined()
+  })
+
+  it('a saved effort the saved model DOES support is left alone', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: { ...CLAUDE_LOCAL, claudeOptions: { model: 'claude-opus-4-6', effortLevel: 'high' } },
+          onConfirm,
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    expect(effortChip(container, 'High')!.checked).toBe(true)
+    submit(container)
+    const [config] = onConfirm.mock.calls[0]
+    expect(config.claudeOptions?.effortLevel).toBe('high')
+  })
+
+  it('a still-supported effort survives a model switch (no over-reset)', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: CLAUDE_LOCAL,
+          onConfirm,
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    // "High" is supported by claude-opus-4-6, so switching must keep it.
+    act(() => { effortChip(container, 'High')!.click() })
+    selectModel(container, 'claude-opus-4-6')
+    expect(effortChip(container, 'High')!.checked).toBe(true)
+    submit(container)
+    const [config] = onConfirm.mock.calls[0]
+    expect(config.claudeOptions?.effortLevel).toBe('high')
+  })
+})

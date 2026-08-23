@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react'
+import { dialogButtonStyle, scrim } from './ui/Dialog'
 
 export type DockFeature = 'tips' | 'ask'
 
@@ -26,6 +27,13 @@ interface Props {
  * an absolutely-positioned backdrop covers the 256px rail instead of the window
  * -- the dialog then renders as a squeezed column with its title wrapped. jsdom
  * has no layout, so only a desktop run shows it.
+ *
+ * Frame and buttons are hand-rolled rather than `DialogOverlay`/`DialogPanel`/
+ * `DialogButton` because the dock's UX-id contract (`data-ux-id` on the
+ * backdrop, the panel and both buttons, asserted by sidebar-dock-tips.test.tsx)
+ * has no pass-through on those primitives -- they render only the attributes
+ * they declare. Colours still come from the same tokens, and the buttons reuse
+ * `dialogButtonStyle`, so the look is the shared one.
  */
 const COPY: Record<DockFeature, { title: string; body: string; note: string; confirm: string }> = {
   tips: {
@@ -61,7 +69,7 @@ export default function HideDockFeatureDialog({ feature, onConfirm, onCancel }: 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'color-mix(in srgb, var(--color-base) 80%, transparent)' }}
+      style={{ background: scrim(0.6) }}
       data-ux-id="hide-dock-feature-backdrop"
     >
       <div
@@ -69,9 +77,10 @@ export default function HideDockFeatureDialog({ feature, onConfirm, onCancel }: 
         aria-modal="true"
         aria-labelledby="hide-dock-feature-title"
         data-ux-id="hide-dock-feature-dialog"
-        className="bg-surface0 border border-surface1 rounded-lg shadow-2xl p-6 max-w-sm w-full mx-4"
+        className="rounded-[14px] shadow-2xl p-6 max-w-sm w-full mx-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
       >
-        <h2 id="hide-dock-feature-title" className="text-lg font-semibold text-text mb-2">
+        <h2 id="hide-dock-feature-title" className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
           {copy.title}
         </h2>
         <p className="text-sm mb-2" style={{ color: 'var(--text-secondary)' }}>
@@ -86,7 +95,8 @@ export default function HideDockFeatureDialog({ feature, onConfirm, onCancel }: 
             type="button"
             onClick={onConfirm}
             data-ux-id="hide-dock-feature-confirm"
-            className="w-full py-2 px-4 text-sm font-medium rounded bg-surface1 hover:bg-surface2 text-text transition-colors focus-ring"
+            className="w-full py-2 px-4 text-sm font-medium rounded-[9px] transition-colors focus-ring"
+            style={dialogButtonStyle('secondary')}
           >
             {copy.confirm}
           </button>
@@ -94,7 +104,8 @@ export default function HideDockFeatureDialog({ feature, onConfirm, onCancel }: 
             type="button"
             onClick={onCancel}
             data-ux-id="hide-dock-feature-cancel"
-            className="w-full py-1.5 px-4 text-xs text-overlay1 hover:text-text transition-colors focus-ring"
+            className="w-full py-1.5 px-4 text-xs transition-colors focus-ring"
+            style={dialogButtonStyle('ghost')}
           >
             Cancel
           </button>

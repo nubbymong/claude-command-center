@@ -39,7 +39,6 @@ export const IPC = {
 
   // Credentials
   CREDENTIALS_SAVE: 'credentials:save',
-  CREDENTIALS_LOAD: 'credentials:load',
   CREDENTIALS_DELETE: 'credentials:delete',
 
   // PTY
@@ -151,6 +150,10 @@ export const IPC = {
   SETUP_IS_CLI_READY: 'setup:isCliReady',
   SETUP_SPAWN_CLI_SETUP: 'setup:spawnCliSetup',
   SETUP_KILL_CLI_SETUP: 'setup:killCliSetup',
+
+  // #374: write a glyph-corruption diagnostic (atlas event log + a window
+  // screenshot) so a user who sees the fault can capture and share it.
+  DIAGNOSTICS_CAPTURE_GLYPH: 'diagnostics:captureGlyph',
 
   // Screenshots
   SCREENSHOT_CAPTURE_RECTANGLE: 'screenshot:captureRectangle',
@@ -298,6 +301,7 @@ export const IPC = {
   WEBVIEW_CHECK: 'webview:check',                 // HEAD probe (CORS-bypass)
   WEBVIEW_OPEN: 'webview:open',                   // create+attach view at bounds
   WEBVIEW_CLOSE: 'webview:close',                 // detach+destroy view
+  WEBVIEW_FORGET: 'webview:forget',               // destroy view AND wipe its persist:webview-<id> profile (session closed for good)
   WEBVIEW_SET_BOUNDS: 'webview:setBounds',        // re-position on resize/scroll
   WEBVIEW_SET_VISIBLE: 'webview:setVisible',      // attach/detach without destroying
   WEBVIEW_RELOAD: 'webview:reload',               // force-reload bypassing cache
@@ -338,6 +342,18 @@ export const IPC = {
   // Codex review MCP (P6)
   CODEX_REVIEW_USAGE_GET: 'codex-review:usage:get',
   CODEX_REVIEW_USAGE_UPDATED: 'codex-review:usage:updated',
+
+  // GUI-subsystem executables (#379). A command button types into a live pty,
+  // whose shell HAS a console, so a Subsystem=2 tool attaches to it and paints
+  // its log over the pane. PROBE reads the target's PE header to say so; RUN
+  // re-parents the tool onto the console-less main process, where its output
+  // can actually be captured. See shared/gui-exe.ts.
+  EXE_PROBE: 'exe:probe',                                           // renderer -> main: { command, cwd? } -> ExeProbeResult
+  EXE_RUN_START: 'exe:run:start',                                   // renderer -> main: { command, cwd? } -> CapturedRunStart
+  EXE_RUN_RELEASE: 'exe:run:release',                               // renderer -> main: { runId } -> boolean; stop capturing, LEAVE it running
+  EXE_RUN_CANCEL: 'exe:run:cancel',                                 // renderer -> main: { runId } -> boolean; KILLS the program
+  EXE_RUN_DATA: 'exe:run:data',                                     // push: main -> renderer (the requesting WebContents only), CapturedRunChunk
+  EXE_RUN_EXIT: 'exe:run:exit',                                     // push: main -> renderer, CapturedRunExit
 
   // Conductor Channels (v1.5.10)
   CHANNELS_SEND: 'channels:send',                                   // renderer -> main: dispatch a payload
@@ -389,7 +405,10 @@ export const IPC = {
   CANVAS_ANNOTATION_UPSERT: 'canvas:annotationUpsert', // renderer -> main: create/update a draft note
   CANVAS_ANNOTATION_DELETE: 'canvas:annotationDelete', // renderer -> main: remove a draft note
   CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports)
-  CANVAS_ANNOTATION_RESOLVE: 'canvas:annotationResolve', // renderer -> main: approve / dismiss / reannotate an open note
+  CANVAS_ANNOTATION_RESOLVE: 'canvas:annotationResolve', // renderer -> main: approve / dismiss / stale / reannotate a live note
+  CANVAS_ANNOTATION_REOPEN: 'canvas:annotationReopen', // renderer -> main: the USER puts a closed note back in play
+  CANVAS_REVIEW_MARK_SEEN: 'canvas:reviewMarkSeen',    // renderer -> main: the USER has these addressed notes on screen (releases the agent close-out barrier; no MCP path here, ever)
+  CANVAS_REVIEW_CLOSE_OUT: 'canvas:reviewCloseOut',    // renderer -> main: { canvasId } -> bulk-stale one canvas's rounds waiting on the user (the library)
   CANVAS_REVIEW_CHANGED: 'canvas:reviewChanged',       // push: main -> renderer (a review/annotation mutation happened)
 
   // Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard.

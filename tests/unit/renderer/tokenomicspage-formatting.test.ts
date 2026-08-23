@@ -26,7 +26,11 @@ describe('getModelShort', () => {
   it('falls back to the family name for fuzzy pattern matches (never claims a wrong version)', () => {
     expect(getModelShort('claude-sonnet-3-5')).toBe('sonnet')
     expect(getModelShort('claude-3-5-sonnet-20241022')).toBe('sonnet')
-    expect(getModelShort('claude-opus-4-5')).toBe('opus')
+    // claude-opus-4-5 used to be an unknown id; #385 added it to the registry,
+    // so it now resolves exactly and correctly shows its version. Opus 4.1 is
+    // the fuzzy case here instead.
+    expect(getModelShort('claude-opus-4-5')).toBe('Opus 4.5')
+    expect(getModelShort('claude-opus-4-1-20250805')).toBe('opus')
     expect(getModelShort('claude-3-haiku-20240307')).toBe('haiku')
   })
 

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useSessionStore, Session } from '../stores/sessionStore'
 import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../stores/configStore'
+import { useCommandStore } from '../stores/commandStore'
+import { commandSecretKey } from '../../shared/command-secret'
 import { reorderLoose } from '../utils/reorderLoose'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -9,7 +11,7 @@ import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import { useAccountAuthStore } from '../stores/accountAuthStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
-import { requestCloseSession } from '../stores/sshCloseStore'
+import { requestCloseSession, forgetSessionBrowserProfile } from '../stores/sshCloseStore'
 import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
@@ -27,13 +29,18 @@ import SectionHeader from './sidebar/SectionHeader'
 import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
+import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
+import SavedConfigsCards from './sidebar/SavedConfigsCards'
+import SavedConfigsFind from './sidebar/SavedConfigsFind'
+import { resolveSavedConfigsView, runningConfigIds } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import { resolveConfigPanelExpanded, toggleConfigPanel, overrideAfterPinChange, type ConfigPanelOverride } from './sidebar/configPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
 import ConfigHydrationNotice from './ConfigHydrationNotice'
 import ConfigLoadFailedNotice from './ConfigLoadFailedNotice'
+import ConfigLoadFailedRailIndicator from './sidebar/ConfigLoadFailedRailIndicator'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { deriveOnboarding } from '../onboarding/gate'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
@@ -113,6 +120,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [sessionGroupCollapsed, setSessionGroupCollapsed] = useState<Record<string, boolean>>({})
+  // #363: collapse state of the "Ungrouped" pseudo-group, keyed by section id
+  // ('' = the unsectioned tail). Lives alongside the group/section state above
+  // and persists the same way (for the life of the window).
+  const [ungroupedSessionsCollapsed, setUngroupedSessionsCollapsed] = useState<Record<string, boolean>>({})
+  const toggleUngroupedSessionsCollapsed = (key: string) =>
+    setUngroupedSessionsCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
   const [sessionRenameValue, setSessionRenameValue] = useState('')
   const [sessionContextMenu, setSessionContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null)
@@ -164,6 +177,16 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     updateSettings({ configPanelPinned: newVal })
   }
   const [configSearchQuery, setConfigSearchQuery] = useState('')
+  // #362: which layout the panel body uses. The list is the default and is
+  // untouched; cards and find are the two views from the design pass.
+  const savedConfigsView = resolveSavedConfigsView(useSettingsStore((s) => s.settings.savedConfigsView))
+  // Configs with a live session: the cards and find views never list them and
+  // launch-all never starts them. `sessions` already excludes the Ask session.
+  const runningIds = useMemo(() => runningConfigIds(sessions), [sessions])
+  // Bumped when the panel is opened DELIBERATELY (header click), so the find
+  // box takes focus. Never on hover: a mouse passing over the sidebar must not
+  // steal the keyboard from the terminal.
+  const [configPanelFocusRequest, setConfigPanelFocusRequest] = useState(0)
   // The panel used to cap itself at a flat 60vh, which cut the list off partway
   // down a row while empty sidebar sat underneath it. Measure what is actually
   // free below the panel's top edge instead, keeping SESSION_RESERVE px for the
@@ -320,11 +343,28 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     // (pre-2.1.0-beta.5 bug).
     await window.electronAPI.credentials.delete(configId + '_sudo')
     await window.electronAPI.credentials.delete(configId + '_argsecret')
+    // The config's own command buttons go with it, and so do their secrets
+    // (ADR-018: "config delete sweeps its buttons' secrets") -- otherwise they
+    // linger as rows "a deleted config" with ciphertext nothing can ever use.
+    const store = useCommandStore.getState()
+    for (const cmd of store.commands.filter((c) => c.scope === 'config' && c.configId === configId)) {
+      if (cmd.hasSecretArg) await window.electronAPI.credentials.delete(commandSecretKey(cmd.id))
+      store.removeCommand(cmd.id)
+    }
   }
 
   const launchFromConfig = async (config: TerminalConfig) => {
     launchConfig(config)
     onViewChange('sessions')
+  }
+
+  // #362: launch-all from the cards / find views. They hand over an already
+  // filtered list (running and Codex-blocked configs removed) -- see
+  // launchAllTargets -- so this is just the loop.
+  const launchMany = async (targets: TerminalConfig[]) => {
+    for (const config of targets) {
+      await launchFromConfig(config)
+    }
   }
 
   const launchGroup = async (groupId: string) => {
@@ -491,7 +531,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     }
   }
   const handleBulkClose = () => {
-    selectedSessionIds.forEach(id => { killSessionPty(id); removeSession(id) })
+    selectedSessionIds.forEach(id => { killSessionPty(id); forgetSessionBrowserProfile(id); removeSession(id) })
     setSelectedSessionIds(new Set())
   }
 
@@ -610,6 +650,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           collapsed
           onShowAccountUsage={onShowAccountUsage}
         />
+        {/* #370: the config-load-failed notice below is in the EXPANDED list
+            only, so the rail carries a danger glyph (tooltip + click opens the
+            same notice in a popover) while writes are latched. Renders nothing
+            otherwise. */}
+        <ConfigLoadFailedRailIndicator />
         {/* `mt-auto` because the collapsed rail has no flex-1 child to push
             against — the nav is content-height. */}
         <AskConductorDock
@@ -709,7 +754,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             type="button"
             /* Works while pinned too: a pinned panel stays collapsible. This used
                to be blocked when pinned, so "pinned" also meant "stuck open". */
-            onClick={() => setConfigPanelOpen((o) => toggleConfigPanel(o, configPanelPinned))}
+            onClick={() => {
+              const next = toggleConfigPanel(configPanelOpen, configPanelPinned)
+              setConfigPanelOpen(next)
+              if (next) setConfigPanelFocusRequest((n) => n + 1)
+            }}
             aria-expanded={configPanelExpanded}
             className="flex items-center gap-1.5 rounded focus-ring"
             title={configPanelExpanded ? 'Collapse saved configs' : 'Show all saved configs'}
@@ -838,7 +887,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             }
         }
       >
-        {/* Search input */}
+        {/* Search input (list view) */}
+        {savedConfigsView === 'list' && (
         <div className="px-2 pt-2 pb-1 shrink-0">
           <input
             value={configSearchQuery}
@@ -847,11 +897,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             className="w-full bg-base border border-surface1 rounded px-2 py-1 text-xs text-text placeholder:text-overlay0 outline-none focus:border-blue"
           />
         </div>
+        )}
 
         {/* Fills whatever height the panel got. Previously a second hard-coded
             `calc(60vh - 40px)`, which had to be kept in step with the panel cap
-            AND with the search box's real height by hand. */}
-        <div className="px-2 space-y-0.5 overflow-y-auto pb-2 flex-1 min-h-0">
+            AND with the search box's real height by hand. In the cards / find
+            views this holds only the empty state and the new-section input;
+            the view below owns the scrolling list. */}
+        <div className={savedConfigsView === 'list' ? 'px-2 space-y-0.5 overflow-y-auto pb-2 flex-1 min-h-0' : 'px-2 space-y-0.5 shrink-0'}>
         {configs.length === 0 && !showNewSectionInput && (
           <div className="text-xs text-overlay0 text-center py-4">
             No saved configs.<br />Click + to create one.
@@ -882,6 +935,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           </div>
         )}
 
+        {savedConfigsView === 'list' && (<>
         {/* Sectioned configs */}
         {sectionData.map(({ section, groups: sectionGroups, looseConfigs }) => (
           <div key={section.id} className="mb-1">
@@ -967,7 +1021,38 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           />
         )}
         {unsectionedUngroupedConfigs.map(renderConfigRow)}
+        </>)}
       </div>
+        {/* #362: the two alternative layouts, chosen in Settings -> General.
+            Both own their search box; the inline new-section input and the
+            empty state below stay with the panel. */}
+        {savedConfigsView === 'cards' && (
+          <SavedConfigsCards
+            configs={configs}
+            groups={groups}
+            sections={sections}
+            runningIds={runningIds}
+            onLaunch={launchFromConfig}
+            onLaunchMany={launchMany}
+            onContextMenu={handleConfigContextMenu}
+            focusRequest={configPanelFocusRequest}
+          />
+        )}
+        {savedConfigsView === 'find' && (
+          <SavedConfigsFind
+            configs={configs}
+            groups={groups}
+            sections={sections}
+            runningIds={runningIds}
+            onLaunch={launchFromConfig}
+            onLaunchMany={launchMany}
+            onEdit={setEditingConfig}
+            onDelete={(c) => handleDeleteConfig(c.id)}
+            onContextMenu={handleConfigContextMenu}
+            focusRequest={configPanelFocusRequest}
+          />
+        )}
+
       </div>{/* end overlay */}
       </div>{/* end relative hover wrapper */}
 
@@ -1117,7 +1202,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                   ...sectionGroups.flatMap((g) => g.sessions),
                   ...looseSessions
                 ]
-                allSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) })
+                allSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) })
               }}
             />
             {!sessionSectionCollapsed[section.id] && (
@@ -1125,10 +1210,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                 {sectionGroups.map(({ group, sessions: groupSessions }) => (
                   <div key={group.id} className="mb-1">
                     <SessionGroupHeader
-                      group={group}
+                      name={group.name}
                       collapsed={sessionGroupCollapsed[group.id]}
                       onToggleCollapse={() => setSessionGroupCollapsed((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
-                      onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
+                      onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
                     />
                     {!sessionGroupCollapsed[group.id] && (
                       <div className="space-y-0.5">
@@ -1137,7 +1222,25 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
                     )}
                   </div>
                 ))}
-                {looseSessions.map(renderSessionRow)}
+                {/* #363: loose sessions in this section get an "Ungrouped"
+                    heading only when a group sits above them; a section of
+                    nothing but loose sessions stays bare. */}
+                {sectionGroups.length > 0 && looseSessions.length > 0 ? (
+                  <div className="mb-1">
+                    <UngroupedSessionsHeader
+                      collapsed={ungroupedSessionsCollapsed[section.id]}
+                      onToggleCollapse={() => toggleUngroupedSessionsCollapsed(section.id)}
+                      onCloseAll={() => { looseSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
+                    />
+                    {!ungroupedSessionsCollapsed[section.id] && (
+                      <div className="space-y-0.5">
+                        {looseSessions.map(renderSessionRow)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  looseSessions.map(renderSessionRow)
+                )}
               </div>
             )}
           </div>
@@ -1147,10 +1250,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         {unsectionedSessionGroups.map(({ group, sessions: groupSessions }) => (
           <div key={group.id} className="mb-1">
             <SessionGroupHeader
-              group={group}
+              name={group.name}
               collapsed={sessionGroupCollapsed[group.id]}
               onToggleCollapse={() => setSessionGroupCollapsed((prev) => ({ ...prev, [group.id]: !prev[group.id] }))}
-              onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
+              onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
             />
             {!sessionGroupCollapsed[group.id] && (
               <div className="space-y-0.5">
@@ -1160,8 +1263,28 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           </div>
         ))}
 
-        {/* Unsectioned ungrouped sessions */}
-        {unsectionedUngroupedSessions.map(renderSessionRow)}
+        {/* Unsectioned ungrouped sessions — the loose tail. #363: headed
+            "Ungrouped" (collapsible, close-all, same look as a group heading)
+            only when something organised sits above it — a section or a group
+            — so it stops reading as the tail of the last group, while a
+            sidebar of nothing but loose sessions stays clean. Mirrors the
+            loose-configs divider rule above. */}
+        {unsectionedUngroupedSessions.length > 0 && (sessionSectionData.length > 0 || unsectionedSessionGroups.length > 0) ? (
+          <div className="mb-1">
+            <UngroupedSessionsHeader
+              collapsed={ungroupedSessionsCollapsed['']}
+              onToggleCollapse={() => toggleUngroupedSessionsCollapsed('')}
+              onCloseAll={() => { unsectionedUngroupedSessions.forEach((s) => { killSessionPty(s.id); forgetSessionBrowserProfile(s.id); removeSession(s.id) }) }}
+            />
+            {!ungroupedSessionsCollapsed[''] && (
+              <div className="space-y-0.5">
+                {unsectionedUngroupedSessions.map(renderSessionRow)}
+              </div>
+            )}
+          </div>
+        ) : (
+          unsectionedUngroupedSessions.map(renderSessionRow)
+        )}
       </div>
 
       {/* Ask Conductor, docked below the session list. Sibling of the scroller

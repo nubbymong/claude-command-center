@@ -1,4 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  DialogOverlay,
+  DialogPanel,
+  DialogHeader,
+  DialogBody,
+  DialogFooter,
+  DialogButton,
+  useDialogEscape,
+} from '../../ui/Dialog'
 
 interface Props {
   flow: {
@@ -91,42 +100,56 @@ export default function OAuthDeviceFlow({ flow, onDone, onCancel }: Props) {
     }
   }
 
+  // Escape is the third way out alongside Cancel and the panel's own controls;
+  // it runs the same teardown so the device_code is always released.
+  useDialogEscape(() => { void cancel() })
+
   return (
-    <div
-      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
-      role="dialog"
-      aria-modal="true"
-    >
-      <div className="bg-mantle p-6 rounded-lg border border-surface0 max-w-md w-full">
-        <h3 className="text-lg mb-3 text-text">Sign in with GitHub</h3>
-        <p className="text-sm text-subtext0 mb-4">
-          Open <code className="bg-surface0 px-1 rounded">{flow.verificationUri}</code> and enter
-          this code:
-        </p>
-        <div className="flex items-center gap-3 bg-surface0 p-4 rounded mb-4">
-          <code className="text-xl text-text font-mono tracking-wider flex-1 text-center">
-            {flow.userCode}
-          </code>
-          <button onClick={copy} className="bg-surface1 px-2 py-1 rounded text-xs">
-            {copied ? 'Copied' : 'Copy'}
-          </button>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={openGitHub}
-            className="bg-blue text-base px-3 py-1.5 rounded text-sm flex-1"
+    <DialogOverlay>
+      <DialogPanel labelledBy="gh-device-flow-title" width="w-full" style={{ maxWidth: '28rem' }}>
+        <DialogHeader titleId="gh-device-flow-title" title="Sign in with GitHub" />
+
+        <DialogBody>
+          <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
+            Open{' '}
+            <code className="px-1 rounded" style={{ background: 'var(--surface-overlay)', color: 'var(--text-primary)' }}>
+              {flow.verificationUri}
+            </code>{' '}
+            and enter this code:
+          </p>
+          <div
+            className="flex items-center gap-3 p-4 rounded-lg mb-4"
+            style={{ background: 'var(--surface-base)', border: '1px solid var(--border-subtle)' }}
           >
-            Open GitHub
-          </button>
-          <button onClick={cancel} className="bg-surface0 px-3 py-1.5 rounded text-sm">
+            <code className="text-xl font-mono tracking-wider flex-1 text-center" style={{ color: 'var(--text-primary)' }}>
+              {flow.userCode}
+            </code>
+            <DialogButton onClick={copy}>
+              {copied ? 'Copied' : 'Copy'}
+            </DialogButton>
+          </div>
+          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            Waiting for you to complete auth in the browser
+          </div>
+          {error && (
+            <div className="text-xs mt-2" style={{ color: 'var(--status-danger)' }} role="alert" aria-live="polite">
+              Error: {error}
+            </div>
+          )}
+        </DialogBody>
+
+        <DialogFooter>
+          <DialogButton variant="ghost" onClick={cancel}>
             Cancel
-          </button>
-        </div>
-        <div className="text-xs text-overlay1 mt-3">
-          Waiting for you to complete auth in the browser
-        </div>
-        {error && <div className="text-xs text-red mt-2">Error: {error}</div>}
-      </div>
-    </div>
+          </DialogButton>
+          {/* Was `bg-blue text-base`: `text-base` is a font SIZE, so the label
+              inherited its colour and sat unreadable on the brand fill (#360).
+              The primary variant owns both the fill and the on-brand text. */}
+          <DialogButton variant="primary" onClick={openGitHub}>
+            Open GitHub
+          </DialogButton>
+        </DialogFooter>
+      </DialogPanel>
+    </DialogOverlay>
   )
 }

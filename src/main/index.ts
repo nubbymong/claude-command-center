@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell, powerMonitor } from 'electron'
 import { join } from 'path'
 import { homedir } from 'os'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
+import { writeFileSync, existsSync, mkdirSync, readdirSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
+import { splashBuildQuery } from './splash-info'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
@@ -36,6 +37,7 @@ import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from '
 import { devSessionDataDir } from './data-paths'
 import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
+import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
@@ -58,6 +60,7 @@ import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/servi
 import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
+import { registerExeHandlers, stopAllCapturedRuns } from './ipc/exe-handlers'
 import { registerRegistryHandlers } from './ipc/registry-handlers'
 import { initSentinel, reconcileOnUpdate, sentinelStartupCheck } from './sentinel/index'
 import { registerSentinelHandlers } from './ipc/sentinel-handlers'
@@ -88,11 +91,14 @@ import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
-import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
+import { createSessionDurability } from './session-durability'
+import { resolveResumeTargetFromTranscript } from './logging/transcript-discovery'
+import { getConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
-import { loadCredential, saveCredential, deleteCredential } from './credential-store'
+import { loadWindowState, saveWindowState, type WindowState } from './window-state'
+import { saveCredential, deleteCredential } from './credential-store'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
 import { safeExternalHttpsHref } from '../shared/safe-url'
@@ -103,6 +109,23 @@ import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVer
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
+
+// #397: the cross-exit session-state durability core. `session:save` routes every
+// renderer writer (autosave, account flush, GitHub flush, Save-&-Close) through
+// saveEnriched — enriching each Claude session's exact resume target from the live
+// transcript binder — so EVERY persisted file is resumable, not only the graceful
+// close (Group 1), and the old autosave-clobber race dissolves. flushOnExit persists
+// the cached state on any non-graceful exit (Group 2); noteCleared drops the cache
+// on an intentional clear so the flush never resurrects a discarded set (F1). The
+// binder is read lazily per call — it may init after this module loads.
+const sessionDurability = createSessionDurability({
+  enrichDeps: {
+    getLatestTranscriptPath: (id) => getTranscriptBinder()?.getLatestTranscriptPath(id) ?? null,
+    resolveResumeTargetFromTranscript,
+  },
+  save: saveSessionState,
+  log: logInfo,
+})
 
 // Multi-instance (dev alongside prod): a dev build must NOT share prod's data
 // dir (CONFIG/sessions/transcripts/profiles). Point it at a dedicated dev root
@@ -186,46 +209,17 @@ migrateRegistryKeys()
 // protocol handler is installed inside whenReady, before any window exists.
 registerCccUxSchemePrivileges()
 
-// Lazy getter — can't call getConfigDir() at module load time
-function getWindowStateFile(): string {
-  return join(getConfigDir(), 'window-state.json')
-}
-
-interface WindowState {
-  x?: number
-  y?: number
-  width: number
-  height: number
-  isMaximized: boolean
-}
-
-function loadWindowState(): WindowState {
-  try {
-    const file = getWindowStateFile()
-    if (existsSync(file)) {
-      return JSON.parse(readFileSync(file, 'utf-8'))
-    }
-  } catch {
-    // ignore
-  }
-  return { width: 3200, height: 1800, isMaximized: false }
-}
-
-function saveWindowState(win: BrowserWindow): void {
+/** Geometry lives in `window-state.ts` (#371) — it is a persister like the
+ *  others and needed the same read-failure latch, plus a unit test. */
+function saveWindowStateFor(win: BrowserWindow): void {
   const bounds = win.getBounds()
-  const state: WindowState = {
+  saveWindowState({
     x: bounds.x,
     y: bounds.y,
     width: bounds.width,
     height: bounds.height,
     isMaximized: win.isMaximized()
-  }
-  try {
-    ensureConfigDir()
-    writeFileSync(getWindowStateFile(), JSON.stringify(state))
-  } catch {
-    // ignore
-  }
+  })
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -254,6 +248,23 @@ const SPLASH_POST_READY_MS = 1000
 // hundred ms after window creation. Initialised to "now" so the skip paths
 // (e2e, page missing) behave as if the splash showed instantly.
 let splashShownAt = Date.now()
+
+// Build-time defines (electron.vite.config.ts). Guarded with typeof so a
+// context without the defines (unit tests, a bare tsx run) degrades to
+// app.getVersion() + "dev" rather than a ReferenceError at boot.
+declare const __APP_VERSION__: string
+declare const __BUILD_SHA__: string
+declare const __BUILD_TIME__: string
+function getBuildIdentityInput(): { version: string; sha?: string; buildTime?: string } {
+  let version = ''
+  try { if (typeof __APP_VERSION__ === 'string' && __APP_VERSION__) version = __APP_VERSION__ } catch { /* undefined */ }
+  if (!version) version = app.getVersion()
+  let sha: string | undefined
+  try { if (typeof __BUILD_SHA__ === 'string') sha = __BUILD_SHA__ } catch { /* undefined */ }
+  let buildTime: string | undefined
+  try { if (typeof __BUILD_TIME__ === 'string') buildTime = __BUILD_TIME__ } catch { /* undefined */ }
+  return { version, sha, buildTime }
+}
 
 function createSplashWindow(): void {
   // Playwright-driven runs (e2e + the training-screenshot capture) assume the
@@ -305,7 +316,12 @@ function createSplashWindow(): void {
   splashWindow.webContents.on('did-fail-load', () => closeSplashWindow())
   splashWindow.webContents.on('render-process-gone', () => closeSplashWindow())
 
-  splashWindow.loadFile(splashHtml)
+  // #384: the build identity ("v2.1.0-beta.17 · beta · build 3a1b2e2 ·
+  // 2026-08-22") rides the URL query — the page is static with a strict CSP
+  // (no inline script, no preload), so a query string read back by
+  // splash-info.js is the one channel that needs no new capability. Only
+  // main builds this URL; the page sets textContent, never markup.
+  splashWindow.loadFile(splashHtml, { query: splashBuildQuery(getBuildIdentityInput()) })
   splashWindow.once('ready-to-show', () => {
     splashShownAt = Date.now()
     splashWindow?.show()
@@ -448,7 +464,7 @@ function createWindow(): void {
   let closeRequestedOnce = false
 
   mainWindow.on('close', (e) => {
-    if (mainWindow) saveWindowState(mainWindow)
+    if (mainWindow) saveWindowStateFor(mainWindow)
 
     // If not yet allowed to close, prevent and notify renderer
     if (!allowClose) {
@@ -460,6 +476,12 @@ function createWindow(): void {
       e.preventDefault()
       mainWindow?.webContents.send('window:closeRequested')
     }
+  })
+
+  // #397 Group 2: a renderer crash / OOM kills the window before it can run its
+  // graceful save. Persist the last-known session state so the sessions survive.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    sessionDurability.flushOnExit(`render-process-gone (${details?.reason ?? 'unknown'})`)
   })
 
   // Renderer calls this after saving sessions and graceful exit
@@ -487,6 +509,9 @@ function createWindow(): void {
   // then calls 'window:forceClose' to actually close
   ipcMain.on('window:close', () => mainWindow?.close())
   ipcMain.on('window:forceClose', () => {
+    // #397 Group 2: destroy() bypasses the 'close' event and the graceful save;
+    // persist the last-known session state before the window is torn down.
+    sessionDurability.flushOnExit('window:forceClose')
     if (mainWindow) {
       mainWindow.destroy()  // Force close without triggering close event
     }
@@ -570,9 +595,8 @@ function createWindow(): void {
     return saveCredential(configId, password)
   })
 
-  ipcMain.handle('credentials:load', async (_event, configId: string) => {
-    return loadCredential(configId)
-  })
+  // No 'credentials:load' handler: a credential's value is injected into the
+  // shell environment at spawn (pty-handlers) and never handed to the renderer.
 
   ipcMain.handle('credentials:delete', async (_event, configId: string) => {
     return deleteCredential(configId)
@@ -580,7 +604,7 @@ function createWindow(): void {
 
   // Session state persistence IPC handlers
   ipcMain.handle('session:save', async (_event, state: SessionState) => {
-    return saveSessionState(state)
+    return sessionDurability.saveEnriched(state)
   })
 
   ipcMain.handle('session:load', async () => {
@@ -588,7 +612,12 @@ function createWindow(): void {
   })
 
   ipcMain.handle('session:clear', async () => {
-    return clearSessionState()
+    const ok = clearSessionState()
+    // #397 F1: a successful clear is the user intentionally discarding the saved set
+    // (Don't-open / Close-without-saving). Drop the cache so the exit-time flush
+    // cannot resurrect it on the next launch.
+    if (ok) sessionDurability.noteCleared()
+    return ok
   })
 
   ipcMain.handle('session:hasSaved', async () => {
@@ -705,6 +734,21 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(() => {
+    // #397 Group 2: exit paths that skip app 'before-quit'. An OS shutdown/logoff
+    // (powerMonitor; macOS/Linux) and SIGTERM (task-manager terminate / OS teardown)
+    // can end the app without the window-close flow running. Persist sessions first.
+    powerMonitor.on('shutdown', () => sessionDurability.flushOnExit('powerMonitor shutdown'))
+    powerMonitor.on('suspend', () => sessionDurability.flushOnExit('powerMonitor suspend'))
+    // Only SIGTERM. SIGINT is intentionally LEFT to Node's default so a console
+    // Ctrl+C on a dev run still terminates in one press — a SIGINT handler here
+    // re-entered the vetoable graceful-close dialog and left the app alive
+    // (adversarial-review round-2). Flush, then exit HARD: app.quit() would be
+    // vetoed by that same dialog, so a signal must not route through it.
+    process.on('SIGTERM', () => {
+      sessionDurability.flushOnExit('SIGTERM')
+      app.exit(0)
+    })
+
     // Set up application menu with Edit roles so Ctrl+C/V/X/A work in frameless window
     // On macOS, include the app name menu (About, Hide, Quit) and Window menu (macOS convention)
     const menuTemplate: Electron.MenuItemConstructorOptions[] = []
@@ -939,12 +983,14 @@ if (!gotTheLock) {
     // external `claude -p` on a dead refresh token). Freshest-wins + email-guarded.
     try { const r = syncPrimaryCredentialsWithGlobal(); if (r !== 'none') logInfo(`[profiles] primary<->global credential sync at launch: ${r}`) } catch (e) { logInfo(`[profiles] credential sync skipped: ${e}`) }
     registerScreenshotHandlers(getWindow)
+    registerDiagnosticsHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
     registerCodexHandlers()
     registerCodexReviewHandlers()
+    registerExeHandlers()
     registerChannelHandlers()
     startRulesEngine()
     registerCloudAgentHandlers(getWindow)
@@ -960,7 +1006,12 @@ if (!gotTheLock) {
       loadSessions: async () => loadSessionState()?.sessions ?? [],
       saveSessions: async (sessions) => {
         const existing = loadSessionState()
-        saveSessionState({
+        // Through the durability core, never saveSessionState directly: a
+        // direct write leaves the exit-flush cache stale, so the flush on
+        // quit would overwrite this very patch with the pre-patch state —
+        // reverting the GitHub binding (or a cleanup that removed one) on
+        // the next launch (independent review of #413, R3).
+        sessionDurability.saveEnriched({
           sessions,
           activeSessionId: existing?.activeSessionId ?? null,
           savedAt: Date.now(),
@@ -1170,6 +1221,9 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     logInfo('App quitting...')
+    // #397 Group 2: persist sessions BEFORE the logging teardown below tears the
+    // transcript binder down — flushing after that would lose the resume targets.
+    sessionDurability.flushOnExit('before-quit')
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
     try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
@@ -1178,7 +1232,10 @@ if (!gotTheLock) {
     try { shutdownLogging() } catch { /* never init / disabled */ }
     // Tear down the tokenomics indexing worker. No-op when never init.
     try { shutdownTokenomics() } catch { /* never init */ }
-    try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
+try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
+    // Kill any GUI-subsystem tool still being captured (#379). Its stdio is
+    // piped to us, so leaving it running orphans a process nobody can see.
+    try { stopAllCapturedRuns() } catch { /* never started */ }
     stopServiceStatusPoller()
     stopLoopStallMonitor()
     stopUpdateWatcher()

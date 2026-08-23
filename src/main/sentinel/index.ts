@@ -6,6 +6,8 @@ import { parseClaudeVersion, minVersionFindings, type ManifestEntry } from './se
 import { fetchChangelog, sliceChangelog } from './sentinel-changelog'
 import { runAnalysis } from './sentinel-analysis'
 import { validateProposal } from './sentinel-apply'
+import { modelCoverageFindings, modelCheckFailedFinding, EXPECTED_MODEL_SET } from './sentinel-models'
+import { fetchArticleModelIds } from './sentinel-model-article'
 import { getRegistry, getBaseline, applyOverlayEntry, removeOverlayEntry, loadOverlay, setOverlay } from '../model-registry-service'
 import { reconcileOverlay } from '../../shared/model-registry'
 import manifestJson from '../../../resources/sentinel-assumption-manifest.json'
@@ -62,9 +64,36 @@ async function analysisHome(): Promise<string | null> {
   }
 }
 
+/**
+ * Model-registry coverage against the Claude Code model configuration (#385).
+ *
+ * The fetch fails soft to null (offline), which selects snapshot mode inside
+ * modelCoverageFindings — an unread article is a degraded check, not an error.
+ * A THROW is different: it means the guard did not run, so it raises a finding
+ * of its own rather than disappearing into a log line (review Q5).
+ */
+async function runModelCoverageCheck(): Promise<void> {
+  if (!state) return
+  try {
+    const liveIds = await fetchArticleModelIds()
+    for (const f of modelCoverageFindings(getRegistry(), EXPECTED_MODEL_SET, Date.now(), liveIds)) {
+      state.upsertFinding(f)
+    }
+  } catch (err) {
+    const msg = (err as Error).message
+    logInfo(`[sentinel] model coverage check failed: ${msg}`)
+    state.upsertFinding(modelCheckFailedFinding(msg))
+  }
+}
+
 /** Trigger B startup check (spec §5). Non-blocking — call fire-and-forget from bootstrap. */
 export async function sentinelStartupCheck(): Promise<void> {
   if (!state) return
+  // Model-registry coverage (#385) runs FIRST and unconditionally: it does not
+  // need a working `claude` binary, so it must not sit behind the --version
+  // probe's fail-open return below. It reads the live article when the network
+  // allows and falls back to the shipped snapshot when it does not (review S1).
+  await runModelCoverageCheck()
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
     const res = await spawnClaudeHeadless(['--version'], 15000, undefined, await analysisHome())

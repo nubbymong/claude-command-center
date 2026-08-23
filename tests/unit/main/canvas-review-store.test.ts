@@ -22,6 +22,20 @@ const store = await import('../../../src/main/canvas/canvas-review-store')
 
 const SID = 'a1b2c3d4e5f6a7b8c9d0e1f2'
 
+/**
+ * The user's verdict, addressed to the canvas the session is on RIGHT NOW.
+ *
+ * `resolveAnnotation` takes the canvas the caller composed the verdict against
+ * and refuses a mismatch — note ids restart at a1 on every canvas, so an id
+ * alone names a note only while the canvas holds still. Every test that is not
+ * about that race goes through here; the ones that are call the store directly
+ * with a canvas id of their own choosing.
+ */
+function resolveNow(annotationId: string, action: import('../../../src/main/canvas/canvas-review-store').ResolveAction) {
+  const canvasId = store.getReviewStateForSession(SID)?.canvasId ?? ''
+  return store.resolveAnnotation(SID, annotationId, action, canvasId)
+}
+
 /** A tiny real PNG (8-byte magic + nothing anyone parses here). */
 const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('x'.repeat(32))])
 const PNG_B64 = PNG_BYTES.toString('base64')
@@ -176,16 +190,16 @@ describe('resolution state machine', () => {
 
   it('approve/dismiss close notes; the review resolves when the last open note closes', () => {
     submitted()
-    let out = store.resolveAnnotation(SID, 'a1', 'approve')
+    let out = resolveNow('a1', 'approve')
     expect(out.state.annotations.find((a) => a.id === 'a1')!.state).toBe('approved')
     expect(out.state.reviews[0].status).toBe('submitted')
 
-    out = store.resolveAnnotation(SID, 'a2', 'dismiss')
+    out = resolveNow('a2', 'dismiss')
     expect(out.state.annotations.find((a) => a.id === 'a2')!.state).toBe('dismissed')
     expect(out.state.reviews[0].status).toBe('resolved')
 
     // A closed note cannot be resolved again.
-    expect(() => store.resolveAnnotation(SID, 'a1', 'approve')).toThrow(/open/)
+    expect(() => resolveNow('a1', 'approve')).toThrow(/open/)
   })
 
   it('reannotate mints the linked replacement in a fresh draft: focus carried, sketch not', () => {
@@ -196,7 +210,7 @@ describe('resolution state machine', () => {
     })
     store.submitReview(SID, 'R1', [{ annotationId: 'a1', pngBase64: PNG_B64 }])
 
-    const { state, reannotationId } = store.resolveAnnotation(SID, 'a1', 'reannotate')
+    const { state, reannotationId } = resolveNow('a1', 'reannotate')
     expect(reannotationId).toBe('a2')
     const old = state.annotations.find((a) => a.id === 'a1')!
     expect(old.state).toBe('reannotated')
@@ -216,7 +230,7 @@ describe('resolution state machine', () => {
   it('never resolves a draft note', () => {
     const { versionId } = renderCanvas()
     store.upsertAnnotation(SID, elementDraft(versionId))
-    expect(() => store.resolveAnnotation(SID, 'a1', 'approve')).toThrow(/submitted/)
+    expect(() => resolveNow('a1', 'approve')).toThrow(/submitted/)
   })
 })
 
@@ -226,7 +240,7 @@ describe('persistence', () => {
     store.upsertAnnotation(SID, elementDraft(versionId))
     store.upsertAnnotation(SID, { scope: 'general', note: 'general one', versionId })
     store.submitReview(SID, 'R1', [])
-    store.resolveAnnotation(SID, 'a1', 'reannotate') // opens draft R2 with a3
+    resolveNow('a1', 'reannotate') // opens draft R2 with a3
 
     // "Restart": drop all in-memory state; the next read must come from disk.
     store._resetCanvasReviewStoreForTest()
@@ -243,7 +257,7 @@ describe('persistence', () => {
 
     // The reloaded record is fully live: closing the last open note resolves
     // the review, and the counters continue where they left off.
-    const resolved = store.resolveAnnotation(SID, 'a2', 'approve')
+    const resolved = resolveNow('a2', 'approve')
     expect(resolved.state.reviews.find((r) => r.id === 'R1')!.status).toBe('resolved')
     const next = store.upsertAnnotation(SID, { scope: 'general', note: 'post-restart', versionId })
     expect(next.annotationId).toBe('a4')
@@ -348,8 +362,8 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
 
   it('never touches what the user has already resolved', () => {
     const { rid, a1, a2 } = submitted()
-    store.resolveAnnotation(SID, a1, 'approve')
-    store.resolveAnnotation(SID, a2, 'dismiss')
+    resolveNow(a1, 'approve')
+    resolveNow(a2, 'dismiss')
     const r = store.markAnnotationsAddressed(SID, rid, [a1, a2])
     expect(r.addressed).toEqual([])
     expect(r.skipped).toEqual(expect.arrayContaining([a1, a2]))
@@ -377,7 +391,7 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
 
   it('does not write when nothing changed', () => {
     const { rid, a1 } = submitted()
-    store.resolveAnnotation(SID, a1, 'approve')
+    resolveNow(a1, 'approve')
     const canvas = canvasStore.getCanvasStateForSession(SID)!
     const file = path.join(getResourcesDirectory(), 'canvas', canvas.canvasId, 'reviews.json')
     const before = fs.statSync(file).mtimeMs
@@ -388,7 +402,7 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
   it('the user can still approve or dismiss an ADDRESSED note — the verdict is theirs', () => {
     const { rid, a1 } = submitted()
     store.markAnnotationsAddressed(SID, rid, [a1])
-    const r = store.resolveAnnotation(SID, a1, 'approve')
+    const r = resolveNow(a1, 'approve')
     expect(r.state.annotations.find((a) => a.id === a1)!.state).toBe('approved')
   })
 
@@ -398,9 +412,9 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
     store.markAnnotationsAddressed(SID, rid, [a1, a2, a3])
     let review = store.getReviewStateForSession(SID)!.reviews.find((r) => r.status !== 'draft')!
     expect(review.status).toBe('submitted')
-    store.resolveAnnotation(SID, a1, 'approve')
-    store.resolveAnnotation(SID, a2, 'approve')
-    store.resolveAnnotation(SID, a3, 'dismiss')
+    resolveNow(a1, 'approve')
+    resolveNow(a2, 'approve')
+    resolveNow(a3, 'dismiss')
     review = store.getReviewStateForSession(SID)!.reviews.find((r) => r.id === review.id)!
     expect(review.status).toBe('resolved')
   })

@@ -3,6 +3,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { requestCloseSession } from '../stores/sshCloseStore'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
+import { captureGlyphDiagnostic } from '../utils/glyphDiagnostic'
 import { sendImageToSession } from '../utils/imageTransfer'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
@@ -76,6 +77,17 @@ export function useKeyboardShortcuts(
       if (matchesShortcut(e, shortcuts.toggleSidebar)) {
         e.preventDefault()
         setSidebarOpen(prev => !prev)
+      }
+      // Capture a glyph-corruption diagnostic (#374): the moment a user sees
+      // characters go missing while backgrounds stay, this saves the always-on
+      // atlas event ring + a window screenshot and reveals them to share. Fixed
+      // action, not per-session, so it fires whatever the active view.
+      // Guard AltGraph: on international layouts AltGr reports ctrlKey && altKey,
+      // so a bare Ctrl+Alt+<key> binding would swallow AltGr text entry into the
+      // terminal. Skip when AltGr is really down (#399 ADR-009 pass).
+      if (matchesShortcut(e, shortcuts.captureGlyphDiagnostic) && !e.getModifierState?.('AltGraph')) {
+        e.preventDefault()
+        void captureGlyphDiagnostic(useSessionStore.getState().activeSessionId)
       }
       // NOTE: rename (F2) is handled in Sidebar so it edits the active session
       // in the Active Sessions list (only when the sidebar is visible), not the
