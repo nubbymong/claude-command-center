@@ -438,6 +438,42 @@ describe('WatchdogManager — feedData debounce', () => {
     expect(text[1]).toContain('你好')
   })
 
+  it('getTailNonDim keeps multi-cell INVERSE runs — an [Image #1] chip or a highlighted row is content, not a cursor', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    const wd = instances[0]
+
+    // claude.exe renders the whole [Image #N] chip inverse when the cursor
+    // snaps to its edge, and a selector may render its focused row inverse.
+    // Blanking those flipped a real draft into a sendable pane (round-2
+    // MAJOR): only a LONE inverse cell is the cursor.
+    mgr.feedData('s1', '❯ \x1b[7m[Image #1]\x1b[27m\r\n\x1b[7m❯ Looks good — save it\x1b[27m\r\n  footer')
+    vi.advanceTimersByTime(50)
+
+    const nonDim = (wd.adapter.getTailNonDim() as string).split('\n')
+    expect(nonDim[0]).toContain('[Image #1]')
+    expect(nonDim[1]).toContain('Looks good')
+  })
+
+  it('getTailNonDim keeps columns across WIDE glyphs — the hidden tail cell is skipped, dim wide glyphs blank in place', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    const wd = instances[0]
+
+    // ❯, space, dim 你 (wide), non-dim 好x. If the width-0 tail cell were
+    // serialized too, every later column would shift right of the raw row.
+    mgr.feedData('s1', '❯ \x1b[2m你\x1b[22m好x\r\n  footer')
+    vi.advanceTimersByTime(50)
+
+    const text = (wd.adapter.getTail() as string).split('\n')
+    const nonDim = (wd.adapter.getTailNonDim() as string).split('\n')
+    expect(nonDim[0].indexOf('好')).toBe(text[0].indexOf('好'))
+    expect(nonDim[0]).not.toContain('你')
+    expect(nonDim[0]).toContain('好x')
+  })
+
   it('getTailNonDim preserves COLUMNS across empty cells — ink lands where the raw row shows it', () => {
     const { host } = makeHost()
     const mgr = new WatchdogManager(host)

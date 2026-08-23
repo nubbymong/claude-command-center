@@ -646,6 +646,19 @@ describe('canSendNow (#266 BLOCKER-2 / MAJOR-3) — the send gate, against REAL 
       })
     })
 
+    it('a dim placeholder behind the BARE prompt is sendable', () => {
+      const ph = 'Press up to edit queued messages'
+      expect(canSendNow(`banner\n> ${ph}`, `banner\n> ${' '.repeat(ph.length)}`)).toEqual({ ok: true })
+    })
+
+    it('pins the glyph locator column: a one-character draft right after the caret still gates', () => {
+      // The locator is /^\s*❯/ — start = the column AFTER the glyph. If it
+      // drifted to include the first non-space (the full shape regex), the
+      // ink check would start past 'x' and send over a real draft.
+      const raw = [BANNER, RULE, '❯ x', RULE, FOOTER].join('\n')
+      expect(canSendNow(raw, raw)).toEqual({ ok: false, reason: 'draft' })
+    })
+
     it('an ALL-DIM unnumbered picker still reads as a menu — raw caret rows count', () => {
       const raw = [
         'Review the proposed auto-mode setup?',

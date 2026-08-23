@@ -258,21 +258,31 @@ function readPanePair(term: Terminal, maxLines: number, withNonDim: boolean): { 
       outNonDim.push('')
       continue
     }
-    let masked = ''
+    // Two passes: collect the visible cells, then blank dim cells and
+    // SINGLE-CELL inverse runs. The focused empty input renders its cursor as
+    // an inverse block OVER the placeholder's first character (claude.exe:
+    // i(e[0]) + dim(e.slice(1))), so a dim-only mask left `❯ P` and the gate
+    // still deferred forever (#418 review BLOCKER) — but ONLY a lone inverse
+    // cell is the cursor. A multi-cell inverse run is content: a selected
+    // range, or an atomic [Image #1] chip (claude.exe renders the whole chip
+    // inverse when the cursor snaps to its edge), and blanking those flipped
+    // a real draft into a sendable pane (round-2 MAJOR). An empty cell keeps
+    // a SPACE, never '', so masked columns stay aligned with the raw row —
+    // the gate's ink check is by column.
+    const cells: Array<{ chars: string; dim: boolean; inverse: boolean }> = []
     for (let x = 0; x < line.length; x++) {
       const cell = line.getCell(x, work)
       if (!cell) continue
       if (cell.getWidth() === 0) continue // the hidden tail cell of a wide glyph
-      const chars = cell.getChars()
-      // INVERSE is masked alongside dim (#418 review BLOCKER): the focused
-      // empty input renders its cursor as an inverse block OVER the
-      // placeholder's first character (claude.exe: i(e[0]) + dim(e.slice(1))),
-      // so a dim-only mask left `❯ P` and the gate still deferred forever.
-      // The inverse cell is the cursor, not draft ink. An empty cell keeps a
-      // SPACE, never '', so masked columns stay aligned with the raw row —
-      // the gate's ink check is by column.
-      if (cell.isDim() || cell.isInverse()) masked += ' '.repeat(Math.max(1, chars.length))
-      else masked += chars.length > 0 ? chars : ' '
+      cells.push({ chars: cell.getChars(), dim: !!cell.isDim(), inverse: !!cell.isInverse() })
+    }
+    let masked = ''
+    for (let c = 0; c < cells.length; c++) {
+      const cur = cells[c]
+      const loneInverse =
+        cur.inverse && !(c > 0 && cells[c - 1].inverse) && !(c + 1 < cells.length && cells[c + 1].inverse)
+      if (cur.dim || loneInverse) masked += ' '.repeat(Math.max(1, cur.chars.length))
+      else masked += cur.chars.length > 0 ? cur.chars : ' '
     }
     outNonDim.push(masked.replace(/\s+$/, ''))
   }

@@ -41,11 +41,17 @@ and future editors must not undo:
   prompt pointer whenever isLoading, and a masked re-match would blank the
   glyph, fail the regex, and flip a live type-ahead draft from refuse to SEND.
   Same for dim box gutters. Empty cells serialize as spaces so columns hold.
-- Accepted residual (documented, judged unreal-rare): a ONE-character draft
-  with the cursor sitting ON that character masks to blank and would send --
-  it needs the user to type one char, arrow back onto it, and a rate-limit
-  retry to fire in that instant; the damage is a concatenated line, not a
-  menu selection.
+- **Only a LONE inverse cell is the cursor.** Round 2 of the review: blanket
+  inverse masking blanked whole inverse RUNS -- the `[Image #1]` chip (which
+  claude.exe renders fully inverse when the cursor snaps to its edge) and an
+  inverse-highlighted picker row -- flipping a real draft into a sendable
+  pane. The mask blanks an inverse cell only when neither neighbour is
+  inverse; a multi-cell inverse run is content.
+- Accepted residuals (documented, judged unreal-rare): a ONE-character draft
+  with the cursor sitting ON that character masks to blank and would send
+  (two characters already refuse); and a single-option ALL-DIM caret picker
+  row no longer gates (claude.exe dims only disabled rows, where Enter is
+  inert -- and a picker with one option is not a real render).
 
 The trap for future edits: do NOT blanket-blank dim/inverse cells before the
 whole gate. Permission menus may dim their rows; blanking them before the menu
