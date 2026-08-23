@@ -135,11 +135,12 @@ export const INBOUND_OVERSIZE_COST = 60
  * continuous spin is a handful of notches a second, and a free-spin wheel's
  * flick lands a dozen-plus at once — so a frustrated user riding the clamp can
  * genuinely produce ~100 notches in ten seconds. Three hundred is ~3× that;
- * nothing human clears it (independent review, N2). A page that does is
- * holding the camera against the user — a sustained ≥30/s stream — and gets
- * the flood budget's answer: the channel drops whole. What this deliberately
- * does NOT bound is a brief fight (a page CAN re-zoom a few times before
- * tripping it); the chrome chip, Ctrl+0 and the drop are the answer there,
+ * nothing human clears it (independent review, N2). What it bounds is THRASH
+ * — a page spending intents wholesale gets the flood budget's answer, the
+ * channel drops whole. What this deliberately does NOT bound is a patient
+ * fight (re-pinning after a user reset costs the page only a few intents, so
+ * the window funds a number of them); the chrome chip, Ctrl+0 and the drop
+ * are the answer there,
  * and the resolve path it can provoke holds one RPC slot inside its own
  * attempt budget regardless. Charged only for intents that PASS the
  * plausibility gate — refused forgeries never count against a page the user
@@ -362,8 +363,10 @@ export function reportedClickIsPlausible(facts: HostInputFacts): boolean {
  *
  * What that buys an attacker is stated where it is bounded: the header above
  * and CONTENT_ZOOM_BUDGET. A forged intent moves a clamped, chrome-visible
- * camera and provokes bounded host work; it cannot touch the review store, the
- * locked selection's identity, or anything persisted.
+ * camera and provokes bounded host work — the re-anchor pass, whose
+ * page-authored boxes land in the resolution map and the live lock's box,
+ * labelled as the page's word; it cannot write a note, a review, the lock's
+ * identity, or anything persisted.
  */
 export function reportedZoomIsPlausible(facts: Pick<HostInputFacts, 'activeElement' | 'frameElement'>): boolean {
   if (!facts.frameElement) return false

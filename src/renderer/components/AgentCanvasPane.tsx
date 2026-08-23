@@ -992,7 +992,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         resolveSkippedRef.current = false
         const driftRetry =
           resolvedZoomRef.current !== zoomRef.current && resolveAttemptsRef.current < MAX_RESOLVE_ATTEMPTS
-        if (!cancelled && (skipped || driftRetry)) {
+        // The skip retry fires REGARDLESS of `cancelled`: a skip is recorded
+        // by a LATER effect run, and React has already cancelled this one by
+        // then — gating it on !cancelled made the path unreachable and
+        // silently dropped a zoom step that landed mid-pass (final review,
+        // M1). The bump is a component-level setState, not a stale write, and
+        // the re-armed effect re-keys its own intent and budget.
+        if (skipped || (!cancelled && driftRetry)) {
           setResolveRetryNonce((n) => n + 1)
         }
       }
