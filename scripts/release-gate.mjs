@@ -15,7 +15,9 @@
 // Checks
 //   1. MILESTONE  The GitHub milestone titled exactly <version> (e.g.
 //      "2.1.0-beta.17") must exist and have no open issue without the
-//      `excluded` label. Pull requests on the milestone are ignored (they are
+//      `excluded` or `in-beta` label (an open in-beta issue is done for this
+//      release — the lifecycle keeps it open until promotion auto-closes it).
+//      Pull requests on the milestone are ignored (they are
 //      not book-of-work items). A MISSING milestone fails closed: the gate
 //      cannot tell "nothing outstanding" from "nobody made the list".
 //   2. MODELS  Every id in the support article's "Supported models" table
@@ -59,10 +61,13 @@ export const EXCLUDED_LABEL = 'excluded'
 /**
  * The issue-lifecycle label (CONTRIBUTING.md): applied when an issue's fix
  * MERGES TO BETA, removed never — the issue stays open until promotion to
- * main auto-closes it. An open `in-beta` issue is therefore DONE for the
- * release being cut, not outstanding work, and the gate must not refuse on
- * it — otherwise the gate and the lifecycle make every cut impossible
- * together. Counted separately so the output still says what is riding along.
+ * main auto-closes it. The gate TRUSTS that label here: an open `in-beta`
+ * issue is treated as done for the release being cut, because refusing on it
+ * would make the gate and the lifecycle jointly forbid every cut. The label
+ * is applied by hand on the beta merge, so this is a trust in the lifecycle
+ * being followed, not a verification that a fix merged — the same trust
+ * `excluded` already extends. Counted separately so the output still says
+ * what is riding along.
  */
 export const IN_BETA_LABEL = 'in-beta'
 export const DEFAULT_REGISTRY_PATH = path.join(ROOT, 'resources', 'model-registry.json')
@@ -86,7 +91,8 @@ function labelNames(labels) {
  * @param {Array<{number:number,title:string,labels?:any[],pull_request?:object,state?:string}>} input.issues
  *        open issues ON that milestone (already filtered by the API; re-filtered here defensively)
  * @param {string} [input.excludedLabel]
- * @returns {{ ok: boolean, reason: string|null, milestone: object|null, blocking: Array<{number:number,title:string,labels:string[]}>, excluded: Array<{number:number,title:string}> }}
+ * @param {string} [input.inBetaLabel]
+ * @returns {{ ok: boolean, reason: string|null, milestone: object|null, blocking: Array<{number:number,title:string,labels:string[]}>, excluded: Array<{number:number,title:string}>, shipped: Array<{number:number,title:string}> }}
  */
 export function evaluateMilestone({ version, milestones, issues, excludedLabel = EXCLUDED_LABEL, inBetaLabel = IN_BETA_LABEL }) {
   const title = String(version || '').trim()

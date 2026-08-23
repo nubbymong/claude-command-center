@@ -489,7 +489,7 @@ try {
   ok(`Release gate passed for v${version}`)
 } catch {
   fail(`RELEASE GATE REFUSED v${version} — see the FAIL lines above.\n      ` +
-    'Close or move the open milestone issues (or have the owner label them "excluded"),\n      ' +
+    'Merge their fixes (label "in-beta"), close or move the open milestone issues (or have the owner label them "excluded"),\n      ' +
     'and align resources/model-registry.json with the Claude Code model configuration article.')
 }
 
@@ -634,7 +634,7 @@ try {
       runInherit(`node scripts/release-gate.mjs --version ${version}`)
     } catch {
       fail(`RELEASE GATE REFUSED v${version} before the stale-release delete — the existing ${tag} release is left intact.\n      ` +
-        'Resolve the open milestone issues (or label them "excluded") and re-run.')
+        'Resolve the open milestone issues (merge + label "in-beta", close, or label "excluded") and re-run.')
     }
     warn(`A release for ${tag} already exists — deleting so the workflow can recreate cleanly`)
     run(`gh release delete ${tag} --yes`)

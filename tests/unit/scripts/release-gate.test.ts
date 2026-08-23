@@ -8,6 +8,7 @@ import { resolve } from 'path'
 import {
   evaluateMilestone,
   evaluateModels,
+  formatReport,
   registryIdCovers,
   repoFromUrl,
   repoFromPackageJson,
@@ -105,6 +106,33 @@ describe('release-gate evaluateMilestone', () => {
     expect(r.ok).toBe(true)
     expect(r.shipped.map((i) => i.number)).toEqual([373, 377])
     expect(r.blocking).toEqual([])
+  })
+
+  it('the FAIL report lists blockers, the in-beta riders, and the in-beta remediation route', () => {
+    const issues: Issue[] = [
+      { number: 373, title: 'shipped', labels: ['in-beta'] },
+      { number: 412, title: 'still outstanding', labels: ['enhancement'] },
+    ]
+    const mr = evaluateMilestone({ version: '2.1.0-beta.17', milestones, issues })
+    const text = formatReport({ version: '2.1.0-beta.17', repo: 'o/r', milestoneResult: mr, modelsResult: null, expectedMeta: null }).join('\n')
+    expect(text).toContain('#412  still outstanding')
+    expect(text).toContain('(in-beta, shipping in this release: #373)')
+    expect(text).toContain('Merge their fixes (label "in-beta")')
+  })
+
+  it('the OK report names what is shipping', () => {
+    const mr = evaluateMilestone({ version: '2.1.0-beta.17', milestones, issues: [{ number: 373, title: 's', labels: ['in-beta'] }] })
+    const text = formatReport({ version: '2.1.0-beta.17', repo: 'o/r', milestoneResult: mr, modelsResult: null, expectedMeta: null }).join('\n')
+    expect(text).toContain('has no outstanding issues')
+    expect(text).toContain('(1 shipping in this release: #373)')
+  })
+
+  it('an issue carrying BOTH labels lands in excluded — the stronger owner claim wins', () => {
+    const issues: Issue[] = [{ number: 1, title: 'x', labels: ['excluded', 'in-beta'] }]
+    const r = evaluateMilestone({ version: '2.1.0-beta.17', milestones, issues })
+    expect(r.ok).toBe(true)
+    expect(r.excluded.map((i) => i.number)).toEqual([1])
+    expect(r.shipped).toEqual([])
   })
 
   it('an in-beta issue does not shield a genuinely open one beside it', () => {

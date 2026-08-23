@@ -27,7 +27,8 @@ jobs:
   # ── Release gate (#375, #385) ──
   # Refuse the cut before a single installer is built: the GitHub milestone
   # titled after package.json's version must have no open issue without the
-  # `excluded` label (a missing milestone fails closed), and
+  # `excluded` or `in-beta` label (an open in-beta issue is done for this
+  # release; a missing milestone fails closed), and
   # resources/model-registry.json must cover every model in Anthropic's Claude
   # Code model configuration article (scripts/fixtures/ holds the expected set).
   # Every build job `needs` this one. Read-only: GITHUB_TOKEN with issues:read.
