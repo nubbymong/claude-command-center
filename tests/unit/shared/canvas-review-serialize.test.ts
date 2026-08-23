@@ -106,6 +106,15 @@ describe('serializeReviewPayload', () => {
     expect(serializeReviewPayload(payload([], [note({})]), []).text).not.toContain('variants:')
   })
 
+  it('suppresses the variants line once the offer is no longer live', () => {
+    // A superseded / dismissed / stale note advertising alternatives would
+    // read as a question still open — only addressed and approved emit.
+    for (const state of ['reannotated', 'dismissed', 'stale'] as const) {
+      const stale = note({ id: 'a6', state, variants: [{ key: 'A', label: 'thin rule' }] })
+      expect(serializeReviewPayload(payload([], [stale]), []).text).not.toContain('variants:')
+    }
+  })
+
   it('numbers images by the attachment order it is HANDED, not by note order', () => {
     const first = note({ id: 'a1', sketch: { excalidrawElementIds: ['e'], pngPath: 'p1', bboxPage: { x: 0, y: 0, width: 1, height: 1 } } })
     const second = note({ id: 'a2', sketch: { excalidrawElementIds: ['e'], pngPath: 'p2', bboxPage: { x: 0, y: 0, width: 1, height: 1 } } })

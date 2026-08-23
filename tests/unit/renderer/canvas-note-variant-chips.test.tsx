@@ -89,13 +89,14 @@ const STATE: CanvasReviewState = {
 }
 
 const annotationResolve = vi.fn(async () => ({ state: STATE }))
+const ptyWrite = vi.fn()
 
 let container: HTMLDivElement
 let root: Root
 
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
-  pty: { ...((globalThis as any).window?.electronAPI?.pty ?? {}), write: vi.fn() },
+  pty: { ...((globalThis as any).window?.electronAPI?.pty ?? {}), write: ptyWrite },
   canvas: {
     ...((globalThis as any).window?.electronAPI?.canvas ?? {}),
     reviewGetState: vi.fn(async () => STATE),
@@ -114,6 +115,7 @@ async function render(): Promise<void> {
 beforeEach(async () => {
   useCanvasReviewStore.getState().reset()
   annotationResolve.mockClear()
+  ptyWrite.mockClear()
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -164,6 +166,51 @@ describe('variant chips on an addressed note', () => {
     const args = annotationResolve.mock.calls[0][0] as Record<string, unknown>
     expect(args.action).toBe('approve')
     expect('variantKey' in args).toBe(false)
+  })
+})
+
+describe('the pick marker in chat', () => {
+  it('tells the agent once the store confirms the pick landed', async () => {
+    // Main confirms: a1 comes back approved with the clicked key.
+    annotationResolve.mockResolvedValueOnce({
+      state: {
+        ...STATE,
+        annotations: [{ ...OFFERED, state: 'approved', closedBy: 'user', closedFrom: 'addressed', chosenVariantKey: 'B' }, PLAIN, PICKED],
+      },
+    } as never)
+    await render()
+    await act(async () => {
+      ;(container.querySelector('[data-testid="note-variant-B"]') as HTMLButtonElement).click()
+    })
+    expect(ptyWrite).toHaveBeenCalledWith(SID, 'Picked B on a1 — approved · canvas_review R1\r')
+  })
+
+  it('stays silent when the write did not land', async () => {
+    // Default mock: the state comes back with a1 still addressed (main refused
+    // or the canvas moved) — announcing a decision nobody recorded would lie.
+    await render()
+    await act(async () => {
+      ;(container.querySelector('[data-testid="note-variant-B"]') as HTMLButtonElement).click()
+    })
+    expect(ptyWrite).not.toHaveBeenCalled()
+  })
+
+  it('a plain approve writes no marker', async () => {
+    annotationResolve.mockResolvedValueOnce({
+      state: {
+        ...STATE,
+        annotations: [{ ...OFFERED, state: 'approved', closedBy: 'user', closedFrom: 'addressed' }, PLAIN, PICKED],
+      },
+    } as never)
+    await render()
+    const chipRow = container.querySelector('[data-testid="note-variant-chips"]')!
+    const approve = Array.from(chipRow.parentElement!.querySelectorAll('button')).find(
+      (el) => el.textContent === 'Approve',
+    )!
+    await act(async () => {
+      approve.click()
+    })
+    expect(ptyWrite).not.toHaveBeenCalled()
   })
 })
 

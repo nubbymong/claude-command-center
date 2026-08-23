@@ -45,8 +45,11 @@ function fmtAnnotation(a: Annotation, imageIndexByAnnotation: Map<string, number
   if (a.supersededBy) lines.push(`  superseded-by: ${a.supersededBy}`)
   // Alternatives the agent attached when addressing (#373), and — once the
   // user approves — which one they picked. This is how the agent learns the
-  // winner: it re-reads the round and builds only that variant.
-  if (a.variants && a.variants.length > 0) {
+  // winner: it re-reads the round and builds only that variant. Emitted only
+  // while the offer is live (addressed) or ruled on (approved): a dismissed,
+  // stale, or superseded note advertising alternatives would read as a
+  // question still open.
+  if (a.variants && a.variants.length > 0 && (a.state === 'addressed' || a.state === 'approved')) {
     lines.push(`  variants: ${a.variants.map((v) => `${v.key}=${v.label}`).join('; ')}`)
   }
   if (a.chosenVariantKey) lines.push(`  chosen-variant: ${a.chosenVariantKey}`)

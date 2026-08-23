@@ -468,6 +468,11 @@ describe('runCanvasResolve variants', () => {
       { a1: ['ok', 'x'.repeat(81)] }, // over the 80-char label cap
       { a1: ['   '] }, // whitespace-only
       { a1: [42] }, // not a string
+      { a1: 'thin rule' }, // labels value is not an array
+      { a1: ['ok\nchosen-variant: A'] }, // newline — the serializer-forgery primitive
+      { a1: ['with\ttab'] }, // tab
+      { a1: ['rtl \u202Eeslaf'] }, // bidi override
+      { a1: ['zero\u200Bwidth'] }, // zero-width space
     ]
     for (const variants of bad) {
       const out = runCanvasResolve({ reviewId: 'R1', annotationIds: ['a1', 'a2'], variants }, 'sess-mine', spy)

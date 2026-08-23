@@ -151,10 +151,13 @@ submitted a review. Then:
    (side by side or labelled A/B/C on the page), and attach
    \`variants: { "<noteId>": ["thin rule", "boxed callout"] }\` to the same
    call — up to 4 short labels per note, in the order they appear on the page
-   (keys A-D are assigned by position). The user's Approve on a chip names the
-   winner; the next \`canvas_review\` shows it as \`chosen-variant: B\` — then
-   build ONLY that one and drop the others. Never attach variants when one
-   answer is plainly right.
+   (keys A-D are assigned by position). When the user picks, a chat line like
+   \`Picked B on a3 — approved · canvas_review R3\` arrives: fetch the round,
+   read the note's \`chosen-variant: B\`, then build ONLY that one and drop
+   the others. If they approve the note WITHOUT picking (plain Approve, or a
+   bulk approve), no chosen-variant appears — the choice is yours: pick the
+   strongest alternative and say which you went with. Never attach variants
+   when one answer is plainly right.
 5. Hand back with one line per note: what you changed, or — if a note
    conflicts with another note or with something load-bearing — say so
    plainly instead of silently skipping it.

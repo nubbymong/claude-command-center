@@ -305,7 +305,28 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     (annotationId: string, action: 'approve' | 'dismiss' | 'reannotate' | 'stale', variantKey?: string) => {
       const on = useCanvasReviewStore.getState().bySessionId[sessionId]?.canvasId ?? null
       if (!on) return
-      void resolveNote(sessionId, annotationId, action, on, variantKey)
+      if (variantKey === undefined) {
+        void resolveNote(sessionId, annotationId, action, on)
+        return
+      }
+      // A variant approval is an ANSWER the agent is waiting on — but approving
+      // closes the note, so the round leaves the open-notes count at exactly
+      // the moment `chosen-variant` becomes readable, and nothing else would
+      // ever tell the agent to look. Same mechanism as the review-submitted
+      // line: one chat line carries the pointer, the agent fetches the payload
+      // itself. Written only after the store confirms the pick landed — a
+      // refused write must not announce a decision that was not recorded.
+      void (async () => {
+        await resolveNote(sessionId, annotationId, action, on, variantKey)
+        const after = useCanvasReviewStore.getState().bySessionId[sessionId]
+        const landed = after?.annotations.find((a) => a.id === annotationId)
+        if (landed?.state === 'approved' && landed.chosenVariantKey === variantKey) {
+          window.electronAPI.pty.write(
+            sessionId,
+            `Picked ${variantKey} on ${annotationId} — approved · canvas_review ${landed.reviewId}\r`,
+          )
+        }
+      })()
     },
     [resolveNote, sessionId],
   )

@@ -248,6 +248,30 @@ export const MAX_ANNOTATION_VARIANTS = 4
  *  explanation (that belongs in the version itself). */
 export const MAX_VARIANT_LABEL_CHARS = 80
 
+/**
+ * The one shape a variant label may have, enforced at BOTH ingresses (the MCP
+ * tool and the store) and again by the file validator.
+ *
+ * Stricter than a note on purpose. A note is the user's multi-line prose; a
+ * label is agent-authored text that becomes (a) a chip the USER clicks and
+ * (b) a single serializer FIELD (`variants: A=…`) the agent reads back beside
+ * `chosen-variant:` — the line that carries the user's decision. A newline in
+ * a label would let the agent forge that line onto a note nobody approved, so
+ * every control character is banned (tab and newline included), along with the
+ * bidi overrides and zero-width characters that could make a chip read
+ * differently than it acts.
+ */
+export function isCleanVariantLabel(label: unknown): label is string {
+  if (typeof label !== 'string') return false
+  if (label.trim().length === 0 || label.length > MAX_VARIANT_LABEL_CHARS) return false
+  // C0 + DEL + C1 controls — tab, newline, and carriage return among them.
+  if (/[\u0000-\u001F\u007F-\u009F]/.test(label)) return false
+  // Zero-width and directionality controls (bidi overrides, the ZWSP family,
+  // line/paragraph separators, BOM).
+  if (/[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]/.test(label)) return false
+  return true
+}
+
 export interface Annotation {
   /** 'a1', 'a2', … — minted by the store, never accepted from a caller. */
   id: string

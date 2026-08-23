@@ -10,7 +10,7 @@
 // arguments are advertised, validated, and then overruled by the bound id — a
 // mismatch is refused rather than silently redirected.
 
-import { AGENT_CLOSE_VERDICTS, MAX_ANNOTATION_VARIANTS, MAX_VARIANT_LABEL_CHARS } from '../shared/canvas'
+import { AGENT_CLOSE_VERDICTS, MAX_ANNOTATION_VARIANTS, MAX_VARIANT_LABEL_CHARS, isCleanVariantLabel } from '../shared/canvas'
 import type {
   AgentCloseVerdict,
   CanvasRenderSource,
@@ -1015,8 +1015,13 @@ export function runCanvasResolve(
         return { text: `Each \`variants\` entry must be 1 to ${MAX_ANNOTATION_VARIANTS} labels — the alternatives the user will pick between.`, isError: true }
       }
       for (const label of labels) {
-        if (typeof label !== 'string' || label.trim().length === 0 || label.length > MAX_VARIANT_LABEL_CHARS) {
-          return { text: `Every variant label must be plain text, 1 to ${MAX_VARIANT_LABEL_CHARS} characters.`, isError: true }
+        // Same rule the store enforces, refused here BEFORE the store is
+        // touched: one line of visibly-plain text — no control characters
+        // (newline included: a label is a serializer field, and a newline in
+        // one could forge the `chosen-variant:` line), no bidi or zero-width
+        // characters.
+        if (!isCleanVariantLabel(label)) {
+          return { text: `Every variant label must be one line of plain text, 1 to ${MAX_VARIANT_LABEL_CHARS} characters, with no control or invisible characters.`, isError: true }
         }
       }
       variantsByNote[noteId] = labels as string[]

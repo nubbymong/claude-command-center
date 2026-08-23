@@ -25,7 +25,7 @@ import {
   CANVAS_REVIEW_ID_RE,
   CANVAS_VERSION_ID_RE,
   MAX_ANNOTATION_VARIANTS,
-  MAX_VARIANT_LABEL_CHARS,
+  isCleanVariantLabel,
   type AddressedBy,
   type AgentCloseVerdict,
   type AnchorRef,
@@ -240,7 +240,7 @@ function isValidAnnotation(value: unknown): value is Annotation {
     for (let i = 0; i < a.variants.length; i++) {
       const v = a.variants[i] as Partial<AnnotationVariant> | undefined
       if (v?.key !== String.fromCharCode(65 + i)) return false
-      if (!isCleanNote(v.label) || v.label.length > MAX_VARIANT_LABEL_CHARS) return false
+      if (!isCleanVariantLabel(v.label)) return false
     }
   }
   // A choice exists only as part of an approval, and only of a variant the
@@ -1235,7 +1235,10 @@ export function markAnnotationsAddressed(
         throw new Error('invalid variants')
       }
       const minted: AnnotationVariant[] = labels.map((label, i) => {
-        if (!isCleanNote(label) || label.trim().length === 0 || label.length > MAX_VARIANT_LABEL_CHARS) {
+        // Stricter than a note: a label is a single serializer FIELD beside
+        // `chosen-variant:` — a newline in it would let the agent forge the
+        // user's decision line, so every control character is banned.
+        if (!isCleanVariantLabel(label)) {
           throw new Error('invalid variant label')
         }
         return { key: String.fromCharCode(65 + i), label }

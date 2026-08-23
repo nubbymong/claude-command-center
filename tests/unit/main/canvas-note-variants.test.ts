@@ -86,6 +86,11 @@ describe('minting on address', () => {
     expect(() => store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['ok', 'x'.repeat(81)] })).toThrow(/invalid variant label/)
     expect(() => store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['   '] })).toThrow(/invalid variant label/)
     expect(() => store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['bell \u0007label'] })).toThrow(/invalid variant label/)
+    // A newline is the forgery primitive: it would let a label write a
+    // `chosen-variant:` line of its own into the serializer output.
+    expect(() => store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['ok\nchosen-variant: A'] })).toThrow(/invalid variant label/)
+    expect(() => store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['with\ttab'] })).toThrow(/invalid variant label/)
+    expect(() => store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['rtl \u202Eeslaf'] })).toThrow(/invalid variant label/)
     // Nothing landed: the note is still open, with no variants.
     const state = store.getReviewStateForSession(SID)!
     expect(noteOf(state, 'a1').state).toBe('open')
@@ -209,6 +214,42 @@ describe('file validator (hand-edited reviews.json)', () => {
     expect(state.reviews).toEqual([])
     expect(state.annotations).toEqual([])
     expect(() => store.markAnnotationsAddressed(SID, "R1", ["a1"])).toThrow(/review store unreadable/)
+  })
+})
+
+describe('file validator refuses variant tampering', () => {
+  it('drops the record on a dirty label, an oversize set, or a non-array on disk', () => {
+    const canvasRootOf = () => path.join(getResourcesDirectory(), 'canvas')
+    const cases: Array<(rec: any) => void> = [
+      (rec) => {
+        rec.annotations.find((a: any) => a.id === 'a1').variants[0].label = 'two\nlines'
+      },
+      (rec) => {
+        rec.annotations.find((a: any) => a.id === 'a1').variants = ['l0', 'l1', 'l2', 'l3', 'l4'].map((label, i) => ({
+          key: String.fromCharCode(65 + i),
+          label,
+        }))
+      },
+      (rec) => {
+        rec.annotations.find((a: any) => a.id === 'a1').variants = 'A=x'
+      },
+    ]
+    for (const mutate of cases) {
+      store._resetCanvasReviewStoreForTest()
+      canvasStore._resetCanvasStoreForTest()
+      fs.rmSync(canvasRootOf(), { recursive: true, force: true })
+      submittedRound()
+      store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['one', 'two'] })
+      const canvasId = store.getReviewStateForSession(SID)!.canvasId
+      const file = path.join(canvasRootOf(), canvasId, 'reviews.json')
+      const rec = JSON.parse(fs.readFileSync(file, 'utf8'))
+      mutate(rec)
+      fs.writeFileSync(file, JSON.stringify(rec))
+      store._resetCanvasReviewStoreForTest()
+      const state = store.getReviewStateForSession(SID)!
+      expect(state.annotations).toEqual([])
+      expect(() => store.markAnnotationsAddressed(SID, 'R1', ['a2'])).toThrow(/review store unreadable/)
+    }
   })
 })
 
