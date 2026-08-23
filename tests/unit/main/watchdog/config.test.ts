@@ -155,3 +155,44 @@ describe('resolveWatchdogConfig — retryMessage sanitization (single-submit / c
     expect(c.retryMessage).toBe('continue')
   })
 })
+
+// #419 review: the F13-reachable numeric knobs carry hard floors and ceilings.
+// A degenerate value falls back to the default rather than clamping — a config
+// that far off is a mistake, and the default is the honest resolution.
+describe('bounded numeric knobs (#419)', () => {
+  it('rejects sub-second and absurd values back to defaults', () => {
+    const c = resolveWatchdogConfig({
+      maxRetries: 1e9,
+      marginSeconds: 1e9,
+      fallbackWaitHours: 0.0001,
+      overload: {
+        backoffSeconds: [0.001, 20],
+        steadyStateSeconds: 1e-9,
+        jitterPct: 100000,
+        maxTotalWaitMinutes: 1e9,
+      },
+      safeguard: { maxRetries: 1e9, retryDelaySeconds: 0.001 },
+    })
+    expect(c.maxRetries).toBe(DEFAULT_WATCHDOG_CONFIG.maxRetries)
+    expect(c.marginSeconds).toBe(DEFAULT_WATCHDOG_CONFIG.marginSeconds)
+    expect(c.fallbackWaitHours).toBe(DEFAULT_WATCHDOG_CONFIG.fallbackWaitHours)
+    expect(c.overload.backoffSeconds).toEqual(DEFAULT_OVERLOAD.backoffSeconds)
+    expect(c.overload.steadyStateSeconds).toBe(DEFAULT_OVERLOAD.steadyStateSeconds)
+    expect(c.overload.jitterPct).toBe(DEFAULT_OVERLOAD.jitterPct)
+    expect(c.overload.maxTotalWaitMinutes).toBe(DEFAULT_OVERLOAD.maxTotalWaitMinutes)
+    expect(c.safeguard.maxRetries).toBe(DEFAULT_SAFEGUARD.maxRetries)
+    expect(c.safeguard.retryDelaySeconds).toBe(DEFAULT_SAFEGUARD.retryDelaySeconds)
+  })
+
+  it('accepts sane in-range tuning', () => {
+    const c = resolveWatchdogConfig({
+      maxRetries: 10,
+      overload: { backoffSeconds: [15, 45], maxTotalWaitMinutes: 240 },
+      safeguard: { retryDelaySeconds: 30 },
+    })
+    expect(c.maxRetries).toBe(10)
+    expect(c.overload.backoffSeconds).toEqual([15, 45])
+    expect(c.overload.maxTotalWaitMinutes).toBe(240)
+    expect(c.safeguard.retryDelaySeconds).toBe(30)
+  })
+})

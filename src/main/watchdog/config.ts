@@ -73,12 +73,17 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-function positiveNumber(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : fallback
-}
-
-function nonNegativeNumber(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : fallback
+/**
+ * A tuning knob with a hard floor and ceiling (#419 review). These fields
+ * became settings.json-reachable with F13; a degenerate value cannot open a
+ * new injection path (the tick cadence bounds the send rate and the message
+ * is sanitized), but sub-second backoffs and effectively-infinite caps turn
+ * the retry loops into a self-DoS. Out-of-range values fall back rather than
+ * clamp — a config that far off is a mistake, and the default is the honest
+ * resolution of a mistake.
+ */
+function boundedNumber(v: unknown, fallback: number, min: number, max: number): number {
+  return typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : fallback
 }
 
 function boolean(v: unknown, fallback: boolean): boolean {
@@ -119,7 +124,7 @@ function sanitizedRetryMessage(v: unknown, fallback: string): string {
 
 function positiveNumberArray(v: unknown, fallback: number[]): number[] {
   if (!Array.isArray(v) || v.length === 0) return fallback
-  const cleaned = v.filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0)
+  const cleaned = v.filter((n): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 1 && n <= 3600)
   return cleaned.length === v.length ? cleaned : fallback
 }
 
@@ -138,9 +143,9 @@ function resolveOverload(partial: unknown, defaultRetryMessage: string): Overloa
   return {
     enabled: boolean(p.enabled, DEFAULT_OVERLOAD.enabled),
     backoffSeconds: positiveNumberArray(p.backoffSeconds, DEFAULT_OVERLOAD.backoffSeconds),
-    steadyStateSeconds: positiveNumber(p.steadyStateSeconds, DEFAULT_OVERLOAD.steadyStateSeconds),
-    jitterPct: nonNegativeNumber(p.jitterPct, DEFAULT_OVERLOAD.jitterPct),
-    maxTotalWaitMinutes: positiveNumber(p.maxTotalWaitMinutes, DEFAULT_OVERLOAD.maxTotalWaitMinutes),
+    steadyStateSeconds: boundedNumber(p.steadyStateSeconds, DEFAULT_OVERLOAD.steadyStateSeconds, 1, 86_400),
+    jitterPct: boundedNumber(p.jitterPct, DEFAULT_OVERLOAD.jitterPct, 0, 100),
+    maxTotalWaitMinutes: boundedNumber(p.maxTotalWaitMinutes, DEFAULT_OVERLOAD.maxTotalWaitMinutes, 1, 1_440),
     retryMessage: sanitizedRetryMessage(p.retryMessage, defaultRetryMessage),
     patterns: stringArray(p.patterns, DEFAULT_OVERLOAD.patterns),
   }
@@ -150,8 +155,8 @@ function resolveSafeguard(partial: unknown, defaultRetryMessage: string): Safegu
   const p = isPlainObject(partial) ? partial : {}
   return {
     enabled: boolean(p.enabled, DEFAULT_SAFEGUARD.enabled),
-    maxRetries: positiveNumber(p.maxRetries, DEFAULT_SAFEGUARD.maxRetries),
-    retryDelaySeconds: positiveNumber(p.retryDelaySeconds, DEFAULT_SAFEGUARD.retryDelaySeconds),
+    maxRetries: boundedNumber(p.maxRetries, DEFAULT_SAFEGUARD.maxRetries, 1, 100),
+    retryDelaySeconds: boundedNumber(p.retryDelaySeconds, DEFAULT_SAFEGUARD.retryDelaySeconds, 1, 3600),
     retryMessage: sanitizedRetryMessage(p.retryMessage, defaultRetryMessage),
     patterns: stringArray(p.patterns, DEFAULT_SAFEGUARD.patterns),
   }
@@ -161,9 +166,9 @@ export function resolveWatchdogConfig(partial?: unknown): WatchdogConfig {
   const p = isPlainObject(partial) ? partial : {}
   const retryMessage = sanitizedRetryMessage(p.retryMessage, DEFAULT_WATCHDOG_CONFIG.retryMessage)
   return {
-    maxRetries: positiveNumber(p.maxRetries, DEFAULT_WATCHDOG_CONFIG.maxRetries),
-    marginSeconds: nonNegativeNumber(p.marginSeconds, DEFAULT_WATCHDOG_CONFIG.marginSeconds),
-    fallbackWaitHours: positiveNumber(p.fallbackWaitHours, DEFAULT_WATCHDOG_CONFIG.fallbackWaitHours),
+    maxRetries: boundedNumber(p.maxRetries, DEFAULT_WATCHDOG_CONFIG.maxRetries, 1, 100),
+    marginSeconds: boundedNumber(p.marginSeconds, DEFAULT_WATCHDOG_CONFIG.marginSeconds, 0, 3600),
+    fallbackWaitHours: boundedNumber(p.fallbackWaitHours, DEFAULT_WATCHDOG_CONFIG.fallbackWaitHours, 1, 24),
     retryMessage,
     overload: resolveOverload(p.overload, retryMessage),
     safeguard: resolveSafeguard(p.safeguard, retryMessage),
