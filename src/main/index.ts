@@ -9,7 +9,7 @@ import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { registerAccountWebHandlers } from './ipc/account-web-handlers'
 import { sweepAbandonedProfiles } from './account-web/sign-in'
-import { killAllPty, gracefulExitAllPty, resolveClaudeForPty } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, resolveClaudeForPty, isSessionWritable, writePty } from './pty-manager'
 import { spawnClaudeHeadless } from './claude-headless'
 import { parseClaudeVersion } from './sentinel/sentinel-version'
 import { registerResumeHandlers } from './ipc/resume-handlers'
@@ -65,6 +65,8 @@ import { registerRegistryHandlers } from './ipc/registry-handlers'
 import { initSentinel, reconcileOnUpdate, sentinelStartupCheck } from './sentinel/index'
 import { registerSentinelHandlers } from './ipc/sentinel-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
+import { registerWatchdogHandlers } from './ipc/watchdog-handlers'
+import { initWatchdogManager, getWatchdogManager } from './watchdog/watchdog-manager'
 import { startRulesEngine } from './channel-rules'
 import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
@@ -941,7 +943,10 @@ if (!gotTheLock) {
         void sentinelStartupCheck()
       }
     }
-    registerConfigHandlers()
+    registerConfigHandlers({
+      // #266 MAJOR-2: unticking the watchdog must tear down RUNNING watchers.
+      onSettingsSaved: () => getWatchdogManager()?.applySettings(),
+    })
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
     // app.log) so field issues are captured. NEVER on stable. This enables only
     // the verbose level, NOT the per-event hot-path TRACE logs and NOT the heavy
@@ -1034,7 +1039,8 @@ if (!gotTheLock) {
     // push carries BOTH snapshots (else one source would wipe the other in the UI).
     const getSup = () => getHooksSupervisor()
     const getPtyDiag = () => getPtyIntegrityMonitor()?.diagnostics() ?? null
-    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag))
+    const getWatchdogDiag = () => getWatchdogManager()
+    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag, getWatchdogDiag))
     const ptyMonitor = new PtyIntegrityMonitor({ emit: pushDiagnostics })
     setPtyIntegrityMonitor(ptyMonitor)
     // Redirect ONLY SERVICE_HEALTH_UPDATE through the merge; every other channel
@@ -1094,9 +1100,29 @@ if (!gotTheLock) {
     // every service). Stopped in before-quit.
     startLoopStallMonitor()
     registerHooksHandlers(getGateway()!)   // B1: handlers get whatever gateway backs the singleton
+    // Session Watchdog (#235): wired after the gateway singleton exists so its
+    // StopFailure subscription binds immediately. send() submits the retry the
+    // same way the command-button / launch paths do — writePty(text + '\r') —
+    // which is the proven way to submit into the Claude TUI. (The channel-bus
+    // paste envelope does NOT submit: formatTier1 ends at the bracketed-paste
+    // close with no trailing Enter, so it only drafts. A bracketed paste with a
+    // fused Enter is also swallowed by the Ink/React TUI.) The retry text is
+    // already sanitized in config.ts to a single control-char-free line, so the
+    // lone appended '\r' is the only submit and cannot be broken out of.
+    initWatchdogManager({
+      getWindow,
+      isSessionAlive: isSessionWritable,
+      send: (sessionId, text) => {
+        writePty(sessionId, `${text}\r`)
+      },
+      // Refresh the services view live when a watchdog state changes; routed
+      // through the same merge so the push carries every source (#235).
+      onHealthChange: () => pushDiagnostics(),
+    })
+    registerWatchdogHandlers()
     // D1b: diagnostics IPC. The getter returns null in the hooks-disabled branch
     // (supervisor never set) -> the handler serves an honest synthetic "hooks off" snapshot.
-    registerServiceHealthHandlers(getSup, getPtyDiag)
+    registerServiceHealthHandlers(getSup, getPtyDiag, getWatchdogDiag)
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }
@@ -1209,6 +1235,7 @@ if (!gotTheLock) {
     try { shutdownLogging() } catch { /* never init / disabled */ }
     // Tear down the tokenomics indexing worker. No-op when never init.
     try { shutdownTokenomics() } catch { /* never init */ }
+try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     // Kill any GUI-subsystem tool still being captured (#379). Its stdio is
     // piped to us, so leaving it running orphans a process nobody can see.
     try { stopAllCapturedRuns() } catch { /* never started */ }

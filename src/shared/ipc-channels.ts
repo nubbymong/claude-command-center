@@ -410,6 +410,12 @@ export const IPC = {
   CANVAS_REVIEW_MARK_SEEN: 'canvas:reviewMarkSeen',    // renderer -> main: the USER has these addressed notes on screen (releases the agent close-out barrier; no MCP path here, ever)
   CANVAS_REVIEW_CLOSE_OUT: 'canvas:reviewCloseOut',    // renderer -> main: { canvasId } -> bulk-stale one canvas's rounds waiting on the user (the library)
   CANVAS_REVIEW_CHANGED: 'canvas:reviewChanged',       // push: main -> renderer (a review/annotation mutation happened)
+
+  // Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard.
+  // Default off. Push on every state change (main -> renderer); invoke to
+  // hydrate a freshly-mounted renderer with whatever is currently running.
+  WATCHDOG_STATE: 'watchdog:state',
+  WATCHDOG_GET_STATES: 'watchdog:getStates',
 } as const
 
 /** Helper to build per-session PTY data channels */

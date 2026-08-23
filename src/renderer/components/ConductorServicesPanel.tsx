@@ -4,6 +4,7 @@ import type {
   ServiceHealth,
   ServiceLogEntry,
   PtyIntegritySnapshot,
+  WatchdogMonitorSnapshot,
 } from '../../shared/service-health'
 import { DialogButton } from './ui/Dialog'
 
@@ -65,7 +66,23 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
 // out, and pushed to the UI) — so the panel says "Trimmed", not "Drops",
 // which read as lost ingest and alarmed users.
 
-function ServiceCard({ s }: { s: ServiceHealth }) {
+// Per-card restart gating. Preserves the original hooks rule (a supervised
+// gateway that fell back to in-process cannot be restarted in place — relaunch),
+// while letting other services (watchdog, logging) restart when running. A
+// stopped service is never restartable.
+function restartInfoFor(s: ServiceHealth): { disabled: boolean; title: string } {
+  if (s.state === 'stopped') {
+    return { disabled: true, title: s.id === 'hooks' ? 'Hooks are disabled in Settings' : `${s.label} is stopped` }
+  }
+  if (s.id === 'hooks' && s.host === 'in-process-fallback') {
+    return { disabled: true, title: 'Relaunch the app to retry the supervised gateway' }
+  }
+  if (s.id === 'watchdog') return { disabled: false, title: 'Restart the watchdog (re-arms watchers on the next session)' }
+  return { disabled: false, title: `Restart ${s.label}` }
+}
+
+function ServiceCard({ s, onRestart }: { s: ServiceHealth; onRestart: (id: string) => void }) {
+  const r = restartInfoFor(s)
   return (
     <div className={CARD_CLASS} style={CARD_STYLE}>
       <div className="flex items-center gap-1.5 mb-2">
@@ -81,6 +98,19 @@ function ServiceCard({ s }: { s: ServiceHealth }) {
             ? 'disabled'
             : `${s.host}${s.port ? ` :${s.port}` : ''}${s.state !== 'listening' ? ` (${s.state})` : ''}`}
         </span>
+        <button
+          onClick={() => onRestart(s.id)}
+          disabled={r.disabled}
+          title={r.title}
+          className="ml-auto px-1.5 py-0.5 rounded border text-[10px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
+          style={{
+            color: 'var(--status-danger)',
+            borderColor: 'color-mix(in srgb, var(--status-danger) 40%, transparent)',
+            background: 'color-mix(in srgb, var(--status-danger) 10%, transparent)',
+          }}
+        >
+          {RESTART_GLYPH} Restart
+        </button>
       </div>
       <div className="grid grid-cols-4 gap-x-2 gap-y-1.5">
         <Metric label="PID" value={s.pid ?? '-'} />
@@ -166,6 +196,38 @@ function PtySection({ pty }: { pty: PtyIntegritySnapshot }) {
   )
 }
 
+function WatchdogSection({ watchdog }: { watchdog: WatchdogMonitorSnapshot }) {
+  const tickSec = Math.round(watchdog.throttle.tickMs / 1000)
+  return (
+    <div className={CARD_CLASS} style={CARD_STYLE}>
+      <div
+        className="flex items-center gap-1.5 mb-2"
+        title="Session Watchdog. Waiting = sessions in a retry backoff; Silent = sessions whose provider stopped streaming; Tick = current scan cadence (widens when the main loop is under load); Stalls = main-loop stalls in the last minute."
+      >
+        <span className="w-2 h-2 rounded-full" style={{ background: 'var(--text-muted)' }} />
+        <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>Session Watchdog</span>
+        <span className="text-[10px]" style={{ color: 'var(--text-secondary)' }}>{watchdog.activeSessions} watched</span>
+      </div>
+      <div className="grid grid-cols-4 gap-x-2 gap-y-1.5 mb-2">
+        <Metric label="Watched" value={watchdog.activeSessions} />
+        <Metric label="Waiting" value={watchdog.waitingSessions} />
+        <Metric label="Silent" value={watchdog.silentSessions} />
+        <Metric label="Tick" value={`${tickSec}s`} />
+      </div>
+      {watchdog.sessions.length > 0 && (
+        <div className="font-mono text-[10px] leading-snug max-h-24 overflow-y-auto" style={{ color: 'var(--text-secondary)' }}>
+          {watchdog.sessions.map((s) => (
+            <div key={s.sessionId} className="whitespace-pre-wrap break-words">
+              <span style={{ color: 'var(--text-muted)' }}>{s.sessionId.slice(0, 8)} </span>
+              {s.gaveUp ? 'gave-up' : s.status}{s.silent ? ' · silent' : ''} idle:{Math.round(s.idleMs / 1000)}s
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ConductorServicesPanel({ open = true, onClose }: { open?: boolean; onClose: () => void }) {
   const [snap, setSnap] = useState<DiagnosticsSnapshot | null>(null)
   const [entered, setEntered] = useState(false)
@@ -201,19 +263,10 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
   }, [onClose])
 
   const services = snap?.services ?? []
-  const svc = services[0]
-  // A 'stopped' service (hooks off in Settings) defaults to host 'in-process-fallback'
-  // but is NOT a crash-fallback — distinguish so we don't tell the user to relaunch.
-  const stopped = svc?.state === 'stopped'
-  const inFallback = !stopped && svc?.host === 'in-process-fallback'
-  const restartDisabled = stopped || inFallback
-  const restartTitle = stopped
-    ? 'Hooks are disabled in Settings'
-    : inFallback
-      ? 'Relaunch the app to retry the supervised gateway'
-      : 'Restart the hooks gateway'
-
-  const handleRestart = () => { void window.electronAPI.serviceHealth.restart('hooks') }
+  // Per-card restart: each ServiceCard passes its own s.id (routing + disable
+  // gating live in buildRestart / restartInfoFor), so every service — hooks,
+  // logging, watchdog — is individually restartable.
+  const handleRestart = (id: string) => { void window.electronAPI.serviceHealth.restart(id) }
   // BUG-2: the copy gave no feedback, so it read as a no-op even on success.
   // Flip to a brief "Copied" state and surface real failures.
   const handleCopy = async () => {
@@ -248,10 +301,11 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
       }}
     >
       {services.map((s) => (
-        <ServiceCard key={s.id} s={s} />
+        <ServiceCard key={s.id} s={s} onRestart={handleRestart} />
       ))}
       <LogTail log={snap?.log ?? []} />
       {snap?.pty && <PtySection pty={snap.pty} />}
+      {snap?.watchdog && snap.watchdog.activeSessions > 0 && <WatchdogSection watchdog={snap.watchdog} />}
       <div
         className="rounded border px-2.5 py-1.5 text-[11px] flex items-center gap-1.5"
         style={{
@@ -266,18 +320,9 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
         <span style={{ color: 'var(--text-muted)' }}>in-process :19333 (next phase)</span>
       </div>
       <div className="flex items-center gap-2 pt-0.5">
-        {/* Restart keeps its destructive read through the `danger` variant,
-            which paints from --status-danger. BUG-3's regression test asserts
-            on that token rather than on a palette class name. */}
-        <DialogButton
-          variant="danger"
-          onClick={handleRestart}
-          disabled={restartDisabled}
-          title={restartTitle}
-          className="flex-1"
-        >
-          {RESTART_GLYPH} Restart
-        </DialogButton>
+        {/* Restart moved onto each card (the watchdog needs its own), keeping
+            its destructive read through --status-danger — BUG-3's regression
+            test asserts on that token rather than on a palette class name. */}
         <DialogButton
           variant="secondary"
           onClick={handleCopy}

@@ -58,6 +58,9 @@ export interface Session {
   sshConfig?: SSHConfig
   contextPercent?: number
   needsAttention?: boolean
+  /** Session Watchdog (#235) live state, pushed from main via IPC.WATCHDOG_STATE.
+   *  Absent = watchdog off / not running for this session (no indicator shown). */
+  watchdog?: { status: string; waitUntil: number | null; gaveUp: boolean }
   costUsd?: number
   modelName?: string
   // Codex: reasoning effort label (e.g. "xhigh"). Always undefined for Claude sessions.

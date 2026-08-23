@@ -54,6 +54,7 @@ import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
+import { getWatchdogManager } from './watchdog/watchdog-manager'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -963,6 +964,12 @@ export function spawnPty(
     /** Ask Conductor's opening question. Travels in the spawn ENV; the launch
      *  line carries only a reference to it (see askPromptRef). */
     askPrompt?: string
+    /** True when this session is an Ask Conductor one-shot (session.kind ===
+     *  'ask'). Threaded explicitly rather than inferred from askPrompt, which
+     *  is empty for a question-less Ask launch and cleared on every restart
+     *  (#266 MAJOR-5): those inferences armed a watchdog on an ephemeral,
+     *  badge-less surface. */
+    isAsk?: boolean
     elevated?: boolean
     configLabel?: string
     /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
@@ -3261,12 +3268,31 @@ export function spawnPty(
     ptyProcess.onData((data) => {
       if (win.isDestroyed()) return
       getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
+      // Watchdog (#235): no-op when off or when this session never got a
+      // watchdog started (shell-only sessions never do — see below).
+      getWatchdogManager()?.feedData(sessionId, data)
       win.webContents.send(`pty:data:${sessionId}`, data)
     })
   }
 
   ptySessions.set(sessionId, { ptyProcess, sessionId })
   updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
+  // Watchdog (#235): local, interactive Claude sessions only — never SSH,
+  // Codex, a bare shell (shellOnly), or an Ask Conductor one-shot (#266
+  // MAJOR-5: an ephemeral ask surface must not grow a retry badge). No-op
+  // when the feature is off.
+  if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
+    getWatchdogManager()?.startWatchdog(sessionId, {
+      provider: options?.provider,
+      ssh: false,
+      shellOnly: false,
+      // Explicit kind flag (#266 MAJOR-5), never the askPrompt heuristic: that
+      // was false for a question-less Ask launch and after every restart.
+      ask: options?.isAsk === true,
+      cols: options?.cols,
+      rows: options?.rows,
+    })
+  }
 
   // Replay any buffered writes (from commands sent before PTY was ready). When a
   // launch line is queued, its timer owns the replay so the buffered write lands
@@ -3385,6 +3411,8 @@ export function spawnPty(
       // per-session bind state so a reused sessionId (restart) binds fresh.
       getTranscriptBinder()?.endRun(sessionId)
       getPtyIntegrityMonitor()?.endSession(sessionId)
+      // (watchdog teardown now lives UNCONDITIONALLY in cleanupSessionResources
+      //  below — see FINDING 1 — so the restart-race stale exit tears it down too)
       try {
         const gwExit = getGateway()
         if (gwExit) gwExit.unregisterSession(sessionId)
@@ -3569,6 +3597,8 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
   try {
     ptySessions.get(sessionId)?.ptyProcess.resize(cols, rows)
     getPtyIntegrityMonitor()?.recordResizeApplied(sessionId, cols, rows)
+    // Keep the watchdog's rendered pane wrapping like the real one (#266).
+    getWatchdogManager()?.noteResize(sessionId, cols, rows)
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EPIPE' || code === 'EIO') {
@@ -3654,6 +3684,17 @@ function cleanupSessionResources(sessionId: string): void {
   // it re-registers), so a session that restarts into a home-rooted, SSH,
   // shell-only or Codex state inherits nothing.
   revokeCanvasUatRoots(sessionId)
+  // SECURITY (adversarial review, FINDING 1): tear the session watchdog down
+  // here too, for the identical per-spawn isolation invariant. This runs from
+  // BOTH killPty (restart / deliberate close) and the natural-exit cleanup, and
+  // UNCONDITIONALLY — unlike onExit's own stopWatchdog, which sat under the
+  // weAreCurrent guard that a restart's stale exit skips. Without this, a
+  // watchdog armed by a local-Claude spawn survived a same-sessionId restart
+  // into a Codex / SSH / shell-only session and could send() its retry into that
+  // new PTY (shell-only + a custom retryMessage = arbitrary command execution).
+  // spawnPty calls killPty → here before the new spawn arms its own, so the new
+  // session inherits no watcher. Idempotent (no-op when none was running).
+  try { getWatchdogManager()?.stopWatchdog(sessionId) } catch { /* best-effort teardown */ }
 }
 
 // U8: grace before killing an SSH PTY so the in-band remote-cleanup command has

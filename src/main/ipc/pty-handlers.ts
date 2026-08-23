@@ -104,6 +104,9 @@ export const spawnOptionsSchema = z.object({
   // handler builds its options from the raw object and discards the parse
   // result, so a `.transform()` here would read as a sanitiser and do nothing.
   askPrompt: z.string().max(8000).optional(),
+  // Session kind flag: an Ask Conductor one-shot. Used only to keep a watchdog
+  // off that ephemeral surface (#266 MAJOR-5); no spawn coordinate.
+  isAsk: z.boolean().optional(),
   // Task 9: per-config logging opt-out (DEFAULT-TRUE; only false disables).
   loggingEnabled: z.boolean().optional(),
   useResumePicker: z.boolean().optional(),

@@ -38,6 +38,7 @@ import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostic
 import { ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useEffortSubscription } from '../hooks/useEffortSubscription'
+import { useWatchdogSubscription } from '../hooks/useWatchdogSubscription'
 import { useAccountIdentitySubscription } from '../hooks/useAccountIdentitySubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
@@ -191,6 +192,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // Extracted hooks
   useStatuslineSubscription(sessionId)
   useEffortSubscription(sessionId)
+  useWatchdogSubscription(sessionId)
   useAccountIdentitySubscription(sessionId)
   useActiveTabEffect(sessionId, isActive, terminalRef, attentionTimerRef, attentionAckedRef)
   useCursorLayerVisibility(xtermContainerRef, isActive, shellOnly)
@@ -748,7 +750,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // pure reflection of the session's SAVED config.
             const sshWithReconnect = ssh ? { ...ssh, reconnect: !!session?.sshReachedClaudeRunning } : ssh
             window.electronAPI.pty
-              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt })
+              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt, isAsk: session?.kind === 'ask' })
               .catch((err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled
