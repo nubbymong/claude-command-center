@@ -564,55 +564,82 @@ export function findRateLimitMessage(text: string, customPatterns: Array<string 
 // gate, so a menu quoted in scrollback does not freeze retries forever.
 const SEND_GATE_TAIL_LINES = 14
 
-// A selectable option row as Claude Code actually renders one: optional
-// selection caret, a small integer, a dot, then the label. Anchored to the row
-// shape (not "a digit and a dot anywhere") so ordinary prose ("2. see above")
-// inside content does not read as a menu; the ❯/> caret alone also counts,
-// because an unnumbered picker row is still a selection.
-const MENU_ROW = /^\s*(?:[❯>]\s*)?\d{1,2}\.\s+\S/
-// The caret'd row of an unnumbered picker ("❯ Continue with …").
-const CARET_ROW = /^\s*❯\s+\S/
-// The boxed input row CARRYING TEXT — the same anchored shape the chrome walk
-// uses for the EMPTY row, but requiring content after the prompt glyph.
+// A NUMBERED selectable option row as Claude Code renders one: optional caret,
+// a small integer, a dot, then the label. Anchored to the row shape (not "a
+// digit and a dot anywhere") so ordinary prose ("2. see above") is not a menu.
+const MENU_NUMBER_ROW = /^\s*(?:[❯>]\s*)?\d{1,2}\.\s+\S/
+
+// The FANCY input/selection caret (U+276F) carrying text after it. This is the
+// discriminator the earlier revision missed by modelling the boxed mock shape
+// instead of the real render (#266 review, F1/F2). Claude Code's real input is
+// a top rule, `❯ …`, a bottom rule, then a footer — NO `│` gutters — and the
+// SAME caret marks the focused row of an unnumbered picker ("❯ Looks good —
+// save it", where Enter persists a policy). So one row of `❯ <non-space>`
+// anywhere in the live window means either the user's draft or an open picker,
+// and both must gate. The EMPTY prompt is `❯ ` with nothing after it, which
+// does not match — that is the sendable retry posture. A markdown blockquote
+// uses ASCII `>`, never this glyph, so this never fires on quoted prose.
+const CARET_TEXT_ROW = /^\s*❯\s+\S/
+// The boxed input row carrying text (the repo's own mock shape, and any render
+// that does draw gutters) — belt-and-braces beside the caret row above.
 const BOXED_DRAFT_ROW = /^\s*│\s*[>❯]\s*\S[^│]*│\s*$/
-// The bare (unboxed) prompt carrying text. Prose-shaped ("> quoted line" in a
-// markdown blockquote), so it counts ONLY as the very last non-blank line —
-// where the live prompt sits and a blockquote never does.
-const BARE_DRAFT_ROW = /^\s*[❯>]\s+\S/
+// The bare ASCII prompt carrying text. Prose-shaped (a markdown blockquote
+// "> quoted line"), so it gates ONLY as the very last non-blank line — where a
+// live ASCII prompt sits and a blockquote never does.
+const BARE_ASCII_DRAFT_ROW = /^\s*>\s+\S/
 
 export interface SendGateResult {
   ok: boolean
   reason?: 'menu' | 'draft'
 }
 
+/**
+ * May an automated retry line be typed into this pane RIGHT NOW (#266
+ * BLOCKER-2/MAJOR-3)? Read from the same rendered tail every detector uses.
+ * Fails SAFE: when the live window shows anything that a `continue\r` could
+ * corrupt — a menu (a permission prompt's "1. Yes" auto-approves), an
+ * unnumbered picker (Enter confirms its focused row), or an input carrying the
+ * user's unsubmitted draft — it refuses, and the caller defers without
+ * consuming an attempt. An empty prompt under a live banner is the one
+ * sendable state and returns ok.
+ */
 export function canSendNow(text: string): SendGateResult {
-  // The purpose-built /rate-limit-options detector first (chrome-aware): that
-  // menu is the one a rate-limit retry is MOST likely to collide with, and
-  // typing into it confirms whatever option the cursor sits on.
+  // The purpose-built /rate-limit-options detector first (chrome-aware): the
+  // menu a rate-limit retry is most likely to collide with.
   if (isRateLimitOptionsPrompt(text, SEND_GATE_TAIL_LINES)) return { ok: false, reason: 'menu' }
   const lines = stripAnsi(text).split('\n')
   // Raw last-N window, deliberately NOT chrome-stripped: the things this gate
   // looks for (menus, the input row) ARE chrome, and stripping them first is
   // how the earlier revision ended up blind at exactly the wrong moment.
   const tail = lines.slice(Math.max(0, lines.length - SEND_GATE_TAIL_LINES))
-  let menuRows = 0
+
+  let numberRows = 0
+  let caretTextRows = 0
   for (const l of tail) {
-    if (MENU_ROW.test(l)) menuRows++
+    if (MENU_NUMBER_ROW.test(l)) numberRows++
+    if (CARET_TEXT_ROW.test(l)) caretTextRows++
   }
-  // Two option rows = a menu is open (one lone "1. …" can be a list item in
-  // content; a real selector always renders the alternatives too). A caret'd
-  // picker row is a menu on its own — carets are not prose.
-  if (menuRows >= 2 || tail.some((l) => CARET_ROW.test(l) && MENU_ROW.test(l))) {
-    return { ok: false, reason: 'menu' }
-  }
-  // The user's draft. The boxed form is unambiguous and may sit a couple of
-  // rows above the footer hints; the bare form is prose-shaped and counts only
-  // as the very last non-blank line.
-  for (const l of tail.slice(-6)) {
+
+  // A menu: two+ numbered rows (a selector always lists its alternatives; one
+  // lone "1. …" can be a content list item), or two+ caret rows (an unnumbered
+  // picker with its options). Reported as 'menu'.
+  if (numberRows >= 2 || caretTextRows >= 2) return { ok: false, reason: 'menu' }
+
+  // A single caret-with-text row is ambiguous between the filled input and a
+  // one-line picker — both gate. Anywhere in the window, because the real
+  // render puts a bottom rule and a footer BELOW it, so it is never the last
+  // line (the bug F1 exposed). Reported as 'draft' (the commoner case).
+  if (caretTextRows >= 1) return { ok: false, reason: 'draft' }
+
+  // The boxed form, anywhere in the window.
+  for (const l of tail) {
     if (BOXED_DRAFT_ROW.test(l) && !isWorkingLine(l)) return { ok: false, reason: 'draft' }
   }
+
+  // The bare ASCII prompt: only as the last non-blank line, so a markdown
+  // blockquote in content is never mistaken for a draft.
   const lastNonBlank = [...tail].reverse().find((l) => l.trim() !== '')
-  if (lastNonBlank && BARE_DRAFT_ROW.test(lastNonBlank) && !isWorkingLine(lastNonBlank)) {
+  if (lastNonBlank && BARE_ASCII_DRAFT_ROW.test(lastNonBlank) && !isWorkingLine(lastNonBlank)) {
     return { ok: false, reason: 'draft' }
   }
   return { ok: true }

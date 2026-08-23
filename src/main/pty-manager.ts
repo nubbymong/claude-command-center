@@ -964,6 +964,12 @@ export function spawnPty(
     /** Ask Conductor's opening question. Travels in the spawn ENV; the launch
      *  line carries only a reference to it (see askPromptRef). */
     askPrompt?: string
+    /** True when this session is an Ask Conductor one-shot (session.kind ===
+     *  'ask'). Threaded explicitly rather than inferred from askPrompt, which
+     *  is empty for a question-less Ask launch and cleared on every restart
+     *  (#266 MAJOR-5): those inferences armed a watchdog on an ephemeral,
+     *  badge-less surface. */
+    isAsk?: boolean
     elevated?: boolean
     configLabel?: string
     /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
@@ -3280,7 +3286,9 @@ export function spawnPty(
       provider: options?.provider,
       ssh: false,
       shellOnly: false,
-      ask: typeof options?.askPrompt === 'string' && options.askPrompt.length > 0,
+      // Explicit kind flag (#266 MAJOR-5), never the askPrompt heuristic: that
+      // was false for a question-less Ask launch and after every restart.
+      ask: options?.isAsk === true,
       cols: options?.cols,
       rows: options?.rows,
     })

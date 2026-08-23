@@ -45,6 +45,28 @@ const HEADLESS_SCROLLBACK = 200
 // it matched to the real session so wrapping matches what the user sees.
 const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 40
+// Resize is synchronous main-thread work now (#266 review, F7): bound it so a
+// pathological resize cannot spend seconds building an enormous grid. No real
+// terminal approaches these.
+const MAX_PANE_COLS = 1000
+const MAX_PANE_ROWS = 1000
+
+// The headless terminal PARSES the raw byte stream on the main thread now, and
+// a single CSI sequence with an enormous numeric parameter (e.g. REP,
+// `\x1b[2147483647b`) is tens of seconds of synchronous parse from ~15 bytes —
+// a main-loop freeze from hostile session output (#266 review, F5). Clamp any
+// 6+-digit run inside a CSI parameter position to a still-generous ceiling
+// before writing. No legitimate sequence uses a parameter that large (screens
+// are hundreds of cells, not hundreds of thousands), so rendering is
+// unaffected; OSC/DCS payloads (which can legitimately carry long digit runs,
+// e.g. a URL) are left alone — the anchor is `\x1b[` only.
+const CSI_HUGE_PARAM = /(\x1b\[[\d;]*?)(\d{6,})/g
+const CSI_PARAM_CEILING = '99999'
+/** Exported for the regression test — same function the write path runs. */
+export function clampAnsiCounts(data: string): string {
+  if (data.indexOf('\x1b[') === -1) return data
+  return data.replace(CSI_HUGE_PARAM, (_m, pre: string) => pre + CSI_PARAM_CEILING)
+}
 
 // The PTY fires onData per chunk (sometimes per byte under heavy output).
 // Debounce feed() so a busy render doesn't run the detection regex ladder on
@@ -318,13 +340,7 @@ export class WatchdogManager {
         else if (level === 'warn') logWarn(line)
         else logInfo(line)
       },
-      onStateChange: (state: WatchdogPublicState) => {
-        this.eventsTotal++
-        try { this.host.onHealthChange?.() } catch { /* host gone */ }
-        const win = this.host.getWindow()
-        if (!win || win.isDestroyed()) return
-        try { win.webContents.send(IPC.WATCHDOG_STATE, state) } catch { /* destroyed */ }
-      },
+      onStateChange: (state: WatchdogPublicState) => this.pushState(state),
     }
 
     const wd = new SessionWatchdog(sessionId, adapter, {
@@ -354,10 +370,41 @@ export class WatchdogManager {
   noteResize(sessionId: string, cols: number, rows: number): void {
     const entry = this.entries.get(sessionId)
     if (!entry) return
-    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || rows < 2) return
+    // Bounded BOTH ways (#266 review, F7): a resize is synchronous work in the
+    // main process now, and a 60000x60000 resize is tens of seconds of it. No
+    // real terminal exceeds these, so clamping never loses fidelity.
+    if (!Number.isInteger(cols) || !Number.isInteger(rows)) return
+    if (cols < 2 || rows < 2 || cols > MAX_PANE_COLS || rows > MAX_PANE_ROWS) return
     try {
       entry.term.resize(cols, rows)
     } catch { /* a mid-write resize throw must not kill the PTY data path */ }
+  }
+
+  /** Publish one watchdog state to the renderer (and refresh the services
+   *  view). The single push path, so teardown can clear a stranded badge the
+   *  same way a live change updates one (#266 review, F9). */
+  private pushState(state: WatchdogPublicState): void {
+    this.eventsTotal++
+    try { this.host.onHealthChange?.() } catch { /* host gone */ }
+    const win = this.host.getWindow()
+    if (!win || win.isDestroyed()) return
+    try { win.webContents.send(IPC.WATCHDOG_STATE, state) } catch { /* destroyed */ }
+  }
+
+  /** The neutral state a torn-down session publishes: 'monitoring', not
+   *  waiting, not given up — which the WatchdogBadge renders as nothing. */
+  private clearedState(sessionId: string): WatchdogPublicState {
+    return {
+      sessionId,
+      status: 'monitoring',
+      attempts: 0,
+      overloadAttempts: 0,
+      safeguardAttempts: 0,
+      waitUntil: null,
+      gaveUp: false,
+      lastAction: 'watchdog stopped',
+      updatedAt: this.now(),
+    }
   }
 
   /** Re-read settings after a save (#266 MAJOR-2): unticking the feature must
@@ -376,6 +423,10 @@ export class WatchdogManager {
     entry.wd.dispose()
     try { entry.term.dispose() } catch { /* already disposed */ }
     this.entries.delete(sessionId)
+    // Clear any badge the torn-down watcher left on the session card (#266
+    // review, F9): unticking the feature, the services-panel Restart, and a
+    // natural session exit all reach here, and none of them updated the UI.
+    this.pushState(this.clearedState(sessionId))
     this.maybeStopTimer()
   }
 
@@ -395,9 +446,11 @@ export class WatchdogManager {
     entry.lastDataAt = this.now()
     entry.silent = false
     // RAW bytes into the rendered pane — the terminal's parser is the tail
-    // discipline now (#266 BLOCKER-1); no stripping, no manual line caps.
+    // discipline now (#266 BLOCKER-1); no stripping, no manual line caps. Only
+    // pathological CSI counts are clamped first (F5), so hostile output cannot
+    // turn a 15-byte sequence into a main-thread freeze.
     try {
-      entry.term.write(data)
+      entry.term.write(clampAnsiCounts(data))
     } catch (err) {
       logError(`[watchdog] headless write threw for ${sessionId}`, err)
     }

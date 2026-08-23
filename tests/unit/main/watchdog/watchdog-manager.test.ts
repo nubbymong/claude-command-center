@@ -66,7 +66,7 @@ vi.mock('../../../../src/main/hooks/index', () => ({
   getGateway: () => gatewayReturn,
 }))
 
-const { WatchdogManager } = await import('../../../../src/main/watchdog/watchdog-manager')
+const { WatchdogManager, clampAnsiCounts } = await import('../../../../src/main/watchdog/watchdog-manager')
 const { IPC } = await import('../../../../src/shared/ipc-channels')
 
 function makeHost() {
@@ -111,6 +111,75 @@ describe('WatchdogManager — default-off / gating', () => {
     expect(instances).toHaveLength(0)
     mgr.startWatchdog('local1', { provider: 'claude', ssh: false, shellOnly: false })
     expect(instances).toHaveLength(1)
+  })
+
+  it('never arms on an Ask Conductor one-shot (#266 MAJOR-5), by the kind flag not askPrompt', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    // The old heuristic keyed off a non-empty askPrompt; the fix keys off ask.
+    mgr.startWatchdog('ask1', { provider: 'claude', ssh: false, shellOnly: false, ask: true })
+    expect(instances).toHaveLength(0)
+    expect(mgr.isActive('ask1')).toBe(false)
+    // A normal local Claude session with the flag absent/false still arms.
+    mgr.startWatchdog('local1', { provider: 'claude', ssh: false, shellOnly: false, ask: false })
+    expect(instances).toHaveLength(1)
+  })
+})
+
+describe('WatchdogManager — teardown badge + resource bounds (#266 review)', () => {
+  it('F9: stopWatchdog pushes a cleared monitoring state so a stranded badge is removed', () => {
+    const { host, webContentsSend } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    webContentsSend.mockClear()
+    mgr.stopWatchdog('s1')
+    expect(webContentsSend).toHaveBeenCalledWith(
+      IPC.WATCHDOG_STATE,
+      expect.objectContaining({ sessionId: 's1', status: 'monitoring', gaveUp: false, waitUntil: null }),
+    )
+  })
+
+  it('F9: disposeAll clears every session badge', () => {
+    const { host, webContentsSend } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    mgr.startWatchdog('s2', { provider: 'claude' })
+    webContentsSend.mockClear()
+    mgr.disposeAll()
+    const cleared = webContentsSend.mock.calls
+      .filter((c) => c[0] === IPC.WATCHDOG_STATE)
+      .map((c) => c[1].sessionId)
+    expect(cleared).toEqual(expect.arrayContaining(['s1', 's2']))
+  })
+
+  it('F7: noteResize clamps out-of-range dimensions without throwing', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    // A pathological 60000x60000 would be tens of seconds of grid build; the
+    // bound rejects it. A normal resize is applied. Neither throws.
+    expect(() => mgr.noteResize('s1', 60000, 60000)).not.toThrow()
+    expect(() => mgr.noteResize('s1', 120, 40)).not.toThrow()
+    expect(() => mgr.noteResize('s1', -5, 10)).not.toThrow()
+  })
+
+  it('F5: clampAnsiCounts caps a huge CSI parameter (an escape bomb) but leaves real sequences alone', () => {
+    // REP with a 2^31 count from ~15 bytes — unclamped this is tens of seconds
+    // of synchronous parse on the main thread.
+    expect(clampAnsiCounts('x\x1b[2147483647b')).toBe('x\x1b[99999b')
+    // Multi-param: only the huge run is clamped.
+    expect(clampAnsiCounts('\x1b[1;2147483647H')).toBe('\x1b[1;99999H')
+    // Ordinary sequences (cursor moves, colours, small counts) are untouched.
+    expect(clampAnsiCounts('\x1b[2J\x1b[1;1H\x1b[31mred\x1b[0m')).toBe('\x1b[2J\x1b[1;1H\x1b[31mred\x1b[0m')
+    expect(clampAnsiCounts('\x1b[200b')).toBe('\x1b[200b')
+    // An OSC payload with a long digit run (e.g. a URL) is NOT a CSI, so it is
+    // left alone — the anchor is `\x1b[` only.
+    expect(clampAnsiCounts('\x1b]8;;https://x/12345678901234\x1b\\')).toBe('\x1b]8;;https://x/12345678901234\x1b\\')
+    // Feeding the bomb through the real write path does not throw.
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    expect(() => mgr.feedData('s1', 'x\x1b[2147483647b')).not.toThrow()
   })
 })
 

@@ -449,60 +449,96 @@ describe('interactive rate-limit-options menu', () => {
   })
 })
 
-describe('canSendNow (#266 BLOCKER-2 / MAJOR-3) — the send gate', () => {
-  it('refuses a numbered selection menu (a permission prompt would be auto-approved)', () => {
+describe('canSendNow (#266 BLOCKER-2 / MAJOR-3) — the send gate, against REAL render shapes', () => {
+  // Claude Code's real input is a top rule, `❯ …`, a bottom rule, then a footer
+  // — NO `│` gutters (#266 review, F1: the earlier fixtures used the repo's own
+  // mock shape and the gate was inert against real output). The EMPTY prompt is
+  // `❯ ` with nothing after the caret; a DRAFT is `❯ <text>`. A footer sits
+  // below the bottom rule, so the caret row is NEVER the last line.
+  const RULE = '─────────────────────────────────────────'
+  const FOOTER = '  ⏵⏵ accept edits on (shift+tab to cycle) · ? for shortcuts'
+  const BANNER = 'Claude usage limit reached. Your limit resets at 4:30pm.'
+
+  it('the normal retry posture — empty prompt under a live banner — is sendable', () => {
+    const tail = [BANNER, RULE, '❯ ', RULE, FOOTER].join('\n')
+    expect(canSendNow(tail)).toEqual({ ok: true })
+  })
+
+  it('F1: refuses a REAL filled input (caret above the bottom rule + footer, not the last line)', () => {
+    const tail = [BANNER, RULE, '❯ fix the failing auth test first', RULE, FOOTER].join('\n')
+    expect(canSendNow(tail)).toEqual({ ok: false, reason: 'draft' })
+  })
+
+  it('F1: refuses a draft even with a task widget between the caret and the bottom of the pane', () => {
+    const tail = [
+      BANNER,
+      RULE,
+      '❯ keep going with the migration',
+      RULE,
+      '  8 tasks (2 done, 6 open)',
+      '  □ a', '  □ b', '  □ c',
+      FOOTER,
+    ].join('\n')
+    expect(canSendNow(tail)).toEqual({ ok: false, reason: 'draft' })
+  })
+
+  it('F2: refuses an UNNUMBERED caret picker (Enter would confirm its focused row)', () => {
+    // A single focused caret row is ambiguous between a filled input and a
+    // one-option picker focus; the SECURITY property is that it gates, not the
+    // cosmetic reason. Two caret rows resolve to 'menu' explicitly.
+    const oneRow = ['Review the proposed auto-mode setup?', '❯ Looks good — save it', RULE].join('\n')
+    expect(canSendNow(oneRow).ok).toBe(false)
+
+    const twoRows = [
+      'Review the proposed auto-mode setup?',
+      '❯ Looks good — save it',
+      '❯ Let me adjust the arguments first',
+      RULE,
+    ].join('\n')
+    expect(canSendNow(twoRows)).toEqual({ ok: false, reason: 'menu' })
+  })
+
+  it('refuses a numbered permission menu (a "1. Yes" would be auto-approved)', () => {
     const tail = [
       'Do you want to run this command?',
       '  npm run deploy',
       '',
       '❯ 1. Yes',
-      '  2. Yes, and don\'t ask again',
+      "  2. Yes, and don't ask again",
       '  3. No (esc)',
-      '',
     ].join('\n')
     expect(canSendNow(tail)).toEqual({ ok: false, reason: 'menu' })
   })
 
   it('refuses the /rate-limit-options menu shape', () => {
     const tail = [
-      'You\'ve reached your usage limit.',
-      '',
-      '  1. Wait for the limit to reset',
-      '  2. Upgrade your plan',
-      '',
+      "You've hit your session limit · resets 4:30pm (Europe/London)",
+      '/rate-limit-options',
+      'What do you want to do?',
+      '❯ 1. Upgrade your plan',
+      '  2. Stop and wait for limit to reset',
+      'Enter to confirm · Esc to cancel',
     ].join('\n')
     expect(canSendNow(tail)).toEqual({ ok: false, reason: 'menu' })
   })
 
-  it('refuses a boxed input row carrying the user\'s draft', () => {
+  it('belt-and-braces: refuses a boxed input row carrying a draft (mock/gutter render)', () => {
     const tail = [
-      'Claude usage limit reached. Your limit resets at 4:30pm.',
+      BANNER,
       '╭──────────────────────────────╮',
       '│ > fix the failing test first │',
       '╰──────────────────────────────╯',
+      FOOTER,
     ].join('\n')
     expect(canSendNow(tail)).toEqual({ ok: false, reason: 'draft' })
   })
 
-  it('allows an EMPTY input box under a live banner (the normal retry posture)', () => {
-    const tail = [
-      'Claude usage limit reached. Your limit resets at 4:30pm.',
-      '╭──────────────────────────────╮',
-      '│ >                            │',
-      '╰──────────────────────────────╯',
-      '  ? for shortcuts',
-    ].join('\n')
-    expect(canSendNow(tail)).toEqual({ ok: true })
-  })
-
-  it('does not read a markdown blockquote as a draft', () => {
+  it('does not read a markdown blockquote (ASCII >) as a draft — the fancy caret is the input, not >', () => {
     const tail = [
       'The reviewer wrote:',
       '> the fix looks right to me',
-      'Claude usage limit reached. Your limit resets at 4:30pm.',
-      '╭──────────────────────────────╮',
-      '│ >                            │',
-      '╰──────────────────────────────╯',
+      BANNER,
+      RULE, '❯ ', RULE, FOOTER,
     ].join('\n')
     expect(canSendNow(tail)).toEqual({ ok: true })
   })
@@ -512,23 +548,23 @@ describe('canSendNow (#266 BLOCKER-2 / MAJOR-3) — the send gate', () => {
       'Plan:',
       '1. Refactor the parser first',
       'then everything else as discussed.',
-      'Claude usage limit reached. Your limit resets at 4:30pm.',
+      BANNER, RULE, '❯ ', RULE,
     ].join('\n')
     expect(canSendNow(tail)).toEqual({ ok: true })
   })
 
-  it('a quoted menu in old scrollback does not gate — only the live window counts', () => {
+  it('a menu quoted in old scrollback does not gate — only the live window counts', () => {
     const menuFarUp = [
       '❯ 1. Yes',
       '  2. No',
       ...Array.from({ length: 30 }, (_, i) => `output line ${i}`),
-      'Claude usage limit reached. Your limit resets at 4:30pm.',
+      BANNER, RULE, '❯ ', RULE,
     ].join('\n')
     expect(canSendNow(menuFarUp)).toEqual({ ok: true })
   })
 
-  it('a bare-prompt draft as the last line refuses; the same text higher up does not', () => {
+  it('a bare ASCII prompt draft as the last line refuses; the same text higher up does not', () => {
     expect(canSendNow('banner\n> half-typed thought')).toEqual({ ok: false, reason: 'draft' })
-    expect(canSendNow('> quoted earlier\nClaude usage limit reached.')).toEqual({ ok: true })
+    expect(canSendNow(`> quoted earlier\n${BANNER}`)).toEqual({ ok: true })
   })
 })

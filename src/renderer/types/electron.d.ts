@@ -209,6 +209,8 @@ export interface ElectronAPI {
        *  CCC_ASK_PROMPT; the launch line carries only the env reference, never
        *  the text. Claude + local + non-shell only. */
       askPrompt?: string
+      /** Session kind: an Ask Conductor one-shot. Keeps a watchdog off it (#266). */
+      isAsk?: boolean
       resume?: { uuid: string; cwd: string }
       model?: string
       profileId?: string
