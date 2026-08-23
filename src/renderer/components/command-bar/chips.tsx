@@ -6,7 +6,7 @@ import { DEFAULT_COMMAND_COLOR } from '../../lib/command-swatches'
 import { chipTitle, clusterTitle, effectiveKind, type ClusterKind } from './layout'
 
 /** The neutral chip every Core tool and user button shares (D1, D4). */
-export const CHIP_CLASS = 'flex items-center gap-1.5 px-2 py-0.5 text-xs rounded-md border whitespace-nowrap shrink-0 transition-colors duration-150 focus-ring'
+export const CHIP_CLASS = 'flex items-center gap-1.5 px-2 h-7 text-xs rounded-md border whitespace-nowrap shrink-0 transition-colors duration-150 focus-ring'
 export const CHIP_STYLE: React.CSSProperties = { background: 'var(--surface-raised)', color: 'var(--text-secondary)', borderColor: 'var(--border-subtle)' }
 
 // Stroked marks, the same family as the Core tool glyphs.
