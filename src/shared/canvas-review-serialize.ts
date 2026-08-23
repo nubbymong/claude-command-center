@@ -43,6 +43,13 @@ function fmtAnnotation(a: Annotation, imageIndexByAnnotation: Map<string, number
     }
   }
   if (a.supersededBy) lines.push(`  superseded-by: ${a.supersededBy}`)
+  // Alternatives the agent attached when addressing (#373), and — once the
+  // user approves — which one they picked. This is how the agent learns the
+  // winner: it re-reads the round and builds only that variant.
+  if (a.variants && a.variants.length > 0) {
+    lines.push(`  variants: ${a.variants.map((v) => `${v.key}=${v.label}`).join('; ')}`)
+  }
+  if (a.chosenVariantKey) lines.push(`  chosen-variant: ${a.chosenVariantKey}`)
   lines.push(`  note: ${fmtNote(a.note, '  ')}`)
   const imageIndex = imageIndexByAnnotation.get(a.id)
   if (imageIndex !== undefined && a.sketch) {

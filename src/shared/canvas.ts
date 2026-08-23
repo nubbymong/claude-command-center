@@ -232,6 +232,22 @@ export interface AnnotationSketch {
   bboxPage: Rect
 }
 
+/** One alternative the agent attached when it ADDRESSED a note (#373): "I did
+ *  it three ways — pick which ships". Keys are minted by the store from
+ *  position ('A'…'D'), never accepted from the agent; the label is agent
+ *  prose, held to the same cleanliness rules as a note. */
+export interface AnnotationVariant {
+  key: string
+  label: string
+}
+
+/** Most alternatives one note may carry — A through D. */
+export const MAX_ANNOTATION_VARIANTS = 4
+
+/** Longest variant label kept. A label names an alternative; it is not the
+ *  explanation (that belongs in the version itself). */
+export const MAX_VARIANT_LABEL_CHARS = 80
+
 export interface Annotation {
   /** 'a1', 'a2', … — minted by the store, never accepted from a caller. */
   id: string
@@ -248,6 +264,19 @@ export interface Annotation {
    *  each note remembers its own). */
   versionId: string
   state: AnnotationState
+  /**
+   * The alternatives the agent attached when addressing this note (#373).
+   * Present only alongside an agent address; replaced whole on a re-address;
+   * cleared when the note goes back to 'open'. Display data plus one choice —
+   * they change no state machine.
+   */
+  variants?: AnnotationVariant[]
+  /**
+   * The variant the USER approved (#373). Only the user's own Approve can set
+   * it — it rides the same IPC the verdict does, and no tool can write it —
+   * and it only ever names a key that exists in `variants`. Cleared on reopen.
+   */
+  chosenVariantKey?: string
   /** Id of the re-annotation that replaced this note (state 'reannotated'). */
   supersededBy?: string
   /**
