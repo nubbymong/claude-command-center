@@ -1,5 +1,4 @@
 import React from 'react'
-import { isContextMenuGesture } from '../../lib/pointer'
 
 /**
  * E5 dialog primitives (#360).
@@ -19,10 +18,11 @@ import { isContextMenuGesture } from '../../lib/pointer'
  * House rules baked in (AGENTS.md):
  *  - the modal overlay NEVER closes on click. Ctrl+C in a terminal fires click
  *    events, so a backdrop that closed on click ate the user's dialog. Escape,
- *    Cancel and the close glyph are the ways out. A light, informational dialog
- *    may opt into `onBackdropDismiss`, which is the MOUSEDOWN rule the bar's
- *    popovers use (#386) -- never a click handler. Anything holding unsaved
- *    input should not opt in at all.
+ *    Cancel and the close glyph are the ways out. (#361 briefly added a
+ *    mousedown-rule `onBackdropDismiss` opt-in for its modal; the tip became a
+ *    backdrop-less anchored card, so the opt-in left with it. If a light
+ *    informational dialog ever needs one, it is the MOUSEDOWN rule the bar's
+ *    popovers use (#386) -- never a click handler.)
  *  - colours are tokens only; no palette class on any element here.
  */
 
@@ -61,14 +61,6 @@ export interface DialogOverlayProps {
   /** When true the overlay is transparent to pointer events except the panel. */
   onKeyDown?: React.KeyboardEventHandler<HTMLDivElement>
   id?: string
-  /**
-   * Opt in to backdrop dismissal. Fires on MOUSEDOWN on the backdrop itself --
-   * never on click (Ctrl+C in a terminal fires click), never from a mousedown
-   * that started inside the panel, and never for a context-menu gesture (see
-   * `lib/pointer.ts`). Omit it and the backdrop is inert, which stays the
-   * default for anything holding user input.
-   */
-  onBackdropDismiss?: () => void
 }
 
 /**
@@ -83,32 +75,9 @@ export function scrim(dim: number): string {
 
 /**
  * The dimmed full-window backdrop. It centres its child and never closes on
- * CLICK — deliberately no `onClick` prop exists on it. `onBackdropDismiss`
- * opts a dialog into the mousedown rule instead.
+ * CLICK — deliberately no `onClick` prop exists on it.
  */
-export function DialogOverlay({ children, position = 'fixed', z = 'z-50', dim = 0.6, className = '', style, testId, onKeyDown, id, onBackdropDismiss }: DialogOverlayProps) {
-  // `target === currentTarget` matters here in a way it does not for the bar's
-  // popovers: their backdrop is an empty sibling of the surface, this one is the
-  // PARENT of the panel. Without it a mousedown that begins on a button inside
-  // the dialog bubbles up and dismisses the dialog under the user's finger.
-  const onMouseDown = onBackdropDismiss
-    ? (e: React.MouseEvent<HTMLDivElement>) => {
-        if (e.target !== e.currentTarget) return
-        if (isContextMenuGesture(e)) return
-        onBackdropDismiss()
-      }
-    : undefined
-  // The inert dismiss: a right-click on the backdrop closes the dialog and the
-  // contextmenu is swallowed, so the gesture cannot fall through to whatever is
-  // underneath (the terminal, where right-click pastes).
-  const onContextMenu = onBackdropDismiss
-    ? (e: React.MouseEvent<HTMLDivElement>) => {
-        if (e.target !== e.currentTarget) return
-        e.preventDefault()
-        e.stopPropagation()
-        onBackdropDismiss()
-      }
-    : undefined
+export function DialogOverlay({ children, position = 'fixed', z = 'z-50', dim = 0.6, className = '', style, testId, onKeyDown, id }: DialogOverlayProps) {
   return (
     <div
       id={id}
@@ -117,8 +86,6 @@ export function DialogOverlay({ children, position = 'fixed', z = 'z-50', dim = 
       data-testid={testId}
       data-dialog-overlay=""
       onKeyDown={onKeyDown}
-      onMouseDown={onMouseDown}
-      onContextMenu={onContextMenu}
     >
       {children}
     </div>

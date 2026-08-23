@@ -101,3 +101,29 @@ plus anchor math against a stubbed pill rect and the advance-in-place suite.
 `dialog-palette-retired.test.ts` now polices `TipCard.tsx` via its
 `role="dialog"` (the NAME heuristic no longer matches -- "Card" is not a
 dialog word -- which is fine: jsx-role catches it).
+
+## 2026-08-23 (review round) -- three MAJORs from the independent pass, fixed
+
+1. **Dead ResizeObserver across sidebar collapse.** The collapsed rail is a
+   different tree, so the pill UNMOUNTS and is replaced; an observer resolved
+   once at mount watched a detached node for ever and the card never
+   re-anchored. The anchor effect now keys on a `sidebarCollapsed` prop from
+   App, re-resolves the element, and re-reads once more after the width
+   transition settles. Pinned by a test that swaps the pill element.
+2. **Escape stolen from dialogs opened after the card.** `useDialogEscape` is
+   window-capture + stopImmediatePropagation and assumes innermost-mounts-last
+   registration order; a long-lived non-blocking card breaks that assumption,
+   so a CloseDialog opened over it LOST Escape to the tip. The card now
+   listens on the window BUBBLE phase (capture-phase dialog handlers always
+   win, whatever the mount order) and respects `defaultPrevented`.
+3. **Invisible-but-mounted card.** With the app live behind the card, acting
+   on the tip's own feature can fire its `excludes`; a tip with no postUse
+   variant then resolves to null while `currentTipId` is still set, and the
+   card rendered null while keeping its Escape listener and a stuck
+   `showTipCard`. The close-yourself effect now watches the RESOLVED tip.
+
+Also from the pass: peach primary + the notch + the faint peach rim (the
+mock's stated defaults, initially dropped), the eyebrow regained
+`category · complexity`, the menu says "Don't show this tip again", and the
+`onBackdropDismiss` opt-in added for the abandoned option-A modal was deleted
+from `DialogOverlay` (zero consumers).

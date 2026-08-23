@@ -111,45 +111,86 @@ describe('tip card -- does not block the app', () => {
   })
 })
 
+/** A stand-in pill: jsdom has no layout, so the rect the sidebar would give it
+ *  is handed to it directly. */
+function makePill(rect: { left: number; right: number; top: number; bottom: number }) {
+  const pill = document.createElement('button')
+  pill.setAttribute('data-ux-id', 'sidebar-tip-pill')
+  pill.getBoundingClientRect = () =>
+    ({ ...rect, width: rect.right - rect.left, height: rect.bottom - rect.top, x: rect.left, y: rect.top, toJSON: () => ({}) }) as DOMRect
+  document.body.appendChild(pill)
+  return pill
+}
+
 describe('tip card -- anchoring', () => {
-  it('with no pill in the DOM it sits in the bottom-left corner, not at 0,0', () => {
+  it('with no pill in the DOM it sits in the bottom-left corner, not at 0,0 — and draws no notch', () => {
     open()
     const style = (q('tip-card') as HTMLElement).style
     expect(style.left).toBe('12px')
     expect(style.bottom).toBe('12px')
+    expect(q('tip-card-notch'), 'nothing to point at').toBeNull()
   })
 
-  it('with a pill it opens to the right of it, bottom-aligned', () => {
-    const pill = document.createElement('button')
-    pill.setAttribute('data-ux-id', 'sidebar-tip-pill')
-    // jsdom has no layout; hand the pill the rect the sidebar would give it.
-    pill.getBoundingClientRect = () =>
-      ({ left: 8, right: 264, top: 700, bottom: 740, width: 256, height: 40, x: 8, y: 700, toJSON: () => ({}) }) as DOMRect
-    document.body.appendChild(pill)
+  it('with a pill it opens to the right of it, bottom-aligned, with the notch pointing back', () => {
+    makePill({ left: 8, right: 264, top: 700, bottom: 740 })
     setWindowSize(1280, 800)
     open()
     const style = (q('tip-card') as HTMLElement).style
     expect(style.left).toBe(`${264 + 10}px`)
     expect(style.bottom).toBe(`${800 - 740}px`)
+    expect(q('tip-card-notch')).not.toBeNull()
   })
 
   it('clamps to the window when the pill sits too far right', () => {
-    const pill = document.createElement('button')
-    pill.setAttribute('data-ux-id', 'sidebar-tip-pill')
-    pill.getBoundingClientRect = () =>
-      ({ left: 1000, right: 1240, top: 700, bottom: 740, width: 240, height: 40, x: 1000, y: 700, toJSON: () => ({}) }) as DOMRect
-    document.body.appendChild(pill)
+    makePill({ left: 1000, right: 1240, top: 700, bottom: 740 })
     setWindowSize(1280, 800)
     open()
     // 1240 + 10 would push a 400px card past the right edge; it clamps back.
     expect((q('tip-card') as HTMLElement).style.left).toBe(`${1280 - 400 - 12}px`)
+  })
+
+  it('re-anchors when the sidebar collapses and the pill is a NEW element', () => {
+    // The collapsed rail is a different tree: the expanded pill UNMOUNTS and an
+    // icon pill mounts in its place. The anchor effect keys on the
+    // sidebarCollapsed prop so it re-resolves the element; an observer left on
+    // the dead node would never fire again (the regression this pins).
+    const tip = FREE_TIPS[0]
+    setWindowSize(1280, 800)
+    const wide = makePill({ left: 8, right: 264, top: 700, bottom: 740 })
+    useTipsStore.setState({ currentTipId: tip.id })
+    act(() => { root.render(<TipCard onClose={() => { closed++ }} sidebarCollapsed={false} />) })
+    expect((q('tip-card') as HTMLElement).style.left).toBe('274px')
+
+    wide.remove()
+    makePill({ left: 8, right: 40, top: 700, bottom: 740 })
+    act(() => { root.render(<TipCard onClose={() => { closed++ }} sidebarCollapsed={true} />) })
+    expect((q('tip-card') as HTMLElement).style.left).toBe('50px')
   })
 })
 
 describe('tip card -- the ways out', () => {
   it('Escape closes', () => {
     open()
-    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    expect(closed).toBe(1)
+  })
+
+  it('yields Escape to a dialog opened after it (capture-phase handlers win)', () => {
+    open()
+    // A real dialog's useDialogEscape: window CAPTURE + stopImmediatePropagation.
+    // It mounts AFTER the long-lived card, and must still win the key — the
+    // card listens on the bubble phase precisely so mount order cannot matter.
+    const dialogEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopImmediatePropagation()
+      e.preventDefault()
+    }
+    window.addEventListener('keydown', dialogEsc, true)
+    act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    window.removeEventListener('keydown', dialogEsc, true)
+    expect(closed, 'the dialog above the card must get the Escape').toBe(0)
+    // With the dialog gone, the same key reaches the card again.
+    act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
     expect(closed).toBe(1)
   })
 
@@ -163,6 +204,20 @@ describe('tip card -- the ways out', () => {
     open()
     act(() => { useTipsStore.setState({ currentTipId: null }) })
     expect(closed).toBe(1)
+  })
+
+  it('closes itself when the CURRENT tip stops resolving, not only when the id clears', () => {
+    // The app is live behind the card: acting on the tip's own feature can fire
+    // its `excludes`, and a tip with no postUse variant then resolves to null
+    // while currentTipId is still set. The card must close, not go
+    // invisible-but-mounted with a live Escape listener (the regression this pins).
+    const excluded = TIPS_LIBRARY.find((t) => t.excludes?.length && !t.variants.postUse && !t.requires?.length)
+    expect(excluded, 'the library must contain an excludes-without-postUse tip').toBeDefined()
+    useTipsStore.setState({ currentTipId: excluded!.id })
+    act(() => { root.render(<TipCard onClose={() => { closed++ }} />) })
+    expect(q('tip-card')).not.toBeNull()
+    act(() => { useTipsStore.getState().recordUsage(excluded!.excludes![0]) })
+    expect(closed).toBeGreaterThanOrEqual(1)
   })
 })
 
@@ -188,11 +243,12 @@ describe('tip card -- Next advances in place', () => {
   it('the unseen counter reads from live tracking and hides at zero', () => {
     open()
     // The card stamped the current tip on mount, so the header counts the rest.
+    // Assert the precondition rather than guarding on it: a library where this
+    // is 0 would turn the whole test vacuous.
     const unseen = countUnseenTips(useTipsStore.getState().tracking)
-    if (unseen > 0) {
-      expect(q('tip-card-unseen')!.textContent).toBe(`${unseen} more you have not seen`)
-    }
-    // Stamp everything: the counter line must disappear rather than say "0 more".
+    expect(unseen, 'a fresh library must leave unseen tips to count').toBeGreaterThan(0)
+    expect(q('tip-card-unseen')!.textContent).toContain(`${unseen} new`)
+    // Stamp everything: the counter must disappear rather than say "0 new".
     act(() => {
       const now = Date.now()
       useTipsStore.setState((s) => ({
@@ -236,7 +292,7 @@ describe('tip card -- the "stop showing me this" actions live under the header �
     act(() => { (q('tip-card-overflow') as HTMLButtonElement).click() })
     const menu = q('tip-card-overflow-menu')!
     expect(menu.textContent).toContain('Silence until restart')
-    expect(menu.textContent).toContain("Don't show this again")
+    expect(menu.textContent).toContain("Don't show this tip again")
     for (const item of menu.querySelectorAll('button')) {
       expect(item.className).toContain('whitespace-nowrap')
     }

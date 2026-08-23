@@ -11,7 +11,7 @@ import {
   DialogFooter,
   DialogButton,
   DialogCallout,
-  useDialogEscape,
+  ON_BRAND,
 } from './ui/Dialog'
 
 /**
@@ -58,6 +58,11 @@ import {
 interface Props {
   onClose: () => void
   onNavigate?: (view: ViewType) => void
+  /** The sidebar state, threaded from App. Collapsing the sidebar UNMOUNTS the
+   *  pill and mounts a different one (the icon rail is a separate tree), so the
+   *  anchor effect must re-resolve the element — a ResizeObserver on the old
+   *  node would watch a detached element for ever. */
+  sidebarCollapsed?: boolean
 }
 
 /** Three dots, drawn. The project bans emoji and `\u{...}` escapes in JSX. */
@@ -108,19 +113,20 @@ const EDGE_MARGIN = 12
 /** Where the card sits: right of the pill, bottom-aligned with it, clamped to
  *  the window. Both sidebar variants (expanded row, collapsed icon) match the
  *  selector, so collapse/expand is just a different rect. No pill → the
- *  bottom-left corner. */
-function anchorToPill(): { left: number; bottom: number } {
+ *  bottom-left corner, and no notch (there is nothing to point at). */
+function anchorToPill(): { left: number; bottom: number; anchored: boolean } {
   const rect = document.querySelector(PILL_SELECTOR)?.getBoundingClientRect()
   if (rect && (rect.width > 0 || rect.height > 0)) {
     return {
       left: Math.max(EDGE_MARGIN, Math.min(rect.right + PILL_GAP, window.innerWidth - CARD_WIDTH - EDGE_MARGIN)),
       bottom: Math.max(EDGE_MARGIN, window.innerHeight - rect.bottom),
+      anchored: true,
     }
   }
-  return { left: EDGE_MARGIN, bottom: EDGE_MARGIN }
+  return { left: EDGE_MARGIN, bottom: EDGE_MARGIN, anchored: false }
 }
 
-export default function TipCard({ onClose, onNavigate }: Props) {
+export default function TipCard({ onClose, onNavigate, sidebarCollapsed }: Props) {
   // Subscribe to currentTipId so the card re-renders when Next advances it
   const currentTipId = useTipsStore((s) => s.currentTipId)
   const tracking = useTipsStore((s) => s.tracking)
@@ -132,20 +138,41 @@ export default function TipCard({ onClose, onNavigate }: Props) {
   const [overflowOpen, setOverflowOpen] = React.useState(false)
   const [anchor, setAnchor] = React.useState(anchorToPill)
 
-  // Escape closes. The card holds no user input, so there is nothing to lose
-  // -- see the hook's own warning about dialogs that do.
-  useDialogEscape(onClose)
+  // Escape closes -- on the window BUBBLE phase, deliberately not
+  // `useDialogEscape`. That hook is window-CAPTURE plus
+  // `stopImmediatePropagation`, and its innermost-wins reasoning assumes
+  // dialogs mount inside each other in one commit. This card is long-lived and
+  // non-blocking, so a real dialog opened LATER (CloseDialog, the window
+  // picker) would register later and LOSE Escape to a tip. On the bubble phase
+  // every capture-phase dialog handler runs first and kills the event before
+  // it reaches us, whatever the mount order; `defaultPrevented` covers
+  // bubble-phase consumers that mark the key handled.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   // Keep the card pinned to the pill: window resizes move the bottom edge, and
-  // collapsing the sidebar swaps the wide row for the icon rail (the observer
-  // sees the pill's size change and re-reads its rect).
+  // the ResizeObserver tracks the expanded pill shrinking or growing with the
+  // rail. Collapsing the sidebar is the case the deps are for: the collapsed
+  // rail is a DIFFERENT tree, so the pill is unmounted and replaced -- the
+  // effect re-runs, finds the new element and observes that one. The settle
+  // timer re-reads once more after the rail's width transition finishes (the
+  // new pill mounts at final size, so the observer alone may never fire).
   React.useEffect(() => {
     const update = () =>
       setAnchor((prev) => {
         const next = anchorToPill()
-        return next.left === prev.left && next.bottom === prev.bottom ? prev : next
+        return next.left === prev.left && next.bottom === prev.bottom && next.anchored === prev.anchored
+          ? prev
+          : next
       })
     update()
+    const settle = window.setTimeout(update, 350)
     window.addEventListener('resize', update)
     const pill = document.querySelector(PILL_SELECTOR)
     let observer: ResizeObserver | null = null
@@ -154,22 +181,17 @@ export default function TipCard({ onClose, onNavigate }: Props) {
       observer.observe(pill)
     }
     return () => {
+      window.clearTimeout(settle)
       window.removeEventListener('resize', update)
       observer?.disconnect()
     }
-  }, [])
+  }, [sidebarCollapsed])
 
   // The card draws the tip, so the card stamps it shown (idempotent — the
   // store keeps the FIRST timestamp; see markTipShown).
   React.useEffect(() => {
     if (currentTipId) useTipsStore.getState().markTipShown(currentTipId)
   }, [currentTipId])
-
-  // When the rotation runs dry (Next past the last eligible tip) or an action
-  // clears the current tip, there is nothing left to anchor a card to.
-  React.useEffect(() => {
-    if (!currentTipId) onClose()
-  }, [currentTipId, onClose])
 
   // Derived OUTSIDE the selector on purpose: getCurrentTip() builds a fresh
   // object every call, which would fail zustand's Object.is check and
@@ -178,6 +200,17 @@ export default function TipCard({ onClose, onNavigate }: Props) {
     () => (currentTipId ? useTipsStore.getState().getCurrentTip() : null),
     [currentTipId, tracking],
   )
+
+  // Close when there is nothing left to show. Watching the RESOLVED tip, not
+  // just the id, matters because the app is live behind the card: acting on the
+  // tip's own feature records usage, and a tip whose `excludes` just fired with
+  // no postUse variant resolves to null while `currentTipId` is still set. A
+  // card that only watched the id would go invisible-but-mounted, keep its
+  // Escape listener, and leave `showTipCard` stuck true with the pill gone.
+  React.useEffect(() => {
+    if (!current) onClose()
+  }, [current, onClose])
+
   if (!current) return null
   const { tip, content } = current
   const isMac = typeof window !== 'undefined' && window.electronPlatform === 'darwin'
@@ -229,16 +262,33 @@ export default function TipCard({ onClose, onNavigate }: Props) {
     <div
       role="dialog"
       aria-labelledby="tip-card-title"
-      className="fixed z-40 w-[400px] max-w-[calc(100vw-24px)] max-h-[70vh] rounded-[14px] shadow-2xl flex flex-col min-h-0"
+      className="fixed z-40 w-[400px] max-w-[calc(100vw-24px)] max-h-[70vh] rounded-[14px] flex flex-col min-h-0"
       style={{
         left: anchor.left,
         bottom: anchor.bottom,
         background: 'var(--surface-raised)',
         border: '1px solid var(--border-subtle)',
         color: 'var(--text-primary)',
+        // shadow-2xl plus the mock's faint peach rim, so the card reads as the
+        // pill's own feature rather than an unrelated floating panel.
+        boxShadow: '0 0 0 1px color-mix(in srgb, var(--accent-tip) 14%, transparent), 0 25px 50px -12px rgba(0, 0, 0, 0.4)',
       }}
       data-testid="tip-card"
     >
+      {anchor.anchored && (
+        // The notch pointing back at the pill (mock C; same pattern as the
+        // saved-configs card). Drawn only when there IS a pill to point at.
+        <div
+          className="absolute -left-[5px] bottom-4 w-[9px] h-[9px] rotate-45"
+          style={{
+            background: 'var(--surface-raised)',
+            borderLeft: '1px solid var(--border-subtle)',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+          aria-hidden
+          data-testid="tip-card-notch"
+        />
+      )}
       <div
         className="px-4 pt-3 pb-2.5 shrink-0 flex items-start gap-2.5"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
@@ -252,11 +302,10 @@ export default function TipCard({ onClose, onNavigate }: Props) {
           <LightbulbMark className="w-4 h-4" />
         </div>
         <div className="flex-1 min-w-0">
-          {unseen > 0 && (
-            <p className="text-[10px] leading-none mb-0.5" style={{ color: 'var(--text-muted)' }} data-testid="tip-card-unseen">
-              {unseen} more you have not seen
-            </p>
-          )}
+          <p className="text-[10px] leading-none mb-0.5" style={{ color: 'var(--text-muted)' }} data-testid="tip-card-eyebrow">
+            {tip.category} · {tip.complexity}
+            {unseen > 0 && <span data-testid="tip-card-unseen"> · {unseen} new</span>}
+          </p>
           <h2 id="tip-card-title" className="text-[13.5px] font-semibold leading-snug">
             {content.title}
           </h2>
@@ -311,7 +360,7 @@ export default function TipCard({ onClose, onNavigate }: Props) {
                   title="Never show this specific tip again"
                   data-testid="tip-card-never"
                 >
-                  Don't show this again
+                  Don't show this tip again
                 </button>
               </div>
             </>
@@ -358,8 +407,16 @@ export default function TipCard({ onClose, onNavigate }: Props) {
           <BrandMark className="w-3 h-3 shrink-0" />
           Discuss
         </DialogButton>
+        {/* Peach primary -- the mock's stated default: the card's main
+            affirmative carries tips' own colour, same as the pill that opened
+            it, not the app-wide brand fill. */}
         {content.actionLabel ? (
-          <DialogButton variant="primary" onClick={handleAction} testId="tip-card-primary">
+          <DialogButton
+            variant="primary"
+            onClick={handleAction}
+            testId="tip-card-primary"
+            style={{ background: 'var(--accent-tip)', color: ON_BRAND }}
+          >
             {content.actionLabel}
           </DialogButton>
         ) : (
@@ -367,6 +424,7 @@ export default function TipCard({ onClose, onNavigate }: Props) {
             variant="primary"
             onClick={() => { markTipActed(tip.id); onClose() }}
             testId="tip-card-primary"
+            style={{ background: 'var(--accent-tip)', color: ON_BRAND }}
           >
             Got it
           </DialogButton>

@@ -1205,7 +1205,7 @@ export default function App() {
             }}
           />
         )}
-        {showTipCard && bootGate === null && <TipCard onClose={() => setShowTipCard(false)} onNavigate={(v) => setView(v)} />}
+        {showTipCard && bootGate === null && <TipCard onClose={() => setShowTipCard(false)} onNavigate={(v) => setView(v)} sidebarCollapsed={!sidebarOpen} />}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
