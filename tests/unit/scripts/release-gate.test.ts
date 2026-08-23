@@ -96,6 +96,29 @@ describe('release-gate evaluateMilestone', () => {
     expect(r.ok).toBe(true)
   })
 
+  it('an open in-beta issue is DONE for this release, not outstanding — the lifecycle keeps it open until promotion', () => {
+    const issues: Issue[] = [
+      { number: 373, title: 'Canvas: per-note A/B/C approve', labels: [{ name: 'in-beta' }, { name: 'canvas' }] },
+      { number: 377, title: 'Tips re-review', labels: [{ name: 'in-beta' }] },
+    ]
+    const r = evaluateMilestone({ version: '2.1.0-beta.17', milestones, issues })
+    expect(r.ok).toBe(true)
+    expect(r.shipped.map((i) => i.number)).toEqual([373, 377])
+    expect(r.blocking).toEqual([])
+  })
+
+  it('an in-beta issue does not shield a genuinely open one beside it', () => {
+    const issues: Issue[] = [
+      { number: 373, title: 'shipped', labels: [{ name: 'in-beta' }] },
+      { number: 412, title: 'still outstanding', labels: [{ name: 'enhancement' }] },
+    ]
+    const r = evaluateMilestone({ version: '2.1.0-beta.17', milestones, issues })
+    expect(r.ok).toBe(false)
+    expect(r.blocking.map((i) => i.number)).toEqual([412])
+    expect(r.shipped.map((i) => i.number)).toEqual([373])
+    expect(r.reason).toContain('"in-beta"')
+  })
+
   it('ignores pull requests and non-open items on the milestone', () => {
     const issues: Issue[] = [
       { number: 390, title: 'feat: something', pull_request: { url: 'x' } },

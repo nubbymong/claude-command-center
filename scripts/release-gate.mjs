@@ -56,6 +56,15 @@ export const EXIT_REFUSED = 1
 export const EXIT_CANNOT_EVALUATE = 2
 
 export const EXCLUDED_LABEL = 'excluded'
+/**
+ * The issue-lifecycle label (CONTRIBUTING.md): applied when an issue's fix
+ * MERGES TO BETA, removed never — the issue stays open until promotion to
+ * main auto-closes it. An open `in-beta` issue is therefore DONE for the
+ * release being cut, not outstanding work, and the gate must not refuse on
+ * it — otherwise the gate and the lifecycle make every cut impossible
+ * together. Counted separately so the output still says what is riding along.
+ */
+export const IN_BETA_LABEL = 'in-beta'
 export const DEFAULT_REGISTRY_PATH = path.join(ROOT, 'resources', 'model-registry.json')
 // Lives under resources/ (not scripts/fixtures/) so the packaged app can read
 // the SAME snapshot: the Sentinel model check imports it at runtime (#385).
@@ -79,31 +88,37 @@ function labelNames(labels) {
  * @param {string} [input.excludedLabel]
  * @returns {{ ok: boolean, reason: string|null, milestone: object|null, blocking: Array<{number:number,title:string,labels:string[]}>, excluded: Array<{number:number,title:string}> }}
  */
-export function evaluateMilestone({ version, milestones, issues, excludedLabel = EXCLUDED_LABEL }) {
+export function evaluateMilestone({ version, milestones, issues, excludedLabel = EXCLUDED_LABEL, inBetaLabel = IN_BETA_LABEL }) {
   const title = String(version || '').trim()
   const milestone = (milestones || []).find((m) => m && String(m.title).trim() === title) || null
   if (!milestone) {
     return {
       ok: false,
       reason: `no GitHub milestone titled "${title}" — create it (and put the release's issues on it) before cutting; the gate fails closed on a missing milestone`,
-      milestone: null, blocking: [], excluded: [],
+      milestone: null, blocking: [], excluded: [], shipped: [],
     }
   }
   const blocking = []
   const excluded = []
+  const shipped = []
   for (const it of issues || []) {
     if (!it || it.pull_request) continue          // PRs are not book-of-work items
     if (it.state && it.state !== 'open') continue
     const labels = labelNames(it.labels)
     if (labels.includes(excludedLabel)) excluded.push({ number: it.number, title: it.title })
+    // The lifecycle keeps a DONE issue open until promotion, marked `in-beta`
+    // when its fix merged to beta. That is the release being cut, so it is
+    // shipping work, not outstanding work.
+    else if (labels.includes(inBetaLabel)) shipped.push({ number: it.number, title: it.title })
     else blocking.push({ number: it.number, title: it.title, labels })
   }
   blocking.sort((a, b) => a.number - b.number)
   excluded.sort((a, b) => a.number - b.number)
+  shipped.sort((a, b) => a.number - b.number)
   return {
     ok: blocking.length === 0,
-    reason: blocking.length === 0 ? null : `${blocking.length} open issue(s) on milestone "${title}" without the "${excludedLabel}" label`,
-    milestone, blocking, excluded,
+    reason: blocking.length === 0 ? null : `${blocking.length} open issue(s) on milestone "${title}" without the "${excludedLabel}" or "${inBetaLabel}" label`,
+    milestone, blocking, excluded, shipped,
   }
 }
 
@@ -171,13 +186,15 @@ export function formatReport({ version, repo, milestoneResult, modelsResult, exp
   if (milestoneResult) {
     const mr = milestoneResult
     if (mr.ok) {
-      out.push(`  OK    milestone "${version}" (#${mr.milestone.number}) has no open issues left` +
+      out.push(`  OK    milestone "${version}" (#${mr.milestone.number}) has no outstanding issues` +
+        ((mr.shipped || []).length ? ` (${mr.shipped.length} shipping in this release: ${mr.shipped.map((i) => `#${i.number}`).join(' ')})` : '') +
         (mr.excluded.length ? ` (${mr.excluded.length} excluded by the owner: ${mr.excluded.map((i) => `#${i.number}`).join(' ')})` : ''))
     } else {
       out.push(`  FAIL  milestone: ${mr.reason}`)
       for (const i of mr.blocking) out.push(`          #${i.number}  ${i.title}${i.labels.length ? `  [${i.labels.join(', ')}]` : ''}`)
+      if ((mr.shipped || []).length) out.push(`          (in-beta, shipping in this release: ${mr.shipped.map((i) => `#${i.number}`).join(' ')})`)
       if (mr.excluded.length) out.push(`          (excluded, not counted: ${mr.excluded.map((i) => `#${i.number}`).join(' ')})`)
-      if (mr.milestone) out.push(`          Close them, move them to a later milestone, or have the owner label them "${EXCLUDED_LABEL}".`)
+      if (mr.milestone) out.push(`          Merge their fixes (label "${IN_BETA_LABEL}"), close them, move them to a later milestone, or have the owner label them "${EXCLUDED_LABEL}".`)
     }
   }
   // ── models
