@@ -98,7 +98,7 @@ import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
 import { loadWindowState, saveWindowState, type WindowState } from './window-state'
-import { saveCredential, deleteCredential } from './credential-store'
+import { registerCredentialHandlers } from './ipc/credentials-handlers'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
 import { safeExternalHttpsHref } from '../shared/safe-url'
@@ -590,17 +590,15 @@ function createWindow(): void {
     return readClipboardImageFilePath(screenshotsDir)
   })
 
-  // Encrypted credential storage using safeStorage — delegated to credential-store module
-  ipcMain.handle('credentials:save', async (_event, configId: string, password: string) => {
-    return saveCredential(configId, password)
-  })
+  // Encrypted credential storage using safeStorage. save/delete are keyed to the
+  // app's own id shape (credentials-handlers.ts): a renderer can address the
+  // SSH/sudo/argsecret/cmdsecret namespaces of a real config or command and
+  // nothing else, so it cannot overwrite or delete an arbitrary key (private
+  // advisory, 2026-08-22).
+  registerCredentialHandlers()
 
   // No 'credentials:load' handler: a credential's value is injected into the
   // shell environment at spawn (pty-handlers) and never handed to the renderer.
-
-  ipcMain.handle('credentials:delete', async (_event, configId: string) => {
-    return deleteCredential(configId)
-  })
 
   // Session state persistence IPC handlers
   ipcMain.handle('session:save', async (_event, state: SessionState) => {

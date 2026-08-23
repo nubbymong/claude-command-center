@@ -8,6 +8,8 @@ import { isValidLegacyVersion } from '../../shared/legacy-version'
 import { loadCredential } from '../credential-store'
 import { readConfig } from '../config-manager'
 import { collectCommandSecrets } from '../command-secrets'
+import { bindSshToSavedConfig, argSecretAllowed } from '../spawn-credential-binding'
+import { logWarn } from '../debug-logger'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
 import type { PtyIntegrityReport } from '../../shared/service-health'
@@ -314,21 +316,39 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // schema doesn't declare would otherwise flow straight through from the
     // renderer. Only the keychain lookup below may set it.
     let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined, commandSecrets: undefined } : options
+    // An SSH block is bound to the config it names, ON DISK: the request must be
+    // that config's own (host/port/username/remotePath/postCommand) or the spawn
+    // is refused. Main trusting the renderer to pair a config's stored password
+    // with the host the renderer chose let a compromised renderer point a
+    // config's password at an attacker host (private advisory, 2026-08-22). The
+    // resolved block is built FROM the saved config, so nothing the renderer
+    // added rides along; credentials are injected only for a bound spawn.
     if (options?.ssh && options.configId) {
+      const bound = bindSshToSavedConfig(options.ssh, options.configId, readConfig('configs'))
+      if (!bound.ok) {
+        logWarn(`[pty] SSH spawn refused: ${bound.reason}`)
+        throw new Error(`SSH spawn refused: does not match a saved config (${bound.reason})`)
+      }
       const password = loadCredential(options.configId) ?? undefined
       const sudoPassword = loadCredential(options.configId + '_sudo') ?? undefined
-      const sshWithCreds: SSHOptions = {
-        ...options.ssh,
-        password,
-        sudoPassword,
-      }
-      resolvedOptions = { ...options, ssh: sshWithCreds }
+      const sshWithCreds: SSHOptions = { ...bound.ssh, password, sudoPassword }
+      resolvedOptions = { ...resolvedOptions, ssh: sshWithCreds }
+    } else if (options?.ssh) {
+      // No configId: nothing is loaded from the keychain, so there is no stored
+      // secret to misdirect. Runs unbound with no credentials, as before.
+      const sshNoCreds: SSHOptions = { ...options.ssh, password: undefined, sudoPassword: undefined }
+      resolvedOptions = { ...resolvedOptions, ssh: sshNoCreds }
     }
 
     // Terminal-only secret argument: resolved HERE, in main, straight from the OS
     // keychain — the value never transits the renderer and is never persisted to
-    // the config file (same posture as the SSH credentials above).
-    if (options?.shellOnly && options.configId && options.terminalOptions?.hasSecretArg) {
+    // the config file (same posture as the SSH credentials above). Injected only
+    // when the SAVED config is terminal-only with a secret on record AND the
+    // requested command line is the saved one, so a compromised renderer cannot
+    // borrow a config's secret for a command line of its own (private advisory,
+    // 2026-08-22).
+    if (options?.shellOnly && options.configId && options.terminalOptions?.hasSecretArg
+        && argSecretAllowed(options.terminalOptions, options.configId, readConfig('configs'))) {
       const argSecret = loadCredential(options.configId + '_argsecret') ?? undefined
       if (argSecret) resolvedOptions = { ...resolvedOptions, terminalSecret: argSecret }
     }

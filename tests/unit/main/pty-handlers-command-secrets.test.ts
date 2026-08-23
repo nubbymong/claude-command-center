@@ -24,7 +24,10 @@ vi.mock('../../../src/main/services/pty-integrity-monitor', () => ({ getPtyInteg
 vi.mock('../../../src/main/canvas/canvas-session-link', () => ({ noteSessionSpawnForCanvas: vi.fn() }))
 
 let commandsOnDisk: unknown = null
-vi.mock('../../../src/main/config-manager', () => ({ readConfig: (key: string) => (key === 'commands' ? commandsOnDisk : null) }))
+let configsOnDisk: unknown = null
+vi.mock('../../../src/main/config-manager', () => ({
+  readConfig: (key: string) => (key === 'commands' ? commandsOnDisk : key === 'configs' ? configsOnDisk : null),
+}))
 const vault: Record<string, string> = {}
 vi.mock('../../../src/main/credential-store', () => ({ loadCredential: (k: string) => vault[k] ?? null }))
 
@@ -36,6 +39,7 @@ const SID = 'a1b2c3d4e5f6a1b2c3d4e5f6'
 beforeEach(() => {
   spawnPty.mockClear()
   commandsOnDisk = null
+  configsOnDisk = null
   for (const k of Object.keys(vault)) delete vault[k]
 })
 
@@ -84,6 +88,9 @@ describe('pty:spawn and command secrets', () => {
   it('gives an SSH shell spawn none -- the env never leaves this PC, so nothing is decrypted for it', async () => {
     commandsOnDisk = [{ id: 'aaa111', hasSecretArg: true, scope: 'global' }]
     vault['aaa111_cmdsecret'] = 'tok-a'
+    // The spawn-credential binding refuses an SSH spawn whose block is not the
+    // saved config's own, so the harness saves the config this spawn names.
+    configsOnDisk = [{ id: 'cfg1', sessionType: 'ssh', sshConfig: { host: 'box', port: 22, username: 'u', remotePath: '~' } }]
     await spawn({}, SID, { cwd: 'C:/w', shellOnly: true, configId: 'cfg1', ssh: { host: 'box', port: 22, username: 'u', remotePath: '~' } })
     expect(spawnPty.mock.calls[0][2].commandSecrets).toBeUndefined()
   })
