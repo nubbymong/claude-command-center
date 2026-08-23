@@ -66,7 +66,7 @@ vi.mock('../../../../src/main/hooks/index', () => ({
   getGateway: () => gatewayReturn,
 }))
 
-const { WatchdogManager, clampAnsiCounts } = await import('../../../../src/main/watchdog/watchdog-manager')
+const { WatchdogManager, clampAnsiChunk } = await import('../../../../src/main/watchdog/watchdog-manager')
 const { IPC } = await import('../../../../src/shared/ipc-channels')
 
 function makeHost() {
@@ -163,23 +163,47 @@ describe('WatchdogManager — teardown badge + resource bounds (#266 review)', (
     expect(() => mgr.noteResize('s1', -5, 10)).not.toThrow()
   })
 
-  it('F5: clampAnsiCounts caps a huge CSI parameter (an escape bomb) but leaves real sequences alone', () => {
-    // REP with a 2^31 count from ~15 bytes — unclamped this is tens of seconds
-    // of synchronous parse on the main thread.
-    expect(clampAnsiCounts('x\x1b[2147483647b')).toBe('x\x1b[99999b')
-    // Multi-param: only the huge run is clamped.
-    expect(clampAnsiCounts('\x1b[1;2147483647H')).toBe('\x1b[1;99999H')
-    // Ordinary sequences (cursor moves, colours, small counts) are untouched.
-    expect(clampAnsiCounts('\x1b[2J\x1b[1;1H\x1b[31mred\x1b[0m')).toBe('\x1b[2J\x1b[1;1H\x1b[31mred\x1b[0m')
-    expect(clampAnsiCounts('\x1b[200b')).toBe('\x1b[200b')
-    // An OSC payload with a long digit run (e.g. a URL) is NOT a CSI, so it is
-    // left alone — the anchor is `\x1b[` only.
-    expect(clampAnsiCounts('\x1b]8;;https://x/12345678901234\x1b\\')).toBe('\x1b]8;;https://x/12345678901234\x1b\\')
-    // Feeding the bomb through the real write path does not throw.
+  it('F5: clampAnsiChunk caps a huge CSI parameter — whole, and split across chunks', () => {
+    // A REP with a 2^31 count in ONE chunk — capped by value to 9999.
+    const s1 = { residual: '' }
+    expect(clampAnsiChunk('x\x1b[2147483647b', s1)).toBe('x\x1b[9999b')
+    expect(s1.residual).toBe('')
+
+    // Split EXACTLY where the earlier byte-clamp failed (the reviewer's case):
+    // neither half carries the full sequence. The first write holds the partial
+    // CSI back; the second completes and clamps the assembled parameter.
+    const s2 = { residual: '' }
+    const first = clampAnsiChunk('y\x1b[2147', s2)
+    expect(first).toBe('y') // the incomplete CSI is HELD BACK, never written
+    // 2147 <= the ceiling, so held verbatim (not yet executed regardless).
+    expect(s2.residual).toBe('\x1b[2147')
+    const second = clampAnsiChunk('483647b', s2)
+    expect(second).toBe('\x1b[9999b') // assembled value 2147483647 capped to 9999
+    expect(s2.residual).toBe('')
+
+    // Per-byte drip of a huge count re-caps to the SAME value every pass — the
+    // value cap is deterministic where a digit-trim left a boundary-dependent
+    // residue. Never balloons the residual.
+    const s3 = { residual: '' }
+    let out = ''
+    for (const ch of '\x1b[2147483647b') out += clampAnsiChunk(ch, s3)
+    expect(out).toBe('\x1b[9999b')
+    expect(s3.residual).toBe('')
+
+    // Ordinary sequences pass through untouched (cursor moves, colours, a small
+    // REP, an OSC hyperlink whose URL carries a long digit run).
+    const s4 = { residual: '' }
+    expect(clampAnsiChunk('\x1b[2J\x1b[1;1H\x1b[31mred\x1b[0m', s4)).toBe('\x1b[2J\x1b[1;1H\x1b[31mred\x1b[0m')
+    expect(clampAnsiChunk('-\x1b[9b', s4)).toBe('-\x1b[9b')
+    expect(clampAnsiChunk('\x1b]8;;https://x/12345678901234\x1b\\', s4)).toBe('\x1b]8;;https://x/12345678901234\x1b\\')
+
+    // End to end: a split bomb through the manager's real write path is clamped
+    // (the correctness is proven by the direct assertions above; here we only
+    // confirm the wiring feeds clampAnsiChunk and does not throw).
     const { host } = makeHost()
     const mgr = new WatchdogManager(host)
     mgr.startWatchdog('s1', { provider: 'claude' })
-    expect(() => mgr.feedData('s1', 'x\x1b[2147483647b')).not.toThrow()
+    expect(() => { mgr.feedData('s1', 'x\x1b[2147'); mgr.feedData('s1', '483647b'); vi.advanceTimersByTime(50) }).not.toThrow()
   })
 })
 

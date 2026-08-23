@@ -52,20 +52,98 @@ const MAX_PANE_COLS = 1000
 const MAX_PANE_ROWS = 1000
 
 // The headless terminal PARSES the raw byte stream on the main thread now, and
-// a single CSI sequence with an enormous numeric parameter (e.g. REP,
-// `\x1b[2147483647b`) is tens of seconds of synchronous parse from ~15 bytes —
-// a main-loop freeze from hostile session output (#266 review, F5). Clamp any
-// 6+-digit run inside a CSI parameter position to a still-generous ceiling
-// before writing. No legitimate sequence uses a parameter that large (screens
-// are hundreds of cells, not hundreds of thousands), so rendering is
-// unaffected; OSC/DCS payloads (which can legitimately carry long digit runs,
-// e.g. a URL) are left alone — the anchor is `\x1b[` only.
-const CSI_HUGE_PARAM = /(\x1b\[[\d;]*?)(\d{6,})/g
-const CSI_PARAM_CEILING = '99999'
-/** Exported for the regression test — same function the write path runs. */
-export function clampAnsiCounts(data: string): string {
-  if (data.indexOf('\x1b[') === -1) return data
-  return data.replace(CSI_HUGE_PARAM, (_m, pre: string) => pre + CSI_PARAM_CEILING)
+// a CSI sequence with an enormous numeric parameter (chiefly REP, CSI Ps b —
+// "repeat the last grapheme Ps times") is tens of seconds of synchronous work
+// from ~15 bytes: a main-loop freeze from hostile session output (#266 review,
+// F5). Clamp any 6+-digit run in a CSI parameter position to a still-generous
+// ceiling before the terminal parses it. No legitimate sequence uses a
+// parameter that large (screens are hundreds of cells, not hundreds of
+// thousands), so rendering is unaffected; OSC/DCS payloads (which can carry
+// long digit runs, e.g. a URL) are left alone — the anchor is `\x1b[` only.
+// A CSI parameter above a few thousand is never legitimate (a screen is
+// hundreds of cells; a REP fills at most a line), so every numeric parameter is
+// capped by VALUE to a small ceiling. Capping the value (not trimming digits)
+// makes the result DETERMINISTIC across chunk boundaries — a count dripped one
+// byte at a time re-caps to the same ceiling every pass rather than leaving a
+// residue — and keeps each clamped sequence trivial to render, which also
+// bounds the chained amplification a stream of clamped REPs could cost (#266
+// review, N3). Matches only the parameter run of a CSI (`\x1b[` then
+// `[0-9;?]*`, stopping before the final byte); OSC/DCS payloads are never `[`.
+const CSI_PARAMS = /(\x1b\[)([\d;?]*)/g
+const CSI_VALUE_CEILING = 9999
+const CSI_CEILING_STR = String(CSI_VALUE_CEILING)
+
+// A CSI can STRADDLE a PTY chunk (the PTY delivers per-byte under load), and a
+// per-chunk regex misses the split sequence that xterm then reassembles and
+// runs — the F5 re-review proved `\x1b[2147` + `483647b` still froze main for
+// 53 s. So a trailing INCOMPLETE CSI (an `\x1b[` with only parameter bytes
+// after it, no final 0x40–0x7e yet) is held back and prepended to the next
+// chunk, making the clamp see the whole sequence. The held part is itself
+// clamped each pass, so a count dripped one digit per chunk is bounded before
+// it ever completes, and the residual can never grow large. Capped so an
+// abnormal run (a `;`-flood that is not a real CSI) is flushed rather than
+// buffered forever.
+const MAX_CSI_RESIDUAL = 64
+/** A CSI final byte, per ECMA-48: 0x40–0x7e. */
+function isCsiFinal(code: number): boolean {
+  return code >= 0x40 && code <= 0x7e
+}
+/**
+ * Index where a trailing INCOMPLETE escape begins, or -1 if the string does not
+ * end mid-escape. Anchored on the last `\x1b`, because a CSI can be dripped one
+ * byte at a time — a lone trailing `\x1b`, or `\x1b[` with only parameter bytes
+ * after it, is unfinished and must be held so the clamp sees the assembled
+ * sequence rather than xterm reassembling the split pieces itself (#266 review,
+ * F5). A non-CSI escape (`\x1b]…`, `\x1bP…`, a two-byte `\x1bM`) is left to
+ * complete on the next write: this module only clamps CSI parameters, and xterm
+ * reassembles those natively.
+ */
+function trailingIncompleteCsiStart(s: string): number {
+  const esc = s.lastIndexOf('\x1b')
+  if (esc === -1) return -1
+  // A lone trailing ESC — could begin any sequence, hold it.
+  if (esc === s.length - 1) return esc
+  // Only a CSI (`\x1b[`) is our concern; anything else we let through.
+  if (s.charCodeAt(esc + 1) !== 0x5b /* [ */) return -1
+  // `\x1b[` + params, complete only once a final byte (0x40–0x7e) appears after
+  // the `[`. (The `[` itself is 0x5b, in that range, so the scan starts past it.)
+  for (let i = esc + 2; i < s.length; i++) {
+    if (isCsiFinal(s.charCodeAt(i))) return -1 // completed; nothing trails
+  }
+  return esc
+}
+
+export interface AnsiClampState {
+  residual: string
+}
+
+/**
+ * Clamp pathological CSI parameters across chunk boundaries. Returns the text
+ * SAFE to write now; `state.residual` carries any trailing partial CSI to the
+ * next call. Exported (with its state) so the regression test drives the exact
+ * split the reviewer used.
+ */
+export function clampAnsiChunk(data: string, state: AnsiClampState): string {
+  const combined = state.residual + data
+  const clamped =
+    combined.indexOf('\x1b[') === -1
+      ? combined
+      : combined.replace(CSI_PARAMS, (_m, pre: string, params: string) =>
+          pre + params.replace(/\d+/g, (d) => (Number(d) > CSI_VALUE_CEILING ? CSI_CEILING_STR : d)))
+  const cut = trailingIncompleteCsiStart(clamped)
+  if (cut === -1) {
+    state.residual = ''
+    return clamped
+  }
+  // Hold the partial CSI back — unless it has grown past anything a real CSI
+  // could be, in which case flush it (xterm tolerates a stray sequence; the
+  // cost vector, a huge VALUE, is already digit-clamped above).
+  if (clamped.length - cut > MAX_CSI_RESIDUAL) {
+    state.residual = ''
+    return clamped
+  }
+  state.residual = clamped.slice(cut)
+  return clamped.slice(0, cut)
 }
 
 // The PTY fires onData per chunk (sometimes per byte under heavy output).
@@ -139,6 +217,9 @@ interface Entry {
   /** The rendered pane (#266 BLOCKER-1): a headless terminal fed the raw PTY
    *  bytes, so getTail() reads the SCREEN, not an append-only strip log. */
   term: Terminal
+  /** Carries a trailing partial CSI across chunks so the parameter clamp (F5)
+   *  sees the whole sequence, not a split half. */
+  ansiClamp: AnsiClampState
   feedTimer: ReturnType<typeof setTimeout> | null
   /** now() of the last PTY chunk seen — reset on each feedData; drives silence. */
   lastDataAt: number
@@ -353,7 +434,7 @@ export class WatchdogManager {
       scrollback: HEADLESS_SCROLLBACK,
       allowProposedApi: true,
     })
-    this.entries.set(sessionId, { wd, term, feedTimer: null, lastDataAt: this.now(), silent: false })
+    this.entries.set(sessionId, { wd, term, ansiClamp: { residual: '' }, feedTimer: null, lastDataAt: this.now(), silent: false })
     if (this.startedAt === null) this.startedAt = this.now()
     this.ensureTickTimer()
     this.ensureHookSubscription()
@@ -447,10 +528,11 @@ export class WatchdogManager {
     entry.silent = false
     // RAW bytes into the rendered pane — the terminal's parser is the tail
     // discipline now (#266 BLOCKER-1); no stripping, no manual line caps. Only
-    // pathological CSI counts are clamped first (F5), so hostile output cannot
-    // turn a 15-byte sequence into a main-thread freeze.
+    // pathological CSI parameters are clamped first (F5), across chunk
+    // boundaries via the per-entry residual, so hostile output cannot turn a
+    // ~15-byte sequence (split or whole) into a main-thread freeze.
     try {
-      entry.term.write(clampAnsiCounts(data))
+      entry.term.write(clampAnsiChunk(data, entry.ansiClamp))
     } catch (err) {
       logError(`[watchdog] headless write threw for ${sessionId}`, err)
     }
