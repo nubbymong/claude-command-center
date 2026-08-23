@@ -82,10 +82,12 @@ describe('openReviewsOf', () => {
   })
 })
 
-describe('AgentCanvasButton -- the open-review pill', () => {
+describe('AgentCanvasButton -- the queue pill (#364, pick B)', () => {
   let container: HTMLDivElement
   let root: Root
   const reviewGetState = vi.fn(() => Promise.resolve(null))
+  const getState = vi.fn(() => Promise.resolve(null))
+  const listAll = vi.fn(() => Promise.resolve([]))
 
   beforeEach(() => {
     container = document.createElement('div')
@@ -94,7 +96,9 @@ describe('AgentCanvasButton -- the open-review pill', () => {
     useCanvasStore.setState({ bySessionId: {} })
     useExcalidrawStore.setState({ bySessionId: {} } as never)
     reviewGetState.mockClear()
-    ;(globalThis as any).window.electronAPI = { canvas: { reviewGetState } }
+    getState.mockClear()
+    listAll.mockClear()
+    ;(globalThis as any).window.electronAPI = { canvas: { reviewGetState, getState, listAll } }
   })
 
   afterEach(() => {
@@ -102,29 +106,55 @@ describe('AgentCanvasButton -- the open-review pill', () => {
     container.remove()
   })
 
-  const render = () => act(() => { root.render(<AgentCanvasButton sessionId="s1" />) })
-  const pill = () => container.querySelector('[data-testid="canvas-open-reviews-count"]')
+  /** The live canvas mirror, loaded, with or without a ready-marked round. */
+  function seedCanvas(awaiting: boolean) {
+    useCanvasStore.setState({
+      bySessionId: {
+        s1: {
+          canvasId: 'c1', versions: [], activeVersionId: null,
+          interactionMode: 'browse', emptyView: 'intro', unseenRender: false, loaded: true,
+          ...(awaiting ? { awaitingReview: { versionId: 'v1', at: '2026-08-23T10:00:00Z' } } : {}),
+        },
+      },
+    })
+  }
 
-  it('shows the numeral from two open reviews', () => {
-    seed([review('R1', 'submitted'), review('R2', 'submitted')])
+  const render = () => act(() => { root.render(<AgentCanvasButton sessionId="s1" />) })
+  const pill = () => container.querySelector('[data-testid="canvas-queue-count"]')
+
+  it('a round waiting on the AGENT counts for nothing: open notes, no pill', () => {
+    seedCanvas(false)
+    seed([review('R1', 'submitted', ['a1'])], [note('a1', 'R1', 'open')])
+    render()
+    expect(pill()).toBeNull()
+    expect(container.textContent).not.toContain('Review needed')
+  })
+
+  it('a round waiting on YOU shows from ONE — every addressed note wants a verdict', () => {
+    seedCanvas(false)
+    seed([review('R1', 'submitted', ['a1'])], [note('a1', 'R1', 'addressed')])
+    render()
+    expect(pill()?.textContent).toBe('1')
+    expect(container.textContent).toContain('Review needed')
+  })
+
+  it('a ready-marked render counts, and adds to the verdict rounds', () => {
+    seedCanvas(true)
+    seed([review('R1', 'submitted', ['a1'])], [note('a1', 'R1', 'addressed')])
     render()
     expect(pill()?.textContent).toBe('2')
   })
 
-  it('shows nothing for a single open review', () => {
-    seed([review('R1', 'submitted')])
-    render()
-    expect(pill()).toBeNull()
-  })
-
-  it('shows nothing when every review is resolved', () => {
+  it('shows nothing when every review is resolved and nothing is ready-marked', () => {
+    seedCanvas(false)
     seed([review('R1', 'resolved'), review('R2', 'resolved')])
     render()
     expect(pill()).toBeNull()
   })
 
   it('never counts a draft review -- that is the one you are still writing', () => {
-    seed([review('R1', 'submitted'), review('R2', 'draft'), review('R3', 'draft')])
+    seedCanvas(false)
+    seed([review('R1', 'draft', ['a1']), review('R2', 'draft')], [note('a1', 'R1', 'open')])
     render()
     expect(pill()).toBeNull()
   })
@@ -136,24 +166,21 @@ describe('AgentCanvasButton -- the open-review pill', () => {
     expect(reviewGetState).toHaveBeenCalledWith({ sessionId: 's1' })
   })
 
-  it('does not re-fetch once the mirror is loaded', () => {
-    seed([review('R1', 'submitted'), review('R2', 'submitted')])
+  it('does not re-fetch a mirror that is already loaded', () => {
+    seedCanvas(false)
+    seed([review('R1', 'submitted')])
     render()
     expect(reviewGetState).not.toHaveBeenCalled()
+    expect(getState).not.toHaveBeenCalled()
   })
 
-  it('keeps the count separate from the new-render pulse -- they mean different things', () => {
-    seed([review('R1', 'submitted'), review('R2', 'submitted')])
-    useCanvasStore.setState({
-      bySessionId: {
-        s1: {
-          canvasId: 'c1', versions: [], activeVersionId: null,
-          interactionMode: 'browse', emptyView: 'intro', unseenRender: true, loaded: true,
-        },
-      },
-    })
+  it('the attention dot is gone for good', () => {
+    seedCanvas(true)
+    seed([review('R1', 'submitted', ['a1'])], [note('a1', 'R1', 'addressed')])
+    useCanvasStore.setState((s) => ({
+      bySessionId: { ...s.bySessionId, s1: { ...s.bySessionId.s1, unseenRender: true } },
+    }))
     render()
-    expect(pill()?.textContent).toBe('2')
-    expect(container.querySelector('[data-testid="canvas-attention-dot"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="canvas-attention-dot"]')).toBeNull()
   })
 })

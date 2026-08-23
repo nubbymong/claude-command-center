@@ -42,7 +42,7 @@ import {
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { logInfo } from '../debug-logger'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
-import { getCanvasStateForSession } from './canvas-store'
+import { clearAwaitingReview, getCanvasStateForSession } from './canvas-store'
 
 // ── Bounds (shared intent with the IPC schemas; the store re-checks because it
 //    is the last line, and the MCP tool reads through it) ────────────────────
@@ -428,6 +428,11 @@ interface SessionCanvas {
   canvasId: string
   activeVersionId: string | null
   versionIds: Set<string>
+  /** Version ids the agent is still drafting (#366) — a review must never
+   *  freeze against one; the user has not seen it. In render order. */
+  draftVersionIds: string[]
+  /** Non-draft version ids, in render order — what the pane can show. */
+  readyVersionIds: string[]
 }
 
 function canvasForSession(sessionId: string): SessionCanvas | null {
@@ -438,6 +443,8 @@ function canvasForSession(sessionId: string): SessionCanvas | null {
     canvasId: state.canvasId,
     activeVersionId: state.activeVersionId,
     versionIds: new Set(state.versions.map((v) => v.id)),
+    draftVersionIds: state.versions.filter((v) => v.draft).map((v) => v.id),
+    readyVersionIds: state.versions.filter((v) => !v.draft).map((v) => v.id),
   }
 }
 
@@ -510,6 +517,9 @@ export interface CanvasReviewCounts {
   openNotes: number
   /** Notes the agent has marked addressed and the user has not ruled on. */
   addressedNotes: number
+  /** Rounds waiting on the USER: submitted reviews with no open notes and at
+   *  least one addressed one. The queue's verdict-owed input (#364). */
+  verdictRounds: number
   /**
    * What a bulk close-out on this canvas would ACTUALLY clear.
    *
@@ -568,11 +578,16 @@ export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts |
   // it whole. Read by `a.reviewId` rather than membership, which the validator
   // now proves is the same set.
   let closeableNotes = 0
+  let verdictRounds = 0
   for (const r of record.reviews) {
     if (r.status !== 'submitted') continue
     if (withOpenNotes.has(r.id)) openReviewIds.push(r.id)
     if ((openByReview.get(r.id) ?? 0) > 0) continue
     closeableNotes += addressedByReview.get(r.id) ?? 0
+    // A round waiting on the USER: nothing left for the agent, and at least
+    // one addressed note wants a verdict. The queue's second input (#364),
+    // derived from the same per-review tallies the close-out gate uses.
+    if ((addressedByReview.get(r.id) ?? 0) > 0) verdictRounds++
   }
   return {
     draftNotes: draftIds.size,
@@ -581,6 +596,7 @@ export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts |
     openNotes,
     addressedNotes,
     closeableNotes,
+    verdictRounds,
   }
 }
 
@@ -918,8 +934,17 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
 
   nextReview.status = 'submitted'
   nextReview.submittedAt = new Date().toISOString()
-  // D12: the review freezes against the version the user was looking at.
-  nextReview.versionId = canvas.activeVersionId
+  // D12: the review freezes against the version the user was LOOKING at. With
+  // drafts (#366) that is not always the active version: the agent may already
+  // be drafting the next round, which moves activeVersionId onto a version the
+  // pane deliberately does not show. Freezing against the draft would anchor
+  // the user's notes to a document they never saw.
+  const activeIsDraft = canvas.activeVersionId !== null && canvas.draftVersionIds.includes(canvas.activeVersionId)
+  const frozenVersionId = activeIsDraft
+    ? canvas.readyVersionIds[canvas.readyVersionIds.length - 1]
+    : canvas.activeVersionId
+  if (!frozenVersionId) throw new Error('no active version to submit against')
+  nextReview.versionId = frozenVersionId
 
   // PNGs first, record second, memory last. A failure anywhere leaves the
   // draft intact in memory and on disk; at worst orphaned PNG files that no
@@ -929,6 +954,15 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
     for (const write of pngWrites) atomicWriteSecure(write.absPath, write.bytes)
   }
   commit(next)
+  // Submitting IS responding: the ready-marked round leaves the review queue
+  // (#366). After the commit, so a failed submit never clears what is owed;
+  // and never the other way to fail — a clear that throws must not undo a
+  // submit that persisted.
+  try {
+    clearAwaitingReview(canvas.canvasId)
+  } catch (err) {
+    logInfo(`[canvas-review] clearAwaitingReview failed for ${canvas.canvasId}: ${err}`)
+  }
   return toState(next)
 }
 

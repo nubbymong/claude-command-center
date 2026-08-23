@@ -5,7 +5,7 @@
 // old Draw button (spec D2), and its empty state is the classic sketchpad.
 
 import { create } from 'zustand'
-import type { CanvasState, CanvasVersion } from '../../shared/canvas'
+import type { CanvasAwaitingReview, CanvasState, CanvasVersion } from '../../shared/canvas'
 import { useExcalidrawStore } from './excalidrawStore'
 import { useCanvasReviewStore } from './canvasReviewStore'
 import { useCanvasTotalsStore } from './canvasTotalsStore'
@@ -28,6 +28,9 @@ export interface CanvasSessionState {
   title?: string
   versions: CanvasVersion[]
   activeVersionId: string | null
+  /** A ready-marked round awaiting the user's first review (#366) — the live
+   *  half of the queue number for the canvas on screen. */
+  awaitingReview?: CanvasAwaitingReview
   /** Browse first: land on the content, explore, then flip to draw. */
   interactionMode: CanvasInteractionMode
   emptyView: CanvasEmptyView
@@ -92,13 +95,14 @@ const EMPTY: CanvasSessionState = {
 
 function fromMain(prev: CanvasSessionState | undefined, state: CanvasState | null): CanvasSessionState {
   const base = prev ?? EMPTY
-  if (!state) return { ...base, canvasId: null, title: undefined, versions: [], activeVersionId: null, loaded: true }
+  if (!state) return { ...base, canvasId: null, title: undefined, versions: [], activeVersionId: null, awaitingReview: undefined, loaded: true }
   return {
     ...base,
     canvasId: state.canvasId,
     title: state.title,
     versions: state.versions,
     activeVersionId: state.activeVersionId,
+    awaitingReview: state.awaitingReview,
     loaded: true,
   }
 }
@@ -242,8 +246,10 @@ export function setupCanvasListener(): void {
     // A null active version is never news: that is the shape emitted when a
     // canvas goes AWAY (deleted from the library, possibly from another
     // session's window). Pulsing there promises the owning session something
-    // new to look at and then shows it an empty pane.
-    if (event.activeVersionId && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
+    // new to look at and then shows it an empty pane. A DRAFT render is never
+    // news either (#366): the user has asked not to be told until the agent
+    // marks the round ready.
+    if (event.activeVersionId && !event.draft && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
       store.markUnseenRender(event.sessionId)
     }
     // FILING: the canvas under this session changed identity. That happens when

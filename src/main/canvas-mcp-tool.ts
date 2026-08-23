@@ -54,7 +54,7 @@ export interface CanvasToolDeps {
   renderVersion: (
     sessionId: string,
     source: CanvasRenderSource,
-  ) => { canvasId: string; versionId: string; filed?: { canvasId: string; returnedToExisting?: boolean } }
+  ) => { canvasId: string; versionId: string; draft?: boolean; filed?: { canvasId: string; returnedToExisting?: boolean } }
   /**
    * What is outstanding on ONE canvas: counts, and ids the STORE minted.
    *
@@ -321,6 +321,7 @@ interface RawRenderArgs {
   entry?: unknown
   buildLabel?: unknown
   title?: unknown
+  ready?: unknown
   cccSessionId?: unknown
 }
 
@@ -463,6 +464,13 @@ export async function runCanvasRender(
     return { text: "Render needs a mode of 'design' (an html document), 'plan' (a plan document) or 'uat' (a built directory).", isError: true }
   }
 
+  // The ready flag (#366). Fail closed on shape: a string 'false' silently
+  // read as truthy would surface a draft the agent asked to keep quiet.
+  if (rawArgs.ready !== undefined && typeof rawArgs.ready !== 'boolean') {
+    return { text: '`ready` must be true (mark the round ready for review) or false (a draft; nothing surfaces).', isError: true }
+  }
+  const ready = rawArgs.ready
+
   let source: CanvasRenderSource
   if (mode === 'design' || mode === 'plan') {
     const hasInline = rawArgs.html != null
@@ -518,7 +526,7 @@ export async function runCanvasRender(
     // The two share every byte of the ingress above -- same path check, same
     // reader, same size cap. `mode` is carried through only so the store can
     // stamp the version; it changes nothing about how the document is admitted.
-    source = { mode, html, ...titleOf(rawArgs) }
+    source = { mode, html, ...titleOf(rawArgs), ...(ready !== undefined ? { ready } : {}) }
   } else {
     if (typeof rawArgs.distRoot !== 'string' || rawArgs.distRoot.length === 0) {
       return { text: 'A uat render needs the built directory in `distRoot`.', isError: true }
@@ -538,6 +546,7 @@ export async function runCanvasRender(
       ...(typeof rawArgs.entry === 'string' && rawArgs.entry.length > 0 ? { entry: rawArgs.entry } : {}),
       ...(typeof rawArgs.buildLabel === 'string' ? { buildLabel: rawArgs.buildLabel } : {}),
       ...titleOf(rawArgs),
+      ...(ready !== undefined ? { ready } : {}),
     }
   }
 
@@ -569,11 +578,25 @@ export async function runCanvasRender(
   // path, not the html — so this line carries operator authority without
   // carrying operator-forgeable text. The same rule governs everything
   // appended below: counts, and ids the STORE minted. Never a title.
+  if (rendered.draft) {
+    return {
+      text:
+        `Draft ${rendered.versionId} updated on canvas ${rendered.canvasId}. ` +
+        'Nothing has surfaced to the user — no pulse, no count, and the pane keeps showing the last ready version. ' +
+        'Snapshot, fix and re-render freely (each draft supersedes the last); when it is ready for their review, render again with ready: true — that ends your turn.' +
+        renderContextSuffix(rendered, deps),
+      isError: false,
+    }
+  }
+  const readiness =
+    ready === true
+      ? 'The round is marked READY: it now counts in the user’s review queue, and this render ends your turn — hand back now and tell them in plain words what to look at. '
+      : 'The user sees it when they open the Canvas pane — hand back and tell them in plain words what to look at. '
   return {
     text:
       `Rendered ${rendered.versionId} on canvas ${rendered.canvasId}. ` +
       'You can call canvas_snapshot now to self-check the layout (it works even while the pane is closed). ' +
-      'The user sees it when they open the Canvas pane (its button is pulsing) — hand back and tell them in plain words what to look at.' +
+      readiness.trimEnd() +
       renderContextSuffix(rendered, deps),
     isError: false,
   }
@@ -1200,7 +1223,7 @@ export function registerCanvasTools(
 
   server.tool(
     'canvas_render',
-    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Three modes. \'design\': write a complete HTML document to a file INSIDE this session\'s project folder, then pass its absolute path as htmlPath — use this to show a proposed screen. \'plan\': the same, for a PLAN of work you are about to do — goal, flow, scope fence, blast radius, open questions, verification — so the user can annotate a step or a boundary instead of reading prose; follow the canvas-plan skill for its shape. \'uat\': you supply the path of a built directory, also inside the project folder, and the app in it is served — use this to review the real product. Every mode reads only from this session\'s own project folder; a path outside it is refused. Name what you are showing with `title` on every call: a canvas holds ONE subject, so the same title adds a version to it and a different title files the current canvas and starts a fresh one. Nothing is ever overwritten. Rendering does not put it on screen: hand back to the user so they can open the Canvas pane.',
+    'Put a page on this session\'s Agent Canvas so it can be laid out by a real browser engine and then read back with canvas_snapshot. Three modes. \'design\': write a complete HTML document to a file INSIDE this session\'s project folder, then pass its absolute path as htmlPath — use this to show a proposed screen. \'plan\': the same, for a PLAN of work you are about to do — goal, flow, scope fence, blast radius, open questions, verification — so the user can annotate a step or a boundary instead of reading prose; follow the canvas-plan skill for its shape. \'uat\': you supply the path of a built directory, also inside the project folder, and the app in it is served — use this to review the real product. Every mode reads only from this session\'s own project folder; a path outside it is refused. Name what you are showing with `title` on every call: a canvas holds ONE subject, so the same title adds a version to it and a different title files the current canvas and starts a fresh one. Nothing is ever overwritten. While you are still checking your own work, render with ready: false — a DRAFT: it surfaces nothing to the user, and each draft supersedes the last. When the round is fit for their eyes, render with ready: true — that marks it ready for review, puts it in their queue, and ENDS YOUR TURN: hand back so they can open the Canvas pane.',
     {
       mode: zMod.enum(['design', 'plan', 'uat']).describe("'design' renders the html document you wrote; 'plan' renders it as a plan for review before you start work; 'uat' serves a built directory."),
       htmlPath: zMod
@@ -1222,6 +1245,12 @@ export function registerCanvasTools(
         .optional()
         .describe(
           'What this canvas is OF, in a few words — "Title bar logo placement", "Checkout flow". Pass it on EVERY render. A canvas holds one subject and collects versions of it, so re-rendering the same subject adds a version, and naming a different subject files the current canvas and starts a fresh one. Without a title everything piles into one canvas and the user sees unresolved notes from unrelated work.',
+        ),
+      ready: zMod
+        .boolean()
+        .optional()
+        .describe(
+          'false = a DRAFT: nothing surfaces to the user (no pulse, no count; the pane keeps showing the last ready version) and each draft supersedes the previous one — use this while you snapshot and fix your own work. true = mark the round READY for review: it enters the user’s queue and ends your turn. Omitted = the render surfaces immediately AND counts as ready (the pre-draft behaviour).',
         ),
       cccSessionId: zMod
         .string()

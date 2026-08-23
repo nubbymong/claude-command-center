@@ -26,25 +26,47 @@ const { default: AgentCanvasButton } = await import('../../../src/renderer/compo
 const api = (window as any).electronAPI.canvas
 const listAll = api.listAll as ReturnType<typeof vi.fn>
 
-const review = (id: string, status: Review['status']): Review => ({
-  id, canvas: { canvasId: 'c1', versionId: 'v1' } as Review['canvas'], versionId: 'v1', annotationIds: [], status, createdAt: '2026-08-20T10:00:00.000Z',
+const review = (id: string, status: Review['status'], annotationIds: string[] = []): Review => ({
+  id, canvas: { canvasId: 'c1', versionId: 'v1' } as Review['canvas'], versionId: 'v1', annotationIds, status, createdAt: '2026-08-20T10:00:00.000Z',
+})
+/** A round waiting on YOU: submitted, its one note addressed. */
+const owedRound = (id: string, noteId: string) => ({
+  review: review(id, 'submitted' as const, [noteId]),
+  note: { id: noteId, reviewId: id, scope: 'general' as const, note: 'x', versionId: 'v1', state: 'addressed' as const },
 })
 const entry = (over: Partial<CanvasLibraryEntry>): CanvasLibraryEntry => ({
   canvasId: over.canvasId ?? 'c', versionCount: 1, createdAt: '2026-08-21T00:00:00Z', lastRenderedAt: '2026-08-21T00:00:00Z', ...over,
 })
-function seedMirror(reviews: Review[]) {
+function seedMirror(rounds: Array<ReturnType<typeof owedRound>>, extraReviews: Review[] = []) {
   useCanvasReviewStore.setState({
     bySessionId: {
       s1: {
-        loaded: true, canvasId: 'c1', reviews, annotations: [],
+        loaded: true, canvasId: 'c1', reviews: [...rounds.map((r) => r.review), ...extraReviews], annotations: rounds.map((r) => r.note),
         focus: null, focusChain: [], focusChainIndex: 0, marqueeArmed: false,
         editingAnnotationId: null, resolution: null, panelHighlight: null, helpDismissed: false,
       },
     },
   })
 }
-function seedTotals(t: { canvases: number; openReviews: number; onActive: number; unknown?: number }) {
-  useCanvasTotalsStore.setState({ bySessionId: { s1: { loaded: true, withOpenReviews: 0, unknown: 0, ...t } } })
+function seedCanvasLive() {
+  useCanvasStore.setState({
+    bySessionId: {
+      s1: {
+        canvasId: 'c1', versions: [], activeVersionId: null,
+        interactionMode: 'browse', emptyView: 'intro', unseenRender: false, loaded: true,
+      },
+    },
+  })
+}
+function seedTotals(t: { queue: number; queueOnActive: number; unknown?: number }) {
+  useCanvasTotalsStore.setState({
+    bySessionId: {
+      s1: {
+        loaded: true, canvases: 1, openReviews: 0, withOpenReviews: 0, unknown: 0, onActive: 0,
+        queueRows: [], ...t,
+      },
+    },
+  })
 }
 
 let container: HTMLDivElement
@@ -64,64 +86,60 @@ afterEach(() => {
   container.remove()
 })
 const render = () => act(() => { root.render(React.createElement(AgentCanvasButton, { sessionId: 's1' })) })
-const pill = () => container.querySelector('[data-testid="canvas-open-reviews-count"]') as HTMLElement | null
+const pill = () => container.querySelector('[data-testid="canvas-queue-count"]') as HTMLElement | null
 const flush = async () => { await act(async () => { await new Promise((r) => setTimeout(r, 10)) }) }
 
-describe('the pill spans canvases', () => {
+describe('the queue pill spans canvases (#364)', () => {
   it('shows the TOTAL across the session, not this canvas alone', async () => {
-    seedMirror([review('R1', 'submitted')])                     // 1 here
-    seedTotals({ canvases: 3, openReviews: 4, onActive: 1 })   // 3 elsewhere
+    seedCanvasLive()
+    seedMirror([owedRound('R1', 'a1')])              // 1 waiting on you here
+    seedTotals({ queue: 4, queueOnActive: 1 })       // 3 elsewhere
     render()
     expect(pill()?.textContent).toBe('4')
-    expect(pill()?.getAttribute('data-elsewhere')).toBe('3')
-    expect(pill()?.title).toContain('4 reviews still open across 3 canvases')
-    expect(pill()?.title).toContain('1 on this one, 3 elsewhere')
   })
   it('shows from ONE when that one is on a canvas you are not looking at', async () => {
-    seedMirror([])                                               // nothing here
-    seedTotals({ canvases: 2, openReviews: 1, onActive: 0 })    // one elsewhere
+    seedCanvasLive()
+    seedMirror([])                                    // nothing here
+    seedTotals({ queue: 1, queueOnActive: 0 })       // one elsewhere
     render()
     expect(pill()?.textContent).toBe('1')
   })
-  it('keeps the old rule on this canvas alone: one here and nothing elsewhere stays quiet; two shows', async () => {
-    seedMirror([review('R1', 'submitted')])
-    seedTotals({ canvases: 1, openReviews: 1, onActive: 1 })
+  it('shows from ONE on this canvas too — the from-two rule retired with the pulse', async () => {
+    seedCanvasLive()
+    seedMirror([owedRound('R1', 'a1')])
+    seedTotals({ queue: 1, queueOnActive: 1 })
     render()
-    expect(pill()).toBeNull()
-    act(() => { seedMirror([review('R1', 'submitted'), review('R2', 'submitted')]); seedTotals({ canvases: 1, openReviews: 2, onActive: 2 }) })
-    expect(pill()?.textContent).toBe('2')
+    expect(pill()?.textContent).toBe('1')
   })
   it('the live mirror wins for this canvas when it is fresher than the sweep -- UP', async () => {
-    // Sweep says 1 in total; the mirror already knows a second review was sent here.
-    seedMirror([review('R1', 'submitted'), review('R2', 'submitted')])
-    seedTotals({ canvases: 1, openReviews: 1, onActive: 1 })
+    // Sweep says 1 in total; the mirror already knows a second round landed here.
+    seedCanvasLive()
+    seedMirror([owedRound('R1', 'a1'), owedRound('R2', 'a2')])
+    seedTotals({ queue: 1, queueOnActive: 1 })
     render()
     expect(pill()?.textContent).toBe('2')
   })
-  it('the live mirror wins for this canvas when it is fresher than the sweep -- DOWN (a close here drops the pill before the sweep catches up)', async () => {
-    // Sweep still says 3 here + 1 elsewhere; the mirror knows all three here were just closed.
-    seedMirror([review('R1', 'resolved'), review('R2', 'resolved'), review('R3', 'resolved')])
-    seedTotals({ canvases: 2, openReviews: 4, onActive: 3 })
+  it('the live mirror wins for this canvas when it is fresher than the sweep -- DOWN (a verdict here drops the pill before the sweep catches up)', async () => {
+    // Sweep still says 3 here + 1 elsewhere; the mirror knows all three here were just ruled on.
+    seedCanvasLive()
+    seedMirror([], [review('R1', 'resolved'), review('R2', 'resolved'), review('R3', 'resolved')])
+    seedTotals({ queue: 4, queueOnActive: 3 })
     render()
     expect(pill()?.textContent).toBe('1')          // only the one elsewhere
-    expect(pill()?.getAttribute('data-elsewhere')).toBe('1')
     // And with nothing elsewhere either, the pill goes away entirely.
-    act(() => { seedTotals({ canvases: 1, openReviews: 3, onActive: 3 }) })
+    act(() => { seedTotals({ queue: 3, queueOnActive: 3 }) })
     expect(pill()).toBeNull()
   })
-  it('says when canvases could not be read instead of calling them clear', async () => {
-    seedMirror([])
-    seedTotals({ canvases: 3, openReviews: 2, onActive: 0, unknown: 1 })
-    render()
-    expect(pill()?.title).toContain('1 canvas could not be read')
-  })
   it('hydrates the sweep on first mount, once', async () => {
-    listAll.mockResolvedValue([entry({ canvasId: 'a', ownedByThisSession: true, openReviewCount: 2 }), entry({ canvasId: 'b', ownedByThisSession: true, openReviewCount: 1 })])
+    listAll.mockResolvedValue([
+      entry({ canvasId: 'a', ownedByThisSession: true, awaitingReview: true, awaitingReviewAt: '2026-08-23T10:00:00Z' }),
+      entry({ canvasId: 'b', ownedByThisSession: true, verdictRounds: 1, openReviewCount: 1 }),
+    ])
     render()
     await flush()
     expect(listAll).toHaveBeenCalledTimes(1)
     expect(listAll.mock.calls[0][0]).toMatchObject({ sessionId: 's1' })
-    expect(pill()?.textContent).toBe('3')
+    expect(pill()?.textContent).toBe('2')
     act(() => { root.unmount() }); root = createRoot(container)
     render(); await flush()
     expect(listAll).toHaveBeenCalledTimes(1) // loaded -> no re-ask

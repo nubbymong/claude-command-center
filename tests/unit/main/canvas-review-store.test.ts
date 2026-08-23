@@ -485,3 +485,58 @@ describe('markAnnotationsAddressed — the agent closes its side of the loop', (
     expect(r.state.annotations.find((a) => a.id === extra.annotationId)!.state).toBe('open')
   })
 })
+
+describe('drafts and the ready round (#366)', () => {
+  it('submitting a review CLEARS the canvas-level review-needed state', () => {
+    const { canvasId, versionId } = canvasStore.renderVersion(SID, {
+      mode: 'design', html: '<!doctype html><p>ready page</p>', ready: true,
+    })
+    expect(canvasStore.getCanvasStateForSession(SID)?.awaitingReview?.versionId).toBe(versionId)
+
+    store.upsertAnnotation(SID, elementDraft(versionId))
+    store.submitReview(SID, 'R1', [])
+    expect(canvasStore.getCanvasStateForSession(SID)?.awaitingReview).toBeUndefined()
+    // ...and the clear persisted with the canvas record, not only in memory.
+    canvasStore._resetCanvasStoreForTest()
+    expect(canvasStore.getCanvasStateForSession(SID)?.canvasId).toBe(canvasId)
+    expect(canvasStore.getCanvasStateForSession(SID)?.awaitingReview).toBeUndefined()
+  })
+
+  it('a submit while the agent is DRAFTING freezes against the version the user saw, never the draft', () => {
+    const ready = canvasStore.renderVersion(SID, {
+      mode: 'design', html: '<!doctype html><p>round one</p>', ready: true,
+    })
+    store.upsertAnnotation(SID, elementDraft(ready.versionId))
+    // The agent starts the next round before the user hits Send: the active
+    // version moves onto a draft the pane deliberately does not show.
+    const draft = canvasStore.renderVersion(SID, {
+      mode: 'design', html: '<!doctype html><p>round two draft</p>', ready: false,
+    })
+    expect(draft.versionId).not.toBe(ready.versionId)
+
+    const state = store.submitReview(SID, 'R1', [])
+    expect(state.reviews[0].versionId).toBe(ready.versionId)
+  })
+
+  it('verdictRounds counts rounds waiting on the USER and nothing else', () => {
+    const { canvasId, versionId } = renderCanvas()
+    store.upsertAnnotation(SID, elementDraft(versionId, 'note one'))
+    store.upsertAnnotation(SID, elementDraft(versionId, 'note two'))
+    store.submitReview(SID, 'R1', [])
+    // Both notes open: the round waits on the AGENT.
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
+
+    store.markAnnotationsAddressed(SID, 'R1', ['a1'])
+    // One addressed, one still open: still the agent's round.
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
+
+    store.markAnnotationsAddressed(SID, 'R1', ['a2'])
+    // Every remaining note addressed: the round is the user's.
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(1)
+
+    resolveNow('a1', 'approve')
+    resolveNow('a2', 'dismiss')
+    // Ruled on: nothing waits on anyone.
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
+  })
+})

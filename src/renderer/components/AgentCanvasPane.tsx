@@ -208,10 +208,20 @@ export default function AgentCanvasPane({ sessionId, isActive = false }: Props) 
     clearUnseenRender(sessionId)
   }, [sessionId, canvasState?.activeVersionId, clearUnseenRender])
 
-  const activeVersion = useMemo(
-    () => canvasState?.versions.find((v) => v.id === canvasState.activeVersionId) ?? null,
-    [canvasState],
-  )
+  // The DISPLAY version, not always the active one: while the agent drafts
+  // (#366) the active version points at work-in-progress the user has asked
+  // not to see, so the pane keeps showing the last READY version until the
+  // deliberate ready-mark promotes the draft.
+  const activeVersion = useMemo(() => {
+    if (!canvasState) return null
+    const active = canvasState.versions.find((v) => v.id === canvasState.activeVersionId) ?? null
+    if (!active?.draft) return active
+    return [...canvasState.versions].reverse().find((v) => !v.draft) ?? null
+  }, [canvasState])
+
+  // Only drafts so far: nothing is ready for review, and the empty state alone
+  // would read as "no canvas at all" — say what is actually happening.
+  const draftPending = !!canvasState?.versions.some((v) => v.draft)
 
   // The library lives HERE, above the empty-state branch, not inside the
   // surface. Deleting the canvas you are looking at empties the pane, which
@@ -221,6 +231,19 @@ export default function AgentCanvasPane({ sessionId, isActive = false }: Props) 
     return (
       <div className="flex-1 flex flex-col min-h-0">
         <CanvasFiledStrip sessionId={sessionId} />
+        {draftPending && (
+          <div
+            className="shrink-0 px-3 py-1.5 text-[11px] border-b"
+            style={{
+              color: 'var(--text-secondary)',
+              borderColor: 'var(--border-subtle)',
+              background: 'color-mix(in srgb, var(--status-warning) 8%, transparent)',
+            }}
+            data-testid="canvas-draft-pending"
+          >
+            The agent is preparing a draft here — nothing is ready for your review yet.
+          </div>
+        )}
         <CanvasEmptyState sessionId={sessionId} onClose={() => togglePane(sessionId)} />
         {libraryOpen && (
           <CanvasLibrary sessionId={sessionId} onClose={() => setLibraryOpen(false)} onOpened={() => setLibraryOpen(false)} />
@@ -287,7 +310,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // X-ray hover mode (#367) — PER USER, so it comes from settings rather than
   // from the canvas store where the per-canvas interaction mode lives. Every
   // read goes through the resolver: an absent or hand-edited value is 'on'.
-  const xrayMode = resolveCanvasXrayMode(useSettingsStore((s) => s.settings.canvasXrayMode))
+  // A PLAN page is always 'stealth' (owner call, 2026-08-23): the boxes-on-page
+  // x-ray adds nothing over a document of steps, and Off would break note
+  // anchoring — the panel readout keeps working, the page stays clean.
+  const settingsXrayMode = resolveCanvasXrayMode(useSettingsStore((s) => s.settings.canvasXrayMode))
+  const xrayMode: CanvasXrayMode = version.mode === 'plan' ? 'stealth' : settingsXrayMode
 
   const focus = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.focus ?? null)
   const marqueeArmed = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.marqueeArmed ?? false)
@@ -1206,7 +1233,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           </span>
           {versionClockLabel ? ` · ${versionClockLabel}` : ''} · {versionKind(version)}
         </span>
-        {versions.length > 1 && (
+        {versions.filter((v) => !v.draft).length > 1 && (
           <select
             value={version.id}
             onChange={(e) => void setActiveVersion(sessionId, e.target.value)}
@@ -1214,7 +1241,8 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             aria-label="Switch version"
             title="Switch version"
           >
-            {versions.map((v) => (
+            {/* Drafts are the agent's own loop (#366) — never offered here. */}
+            {versions.filter((v) => !v.draft).map((v) => (
               <option key={v.id} value={v.id}>
                 {versionOptionLabel(v, Date.now())}
               </option>
@@ -1303,29 +1331,35 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         {/* X-ray (#367) — whether pointing at the page marks it up, names it
             quietly beside the stage, or does nothing at all. Beside the mode
             switch because the two together are the whole answer to "what
-            happens when I move the mouse over this". */}
-        <span className="shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]" aria-hidden="true">
-          X-ray
-        </span>
-        <div
-          className="shrink-0 flex items-center gap-[2px] p-[2px] rounded-md bg-[var(--surface-panel)] border border-[var(--border-subtle)]"
-          role="group"
-          aria-label="Canvas x-ray hover"
-          data-testid="canvas-xray-mode"
-        >
-          {CANVAS_XRAY_MODE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              onClick={() => setXrayMode(option.value)}
-              aria-pressed={xrayMode === option.value}
-              className={segmentClass(xrayMode === option.value)}
-              title={option.title}
-              data-testid={`canvas-xray-${option.value}`}
+            happens when I move the mouse over this". A PLAN page pins x-ray to
+            stealth (owner call, 2026-08-23), so the switch would be three dead
+            buttons there — it is dropped rather than disabled. */}
+        {version.mode !== 'plan' && (
+          <>
+            <span className="shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]" aria-hidden="true">
+              X-ray
+            </span>
+            <div
+              className="shrink-0 flex items-center gap-[2px] p-[2px] rounded-md bg-[var(--surface-panel)] border border-[var(--border-subtle)]"
+              role="group"
+              aria-label="Canvas x-ray hover"
+              data-testid="canvas-xray-mode"
             >
-              {option.label}
-            </button>
-          ))}
-        </div>
+              {CANVAS_XRAY_MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  onClick={() => setXrayMode(option.value)}
+                  aria-pressed={xrayMode === option.value}
+                  className={segmentClass(xrayMode === option.value)}
+                  title={option.title}
+                  data-testid={`canvas-xray-${option.value}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
         <button
           onClick={() => togglePane(sessionId)}
           aria-label="Close Agent Canvas"
