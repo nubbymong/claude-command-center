@@ -153,12 +153,12 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Group command buttons into named sections',
         title: 'Command Sections',
-        body: 'Once you have more than 4-5 command buttons they start to get cluttered. Organize them into **named sections**:\n\n• **Right-click** the command bar and choose **Add Section**\n• **Drag any command button** onto a section header to assign it\n• **Drag it back out** to the unsectioned area to unassign\n• **Right-click a command** and use **Move to Section** to assign without dragging\n• **Click a section header** to collapse/expand it\n• **Right-click a section header** to rename, change text color, or delete it\n• **Drag section headers** to reorder them\n\nExamples: "Testing", "Deploy", "DB Ops", "Claude prompts".',
+        body: 'Once you have more than 4-5 command buttons they start to get cluttered. Organize them into **named sections** inside the one-row bar:\n\n• **Right-click** the command bar and choose **Add section…** (or use the **Add ▾** menu)\n• **Right-click a command** and use **Move to section** to assign it\n• **Right-click a section** to rename it, recolour it, **collapse it to a chip**, move it between the Global and Session bands, or delete it\n\nSections live per band -- your **global** commands and this config\'s own commands each keep their own.\n\nExamples: "Testing", "Deploy", "DB Ops", "Claude prompts".',
       },
       postUse: {
-        shortText: 'Customize section colors and reorder by dragging',
+        shortText: 'Collapse sections to keep the one-row bar short',
         title: 'Section Power Tips',
-        body: 'You\'re using sections -- here are some extras:\n\n• **Right-click a section header** to rename it or change the **text color** -- great for visual grouping\n• **Drag section headers** to reorder entire groups\n• **Right-click a command** > **Move to Section** to quickly reassign without dragging\n• Collapsed sections show a **count badge** so you know how many commands are hidden',
+        body: 'You\'re using sections -- here are some extras:\n\n• **Right-click a section** to rename it or change its **colour** -- great for visual grouping\n• **Collapse to a chip** (same menu) keeps a whole section out of the row -- the fastest way to stop the one-row bar overflowing\n• **Right-click a command** > **Move to section** to quickly reassign it\n• Anything that will not fit the row folds into its band\'s **"N more" pill** -- collapsed or not, nothing is lost',
       },
     },
   },
@@ -667,13 +667,13 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Have your agent SHOW you the work',
         title: 'Agent Canvas',
-        body: 'The **Canvas** button in the session toolbar -- next to Browser -- opens a pane your agent can draw into. Ask for a mockup, a design or a look at the site it just built and it arrives as something you can see, instead of a wall of markdown describing it.\n\nIt is a two-way surface. Click anywhere on the render to leave a **note**, then send the round back as a **review**. The agent reads the notes, changes the work and renders the next version.\n\nThe button **pulses** when the agent has rendered something you have not opened yet -- that is the hand-back moment -- and carries a count once two or more of your reviews are still open.',
+        body: 'The **Canvas** button in the session toolbar -- next to Browser -- opens a pane your agent can draw into. Ask for a mockup, a design or a look at the site it just built and it arrives as something you can see, instead of a wall of markdown describing it.\n\nIt is a two-way surface. Click anywhere on the render to leave a **note**, then send the round back as a **review**. The agent reads the notes, changes the work and renders the next version.\n\nWhen a round is waiting on you, the button turns **amber and says "Review needed"**, with the number of rounds owed beside it -- click the count for the list, newest first. The session tab carries a dot for the same thing, so a hand-back is visible from any tab.',
         focusHint: 'Session toolbar -- the Canvas button, beside Browser',
       },
       postUse: {
         shortText: 'Every canvas version is kept -- walk back through them',
         title: 'Canvas: Versions, Reviews and the Library',
-        body: 'You already use the canvas. A few things it does that are easy to miss:\n\n• **Nothing is overwritten.** Each render is a new version; the version picker walks back through every one of them.\n• **A review closes only when every note in it has a verdict**, which is why the button counts open reviews from two rather than one -- a single outstanding note would sit there forever and stop meaning anything.\n• **Library** lists the canvases for this project, so a mockup from last week is two clicks away rather than lost with the session.\n• The pane **replaces the terminal** while it is open -- the button is tinted so you can see you have left the terminal without hovering anything.',
+        body: 'You already use the canvas. A few things it does that are easy to miss:\n\n• **Nothing is overwritten.** Each render is a new version; the version picker walks back through every one of them.\n• **Agents draft in private now.** While an agent is still checking its own work it renders invisible drafts; you are only shown versions it deliberately marks ready, and those are what the "Review needed" queue counts.\n• **A note can offer alternatives.** When a fix has more than one defensible answer, the agent renders them all and the note grows **A/B/C chips** -- clicking a chip approves the note AND names the winner, and the agent builds only that one.\n• **Library** lists the canvases for this project, so a mockup from last week is two clicks away rather than lost with the session.\n• The pane **replaces the terminal** while it is open -- the button is tinted so you can see you have left the terminal without hovering anything.',
       },
     },
   },
@@ -833,6 +833,71 @@ export const TIPS_LIBRARY: Tip[] = [
         body: 'Terminal scrollback is finite and a closed session takes its history with it. **Logs** keeps the output anyway: what ran, in which session, and when.\n\nUse it for the thing you saw twenty minutes ago and cannot scroll back to, for what a session did while you were in another tab, and for handing an exact error to someone else.\n\nIt stays on your machine -- the log files live in your resources folder and nothing is uploaded.',
         actionLabel: 'Open Logs',
         actionTarget: 'logs',
+      },
+    },
+  },
+
+  // ── beta.17: the one-row bar, canvas x-ray/zoom, the watchdog, GPU ──────
+  // Added at the 2.1.0-beta.17 tips sweep (#377). Same rule as the block
+  // above: gate only on ids this build records.
+
+  {
+    id: 'tip.command-bar-one-row',
+    category: 'commands',
+    complexity: 'simple',
+    priority: 78,
+    variants: {
+      primary: {
+        shortText: 'The command bar is one row now -- right-click it',
+        title: 'The One-Row Command Bar',
+        body: 'The command bar is **one row by default**: core tools on the left as icons, then your Global commands, then this config\'s Session ones -- and anything that does not fit folds into a **"N more" pill** at the end of its band instead of wrapping. (Settings can give it a second row before folding.)\n\nThe bar is worth a right-click. **Right-click empty bar** for Add command… and Add section…; **right-click a command** to edit, move, or retarget it; **right-click a core tool** to hide it from the row.\n\nHidden core tools come back under **Settings > Custom Commands**, which also has the switch for the whole row. And **Ctrl+click** any command that takes arguments still opens the one-run arguments editor.',
+        focusHint: 'The command bar above the terminal -- try a right-click',
+      },
+    },
+  },
+
+  {
+    id: 'tip.canvas-xray-zoom',
+    category: 'agents',
+    complexity: 'intermediate',
+    priority: 60,
+    requires: ['canvas.opened'],
+    variants: {
+      primary: {
+        shortText: 'X-ray and zoom: inspect a render without disturbing it',
+        title: 'Canvas X-ray and Zoom',
+        body: 'Two controls in the canvas header change how you read a render:\n\n**X-ray** decides what hovering does. **On** outlines and labels the element under the pointer (the default). **Stealth** still identifies it -- the identity and box are read out in the panel -- but draws nothing on the page, so a hover-sensitive design stays undisturbed. **Off** makes the page behave like a normal browser tab. Plan pages always use Stealth: the flow itself is the picture, and boxes on top of it were noise.\n\n**Zoom** is **Ctrl+wheel** anywhere over the pane -- chrome, render or notes panel. The level shows in the header while you are zoomed and holds for as long as the pane is open, so a dense mockup can be read at 150% without asking the agent to render it bigger.',
+        focusHint: 'Canvas pane header -- the X-ray segment and the zoom readout',
+      },
+    },
+  },
+
+  {
+    id: 'tip.session-watchdog',
+    category: 'sessions',
+    complexity: 'intermediate',
+    priority: 63,
+    variants: {
+      primary: {
+        shortText: 'Auto-resume sessions after a rate limit resets',
+        title: 'Session Watchdog',
+        body: 'Hit a usage limit at 4pm and the session just sits there until you notice. The **Session Watchdog** notices for you: it reads the limit banner, waits out the reset time, and types the retry itself -- so an overnight session picks itself back up instead of losing the hours.\n\nIt is careful about WHEN it types. Nothing is sent while a permission prompt or picker is open, or while your own unsubmitted draft is in the input box -- the retry defers rather than corrupting either. It also backs off on API overload errors, with capped attempts.\n\n**Off by default.** Turn it on under **Settings > General > Session Watchdog**, where you can also change the retry message. Local Claude sessions only.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+      },
+    },
+  },
+
+  {
+    id: 'tip.gpu-rendering',
+    category: 'advanced',
+    complexity: 'intermediate',
+    priority: 35,
+    variants: {
+      primary: {
+        shortText: 'Terminals draw on the GPU now -- Ctrl+Alt+G if glyphs vanish',
+        title: 'GPU Terminal Rendering',
+        body: 'Terminals are drawn on the **GPU** by default now -- noticeably faster with several busy sessions on screen.\n\nEvery terminal shares one cache of character images. When one session rebuilds that cache, the others redraw themselves the way they would after a window resize, so text no longer drops out of background terminals.\n\nIf you ever DO see characters go missing while backgrounds stay: press **Ctrl+Alt+G** to save a diagnostic (event log plus screenshot) worth attaching to a bug report, and flip **Settings > General > Terminal > GPU rendering** off to fall back to the plain renderer. The change takes effect the next time a terminal is shown -- a tab switch is enough.',
       },
     },
   },
