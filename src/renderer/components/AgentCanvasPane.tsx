@@ -21,6 +21,7 @@ import {
   type CanvasHoverReportingResult,
 } from '../../shared/canvas'
 import { contentPageRectToStage, stageToContentPagePoint, glassNeedsRepin, glassScrollForContent } from '../utils/canvas-coords'
+import { formatCanvasZoom, stepCanvasZoom } from '../utils/canvas-zoom'
 import { safeAnchorResolutions, safeInspectResult } from '../utils/canvas-geometry-guard'
 import { registerCanvasFrame } from '../canvas/canvas-snapshot-host'
 import { askCanvasFrame, framesInFlight, MAX_FRAME_REQUESTS_IN_FLIGHT } from '../canvas/canvas-frame-rpc'
@@ -278,6 +279,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const setMarqueeArmed = useCanvasReviewStore((s) => s.setMarqueeArmed)
 
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  /** The pane's root element — the scope of the HOST-side zoom gesture (#368):
+   *  a Ctrl+wheel over the chrome, the glass or the notes panel zooms the
+   *  content, and the zoom chords apply only while the pane is hovered or holds
+   *  focus, so a terminal's shortcuts in another pane are never contested. */
+  const paneRootRef = useRef<HTMLDivElement | null>(null)
   const glassApiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const repinPendingRef = useRef(false)
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
@@ -343,6 +349,9 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   /** One outstanding inspect per frame — a page-driven click cannot open a
    *  second one while the first is unanswered. */
   const inspectPendingRef = useRef(false)
+  /** The zoom the last successful resolution pass ran under (#368): a pass
+   *  belongs to a layout, and a zoom step changes the layout. */
+  const resolvedZoomRef = useRef(1)
 
   const [bridgeReady, setBridgeReady] = useState(false)
   const bridgeReadyRef = useRef(false)
@@ -351,6 +360,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
    *  that has quietly stopped responding. */
   const [bridgeFlooded, setBridgeFlooded] = useState(false)
   const [viewport, setViewport] = useState<CanvasViewportInfo | null>(null)
+  /** Content zoom (#368) — a ladder value, 1 when unzoomed. Pane-local like a
+   *  browser tab's zoom: it survives version switches in this mount and resets
+   *  when the pane closes. The iframe carries it as CSS zoom with its layout
+   *  size compensated, so 1 content px paints as `zoom` stage px; every
+   *  content↔stage conversion and the glass binding fold the factor in. */
+  const [zoom, setZoom] = useState(1)
+  const zoomRef = useRef(1)
   const [hover, setHover] = useState<HoverState | null>(null)
   const [marqueeDrag, setMarqueeDrag] = useState<MarqueeDrag | null>(null)
   // Load health. `frameLoaded` is the browser's own load event (it fires for an
@@ -370,12 +386,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   modeRef.current = mode
   xrayModeRef.current = xrayMode
   versionIdRef.current = version.id
+  zoomRef.current = zoom
 
-  // Keep the glass pinned to the content: scene scroll ≡ −content scroll at
-  // zoom 1 (canvas-coords.glassScrollForContent). Applied on every viewport
-  // event, and re-applied if Excalidraw itself pans/zooms the scene (wheel or
-  // space-drag on the glass in draw mode) — the canvas glass has no free
-  // camera, the content is the camera.
+  // Keep the glass pinned to the content: scene scroll ≡ −content scroll, scene
+  // zoom ≡ the content zoom (canvas-coords.glassScrollForContent). Applied on
+  // every viewport event and every zoom step, and re-applied if Excalidraw
+  // itself pans/zooms the scene (wheel or space-drag on the glass in draw mode)
+  // — the canvas glass has no free camera, the content is the camera.
   const repinGlass = useCallback(() => {
     const api = glassApiRef.current
     const vp = viewportRef.current
@@ -385,9 +402,23 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
       repinPendingRef.current = false
       const currentVp = viewportRef.current
       if (!currentVp || !glassApiRef.current) return
-      glassApiRef.current.updateScene({ appState: glassScrollForContent(currentVp) } as never)
+      glassApiRef.current.updateScene({ appState: glassScrollForContent(currentVp, zoomRef.current) } as never)
     })
   }, [])
+
+  /** Walk the zoom ladder (+in / −out); `reset` snaps to 1. */
+  const applyZoom = useCallback(
+    (intent: { steps: number; reset: boolean }) => {
+      setZoom((z) => (intent.reset ? 1 : stepCanvasZoom(z, intent.steps)))
+    },
+    [],
+  )
+
+  // The glass must follow the zoom in the same frame discipline it follows the
+  // scroll — its zoom is part of the same binding.
+  useEffect(() => {
+    repinGlass()
+  }, [zoom, repinGlass])
 
   /** A reported content click (browse mode) becomes a locked selection: ask
    *  the frame for the chain at that point, then lock its deepest entry. The
@@ -626,10 +657,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           if (modeRef.current === 'browse') void inspectAndLock(pageX, pageY)
         },
         onContentKey: handleReportedKey,
+        onContentZoom: applyZoom,
         onFlood: () => setBridgeFlooded(true),
       },
     })
-  }, [repinGlass, canvasId, inspectAndLock, handleReportedKey, syncHoverReporting])
+  }, [repinGlass, canvasId, inspectAndLock, handleReportedKey, applyZoom, syncHoverReporting])
 
   // The same two keys, host-side, for when the HOST document has keyboard
   // focus (after touching the panel or the chrome). Never while typing.
@@ -647,6 +679,74 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [sessionId, handleReportedKey])
+
+  // ── Content zoom, host side (#368) ─────────────────────────────────────────
+  // Ctrl+wheel anywhere over the pane's own chrome — the header, the glass in
+  // draw mode, the notes panel — zooms the content, exactly as the same gesture
+  // over the frame does via the bridge relay. Capture phase so the glass's own
+  // Excalidraw wheel handling (scene zoom, which the repin would fight) never
+  // sees the ctrl-chord; a plain wheel is untouched. Native listener because
+  // React's synthetic wheel is passive and could not preventDefault.
+  useEffect(() => {
+    const root = paneRootRef.current
+    if (!root) return
+    let accum = 0
+    const onWheel = (e: WheelEvent) => {
+      // altKey excluded: AltGr on Windows layouts reports ctrl+alt together.
+      if (!e.ctrlKey || e.altKey) return
+      e.preventDefault()
+      e.stopPropagation()
+      const notch = e.deltaMode === 1 ? 3 : 100
+      accum += e.deltaY
+      let steps = 0
+      while (accum >= notch) {
+        accum -= notch
+        steps -= 1
+      }
+      while (accum <= -notch) {
+        accum += notch
+        steps += 1
+      }
+      if (steps !== 0) applyZoom({ steps, reset: false })
+    }
+    root.addEventListener('wheel', onWheel, { capture: true, passive: false })
+    return () => root.removeEventListener('wheel', onWheel, { capture: true })
+  }, [applyZoom])
+
+  // The zoom chords, host side: Ctrl+= / Ctrl+- / Ctrl+0 while the pane is
+  // hovered or holds focus. The app registers no zoom accelerators of its own
+  // (no View menu), so there is nothing to fight — the scope check exists so a
+  // future shortcut elsewhere stays unaffected, and typing in the notes
+  // composer is unaffected because these are ctrl-chords, not text.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.metaKey) return
+      const intent =
+        e.key === '=' || e.key === '+'
+          ? { steps: 1, reset: false }
+          : e.key === '-' || e.key === '_'
+            ? { steps: -1, reset: false }
+            : e.key === '0'
+              ? { steps: 0, reset: true }
+              : null
+      if (!intent) return
+      const root = paneRootRef.current
+      if (!root) return
+      let engaged = root.contains(document.activeElement)
+      if (!engaged) {
+        try {
+          engaged = root.matches(':hover')
+        } catch {
+          engaged = false
+        }
+      }
+      if (!engaged) return
+      e.preventDefault()
+      applyZoom(intent)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [applyZoom])
 
   // The user changed the mode: bring the frame in line with it. (A frame that
   // is not ready yet is told on its `ready` instead — see the channel above.)
@@ -733,14 +833,22 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     if (!target) return
     const store = useCanvasReviewStore.getState()
     const current = store.bySessionId[sessionId]?.resolution
-    const done = current?.versionId === version.id ? current.byAnnotation : {}
+    // A zoom step reflows the content (#368) — the CSS viewport narrows or
+    // widens like a browser tab's — so page-space boxes measured under another
+    // zoom are stale: the whole pass runs again, same-version notes included,
+    // which is what lets a note placed at 150 % re-anchor at 100 %.
+    const zoomChanged = resolvedZoomRef.current !== zoom
+    const done = !zoomChanged && current?.versionId === version.id ? current.byAnnotation : {}
     const pending = openNotes.filter(
-      (n) => n.versionId !== version.id && n.focus && n.focus.targets.length > 0 && !(n.id in done),
+      (n) => (zoomChanged || n.versionId !== version.id) && n.focus && n.focus.targets.length > 0 && !(n.id in done),
     )
-    if (pending.length === 0) return
+    if (pending.length === 0) {
+      resolvedZoomRef.current = zoom
+      return
+    }
 
     let cancelled = false
-    void (async () => {
+    const run = async () => {
       const flat: AnchorRef[] = []
       const spans: Array<{ id: string; start: number; count: number }> = []
       for (const note of pending) {
@@ -762,22 +870,27 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           const slice = results.slice(span.start, span.start + span.count)
           merged[span.id] = slice.find((r) => r.found) ?? null
         }
+        resolvedZoomRef.current = zoom
         useCanvasReviewStore.getState().setResolution(sessionId, { versionId: version.id, byAnnotation: merged })
       } catch {
         /* frame gone or slow — the checklist keeps its ghosts */
       }
-    })()
+    }
+    // Debounced only when the zoom moved it: rapid ladder steps supersede each
+    // other rather than racing one resolve per rung through the RPC cap.
+    const timer = window.setTimeout(() => void run(), zoomChanged ? 300 : 0)
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
-  }, [bridgeReady, version.id, openNotesKey, sessionId, canvasId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bridgeReady, version.id, openNotesKey, sessionId, canvasId, zoom]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGlassScrolled = useCallback(() => {
     const vp = viewportRef.current
     const api = glassApiRef.current
     if (!vp || !api) return
     const appState = api.getAppState()
-    if (glassNeedsRepin(appState, vp)) repinGlass()
+    if (glassNeedsRepin(appState, vp, zoomRef.current)) repinGlass()
   }, [repinGlass])
 
   // ── Marquee (spec §6 step 3: rectangle for region notes) ──────────────────
@@ -810,8 +923,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     const width = Math.abs(drag.x1 - drag.x0)
     const height = Math.abs(drag.y1 - drag.y0)
     if (width >= MARQUEE_MIN_PX && height >= MARQUEE_MIN_PX) {
-      const p0 = stageToContentPagePoint({ x: left, y: top }, vp)
-      const p1 = stageToContentPagePoint({ x: left + width, y: top + height }, vp)
+      // The zoom folds into the same slot the pinch scale occupies: 1 content
+      // px is `scale × zoom` stage px (#368).
+      const effVp = { ...vp, scale: vp.scale * zoomRef.current }
+      const p0 = stageToContentPagePoint({ x: left, y: top }, effVp)
+      const p1 = stageToContentPagePoint({ x: left + width, y: top + height }, effVp)
       useCanvasReviewStore
         .getState()
         .setRegionFocus(sessionId, { x: p0.x, y: p0.y, width: p1.x - p0.x, height: p1.y - p0.y }, versionIdRef.current)
@@ -820,10 +936,20 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     }
   }, [sessionId])
 
+  /** The viewport the STAGE actually paints under: the frame's own report with
+   *  the pane's zoom folded into the scale slot — 1 content px is
+   *  `scale × zoom` stage px (#368). Everything that converts content page
+   *  coords to stage pixels reads this one, so a box drawn on an element stays
+   *  on it at every zoom. */
+  const stageViewport = useMemo(
+    () => (viewport ? { ...viewport, scale: viewport.scale * zoom } : null),
+    [viewport, zoom],
+  )
+
   const hoverStageRect = useMemo(() => {
-    if (!hover || !viewport) return null
-    return contentPageRectToStage(hover.hit.box, viewport)
-  }, [hover, viewport])
+    if (!hover || !stageViewport) return null
+    return contentPageRectToStage(hover.hit.box, stageViewport)
+  }, [hover, stageViewport])
 
   /** Which layer the pointer is on — the same three-way the glass and marquee
    *  layers are wired from, named once so the stealth readout can tell the user
@@ -837,18 +963,18 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const stageHoverRect = mode === 'browse' && !marqueeArmed && xrayDrawsOnPage(xrayMode) ? hoverStageRect : null
 
   const focusStageRect = useMemo(() => {
-    if (!focus || !viewport) return null
-    return contentPageRectToStage(focus.bboxPage, viewport)
-  }, [focus, viewport])
+    if (!focus || !stageViewport) return null
+    return contentPageRectToStage(focus.bboxPage, stageViewport)
+  }, [focus, stageViewport])
 
   /** An element lock's label came out of an inspect reply — the page's own
    *  account of what the user clicked. A region's came from the marquee. */
   const focusIsPageReported = (focus?.targets.length ?? 0) > 0
 
   const highlightStageRect = useMemo(() => {
-    if (!panelHighlight || !viewport) return null
-    return contentPageRectToStage(panelHighlight.rect, viewport)
-  }, [panelHighlight, viewport])
+    if (!panelHighlight || !stageViewport) return null
+    return contentPageRectToStage(panelHighlight.rect, stageViewport)
+  }, [panelHighlight, stageViewport])
 
   const hoverLabel = useMemo(() => {
     if (!hover) return ''
@@ -904,7 +1030,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const versionClockLabel = versionClock(version.createdAt)
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
+    <div ref={paneRootRef} className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
       {/* Pane chrome — 38px, one type size, and the mode switch given real
           weight because it decides where the user's clicks land. */}
       <div className="h-[38px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)] border-b border-[var(--border-subtle)]">
@@ -931,6 +1057,19 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         >
           {canvasModeBadge(version).label}
         </span>
+        {/* Content zoom (#368) — shown only when it is not 1:1, click resets.
+            The chip is the visibility the forged-zoom analysis leans on: a zoom
+            the user did not ask for is never silent. */}
+        {zoom !== 1 && (
+          <button
+            onClick={() => applyZoom({ steps: 0, reset: true })}
+            data-testid="canvas-zoom-chip"
+            title="Canvas zoom — Ctrl+wheel or Ctrl+= / Ctrl+- · click or Ctrl+0 to reset"
+            className="shrink-0 text-[10px] rounded px-1.5 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring"
+          >
+            {formatCanvasZoom(zoom)}
+          </button>
+        )}
         <span
           className="min-w-0 truncate text-[11.5px] text-[var(--text-primary)]"
           title={versionTooltip(version)}
@@ -1114,7 +1253,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             // flash in a dark pane read as a broken render every time a version
             // arrived. (The Excalidraw glass below stays theme="light" — that
             // one is deliberate, see the comment on glassInitialData.)
-            className="absolute inset-0 w-full h-full border-0 bg-[var(--surface-stage)]"
+            className="absolute left-0 top-0 border-0 bg-[var(--surface-stage)]"
+            // Content zoom (#368): CSS zoom scales the element's box and paint
+            // together, so the layout size is compensated to keep the frame
+            // filling the stage exactly — the content lays out to a
+            // narrower/wider CSS viewport and paints scaled, which is what a
+            // browser tab's own Ctrl+wheel does.
+            style={{ zoom, width: `${100 / zoom}%`, height: `${100 / zoom}%` }}
           />
           {/* Glass — Excalidraw over the content, transparent board, pointer
               only in draw mode. A sibling overlay, never injected (D7). */}

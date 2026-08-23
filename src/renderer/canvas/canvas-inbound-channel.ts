@@ -6,9 +6,14 @@
 // Any claim that "everything arriving here is a report about the content, never
 // an instruction" is therefore only true of the events the host merely PAINTS.
 //
-// Three of the five inbound types are paint-only (`ready`, `viewport`,
+// Three of the six inbound types are paint-only (`ready`, `viewport`,
 // `pointer`): the worst a forgery does is move a highlight box, and the geometry
-// guards bound it. Two MUTATE HOST STATE and are handled differently here:
+// guards bound it. `contentZoom` (#368) sits between the classes: it steps the
+// pane's clamped zoom ladder — visible in the chrome, reversible with Ctrl+0,
+// and unable to reach the review store — and is honoured only with host-side
+// evidence the frame plausibly owns the gesture (pointer hover or keyboard
+// focus; see reportedZoomIsPlausible for why not user activation). Two MUTATE
+// HOST STATE and are handled differently here:
 //
 //   `contentKey`  clears the user's locked focus / disarms an armed marquee. It
 //                 is honoured only when the host can see for itself that the
@@ -45,6 +50,7 @@ import {
   type CanvasBridgeEvent,
   type CanvasHitInfo,
   type CanvasViewportInfo,
+  type CanvasZoomAction,
   canvasOrigin,
 } from '../../shared/canvas'
 import { finite, safeHit, safeViewport } from '../utils/canvas-geometry-guard'
@@ -216,6 +222,9 @@ export interface CanvasInboundHandlers {
   /** A click the host could verify was a real user click inside the frame. */
   onContentClick: (pageX: number, pageY: number) => void
   onContentKey: (key: 'Escape' | 'ArrowUp') => void
+  /** Zoom intent relayed from the frame (#368), coalesced per animation frame:
+   *  `steps` is the net ladder movement (+in / −out), `reset` wins over steps. */
+  onContentZoom: (intent: { steps: number; reset: boolean }) => void
   /** The page exceeded the flood budget: the channel is gone for this frame. */
   onFlood: () => void
 }
@@ -307,6 +316,30 @@ export function reportedClickIsPlausible(facts: HostInputFacts): boolean {
   return facts.userActivation === true
 }
 
+/**
+ * Could this reported zoom intent have been a real gesture in the frame (#368)?
+ *
+ * A wheel needs the POINTER over the frame, not keyboard focus, and the host's
+ * own evidence for that is `:hover` on its iframe element; the zoom chords need
+ * the frame to own keyboard focus, exactly as `contentKey` does. Either
+ * suffices. Deliberately weaker than the key/click gates — no user-activation
+ * requirement — because a wheel is not an activation-triggering input, so that
+ * gate would drop every genuine first gesture; and unlike those two, a forged
+ * zoom cannot touch the review store or the locked selection. It can only step
+ * the pane's own zoom ladder: clamped, painted in the chrome, and reversible
+ * with Ctrl+0 — nothing a page cannot already do to its own rendering with a
+ * stylesheet.
+ */
+export function reportedZoomIsPlausible(facts: Pick<HostInputFacts, 'activeElement' | 'frameElement'>): boolean {
+  if (!facts.frameElement) return false
+  if (facts.activeElement === facts.frameElement) return true
+  try {
+    return facts.frameElement.matches(':hover')
+  } catch {
+    return false
+  }
+}
+
 function nextFrame(run: () => void): void {
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => run())
   else setTimeout(run, 16)
@@ -327,6 +360,7 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
   let pendingViewport: CanvasViewportInfo | null = null
   let pendingPointer: { hit: CanvasHitInfo | null } | null = null
   let pendingClick: { pageX: number; pageY: number } | null = null
+  let pendingZoom: { steps: number; reset: boolean } | null = null
   let flushQueued = false
 
   const dispose = () => {
@@ -336,6 +370,7 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
     pendingViewport = null
     pendingPointer = null
     pendingClick = null
+    pendingZoom = null
   }
 
   // Latest wins. A page that reports twice inside one frame gets one delivery,
@@ -350,12 +385,15 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
       const viewport = pendingViewport
       const pointer = pendingPointer
       const click = pendingClick
+      const zoom = pendingZoom
       pendingViewport = null
       pendingPointer = null
       pendingClick = null
+      pendingZoom = null
       if (viewport) handlers.onViewport(viewport)
       if (pointer) handlers.onPointer(pointer.hit)
       if (click) handlers.onContentClick(click.pageX, click.pageY)
+      if (zoom && (zoom.reset || zoom.steps !== 0)) handlers.onContentZoom(zoom)
     })
   }
 
@@ -476,6 +514,35 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
         return
       }
       handlers.onContentKey(key)
+      return
+    }
+    if (msg.type === 'contentZoom') {
+      // A closed vocabulary, checked on arrival like every other field the
+      // page authors; anything else in `action` is not a report this protocol
+      // emits and is dropped unread.
+      const action = (msg as { action?: unknown }).action as CanvasZoomAction | unknown
+      if (action !== 'in' && action !== 'out' && action !== 'reset') return
+      // Gated on arrival (like the click gate): hover/focus is evidence about
+      // NOW, and a later tick is a different claim.
+      if (
+        !reportedZoomIsPlausible({
+          activeElement: document.activeElement,
+          frameElement: options.getFrameElement(),
+        })
+      ) {
+        return
+      }
+      const current = pendingZoom ?? { steps: 0, reset: false }
+      if (action === 'reset') {
+        // Reset wins over whatever steps were queued beside it this frame.
+        pendingZoom = { steps: 0, reset: true }
+      } else if (!current.reset) {
+        // Net movement, bounded well past the ladder's full sweep — the frame
+        // chooses how often it speaks, not how far the host walks.
+        const steps = Math.max(-16, Math.min(16, current.steps + (action === 'in' ? 1 : -1)))
+        pendingZoom = { steps, reset: false }
+      }
+      queueFlush()
     }
   }
 

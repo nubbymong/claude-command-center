@@ -369,6 +369,62 @@ function install(): void {
     { capture: true, passive: true },
   )
 
+  // Ctrl+wheel is the browser's zoom gesture, and in the pane it belongs to the
+  // HOST (#368): while the pointer is over the content the wheel lands here, so
+  // without this relay the gesture would silently vanish. Relayed as INTENT —
+  // one 'in'/'out' per accumulated wheel notch, so a trackpad's stream of small
+  // deltas steps the same ladder a notched wheel does — never as raw deltas;
+  // the host owns the ladder and the clamp and may ignore the report (D8).
+  // preventDefault so the zoom gesture is not also a scroll; a plain
+  // (ctrl-less) wheel is untouched. Not gated on hoverReporting: zoom is pane
+  // chrome, not x-ray, and x-ray Off must not kill the zoom gesture.
+  let wheelAccum = 0
+  document.addEventListener(
+    'wheel',
+    (event: WheelEvent) => {
+      // altKey excluded: AltGr on Windows layouts reports ctrl+alt together.
+      if (!event.ctrlKey || event.altKey) return
+      event.preventDefault()
+      // DOM_DELTA_LINE (1) counts lines (~3 per notch); anything else is pixels.
+      const notch = event.deltaMode === 1 ? 3 : 100
+      wheelAccum += event.deltaY
+      while (wheelAccum >= notch) {
+        wheelAccum -= notch
+        send({ ns: NS, type: 'contentZoom', action: 'out' })
+      }
+      while (wheelAccum <= -notch) {
+        wheelAccum += notch
+        send({ ns: NS, type: 'contentZoom', action: 'in' })
+      }
+    },
+    { capture: true, passive: false },
+  )
+
+  // The zoom CHORDS, for when the frame owns keyboard focus (the user clicked
+  // the page): Ctrl+= / Ctrl+- / Ctrl+0, relayed as the same closed intents.
+  // Never from an editable target (consistent with the key relay above) and
+  // never the key value itself — there is no path from here to arbitrary keys.
+  document.addEventListener(
+    'keydown',
+    (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey) return
+      const action =
+        event.key === '=' || event.key === '+'
+          ? ('in' as const)
+          : event.key === '-' || event.key === '_'
+            ? ('out' as const)
+            : event.key === '0'
+              ? ('reset' as const)
+              : null
+      if (!action) return
+      const target = event.target
+      if (target instanceof Element && isEditableTarget(target)) return
+      event.preventDefault()
+      send({ ns: NS, type: 'contentZoom', action })
+    },
+    { capture: true, passive: false },
+  )
+
   function announceReady(): void {
     send({ ns: NS, type: 'ready' })
     send({ ns: NS, type: 'viewport', viewport: viewportInfo() })
