@@ -74,3 +74,19 @@ on-screen canvas (fresher in both directions — the old pill's rule kept).
 - The old button tests pinned the pulse and the from-two pill; they were
   REWRITTEN to the new contract, not deleted — the no-dot assertion now pins
   the retirement itself.
+
+## Adversarial rounds 2–3 (independent Opus): the hand-over is deferred at the STORE
+
+Round 1's renderer-only silence was wrong twice over (mirror pinned while
+main's session binding had moved: user notes resolved a canvas they had
+never seen; one pane toggle lost the deferred filing notice). Root fix: a
+subject-change DRAFT no longer repoints `sessionIndex` or files anything —
+an in-memory `draftIndex` records where the agent drafts, `canvas_snapshot`
+follows it (new snapshot-only `getAgentCanvasState` dep), and the
+ready-mark performs the repoint + filing in one event, which is what the
+renderer announces against. Deliberate residual trades: a draft-only canvas
+IS still listed in the picker/library (hiding it would make an abandoned
+one undeletable — the row is quiet and lands on the honest draft banner),
+and `versionCount` stays the TOTAL because it labels Delete, which destroys
+drafts too; recency and the mode chip stay drafts-excluded. Final verdict:
+PASS (3 rounds).

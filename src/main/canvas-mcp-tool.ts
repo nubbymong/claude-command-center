@@ -634,9 +634,10 @@ function listIds(ids: readonly string[]): string {
 function renderContextSuffix(
   rendered: { canvasId: string; filed?: { canvasId: string; returnedToExisting?: boolean } },
   deps: CanvasToolDeps,
-  /** quiet = a DRAFT render (#366): the user has been told NOTHING (the
-   *  renderer stays on the canvas they were on), so the coaching must not
-   *  tell the agent to announce anything — the facts still matter to it. */
+  /** quiet = a DRAFT render (#366): the user has been told nothing, so the
+   *  coaching says "before marking ready" instead of "hand back". (A draft
+   *  can never carry `filed` — a subject-change draft defers the filing — so
+   *  quiet only shapes the current-canvas lines below.) */
   opts?: { quiet?: boolean },
 ): string {
   try {
@@ -647,17 +648,10 @@ function renderContextSuffix(
           ? ` You named a different subject, so canvas ${rendered.filed.canvasId} was filed and this is the canvas you had already started on that subject.`
           : ` You named a different subject, so canvas ${rendered.filed.canvasId} was filed and this is a new canvas.`,
       )
-      if (opts?.quiet) {
-        parts.push(
-          ' The user has not been told: their pane stays on the canvas they were on until you mark this round ready.',
-        )
-      }
       const filedCounts = deps.getReviewCounts(rendered.filed.canvasId)
       if (filedCounts && filedCounts.draftNotes > 0) {
         parts.push(
-          opts?.quiet
-            ? ` The canvas you filed still has ${filedCounts.draftNotes} unsubmitted note(s) on it — the user may still be writing them; leave them in peace.`
-            : ` The canvas you filed still has ${filedCounts.draftNotes} unsubmitted note(s) on it — the user was mid-review; say so rather than moving on.`,
+          ` The canvas you filed still has ${filedCounts.draftNotes} unsubmitted note(s) on it — the user was mid-review; say so rather than moving on.`,
         )
         return parts.join('')
       }
@@ -683,13 +677,17 @@ function renderContextSuffix(
     if (counts.draftNotes > 0) {
       const against = counts.draftVersionIds.length > 0 ? ` against ${listIds(counts.draftVersionIds)}` : ''
       parts.push(
-        ` The user has ${counts.draftNotes} unsubmitted note(s) on this canvas${against}: they are mid-review, so hand back rather than rendering again.`,
+        opts?.quiet
+          ? ` The user has ${counts.draftNotes} unsubmitted note(s) on this canvas${against} — they are mid-review of the READY version (your draft does not disturb it); fetch their review before marking this round ready.`
+          : ` The user has ${counts.draftNotes} unsubmitted note(s) on this canvas${against}: they are mid-review, so hand back rather than rendering again.`,
       )
       return parts.join('')
     }
     if (counts.openReviewIds.length > 0) {
       parts.push(
-        ` ${counts.openReviewIds.length} submitted review(s) on this canvas still have notes in play: ${listIds(counts.openReviewIds)}. Fetch with canvas_review before re-rendering.`,
+        opts?.quiet
+          ? ` ${counts.openReviewIds.length} submitted review(s) on this canvas still have notes in play: ${listIds(counts.openReviewIds)}. Fetch with canvas_review before marking this round ready.`
+          : ` ${counts.openReviewIds.length} submitted review(s) on this canvas still have notes in play: ${listIds(counts.openReviewIds)}. Fetch with canvas_review before re-rendering.`,
       )
     }
     return parts.join('')
