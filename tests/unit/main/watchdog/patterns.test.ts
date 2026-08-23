@@ -567,4 +567,121 @@ describe('canSendNow (#266 BLOCKER-2 / MAJOR-3) — the send gate, against REAL 
     expect(canSendNow('banner\n> half-typed thought')).toEqual({ ok: false, reason: 'draft' })
     expect(canSendNow(`> quoted earlier\n${BANNER}`)).toEqual({ ok: true })
   })
+
+  // --- #418: the styled read. Claude Code renders placeholder text in an
+  // EMPTY input dim; the second argument is the same pane with every dim cell
+  // blanked. A caret row is a draft only if NON-DIM ink follows the caret.
+  describe('#418 dim placeholders', () => {
+    it('every real placeholder shape is the sendable empty prompt — and still defers without the styled read', () => {
+      const placeholders = [
+        'Press up to edit queued messages',
+        'Message @reviewer…',
+        'Comment on 4 selected lines…',
+        'Try "fix lint errors"', // the model-generated prompt suggestion
+      ]
+      for (const ph of placeholders) {
+        const raw = [BANNER, RULE, `❯ ${ph}`, RULE, FOOTER].join('\n')
+        const nonDim = [BANNER, RULE, '❯ ', RULE, FOOTER].join('\n')
+        expect(canSendNow(raw, nonDim), ph).toEqual({ ok: true })
+        // Text-only reading keeps the old fail-closed posture.
+        expect(canSendNow(raw).ok, `${ph} (no styled read)`).toBe(false)
+      }
+    })
+
+    it('a real draft carries non-dim ink and still gates', () => {
+      const raw = [BANNER, RULE, '❯ fix the failing auth test first', RULE, FOOTER].join('\n')
+      expect(canSendNow(raw, raw)).toEqual({ ok: false, reason: 'draft' })
+    })
+
+    it('part-typed text with a trailing dim hint gates — any non-dim ink is a draft', () => {
+      const raw = [BANNER, RULE, '❯ fix the (tab to accept)', RULE, FOOTER].join('\n')
+      const nonDim = [BANNER, RULE, '❯ fix the', RULE, FOOTER].join('\n')
+      expect(canSendNow(raw, nonDim)).toEqual({ ok: false, reason: 'draft' })
+    })
+
+    it('a styled read that does not align line-for-line is IGNORED (fail closed)', () => {
+      const raw = [BANNER, RULE, '❯ Press up to edit queued messages', RULE, FOOTER].join('\n')
+      const misaligned = [BANNER, RULE, '❯ '].join('\n')
+      expect(canSendNow(raw, misaligned)).toEqual({ ok: false, reason: 'draft' })
+    })
+
+    it('menu detection stays on the RAW text — dim unfocused rows still count', () => {
+      const raw = [
+        'Do you want to run this command?',
+        '❯ 1. Yes',
+        "  2. Yes, and don't ask again",
+        '  3. No (esc)',
+      ].join('\n')
+      // A selector may render its unfocused rows dim; blanking them must not
+      // let the menu collapse to a sendable pane.
+      const nonDim = ['Do you want to run this command?', '❯ 1. Yes', '', ''].join('\n')
+      expect(canSendNow(raw, nonDim)).toEqual({ ok: false, reason: 'menu' })
+    })
+
+    it('an unnumbered picker (focused row is not dim) still gates with the styled read', () => {
+      const raw = ['Review the proposed auto-mode setup?', '❯ Looks good — save it', RULE].join('\n')
+      expect(canSendNow(raw, raw).ok).toBe(false)
+    })
+
+    it('a DIM PROMPT GLYPH over a live type-ahead draft still gates (the glyph dims while loading)', () => {
+      // claude.exe dims the pointer whenever isLoading — the ink check must be
+      // by column after the glyph found in the RAW row, never a masked
+      // re-match of the whole shape (which the blanked glyph would fail,
+      // flipping refuse to SEND).
+      const raw = [BANNER, RULE, '❯ fix the failing auth test', RULE, FOOTER].join('\n')
+      const nonDim = [BANNER, RULE, '  fix the failing auth test', RULE, FOOTER].join('\n')
+      expect(canSendNow(raw, nonDim)).toEqual({ ok: false, reason: 'draft' })
+    })
+
+    it('DIM box borders around a non-dim draft still gate', () => {
+      const raw = [BANNER, '╭────────────────────────╮', '│ > fix the failing test │', '╰────────────────────────╯', FOOTER].join('\n')
+      const nonDim = [BANNER, '', '    fix the failing test', '', FOOTER].join('\n')
+      expect(canSendNow(raw, nonDim)).toEqual({ ok: false, reason: 'draft' })
+    })
+
+    it('a DIM bare ASCII glyph over a draft as the last line still gates', () => {
+      expect(canSendNow('banner\n> half-typed thought', 'banner\n  half-typed thought')).toEqual({
+        ok: false,
+        reason: 'draft',
+      })
+    })
+
+    it('a dim placeholder behind the BARE prompt is sendable', () => {
+      const ph = 'Press up to edit queued messages'
+      expect(canSendNow(`banner\n> ${ph}`, `banner\n> ${' '.repeat(ph.length)}`)).toEqual({ ok: true })
+    })
+
+    it('pins the glyph locator column: a one-character draft right after the caret still gates', () => {
+      // The locator is /^\s*❯/ — start = the column AFTER the glyph. If it
+      // drifted to include the first non-space (the full shape regex), the
+      // ink check would start past 'x' and send over a real draft.
+      const raw = [BANNER, RULE, '❯ x', RULE, FOOTER].join('\n')
+      expect(canSendNow(raw, raw)).toEqual({ ok: false, reason: 'draft' })
+      // Same pin for the bare ASCII locator (/^\s*>/).
+      expect(canSendNow('banner\n> x', 'banner\n> x')).toEqual({ ok: false, reason: 'draft' })
+    })
+
+    it('an ALL-DIM unnumbered picker still reads as a menu — raw caret rows count', () => {
+      const raw = [
+        'Review the proposed auto-mode setup?',
+        '❯ Looks good — save it',
+        '❯ Let me adjust the arguments first',
+        RULE,
+      ].join('\n')
+      const nonDim = ['Review the proposed auto-mode setup?', '', '', RULE].join('\n')
+      expect(canSendNow(raw, nonDim)).toEqual({ ok: false, reason: 'menu' })
+    })
+
+    it('a dim placeholder in the BOXED render is sendable too; a boxed draft is not', () => {
+      const ph = 'Press up to edit queued messages'
+      const box = (inner: string) => [BANNER, '╭──────────────────────────────╮', `│ > ${inner} │`, '╰──────────────────────────────╯', FOOTER]
+      const raw = box(ph).join('\n')
+      // Column-faithful mask: the dim placeholder blanks to spaces IN PLACE,
+      // so the closing gutter stays at the same column as the raw row.
+      const nonDim = box(' '.repeat(ph.length)).join('\n')
+      expect(canSendNow(raw, nonDim)).toEqual({ ok: true })
+      const draft = box('fix the failing test').join('\n')
+      expect(canSendNow(draft, draft)).toEqual({ ok: false, reason: 'draft' })
+    })
+  })
 })

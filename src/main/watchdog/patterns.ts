@@ -603,7 +603,7 @@ export interface SendGateResult {
  * consuming an attempt. An empty prompt under a live banner is the one
  * sendable state and returns ok.
  */
-export function canSendNow(text: string): SendGateResult {
+export function canSendNow(text: string, nonDimText?: string): SendGateResult {
   // The purpose-built /rate-limit-options detector first (chrome-aware): the
   // menu a rate-limit retry is most likely to collide with.
   if (isRateLimitOptionsPrompt(text, SEND_GATE_TAIL_LINES)) return { ok: false, reason: 'menu' }
@@ -613,34 +613,106 @@ export function canSendNow(text: string): SendGateResult {
   // how the earlier revision ended up blind at exactly the wrong moment.
   const tail = lines.slice(Math.max(0, lines.length - SEND_GATE_TAIL_LINES))
 
+  // The styled companion of the same pane (#418): every DIM cell blanked to a
+  // space, lines aligned 1:1 with `text`. Claude Code renders the placeholder
+  // in an EMPTY input dim — "Press up to edit queued messages" whenever the
+  // queue is non-empty, "Message @agent…" in an agent view, "Comment on N
+  // selected lines…" over an IDE selection — states that coexist with a live
+  // rate limit indefinitely, so reading text alone made the gate defer forever
+  // and the retry silently never fired. A DRAFT row must show NON-DIM ink
+  // after its prompt glyph; a row whose after-caret text is all placeholder is
+  // the sendable empty prompt wearing a hint. Two deliberate asymmetries:
+  //   - menu rows are counted on the RAW text (a selector's unfocused rows may
+  //     render dim, and losing them would weaken the menu guard);
+  //   - no styled read, or line counts that do not match, means the styled
+  //     read is IGNORED and every caret row gates as before — the fail-closed
+  //     posture this gate has always had.
+  const nonDimLines = nonDimText !== undefined ? stripAnsi(nonDimText).split('\n') : null
+  const nonDimTail =
+    nonDimLines !== null && nonDimLines.length === lines.length
+      ? nonDimLines.slice(Math.max(0, nonDimLines.length - SEND_GATE_TAIL_LINES))
+      : null
+
+  // "Non-dim ink after the prompt glyph" — computed by COLUMN in the styled
+  // row, never by re-running the anchored shape regex on the masked line. The
+  // glyph itself renders DIM while Claude is loading (claude.exe dims the
+  // pointer on isLoading), so a masked re-match would blank the glyph, fail
+  // the regex, and flip a live type-ahead draft from refuse to SEND — the
+  // mis-send direction. The glyph is located in the RAW row; the masked row
+  // is then examined at and after that column only (and, for the boxed shape,
+  // before the closing gutter, which is chrome rather than draft ink).
+  const contentHasInk = (rowIndex: number, kind: 'caret' | 'boxed' | 'bare'): boolean => {
+    if (!nonDimTail) return true // no styled read: every raw match counts (fail closed)
+    const raw = tail[rowIndex]
+    const masked = nonDimTail[rowIndex] ?? ''
+    let start: number
+    let end = masked.length
+    if (kind === 'caret') {
+      const m = /^\s*❯/.exec(raw)
+      if (!m) return true
+      start = m[0].length
+    } else if (kind === 'bare') {
+      const m = /^\s*>/.exec(raw)
+      if (!m) return true
+      start = m[0].length
+    } else {
+      const m = /^\s*│\s*[>❯]/.exec(raw)
+      if (!m) return true
+      start = m[0].length
+      const gutter = raw.lastIndexOf('│')
+      if (gutter > start) end = gutter
+    }
+    return /\S/.test(masked.slice(start, end))
+  }
+
   let numberRows = 0
-  let caretTextRows = 0
-  for (const l of tail) {
+  let caretRowsRaw = 0
+  let caretRowsInk = 0
+  for (let i = 0; i < tail.length; i++) {
+    const l = tail[i]
     if (MENU_NUMBER_ROW.test(l)) numberRows++
-    if (CARET_TEXT_ROW.test(l)) caretTextRows++
+    if (CARET_TEXT_ROW.test(l)) {
+      caretRowsRaw++
+      if (contentHasInk(i, 'caret')) caretRowsInk++
+    }
   }
 
   // A menu: two+ numbered rows (a selector always lists its alternatives; one
   // lone "1. …" can be a content list item), or two+ caret rows (an unnumbered
-  // picker with its options). Reported as 'menu'.
-  if (numberRows >= 2 || caretTextRows >= 2) return { ok: false, reason: 'menu' }
+  // picker with its options). BOTH menu signals count on the RAW text — a
+  // selector's rows may render dim (disabled options do), and an all-dim
+  // picker collapsing to a sendable pane would press Enter on its focused
+  // row. Only the DRAFT signal below is ink-filtered. Reported as 'menu'.
+  if (numberRows >= 2 || caretRowsRaw >= 2) return { ok: false, reason: 'menu' }
 
   // A single caret-with-text row is ambiguous between the filled input and a
   // one-line picker — both gate. Anywhere in the window, because the real
   // render puts a bottom rule and a footer BELOW it, so it is never the last
   // line (the bug F1 exposed). Reported as 'draft' (the commoner case).
-  if (caretTextRows >= 1) return { ok: false, reason: 'draft' }
+  if (caretRowsInk >= 1) return { ok: false, reason: 'draft' }
 
   // The boxed form, anywhere in the window.
-  for (const l of tail) {
-    if (BOXED_DRAFT_ROW.test(l) && !isWorkingLine(l)) return { ok: false, reason: 'draft' }
+  for (let i = 0; i < tail.length; i++) {
+    const l = tail[i]
+    if (BOXED_DRAFT_ROW.test(l) && contentHasInk(i, 'boxed') && !isWorkingLine(l)) {
+      return { ok: false, reason: 'draft' }
+    }
   }
 
   // The bare ASCII prompt: only as the last non-blank line, so a markdown
   // blockquote in content is never mistaken for a draft.
-  const lastNonBlank = [...tail].reverse().find((l) => l.trim() !== '')
-  if (lastNonBlank && BARE_ASCII_DRAFT_ROW.test(lastNonBlank) && !isWorkingLine(lastNonBlank)) {
-    return { ok: false, reason: 'draft' }
+  let lastNonBlankIndex = -1
+  for (let i = tail.length - 1; i >= 0; i--) {
+    if (tail[i].trim() !== '') {
+      lastNonBlankIndex = i
+      break
+    }
+  }
+  if (lastNonBlankIndex >= 0) {
+    const l = tail[lastNonBlankIndex]
+    if (BARE_ASCII_DRAFT_ROW.test(l) && contentHasInk(lastNonBlankIndex, 'bare') && !isWorkingLine(l)) {
+      return { ok: false, reason: 'draft' }
+    }
   }
   return { ok: true }
 }

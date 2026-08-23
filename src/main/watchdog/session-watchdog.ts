@@ -57,6 +57,12 @@ export interface WatchdogPublicState {
 
 export interface WatchdogAdapter {
   getTail(): string
+  /** The DIM-BLANKED companion of getTail() (#418): same lines, every dim cell
+   *  a space. The send gate uses it to tell an empty prompt wearing a dim
+   *  placeholder ("Press up to edit queued messages") from a real draft.
+   *  Optional — without it the gate reads text alone and fails closed (defers
+   *  on any caret text, placeholder or not). */
+  getTailNonDim?(): string
   isSessionAlive(): boolean
   send(text: string): void
   now(): number
@@ -417,7 +423,7 @@ export class SessionWatchdog {
    *  shows a menu or the user's draft), with the wait pushed out by `deferMs`
    *  and no attempt consumed. */
   private sendGate(tail: string, now: number, deferMs: number): boolean {
-    const gate = canSendNow(tail)
+    const gate = canSendNow(tail, this.adapter.getTailNonDim?.())
     if (gate.ok) return true
     this.waitUntil = now + deferMs
     this.adapter.log(
