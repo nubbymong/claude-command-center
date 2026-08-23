@@ -372,7 +372,9 @@ describe('contentZoom (#368) is gated, closed-vocabulary and coalesced', () => {
     arm()
     composer.focus()
     setFrameHovered(false)
-    for (let i = 0; i < CONTENT_ZOOM_BUDGET * 3; i++) fromFrame({ type: 'contentZoom', action: 'in' })
+    // Past the zoom budget but under the general flood budget — the refusals
+    // must be what saves the channel, not the message count.
+    for (let i = 0; i < CONTENT_ZOOM_BUDGET + 100; i++) fromFrame({ type: 'contentZoom', action: 'in' })
     expect(handlers.onFlood).not.toHaveBeenCalled()
     // The user hovers; a genuine gesture still gets through.
     setFrameHovered(true)

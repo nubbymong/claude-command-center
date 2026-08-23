@@ -9,16 +9,17 @@
 // Three of the six inbound types are paint-only (`ready`, `viewport`,
 // `pointer`): the worst a forgery does is move a highlight box, and the geometry
 // guards bound it. `contentZoom` (#368) sits between the classes: it steps the
-// pane's clamped, chrome-visible zoom ladder — it cannot reach the review store
-// or the locked selection — and is honoured only with host-side evidence the
-// frame plausibly owns the gesture (pointer hover or keyboard focus; see
-// reportedZoomIsPlausible for why not user activation). What a hostile page CAN
-// do with it is fight the user for the camera (re-zooming after every Ctrl+0)
-// and provoke the host work a zoom change triggers (a reflow, a re-anchor
-// pass); its own budget exists for exactly that — past CONTENT_ZOOM_BUDGET the
-// channel is dropped whole, and the host's resolve path holds one RPC slot at
-// most however often the zoom moves. Two MUTATE HOST STATE and are handled
-// differently here:
+// pane's clamped, chrome-visible zoom ladder — it cannot write a note, a
+// review, or the locked selection's IDENTITY — and is honoured only with
+// host-side evidence the frame plausibly owns the gesture (pointer hover or
+// keyboard focus; see reportedZoomIsPlausible for why not user activation).
+// What a hostile page CAN do with it: fight the user for the camera
+// (re-zooming after a Ctrl+0 — briefly; sustained fighting trips
+// CONTENT_ZOOM_BUDGET and drops the channel whole) and provoke the re-anchor
+// pass a real zoom would provoke — which writes page-authored, page-labelled
+// BOXES into the resolution map and the live lock, exactly as any reflow does,
+// under the pane's single-flight and per-intent attempt budget. Two MUTATE
+// HOST STATE and are handled differently here:
 //
 //   `contentKey`  clears the user's locked focus / disarms an armed marquee. It
 //                 is honoured only when the host can see for itself that the
@@ -124,18 +125,27 @@ export const INBOUND_OVERSIZE_COST = 60
  */
 /**
  * How many contentZoom intents the frame may have HONOURED per rolling window
- * (#368). The flood budget bounds message COUNT and is far too generous to
- * bound this event's EFFECT: sixty accepted intents a second is 10 % of the
- * flood budget and enough to pin the zoom at an end of the ladder faster than
- * the user can reset it, indefinitely. A human's heaviest plausible input — a
- * full-ladder sweep is ten notches, a hard continuous spin a few dozen — sits
- * well under sixty in ten seconds; a page over it is fighting the user for the
- * pane's camera on purpose, and the answer is the one the flood budget already
- * gives: stop listening to that page. Charged only for intents that PASS the
- * plausibility gate — refused forgeries never count against a page the user is
- * not even hovering.
+ * (#368). The flood budget bounds message COUNT and is too generous to bound
+ * this event's EFFECT: sixty intents a second is 10 % of the flood budget and
+ * enough to re-pin the zoom after every Ctrl+0, indefinitely.
+ *
+ * The ceiling is set the way INBOUND_FLOOD_BUDGET's is — several times the
+ * heaviest REAL rate, not just above the average one. One intent is one wheel
+ * notch (the bridge accumulates deltas to notches before relaying), a hard
+ * continuous spin is a handful of notches a second, and a free-spin wheel's
+ * flick lands a dozen-plus at once — so a frustrated user riding the clamp can
+ * genuinely produce ~100 notches in ten seconds. Three hundred is ~3× that;
+ * nothing human clears it (independent review, N2). A page that does is
+ * holding the camera against the user — a sustained ≥30/s stream — and gets
+ * the flood budget's answer: the channel drops whole. What this deliberately
+ * does NOT bound is a brief fight (a page CAN re-zoom a few times before
+ * tripping it); the chrome chip, Ctrl+0 and the drop are the answer there,
+ * and the resolve path it can provoke holds one RPC slot inside its own
+ * attempt budget regardless. Charged only for intents that PASS the
+ * plausibility gate — refused forgeries never count against a page the user
+ * is not even hovering.
  */
-export const CONTENT_ZOOM_BUDGET = 60
+export const CONTENT_ZOOM_BUDGET = 300
 export const CONTENT_ZOOM_WINDOW_MS = 10_000
 
 export const MAX_INBOUND_STRING_CHARS = 4096

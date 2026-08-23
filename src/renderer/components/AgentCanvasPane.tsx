@@ -87,6 +87,23 @@ const MAX_HOVER_REPORTING_DEFERRALS = 12
 const MAX_HOVER_REPORTING_SENDS_PER_WINDOW = 12
 const HOVER_REPORTING_SEND_WINDOW_MS = 1000
 
+/** resolveAnchors RPCs one resolution intent may spend (#368, N1). The frame
+ *  can refuse or sit on a resolve forever, and the settle-time retry would
+ *  otherwise re-arm it indefinitely — a page-controlled call rate, the exact
+ *  class MAX_HOVER_REPORTING_ATTEMPTS exists for. A new intent (zoom, version,
+ *  or note set changed) is a fresh budget. */
+const MAX_RESOLVE_ATTEMPTS = 3
+
+/** Is the user TYPING here — an editable, or xterm's helper textarea? The
+ *  zoom-chord scope test (N3): typing focus refuses the hover claim; any
+ *  other focus does not. */
+function isTypingTarget(el: Element | null): boolean {
+  if (!el) return false
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+  return (el as HTMLElement).isContentEditable === true
+}
+
 /** Wall-clock of a render, or null when the stored stamp will not parse. */
 function versionClock(iso: string): string | null {
   const ms = Date.parse(iso)
@@ -358,6 +375,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const resolvePendingRef = useRef(false)
   const resolveSkippedRef = useRef(false)
   const [resolveRetryNonce, setResolveRetryNonce] = useState(0)
+  /** The retry's attempt budget, per intent (version + zoom + note set). The
+   *  frame can refuse or never answer a resolve, and the settle-time retry
+   *  re-arms it — so without a budget a page that never complies chooses the
+   *  host's call rate forever (the same reason hover reporting carries
+   *  MAX_HOVER_REPORTING_ATTEMPTS; independent review, N1). A new intent — the
+   *  user zooming again, a version switch, a note added — is a fresh budget. */
+  const resolveIntentRef = useRef('')
+  const resolveAttemptsRef = useRef(0)
 
   const [bridgeReady, setBridgeReady] = useState(false)
   const bridgeReadyRef = useRef(false)
@@ -756,7 +781,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
       if (!root) return
       const active = document.activeElement
       let engaged = root.contains(active)
-      if (!engaged && (!active || active === document.body)) {
+      if (!engaged && !isTypingTarget(active)) {
+        // Hover claims the chord unless the user is TYPING somewhere else —
+        // an editable, or a terminal (xterm focuses a helper textarea, so the
+        // same test covers it). Focus merely resting on a button elsewhere
+        // does not un-claim a chord aimed at the hovered pane (N3).
         try {
           engaged = root.matches(':hover')
         } catch {
@@ -877,6 +906,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
       resolvedZoomRef.current = zoom
       return
     }
+    // The attempt budget belongs to ONE intent; asking about anything new is a
+    // new budget (mirrors the hover-reporting intent key above).
+    const intent = `${version.id}:${zoom}:${openNotesKey}`
+    if (resolveIntentRef.current !== intent) {
+      resolveIntentRef.current = intent
+      resolveAttemptsRef.current = 0
+    }
     // ONE resolve in flight from this effect, ever (A1). The RPC layer caps a
     // frame at four requests; without this guard a page that provokes passes
     // (zoom intents are page-relayable) and never answers them could hold all
@@ -892,23 +928,27 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     const run = async () => {
       const flat: AnchorRef[] = []
       const spans: Array<{ id: string; start: number; count: number }> = []
+      // The live focus rides FIRST: it is the thing the user is actively
+      // holding, so the anchor cap must never be what drops it. '~focus'
+      // cannot collide with a note id (ids match CANVAS_ANNOTATION_ID_RE,
+      // /^a[0-9]{1,9}$/, enforced on load) and never enters `merged` — its
+      // result goes to updateFocusBox.
+      if (liveFocusTargets) {
+        spans.push({ id: '~focus', start: 0, count: liveFocusTargets.length })
+        flat.push(...liveFocusTargets)
+      }
       for (const note of pending) {
         const targets = note.focus!.targets
         if (flat.length + targets.length > MAX_RESOLVE_ANCHORS) break
         spans.push({ id: note.id, start: flat.length, count: targets.length })
         flat.push(...targets)
       }
-      // The live focus rides along after the notes; '~focus' cannot collide
-      // with a note id (ids are uuid-shaped).
-      if (liveFocusTargets && flat.length + liveFocusTargets.length <= MAX_RESOLVE_ANCHORS) {
-        spans.push({ id: '~focus', start: flat.length, count: liveFocusTargets.length })
-        flat.push(...liveFocusTargets)
-      }
       if (flat.length === 0) {
         resolvedZoomRef.current = zoom
         return
       }
       resolvePendingRef.current = true
+      resolveAttemptsRef.current += 1
       try {
         const raw = await askCanvasFrame(target, canvasId, { type: 'resolveAnchors', anchors: flat }, 10_000)
         if (cancelled) return
@@ -937,12 +977,24 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
       } finally {
         resolvePendingRef.current = false
         // Whatever this run could not cover — a pass the in-flight guard
-        // skipped, or a zoom that moved again while it was out — gets one more
-        // look. Fires only on recorded drift or a recorded skip, so it cannot
-        // loop on a quiet pane.
+        // skipped, or a zoom that moved again while it was out — gets another
+        // look, INSIDE the intent's attempt budget. On success the drift
+        // clears and nothing fires; on failure the budget is what stops a
+        // frame that never answers from choosing the host's call rate (N1) —
+        // three attempts per intent, then the checklist keeps its ghosts
+        // until the user asks something new.
+        // A recorded skip always retries: the guard turned away a whole effect
+        // run over a HOST condition (this pass being out), possibly for a NEW
+        // intent whose budget is not this one's — the re-armed effect re-keys
+        // the intent and its own budget bounds any RPC it issues. Drift alone
+        // retries only inside this intent's budget.
         const skipped = resolveSkippedRef.current
         resolveSkippedRef.current = false
-        if (!cancelled && (skipped || resolvedZoomRef.current !== zoomRef.current)) setResolveRetryNonce((n) => n + 1)
+        const driftRetry =
+          resolvedZoomRef.current !== zoomRef.current && resolveAttemptsRef.current < MAX_RESOLVE_ATTEMPTS
+        if (!cancelled && (skipped || driftRetry)) {
+          setResolveRetryNonce((n) => n + 1)
+        }
       }
     }
     // Debounced only when the zoom moved it: rapid ladder steps supersede each
