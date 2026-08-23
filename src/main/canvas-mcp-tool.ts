@@ -584,7 +584,7 @@ export async function runCanvasRender(
         `Draft ${rendered.versionId} updated on canvas ${rendered.canvasId}. ` +
         'Nothing has surfaced to the user — no pulse, no count, and the pane keeps showing the last ready version. ' +
         'Snapshot, fix and re-render freely (each draft supersedes the last); when it is ready for their review, render again with ready: true — that ends your turn.' +
-        renderContextSuffix(rendered, deps),
+        renderContextSuffix(rendered, deps, { quiet: true }),
       isError: false,
     }
   }
@@ -624,6 +624,10 @@ function listIds(ids: readonly string[]): string {
 function renderContextSuffix(
   rendered: { canvasId: string; filed?: { canvasId: string; returnedToExisting?: boolean } },
   deps: CanvasToolDeps,
+  /** quiet = a DRAFT render (#366): the user has been told NOTHING (the
+   *  renderer stays on the canvas they were on), so the coaching must not
+   *  tell the agent to announce anything — the facts still matter to it. */
+  opts?: { quiet?: boolean },
 ): string {
   try {
     const parts: string[] = []
@@ -633,10 +637,17 @@ function renderContextSuffix(
           ? ` You named a different subject, so canvas ${rendered.filed.canvasId} was filed and this is the canvas you had already started on that subject.`
           : ` You named a different subject, so canvas ${rendered.filed.canvasId} was filed and this is a new canvas.`,
       )
+      if (opts?.quiet) {
+        parts.push(
+          ' The user has not been told: their pane stays on the canvas they were on until you mark this round ready.',
+        )
+      }
       const filedCounts = deps.getReviewCounts(rendered.filed.canvasId)
       if (filedCounts && filedCounts.draftNotes > 0) {
         parts.push(
-          ` The canvas you filed still has ${filedCounts.draftNotes} unsubmitted note(s) on it — the user was mid-review; say so rather than moving on.`,
+          opts?.quiet
+            ? ` The canvas you filed still has ${filedCounts.draftNotes} unsubmitted note(s) on it — the user may still be writing them; leave them in peace.`
+            : ` The canvas you filed still has ${filedCounts.draftNotes} unsubmitted note(s) on it — the user was mid-review; say so rather than moving on.`,
         )
         return parts.join('')
       }

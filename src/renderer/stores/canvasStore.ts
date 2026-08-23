@@ -238,6 +238,15 @@ export function setupCanvasListener(): void {
   listenerArmed = true
   window.electronAPI.canvas.onChanged((event) => {
     const store = useCanvasStore.getState()
+    // A DRAFT render surfaces NOTHING (#366) — and that means the whole
+    // listener, not just the pulse. Refreshing the mirror would move the pane
+    // onto the draft's canvas (a draft that names a new subject files the old
+    // one and repoints the session), and announcing the filing would tell the
+    // user about work they asked not to be told about. The mirror simply
+    // stays where it is: the pane keeps showing the last ready canvas and
+    // version, and the deferred filing notice fires with the ready-mark's own
+    // event, whose `prev` is still the canvas the user was on.
+    if (event.draft) return
     // The hand-back moment (spec §6 step 1): a render that lands while the
     // pane is CLOSED is news the user has not seen — pulse the Canvas button
     // until they open it. With the pane open, the surface itself shows the
@@ -246,10 +255,8 @@ export function setupCanvasListener(): void {
     // A null active version is never news: that is the shape emitted when a
     // canvas goes AWAY (deleted from the library, possibly from another
     // session's window). Pulsing there promises the owning session something
-    // new to look at and then shows it an empty pane. A DRAFT render is never
-    // news either (#366): the user has asked not to be told until the agent
-    // marks the round ready.
-    if (event.activeVersionId && !event.draft && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
+    // new to look at and then shows it an empty pane.
+    if (event.activeVersionId && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
       store.markUnseenRender(event.sessionId)
     }
     // FILING: the canvas under this session changed identity. That happens when

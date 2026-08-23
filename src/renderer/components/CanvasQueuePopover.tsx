@@ -38,10 +38,15 @@ export default function CanvasQueuePopover({ sessionId, onClose }: Props) {
       setError(null)
       if (row.canvasId !== activeCanvasId) {
         setBusy(row.canvasId)
-        // The subject picker's switch, verbatim: announce before the
-        // round-trip so the change is not reported as a filing, and cancel
-        // the announcement on any refusal so it cannot swallow a real one.
-        useCanvasStore.getState().expectSwitch(sessionId)
+        // The subject picker's switch: announce before the round-trip so the
+        // change is not reported as a filing, and cancel the announcement on
+        // any refusal so it cannot swallow a real one. Announced ONLY when the
+        // mirror holds a canvas to switch FROM — with none (the row opens a
+        // canvas onto an empty session), the change event carries no identity
+        // change, nothing would consume the expectation, and the leaked count
+        // would silence the next genuine filing notice.
+        const announced = activeCanvasId !== null
+        if (announced) useCanvasStore.getState().expectSwitch(sessionId)
         try {
           const res = await window.electronAPI.canvas.reclaim({
             sessionId,
@@ -49,13 +54,13 @@ export default function CanvasQueuePopover({ sessionId, onClose }: Props) {
             openTileSessionIds: openSessionIds ? openSessionIds.split(',') : [],
           })
           if (!res?.ok) {
-            useCanvasStore.getState().cancelExpectedSwitch(sessionId)
+            if (announced) useCanvasStore.getState().cancelExpectedSwitch(sessionId)
             setError('That canvas could not be opened here.')
             setBusy(null)
             return
           }
         } catch {
-          useCanvasStore.getState().cancelExpectedSwitch(sessionId)
+          if (announced) useCanvasStore.getState().cancelExpectedSwitch(sessionId)
           setError('That canvas could not be opened here.')
           setBusy(null)
           return

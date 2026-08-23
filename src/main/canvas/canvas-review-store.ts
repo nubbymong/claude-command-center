@@ -759,6 +759,12 @@ function validateDraft(draft: CanvasAnnotationDraft, canvas: SessionCanvas): voi
   if (!ANNOTATION_SCOPES.has(draft.scope)) throw new Error('invalid draft scope')
   if (!isCleanNote(draft.note)) throw new Error('invalid draft note')
   if (typeof draft.versionId !== 'string' || !canvas.versionIds.has(draft.versionId)) throw new Error('draft names an unknown version')
+  // A user note can only be about a version the user was SHOWN. Agent drafts
+  // (#366) are invisible by contract — and after a subject change their ids
+  // restart at v1, so an id from the pane's canvas can collide with a draft
+  // on the session's new one. Refusing here keeps a note from silently
+  // anchoring to a page the user has never seen.
+  if (canvas.draftVersionIds.includes(draft.versionId)) throw new Error('draft names a version the user has not been shown')
   if (draft.scope === 'general') {
     if (draft.focus !== undefined) throw new Error('a general note carries no focus')
   } else {
@@ -1041,14 +1047,22 @@ export function resolveAnnotation(
     nextTarget.closedBy = 'user'
     nextTarget.closedFrom = closedFrom
   } else {
-    if (!canvas.activeVersionId) throw new Error('no active version to re-annotate against')
+    // The version the re-annotation is ABOUT: the one the user is looking at.
+    // With drafts (#366) the ACTIVE version can be agent work-in-progress the
+    // pane deliberately does not show — the same rule submitReview applies, so
+    // a note minted here can never anchor to a page the user has not seen.
+    const activeIsDraft = canvas.activeVersionId !== null && canvas.draftVersionIds.includes(canvas.activeVersionId)
+    const shownVersionId = activeIsDraft
+      ? canvas.readyVersionIds[canvas.readyVersionIds.length - 1]
+      : canvas.activeVersionId
+    if (!shownVersionId) throw new Error('no active version to re-annotate against')
     let draft = draftReviewOf(next)
     if (!draft) {
       if (next.reviews.length >= MAX_REVIEWS_PER_CANVAS) throw new Error('review cap reached for this canvas')
       draft = {
         id: `R${next.nextReview}`,
         canvas: { sessionId, canvasId: canvas.canvasId },
-        versionId: canvas.activeVersionId,
+        versionId: shownVersionId,
         annotationIds: [],
         status: 'draft',
         createdAt: new Date().toISOString(),
@@ -1065,7 +1079,7 @@ export function resolveAnnotation(
       scope: nextTarget.scope,
       // The old wording carries over as the starting point for the new one.
       note: nextTarget.note,
-      versionId: canvas.activeVersionId,
+      versionId: shownVersionId,
       state: 'open',
       // The focus carries over so the new note points where the old one did;
       // the sketch does not — its glass elements belong to the old turn.

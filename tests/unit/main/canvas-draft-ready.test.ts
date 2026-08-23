@@ -171,3 +171,21 @@ describe('the library row (#364)', () => {
     expect(rows[0].awaitingReview).toBeUndefined()
   })
 })
+
+describe('drafts do not leak into the rows the user reads', () => {
+  it('a draft bumps neither the row recency, the version count, nor the mode chip', () => {
+    const ready = render('round one', true)
+    const before = store.listAllCanvases([], undefined, SID)[0]
+
+    // A uat-mode draft: the strongest leak case (it would flip the chip too).
+    store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>wip</p>', title: 'Queue states', ready: false })
+    const after = store.listAllCanvases([], undefined, SID)[0]
+
+    expect(after.versionCount).toBe(before.versionCount)
+    expect(after.lastRenderedAt).toBe(before.lastRenderedAt)
+    expect(after.latestMode).toBe(before.latestMode)
+    // ...while the owed round from the ready render stays visible.
+    expect(after.awaitingReview).toBe(true)
+    expect(ready.canvasId).toBe(after.canvasId)
+  })
+})

@@ -540,3 +540,27 @@ describe('drafts and the ready round (#366)', () => {
     expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
   })
 })
+
+describe('drafts and the notes the user can write (#366, review round 2)', () => {
+  it("a user note may not name a DRAFT version — even one whose id collides with a page they saw", () => {
+    canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>seen</p>', ready: true })
+    canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>wip</p>', ready: false })
+    const state = canvasStore.getCanvasStateForSession(SID)!
+    const draftVersion = state.versions.find((v) => v.draft)!
+    expect(() => store.upsertAnnotation(SID, elementDraft(draftVersion.id))).toThrow(/has not been shown/)
+  })
+
+  it('re-annotate anchors to the version the user SAW, not the agent draft the active id points at', () => {
+    const ready = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>round one</p>', ready: true })
+    store.upsertAnnotation(SID, elementDraft(ready.versionId))
+    store.submitReview(SID, 'R1', [])
+    store.markAnnotationsAddressed(SID, 'R1', ['a1'])
+    // The agent drafts the next round: activeVersionId moves onto the draft.
+    canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>round two wip</p>', ready: false })
+
+    const { state, reannotationId } = store.resolveAnnotation(SID, 'a1', 'reannotate', ready.canvasId)
+    const replacement = state.annotations.find((a) => a.id === reannotationId)!
+    expect(replacement.versionId).toBe(ready.versionId)
+    expect(state.reviews.find((r) => r.status === 'draft')!.versionId).toBe(ready.versionId)
+  })
+})

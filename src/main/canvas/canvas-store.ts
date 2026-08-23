@@ -759,9 +759,11 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   // whose mode is not one of the three is dropped rather than shown as a chip
   // naming whatever the file said.
   if (ver.mode !== 'uat' && ver.mode !== 'design' && ver.mode !== 'plan') return false
-  // The draft flag is OUR shape or absent — a hand-edited truthy string must
-  // not survive into a field the queue derivation reads.
-  if (ver.draft !== undefined && ver.draft !== true) return false
+  // The draft flag is a BOOLEAN or absent — a hand-edited truthy string must
+  // not survive into a field the queue derivation reads. `false` is accepted
+  // (it means what absence means), so a future writer spelling ready-ness as
+  // draft:false cannot silently destroy versions on load.
+  if (ver.draft !== undefined && typeof ver.draft !== 'boolean') return false
   // A hand-edited record must not smuggle a traversing/colon/device `entry`
   // past the live-render normalizer (the empty-path + SPA branches serve the
   // entry WITHOUT re-running the URL segment filter). distRoot containment is
@@ -1625,11 +1627,16 @@ export function listAllCanvases(
     // foreclosing is not, so own rows are always kept and the picker sorts them
     // to the top.
     if (!mine && projectCwd && record.cwd && !sameProjectDir(record.cwd, projectCwd)) continue
-    const latest = record.versions[record.versions.length - 1]
+    // Rows describe what the USER can see. Drafts (#366) are invisible by
+    // contract, so a draft must not bump the row's recency (re-sorting the
+    // picker under the user), its count, or its mode chip — the shape of
+    // invisible work must not leak into a surface the user reads.
+    const shown = record.versions.filter((v) => !v.draft)
+    const latest = shown[shown.length - 1]
     const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
     out.push({
       canvasId: record.canvasId,
-      versionCount: record.versions.length,
+      versionCount: shown.length,
       createdAt: clampToNow(record.createdAt),
       lastRenderedAt: clampToNow(latest?.createdAt ?? record.createdAt),
       ...(latest?.source.mode ? { latestMode: latest.source.mode } : {}),

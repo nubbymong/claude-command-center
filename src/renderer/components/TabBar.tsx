@@ -44,10 +44,14 @@ function displayNameOf(s: { customName?: string; label: string }): string {
 function TabCanvasQueueMark({ sessionId }: { sessionId: string }) {
   const queue = useCanvasQueue(sessionId)
   const totalsLoaded = useCanvasTotalsStore((s) => !!s.bySessionId[sessionId]?.loaded)
-  const refreshTotals = useCanvasTotalsStore((s) => s.refresh)
+  const scheduleRefresh = useCanvasTotalsStore((s) => s.scheduleRefresh)
+  // Debounced, not immediate: every tab hydrates its own session's sweep and
+  // each sweep is synchronous file reads in main, so a window full of tabs
+  // must coalesce with the push-driven refreshes instead of stampeding at
+  // mount. Boot-time cost is bounded (canvases per session are capped).
   React.useEffect(() => {
-    if (!totalsLoaded) void refreshTotals(sessionId)
-  }, [sessionId, totalsLoaded, refreshTotals])
+    if (!totalsLoaded) scheduleRefresh(sessionId)
+  }, [sessionId, totalsLoaded, scheduleRefresh])
   if (queue === 0) return null
   return (
     <span

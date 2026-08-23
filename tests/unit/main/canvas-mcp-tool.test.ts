@@ -997,7 +997,7 @@ describe('canvas_render -- the ready flag (#366)', () => {
   it('the ready flag rides the uat mode too', async () => {
     const reached: unknown[] = []
     const out = await runCanvasRender(
-      { mode: 'uat', distRoot: 'C:\proj\dist', ready: false },
+      { mode: 'uat', distRoot: 'C:/proj/dist', ready: false },
       'sess-mine',
       deps({
         renderVersion: (_s, src) => {

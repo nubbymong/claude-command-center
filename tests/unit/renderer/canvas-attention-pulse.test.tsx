@@ -78,6 +78,32 @@ describe('unseen-render tracking (#366)', () => {
     expect(useCanvasStore.getState().bySessionId[SID]?.unseenRender ?? false).toBe(false)
   })
 
+  it('a draft that CHANGES SUBJECT surfaces nothing either: no filing notice, no mirror move, deferred to the ready-mark', () => {
+    // The user is on canvas c1; the agent starts drafting a NEW subject, which
+    // files c1 store-side and repoints the session at c2. The renderer must
+    // stay silent AND stay put — the filing is announced by the ready-mark's
+    // own event, whose prev is still the canvas the user was on.
+    useCanvasStore.setState({
+      bySessionId: {
+        [SID]: {
+          canvasId: 'c1', versions: [], activeVersionId: 'v1',
+          interactionMode: 'browse', emptyView: 'intro', unseenRender: false, loaded: true,
+        },
+      },
+    })
+    getState.mockClear()
+    act(() => { onChangedCb?.({ sessionId: SID, canvasId: 'c2', activeVersionId: 'v1', draft: true }) })
+    const afterDraft = useCanvasStore.getState().bySessionId[SID]
+    expect(afterDraft.filedNotice ?? null).toBeNull()
+    expect(afterDraft.canvasId, 'the mirror must not follow a draft').toBe('c1')
+    expect(getState, 'no refresh on a draft event').not.toHaveBeenCalled()
+
+    // The ready-mark arrives as an ordinary event on c2: NOW the filing of c1
+    // is announced, from the prev the mirror faithfully kept.
+    act(() => { onChangedCb?.({ sessionId: SID, canvasId: 'c2', activeVersionId: 'v1' }) })
+    expect(useCanvasStore.getState().bySessionId[SID].filedNotice).toMatchObject({ canvasId: 'c1' })
+  })
+
   it('clears on demand and stays cleared', () => {
     useCanvasStore.getState().markUnseenRender(SID)
     useCanvasStore.getState().clearUnseenRender(SID)
