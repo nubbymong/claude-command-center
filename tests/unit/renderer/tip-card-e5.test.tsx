@@ -326,6 +326,16 @@ describe('tip card -- the "stop showing me this" actions live under the header â
     expect(closed).toBeGreaterThanOrEqual(1)
   })
 
+  it('Escape closes the open menu first, the card only on the next press', () => {
+    open()
+    act(() => { (q('tip-card-overflow') as HTMLButtonElement).click() })
+    act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    expect(q('tip-card-overflow-menu')).toBeNull()
+    expect(closed, 'the first Escape must only close the menu').toBe(0)
+    act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    expect(closed).toBe(1)
+  })
+
   it('the menu closes on mousedown, not on click, and never closes the card', () => {
     open()
     act(() => { (q('tip-card-overflow') as HTMLButtonElement).click() })

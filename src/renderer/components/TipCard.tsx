@@ -153,17 +153,29 @@ export default function TipCard({ onClose, onNavigate, sidebarCollapsed }: Props
   // anything), but YIELD whenever a real modal is on screen. The card never
   // sets aria-modal, so the query cannot match the card itself; it is the
   // same marker TerminalView uses for its own focus arbitration.
+  //
+  // Known limit of the marker: overlays that are not aria-modal (the command
+  // bar's popovers, band menus, the guided tour) still lose one Escape to the
+  // card while it is open -- the key closes the card, a second reaches them.
+  // Extending the query to menus would self-match the card's own ⋯ menu, so
+  // the trade stays as-is; a menu-first check keeps the card's own menu sane.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (document.querySelector('[aria-modal="true"]')) return
       e.stopImmediatePropagation()
       e.preventDefault()
+      // Standard menu semantics: with the ⋯ menu open, Escape closes the
+      // menu, and only the next one closes the card.
+      if (overflowOpen) {
+        setOverflowOpen(false)
+        return
+      }
       onClose()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [onClose])
+  }, [onClose, overflowOpen])
 
   // Keep the card pinned to the pill: window resizes move the bottom edge, and
   // the ResizeObserver tracks the expanded pill shrinking or growing with the
