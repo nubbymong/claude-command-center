@@ -29,9 +29,9 @@ describe('the env variable name', () => {
 })
 
 describe('the reference the button types', () => {
-  it('is $env:NAME on Windows and a quoted "$NAME" on POSIX', () => {
+  it('is a BRACED, unquoted core on both platforms -- quoting is decided per word', () => {
     expect(commandSecretRef('abc', true)).toBe('${env:CCC_CMD_SECRET_abc}')
-    expect(commandSecretRef('abc', false)).toBe('"$CCC_CMD_SECRET_abc"')
+    expect(commandSecretRef('abc', false)).toBe('${CCC_CMD_SECRET_abc}')
   })
 
   it('is null for an id that has no valid name', () => {
@@ -56,14 +56,38 @@ describe('buildCommandLine — the ONE rule for what gets typed', () => {
   it('replaces {secret} in the arguments with the reference, every occurrence', () => {
     const ref = commandSecretRef('abc', true)!
     expect(buildCommandLine('curl', ['-H', `Authorization: ${COMMAND_SECRET_TOKEN}`], ref))
-      .toBe('curl -H Authorization: ${env:CCC_CMD_SECRET_abc}')
+      .toBe('curl -H Authorization: "${env:CCC_CMD_SECRET_abc}"')
     expect(buildCommandLine('x', ['{secret}{secret}'], ref))
-      .toBe('x ${env:CCC_CMD_SECRET_abc}${env:CCC_CMD_SECRET_abc}')
+      .toBe('x "${env:CCC_CMD_SECRET_abc}${env:CCC_CMD_SECRET_abc}"')
   })
 
-  it('never touches the prompt itself -- the secret is an ARGUMENT', () => {
+  /**
+   * #371 — this used to assert the opposite ("never touches the prompt itself
+   * -- the secret is an ARGUMENT"). A secret can only exist on a SHELL button:
+   * the toggle is not offered for a prompt or a page, and a stored value is
+   * dropped when one is converted. On a shell button that first field is not a
+   * prompt — it is labelled "Command to run" and typed into the terminal
+   * exactly as written — so `curl -H "Bearer {secret}"`, the natural way to
+   * write a whole invocation, put the literal token into the user's shell.
+   */
+  it('substitutes {secret} in the command line as well as the arguments', () => {
     const ref = commandSecretRef('abc', true)!
-    expect(buildCommandLine('echo {secret}', ['x'], ref)).toBe('echo {secret} x')
+    expect(buildCommandLine('echo {secret}', ['x'], ref)).toBe('echo "${env:CCC_CMD_SECRET_abc}" x')
+    expect(buildCommandLine('curl -H "Bearer {secret}"', [], ref))
+      .toBe('curl -H "Bearer ${env:CCC_CMD_SECRET_abc}"')
+  })
+
+  it('cannot reach a Claude prompt: with no reference the token stays literal', () => {
+    // `commandSecretRef` is null for anything that is not a shell button with a
+    // stored secret, so a prompt is untouchable through this path.
+    expect(buildCommandLine('echo {secret}', ['x'])).toBe('echo {secret} x')
+    expect(buildCommandLine('echo {secret}', ['x'], null)).toBe('echo {secret} x')
+  })
+
+  it('a command is empty only because nothing was typed, never because a token collapsed', () => {
+    const ref = commandSecretRef('abc', true)!
+    expect(buildCommandLine('', ['x'], ref)).toBe('')
+    expect(buildCommandLine('   ', ['x'], ref)).toBe('')
   })
 
   it('leaves the token alone when there is no reference to substitute', () => {

@@ -117,6 +117,87 @@ describe('reviewCommandsForUpgrade -- tagged, never changed', () => {
     const before = [cmd({ id: 'r', target: 'partner', defaultArgs: ['-Env', 'prod'], lastCustomArgs: ['-Token', 'ghp_abcdefghijklmnopqrstuvwxyz0123'] })]
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
   })
+  /**
+   * #371 — a shell button's own command line was the one typed field never
+   * scanned. On a shell button that field is not a prompt; it is the line typed
+   * into the terminal, and a whole invocation with a token in it is the most
+   * natural thing to write there.
+   */
+  it('scans a SHELL button\'s command line, not just its arguments', () => {
+    const before = [cmd({ id: 'sh', kind: 'shell', target: 'partner', prompt: 'curl -H "Bearer ghp_abcdefghijklmnopqrstuvwxyz0123"' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
+  })
+  /**
+   * #371 review MAJOR-3. `looksLikeSecretArg` judges ONE chip, and its
+   * `(^|[-/])` branch exists for `--token` / `/Token`. Fed the words of a whole
+   * command line it matched the last segment of any URL or path, and
+   * HIGH_ENTROPY's charset includes `/` and `-` so long paths matched too.
+   *
+   * The review ran these exact lines against the predicate and every one was
+   * TAGGED. The review runs once per install, so each was a permanent banner on
+   * a healthy button — training the user to dismiss the one banner that has to
+   * carry a real plaintext token when one turns up.
+   */
+  it.each([
+    'curl https://api.example.com/auth',
+    'git push origin feature/auth',
+    'docker run -v /var/lib/pat:/pat busybox',
+    'cd /srv/deployments/release-2026-08-22-abcdef123456',
+    'npm run build && cp dist/token.js out/',
+    // Round two (ADR-009 pass): bare credential-ish WORDS are ordinary
+    // subcommands and program names on a command line, and were all tagged.
+    'gh auth status',
+    'kubectl get secret',
+    'git push origin auth',
+    'pwd',
+    'aws secretsmanager list-secrets',
+    'ssh-add -l',
+  ])('does not tag an ordinary shell line: %s', (line) => {
+    const before = [cmd({ id: 'sh', kind: 'shell', target: 'partner', prompt: line })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)
+  })
+
+  /**
+   * The path/URL filter used to run BEFORE the credential-flag test, so a real
+   * plaintext credential whose value contains a `/` — ordinary base64 — was
+   * discarded as a path and never tagged (#371, ADR-009 re-verification).
+   */
+  it.each([
+    'curl --token=aB3xY/9kQ2mNp7Rw',
+    'deploy --api-key=cD4/zE8wR1tY6uI0oP',
+    'run /Token:mN2/qW5eR8tY1uI4',
+  ])('still tags a credential flag whose VALUE contains a slash: %s', (line) => {
+    const before = [cmd({ id: 'sh', kind: 'shell', target: 'partner', prompt: line })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
+  })
+
+  it('still tags a REAL credential sitting next to a path or a URL', () => {
+    const before = [cmd({
+      id: 'sh',
+      kind: 'shell',
+      target: 'partner',
+      prompt: 'curl https://api.example.com/auth -H "Bearer ghp_abcdefghijklmnopqrstuvwxyz0123"',
+    })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
+  })
+
+  it('scans a legacy config-scoped button on a terminal-only config (effectiveKind widens it to shell)', () => {
+    const before = [cmd({ id: 'lg', scope: 'config', configId: 'termCfg', prompt: 'deploy --api-key=AKIAABCDEFGHIJKLMNOP' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toContain('secret-like-arg')
+  })
+
+  it('does not scan a PROMPT button\'s text -- a prompt is prose, and no reference is ever typed into one', () => {
+    const before = [cmd({ id: 'pr', scope: 'config', configId: 'claudeCfg', prompt: 'explain the --password flag to me' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)
+  })
+  it('scans a legacy shell button too -- written before `kind` existed, a partner target is what made it one', () => {
+    const before = [cmd({ id: 'legacy', target: 'partner', prompt: 'deploy --api-key=AKIAABCDEFGHIJKLMNOP' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['secret-like-arg'])
+  })
+  it('does not tag a shell button whose command line already carries the token', () => {
+    const before = [cmd({ id: 'sh2', kind: 'shell', target: 'partner', hasSecretArg: true, prompt: 'curl -H "Bearer {secret}"' })]
+    expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })).toBe(before)
+  })
   it('tags a Global prompt button when the user has a terminal-only config, and not otherwise', () => {
     const before = [cmd({ id: 'p', scope: 'global' })]
     expect(reviewCommandsForUpgrade(before, { configs, dissolvedCommandIds: none })[0].needsReview).toEqual(['prompt-inert-on-shell-configs'])

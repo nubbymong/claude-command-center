@@ -54,11 +54,47 @@ describe('askPromptRef', () => {
     expect(askPromptRef(false)).toBe('"$CCC_ASK_PROMPT"')
   })
 
-  it('follows the same shape as the secret reference it is modelled on', () => {
-    // If secretRef's quoting rule is ever revised, this pairing should be
-    // revisited together rather than drifting apart silently.
-    expect(askPromptRef(true).startsWith('$env:')).toBe(secretRef(true).startsWith('$env:'))
-    expect(askPromptRef(false).startsWith('"$')).toBe(secretRef(false).startsWith('"$'))
+  /**
+   * This pairing existed so the two references could not drift apart silently,
+   * and in #371 it caught the revision it was written for. They now differ ON
+   * PURPOSE, and the difference is the point:
+   *
+   * `secretRef` became BRACED (`${env:NAME}`) because `{secret}` is written by
+   * the user INSIDE their own text, so it can end up adjacent to another
+   * character — `{secret}.json`, `{secret}_v2`, `--token={secret}` — and a bare
+   * reference lets that character run into the variable name.
+   *
+   * `askPromptRef` is only ever emitted by the app itself, in one place, as a
+   * standalone token followed by `;`
+   * (`& 'claude' -- $env:CCC_ASK_PROMPT; exit`). Nothing can be written next to
+   * it, so the bare form has no way to be wrong here.
+   *
+   * What must still hold is the POSIX quoting, which is what keeps a value with
+   * spaces or globs one argument in both cases.
+   */
+  /**
+   * They now differ on BOTH platforms, deliberately, and this caught the second
+   * change too (#371, review of #408).
+   *
+   * `secretRef` is a bare, unquoted, braced CORE on both platforms, because
+   * `{secret}` is written inside text the user wrote: the quoting has to be
+   * decided from the surrounding word (`substituteSecretToken`), and a
+   * pre-quoted reference is only ever correct for a token that stands alone.
+   * Substituted inside the user's own quotes it nested wrongly and left the
+   * expansion unquoted — measured in bash as a word-split, glob-expanded value.
+   *
+   * `askPromptRef` is emitted by the app itself, in one place, as a standalone
+   * trailing token followed by `;`. Nothing can be written next to it, so it
+   * keeps the self-contained form — bare on Windows, quoted on POSIX, which is
+   * what makes a spaced question one argument there.
+   */
+  it('is self-contained, where the secret reference is a core to be quoted in context', () => {
+    expect(askPromptRef(false)).toBe('"$CCC_ASK_PROMPT"')
+    expect(askPromptRef(true)).toBe('$env:CCC_ASK_PROMPT')
+    // The secret's core carries no quotes of its own, on either platform.
+    expect(secretRef(true)).toBe('${env:CCC_ARG_SECRET}')
+    expect(secretRef(false)).toBe('${CCC_ARG_SECRET}')
+    expect(secretRef(false).startsWith('"')).toBe(false)
   })
 })
 

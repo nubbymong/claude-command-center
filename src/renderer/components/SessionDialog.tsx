@@ -8,7 +8,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { modelGroupsFromRegistry, effortsForModel, PERMISSION_MODES } from '../lib/claude-cli-options'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
-import { secretValueProblem } from '../../shared/command-secret'
+import { secretValueProblem, secretPlacementProblem } from '../../shared/command-secret'
 import { DialogOverlay, DialogPanel, DialogHeader, DialogFooter, DialogButton, ON_BRAND } from './ui/Dialog'
 
 export type SessionType = 'local' | 'ssh'
@@ -318,6 +318,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     if (uiProvider === 'terminal' && sessionType === 'local' && secretArg) {
       const problem = secretValueProblem(secretArg, window.electronPlatform === 'win32')
       if (problem) return problem
+    }
+    // A {secret} written where no reference form is safe (just outside a closed
+    // quote, inside single quotes, or as the command itself) is left LITERAL at
+    // launch rather than substituted — the ADR-009 pass measured the alternative
+    // leaking the value into its own argv entry. Say so here, or the user only
+    // finds out when the command fails. (#371)
+    if (uiProvider === 'terminal' && sessionType === 'local') {
+      const placement =
+        secretPlacementProblem(termCommand, { isCommandLine: true }) ?? secretPlacementProblem(termArgs)
+      if (placement) return placement
     }
     // Required only where the folder is load-bearing: an agent session reads and
     // edits files there, and it's the folder transcripts get filed under. A
@@ -1027,7 +1037,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         <p className="text-[11px] text-[var(--text-muted)]">
                           <span className="text-[var(--status-success)]">🔒</span> Kept in your OS keychain, never written to the
                           config file. Type <span className="font-mono text-[var(--text-secondary)]">{'{secret}'}</span> in
-                          Arguments to use it.
+                          the command or Arguments to use it.
+                          {window.electronPlatform === 'win32' && <> A value longer than about 8,000 characters will not reach a tool
+                          launched through a <span className="font-mono text-[var(--text-secondary)]">.cmd</span> wrapper
+                          (most <span className="font-mono text-[var(--text-secondary)]">npm</span>-installed tools) — a limit
+                          of the Windows command line itself.</>}
                         </p>
                         {storedSecret && (
                           <button

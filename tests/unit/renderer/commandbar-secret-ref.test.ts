@@ -74,7 +74,7 @@ describe('what a secret-bearing button types', () => {
     click('Deploy')
     expect(ptyWrite).toHaveBeenCalledTimes(1)
     const [, text] = ptyWrite.mock.calls[0]
-    expect(text).toBe('./deploy.ps1 -Env prod -Token ${env:CCC_CMD_SECRET_abc123}\r')
+    expect(text).toBe('./deploy.ps1 -Env prod -Token "${env:CCC_CMD_SECRET_abc123}"\r')
   })
 
   it('never types the literal token for a secret-bearing command', () => {

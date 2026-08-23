@@ -93,6 +93,57 @@ const FLAG_NAME = /(^|[-/])(token|secret|password|passwd|pwd|api[-_]?key|apikey|
 const KEY_SHAPED = /^(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{12,}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/
 const HIGH_ENTROPY = /^[A-Za-z0-9+/_=-]{32,}$/
 
+/**
+ * A word that is a URL or a filesystem path, and so is not a credential however
+ * much its last segment looks like one (#371).
+ *
+ * A Windows-style flag (`/Token:abc`) is deliberately NOT caught: its only
+ * slash is the leading one. Anything with a scheme, a backslash, a drive
+ * prefix, or a slash anywhere other than position 0 is a path.
+ */
+function looksLikePathOrUrl(word: string): boolean {
+  if (word.includes('://')) return true
+  if (word.includes('\\')) return true
+  if (/^[A-Za-z]:[\\/]/.test(word)) return true
+  return word.indexOf('/', 1) > 0
+}
+
+/**
+ * Does this WORD of a shell command line carry a plaintext credential?
+ *
+ * Stricter than `looksLikeSecretArg`, which judges an argument CHIP. Its
+ * `FLAG_NAME` accepts a bare credential-ish word at start-of-string — right for
+ * a chip like `Token=abc`, wrong for a command line, where `auth`, `secret` and
+ * `pwd` are ordinary subcommands and program names:
+ *
+ *   gh auth status · kubectl get secret · git push origin auth · pwd
+ *
+ * All four were tagged (ADR-009 pass). The review banner fires ONCE per install,
+ * so each false positive is a permanent banner on a healthy button — and it
+ * teaches the user to dismiss the one banner that has to carry a real token.
+ *
+ * So on a command line a word only counts when it is a FLAG carrying a
+ * credential name (`--token=…`, `/Token:…`), or is itself key-shaped or
+ * high-entropy. A bare English word never does.
+ */
+function looksLikeSecretWordInShellLine(word: string): boolean {
+  const w = (word ?? '').trim()
+  if (!w || w.includes(COMMAND_SECRET_TOKEN)) return false
+  // The FLAG test runs FIRST, because a credential-named flag is never a path
+  // whatever its VALUE looks like: running the path/URL filter first meant
+  // `--token=aB3xY/9kQ2mNp7Rw` (ordinary base64) was discarded as a path and
+  // never tagged (#371, ADR-009 re-verification).
+  //
+  // "Flag" has to be precise, though. A leading `/` is a Windows switch
+  // (`/Token:abc`) AND the start of every POSIX absolute path — so a switch is
+  // one segment with an optional `:value`, and `/var/lib/pat:/pat` is not one.
+  const isFlag = /^-/.test(w) || /^\/[A-Za-z][\w-]*(:.*)?$/.test(w)
+  if (isFlag) return looksLikeSecretArg(w)
+  if (looksLikePathOrUrl(w)) return false
+  // Not a flag: only the VALUE shapes count, never the name shapes.
+  return KEY_SHAPED.test(w) || (HIGH_ENTROPY.test(w) && /[A-Za-z]/.test(w) && /[0-9]/.test(w))
+}
+
 /** Does this argument look like it carries a credential in plain text? */
 export function looksLikeSecretArg(arg: string): boolean {
   const a = (arg ?? '').trim()
@@ -196,7 +247,41 @@ export function reviewCommandsForUpgrade(
     const isPage = c.kind === 'page'
     const isPrompt = !isPage && (c.target ?? 'claude') === 'claude'
     // Remembered (Ctrl+click) arguments are typed too, so they are scanned too.
-    if (!isPage && !c.hasSecretArg && [...(c.defaultArgs ?? []), ...(c.lastCustomArgs ?? [])].some(looksLikeSecretArg)) reasons.push('secret-like-arg')
+    // So is a SHELL button's command line (#371): on a shell button that field
+    // is not a prompt, it is the line typed into the terminal, and a whole
+    // invocation with a token in it is the most natural thing to write there —
+    // `curl -H "Bearer ghp_..."`. It was the one typed field never scanned.
+    // A record written before `kind` existed carries no kind, and a partner
+    // target is what made it a shell line then — the same widening
+    // `effectiveKind` does, minus the parts that need a live session.
+    // Mirrors `effectiveKind`'s session-independent branches: an explicit
+    // 'shell' kind; a legacy record with no kind whose partner target is what
+    // made it one; and a legacy config-scoped record on a terminal-only config,
+    // which `effectiveKind` also widens to 'shell' and which `ctx.configs`
+    // already carries the `shellOnly` fact for.
+    const isShellLine =
+      !isPage &&
+      (c.kind === 'shell' ||
+        (!c.kind &&
+          (c.target === 'partner' ||
+            (c.scope === 'config' && ctx.configs.some((cfg) => cfg.id === c.configId && cfg.shellOnly)))))
+    // Split into words: `looksLikeSecretArg` judges ONE argument (its key-shape
+    // and entropy rules are anchored), so handing it a whole command line would
+    // match nothing. The words are what the chips would have been — minus the
+    // ones that are plainly a URL or a path, which `looksLikeSecretArg` was
+    // never meant to judge and gets wrong (#371):
+    //   curl https://api.example.com/auth   -> matched on ".../auth"
+    //   git push origin feature/auth        -> matched on "feature/auth"
+    //   docker run -v /var/lib/pat:/pat …   -> matched on the volume spec
+    // Those are sticky one-shot banners on healthy buttons, and a banner the
+    // user learns to dismiss is worse than no banner: it is the same banner
+    // that has to carry a REAL plaintext token when one turns up.
+    const shellLineHasSecret = isShellLine && (c.prompt ?? '').split(/\s+/).some(looksLikeSecretWordInShellLine)
+    if (
+      !isPage &&
+      !c.hasSecretArg &&
+      (shellLineHasSecret || [...(c.defaultArgs ?? []), ...(c.lastCustomArgs ?? [])].some(looksLikeSecretArg))
+    ) reasons.push('secret-like-arg')
     if (isPrompt && c.scope === 'global' && anyShellConfig) reasons.push('prompt-inert-on-shell-configs')
     if (ctx.dissolvedCommandIds.has(c.id)) reasons.push('section-dissolved')
     if (!isPage && c.target === 'partner' && c.scope === 'config' && c.configId && sshConfigIds.has(c.configId)) reasons.push('ssh-partner-is-local')

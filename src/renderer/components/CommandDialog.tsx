@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { CustomCommand, CommandSection, CommandReviewReason, useCommandStore } from '../stores/commandStore'
 import { generateId } from '../utils/id'
-import { buildCommandLine, commandSecretRef, COMMAND_SECRET_TOKEN, secretValueProblem } from '../../shared/command-secret'
+import { buildCommandLine, commandSecretRef, COMMAND_SECRET_TOKEN, secretValueProblem, secretPlacementProblem } from '../../shared/command-secret'
 import { normaliseBrowserInput } from '../../shared/browser-url'
 import { sessionCapabilities, describeTarget, type SessionCapabilities, type CommandTarget } from '../lib/session-capabilities'
 import { swatchesFor, DEFAULT_COMMAND_COLOR } from '../lib/command-swatches'
@@ -245,10 +245,19 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
   // here, because the app cannot rewrite a secret. One rule, shared with the
   // terminal config's secret argument: shared/command-secret.secretValueProblem.
   const secretProblem = secretOn && secretValue.length > 0 ? secretValueProblem(secretValue, isWin) : null
+  // Where the token SITS matters as much as what the value is: a {secret} just
+  // outside a closed quote, inside single quotes, or in the command position has
+  // no safe reference form, so it is left literal at launch rather than
+  // substituted (the ADR-009 pass measured the alternative putting the value in
+  // its own argv entry). Tell the user here instead of letting the command fail
+  // mysteriously. (#371)
+  const placementProblem = secretOn
+    ? secretPlacementProblem(prompt, { isCommandLine: true }) ?? defaultArgs.map((a) => secretPlacementProblem(a)).find(Boolean) ?? null
+    : null
   // A secret that is switched on must HAVE a value: stored already, or typed now
   // (not whitespace), and a typed value must be one the shell can carry.
   const typedSecret = secretValue.trim().length > 0
-  const secretReady = !secretOn || ((storedSecret || typedSecret) && !secretProblem)
+  const secretReady = !secretOn || ((storedSecret || typedSecret) && !secretProblem && !placementProblem)
   const canSubmit = !!kind && !!label.trim() && secretReady && (kind === 'page' ? !!pageUrl.trim() : !!prompt.trim())
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -579,6 +588,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                                   data-testid="command-secret-value"
                                 />
                                 {secretProblem && <p className="mt-1 text-[10.5px]" style={{ color: 'var(--status-danger)' }} role="alert" data-testid="command-secret-problem">{secretProblem}</p>}
+                                {placementProblem && <p className="mt-1 text-[10.5px]" style={{ color: 'var(--status-danger)' }} role="alert" data-testid="command-secret-placement-problem">{placementProblem}</p>}
                                 {/* Same mechanism a terminal config's secret argument already
                                     uses, and for the same reason: the shell writes every
                                     submitted line to disk (PSReadLine), so the value must
@@ -590,7 +600,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                                     <b style={{ color: 'var(--text-primary)' }}>Mark an argument secret</b> and its value goes to the OS keychain. The button passes a reference the shell expands, so the value never appears in the command line and never reaches your shell history. Write <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{COMMAND_SECRET_TOKEN}</span> where the value belongs, e.g. <span className="font-mono" style={{ color: 'var(--text-primary)' }}>-Token {COMMAND_SECRET_TOKEN}</span>.
                                     {' '}The button types {isWin ? <span className="font-mono">{'${env:NAME}'}</span> : <span className="font-mono">"$NAME"</span>} ({isWin ? 'PowerShell' : 'bash, zsh'}); a shell of another kind, such as {isWin ? 'cmd.exe or WSL' : 'PowerShell or nushell'}, will not expand it.
                                     {' '}A shell that is already open does not have it yet -- restart the shell after saving.
-                                    {isWin && <> On Windows the value cannot contain a double quote or <span className="font-mono">&amp; | ^ &lt; &gt; %</span>, or end with a backslash -- PowerShell cannot pass those to a command intact.</>}
+                                    {isWin && <> On Windows the value cannot contain a double quote or <span className="font-mono">&amp; | ^ &lt; &gt; %</span>, or end with a backslash -- PowerShell cannot pass those to a command intact. A value longer than about 8,000 characters will not reach a tool launched through a <span className="font-mono">.cmd</span> wrapper (most <span className="font-mono">npm</span>-installed tools), which is a limit of the Windows command line itself.</>}
                                   </span>
                                 </div>
                               </div>
