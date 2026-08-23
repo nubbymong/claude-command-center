@@ -389,22 +389,26 @@ describe('WatchdogManager — feedData debounce', () => {
   // #418: the styled read. The placeholder in an empty input arrives as SGR
   // dim (\x1b[2m); getTailNonDim() blanks those cells so the send gate can
   // tell the empty prompt wearing a hint from a real draft.
-  it('getTailNonDim blanks DIM cells and stays line-aligned with getTail', () => {
+  it('getTailNonDim blanks the REAL placeholder render — inverse cursor block + dim tail', () => {
     const { host } = makeHost()
     const mgr = new WatchdogManager(host)
     mgr.startWatchdog('s1', { provider: 'claude' })
     const wd = instances[0]
 
+    // The exact shape claude.exe emits for a focused empty input wearing a
+    // placeholder: the FIRST character is the cursor (SGR 7 inverse), the rest
+    // is dim (#418 review BLOCKER — a dim-only mask left '❯ P' and the gate
+    // still deferred forever).
     mgr.feedData(
       's1',
-      'Claude usage limit reached. Your limit resets at 4:30pm.\r\n❯ \x1b[2mPress up to edit queued messages\x1b[22m\r\n  footer',
+      'Claude usage limit reached. Your limit resets at 4:30pm.\r\n❯ \x1b[7mP\x1b[27m\x1b[2mress up to edit queued messages\x1b[22m\r\n  footer',
     )
     vi.advanceTimersByTime(50)
 
     const text = wd.adapter.getTail() as string
     const nonDim = wd.adapter.getTailNonDim() as string
     expect(text).toContain('Press up to edit queued messages')
-    expect(nonDim).not.toContain('Press up')
+    expect(nonDim).not.toContain('P')
     expect(nonDim.split('\n').length).toBe(text.split('\n').length)
     // The caret row carries no ink after the caret in the styled read…
     const caretRow = nonDim.split('\n').find((l) => l.includes('❯'))!
@@ -412,6 +416,43 @@ describe('WatchdogManager — feedData debounce', () => {
     // …while non-dim rows come through intact.
     expect(nonDim).toContain('usage limit reached')
     expect(nonDim).toContain('footer')
+  })
+
+  it('getTailNonDim blanks the empty-input inverse-space cursor and dim WIDE glyphs', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    const wd = instances[0]
+
+    // Row 1: empty input, cursor = inverse space. Row 2: a dim wide-glyph
+    // hint (each glyph spans two cells; the hidden tail cell must be skipped,
+    // and each dim glyph must still blank to at least one space).
+    mgr.feedData('s1', '❯ \x1b[7m \x1b[27m\r\n❯ \x1b[2m你好\x1b[22m\r\n  footer')
+    vi.advanceTimersByTime(50)
+
+    const nonDim = (wd.adapter.getTailNonDim() as string).split('\n')
+    const text = (wd.adapter.getTail() as string).split('\n')
+    expect(nonDim.length).toBe(text.length)
+    expect(nonDim[0].trim()).toBe('❯')
+    expect(nonDim[1].trim()).toBe('❯')
+    expect(text[1]).toContain('你好')
+  })
+
+  it('getTailNonDim preserves COLUMNS across empty cells — ink lands where the raw row shows it', () => {
+    const { host } = makeHost()
+    const mgr = new WatchdogManager(host)
+    mgr.startWatchdog('s1', { provider: 'claude' })
+    const wd = instances[0]
+
+    // A dim glyph at column 0, a cursor jump, then non-dim text at column 7.
+    // The gate's ink check is BY COLUMN, so the untouched cells in between
+    // must serialize as spaces, never collapse.
+    mgr.feedData('s1', '\x1b[2m❯\x1b[22m\x1b[8Gdraft\r\n  footer')
+    vi.advanceTimersByTime(50)
+
+    const nonDim = (wd.adapter.getTailNonDim() as string).split('\n')
+    expect(nonDim[0].indexOf('draft')).toBe(7)
+    expect(nonDim[0].slice(0, 7).trim()).toBe('')
   })
 
   it('getTailNonDim keeps NON-dim input text — a real draft is never blanked', () => {

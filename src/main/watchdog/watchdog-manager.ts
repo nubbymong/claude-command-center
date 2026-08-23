@@ -239,7 +239,7 @@ interface Entry {
  *  coexisted with a live rate limit. `nonDim` is the same rows with every dim
  *  cell blanked to a space, trimmed in LOCKSTEP with `text` so the two stay
  *  aligned line-for-line (canSendNow ignores the styled read if they are not). */
-function readPanePair(term: Terminal, maxLines: number): { text: string; nonDim: string } {
+function readPanePair(term: Terminal, maxLines: number, withNonDim: boolean): { text: string; nonDim: string } {
   const buf = term.buffer.active
   const total = buf.length
   const start = Math.max(0, total - maxLines)
@@ -254,13 +254,24 @@ function readPanePair(term: Terminal, maxLines: number): { text: string; nonDim:
       continue
     }
     out.push(line.translateToString(true))
+    if (!withNonDim) {
+      outNonDim.push('')
+      continue
+    }
     let masked = ''
     for (let x = 0; x < line.length; x++) {
       const cell = line.getCell(x, work)
       if (!cell) continue
       if (cell.getWidth() === 0) continue // the hidden tail cell of a wide glyph
       const chars = cell.getChars()
-      if (cell.isDim()) masked += ' '.repeat(Math.max(1, chars.length))
+      // INVERSE is masked alongside dim (#418 review BLOCKER): the focused
+      // empty input renders its cursor as an inverse block OVER the
+      // placeholder's first character (claude.exe: i(e[0]) + dim(e.slice(1))),
+      // so a dim-only mask left `❯ P` and the gate still deferred forever.
+      // The inverse cell is the cursor, not draft ink. An empty cell keeps a
+      // SPACE, never '', so masked columns stay aligned with the raw row —
+      // the gate's ink check is by column.
+      if (cell.isDim() || cell.isInverse()) masked += ' '.repeat(Math.max(1, chars.length))
       else masked += chars.length > 0 ? chars : ' '
     }
     outNonDim.push(masked.replace(/\s+$/, ''))
@@ -440,11 +451,14 @@ export class WatchdogManager {
     const adapter: WatchdogAdapter = {
       getTail: () => {
         const e = this.entries.get(sessionId)
-        return e ? readPanePair(e.term, TAIL_MAX_LINES).text : ''
+        // No masked build here: getTail runs on every debounced feed, and the
+        // cell walk costs ~2.5x translateToString. The styled read happens
+        // only at send-gate time below.
+        return e ? readPanePair(e.term, TAIL_MAX_LINES, false).text : ''
       },
       getTailNonDim: () => {
         const e = this.entries.get(sessionId)
-        return e ? readPanePair(e.term, TAIL_MAX_LINES).nonDim : ''
+        return e ? readPanePair(e.term, TAIL_MAX_LINES, true).nonDim : ''
       },
       isSessionAlive: () => this.host.isSessionAlive(sessionId),
       send: (text: string) => this.host.send(sessionId, text),

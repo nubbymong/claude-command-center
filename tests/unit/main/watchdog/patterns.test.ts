@@ -623,10 +623,47 @@ describe('canSendNow (#266 BLOCKER-2 / MAJOR-3) — the send gate, against REAL 
       expect(canSendNow(raw, raw).ok).toBe(false)
     })
 
+    it('a DIM PROMPT GLYPH over a live type-ahead draft still gates (the glyph dims while loading)', () => {
+      // claude.exe dims the pointer whenever isLoading — the ink check must be
+      // by column after the glyph found in the RAW row, never a masked
+      // re-match of the whole shape (which the blanked glyph would fail,
+      // flipping refuse to SEND).
+      const raw = [BANNER, RULE, '❯ fix the failing auth test', RULE, FOOTER].join('\n')
+      const nonDim = [BANNER, RULE, '  fix the failing auth test', RULE, FOOTER].join('\n')
+      expect(canSendNow(raw, nonDim)).toEqual({ ok: false, reason: 'draft' })
+    })
+
+    it('DIM box borders around a non-dim draft still gate', () => {
+      const raw = [BANNER, '╭────────────────────────╮', '│ > fix the failing test │', '╰────────────────────────╯', FOOTER].join('\n')
+      const nonDim = [BANNER, '', '    fix the failing test', '', FOOTER].join('\n')
+      expect(canSendNow(raw, nonDim)).toEqual({ ok: false, reason: 'draft' })
+    })
+
+    it('a DIM bare ASCII glyph over a draft as the last line still gates', () => {
+      expect(canSendNow('banner\n> half-typed thought', 'banner\n  half-typed thought')).toEqual({
+        ok: false,
+        reason: 'draft',
+      })
+    })
+
+    it('an ALL-DIM unnumbered picker still reads as a menu — raw caret rows count', () => {
+      const raw = [
+        'Review the proposed auto-mode setup?',
+        '❯ Looks good — save it',
+        '❯ Let me adjust the arguments first',
+        RULE,
+      ].join('\n')
+      const nonDim = ['Review the proposed auto-mode setup?', '', '', RULE].join('\n')
+      expect(canSendNow(raw, nonDim)).toEqual({ ok: false, reason: 'menu' })
+    })
+
     it('a dim placeholder in the BOXED render is sendable too; a boxed draft is not', () => {
+      const ph = 'Press up to edit queued messages'
       const box = (inner: string) => [BANNER, '╭──────────────────────────────╮', `│ > ${inner} │`, '╰──────────────────────────────╯', FOOTER]
-      const raw = box('Press up to edit queued messages').join('\n')
-      const nonDim = [BANNER, '╭──────────────────────────────╮', '│ >  │', '╰──────────────────────────────╯', FOOTER].join('\n')
+      const raw = box(ph).join('\n')
+      // Column-faithful mask: the dim placeholder blanks to spaces IN PLACE,
+      // so the closing gutter stays at the same column as the raw row.
+      const nonDim = box(' '.repeat(ph.length)).join('\n')
       expect(canSendNow(raw, nonDim)).toEqual({ ok: true })
       const draft = box('fix the failing test').join('\n')
       expect(canSendNow(draft, draft)).toEqual({ ok: false, reason: 'draft' })
