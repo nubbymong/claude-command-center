@@ -45,14 +45,17 @@ import {
  *
  * Anchoring: the pill is found by its `data-ux-id`, which both sidebar
  * variants carry — the expanded row and the collapsed icon rail — so the same
- * math covers both, and a ResizeObserver on the pill re-anchors the card when
- * the sidebar collapses or expands under it. If the pill cannot be found or
- * has no layout yet (dock hidden mid-session, jsdom), the card falls back to
- * the bottom-left corner rather than rendering at 0,0 over the sidebar.
+ * math covers both. Collapse/expand REPLACES the pill element (the rails are
+ * different trees), which is why the anchor effect keys on the
+ * `sidebarCollapsed` prop and re-resolves it; the ResizeObserver only tracks
+ * the current element's size. If the pill cannot be found or has no layout
+ * yet (dock hidden mid-session, jsdom), the card falls back to the
+ * bottom-left corner rather than rendering at 0,0 over the sidebar.
  *
  * Colour: tips are peach (`--accent-tip`), Ask Conductor is `--brand`; the
  * Discuss button stays brand-coloured because it IS the Ask action, and the
- * primary is the standard E5 brand fill.
+ * primary carries the peach fill — the mock's stated default: the card's main
+ * affirmative matches the pill that opened it, not the app-wide brand.
  */
 
 interface Props {
@@ -138,22 +141,28 @@ export default function TipCard({ onClose, onNavigate, sidebarCollapsed }: Props
   const [overflowOpen, setOverflowOpen] = React.useState(false)
   const [anchor, setAnchor] = React.useState(anchorToPill)
 
-  // Escape closes -- on the window BUBBLE phase, deliberately not
-  // `useDialogEscape`. That hook is window-CAPTURE plus
-  // `stopImmediatePropagation`, and its innermost-wins reasoning assumes
-  // dialogs mount inside each other in one commit. This card is long-lived and
-  // non-blocking, so a real dialog opened LATER (CloseDialog, the window
-  // picker) would register later and LOSE Escape to a tip. On the bubble phase
-  // every capture-phase dialog handler runs first and kills the event before
-  // it reaches us, whatever the mount order; `defaultPrevented` covers
-  // bubble-phase consumers that mark the key handled.
+  // Escape closes -- window CAPTURE with explicit arbitration, deliberately
+  // not `useDialogEscape`. That hook's innermost-wins reasoning assumes
+  // dialogs mount inside each other in one commit; this card is long-lived
+  // and non-blocking, so a real dialog opened LATER (CloseDialog, the window
+  // picker) registers later and would LOSE Escape to a tip. The bubble phase
+  // is not the answer either: xterm cancels Escape at its own textarea
+  // (preventDefault + stopPropagation), so a bubble listener never hears the
+  // key while the terminal has focus -- which is exactly where a non-blocking
+  // card invites the user to click. So: capture (runs before xterm can stop
+  // anything), but YIELD whenever a real modal is on screen. The card never
+  // sets aria-modal, so the query cannot match the card itself; it is the
+  // same marker TerminalView uses for its own focus arbitration.
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return
+      if (e.key !== 'Escape') return
+      if (document.querySelector('[aria-modal="true"]')) return
+      e.stopImmediatePropagation()
+      e.preventDefault()
       onClose()
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
 
   // Keep the card pinned to the pill: window resizes move the bottom edge, and
@@ -303,7 +312,9 @@ export default function TipCard({ onClose, onNavigate, sidebarCollapsed }: Props
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-[10px] leading-none mb-0.5" style={{ color: 'var(--text-muted)' }} data-testid="tip-card-eyebrow">
-            {tip.category} · {tip.complexity}
+            {/* Library values are kebab-case identifiers (`ui-navigation`);
+                the eyebrow shows words, not enum spellings. */}
+            <span className="capitalize">{tip.category.replace(/-/g, ' ')} · {tip.complexity.replace(/-/g, ' ')}</span>
             {unseen > 0 && <span data-testid="tip-card-unseen"> · {unseen} new</span>}
           </p>
           <h2 id="tip-card-title" className="text-[13.5px] font-semibold leading-snug">

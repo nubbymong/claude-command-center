@@ -175,23 +175,35 @@ describe('tip card -- the ways out', () => {
     expect(closed).toBe(1)
   })
 
-  it('yields Escape to a dialog opened after it (capture-phase handlers win)', () => {
+  it('yields Escape to any open modal, whatever the mount order', () => {
     open()
-    // A real dialog's useDialogEscape: window CAPTURE + stopImmediatePropagation.
-    // It mounts AFTER the long-lived card, and must still win the key — the
-    // card listens on the bubble phase precisely so mount order cannot matter.
-    const dialogEsc = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.stopImmediatePropagation()
-      e.preventDefault()
-    }
-    window.addEventListener('keydown', dialogEsc, true)
+    // A real dialog is marked aria-modal="true" (DialogPanel and the
+    // hand-rolled ones alike). It mounts AFTER the long-lived card, so
+    // registration order cannot be the arbiter — the card yields on the DOM
+    // marker instead, leaving the key for the dialog's own handler.
+    const modal = document.createElement('div')
+    modal.setAttribute('aria-modal', 'true')
+    document.body.appendChild(modal)
     act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
-    window.removeEventListener('keydown', dialogEsc, true)
-    expect(closed, 'the dialog above the card must get the Escape').toBe(0)
-    // With the dialog gone, the same key reaches the card again.
+    expect(closed, 'the modal above the card must get the Escape').toBe(0)
+    // With the modal gone, the same key reaches the card again.
+    modal.remove()
     act(() => { document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
     expect(closed).toBe(1)
+  })
+
+  it('still gets Escape when a descendant (xterm) cancels the key at its target', () => {
+    open()
+    // xterm's textarea handler does preventDefault + stopPropagation on
+    // Escape, so a bubble listener at window would never hear the key while
+    // the terminal has focus — which is exactly where a non-blocking card
+    // invites the user to click. Capture at window runs first.
+    const term = document.createElement('textarea')
+    document.body.appendChild(term)
+    term.addEventListener('keydown', (e) => { e.preventDefault(); e.stopPropagation() })
+    act(() => { term.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })) })
+    term.remove()
+    expect(closed, 'the card must close even though the terminal swallowed the key').toBe(1)
   })
 
   it('the close glyph closes', () => {
