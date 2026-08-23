@@ -76,7 +76,7 @@ export default function AgentCanvasButton({ sessionId }: Props) {
           if (!isOpen) trackUsage('canvas.opened')
           togglePane(sessionId)
         }}
-        className={`relative flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
+        className={`relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
           isOpen
             ? 'bg-mauve/20 border-mauve/70 text-mauve hover:bg-mauve/30'
             : waiting

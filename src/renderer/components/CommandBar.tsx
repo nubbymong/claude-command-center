@@ -61,7 +61,7 @@ function CodexModelDropdown({ value, onChange }: { value: string; onChange: (nex
       <select
         value={value}
         onChange={(e) => { setDirty(true); onChange(e.target.value) }}
-        className="bg-base border border-surface1 rounded px-1.5 h-[22px] py-0 text-xs text-text"
+        className="bg-base border border-surface1 rounded px-1.5 h-7 text-xs text-text"
       >
         {CODEX_MODELS.map((m) => (<option key={m} value={m}>{m}</option>))}
       </select>
@@ -77,7 +77,7 @@ function PermissionsPresetDropdown({ value, onChange }: { value: CodexPreset; on
       <select
         value={value}
         onChange={(e) => { setDirty(true); onChange(e.target.value as CodexPreset) }}
-        className="bg-base border border-surface1 rounded px-1.5 h-[22px] py-0 text-xs text-text"
+        className="bg-base border border-surface1 rounded px-1.5 h-7 text-xs text-text"
       >
         {CODEX_PRESETS.map((p) => (<option key={p} value={p}>{p}</option>))}
       </select>
@@ -557,9 +557,16 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const moreCount = foldedChips.length + plan.inapplicable.length
     let chipIndex = 0
     const sectionName = (id?: string) => plan.sections.find((s) => s.id === id)?.name
+    // An empty band shows nothing but its GLOBAL/SESSION label, which just adds
+    // noise to the row (owner). Hide the label — and its leading divider — when
+    // the band carries no commands at all, EXCEPT while a drag is in progress:
+    // an empty band is still the drop target that makes a command global or
+    // session-scoped, so the label must reappear then to give somewhere to drop.
+    const bandEmpty = plan.chips.length === 0 && plan.inapplicable.length === 0
+    const showBandLabel = !bandEmpty || !!dragId
     return (
       <React.Fragment key={band}>
-        <div className="w-px h-4 mx-0.5 shrink-0" style={{ background: 'var(--border-subtle)' }} />
+        {showBandLabel && <div className="w-px h-4 mx-0.5 shrink-0" style={{ background: 'var(--border-subtle)' }} />}
         <div
           role="toolbar"
           aria-label={`${plan.label} commands`}
@@ -570,14 +577,16 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           onDragOver={(e) => onSlotDragOver(e, band)}
           onDrop={(e) => onSlotDrop(e, band)}
         >
-          <span
-            className="shrink-0 text-[9.5px] font-semibold uppercase tracking-[.09em] px-1 select-none"
-            style={{ color: 'var(--text-muted)' }}
-            title={band === 'global' ? 'Global — these buttons show in every config' : `Session — this config only${configName ? ` (${configName})` : ''}`}
-            data-testid={`command-band-label-${band}`}
-          >
-            {plan.label}
-          </span>
+          {showBandLabel && (
+            <span
+              className="shrink-0 text-[9.5px] font-semibold uppercase tracking-[.09em] px-1 select-none"
+              style={{ color: 'var(--text-muted)' }}
+              title={band === 'global' ? 'Global — these buttons show in every config' : `Session — this config only${configName ? ` (${configName})` : ''}`}
+              data-testid={`command-band-label-${band}`}
+            >
+              {plan.label}
+            </span>
+          )}
           {plan.clusters.map((cluster) => (
             <React.Fragment key={cluster.kind}>
               {cluster.chips.some((c) => !foldedIds.has(c.id) && !(c.sectionId && collapsedSectionIds.includes(c.sectionId))) && <TargetMark kind={cluster.kind} caps={caps} />}
@@ -645,7 +654,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           ))}
           {dragId && (
             <span
-              className="inline-block w-7 h-[22px] rounded-md border border-dashed shrink-0"
+              className="inline-block w-7 h-7 rounded-md border border-dashed shrink-0"
               style={{ borderColor: dragOverSlot === band ? 'var(--brand)' : 'var(--border-strong)', background: dragOverSlot === band ? 'color-mix(in srgb, var(--brand) 12%, transparent)' : 'transparent' }}
               onDragOver={(e) => onSlotDragOver(e, band)}
               onDrop={(e) => onSlotDrop(e, band)}
@@ -694,7 +703,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
       <PasteHint sessionId={sessionId} />
       <div
         ref={rowRef}
-        className={`flex items-center gap-1 px-2 py-0.5 border-t ${overflowMode === 'wrap2' ? 'flex-wrap' : 'overflow-hidden'}`}
+        className={`flex items-center gap-1.5 px-2.5 py-[9px] border-t ${overflowMode === 'wrap2' ? 'flex-wrap gap-y-1.5' : 'overflow-hidden'}`}
         style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }}
         data-testid="command-row"
         data-overflow={overflowMode}
@@ -704,7 +713,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           <button
             type="button"
             onClick={() => setShowDialog({ scope: configId ? 'config' : 'global' })}
-            className="flex items-center gap-1 px-2 py-0.5 text-xs font-semibold focus-ring"
+            className="flex items-center gap-1 px-2.5 h-7 text-xs font-semibold focus-ring"
             style={{ color: '#5cb0ff' }}
             title="Add a command button"
             aria-label="Add command"
@@ -736,7 +745,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           {partnerEnabled && onTogglePartner && !hiddenHere.has('partner') && coreWrap('partner', (
             <button
               onClick={onTogglePartner}
-              className={`relative flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${
+              className={`relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${
                 isPartnerActive
                   ? 'bg-green/20 border-green/70 text-green hover:bg-green/30'
                   : 'bg-surface0/60 border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text'

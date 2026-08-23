@@ -42,7 +42,7 @@ export default function LogsButton({ sessionId, structuralReason = null, remoteH
   return (
     <button
       onClick={() => togglePane(sessionId)}
-      className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
+      className={`flex items-center gap-1.5 px-2 h-7 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
         isOpen
           ? 'bg-surface1 border-surface1 text-text'
           : 'bg-surface0/60 border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text'

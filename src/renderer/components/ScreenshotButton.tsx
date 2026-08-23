@@ -76,7 +76,7 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
           ref={buttonRef}
           onClick={toggleDropdown}
           disabled={capturing}
-          className="flex items-center gap-1.5 px-2 py-0.5 text-xs rounded bg-surface0/60 border border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+          className="flex items-center gap-1.5 px-2 h-7 text-xs rounded bg-surface0/60 border border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
           title="Take a screenshot and send it to the agent"
           data-testid="snap-button"
         >

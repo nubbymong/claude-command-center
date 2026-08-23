@@ -83,7 +83,7 @@ export default function WebviewButton({ sessionId }: Props) {
         if (!isOpen) trackUsage('webview.opened')
         togglePane(sessionId)
       }}
-      className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${classes}`}
+      className={`flex items-center gap-1.5 px-2 h-7 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${classes}`}
       title={titleParts.join('').trim()}
       data-testid="browser-toggle"
       data-watch-status={status}
