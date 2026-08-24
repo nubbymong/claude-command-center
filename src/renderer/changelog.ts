@@ -21,6 +21,25 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.1',
+    date: '2026-08-24',
+    highlights: 'The first release candidate for 2.1. The left panel has two modes — Saved configs and Running sessions — with a Quick Start; the Agent Canvas pane is redesigned around its mode (PLAN / MOCKUP / TESTING as the title), with tool chips, a framed page, a sectioned notes panel and a two-level History that can archive or permanently delete an artifact; the canvas review flow gains one-sweep dismiss, Ctrl+V paste-into-a-note and chat picks; and the release notes you are reading arrive as a multi-page showcase with drawn feature pages. Plus a crop of fixes: the tips row no longer vanishes after "Got it", creating an Agent Hub pipeline no longer crashes the app, and the glyph-corruption shortcut finally fires where you actually press it.',
+    changes: [
+      { type: 'feature', description: 'The left panel has two modes: Saved ⇄ Running tabs with a Quick Start row, so launching and tending sessions stop sharing one crowded list. Session cards are unchanged.' },
+      { type: 'feature', description: 'Canvas pane redesign. The MODE is the title — PLAN, MOCKUP or TESTING in its own colour — with Inspect / Sketch / Region tool chips (the X-ray Off/Stealth/On setting rides Inspect, locked to Stealth on plans). The reviewed page sits in a framed card with a provenance line; the notes panel is grouped under NEEDS YOU / WITH THE AGENT / CLOSED with seen-aware collapse and a hide rail.' },
+      { type: 'feature', description: 'Canvas history is two-level: History picks the artifact (a plan, a mockup, an older test build under Archived) and a per-artifact stepper walks its versions. A History row can archive an artifact (reversible) or delete it permanently — a deleted artifact can never be resurrected by a later render.' },
+      { type: 'feature', description: 'Canvas review workflow: right-click the Canvas button to clear the whole review queue in one sweep (a confirm card first; nothing is deleted and every cleared note keeps a one-click Reopen). Ctrl+V in the note composer attaches a pasted screenshot to your note. Naming your A/B/C pick in chat now records it — shown as "picked in chat", apart from your own clicks.' },
+      { type: 'feature', description: 'The release notes are a multi-page showcase now: the one-line summary is page one, and the headline features each get a full page with a drawn illustration — flip with the dots, jump with "See it", or skip the lot.' },
+      { type: 'fix', description: 'The tips row survives "Got it". Acknowledging a tip — or using the very feature a tip points at — now advances to the next tip instead of hiding the whole row for the rest of the session.' },
+      { type: 'fix', description: 'Agent Hub: clicking "New pipeline" crashed the whole app. The pipeline builder opens normally again, and a regression test now exercises the real store it mounts against.' },
+      { type: 'fix', description: 'Ctrl+Alt+G (the glyph-corruption diagnostic) now fires while a terminal has focus — which is exactly where you are when characters go missing. It used to be swallowed by the terminal in that one spot and worked everywhere else, which made it look broken at random.' },
+      { type: 'improvement', description: 'Command bar breathing room: a Balanced row height and empty band labels are hidden.' },
+      { type: 'fix', description: 'Sentinel names the account and the real reason — a rate limit is reported as a rate limit — when an analysis fails, instead of a generic error.' },
+      { type: 'improvement', description: 'The session header’s GitHub pill is a dot and the word GitHub — the logo is gone.' },
+      { type: 'improvement', description: 'Release governance: issues fixed on beta now advance to an in-release state automatically when a release candidate is cut, and close automatically when it promotes to stable.' },
+    ],
+  },
+  {
     version: '2.1.0-beta.17',
     date: '2026-08-23',
     highlights: 'The command bar is one row. The tool row and the two command rows beneath every session are now a single row: the fixed tools (Snap, Canvas, Logs, Browser, Partner, Notes), then your Global buttons, then this config\'s Session buttons. The bar knows what kind of session it is in — a Codex session says Codex, an SSH session says which computer each button runs on — and so does the dialog that makes a button. Nothing you had is changed without asking: existing buttons that clash with the new model carry a small amber mark until you look at them. The Agent Canvas grows a real review flow — a "Review needed" state with one queue number, agent drafts you never see until they are ready, per-note A/B/C alternatives your approve picks between, close-out on your word, three x-ray modes and Ctrl+wheel zoom. A new Session Watchdog waits out a rate limit and types the retry itself — off by default, and careful never to type over you — and GPU terminal rendering is on by default with the corruption actually fixed.',
