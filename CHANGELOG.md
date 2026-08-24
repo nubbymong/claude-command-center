@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.2] - 2026-08-25
+
+> Fixes from the rc.1 install pass. A saved config that is running shows a session-count pill and can be relaunched — with a clear warning before editing anything a restart would change; the canvas front page can delete an old canvas right from its "Pick up where you left off" rows; and the browser pane finally wears the app’s modern design language instead of the old black one.
+
+### Added
+- A saved config that is running is no longer locked. Its card shows a count pill for the sessions it has up, Launch starts another one (a config is a template, not a single session), and Quick Start keeps offering your pinned configs while they run. Editing a running config is allowed — the dialog warns, in amber, that open sessions keep the old values until relaunched and names exactly what a restart would change. Deleting is still refused while sessions are up.
+
+### Changed
+- The browser pane matches the rest of the app. Its start page, address row and favourites bar had kept the old near-black look; they now wear the modern design language, in both themes — and a guard test keeps the old palette from creeping back.
+- The app’s old working name is gone from every user-facing string, including the release notes you are reading.
+
+### Fixed
+- The canvas front page can delete. The "Pick up where you left off" rows each carry a Delete beside Reopen — the same two-step confirm as the library, naming how many versions go, permanent once confirmed. And deleting a canvas in the library no longer leaves its stale row behind on the front page.
+
 ## [2.1.0-rc.1] - 2026-08-24
 
 > The first release candidate for 2.1. The left panel has two modes — Saved configs and Running sessions — with a Quick Start; the Agent Canvas pane is redesigned around its mode (PLAN / MOCKUP / TESTING as the title), with tool chips, a framed page, a sectioned notes panel and a two-level History that can archive or permanently delete an artifact; the canvas review flow gains one-sweep dismiss, Ctrl+V paste-into-a-note and chat picks; and the release notes you are reading arrive as a multi-page showcase with drawn feature pages. Plus a crop of fixes: the tips row no longer vanishes after "Got it", creating an Agent Hub pipeline no longer crashes the app, and the glyph-corruption shortcut finally fires where you actually press it.
@@ -1293,6 +1307,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.2]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.2
 [2.1.0-rc.1]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.1
 [2.1.0-beta.17]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.17
 [2.1.0-beta.16]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.16
