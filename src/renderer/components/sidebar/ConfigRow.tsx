@@ -47,9 +47,15 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
   if (running) {
     return (
       <div
-        className="relative flex items-center gap-1.5 rounded py-1 px-2 border border-dashed cursor-pointer transition-colors hover:bg-surface0/40"
+        className="relative flex items-center gap-1.5 rounded py-1 px-2 border border-dashed cursor-pointer transition-colors hover:bg-surface0/40 focus-ring"
         style={{ borderColor: 'color-mix(in srgb, var(--color-green) 40%, var(--color-surface1))' }}
+        role="button"
+        tabIndex={0}
         onClick={onOpenSession}
+        onKeyDown={(e) => {
+          // The locked row's ONLY affordance — keyboard users get it too.
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenSession?.() }
+        }}
         onContextMenu={onContextMenu}
         title="Running — click to open its session"
         data-testid="config-row-running"

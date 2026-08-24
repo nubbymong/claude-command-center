@@ -5,11 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-const settings = { configPanelPinned: false, theme: 'dark', keyboardShortcuts: undefined }
+const settings: any = { configPanelPinned: false, theme: 'dark', keyboardShortcuts: undefined, sessionsPanelDefaultTab: undefined }
+const SETTINGS_STATE: any = { settings, updateSettings: () => {}, isLoaded: false }
 vi.mock('../../../src/renderer/stores/settingsStore', () => {
-  const STATE = { settings, updateSettings: () => {} }
-  const useSettingsStore: any = (sel: any) => sel(STATE)
-  useSettingsStore.getState = () => STATE
+  const useSettingsStore: any = (sel: any) => sel(SETTINGS_STATE)
+  useSettingsStore.getState = () => SETTINGS_STATE
   return { useSettingsStore }
 })
 vi.mock('../../../src/renderer/stores/sessionStore', () => {
@@ -35,7 +35,11 @@ const { default: Sidebar } = await import('../../../src/renderer/components/Side
 
 describe('Sidebar panel tabs (two-mode left panel)', () => {
   let container: HTMLDivElement; let root: Root
-  beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
+  beforeEach(() => {
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container)
+    SETTINGS_STATE.isLoaded = false
+    SETTINGS_STATE.settings.sessionsPanelDefaultTab = undefined
+  })
   afterEach(() => { act(() => root.unmount()); container.remove() })
 
   const render = () =>
@@ -66,7 +70,7 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     expect(tabs().saved!.getAttribute('aria-selected')).toBe('true')
     expect(container.querySelector('[data-testid="saved-tab"]')).toBeTruthy()
     expect(container.querySelector('[data-testid="running-tab"]')).toBeNull()
-    const newConfig = container.querySelector('[data-tour="new-config"]')
+    const newConfig = container.querySelector('[data-testid="new-config-button"]')
     expect(newConfig).toBeTruthy()
     expect(newConfig!.textContent).toMatch(/new config/i)
     // The old fly-out disclosure is gone with the overlay it opened.
@@ -81,5 +85,40 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     expect(tabs().running!.getAttribute('aria-selected')).toBe('true')
     expect(container.querySelector('[data-testid="running-tab"]')).toBeTruthy()
     expect(container.querySelector('[data-testid="saved-tab"]')).toBeNull()
+  })
+
+  it("adopts a stored 'saved' default once settings hydrate", () => {
+    render()
+    expect(tabs().running!.getAttribute('aria-selected')).toBe('true')
+    SETTINGS_STATE.isLoaded = true
+    SETTINGS_STATE.settings.sessionsPanelDefaultTab = 'saved'
+    render() // hydration re-render — the adoption effect fires
+    expect(tabs().saved!.getAttribute('aria-selected')).toBe('true')
+    expect(container.querySelector('[data-testid="saved-tab"]')).toBeTruthy()
+  })
+
+  it('never stomps a tab the user clicked before hydration', () => {
+    render()
+    act(() => { tabs().saved!.click() }) // user chooses Saved pre-hydration
+    SETTINGS_STATE.isLoaded = true
+    SETTINGS_STATE.settings.sessionsPanelDefaultTab = 'running'
+    render() // hydration arrives with a 'running' default
+    expect(tabs().saved!.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('junk stored value resolves to Running', () => {
+    SETTINGS_STATE.isLoaded = true
+    SETTINGS_STATE.settings.sessionsPanelDefaultTab = 'cards'
+    render()
+    expect(tabs().running!.getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('the tour anchor [data-tour="new-config"] resolves while the DEFAULT (Running) tab is active', () => {
+    render()
+    // GuidedTour.available() silently skips a step whose selector misses; the
+    // anchor therefore lives on the always-mounted Saved tab button.
+    const anchor = container.querySelector('[data-tour="new-config"]')
+    expect(anchor).toBeTruthy()
+    expect(anchor).toBe(tabs().saved)
   })
 })

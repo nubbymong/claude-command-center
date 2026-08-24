@@ -184,6 +184,9 @@ export interface AppSettings {
   debugMode: boolean
   keyboardShortcuts: Record<string, string>
   inputBarMaxHeight: number
+  /** @deprecated The fly-out it pinned open retired with the two-mode
+   *  Sessions panel (design pass 2026-08-24). Retained (with its default) so
+   *  older saved settings hydrate unchanged; no longer read anywhere. */
   configPanelPinned: boolean
   statusLine: StatusLineSettings
   statusLineEnabled?: boolean

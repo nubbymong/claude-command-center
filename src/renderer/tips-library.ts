@@ -189,9 +189,9 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['sessions.pin-config'],
     variants: {
       primary: {
-        shortText: 'Pin your most-used configs to the top',
-        title: 'Pinned Configs',
-        body: 'Right-click any config in the sidebar and choose **Pin** to move it to a dedicated pinned panel at the top. Pinned configs stay visible even when you scroll through dozens of others.\n\nPerfect for your main project that you launch a dozen times a day. You can also access pinned configs from the Sessions view when the sidebar is collapsed.',
+        shortText: 'Pin your most-used configs to Quick Start',
+        title: 'Quick Start',
+        body: 'Right-click any config — or any running session — and choose **Pin to Quick Start**. Pinned configs appear in the Quick Start strip at the top of the **Running** tab with a one-click **Start**, so your daily drivers are always one click away.\n\nA pinned config whose session is already running steps aside until that session closes — no duplicates, no accidental second launch. Collapse the strip from its header if you want it out of the way.',
       },
     },
   },

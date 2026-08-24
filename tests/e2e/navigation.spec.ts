@@ -97,26 +97,35 @@ test.describe('Sidebar Navigation', () => {
     await expect(firstButton).toHaveClass(/rail-active/)
   })
 
-  test('"Saved Configs" section exists in sidebar', async () => {
+  test('Sessions panel exposes the two-mode tabs, Running selected by default', async () => {
+    // The old "Saved Configs" fly-out header retired with the two-mode panel
+    // (design pass 2026-08-24): the contract is now the tab pair.
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
       return
     }
 
-    // Exact match: the empty-state "No saved configs…" also contains the
-    // substring, so a loose text= locator hits two elements.
-    const configsLabel = sidebar.getByText('Saved Configs', { exact: true })
-    await expect(configsLabel).toBeVisible()
+    const savedTab = sidebar.locator('[data-testid="panel-tab-saved"]')
+    const runningTab = sidebar.locator('[data-testid="panel-tab-running"]')
+    await expect(savedTab).toBeVisible()
+    await expect(runningTab).toBeVisible()
+    await expect(runningTab).toHaveAttribute('aria-selected', 'true')
   })
 
-  test('"Active Sessions" section exists in sidebar', async () => {
+  test('Saved tab reveals the launcher (+ New config); Running returns to sessions', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
       return
     }
 
+    await sidebar.locator('[data-testid="panel-tab-saved"]').click()
+    await expect(sidebar.locator('[data-testid="saved-tab"]')).toBeVisible()
+    await expect(sidebar.locator('[data-testid="new-config-button"]')).toBeVisible()
+
+    await sidebar.locator('[data-testid="panel-tab-running"]').click()
+    await expect(sidebar.locator('[data-testid="running-tab"]')).toBeVisible()
     const sessionsLabel = sidebar.getByText('Active Sessions', { exact: true })
     await expect(sessionsLabel).toBeVisible()
   })

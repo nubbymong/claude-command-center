@@ -334,7 +334,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   }
 
   const launchGroup = async (groupId: string) => {
-    const groupConfigs = configs.filter((c) => c.groupId === groupId)
+    // Skip configs whose session is already live: launch-all must never spawn
+    // the duplicate the locked row exists to prevent (design pass 2026-08-24;
+    // the retired cards/find views filtered the same way via launchAllTargets).
+    const groupConfigs = configs.filter((c) => c.groupId === groupId && !runningIds.has(c.id))
     for (const config of groupConfigs) {
       await launchFromConfig(config)
     }
@@ -439,7 +442,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const launchSection = async (sectionId: string) => {
     const sectionGroups = groups.filter((g) => g.sectionId === sectionId)
     const sectionGroupIds = new Set(sectionGroups.map((g) => g.id))
+    // Running configs skipped for the same reason as launchGroup: no duplicate
+    // sessions behind the locked row's back.
     const sectionConfigs = configs.filter((c) => {
+      if (runningIds.has(c.id)) return false
       if (c.groupId && sectionGroupIds.has(c.groupId)) return true
       if (!c.groupId && c.sectionId === sectionId) return true
       return false
@@ -715,15 +721,32 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       {/* Saved ⇄ Running — the two-mode head (design pass 2026-08-24). The
           whole left panel switches modes; the old hover fly-out, its notch and
           the pin-open machinery are gone — a mode needs no overlay. */}
-      <div className="px-2 pt-2 pb-1.5 flex gap-1.5 shrink-0" role="tablist" aria-label="Sessions panel">
+      <div
+        className="px-2 pt-2 pb-1.5 flex gap-1.5 shrink-0"
+        role="tablist"
+        aria-label="Sessions panel"
+        onKeyDown={(e) => {
+          // Roving tabs: Left/Right switches mode from either tab button.
+          if (e.key === 'ArrowLeft') { e.preventDefault(); selectPanelTab('saved') }
+          if (e.key === 'ArrowRight') { e.preventDefault(); selectPanelTab('running') }
+        }}
+      >
         <button
+          id="panel-tab-saved"
           role="tab"
           aria-selected={panelTab === 'saved'}
+          aria-controls="saved-tabpanel"
+          tabIndex={panelTab === 'saved' ? 0 : -1}
           onClick={() => selectPanelTab('saved')}
           className={`flex-1 h-8 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors focus-ring ${
             panelTab === 'saved' ? 'bg-surface0 border border-surface1 text-text' : 'border border-transparent text-overlay1 hover:text-text'
           }`}
           data-testid="panel-tab-saved"
+          /* The tour's "Saved configs live here" anchor: on the always-mounted
+             tab, NOT the "+ New config" button inside the Saved body — the
+             panel defaults to Running, and an unresolvable selector makes
+             GuidedTour.available() silently skip the step. */
+          data-tour="new-config"
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={panelTab === 'saved' ? 'text-blue' : ''}>
             <line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" />
@@ -733,8 +756,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           <span className={`text-[10px] rounded-full px-1.5 py-0.5 ${panelTab === 'saved' ? 'bg-blue/20 text-blue' : 'bg-surface0 text-overlay1'}`}>{configs.length}</span>
         </button>
         <button
+          id="panel-tab-running"
           role="tab"
           aria-selected={panelTab === 'running'}
+          aria-controls="running-tabpanel"
+          tabIndex={panelTab === 'running' ? 0 : -1}
           onClick={() => selectPanelTab('running')}
           className={`flex-1 h-8 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors focus-ring ${
             panelTab === 'running' ? 'bg-surface0 border border-surface1 text-text' : 'border border-transparent text-overlay1 hover:text-text'
@@ -752,7 +778,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
       {/* ── Saved tab: the launcher ── */}
       {panelTab === 'saved' && (
-      <div className="flex flex-col flex-1 min-h-0" data-testid="saved-tab">
+      <div id="saved-tabpanel" role="tabpanel" aria-labelledby="panel-tab-saved" className="flex flex-col flex-1 min-h-0" data-testid="saved-tab">
         <div className="px-2 pt-2 pb-1 shrink-0">
           <input
             value={configSearchQuery}
@@ -762,11 +788,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           />
         </div>
         {/* The header icon buttons became labelled toolbar buttons here; the
-            pin-panel button retired with the fly-out. data-tour survives so the
-            walkthrough still finds New config. */}
+            pin-panel button retired with the fly-out. The tour anchor lives on
+            the Saved TAB (always mounted), not here. */}
         <div className="px-2 pb-1.5 flex gap-1.5 shrink-0">
           <button
-            data-tour="new-config"
+            data-testid="new-config-button"
             onClick={() => setShowNewDialog(true)}
             className="h-7 px-2.5 rounded-md bg-blue/20 border border-blue/45 text-blue text-[11px] font-semibold flex items-center gap-1 hover:bg-blue/30 transition-colors focus-ring"
             title="New config (Ctrl+T)"
@@ -957,14 +983,15 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       {/* ── Running tab: the live sessions (rows untouched by design). Quick
           Start — launch-only, collapsible — leads the tab; the old
           always-below PinnedConfigsPanel is what it replaces. ── */}
-      {panelTab === 'running' && (<>
+      {panelTab === 'running' && (
+      <div id="running-tabpanel" role="tabpanel" aria-labelledby="panel-tab-running" className="flex flex-col flex-1 min-h-0" data-testid="running-tab">
       <QuickStartPanel
         configs={configs}
         running={runningIds}
         onLaunch={launchFromConfig}
         onContextMenu={handleConfigContextMenu}
       />
-      <div className="p-3 flex items-center justify-between" data-testid="running-tab">
+      <div className="p-3 flex items-center justify-between">
         <span className="flex items-center gap-1.5">
           <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Active Sessions</span>
           <span className="text-[10px] text-overlay0">{sessions.length}</span>
@@ -1137,7 +1164,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           unsectionedUngroupedSessions.map(renderSessionRow)
         )}
       </div>
-      </>)}{/* end Running tab */}
+      </div>
+      )}{/* end Running tab */}
 
       {/* Ask Conductor, docked below the session list. Sibling of the scrollers
           (each tab's scroller is that tab's only flex-1 child), so it stays

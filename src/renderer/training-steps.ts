@@ -57,9 +57,9 @@ export const trainingSteps: TrainingStep[] = [
       'Local or SSH -- one config form, full Claude support either way',
     ],
     howToTrigger: [
-      { label: 'Create', value: 'Saved Configs → +' },
+      { label: 'Create', value: 'Saved tab → + New config' },
       { label: 'Edit', value: 'Hover a config → pencil icon' },
-      { label: 'Pin', value: 'Saved Configs → 📌' },
+      { label: 'Pin', value: 'Right-click a config → Pin to Quick Start' },
     ],
     proTip:
       'Drag a folder onto the sidebar to create a working-directory config in one drop -- fastest way to bootstrap a new project session.',
