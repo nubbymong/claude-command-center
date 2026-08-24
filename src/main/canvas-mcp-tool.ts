@@ -944,8 +944,11 @@ export async function runCanvasReview(
     `review ${payload.review.id}, ${payload.review.status}, frozen against ${payload.review.versionId}`,
     `${total} note(s): ${counts.element} element, ${counts.region} region, ${counts.general} general; ${open} open`,
   ]
-  if (images.length > 0) notes.push(`${images.length} sketch image(s) attached after the text`)
-  if (attachmentsDropped > 0) notes.push(`${attachmentsDropped} sketch attachment(s) could not be loaded`)
+  // "image(s)", not "sketch image(s)": an attachment is now either a sketch
+  // export or a pasted screenshot, and the per-note serializer line already
+  // says which. Calling a pasted screenshot a sketch out here would mislead.
+  if (images.length > 0) notes.push(`${images.length} image(s) attached after the text`)
+  if (attachmentsDropped > 0) notes.push(`${attachmentsDropped} image attachment(s) could not be loaded`)
 
   const format = rawArgs.format === 'json' ? 'json' : 'text'
   const body =

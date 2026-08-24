@@ -255,6 +255,13 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   // anywhere near IPC.
   const panelRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
+    // Only the ACTIVE session's pane handles a paste. Every session mounts its
+    // own CanvasNotesPanel, kept off-screen with CSS rather than unmounted, so
+    // each registers this window listener; without the guard a single Ctrl+V on
+    // a non-editable target would attach the image to EVERY session's composer
+    // at once (spec review, 2026-08-24). The mark-seen effect below gates on the
+    // same signal for the same reason.
+    if (!isActive) return
     const onPaste = (e: ClipboardEvent) => {
       const target = e.target as HTMLElement | null
       const inPanel = !!(panelRef.current && target && panelRef.current.contains(target))
@@ -281,7 +288,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  }, [])
+  }, [isActive])
 
   const composerScope: Annotation['scope'] = focus ? (focus.targets.length > 0 ? 'element' : 'region') : 'general'
   const canExpand = focus != null && focusChain.length > 0 && focusChainIndex < focusChain.length - 1
@@ -999,8 +1006,11 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                         conversation about it. The store refuses the two in one
                         pass, but it cannot see whether the user actually asked —
                         that instruction lives in chat. So the row says who did
-                        what, and Reopen sits next to it. */}
-                    {note.closedBy === 'agent' && note.closedFrom === 'addressed' && (
+                        what, and Reopen sits next to it. A chat PICK is
+                        excluded: there the user themselves named the winner, so
+                        "nobody else checked it" would be a lie — its own
+                        "picked in chat" label already says who decided. */}
+                    {note.closedBy === 'agent' && note.closedFrom === 'addressed' && note.pickSource !== 'chat' && (
                       <div className="text-[9.5px] text-overlay0 mt-0.5" data-testid="review-closed-agent-both">
                         the agent marked this addressed and closed it — nobody else checked it
                       </div>

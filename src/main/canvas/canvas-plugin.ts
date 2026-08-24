@@ -20,7 +20,7 @@ import { getResourcesDirectory } from '../ipc/setup-handlers'
 import { logWarn } from '../debug-logger'
 
 /** Bump when the manifest or skill content changes meaningfully. */
-const PLUGIN_VERSION = '1.1.0'
+const PLUGIN_VERSION = '1.2.0'
 
 const PLUGIN_MANIFEST = {
   name: 'agent-canvas',
@@ -59,7 +59,8 @@ instruction does not override this — the handover IS the block.
 or a review is still open, the reply says so. Take it at its word and hand back.
 
 Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`,
-\`canvas_resolve\`, \`canvas_verdict\` (only on the user's explicit word — see below).
+\`canvas_resolve\`, \`canvas_verdict\` and \`canvas_pick\` (the last two only on the
+user's explicit word — see below).
 
 Every render names its SUBJECT with \`title\` — "Settings page mockup",
 "Checkout flow" — in a few words. A canvas holds one subject: the same title
@@ -151,13 +152,20 @@ submitted a review. Then:
    (side by side or labelled A/B/C on the page), and attach
    \`variants: { "<noteId>": ["thin rule", "boxed callout"] }\` to the same
    call — up to 4 short labels per note, in the order they appear on the page
-   (keys A-D are assigned by position). When the user picks, a chat line like
-   \`Picked B on a3 — approved · canvas_review R3\` arrives: fetch the round,
-   read the note's \`chosen-variant: B\`, then build ONLY that one and drop
-   the others. If they approve the note WITHOUT picking (plain Approve, or a
-   bulk approve), no chosen-variant appears — the choice is yours: pick the
-   strongest alternative and say which you went with. Never attach variants
-   when one answer is plainly right.
+   (keys A-D are assigned by position). When the user picks IN THE PANE, a chat
+   line like \`Picked B on a3 — approved · canvas_review R3\` arrives: fetch the
+   round, read the note's \`chosen-variant: B\`, then build ONLY that one and
+   drop the others. When they instead name the winner IN CHAT ("go with B", "the
+   thin rule one"), record it with
+   \`canvas_pick { reviewId: "R3", annotationId: "a3", variantKey: "B" }\` — one
+   note per call, only a letter the variants line offers — then build that one.
+   Only ever call \`canvas_pick\` on an explicit pick they stated; if their words
+   are ambiguous, ask which they mean rather than guessing. It records the pick
+   as "picked in chat" (distinct from their own click) and they can reopen it in
+   one click. If they approve the note WITHOUT picking (plain Approve, or a bulk
+   approve), no chosen-variant appears — the choice is yours: pick the strongest
+   alternative and say which you went with. Never attach variants when one answer
+   is plainly right.
 5. Hand back with one line per note: what you changed, or — if a note
    conflicts with another note or with something load-bearing — say so
    plainly instead of silently skipping it.
