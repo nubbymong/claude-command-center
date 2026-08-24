@@ -3,6 +3,7 @@ import { Session } from '../../stores/sessionStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { isAccountActive, type AccountProfile } from '../../../shared/account-types'
 import { resolveAccountName, middleTruncateEmail } from '../../../shared/account-chip-color'
+import { pinMenuLabel, PIN_WHILE_RUNNING_HINT } from './sessionsPanelState'
 
 interface SessionContextMenuProps {
   x: number
@@ -13,6 +14,11 @@ interface SessionContextMenuProps {
   onRemoveFromGroup: () => void
   onClose: () => void
   onDismiss: () => void
+  /** Pin/unpin the session's CONFIG to Quick Start (design pass 2026-08-24).
+   *  Absent for config-less sessions (Ask, adopted shells) — item hidden. The
+   *  hint notes the deferral: a running pin quick-starts after close. */
+  configPinned?: boolean
+  onPinConfig?: () => void
   /** Multi-account switch: gated by the caller. When false the item is hidden. */
   canSwitchAccount?: boolean
   /** All known account profiles, for the Switch Account sub-chooser. */
@@ -38,6 +44,7 @@ interface SessionContextMenuProps {
 
 export default function SessionContextMenu({
   x, y, session, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss,
+  configPinned, onPinConfig,
   canSwitchAccount, profiles, accountAliases, onSwitchAccount,
   onOpenArtifacts, onAuthenticateWeb, onSignInCode, hasWebSession, codeSignedIn,
 }: SessionContextMenuProps) {
@@ -61,6 +68,26 @@ export default function SessionContextMenu({
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
         Rename
       </button>
+      {onPinConfig && (
+        <>
+          <button
+            onClick={onPinConfig}
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+            style={{ color: 'var(--text-primary)' }}
+            data-testid="session-ctx-pin"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-yellow" aria-hidden>
+              <path d="M13 2L3 14h7l-1 8 11-13h-8z" />
+            </svg>
+            {pinMenuLabel(configPinned)}
+          </button>
+          {!configPinned && (
+            <div className="px-3 pb-1 pl-8 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+              {PIN_WHILE_RUNNING_HINT}
+            </div>
+          )}
+        </>
+      )}
       {hasGroup && (
         <button
           onClick={onRemoveFromGroup}

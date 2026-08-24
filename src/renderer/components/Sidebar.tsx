@@ -32,6 +32,7 @@ import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
 import { runningConfigIds } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
+import QuickStartPanel from './sidebar/QuickStartPanel'
 import { resolveDefaultPanelTab, type PanelTab } from './sidebar/sessionsPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
@@ -912,6 +913,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           currentGroupId={configs.find((c) => c.id === contextMenuConfig.configId)?.groupId}
           currentSectionId={configs.find((c) => c.id === contextMenuConfig.configId)?.sectionId}
           isPinned={configs.find((c) => c.id === contextMenuConfig.configId)?.pinned}
+          running={runningIds.has(contextMenuConfig.configId)}
           onMoveToGroup={(gid) => handleMoveToGroup(contextMenuConfig.configId, gid)}
           onCreateGroup={(name) => handleCreateGroupAndMove(contextMenuConfig.configId, name)}
           onMoveToSection={(sid) => handleMoveConfigToSection(contextMenuConfig.configId, sid)}
@@ -952,10 +954,16 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         />
       )}
 
-      {/* ── Running tab: the live sessions (rows untouched by design). The old
-          always-below PinnedConfigsPanel retired — Quick Start (launch-only,
-          collapsible) takes its place at the top of this tab. ── */}
+      {/* ── Running tab: the live sessions (rows untouched by design). Quick
+          Start — launch-only, collapsible — leads the tab; the old
+          always-below PinnedConfigsPanel is what it replaces. ── */}
       {panelTab === 'running' && (<>
+      <QuickStartPanel
+        configs={configs}
+        running={runningIds}
+        onLaunch={launchFromConfig}
+        onContextMenu={handleConfigContextMenu}
+      />
       <div className="p-3 flex items-center justify-between" data-testid="running-tab">
         <span className="flex items-center gap-1.5">
           <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Active Sessions</span>
@@ -1151,6 +1159,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             session={s}
             hasGroup={!!cfg?.groupId}
             onRename={() => handleStartSessionRename(s.id, s.customName?.trim() || s.label)}
+            configPinned={cfg?.pinned}
+            onPinConfig={cfg ? () => {
+              togglePinned(cfg.id)
+              trackUsage('sessions.pin-config')
+              setSessionContextMenu(null)
+            } : undefined}
             onRemoveFromGroup={() => {
               if (cfg) moveConfigToGroup(cfg.id, undefined)
               setSessionContextMenu(null)
