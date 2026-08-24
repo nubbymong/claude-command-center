@@ -5,11 +5,11 @@ import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/id
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { CODEX_OFF_LAUNCH_REASON } from '../../hooks/useLaunchConfig'
-import { quickStartConfigs, quickStartRunningCount, resolveQuickStartCollapsed } from './sessionsPanelState'
+import { quickStartConfigs, resolveQuickStartCollapsed, runningCountLabel } from './sessionsPanelState'
 
 interface QuickStartPanelProps {
   configs: TerminalConfig[]
-  running: ReadonlySet<string>
+  running: ReadonlyMap<string, number>
   onLaunch: (config: TerminalConfig) => void
   onContextMenu: (e: React.MouseEvent, configId: string) => void
 }
@@ -17,10 +17,9 @@ interface QuickStartPanelProps {
 /**
  * Quick Start — the launch-only strip at the top of the Running tab (design
  * pass 2026-08-24; replaces the always-below PinnedConfigsPanel). Fed by
- * `pinned` configs; one whose session is LIVE is omitted entirely (it is in
- * the sessions list just below — that omission is what killed the old
- * duplicate-pinned-at-top bug) and returns when the session closes. The
- * header collapses, persisted in settings.
+ * `pinned` configs. A running pin STAYS (owner revision 2026-08-24: a config
+ * is a template — Start spawns another instance) and carries a count pill.
+ * The header collapses, persisted in settings.
  */
 export default function QuickStartPanel({ configs, running, onLaunch, onContextMenu }: QuickStartPanelProps) {
   const theme = useResolvedTheme()
@@ -28,11 +27,10 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const codexOff = useSettingsStore((s) => s.settings.codexEnabled === false)
 
-  const items = quickStartConfigs(configs, running)
-  const hiddenRunning = quickStartRunningCount(configs, running)
+  const items = quickStartConfigs(configs)
   // Nothing pinned at all: no strip, no empty state — Quick Start is opt-in
   // via the context menus and absent until used.
-  if (items.length === 0 && hiddenRunning === 0) return null
+  if (items.length === 0) return null
 
   return (
     <div className="shrink-0 border-b border-surface1 pb-1.5 mb-1" data-testid="quick-start">
@@ -56,19 +54,12 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
         </svg>
         <span className="text-[10.5px] font-bold uppercase tracking-wider text-yellow">Quick Start</span>
         <span className="text-[10px] text-overlay0">{items.length}</span>
-        {hiddenRunning > 0 && (
-          <span
-            className="ml-auto text-[9px] text-overlay0"
-            title={`${hiddenRunning} pinned config${hiddenRunning === 1 ? ' is' : 's are'} running — back here when the session closes`}
-          >
-            {hiddenRunning} running
-          </span>
-        )}
       </button>
       {!collapsed && items.map((config) => {
         const chipColour = resolveIdentityColor(config.identityColorKey ?? bucketLegacyColorToKey(config.color), theme)
         const typeKind = config.shellOnly ? 'shell' : (config.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'
         const blocked = codexOff && config.provider === 'codex'
+        const liveCount = running.get(config.id) ?? 0
         return (
           <div
             key={config.id}
@@ -83,6 +74,16 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
             <SessionTypeBadge kind={typeKind} />
             <span className="w-2 h-2 rounded-[3px] shrink-0" style={{ backgroundColor: chipColour }} aria-hidden />
             <span className="text-xs font-medium truncate flex-1 text-text">{config.label}</span>
+            {liveCount > 0 && (
+              <span
+                className="flex items-center gap-1 text-[8.5px] font-semibold uppercase tracking-wide text-green bg-green/15 rounded-full px-1.5 py-0.5 shrink-0"
+                title={runningCountLabel(liveCount)}
+                data-testid="quick-start-running-count"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-green" aria-hidden />
+                {liveCount}
+              </span>
+            )}
             {config.sessionType === 'ssh' && <SshBadge />}
             <button
               onClick={blocked ? undefined : () => onLaunch(config)}

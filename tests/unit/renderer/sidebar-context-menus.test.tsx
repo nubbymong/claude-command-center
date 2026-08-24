@@ -27,13 +27,15 @@ describe('sidebar context menus — Quick Start + running lock', () => {
       ...over,
     } as any)))
 
-  it('config menu: running disables Edit and Delete with reasons', () => {
+  it('config menu: running keeps Edit live (edits shape future launches) and refuses only Delete', () => {
+    // Owner revision 2026-08-24: a config is a template — it may relaunch and
+    // be edited while running; deleting it under live sessions stays refused.
     renderConfigMenu({ running: true })
     const edit = container.querySelector('[data-testid="ctx-edit"]') as HTMLButtonElement
     const del = container.querySelector('[data-testid="ctx-delete"]') as HTMLButtonElement
-    expect(edit.disabled).toBe(true)
+    expect(edit.disabled).toBe(false)
+    expect(edit.title).toMatch(/launched from now on/i)
     expect(del.disabled).toBe(true)
-    expect(edit.title).toMatch(/running/i)
     expect(del.title).toMatch(/running/i)
   })
 

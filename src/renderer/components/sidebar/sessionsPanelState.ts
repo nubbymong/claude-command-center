@@ -4,14 +4,20 @@
 // The owner's agreed design: the whole left panel switches between two tabs —
 // Saved (the launcher) and Running (live sessions). Quick Start is a
 // collapsible, LAUNCH-ONLY strip at the top of Running fed by `pinned`
-// configs; a pinned config whose session is live simply is not shown there
-// until it closes (that is what killed the old duplicate-pinned-at-top bug).
-// In Saved, a config with a live session stays visible but LOCKED — greyed,
-// not editable, click jumps to the session — so a running config can never be
-// edited by accident.
+// configs.
+//
+// REVISED (owner, 2026-08-24 rc.1 install pass): a config is a TEMPLATE — a
+// running one may be launched AGAIN, spawning another session. The old locked
+// row ("a running config cannot relaunch") was wrong by the owner's own call.
+// A config with live sessions shows a COUNT indicator instead, and Quick
+// Start keeps showing pinned configs while they run (spawn as many as you
+// like). What remains guarded: DELETE while sessions run (removing the
+// template under live sessions), and group/section launch-all still fills in
+// only what is not already running (bring-up semantics — it never doubles a
+// whole group silently; doubling is the single row's deliberate act).
 //
 // Everything decidable without a DOM lives here so it unit-tests flat.
-// Running detection reuses runningConfigIds from savedConfigsView.ts.
+// Running detection reuses runningConfigCounts from savedConfigsView.ts.
 
 import type { TerminalConfig, ConfigGroup } from '../../stores/configStore'
 
@@ -29,77 +35,72 @@ export function resolveQuickStartCollapsed(value: unknown): boolean {
 }
 
 /**
- * The Quick Start strip: pinned configs WITHOUT a live session, in config
- * order. Launch-only by design — a pinned config that is running is omitted
- * entirely (it lives in the sessions list just below) and returns when its
- * session closes. Existing `pinned` flags carry over as Quick Start pins
- * (plan Q2): the field is reused, so there is no data migration.
+ * The Quick Start strip: every pinned config, in config order, running or
+ * not — a config is a template, and Quick Start may spawn another instance
+ * at any time (owner revision 2026-08-24). Existing `pinned` flags carry
+ * over as Quick Start pins (plan Q2): the field is reused, no migration.
  */
-export function quickStartConfigs(
-  configs: ReadonlyArray<TerminalConfig>,
-  running: ReadonlySet<string>,
-): TerminalConfig[] {
-  return configs.filter((c) => !!c.pinned && !running.has(c.id))
-}
-
-/** How many pinned configs are hidden from Quick Start because they run now. */
-export function quickStartRunningCount(
-  configs: ReadonlyArray<TerminalConfig>,
-  running: ReadonlySet<string>,
-): number {
-  return configs.filter((c) => !!c.pinned && running.has(c.id)).length
+export function quickStartConfigs(configs: ReadonlyArray<TerminalConfig>): TerminalConfig[] {
+  return configs.filter((c) => !!c.pinned)
 }
 
 /**
- * Whether a config may be EDITED (or deleted) right now. A config with a live
- * session is locked — the dialog writes template fields the session already
- * consumed at spawn, so an edit mid-run is at best confusing and at worst a
- * divergence between what runs and what is saved. The row's affordance for a
- * locked config is "jump to session", not the editor.
+ * Whether a config may be DELETED right now. Editing while running is fine —
+ * a template edit only shapes FUTURE launches, which is now the whole point
+ * of relaunch — but deleting the template out from under live sessions is
+ * still refused: the Running rows and any relaunch would point at nothing.
  */
-export function canEditConfig(configId: string, running: ReadonlySet<string>): boolean {
-  return !running.has(configId)
+export function canDeleteConfig(configId: string, running: ReadonlyMap<string, number>): boolean {
+  return !running.get(configId)
 }
+
+/** The reason shown wherever delete is refused for a running config. */
+export const DELETE_WHILE_RUNNING_REASON = 'Running — close its sessions before deleting the config'
 
 /**
  * The pin/unpin label for the context menus (config row AND running session
  * row — both pin the underlying config). `running` only changes the HINT the
- * menu shows, never the action: pinning a running config is allowed and takes
- * effect in Quick Start when the session closes.
+ * menu shows, never the action.
  */
 export function pinMenuLabel(pinned: boolean | undefined): string {
   return pinned ? 'Unpin from Quick Start' : 'Pin to Quick Start'
 }
 
 /** The hint under the pin item when the config's session is live. */
-export const PIN_WHILE_RUNNING_HINT = 'Running now — will quick-start when this session closes'
+export const PIN_WHILE_RUNNING_HINT = 'Running now — Quick Start can spawn another'
+
+/** The running-count pill's accessible/tooltip text. */
+export function runningCountLabel(count: number): string {
+  return count === 1 ? '1 session running — click to open it' : `${count} sessions running — click to open the latest`
+}
 
 /**
  * Launch-all targets for a GROUP: its configs minus anything already running.
- * Launch-all must never spawn the duplicate the locked row exists to prevent
- * (the retired cards/find views filtered the same way via launchAllTargets).
+ * Deliberate even now that relaunch is allowed: launch-all is BRING-UP — it
+ * fills in what is missing. Doubling a whole group is never what "launch all"
+ * meant; spawning a duplicate is the single row's deliberate act.
  */
 export function launchableInGroup(
   configs: ReadonlyArray<TerminalConfig>,
   groupId: string,
-  running: ReadonlySet<string>,
+  running: ReadonlyMap<string, number>,
 ): TerminalConfig[] {
-  return configs.filter((c) => c.groupId === groupId && !running.has(c.id))
+  return configs.filter((c) => c.groupId === groupId && !running.get(c.id))
 }
 
 /**
  * Launch-all targets for a SECTION: configs in its groups plus its loose
- * configs, minus anything already running.
+ * configs, minus anything already running (same bring-up rule as the group).
  */
 export function launchableInSection(
   configs: ReadonlyArray<TerminalConfig>,
   groups: ReadonlyArray<ConfigGroup>,
   sectionId: string,
-  running: ReadonlySet<string>,
+  running: ReadonlyMap<string, number>,
 ): TerminalConfig[] {
   const sectionGroupIds = new Set(groups.filter((g) => g.sectionId === sectionId).map((g) => g.id))
   return configs.filter((c) => {
-    if (running.has(c.id)) return false
+    if (running.get(c.id)) return false
     if (c.groupId && sectionGroupIds.has(c.groupId)) return true
     if (!c.groupId && c.sectionId === sectionId) return true
     return false
