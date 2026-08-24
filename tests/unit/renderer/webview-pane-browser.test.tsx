@@ -228,3 +228,28 @@ describe('with a page loaded', () => {
     expect(useBrowserStore.getState().homeByConfig).toEqual({})
   })
 })
+
+describe('the modern palette (#455)', () => {
+  it('styles with the token system — the legacy Catppuccin utilities may not creep back', async () => {
+    // The pane regressed to the pre-redesign near-black palette once (#455:
+    // "the old black UX crept in again"). These utilities ARE the old scheme;
+    // the pane must style with the --surface-*/--brand/--status-* tokens the
+    // redesigned surfaces use, which also gives it a correct light theme.
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    // process.cwd() is the repo root under vitest; import.meta.url is not a
+    // file: URL in the jsdom environment.
+    const src = readFileSync(join(process.cwd(), 'src/renderer/components/WebviewPane.tsx'), 'utf8')
+    const legacy = [
+      'bg-crust', 'bg-mantle', 'surface0', 'surface1', 'overlay0', 'overlay1',
+      'subtext0', 'text-text', 'text-blue', 'bg-blue', 'text-red', 'bg-red',
+      'text-green', 'text-yellow',
+    ]
+    for (const cls of legacy) {
+      expect(src.includes(cls), `legacy palette class "${cls}" crept back into WebviewPane`).toBe(false)
+    }
+    expect(src).toContain('var(--surface-stage)')
+    expect(src).toContain('var(--brand)')
+    expect(src).toContain('var(--status-danger)')
+  })
+})
