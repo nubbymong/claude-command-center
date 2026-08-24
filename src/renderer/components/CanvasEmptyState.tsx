@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import ExcalidrawPane from './ExcalidrawPane'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useSessionStore } from '../stores/sessionStore'
@@ -73,6 +73,15 @@ const GHOST_CLASS =
   'hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] ' +
   'disabled:opacity-40 transition-colors focus-ring'
 
+/** The armed delete confirm — same geometry as GHOST_CLASS, danger colours
+ *  (the library's own confirm recipe). */
+const DANGER_CLASS =
+  'shrink-0 rounded-md px-3 py-2 text-[12px] font-medium ' +
+  'bg-[color-mix(in_srgb,var(--status-danger)_15%,transparent)] ' +
+  'border border-[color-mix(in_srgb,var(--status-danger)_50%,transparent)] ' +
+  'text-[var(--status-danger)] hover:bg-[color-mix(in_srgb,var(--status-danger)_25%,transparent)] ' +
+  'disabled:opacity-40 transition-colors focus-ring'
+
 /**
  * The Agent Canvas landing (owner feedback 2026-08-13): with nothing rendered
  * yet, the pane used to fall straight back to the old Draw sketchpad —
@@ -94,6 +103,12 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [reclaimable, setReclaimable] = useState<ReclaimableCanvas[]>([])
   const [reclaiming, setReclaiming] = useState<string | null>(null)
+  // Delete on the reclaim rows (#452): the front page has no top bar, so
+  // before this the only way to be rid of an old canvas from here was to
+  // open the library. Same two-step confirm + IPC as the library's delete.
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const refreshCanvas = useCanvasStore((s) => s.refresh)
 
   // What this session could take back. A pure read — nothing moves until the
@@ -104,25 +119,31 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   // exists only between a graceful Save & Close and the next restore), so it
   // was offering canvases whose own tile was open and visible. The renderer is
   // the only party that knows, and the hint can only shorten the list.
-  useEffect(() => {
-    let cancelled = false
+  //
+  // Callable, not just an effect: the library overlay can delete a canvas this
+  // list still shows, and a stale row's Delete would then dead-end on a
+  // truthful-but-inverted "could not be deleted". The epoch keeps overlapping
+  // loads last-write-wins.
+  const reclaimEpoch = useRef(0)
+  const loadReclaimable = useCallback(async () => {
+    const epoch = ++reclaimEpoch.current
     const openTileSessionIds = useSessionStore.getState().sessions.map((s) => s.id)
-    void window.electronAPI.canvas
-      .listReclaimable({ sessionId, openTileSessionIds })
-      .then((list) => {
-        if (!cancelled) setReclaimable(Array.isArray(list) ? list : [])
-      })
-      .catch(() => {
-        /* nothing to offer is the safe default */
-      })
-    return () => {
-      cancelled = true
+    try {
+      const list = await window.electronAPI.canvas.listReclaimable({ sessionId, openTileSessionIds })
+      if (reclaimEpoch.current === epoch) setReclaimable(Array.isArray(list) ? list : [])
+    } catch {
+      /* nothing to offer is the safe default */
     }
   }, [sessionId])
+
+  useEffect(() => {
+    void loadReclaimable()
+  }, [loadReclaimable])
 
   const reclaim = useCallback(
     async (canvasId: string) => {
       setReclaiming(canvasId)
+      setDeleteError(null)
       try {
         // Re-read the tiles at CLICK time, not at list time: main applies the
         // same rule on both calls and the truth may have changed in between.
@@ -143,6 +164,21 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
     },
     [sessionId, refreshCanvas],
   )
+
+  const removeCanvas = useCallback(async (canvasId: string) => {
+    setDeleting(canvasId)
+    setDeleteError(null)
+    try {
+      const res = await window.electronAPI.canvas.deleteCanvas({ canvasId })
+      if (res?.ok) setReclaimable((list) => list.filter((c) => c.canvasId !== canvasId))
+      else setDeleteError('That canvas could not be deleted.')
+    } catch {
+      setDeleteError('That canvas could not be deleted.')
+    } finally {
+      setDeleting(null)
+      setConfirmingDelete(null)
+    }
+  }, [])
 
   const typeIntoTerminal = useCallback(() => {
     // No newline: the terminal shows the request, the user sends it.
@@ -423,21 +459,58 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
                     </div>
                     <button
                       onClick={() => void reclaim(c.canvasId)}
-                      disabled={reclaiming !== null}
+                      disabled={reclaiming !== null || deleting !== null}
                       className={GHOST_CLASS}
                       title="Reopen this canvas in this session, with its version history and notes"
                     >
                       {reclaiming === c.canvasId ? 'Reopening…' : 'Reopen'}
                     </button>
+                    {confirmingDelete === c.canvasId ? (
+                      <button
+                        onClick={() => void removeCanvas(c.canvasId)}
+                        disabled={reclaiming !== null || deleting !== null}
+                        className={DANGER_CLASS}
+                        aria-label={`Delete ${c.versionCount} version${c.versionCount === 1 ? '' : 's'} of canvas ${canvasLabel(c)}`}
+                        data-testid="canvas-reclaim-confirm-delete"
+                      >
+                        {deleting === c.canvasId
+                          ? 'Deleting…'
+                          : `Delete ${c.versionCount} version${c.versionCount === 1 ? '' : 's'}`}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => { setConfirmingDelete(c.canvasId); setDeleteError(null) }}
+                        disabled={reclaiming !== null || deleting !== null}
+                        className={`${GHOST_CLASS} hover:!text-[var(--status-danger)]`}
+                        title="Permanently delete this canvas — its versions and review notes go with it"
+                        aria-label={`Delete canvas ${canvasLabel(c)}`}
+                        data-testid="canvas-reclaim-delete"
+                      >
+                        Delete
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
+              {deleteError && (
+                <p className="mt-2 m-0 text-[11.5px] text-[var(--status-danger)]" role="alert" data-testid="canvas-reclaim-delete-error">
+                  {deleteError}
+                </p>
+              )}
             </div>
           )}
         </div>
       </div>
       {libraryOpen && (
-        <CanvasLibrary sessionId={sessionId} onClose={() => setLibraryOpen(false)} />
+        <CanvasLibrary
+          sessionId={sessionId}
+          onClose={() => {
+            setLibraryOpen(false)
+            // The library can delete (or adopt) a canvas the reclaim list still
+            // shows — re-read so no row offers an action on a ghost.
+            void loadReclaimable()
+          }}
+        />
       )}
     </div>
   )
