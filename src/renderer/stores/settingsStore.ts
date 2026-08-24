@@ -184,6 +184,9 @@ export interface AppSettings {
   debugMode: boolean
   keyboardShortcuts: Record<string, string>
   inputBarMaxHeight: number
+  /** @deprecated The fly-out it pinned open retired with the two-mode
+   *  Sessions panel (design pass 2026-08-24). Retained (with its default) so
+   *  older saved settings hydrate unchanged; no longer read anywhere. */
   configPanelPinned: boolean
   statusLine: StatusLineSettings
   statusLineEnabled?: boolean
@@ -236,8 +239,19 @@ export interface AppSettings {
    *  the sections-and-groups list that shipped first; 'cards' and 'find' are
    *  the two views from the design pass (both search with auto-complete, both
    *  hide running configs). Absent = 'list', so no existing install changes
-   *  shape on upgrade. */
+   *  shape on upgrade.
+   *  @deprecated Superseded by the two-mode Sessions panel (Saved ⇄ Running
+   *  tabs, canvas design pass 2026-08-24). Retained so older saved settings
+   *  still hydrate; no longer surfaced or read. */
   savedConfigsView?: 'list' | 'cards' | 'find'
+  /** Sessions panel (the left panel's two-mode redesign): which tab opens when
+   *  the app starts. Absent = 'running' (owner decision, plan Q1) — sessions
+   *  are what you work in; Saved is one click away. Read via
+   *  resolveDefaultPanelTab, never by comparing the field. */
+  sessionsPanelDefaultTab?: 'saved' | 'running'
+  /** Sessions panel: the Quick Start section on the Running tab is collapsed.
+   *  Absent = expanded. Persisted so the choice survives restarts. */
+  quickStartCollapsed?: boolean
   /** #367: the Agent Canvas x-ray hover mode. 'on' is the outline + label chip
    *  drawn over the content (what shipped); 'stealth' still resolves the
    *  hovered element but draws nothing, reading it out in the canvas side panel

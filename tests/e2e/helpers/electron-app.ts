@@ -110,8 +110,9 @@ export async function launchIsolatedApp(): Promise<IsolatedApp> {
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  // Deterministic readiness: the sidebar's new-config button renders once the
-  // shell has hydrated and setup is complete (env hook → isSetupComplete).
+  // Deterministic readiness: the sidebar's Saved TAB (which carries the
+  // data-tour="new-config" tour anchor since the two-mode panel) renders once
+  // the shell has hydrated and setup is complete (env hook → isSetupComplete).
   // NOT button[title="Settings"] — that title no longer exists on the nav item,
   // so the wait could only ever time out.
   await page.waitForSelector('[data-tour="new-config"]', { timeout: 20000 })

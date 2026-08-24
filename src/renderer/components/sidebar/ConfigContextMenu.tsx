@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react'
 import { ConfigGroup, ConfigSection } from '../../stores/configStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
+import { pinMenuLabel, PIN_WHILE_RUNNING_HINT } from './sessionsPanelState'
 
 interface ConfigContextMenuProps {
   x: number
@@ -10,6 +11,9 @@ interface ConfigContextMenuProps {
   currentGroupId?: string
   currentSectionId?: string
   isPinned?: boolean
+  /** The config's session is live: Edit/Delete lock (a running template must
+   *  not be edited by accident) and the pin item explains its deferral. */
+  running?: boolean
   onMoveToGroup: (groupId: string | undefined) => void
   onCreateGroup: (name: string) => void
   onMoveToSection: (sectionId: string | undefined) => void
@@ -21,7 +25,7 @@ interface ConfigContextMenuProps {
   onClose: () => void
 }
 
-export default function ConfigContextMenu({ x, y, groups, sections, currentGroupId, currentSectionId, isPinned, onMoveToGroup, onCreateGroup, onMoveToSection, onCreateSection, onEdit, onDelete, onPin, onDuplicate, onClose }: ConfigContextMenuProps) {
+export default function ConfigContextMenu({ x, y, groups, sections, currentGroupId, currentSectionId, isPinned, running, onMoveToGroup, onCreateGroup, onMoveToSection, onCreateSection, onEdit, onDelete, onPin, onDuplicate, onClose }: ConfigContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [showNewGroupInput, setShowNewGroupInput] = useState(false)
   const [showNewSectionInput, setShowNewSectionInput] = useState(false)
@@ -51,9 +55,13 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
       style={{ left: x, top: y, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
       <button
-        onClick={onEdit}
-        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+        onClick={running ? undefined : onEdit}
+        disabled={running}
+        aria-disabled={running}
+        className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${running ? 'cursor-not-allowed opacity-45' : 'hover:bg-[var(--surface-overlay)]'}`}
         style={{ color: 'var(--text-primary)' }}
+        title={running ? 'Running — a live config cannot be edited' : undefined}
+        data-testid="ctx-edit"
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
         Edit
@@ -62,12 +70,18 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
         onClick={onPin}
         className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
         style={{ color: 'var(--text-primary)' }}
+        data-testid="ctx-pin"
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
-          <path d="M7.5 1.5L10.5 4.5L8 7L9 10.5L6 7.5L2.5 11L5 7L1.5 4L5 5L7.5 1.5Z" strokeLinecap="round" strokeLinejoin="round"/>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--status-warning)' }}>
+          <path d="M13 2L3 14h7l-1 8 11-13h-8z" />
         </svg>
-        {isPinned ? 'Unpin' : 'Pin to Top'}
+        {pinMenuLabel(isPinned)}
       </button>
+      {running && !isPinned && (
+        <div className="px-3 pb-1 pl-8 text-[10px] leading-snug" style={{ color: 'var(--text-muted)' }}>
+          {PIN_WHILE_RUNNING_HINT}
+        </div>
+      )}
       <button
         onClick={onDuplicate}
         className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
@@ -80,9 +94,13 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
         Duplicate
       </button>
       <button
-        onClick={onDelete}
-        className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center gap-2"
+        onClick={running ? undefined : onDelete}
+        disabled={running}
+        aria-disabled={running}
+        className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${running ? 'cursor-not-allowed opacity-45' : 'hover:bg-[var(--surface-overlay)]'}`}
         style={{ color: 'var(--status-danger)' }}
+        title={running ? 'Running — close the session before deleting this config' : undefined}
+        data-testid="ctx-delete"
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
         Delete

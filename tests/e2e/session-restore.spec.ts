@@ -185,7 +185,10 @@ test('fail-open: a CORRUPT primary with NO usable .bak boots clean (no wedge, no
 
 /** Create + launch a Terminal x Local session named SESSION_NAME in workDir. */
 async function createTerminalSession(page: Page): Promise<void> {
-  await page.locator('[data-tour="new-config"]').first().click()
+  // Two-mode panel: open the Saved tab first (the panel defaults to Running),
+  // then the launcher's "+ New config" button.
+  await page.locator('[data-testid="panel-tab-saved"]').click()
+  await page.locator('[data-testid="new-config-button"]').click()
   await expect(page.locator('text=New saved config')).toBeVisible({ timeout: 10000 })
 
   await page

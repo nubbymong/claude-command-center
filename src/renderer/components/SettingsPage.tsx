@@ -18,7 +18,7 @@ import { CustomCommandsTab } from './settings/CustomCommandsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import { SectionLabel } from './ui/SectionLabel'
-import { SAVED_CONFIGS_VIEW_OPTIONS, resolveSavedConfigsView, type SavedConfigsView } from './sidebar/savedConfigsView'
+import { resolveDefaultPanelTab, type PanelTab } from './sidebar/sessionsPanelState'
 import { Kbd } from './ui/Kbd'
 import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
@@ -236,18 +236,18 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   Show Ask Conductor
                   <span className="text-[10px] text-overlay0">(The button at the bottom of the sidebar)</span>
                 </label>
-                {/* #362: the Saved Configs panel's layout. One choice, next to
-                    the other sidebar settings; the list stays the default. */}
-                <Field label="Saved Configs layout">
+                {/* Sessions panel (the two-mode left panel, design pass
+                    2026-08-24; supersedes the #362 layout picker). One choice:
+                    which tab the app opens on. */}
+                <Field label="Sessions panel — default tab">
                   <select
-                    value={resolveSavedConfigsView(settings.savedConfigsView)}
-                    onChange={(e) => save({ savedConfigsView: e.target.value as SavedConfigsView })}
+                    value={resolveDefaultPanelTab(settings.sessionsPanelDefaultTab)}
+                    onChange={(e) => save({ sessionsPanelDefaultTab: e.target.value as PanelTab })}
                     className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
-                    data-ux-id="settings-saved-configs-view"
+                    data-ux-id="settings-sessions-panel-default-tab"
                   >
-                    {SAVED_CONFIGS_VIEW_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
+                    <option value="running">Running -- your live sessions (default)</option>
+                    <option value="saved">Saved -- the config launcher</option>
                   </select>
                 </Field>
               </Section>

@@ -24,9 +24,13 @@ const STEPS: TourStep[] = [
     body: 'Agent Hub, Insights, Tokenomics, Memory, Logs and the built-in tools (Conductor MCP) all live on this rail. Each opens a full page.',
   },
   {
+    // Anchored on the always-mounted Saved TAB, not the "+ New config" button
+    // inside it: the panel defaults to the Running tab, so a selector into the
+    // Saved body would be unresolvable at tour time and available() would
+    // silently skip the step that explains the app's core concept.
     selector: '[data-tour="new-config"]',
     title: 'Saved configs live here',
-    body: 'A saved config is a reusable launcher: project folder, model, account. Create it once, then start a session from it whenever you want (Claude or Codex, local or over SSH).',
+    body: 'The left panel has two modes — Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab and press "+ New config" to create one, then start a session from it whenever you want (Claude or Codex, local or over SSH).',
   },
   {
     // Anchored on data-tour, not aria-label: the nav button's label is dynamic

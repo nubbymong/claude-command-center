@@ -67,7 +67,10 @@ async function openDialog() {
     await cancel.click()
     await expect(page.locator('text=New saved config')).toHaveCount(0)
   }
-  await page.locator('[data-tour="new-config"]').first().click()
+  // Two-mode panel: open the Saved tab first (the panel defaults to Running),
+  // then the launcher's "+ New config" button.
+  await page.locator('[data-testid="panel-tab-saved"]').click()
+  await page.locator('[data-testid="new-config-button"]').click()
   await expect(page.locator('text=New saved config')).toBeVisible({ timeout: 10000 })
 }
 
