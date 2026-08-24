@@ -767,7 +767,7 @@ async function killSpawnedBrowserForRelaunch(): Promise<void> {
   const pid = spawnedBrowserPid
   spawnedBrowserPid = null
   if (!pid) return
-  logInfo(`[vision] Killing previous CCC-spawned browser (pid ${pid}) before relaunch`)
+  logInfo(`[vision] Killing previous app-spawned browser (pid ${pid}) before relaunch`)
   if (process.platform === 'win32') {
     await runKillAwait('taskkill', ['/pid', String(pid), '/T', '/F'])
   } else {
@@ -793,7 +793,7 @@ export function killSpawnedBrowser(): void {
       // Negative pid targets the detached process group (spawn was detached).
       try { process.kill(-pid, 'SIGTERM') } catch { process.kill(pid, 'SIGTERM') }
     }
-    logInfo(`[vision] Killed CCC-spawned headless browser (pid ${pid})`)
+    logInfo(`[vision] Killed app-spawned headless browser (pid ${pid})`)
   } catch {
     // Already exited / not found — nothing to clean up.
   }

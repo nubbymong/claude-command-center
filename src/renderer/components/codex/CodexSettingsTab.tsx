@@ -185,7 +185,7 @@ export function CodexSettingsTab() {
             <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Install</h3>
           </div>
           <div className="p-4 space-y-3">
-            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Install the Codex CLI to use OpenAI Codex sessions in CCC.</p>
+            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Install the Codex CLI to use OpenAI Codex sessions in AI Code Conductor.</p>
             <div className="flex items-center gap-2">
               <code className="flex-1 border rounded-lg px-3 py-2 text-sm font-mono" style={CODE_WELL_STYLE}>
                 npm i -g @openai/codex
@@ -294,7 +294,7 @@ export function CodexSettingsTab() {
 
       {/* Profile-edit note -- always visible */}
       <p className="text-xs leading-relaxed px-1" style={{ color: 'var(--text-muted)' }}>
-        Profiles edited in <code className="px-1 py-0.5 rounded" style={{ color: 'var(--text-secondary)', background: 'var(--surface-sunken)' }}>{'~/.codex/config.toml'}</code> outside CCC are ignored when spawning from here. CCC sets model and reasoning effort per session.
+        Profiles edited in <code className="px-1 py-0.5 rounded" style={{ color: 'var(--text-secondary)', background: 'var(--surface-sunken)' }}>{'~/.codex/config.toml'}</code> outside AI Code Conductor are ignored when spawning from here. The app sets model and reasoning effort per session.
       </p>
       </div>
     </div>

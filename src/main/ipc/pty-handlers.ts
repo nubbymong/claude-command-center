@@ -200,7 +200,7 @@ export const spawnOptionsSchema = z.object({
     // line continuation, which hangs the session on a `>` prompt waiting for
     // input that never comes.
     (v) => extraArgsRefineOk(v),
-    { message: 'extraArgs must not include a CCC-managed flag (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/--resume), nor end in a backslash' },
+    { message: 'extraArgs must not include an app-managed flag (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/--resume), nor end in a backslash' },
   ).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),

@@ -40,7 +40,7 @@ function copyFor(reason: LogEmptyReason, watchedCwd?: string | null): Copy {
     case 'ssh':
       return {
         title: 'Remote session — no local transcript',
-        body: "SSH sessions write their transcript on the remote host, so CCC can't index them here.",
+        body: "SSH sessions write their transcript on the remote host, so AI Code Conductor can't index them here.",
       }
     case 'codex':
       return {

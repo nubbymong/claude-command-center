@@ -133,7 +133,7 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
 
   const handleDelete = async () => {
     const confirmed = window.confirm(
-      'Remove this account from CCC? Your Claude login is not affected.'
+      'Remove this account from AI Code Conductor? Your Claude login is not affected.'
     )
     if (!confirmed) return
     setDeleteError(null)
@@ -216,7 +216,7 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
         {!profile.isPrimary && (
           <button
             onClick={handleDelete}
-            title="Remove this account from CCC"
+            title="Remove this account from AI Code Conductor"
             data-testid={`delete-profile-${profile.id}`}
             className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-red/50 shrink-0"
             aria-label="Remove account"

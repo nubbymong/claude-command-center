@@ -98,7 +98,7 @@ export default function LoggingConsentPrompt() {
         {/* Body */}
         <DialogBody className="space-y-3">
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            CCC indexes Claude's own conversation transcripts so you can browse and review them here.
+            AI Code Conductor indexes Claude's own conversation transcripts so you can browse and review them here.
             Your conversations always live in Claude's own files (
             <code className="text-xs font-mono">~/.claude/projects</code>
             ) — CCC only reads them to build a local index.

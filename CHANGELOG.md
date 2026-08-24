@@ -333,7 +333,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics only one account reported now get their own section instead of being dropped. In practice that is most of them, and it is often the most interesting part: a tool or a kind of error that shows up in one account and nowhere else says more than a metric you already had side by side. Each account's top tools, languages and goals are carried into the comparison too.
 - If the written analysis cannot be produced, you still get the measured comparison and the report says so rather than quietly leaving it out.
 - While a cross-account run is in progress it reports which account it is on, and finishing accounts no longer pull the report you are reading out from under you.
-- Generating the combined report costs roughly a tenth of what it did: it is now handed the comparison CCC has already worked out rather than every account's full metric dump. That also makes it a better report, because the alignment is done before the analysis starts instead of during it.
+- Generating the combined report costs roughly a tenth of what it did: it is now handed the comparison the app has already worked out rather than every account's full metric dump. That also makes it a better report, because the alignment is done before the analysis starts instead of during it.
 - Generating Insights is far cheaper. Each analysis was quietly loading everything your account has configured — every connected tool server, every skill, your instruction files — into a job that only needed to read one report. Measured on a real setup that was about 193,000 words of context per account; it is now about 14,000. Nothing about the analysis itself changes.
 
 ### Fixed
@@ -352,11 +352,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.1.0-beta.5] - 2026-08-02
 
-> A runtime refresh. CCC now runs on Electron 43, with the terminal backend and the local database updated to match. No feature changes: this build exists so the beta channel is actually running what the beta line has been carrying.
+> A runtime refresh. The app now runs on Electron 43, with the terminal backend and the local database updated to match. No feature changes: this build exists so the beta channel is actually running what the beta line has been carrying.
 
 ### Changed
-- Updated the application runtime to Electron 43, which brings a newer Chromium and Node.js underneath CCC. A foundation update with no feature changes, carrying the browser and platform security fixes released with those versions.
-- Updated the two native components CCC depends on: the terminal backend that runs your sessions, and the local database that stores transcripts and usage. Both were rebuilt against the new runtime and exercised in a real launch before this release. Existing data is unchanged and nothing needs migrating.
+- Updated the application runtime to Electron 43, which brings a newer Chromium and Node.js underneath the app. A foundation update with no feature changes, carrying the browser and platform security fixes released with those versions.
+- Updated the two native components the app depends on: the terminal backend that runs your sessions, and the local database that stores transcripts and usage. Both were rebuilt against the new runtime and exercised in a real launch before this release. Existing data is unchanged and nothing needs migrating.
 - Updated the screen-capture component used when you attach a screenshot to a session.
 - Updated the build pipeline that produces and publishes the installers. No effect on the application.
 
@@ -366,8 +366,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Selecting a 1M-context model (Opus 1M) now launches correctly on macOS. The model name contains square brackets, which the macOS default shell treats as a filename pattern, so the whole launch command was aborted before the session started and nothing appeared to happen.
-- Restoring a session on Windows no longer mangles the paths CCC passes to Claude. The default data folder contains a space and the relaunch was splitting on it, which could silently drop per-session settings and turn the leftover text into an accidental first prompt.
-- Extra command-line arguments set on a config can no longer override the flags CCC manages for a session, including its per-session settings file. Certain spellings slipped past the existing check.
+- Restoring a session on Windows no longer mangles the paths the app passes to Claude. The default data folder contains a space and the relaunch was splitting on it, which could silently drop per-session settings and turn the leftover text into an accidental first prompt.
+- Extra command-line arguments set on a config can no longer override the flags the app manages for a session, including its per-session settings file. Certain spellings slipped past the existing check.
 - Regenerating the changelog no longer fails when a comment in the source contains an apostrophe. Developer tooling only.
 
 ## [2.1.0-beta.3] - 2026-07-31
@@ -378,18 +378,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated bundled dependencies to close 12 published security advisories, plus two more found while checking. No feature changes.
 
 ### Fixed
-- Ctrl+V now pastes into terminals. Previously only right-click pasted: Ctrl+V was passed straight through to the session as a raw control code, which a shell happened to treat as its own paste command, while Claude ignored it entirely. Cmd+V, Shift+Insert and Ctrl+Shift+V work too, and if the clipboard has no text CCC now says so instead of appearing to do nothing.
+- Ctrl+V now pastes into terminals. Previously only right-click pasted: Ctrl+V was passed straight through to the session as a raw control code, which a shell happened to treat as its own paste command, while Claude ignored it entirely. Cmd+V, Shift+Insert and Ctrl+Shift+V work too, and if the clipboard has no text the app now says so instead of appearing to do nothing.
 - Voice dictation and text-expander tools now work in terminals. Tools of that kind type into whatever is focused by copying text and sending Ctrl+V, so they were silently doing nothing in a Claude session — the same root cause as above.
-- Settings -> Check for Updates can now install the update it finds. It used to only report that one existed, leaving you to hunt for the small Update pill in the bottom bar. Open sessions are still saved before CCC restarts.
+- Settings -> Check for Updates can now install the update it finds. It used to only report that one existed, leaving you to hunt for the small Update pill in the bottom bar. Open sessions are still saved before the app restarts.
 - Copying with Ctrl+Shift+C no longer fires for every open terminal at once, and no longer competes with a focused text box.
-- Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in CCC tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.
+- Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in the app tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.
 - Session, config, team and agent-template identifiers are now generated with a cryptographic random number generator instead of a predictable one. Existing items keep the identifiers they already have and nothing needs migrating.
 - The in-app updater now verifies every installer it downloads against the SHA-256 checksums published with the release, and refuses to run one that does not match. Previously it launched whatever it downloaded, with no client-side check on any platform. If a download fails the check it is discarded and you are told why, rather than the update silently doing nothing.
-- Fixed a flaw in how a session's conversation transcript was located. A machine you opened an SSH session to could name a file outside the Claude projects folder — a private key or token elsewhere on your drive — and CCC would open it and read its contents into that session's local transcript store. Transcript locations are now confined to the projects folder, and the status information a remote host sends is checked before it is used. Exploiting this needed you to connect to a host the attacker controlled, and the file contents stayed on your own machine. Advisory GHSA-hw7c-g5pw-w725.
+- Fixed a flaw in how a session's conversation transcript was located. A machine you opened an SSH session to could name a file outside the Claude projects folder — a private key or token elsewhere on your drive — and the app would open it and read its contents into that session's local transcript store. Transcript locations are now confined to the projects folder, and the status information a remote host sends is checked before it is used. Exploiting this needed you to connect to a host the attacker controlled, and the file contents stayed on your own machine. Advisory GHSA-hw7c-g5pw-w725.
 
 ## [2.1.0-beta.2] - 2026-07-29
 
-> Resuming your work is far easier to read, your own Claude hooks now run in CCC sessions, and each config can set its own permission mode and CLI arguments.
+> Resuming your work is far easier to read, your own Claude hooks now run in the app sessions, and each config can set its own permission mode and CLI arguments.
 
 ### Added
 - Each config can now set its own Claude permission mode and extra command-line arguments, instead of every session sharing one global setting.
@@ -400,10 +400,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Resume Conversation picker shown in the terminal is much easier to scan: it now fills the width of your window instead of being capped at a narrow column, leads each entry with a recognisable title (your session's work name when you renamed it, otherwise Claude's own summary of the conversation), and strips the slash-command markup that used to crowd out the actual content. Conversations that only showed "(continued session)" now show what they were about.
 
 ### Fixed
-- Hooks you configure yourself now run in CCC sessions. CCC was replacing the whole hooks block with its own, so hooks from your user settings or a project's .claude/settings.json never fired in a CCC session even though they worked in a plain Claude session in the same folder. They are now merged, so a CCC session behaves like a normal Claude session in that folder, plus CCC's own hooks.
+- Hooks you configure yourself now run in the app sessions. The app was replacing the whole hooks block with its own, so hooks from your user settings or a project's .claude/settings.json never fired in a the app session even though they worked in a plain Claude session in the same folder. They are now merged, so a the app session behaves like a normal Claude session in that folder, plus the app's own hooks.
 - The text cursor is visible and blinking again in shell terminals on Windows and macOS.
 - Startup no longer freezes for roughly half a minute: two long synchronous sweeps during boot now run in the background.
-- macOS: fixed the "A keychain cannot be found to store" error at launch, which was caused by CCC redirecting your home directory away from your login keychain.
+- macOS: fixed the "A keychain cannot be found to store" error at launch, which was caused by the app redirecting your home directory away from your login keychain.
 - Multi-account: sessions belonging to a signed-in account whose per-account project folder had been orphaned are recovered, so cross-account resume finds your conversations again.
 
 ## [2.1.0-beta.1] - 2026-07-17
@@ -422,7 +422,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Scrolling up with the scrollbar or keyboard now holds your place while a session streams output. Previously only mouse-wheel scrolling was recognised, so any other way of scrolling up got yanked back to the bottom by the next burst of output.
-- Relaunching CCC reopens each session under the account it was closed with, instead of re-asking which account to use for every restored session.
+- Relaunching the app reopens each session under the account it was closed with, instead of re-asking which account to use for every restored session.
 
 ## [2.0.0-rc.1] - 2026-07-10
 
@@ -433,7 +433,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - In-app update checks now find newer releases. Releases were being tagged against a stale commit, which mis-dated them so the updater never saw them; they are now tagged at the exact commit that was built, the updater scans the full release list, and it understands release-candidate versions.
-- The all-accounts usage panel now shows live usage for every signed-in account — even ones you have not opened a session with recently. It quietly refreshes each account's short-lived key in the background, only for accounts with no running session or sign-in in progress. Your primary account is deliberately left untouched (its credentials are shared with Claude outside CCC) — it shows last-known usage until you open a session.
+- The all-accounts usage panel now shows live usage for every signed-in account — even ones you have not opened a session with recently. It quietly refreshes each account's short-lived key in the background, only for accounts with no running session or sign-in in progress. Your primary account is deliberately left untouched (its credentials are shared with Claude outside the app) — it shows last-known usage until you open a session.
 - Codex sessions no longer double-count cached input and reasoning tokens in the statusline and Tokenomics — token counts and dollar costs for cache-heavy Codex sessions were inflated (input could read nearly double).
 - Fixed a blank browser window that could appear on startup (and linger after closing the app) when the browser/vision tool was enabled. The automation browser is now kept off-screen and is reliably shut down together with the app.
 - The automation browser no longer runs Chrome's first-run setup on every launch, which was touching the desktop shortcuts and making the Chrome icon flicker on OneDrive-synced desktops.
@@ -464,18 +464,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Claude Command Center 2.0: a guided first-run setup, an in-app Ask Command Center guide, a modernized engine, and a privacy pass that keeps every Claude config write per-session.
 
 ### Added
-- New guided setup on first launch (and once after this upgrade): pick your theme, point CCC at your Claude install, see how accounts and GitHub connect, and switch on exactly the features you want. Every step shows real state from your machine, and nothing runs or gets enabled without you seeing it.
+- New guided setup on first launch (and once after this upgrade): pick your theme, point the app at your Claude install, see how accounts and GitHub connect, and switch on exactly the features you want. Every step shows real state from your machine, and nothing runs or gets enabled without you seeing it.
 - A live guided tour follows setup: coach marks anchored to the real app walk you to your first session. The old static tour and the stack of first-launch popups are retired.
 - Ask Command Center: the ? button in the sidebar opens a searchable guide to every feature, or hands your question to a Claude session primed with the app's docs so you can ask in plain language.
 - Built-in tools are now under your control: a master switch plus per-tool toggles (vision, code review, host transfer) in setup and Settings, enforced everywhere a session spawns: local, SSH, and Codex.
-- The status line has a real master switch: turn it off and CCC stops injecting it into sessions entirely, local and SSH alike.
+- The status line has a real master switch: turn it off and the app stops injecting it into sessions entirely, local and SSH alike.
 - Codex support is now clearly marked Beta with its own master switch, and you can sign in during setup with the browser flow or an API key. Off means off: Codex configs are marked disabled (with the reason) and will not launch while the master is off.
 
 ### Changed
 - Engine modernization: Electron 42, React 19, xterm.js 6, Vite 7, and TypeScript 6. A faster renderer on a current Chromium security baseline.
 - Privacy pass: the status line and the Conductor MCP server are now delivered per session instead of being written into your global Claude config, legacy global entries are cleaned up on boot, per-session SSH files are swept on close, and your ~/.claude/CLAUDE.md is never touched.
-- Claude Code 2.1.195+ renders its questions with clickable answer options; inside CCC a stray terminal click could select one, so they are switched off by default and answers stay keyboard-driven. Opt back in under Settings, General, Terminal.
-- CCC Sentinel and cloud-agent permissions now default to off. Both are opt-in, with the ask made plainly during setup, so nothing spends tokens or grants permissions without your say-so.
+- Claude Code 2.1.195+ renders its questions with clickable answer options; inside the app a stray terminal click could select one, so they are switched off by default and answers stay keyboard-driven. Opt back in under Settings, General, Terminal.
+- Sentinel and cloud-agent permissions now default to off. Both are opt-in, with the ask made plainly during setup, so nothing spends tokens or grants permissions without your say-so.
 - Agent Hub is reorganized into Tasks, Pipelines, and Library, with clearer first-run guidance.
 - Insights reliability round: runs compare against the previous run of the same account, concurrent runs are locked per account, failed runs and KPI-extraction failures are surfaced instead of silently vanishing, and KPI extraction no longer bypasses permissions.
 - Security hardening: external links open only over verified https, config files are validated as they load, the vision browser's debug port binds to loopback only, memory files are contained against symlink escape, and all known dependency vulnerabilities are resolved (undici, ws).
@@ -486,7 +486,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.45] - 2026-06-14
 
-> CCC Sentinel's status dot now only turns amber when a finding actually affects your setup.
+> Sentinel's status dot now only turns amber when a finding actually affects your setup.
 
 ### Changed
 - The Sentinel status dot is graded by reachability: amber means a compatibility finding reaches the accounts and features you actually use, and a calm grey state shows once you have reviewed the report.
@@ -496,7 +496,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Light theme: Claude sessions now start with a matching light terminal theme.
 
 ### Fixed
-- When CCC is in light mode, new Claude sessions are told about it (via the standard COLORFGBG signal) so Claude picks its light terminal theme instead of rendering dark-on-light. Applies to newly started sessions.
+- When the app is in light mode, new Claude sessions are told about it (via the standard COLORFGBG signal) so Claude picks its light terminal theme instead of rendering dark-on-light. Applies to newly started sessions.
 
 ## [1.5.43] - 2026-06-14
 
@@ -522,17 +522,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.41] - 2026-06-13
 
-> Copy the CCC Sentinel compatibility report to your clipboard.
+> Copy the Sentinel compatibility report to your clipboard.
 
 ### Added
 - The Sentinel report gains copy buttons: copy the whole report or a single finding, ready to paste into an issue or a Claude session.
 
 ## [1.5.40] - 2026-06-13
 
-> Fix: conversations recorded outside a CCC session now show up in the resume picker.
+> Fix: conversations recorded outside a the app session now show up in the resume picker.
 
 ### Fixed
-- The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside CCC sessions). Existing conversations are backfilled on the next scan.
+- The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside the app sessions). Existing conversations are backfilled on the next scan.
 
 ## [1.5.39] - 2026-06-13
 
@@ -548,7 +548,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - First-launch prompts (logging consent, What's New, setup steps) now appear one at a time in priority order instead of stacking on top of each other.
-- CCC Sentinel's background compatibility analysis no longer hangs on a shared login or leaves stray claude processes behind: it now runs against one of your signed-in accounts and tears the whole process tree down on timeout.
+- Sentinel's background compatibility analysis no longer hangs on a shared login or leaves stray claude processes behind: it now runs against one of your signed-in accounts and tears the whole process tree down on timeout.
 - The Tokenomics cost donut no longer shows a "<synthetic>" slice; those system rows are labelled and excluded from the cost breakdown.
 
 ## [1.5.38] - 2026-06-12
@@ -568,10 +568,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.37] - 2026-06-11
 
-> New: CCC Sentinel -- an opt-in watcher that flags when a Claude Code update might affect the app, plus Memory and Hooks fixes.
+> New: Sentinel -- an opt-in watcher that flags when a Claude Code update might affect the app, plus Memory and Hooks fixes.
 
 ### Added
-- CCC Sentinel (opt-in, fail-open) detects Claude Code version changes on startup, checks the CC changelog against CCC's compatibility assumptions, and surfaces findings in a status dot plus a panel. It proposes model and effort registry fixes you apply yourself (never automatically) and reports compatibility for everything else. Toggle it in Settings, CCC Sentinel.
+- Sentinel (opt-in, fail-open) detects Claude Code version changes on startup, checks the CC changelog against the app's compatibility assumptions, and surfaces findings in a status dot plus a panel. It proposes model and effort registry fixes you apply yourself (never automatically) and reports compatibility for everything else. Toggle it in Settings, Sentinel.
 
 ### Changed
 - A new hot-reloadable model and effort registry replaces around ten hardcoded model-identity sites, so an unknown or brand-new model now gets a colour, a label, and flagged pricing instead of vanishing.
@@ -585,7 +585,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Three big workstreams land: Logs v2 (a chat-transcript viewer), a ground-up Tokenomics rebuild, and the removal of the permission tray.
 
 ### Added
-- Logs v2: a clean-slate transcript system. CCC indexes Claude's own conversation transcripts and renders them back as a readable chat with a timeline rail and full-text search. Restart and relaunch now resume the conversation you were actually in, worktree-aware. The old logging stack is removed.
+- Logs v2: a clean-slate transcript system. The app indexes Claude's own conversation transcripts and renders them back as a readable chat with a timeline rail and full-text search. Restart and relaunch now resume the conversation you were actually in, worktree-aware. The old logging stack is removed.
 
 ### Changed
 - Tokenomics is rebuilt on its own background indexer that reads ALL transcripts including subagent and sidechain files (the old scan missed around half the events), dedups globally, computes cost at query time from live pricing, attributes by config, and opens instantly with an indexing state and a green nav badge.
@@ -688,7 +688,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - No on/off switch any more. On first run your current Claude login is captured into a protected account, and every session runs under a saved account, so you are multi-account ready from the start.
-- New account detection: run /login as a different account inside a session and CCC offers to add it as a separate named account, keeping your original account intact.
+- New account detection: run /login as a different account inside a session and the app offers to add it as a separate named account, keeping your original account intact.
 
 ### Changed
 - The Accounts list shows every account the same way, with the captured original marked as primary (and never deletable).
@@ -725,7 +725,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.19] - 2026-06-01
 
-> Run multiple Claude accounts in CCC: add accounts, switch per session, keep them isolated.
+> Run multiple Claude accounts in the app: add accounts, switch per session, keep them isolated.
 
 ### Added
 - Multiple accounts: add a second or third Claude account and run different sessions under different accounts. A first-run prompt walks you through it, and you can manage accounts anytime in Settings then Accounts.

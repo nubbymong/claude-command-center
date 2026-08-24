@@ -934,7 +934,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       />
                       <Hint k="xargs">
                         Advanced. Appended to the claude command exactly as typed. Shell characters are blocked
-                        and CCC's own flags (--model, --effort, --permission-mode, --settings, --mcp-config,
+                        and the app's own flags (--model, --effort, --permission-mode, --settings, --mcp-config,
                         --agents, --resume) can't be overridden here.
                       </Hint>
                     </div>
