@@ -79,10 +79,13 @@ no bypass. Two checks, both must pass:
 
 1. **Milestone (#375).** A GitHub milestone titled exactly the version being cut
    (e.g. `2.1.0-beta.17`) must exist and have **no open issue** without the
-   `excluded` label. Open issues are printed by number; pull requests on the
-   milestone are ignored. A missing milestone **fails closed** — the gate cannot
-   tell "nothing outstanding" from "nobody made the list". To clear it: close
-   the issues, move them to a later milestone, or have the owner label them
+   `excluded`, `in-beta`, or `in-release` label (the lifecycle labels mark work
+   that is already merged — on beta or in a cut rc — so it is shipping, not
+   outstanding; see CONTRIBUTING.md "Issue lifecycle"). Open issues are printed
+   by number; pull requests on the milestone are ignored. A missing milestone
+   **fails closed** — the gate cannot tell "nothing outstanding" from "nobody
+   made the list". To clear it: merge the fixes (label `in-beta`), close the
+   issues, move them to a later milestone, or have the owner label them
    `excluded` (owner-excluded from the current milestone gate).
 2. **Model registry (#385).** `resources/model-registry.json` must cover every
    model in Anthropic's [Claude Code model configuration](https://support.claude.com/en/articles/11940350-claude-code-model-configuration)

@@ -893,9 +893,12 @@ jobs:
   # LAST job: a relabel failure is a loud red X, but it blocks nothing — the
   # release is already live when this runs. A job-level `if` with no status
   # function still implies success(), so a failed publish never rolls labels.
+  # `!inputs.dry_run` is redundant today (`needs: release` already skips on a
+  # dry run) but is defence in depth: adding a status function to this `if`
+  # later would otherwise silently let a dry run relabel real issues.
   roll-rc:
     needs: [build-windows, release]
-    if: ${{ contains(needs.build-windows.outputs.tag, '-rc.') }}
+    if: ${{ contains(needs.build-windows.outputs.tag, '-rc.') && !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

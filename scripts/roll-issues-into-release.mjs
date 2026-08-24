@@ -20,7 +20,7 @@
 //                   script must never guess which release it is rolling).
 //   --repo <o/n>    Target repo. Defaults to $GITHUB_REPOSITORY, else
 //                   package.json's repository, else the origin remote.
-//   --dry-run       Print the plan; touch nothing.
+//   --dry-run       Print the plan; touch nothing. Also honoured via DRY_RUN=1.
 //
 // Scope: the milestone's open `in-beta` issues — the same set the release gate
 // certified as "shipping in this release" when it allowed the cut. An in-beta
@@ -77,12 +77,13 @@ export function classifyIssue(item, { inBetaLabel = IN_BETA_LABEL, inReleaseLabe
   if (item.state && item.state !== 'open') return { action: 'skip', reason: `already ${item.state}` }
   const labels = labelNames(item.labels)
   if (labels.includes(inReleaseLabel)) return { action: 'skip', reason: `already labeled ${inReleaseLabel}` }
-  if (!labels.includes(inBetaLabel)) {
-    // An excluded issue is the owner's business, not this script's — say so
-    // distinctly so the run log reads as "deliberately left", not "missed".
-    if (labels.includes(excludedLabel)) return { action: 'skip', reason: `labeled ${excludedLabel} (owner-excluded)` }
-    return { action: 'skip', reason: `not labeled ${inBetaLabel}` }
-  }
+  // An excluded issue is the owner's business, not this script's — and it WINS
+  // over in-beta, exactly as it does in the gate (evaluateMilestone checks
+  // excluded first): an issue the owner excluded must never be commented as
+  // "rolled" and auto-closed on promotion. Distinct reason so the run log
+  // reads as "deliberately left", not "missed".
+  if (labels.includes(excludedLabel)) return { action: 'skip', reason: `labeled ${excludedLabel} (owner-excluded)` }
+  if (!labels.includes(inBetaLabel)) return { action: 'skip', reason: `not labeled ${inBetaLabel}` }
   return { action: 'roll' }
 }
 
@@ -200,6 +201,14 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 
   if (!toRoll.length) {
     console.log(`\nNo open \`${IN_BETA_LABEL}\` issues on milestone "${version}". Done.`)
+    // Zero rolled AND zero already-rolled on a live run smells like an empty rc
+    // milestone — the roll's scope is the milestone, so an in-beta issue that
+    // never made it onto the milestone is silently left behind. A rolling
+    // re-release (everything already in-release) is fine and stays quiet.
+    const alreadyRolled = skipped.some((s) => s.reason === `already labeled ${IN_RELEASE_LABEL}`)
+    if (!dryRun && !alreadyRolled) {
+      console.log(`::warning::Zero issues rolled for ${version}. If this rc ships real fixes, check that its milestone actually lists them (milestone hygiene is part of the cut checklist).`)
+    }
     return EXIT_OK
   }
 
@@ -212,8 +221,10 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
       // Comment first: if the relabel fails, the issue still carries the
       // explanation rather than being silently half-processed.
       await githubRequest('POST', `/repos/${repo}/issues/${issue.number}/comments`, { body: rollCommentBody({ version }) }, { token })
-      // PUT replaces the whole label set in one call — the swap is atomic, and
-      // rolledLabels preserves everything that is not the lifecycle label.
+      // PUT replaces the whole label set with one computed from the LIST-TIME
+      // snapshot: the swap itself cannot half-apply, but a label someone adds
+      // by hand between the list and this call is lost. Accepted for the
+      // seconds-wide window of a release job.
       await githubRequest('PUT', `/repos/${repo}/issues/${issue.number}/labels`, { labels: rolledLabels(issue.labels) }, { token })
     } catch (err) {
       failed++
@@ -222,7 +233,7 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   }
 
   if (failed) {
-    console.error(`\n${failed} issue(s) failed to roll — re-run this script (already-rolled issues are skipped) or fix the labels by hand.`)
+    console.error(`\n${failed} issue(s) failed to roll — re-run this script or fix the labels by hand. Already-rolled issues are skipped on a re-run; an issue whose RELABEL failed (comment landed, label did not) is re-attempted and will carry a duplicate roll comment.`)
     return EXIT_FAILED
   }
   console.log(dryRun ? '\nDry run — nothing was changed.' : '\nDone.')

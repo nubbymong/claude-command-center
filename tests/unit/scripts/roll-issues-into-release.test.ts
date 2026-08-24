@@ -56,6 +56,15 @@ describe('classifyIssue', () => {
     })
   })
 
+  it('excluded WINS over in-beta — same precedence as the gate', () => {
+    // An owner-excluded issue that also (wrongly or partially) carries in-beta
+    // must never be commented as rolled and auto-closed on promotion.
+    expect(classifyIssue(issue({ labels: ['excluded', 'in-beta'] }))).toEqual({
+      action: 'skip',
+      reason: 'labeled excluded (owner-excluded)',
+    })
+  })
+
   it('accepts plain-string labels', () => {
     expect(classifyIssue(issue({ labels: ['in-beta'] }))).toEqual({ action: 'roll' })
   })
