@@ -1924,7 +1924,11 @@ export function deleteAnnotationsForVersions(canvasId: string, versionIds: reado
   // undo the commit above.
   for (const a of doomed) {
     if (a.image) unlinkPastedImage(canvasId, a.image)
-    if (a.sketch && a.sketch.pngPath) {
+    // Re-validate the sketch path at unlink time, exactly as unlinkPastedImage
+    // re-checks its own — the record is validated on load today, but this guard
+    // keeps the unlink from becoming a delete-by-path primitive if any future
+    // path ever warms the cache with a less-validated sketch pngPath (ADR-009).
+    if (a.sketch && PNG_PATH_RE.test(a.sketch.pngPath)) {
       try {
         fs.unlinkSync(path.join(canvasDir(canvasId), a.sketch.pngPath))
       } catch {

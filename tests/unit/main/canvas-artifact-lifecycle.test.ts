@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import { vi } from 'vitest'
 
@@ -133,6 +134,38 @@ describe('delete-artifact durability', () => {
     const canvasId = store.getCanvasStateForSession(SID)!.canvasId
     expect(store.deleteArtifact(canvasId, 'v99').ok).toBe(false)
     expect(store.deleteArtifact('deadbeefdeadbeefdeadbeef', 'v1').ok).toBe(false)
+  })
+
+  it('refuses to delete THROUGH a junction planted at the versions/ dir (ADR-009)', () => {
+    // A reparse point at <canvasDir>/versions is resolved transparently by the
+    // OS, so a per-version removal that starts below the checked canvas dir
+    // would delete out of tree. The realpath identity check on each version dir
+    // must refuse it — the victim survives, and the metadata delete still lands.
+    seedTwoArtifacts()
+    const canvasId = store.getCanvasStateForSession(SID)!.canvasId
+    const versionsDir = path.join(getResourcesDirectory(), 'canvas', canvasId, 'versions')
+    const victim = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-victim-'))
+    fs.mkdirSync(path.join(victim, 'v3'))
+    fs.writeFileSync(path.join(victim, 'v3', 'precious.txt'), 'keep me')
+    fs.rmSync(versionsDir, { recursive: true, force: true })
+    try {
+      fs.symlinkSync(victim, versionsDir, process.platform === 'win32' ? 'junction' : 'dir')
+    } catch {
+      // Some CI shells cannot create a link without privilege — skip rather than
+      // fail; the win32 leg (where junctions need none) is the one that matters.
+      fs.rmSync(victim, { recursive: true, force: true })
+      return
+    }
+    const res = store.deleteArtifact(canvasId, 'v3')
+    expect(res.ok).toBe(true) // metadata delete still succeeds
+    expect(fs.existsSync(path.join(victim, 'v3', 'precious.txt'))).toBe(true) // NOT deleted
+    // cleanup: detach the link (never the target), then the victim
+    try {
+      fs.rmdirSync(versionsDir)
+    } catch {
+      try { fs.unlinkSync(versionsDir) } catch { /* ignore */ }
+    }
+    fs.rmSync(victim, { recursive: true, force: true })
   })
 })
 

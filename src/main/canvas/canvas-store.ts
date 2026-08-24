@@ -2013,8 +2013,9 @@ export function deleteArtifact(
   } catch {
     realRoot = root
   }
+  let realCanvasDir: string | null = null
   try {
-    const realCanvasDir = fs.realpathSync(canvasDir(canvasId))
+    realCanvasDir = fs.realpathSync(canvasDir(canvasId))
     const expected = path.join(realRoot, canvasId)
     const same =
       process.platform === 'win32'
@@ -2023,20 +2024,72 @@ export function deleteArtifact(
     if (!same) return { ok: false, reason: 'unsafe' }
   } catch (err) {
     // ENOENT — the canvas dir is already gone; the record mutation below is
-    // still the durable truth, so continue. Any other error means we cannot
-    // vouch for the path and must not remove under it.
+    // still the durable truth, so continue with no file removal. Any other
+    // error means we cannot vouch for the path and must not remove under it.
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return { ok: false, reason: 'unsafe' }
+    realCanvasDir = null
   }
 
   const deletedVersionIds = run.map((v) => v.id)
   const deleted = new Set(deletedVersionIds)
-  for (const id of deletedVersionIds) {
+  // `versions/` itself is lstat'd as a FINAL component (which the OS does not
+  // follow), so a reparse point planted there is caught as a link and ALL file
+  // removal is skipped — the deterministic form of the intermediate-junction
+  // escape, closed the same way `deleteCanvas`'s walker catches it (ADR-009
+  // round 2). This is checked once, up front, before any per-version work.
+  if (realCanvasDir !== null) {
     try {
-      removeTreeNoFollow(versionDir(canvasId, id))
+      const vst = fs.lstatSync(path.join(canvasDir(canvasId), 'versions'))
+      if (vst.isSymbolicLink() || !vst.isDirectory()) {
+        console.warn('[canvas-store] refusing version-file removal: versions/ is not a plain directory')
+        realCanvasDir = null // skip all file removal; the metadata delete still lands
+      }
     } catch (err) {
-      // Best-effort: the record mutation is what makes the delete durable, so a
-      // file that will not unlink leaves an orphan, never a resurrected version.
-      console.warn('[canvas-store] artifact version files left behind:', err)
+      // No versions dir at all — nothing to remove. Skip file removal; the
+      // record mutation below is still the durable truth.
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') realCanvasDir = null
+    }
+  }
+  // Realpath EACH version directory to its expected slot before removing it —
+  // not just the canvas dir. `removeTreeNoFollow` refuses to follow the FINAL
+  // path component, but the OS resolves an intermediate reparse point (a
+  // junction planted at `<canvasDir>/versions`) transparently, so starting the
+  // walk below the checked boundary let a `versions` junction redirect the
+  // per-version delete out of the canvas dir entirely (ADR-009, this change).
+  // The identity check catches exactly that: a redirected version dir realpaths
+  // somewhere other than `<realCanvasDir>/versions/<id>` and is skipped. Its
+  // metadata still goes below, so the delete is durable; only the out-of-tree
+  // unlink is refused. Skipped whole when the canvas dir was already gone.
+  if (realCanvasDir !== null) {
+    for (const id of deletedVersionIds) {
+      const dir = versionDir(canvasId, id)
+      try {
+        const realDir = fs.realpathSync(dir)
+        const expectedDir = path.join(realCanvasDir, 'versions', id)
+        const same =
+          process.platform === 'win32'
+            ? realDir.toLowerCase() === expectedDir.toLowerCase()
+            : realDir === expectedDir
+        if (!same) {
+          console.warn(`[canvas-store] refusing to remove ${dir}: it resolves outside the canvas dir`)
+          continue
+        }
+      } catch (err) {
+        // ENOENT — nothing there to remove. Anything else — cannot vouch for
+        // the path; leave it rather than risk removing out of tree.
+        if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+          console.warn('[canvas-store] artifact version dir not removable:', err)
+        }
+        continue
+      }
+      try {
+        removeTreeNoFollow(dir)
+      } catch (err) {
+        // Best-effort: the record mutation is what makes the delete durable, so
+        // a file that will not unlink leaves an orphan, never a resurrected
+        // version.
+        console.warn('[canvas-store] artifact version files left behind:', err)
+      }
     }
   }
 
