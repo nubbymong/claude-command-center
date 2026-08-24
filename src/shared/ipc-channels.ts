@@ -399,6 +399,8 @@ export const IPC = {
   CANVAS_RECLAIM: 'canvas:reclaim',                    // renderer -> main: the USER moves a named canvas to this session
   CANVAS_LIST_ALL: 'canvas:listAll',                   // renderer -> main: { openTileSessionIds?, sessionId? } -> CanvasLibraryEntry[] (the library, scoped to that session's project; read-only)
   CANVAS_DELETE: 'canvas:delete',                      // renderer -> main: the USER deletes a canvas and its files
+  CANVAS_ARCHIVE_ARTIFACT: 'canvas:archiveArtifact',   // renderer -> main: { canvasId, versionId, archived } -> tuck an artifact into (or out of) the Archived history group (reversible)
+  CANVAS_DELETE_ARTIFACT: 'canvas:deleteArtifact',     // renderer -> main: { canvasId, versionId } -> permanently delete an artifact, its versions and their review notes
 
   // Agent Canvas P3 — reviews & annotations (the review loop, spec §6)
   CANVAS_REVIEW_GET_STATE: 'canvas:reviewGetState',    // renderer -> main: { sessionId } -> CanvasReviewState | null

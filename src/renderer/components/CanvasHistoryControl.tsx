@@ -125,16 +125,20 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
             and takes the notes with it, so it confirms first. */}
         {(onArchive || onDelete) && (
           <span className="shrink-0 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-            {onArchive && !a.archived && (
+            {/* Archive is reversible for a user-archived artifact; a legacy uat
+                build is inherently archived and has no toggle. */}
+            {onArchive && a.kind !== 'uat' && (
               <button
                 type="button"
                 onClick={() => onArchive(a)}
                 className="text-[10.5px] focus-ring rounded px-0.5"
                 style={{ color: 'var(--text-secondary)' }}
-                title="Tuck this artifact into Archived — out of the picker, recoverable any time."
+                title={a.archived
+                  ? 'Bring this artifact back out of Archived into the live picker.'
+                  : 'Tuck this artifact into Archived — out of the picker, recoverable any time.'}
                 data-testid="canvas-history-archive"
               >
-                archive
+                {a.archived ? 'unarchive' : 'archive'}
               </button>
             )}
             {onDelete &&

@@ -1267,6 +1267,18 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           versions={versions}
           activeVersionId={version.id}
           onSelectVersion={(id) => void setActiveVersion(sessionId, id)}
+          onArchive={(artifact) => {
+            // Reversible: the store returns the new state and pushes a change,
+            // but refresh here makes the picker update without the round-trip.
+            void window.electronAPI.canvas
+              .archiveArtifact({ canvasId, versionId: artifact.key, archived: !artifact.archived })
+              .then(() => useCanvasStore.getState().refresh(sessionId))
+          }}
+          onDelete={(artifact) => {
+            void window.electronAPI.canvas
+              .deleteArtifact({ canvasId, versionId: artifact.key })
+              .then(() => useCanvasStore.getState().refresh(sessionId))
+          }}
         />
         {/* What is still owed on THIS canvas. From one, unlike the Canvas
             button's pill: in here you are already looking at the thing, so one

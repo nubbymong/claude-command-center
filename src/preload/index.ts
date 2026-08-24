@@ -281,6 +281,12 @@ export interface ElectronAPI {
     listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) => Promise<CanvasLibraryEntry[]>
     /** The user deletes a canvas and its files. The only destructive canvas call. */
     deleteCanvas: (args: { canvasId: string }) => Promise<{ ok: boolean }>
+    /** Archive/unarchive one artifact (item C): reversible, returns the state. */
+    archiveArtifact: (args: { canvasId: string; versionId: string; archived: boolean }) => Promise<{ ok: boolean; state: CanvasState | null }>
+    /** Permanently delete one artifact, its versions and their review notes. */
+    deleteArtifact: (args: { canvasId: string; versionId: string }) => Promise<
+      { ok: true; deletedVersions: number; notesDeleted: number } | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' }
+    >
     /** The user reclaims a named canvas — the only path that moves ownership. */
     reclaim: (args: {
       sessionId: string
@@ -895,6 +901,9 @@ const electronAPI: ElectronAPI = {
     listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_LIST_ALL, args ?? {}),
     deleteCanvas: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_DELETE, args),
+    archiveArtifact: (args: { canvasId: string; versionId: string; archived: boolean }) =>
+      ipcRenderer.invoke(IPC.CANVAS_ARCHIVE_ARTIFACT, args),
+    deleteArtifact: (args: { canvasId: string; versionId: string }) => ipcRenderer.invoke(IPC.CANVAS_DELETE_ARTIFACT, args),
     reviewGetState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_GET_STATE, args),
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_UPSERT, args),

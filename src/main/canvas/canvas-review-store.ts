@@ -1887,6 +1887,55 @@ export function closeOutCanvasReviews(canvasId: string): { closed: number; revie
 }
 
 /**
+ * Delete every note anchored to one of `versionIds`, because the artifact those
+ * versions belong to was permanently deleted (item C, phase 5). Reviews left
+ * with no notes are removed; the monotonic counters are untouched, so no id is
+ * ever reissued. Attachment files (sketch exports, pasted images) for the
+ * removed notes are unlinked best-effort — the record is the durable truth.
+ *
+ * Keyed by canvasId, like closeOutCanvasReviews and deleteCanvas: the caller
+ * (the delete-artifact IPC handler) holds both stores and drives this after the
+ * canvas store has removed the versions. Returns the number of notes removed,
+ * or null for an unreadable store.
+ */
+export function deleteAnnotationsForVersions(canvasId: string, versionIds: readonly string[]): number | null {
+  const base = recordByCanvasId(canvasId)
+  if (!base) return null
+  const targets = new Set<string>()
+  for (const id of versionIds) if (typeof id === 'string' && CANVAS_VERSION_ID_RE.test(id)) targets.add(id)
+  if (targets.size === 0) return 0
+
+  const doomed = base.annotations.filter((a) => targets.has(a.versionId))
+  if (doomed.length === 0) return 0
+  const doomedIds = new Set(doomed.map((a) => a.id))
+
+  const keptAnnotations = base.annotations.filter((a) => !doomedIds.has(a.id)).map(cloneAnnotation)
+  const reviews = base.reviews
+    .map((r) => ({ ...r, annotationIds: r.annotationIds.filter((id) => !doomedIds.has(id)) }))
+    // A review emptied of every note is removed — its number is not reused
+    // (nextReview never decreases), exactly like a deleted version's id.
+    .filter((r) => r.annotationIds.length > 0)
+
+  const next: ReviewFileRecord = { ...base, reviews, annotations: keptAnnotations }
+  commit(next)
+
+  // Best-effort file cleanup for the removed notes. The record already no longer
+  // references them, so a leftover file is harmless; a throw here must never
+  // undo the commit above.
+  for (const a of doomed) {
+    if (a.image) unlinkPastedImage(canvasId, a.image)
+    if (a.sketch && a.sketch.pngPath) {
+      try {
+        fs.unlinkSync(path.join(canvasDir(canvasId), a.sketch.pngPath))
+      } catch {
+        /* already gone, locked, or never exported — the record is the truth */
+      }
+    }
+  }
+  return doomed.length
+}
+
+/**
  * Forget everything held for one canvas, because that canvas has been deleted.
  *
  * `reviews.json` lives inside the canvas directory, so deleting the canvas

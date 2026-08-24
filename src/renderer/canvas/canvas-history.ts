@@ -13,7 +13,7 @@
 // their old review notes keep an anchor.
 
 import type { CanvasVersion } from '../../shared/canvas'
-import { CanvasMode } from '../../shared/canvas'
+import { CanvasMode, artifactRuns } from '../../shared/canvas'
 
 export interface CanvasArtifact {
   /** Stable within a render of the list: the id of the artifact's FIRST
@@ -44,26 +44,17 @@ function artifactLabel(v: CanvasVersion): string {
  * appear in history.
  */
 export function groupVersionsIntoArtifacts(versions: readonly CanvasVersion[]): CanvasArtifact[] {
-  const artifacts: CanvasArtifact[] = []
-  for (const v of versions) {
-    if (v.draft) continue
-    const kind = v.mode
-    const last = artifacts[artifacts.length - 1]
-    if (last && last.kind === kind) {
-      last.versions.push(v)
-      last.updatedAt = v.createdAt
-    } else {
-      artifacts.push({
-        key: v.id,
-        kind,
-        label: artifactLabel(v),
-        versions: [v],
-        updatedAt: v.createdAt,
-        archived: kind === 'uat',
-      })
-    }
-  }
-  return artifacts
+  // Runs come from the SHARED grouping so this picker and main's archive/delete
+  // act on the exact same version sets. A run is archived when it is a legacy
+  // uat build OR the user tucked it away (the flag rides every version in it).
+  return artifactRuns(versions).map((run) => ({
+    key: run[0].id,
+    kind: run[0].mode,
+    label: artifactLabel(run[0]),
+    versions: run,
+    updatedAt: run[run.length - 1].createdAt,
+    archived: run[0].mode === 'uat' || run[0].archived === true,
+  }))
 }
 
 /** The artifact a given version belongs to, and its 1-based position within

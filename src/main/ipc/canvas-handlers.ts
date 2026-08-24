@@ -13,12 +13,14 @@ import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import {
   clearAwaitingReview,
+  deleteArtifact,
   deleteCanvas,
   getCanvasStateForSession,
   listAllCanvases,
   onCanvasChanged,
   renderVersion,
   setActiveVersion,
+  setArtifactArchived,
 } from '../canvas/canvas-store'
 import {
   MAX_SKETCH_PNG_BYTES,
@@ -27,6 +29,7 @@ import {
   dropReviewsForCanvas,
   getReviewCountsForCanvas,
   getReviewStateForSession,
+  deleteAnnotationsForVersions,
   markAddressedNotesSeen,
   onReviewChanged,
   reopenAnnotation,
@@ -118,6 +121,26 @@ const listAllSchema = z
  *  canvas store even before the store re-checks and realpath-confirms it. */
 const deleteCanvasSchema = z
   .object({ canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
+  .strict()
+
+/** Archive/unarchive one artifact (item C, phase 5): the canvas it is on, one
+ *  of its version ids, and the target state. Reversible; the store re-checks
+ *  everything and no-ops safely on a stranger id. */
+const artifactArchiveSchema = z
+  .object({
+    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
+    versionId: z.string().regex(/^v[0-9]{1,9}$/),
+    archived: z.boolean(),
+  })
+  .strict()
+
+/** Permanently delete one artifact (item C, phase 5). Same id shapes; the store
+ *  applies the path discipline and refuses the canvas's only artifact. */
+const artifactDeleteSchema = z
+  .object({
+    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
+    versionId: z.string().regex(/^v[0-9]{1,9}$/),
+  })
   .strict()
 
 /** Canvas ids are app-minted (see CANVAS_ID_RE); bounded here at the seam. */
@@ -378,6 +401,29 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   ipcMain.handle(IPC.CANVAS_RENDER, async (_e, args: unknown) => {
     const { sessionId, source } = renderSchema.parse(args)
     return renderVersion(sessionId, source)
+  })
+
+  // Archive/unarchive one artifact (item C, phase 5). Reversible: it only moves
+  // the artifact into (or out of) the muted Archived history group. Returns the
+  // updated state so the pane reflects it without waiting for the change push.
+  ipcMain.handle(IPC.CANVAS_ARCHIVE_ARTIFACT, async (_e, args: unknown) => {
+    const { canvasId, versionId, archived } = artifactArchiveSchema.parse(args)
+    const state = setArtifactArchived(canvasId, versionId, archived)
+    return { ok: state !== null, state }
+  })
+
+  // Permanently delete one artifact: its versions, their files, and their review
+  // notes. Two stores: the canvas store removes the versions (and returns their
+  // ids), then the review store drops the notes anchored to them — the same
+  // two-store shape CANVAS_DELETE uses for dropReviewsForCanvas. The review drop
+  // only runs on a successful version delete, so a refused delete never clears a
+  // note.
+  ipcMain.handle(IPC.CANVAS_DELETE_ARTIFACT, async (_e, args: unknown) => {
+    const { canvasId, versionId } = artifactDeleteSchema.parse(args)
+    const result = deleteArtifact(canvasId, versionId)
+    if (!result.ok) return { ok: false as const, reason: result.reason }
+    const notesDeleted = deleteAnnotationsForVersions(canvasId, result.deletedVersionIds)
+    return { ok: true as const, deletedVersions: result.deletedVersionIds.length, notesDeleted: notesDeleted ?? 0 }
   })
 
   ipcMain.handle(IPC.CANVAS_SET_ACTIVE_VERSION, async (_e, args: unknown) => {
