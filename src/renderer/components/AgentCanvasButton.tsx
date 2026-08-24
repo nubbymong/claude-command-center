@@ -88,7 +88,7 @@ export default function AgentCanvasButton({ sessionId }: Props) {
           isOpen
             ? 'Back to the terminal (closes the Agent Canvas)'
             : waiting
-              ? `${queue} round${queue === 1 ? '' : 's'} waiting on your review — click the count for the list`
+              ? `${queue} round${queue === 1 ? '' : 's'} waiting on your review — click the count for the list, right-click to dismiss all`
               : 'Open Agent Canvas'
         }
         data-testid="canvas-button"
