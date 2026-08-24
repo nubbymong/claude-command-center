@@ -16,7 +16,7 @@ import type { TeamTemplate } from '../../../src/renderer/types/electron'
 vi.mock('../../../src/renderer/stores/agentLibraryStore', () => ({
   BUILTIN_TEMPLATES: [],
   useAgentLibraryStore: (selector: (s: any) => unknown) =>
-    selector({ getAllTemplates: () => [] }),
+    selector({ templates: [] }),
 }))
 
 const { default: TeamsPanel } = await import('../../../src/renderer/components/TeamsPanel')

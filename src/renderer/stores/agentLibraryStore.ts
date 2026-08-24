@@ -65,9 +65,11 @@ interface AgentLibraryState {
   removeTemplate: (id: string) => void
   duplicateTemplate: (id: string) => AgentTemplate | undefined
 
-  getUserTemplates: () => AgentTemplate[]
-  getBuiltInTemplates: () => AgentTemplate[]
-  getAllTemplates: () => AgentTemplate[]
+  // No getter methods here on purpose (#442): a method building a fresh array
+  // per call, used inside a zustand selector, fails Object.is and re-renders
+  // for ever — under React 19 that is an update-depth throw that took the
+  // whole window down. Select `templates` and derive with useMemo, appending
+  // the module const BUILTIN_TEMPLATES where the built-ins are wanted.
 }
 
 // Through config-saver, never straight to the IPC: config-saver is where the
@@ -131,7 +133,4 @@ export const useAgentLibraryStore = create<AgentLibraryState>((set, get) => ({
     return copy
   },
 
-  getUserTemplates: () => get().templates,
-  getBuiltInTemplates: () => BUILTIN_TEMPLATES,
-  getAllTemplates: () => [...get().templates, ...BUILTIN_TEMPLATES],
 }))

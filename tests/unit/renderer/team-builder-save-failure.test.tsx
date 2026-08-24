@@ -16,10 +16,14 @@ import type { TeamTemplate } from '../../../src/renderer/types/electron'
 
 // The agent library is irrelevant to the save path; stub it so the dialog can
 // render its one step row without pulling in the real store's config hydration.
+// The stub serves the STABLE `templates` array (what the component now
+// selects), never a method building a fresh array — that shape is the crash
+// team-builder-mount.test.tsx pins against the real store.
+const STUB_TEMPLATES = [{ id: 'builtin-code-reviewer', name: 'Code Reviewer' }]
 vi.mock('../../../src/renderer/stores/agentLibraryStore', () => ({
   BUILTIN_TEMPLATES: [],
   useAgentLibraryStore: (selector: (s: any) => unknown) =>
-    selector({ getAllTemplates: () => [{ id: 'builtin-code-reviewer', name: 'Code Reviewer' }] }),
+    selector({ templates: STUB_TEMPLATES }),
 }))
 
 const { default: TeamBuilder } = await import('../../../src/renderer/components/TeamBuilder')

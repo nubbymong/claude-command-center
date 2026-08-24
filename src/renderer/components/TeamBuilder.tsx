@@ -35,7 +35,14 @@ const PARALLEL = 'var(--status-info)'
 export default function TeamBuilder({ onClose }: { onClose: () => void }) {
   const editingTeam = useTeamStore(s => s.editingTeam)
   const saveTeam = useTeamStore(s => s.saveTeam)
-  const allTemplates = useAgentLibraryStore(s => s.getAllTemplates())
+  // Select the stable array and derive OUTSIDE the selector: getAllTemplates()
+  // builds a fresh array every call, which fails zustand's Object.is check and
+  // re-renders for ever — under React 19's useSyncExternalStore that is a
+  // "Maximum update depth exceeded" throw the moment the dialog mounts, and
+  // the app-wide ErrorBoundary took the whole window down (owner repro:
+  // Agent Hub → New pipeline → crash). Same rule as TipCard/AskConductorDock.
+  const userTemplates = useAgentLibraryStore(s => s.templates)
+  const allTemplates = React.useMemo(() => [...userTemplates, ...BUILTIN_TEMPLATES], [userTemplates])
 
   const [name, setName] = useState(editingTeam?.name || '')
   const [description, setDescription] = useState(editingTeam?.description || '')
