@@ -639,6 +639,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     // neither drag sources nor drop targets, so a stray drag over them shows
     // no drop affordance and does nothing.
     const loose = looseConfigIds.has(config.id)
+    const running = runningIds.has(config.id)
     return (
       <ConfigRow
         key={config.id}
@@ -648,7 +649,18 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onDelete={() => handleDeleteConfig(config.id)}
         onPin={() => togglePinned(config.id)}
         onContextMenu={(e) => handleConfigContextMenu(e, config.id)}
-        draggable={loose}
+        running={running}
+        onOpenSession={running ? () => {
+          // The locked row's affordance: jump to the live session — on the
+          // Running tab, in the sessions view.
+          const live = sessions.find((s) => s.configId === config.id)
+          if (live) {
+            setActiveSession(live.id)
+            selectPanelTab('running')
+            onViewChange('sessions')
+          }
+        } : undefined}
+        draggable={loose && !running}
         onDragStart={loose ? (e) => handleConfigDragStart(e, config.id) : undefined}
         onDragOver={loose ? (e) => handleConfigDragOver(e, config.id) : undefined}
         onDrop={loose ? (e) => handleConfigDrop(e, config.id) : undefined}
