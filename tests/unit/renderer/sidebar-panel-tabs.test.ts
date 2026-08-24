@@ -106,10 +106,15 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     expect(tabs().saved!.getAttribute('aria-selected')).toBe('true')
   })
 
-  it('junk stored value resolves to Running', () => {
+  it('junk stored value resolves to Running — even after a valid default applied', () => {
+    // Start from an ADOPTED 'saved' state so this proves the resolver path in
+    // the effect, not just the useState seed (which is already 'running').
     SETTINGS_STATE.isLoaded = true
-    SETTINGS_STATE.settings.sessionsPanelDefaultTab = 'cards'
+    SETTINGS_STATE.settings.sessionsPanelDefaultTab = 'saved'
     render()
+    expect(tabs().saved!.getAttribute('aria-selected')).toBe('true')
+    SETTINGS_STATE.settings.sessionsPanelDefaultTab = 'cards'
+    render() // stored value changes to junk → effect re-fires → resolver default
     expect(tabs().running!.getAttribute('aria-selected')).toBe('true')
   })
 

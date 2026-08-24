@@ -13,7 +13,7 @@
 // Everything decidable without a DOM lives here so it unit-tests flat.
 // Running detection reuses runningConfigIds from savedConfigsView.ts.
 
-import type { TerminalConfig } from '../../stores/configStore'
+import type { TerminalConfig, ConfigGroup } from '../../stores/configStore'
 
 /** The two modes of the left panel. */
 export type PanelTab = 'saved' | 'running'
@@ -73,3 +73,35 @@ export function pinMenuLabel(pinned: boolean | undefined): string {
 
 /** The hint under the pin item when the config's session is live. */
 export const PIN_WHILE_RUNNING_HINT = 'Running now — will quick-start when this session closes'
+
+/**
+ * Launch-all targets for a GROUP: its configs minus anything already running.
+ * Launch-all must never spawn the duplicate the locked row exists to prevent
+ * (the retired cards/find views filtered the same way via launchAllTargets).
+ */
+export function launchableInGroup(
+  configs: ReadonlyArray<TerminalConfig>,
+  groupId: string,
+  running: ReadonlySet<string>,
+): TerminalConfig[] {
+  return configs.filter((c) => c.groupId === groupId && !running.has(c.id))
+}
+
+/**
+ * Launch-all targets for a SECTION: configs in its groups plus its loose
+ * configs, minus anything already running.
+ */
+export function launchableInSection(
+  configs: ReadonlyArray<TerminalConfig>,
+  groups: ReadonlyArray<ConfigGroup>,
+  sectionId: string,
+  running: ReadonlySet<string>,
+): TerminalConfig[] {
+  const sectionGroupIds = new Set(groups.filter((g) => g.sectionId === sectionId).map((g) => g.id))
+  return configs.filter((c) => {
+    if (running.has(c.id)) return false
+    if (c.groupId && sectionGroupIds.has(c.groupId)) return true
+    if (!c.groupId && c.sectionId === sectionId) return true
+    return false
+  })
+}

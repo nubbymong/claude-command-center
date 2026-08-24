@@ -15,6 +15,8 @@ import {
   canEditConfig,
   pinMenuLabel,
   PIN_WHILE_RUNNING_HINT,
+  launchableInGroup,
+  launchableInSection,
 } from '../../../src/renderer/components/sidebar/sessionsPanelState'
 import { runningConfigIds } from '../../../src/renderer/components/sidebar/savedConfigsView'
 import type { TerminalConfig } from '../../../src/renderer/stores/configStore'
@@ -99,6 +101,30 @@ describe('canEditConfig — the running lock', () => {
   it('an ask session locks nothing (config-less by design)', () => {
     const running = runningConfigIds([{ configId: 'a', kind: 'ask' }] as never)
     expect(canEditConfig('a', running)).toBe(true)
+  })
+})
+
+describe('launch-all skips running configs (no duplicate behind the locked row)', () => {
+  const configs = [
+    cfg('g1', { groupId: 'G' }),
+    cfg('g2', { groupId: 'G' }),
+    cfg('loose', { sectionId: 'S' }),
+    cfg('other'),
+  ]
+  const groups = [{ id: 'G', name: 'Group', sectionId: 'S' }]
+
+  it('group launch-all filters the running config out', () => {
+    expect(launchableInGroup(configs, 'G', new Set(['g1'])).map((c) => c.id)).toEqual(['g2'])
+    expect(launchableInGroup(configs, 'G', new Set()).map((c) => c.id)).toEqual(['g1', 'g2'])
+  })
+
+  it('group launch-all is empty when every member runs (silent no-op, like an empty group)', () => {
+    expect(launchableInGroup(configs, 'G', new Set(['g1', 'g2']))).toEqual([])
+  })
+
+  it("section launch-all covers the section's groups + loose configs, minus running", () => {
+    expect(launchableInSection(configs, groups, 'S', new Set(['g2'])).map((c) => c.id)).toEqual(['g1', 'loose'])
+    expect(launchableInSection(configs, groups, 'S', new Set()).map((c) => c.id)).toEqual(['g1', 'g2', 'loose'])
   })
 })
 

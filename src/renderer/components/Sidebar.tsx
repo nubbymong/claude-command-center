@@ -33,7 +33,7 @@ import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
 import { runningConfigIds } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import QuickStartPanel from './sidebar/QuickStartPanel'
-import { resolveDefaultPanelTab, type PanelTab } from './sidebar/sessionsPanelState'
+import { resolveDefaultPanelTab, launchableInGroup, launchableInSection, type PanelTab } from './sidebar/sessionsPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
 import ConfigHydrationNotice from './ConfigHydrationNotice'
@@ -179,6 +179,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const selectPanelTab = (tab: PanelTab) => {
     panelTabTouchedRef.current = true
     setPanelTab(tab)
+  }
+  // Roving tabIndex needs focus to FOLLOW arrow-key selection (APG tabs
+  // pattern) — selection alone would leave focus on a tabIndex={-1} button.
+  const savedTabRef = useRef<HTMLButtonElement | null>(null)
+  const runningTabRef = useRef<HTMLButtonElement | null>(null)
+  const selectPanelTabWithFocus = (tab: PanelTab) => {
+    selectPanelTab(tab)
+    ;(tab === 'saved' ? savedTabRef : runningTabRef).current?.focus()
   }
   const [configSearchQuery, setConfigSearchQuery] = useState('')
   // Configs with a live session: locked in the Saved list and excluded from
@@ -334,11 +342,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   }
 
   const launchGroup = async (groupId: string) => {
-    // Skip configs whose session is already live: launch-all must never spawn
-    // the duplicate the locked row exists to prevent (design pass 2026-08-24;
-    // the retired cards/find views filtered the same way via launchAllTargets).
-    const groupConfigs = configs.filter((c) => c.groupId === groupId && !runningIds.has(c.id))
-    for (const config of groupConfigs) {
+    // Running configs are skipped (launchableInGroup): launch-all must never
+    // spawn the duplicate the locked row exists to prevent.
+    for (const config of launchableInGroup(configs, groupId, runningIds)) {
       await launchFromConfig(config)
     }
   }
@@ -440,17 +446,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   }
 
   const launchSection = async (sectionId: string) => {
-    const sectionGroups = groups.filter((g) => g.sectionId === sectionId)
-    const sectionGroupIds = new Set(sectionGroups.map((g) => g.id))
     // Running configs skipped for the same reason as launchGroup: no duplicate
     // sessions behind the locked row's back.
-    const sectionConfigs = configs.filter((c) => {
-      if (runningIds.has(c.id)) return false
-      if (c.groupId && sectionGroupIds.has(c.groupId)) return true
-      if (!c.groupId && c.sectionId === sectionId) return true
-      return false
-    })
-    for (const config of sectionConfigs) {
+    for (const config of launchableInSection(configs, groups, sectionId, runningIds)) {
       await launchFromConfig(config)
     }
   }
@@ -726,12 +724,13 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         role="tablist"
         aria-label="Sessions panel"
         onKeyDown={(e) => {
-          // Roving tabs: Left/Right switches mode from either tab button.
-          if (e.key === 'ArrowLeft') { e.preventDefault(); selectPanelTab('saved') }
-          if (e.key === 'ArrowRight') { e.preventDefault(); selectPanelTab('running') }
+          // Roving tabs: Left/Right moves selection AND focus.
+          if (e.key === 'ArrowLeft') { e.preventDefault(); selectPanelTabWithFocus('saved') }
+          if (e.key === 'ArrowRight') { e.preventDefault(); selectPanelTabWithFocus('running') }
         }}
       >
         <button
+          ref={savedTabRef}
           id="panel-tab-saved"
           role="tab"
           aria-selected={panelTab === 'saved'}
@@ -756,6 +755,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           <span className={`text-[10px] rounded-full px-1.5 py-0.5 ${panelTab === 'saved' ? 'bg-blue/20 text-blue' : 'bg-surface0 text-overlay1'}`}>{configs.length}</span>
         </button>
         <button
+          ref={runningTabRef}
           id="panel-tab-running"
           role="tab"
           aria-selected={panelTab === 'running'}
