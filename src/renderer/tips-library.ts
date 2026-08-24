@@ -349,7 +349,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Sketch ideas in the Canvas scratchpad',
         title: 'Excalidraw Scratchpad',
-        body: 'The **Canvas** button next to Snap opens the Agent Canvas — an empty one is a full Excalidraw scratchpad. Sketch architecture, annotate flowcharts, draw selectors over a screenshot -- anything you\'d normally reach for a tablet for.\n\n• **Copy to clipboard** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session -- no per-config setup.\n• Close it with the **Close** button, or press **Canvas** again.',
+        body: 'The **Canvas** button next to Snap opens the Agent Canvas — an empty one is a full Excalidraw scratchpad. Sketch architecture, annotate flowcharts, draw selectors over a screenshot -- anything you\'d normally reach for a tablet for.\n\n• **Copy** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session -- no per-config setup.\n• Close it with the close control, or press the same toolbar button again -- it reads **Terminal** while the pane is open.',
       },
     },
   },
@@ -667,8 +667,8 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Have your agent SHOW you the work',
         title: 'Agent Canvas',
-        body: 'The **Canvas** button in the session toolbar -- next to Browser -- opens a pane your agent can draw into. Ask for a mockup, a design or a look at the site it just built and it arrives as something you can see, instead of a wall of markdown describing it.\n\nIt is a two-way surface. Click anywhere on the render to leave a **note** (**Ctrl+V** in the composer attaches a pasted screenshot to it), then send the round back as a **review**. The agent reads the notes, changes the work and renders the next version.\n\nWhen a round is waiting on you, the button turns **amber and says "Review needed"**, with the number of rounds owed beside it -- click the count for the list, newest first. **Right-click the button** to clear the whole queue in one sweep (a confirm card first; nothing is deleted and every cleared note keeps a one-click Reopen). The session tab carries a dot for the same thing, so a hand-back is visible from any tab.',
-        focusHint: 'Session toolbar -- the Canvas button, beside Browser',
+        body: 'The **Canvas** button in the session toolbar -- next to Snap -- opens a pane your agent can draw into. Ask for a mockup, a design or a look at the site it just built and it arrives as something you can see, instead of a wall of markdown describing it.\n\nIt is a two-way surface. Click anywhere on the render to leave a **note** (**Ctrl+V** in the composer attaches a pasted screenshot to it), then send the round back as a **review**. The agent reads the notes, changes the work and renders the next version.\n\nWhen a round is waiting on you, the button turns **amber and says "Review needed"**, with the number of rounds owed beside it -- click the count for the list, newest first. **Right-click the button** to clear the whole queue in one sweep (a confirm card first; nothing is deleted and every cleared note keeps a one-click Reopen). The session tab carries a dot for the same thing, so a hand-back is visible from any tab.',
+        focusHint: 'Session toolbar -- the Canvas button, beside Snap',
       },
       postUse: {
         shortText: 'Every canvas version is kept -- walk back through them',
