@@ -57,6 +57,8 @@ function fmtAnnotation(a: Annotation, imageIndexByAnnotation: Map<string, number
   const imageIndex = imageIndexByAnnotation.get(a.id)
   if (imageIndex !== undefined && a.sketch) {
     lines.push(`  sketch: attached as image ${imageIndex} ${fmtBox(a.sketch.bboxPage)}`)
+  } else if (imageIndex !== undefined && a.image) {
+    lines.push(`  image: pasted screenshot, attached as image ${imageIndex}`)
   }
   return lines.join('\n')
 }

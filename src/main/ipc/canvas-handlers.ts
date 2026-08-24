@@ -195,9 +195,17 @@ const annotationDraftSchema = z
   .object({
     annotationId: annotationIdSchema.optional(),
     scope: z.enum(['element', 'region', 'general']),
-    note: z.string().min(1).max(4000),
+    // min(0): empty text is legal ONLY beside a pasted image — the store is
+    // the gate (validateDraft), this schema only bounds the shape.
+    note: z.string().min(0).max(4000),
     focus: focusSchema.optional(),
     sketch: sketchMetaSchema.optional(),
+    // A pasted screenshot riding the save: fresh bytes, or 'keep' for an
+    // existing one the renderer no longer holds. Base64 bound reuses the
+    // sketch cap (declared below; hoisted const).
+    image: z
+      .union([z.literal('keep'), z.object({ pngBase64: z.string().min(8).max(Math.ceil(MAX_SKETCH_PNG_BYTES / 3) * 4 + 8) }).strict()])
+      .optional(),
     versionId: versionIdSchema,
   })
   .strict()

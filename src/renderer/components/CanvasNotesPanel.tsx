@@ -12,6 +12,7 @@ import {
   type ReviewGroup,
 } from '../stores/canvasReviewStore'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
+import { imageFileFromClipboard, pastedImageToPng } from '../utils/canvasPasteImage'
 
 interface Props {
   sessionId: string
@@ -162,6 +163,12 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
 
   const [noteText, setNoteText] = useState('')
   const [attachedSketch, setAttachedSketch] = useState<{ excalidrawElementIds: string[]; bboxPage: Rect } | null>(null)
+  /** A pasted screenshot on the composer (item B). Fresh paste holds the bytes;
+   *  'keep' stands for an existing image on the note being edited (the
+   *  renderer never re-reads those bytes). One attachment slot: attaching a
+   *  sketch drops the image and vice versa. */
+  const [attachedImage, setAttachedImage] = useState<'keep' | { pngBase64: string } | null>(null)
+  const [pasteError, setPasteError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [justSubmitted, setJustSubmitted] = useState<{ id: string; count: number } | null>(null)
@@ -225,13 +232,50 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     [editingId, draftNotes],
   )
 
-  // Opening a note for editing loads its text + sketch into the composer.
+  // Opening a note for editing loads its text + attachments into the composer.
   useEffect(() => {
     if (editingNote) {
       setNoteText(editingNote.note)
       setAttachedSketch(editingNote.sketch ? { excalidrawElementIds: editingNote.sketch.excalidrawElementIds, bboxPage: editingNote.sketch.bboxPage } : null)
+      setAttachedImage(editingNote.image ? 'keep' : null)
+      setPasteError(null)
     }
   }, [editingNote?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ctrl+V anywhere on this pane attaches an image to the note being written
+  // (owner: "auto attach"). A paste aimed at someone else's editable — another
+  // tile's terminal, a rename field — is left alone; a text paste is left to
+  // the textarea. The image is re-encoded to a capped PNG before it goes
+  // anywhere near IPC.
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const inPanel = !!(panelRef.current && target && panelRef.current.contains(target))
+      const editable =
+        target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || !!target?.isContentEditable
+      if (!inPanel && editable) return
+      const file = imageFileFromClipboard(e.clipboardData)
+      if (!file) return
+      e.preventDefault()
+      void (async () => {
+        const out = await pastedImageToPng(file)
+        if ('error' in out) {
+          setPasteError(
+            out.error === 'too-large'
+              ? 'That image is too large even after downscaling (2 MB cap).'
+              : 'Could not read that image from the clipboard.',
+          )
+          return
+        }
+        setPasteError(null)
+        setAttachedSketch(null)
+        setAttachedImage({ pngBase64: out.pngBase64 })
+      })()
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [])
 
   const composerScope: Annotation['scope'] = focus ? (focus.targets.length > 0 ? 'element' : 'region') : 'general'
   const canExpand = focus != null && focusChain.length > 0 && focusChainIndex < focusChain.length - 1
@@ -244,12 +288,14 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     if (ids.length === 0) return
     const chosen = api.getSceneElements().filter((el) => ids.includes(el.id))
     if (chosen.length === 0) return
+    setAttachedImage(null)
     setAttachedSketch({ excalidrawElementIds: chosen.map((el) => el.id), bboxPage: sceneBBox(chosen) })
   }, [getGlassApi])
 
   const saveNote = useCallback(async () => {
     const text = noteText.trim()
-    if (!text) return
+    // Text may be empty only when a pasted image IS the note.
+    if (!text && !attachedImage) return
     const scope = editingNote ? editingNote.scope : composerScope
     const noteFocus = editingNote ? editingNote.focus : (focus ?? undefined)
     const saved = await upsertNote(sessionId, {
@@ -258,16 +304,19 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
       note: text,
       ...(scope !== 'general' && noteFocus ? { focus: noteFocus } : {}),
       ...(attachedSketch ? { sketch: attachedSketch } : {}),
+      ...(attachedImage ? { image: attachedImage === 'keep' ? ('keep' as const) : { pngBase64: attachedImage.pngBase64 } } : {}),
       versionId: version.id,
     })
     if (saved !== null) {
       setNoteText('')
       setAttachedSketch(null)
+      setAttachedImage(null)
+      setPasteError(null)
       setEditing(sessionId, null)
       if (!editingNote) clearFocus(sessionId)
       setJustSubmitted(null)
     }
-  }, [noteText, editingNote, composerScope, focus, attachedSketch, sessionId, version.id, upsertNote, setEditing, clearFocus])
+  }, [noteText, editingNote, composerScope, focus, attachedSketch, attachedImage, sessionId, version.id, upsertNote, setEditing, clearFocus])
 
   /**
    * Resolve a snapshotted list of note ids one at a time, ABORTING the moment
@@ -473,6 +522,8 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     setEditing(sessionId, null)
     setNoteText('')
     setAttachedSketch(null)
+    setAttachedImage(null)
+    setPasteError(null)
   }, [sessionId, setEditing])
 
   /**
@@ -610,7 +661,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   )
 
   return (
-    <div className="w-80 shrink-0 border-l border-surface0 bg-mantle flex flex-col min-h-0 text-[12px]">
+    <div ref={panelRef} className="w-80 shrink-0 border-l border-surface0 bg-mantle flex flex-col min-h-0 text-[12px]">
       <div className="px-3 py-2 border-b border-surface0 flex items-center gap-2 shrink-0">
         <span className="font-medium text-subtext1">Review</span>
         {draftReview && <span className="text-overlay1">draft · {draftNotes.length} note{draftNotes.length === 1 ? '' : 's'}</span>}
@@ -995,7 +1046,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
             rows={3}
             className="w-full resize-y rounded bg-surface0/60 border border-surface1/60 px-2 py-1.5 text-text placeholder:text-overlay0 focus:outline-none focus:border-overlay1"
           />
-          <div className="flex items-center gap-1.5 mt-1.5">
+          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
             <button
               onClick={attachSelection}
               className={`px-1.5 py-0.5 text-[10px] rounded border ${
@@ -1014,6 +1065,29 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                 ✕
               </button>
             )}
+            {attachedImage && (
+              <span
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded border border-mauve/50 text-mauve bg-mauve/10"
+                data-testid="composer-image-chip"
+              >
+                {attachedImage !== 'keep' && (
+                  <img
+                    src={`data:image/png;base64,${attachedImage.pngBase64}`}
+                    alt=""
+                    className="h-[14px] w-auto max-w-[28px] rounded-[2px] object-cover"
+                  />
+                )}
+                pasted image
+                <button onClick={() => setAttachedImage(null)} className="text-overlay1 hover:text-text" title="Remove the image" data-testid="composer-image-remove">
+                  ✕
+                </button>
+              </span>
+            )}
+            {!attachedImage && !attachedSketch && (
+              <span className="text-[10px] text-overlay0" data-testid="composer-paste-hint">
+                Ctrl+V pastes an image
+              </span>
+            )}
             <div className="flex-1" />
             {editingNote && (
               <button onClick={cancelEdit} className="px-2 py-0.5 text-[11px] rounded border border-surface1 text-overlay1 hover:text-text">
@@ -1022,12 +1096,17 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
             )}
             <button
               onClick={() => void saveNote()}
-              disabled={noteText.trim().length === 0}
+              disabled={noteText.trim().length === 0 && !attachedImage}
               className="px-2 py-0.5 text-[11px] rounded border border-blue/50 text-blue hover:bg-blue/10 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {editingNote ? 'Save' : 'Add note'}
             </button>
           </div>
+          {pasteError && (
+            <div className="mt-1 text-[10.5px] text-red" data-testid="composer-paste-error">
+              {pasteError}
+            </div>
+          )}
         </div>
 
         {/* ── Draft notes ── */}
@@ -1044,6 +1123,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                 <div className="flex items-center gap-1.5">
                   <span className={`text-[10px] uppercase tracking-wide ${SCOPE_BADGE[note.scope]}`}>{note.scope}</span>
                   {note.sketch && <span className="text-[10px] text-mauve">✎ sketch</span>}
+                  {note.image && <span className="text-[10px] text-mauve" data-testid="draft-image-chip">image</span>}
                   <div className="flex-1" />
                   <button
                     onClick={() => setEditing(sessionId, note.id)}

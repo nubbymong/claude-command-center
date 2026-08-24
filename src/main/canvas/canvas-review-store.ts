@@ -25,11 +25,13 @@ import {
   CANVAS_REVIEW_ID_RE,
   CANVAS_VERSION_ID_RE,
   MAX_ANNOTATION_VARIANTS,
+  MAX_ATTACHMENT_PNG_BYTES,
   isCleanVariantLabel,
   type AddressedBy,
   type AgentCloseVerdict,
   type AnchorRef,
   type Annotation,
+  type AnnotationImage,
   type AnnotationSketch,
   type AnnotationState,
   type AnnotationVariant,
@@ -58,9 +60,11 @@ const MAX_ANNOTATIONS_PER_REVIEW = 100
 const MAX_REVIEWS_PER_CANVAS = 200
 const MAX_SKETCH_ELEMENT_IDS = 100
 const SKETCH_ELEMENT_ID_MAX = 128
-/** One exported sketch PNG. Far beyond any real annotation sketch; small
- *  enough that a submit can't be turned into a disk-filling primitive. */
-export const MAX_SKETCH_PNG_BYTES = 2 * 1024 * 1024
+/** One attachment PNG (sketch export or pasted image). Far beyond any real
+ *  annotation attachment; small enough that a save can't be turned into a
+ *  disk-filling primitive. The shared constant is the single source; this
+ *  export keeps the name the IPC schemas import. */
+export const MAX_SKETCH_PNG_BYTES = MAX_ATTACHMENT_PNG_BYTES
 /** Ceiling on a reviews.json the COUNT path will read (see readRecordNoRebind).
  *  Generous next to any real record — a few hundred notes of prose — and well
  *  under what the per-field maxima would permit if every one were at its bound. */
@@ -70,6 +74,9 @@ const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** The one shape a stored pngPath may have — minted here, revalidated on load
  *  so a hand-edited record cannot point the MCP tool at an arbitrary file. */
 const PNG_PATH_RE = /^reviews\/R[0-9]{1,9}\/a[0-9]{1,9}\.png$/
+/** Same rule for a pasted image's path — its own directory, because the file
+ *  exists before the note's review is submitted (no review id yet). */
+const IMAGE_PNG_PATH_RE = /^reviews\/pasted\/a[0-9]{1,9}\.png$/
 
 // ── Record shape on disk ────────────────────────────────────────────────────
 
@@ -137,6 +144,12 @@ function isCleanString(value: unknown, max: number): value is string {
 
 function isCleanNote(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= NOTE_MAX_CHARS && !CONTROL_CHARS.test(value)
+}
+
+/** A note's text may be EMPTY only when a pasted image rides the note — the
+ *  image is the note then. Same cleanliness rules otherwise. */
+function isCleanNoteOrEmpty(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= NOTE_MAX_CHARS && !CONTROL_CHARS.test(value)
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -223,13 +236,20 @@ function isValidAnnotation(value: unknown): value is Annotation {
   if (typeof a.id !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(a.id)) return false
   if (typeof a.reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(a.reviewId)) return false
   if (typeof a.scope !== 'string' || !ANNOTATION_SCOPES.has(a.scope)) return false
-  if (!isCleanNote(a.note)) return false
+  if (!(a.image !== undefined ? isCleanNoteOrEmpty(a.note) : isCleanNote(a.note))) return false
   if (typeof a.versionId !== 'string' || !CANVAS_VERSION_ID_RE.test(a.versionId)) return false
   if (typeof a.state !== 'string' || !ANNOTATION_STATES.has(a.state)) return false
   if (a.scope === 'general') {
     if (a.focus !== undefined) return false
   } else if (!isValidFocus(a.focus)) return false
   if (a.sketch !== undefined && !isValidStoredSketch(a.sketch)) return false
+  // A pasted image: our minted path shape or absent, and never beside a sketch.
+  if (a.image !== undefined) {
+    const img = a.image as Partial<AnnotationImage> | null
+    if (typeof img !== 'object' || img === null) return false
+    if (typeof img.pngPath !== 'string' || !IMAGE_PNG_PATH_RE.test(img.pngPath)) return false
+    if (a.sketch !== undefined) return false
+  }
   if (a.supersededBy !== undefined && (typeof a.supersededBy !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(a.supersededBy))) return false
   // Alternatives (#373): OUR minted shape or absent — keys are positional
   // 'A'…, labels are held to note cleanliness, and a hand-edited set that
@@ -505,6 +525,7 @@ function cloneAnnotation(a: Annotation): Annotation {
       ? { focus: { ...a.focus, targets: a.focus.targets.map((t) => ({ ...t })), bboxPage: { ...a.focus.bboxPage } } }
       : {}),
     ...(a.sketch ? { sketch: { ...a.sketch, excalidrawElementIds: [...a.sketch.excalidrawElementIds], bboxPage: { ...a.sketch.bboxPage } } } : {}),
+    ...(a.image ? { image: { ...a.image } } : {}),
   }
 }
 
@@ -778,7 +799,17 @@ function settleReviewStatus(record: ReviewFileRecord, reviewId: string): void {
 function validateDraft(draft: CanvasAnnotationDraft, canvas: SessionCanvas): void {
   if (typeof draft !== 'object' || draft === null) throw new Error('invalid draft')
   if (!ANNOTATION_SCOPES.has(draft.scope)) throw new Error('invalid draft scope')
-  if (!isCleanNote(draft.note)) throw new Error('invalid draft note')
+  // Empty text is allowed only when a pasted image rides the note.
+  if (!(draft.image !== undefined ? isCleanNoteOrEmpty(draft.note) : isCleanNote(draft.note))) throw new Error('invalid draft note')
+  if (draft.image !== undefined) {
+    if (draft.sketch !== undefined) throw new Error('a note carries one attachment: a sketch or an image')
+    if (draft.image !== 'keep') {
+      const img = draft.image as { pngBase64?: unknown } | null
+      if (typeof img !== 'object' || img === null || typeof img.pngBase64 !== 'string' || img.pngBase64.length === 0)
+        throw new Error('invalid draft image')
+      if (img.pngBase64.length > Math.ceil(MAX_ATTACHMENT_PNG_BYTES / 3) * 4 + 8) throw new Error('draft image too large')
+    }
+  }
   if (typeof draft.versionId !== 'string' || !canvas.versionIds.has(draft.versionId)) throw new Error('draft names an unknown version')
   // A user note can only be about a version the user was SHOWN. Agent drafts
   // (#366) are invisible by contract — and after a subject change their ids
@@ -793,6 +824,33 @@ function validateDraft(draft: CanvasAnnotationDraft, canvas: SessionCanvas): voi
     if (draft.scope === 'element' && draft.focus.targets.length === 0) throw new Error('an element note needs at least one anchor')
   }
   if (draft.sketch !== undefined && !isValidSketchMeta(draft.sketch)) throw new Error('invalid draft sketch')
+}
+
+/** Where a pasted image lives, relative to the canvas dir. Keyed by note id —
+ *  unique per canvas — because at compose time the review id is still fluid. */
+function pastedImagePath(annotationId: string): string {
+  return `reviews/pasted/${annotationId}.png`
+}
+
+/** Decode, cap-check and write a pasted image; returns the record to store.
+ *  Same PNG discipline as sketch exports (magic + byte cap), written BEFORE the
+ *  record commits so a failed write refuses the whole save. */
+function writePastedImage(canvasId: string, annotationId: string, pngBase64: string): AnnotationImage {
+  const bytes = decodeSketchPng(pngBase64)
+  mkdirSecure(path.join(canvasDir(canvasId), 'reviews', 'pasted'))
+  atomicWriteSecure(path.join(canvasDir(canvasId), pastedImagePath(annotationId)), bytes)
+  return { pngPath: pastedImagePath(annotationId) }
+}
+
+/** Best-effort removal — a leftover file no record references is harmless; a
+ *  throw here must never undo the record mutation it accompanies. */
+function unlinkPastedImage(canvasId: string, image: AnnotationImage | undefined): void {
+  if (!image?.pngPath || !IMAGE_PNG_PATH_RE.test(image.pngPath)) return
+  try {
+    fs.unlinkSync(path.join(canvasDir(canvasId), image.pngPath))
+  } catch {
+    /* already gone, or locked — either way the record is the truth */
+  }
 }
 
 /**
@@ -833,6 +891,16 @@ export function upsertAnnotation(
     else existing.focus = draft.focus
     if (draft.sketch) existing.sketch = { ...draft.sketch, pngPath: '' }
     else delete existing.sketch
+    if (draft.image === 'keep') {
+      if (!existing.image) throw new Error('no image to keep on this note')
+    } else if (draft.image) {
+      // Write before commit (persist-before-memory); replacing overwrites the
+      // same path atomically.
+      existing.image = writePastedImage(canvas.canvasId, existing.id, draft.image.pngBase64)
+    } else if (existing.image) {
+      unlinkPastedImage(canvas.canvasId, existing.image)
+      delete existing.image
+    }
   } else {
     if (!review) {
       if (next.reviews.length >= MAX_REVIEWS_PER_CANVAS) throw new Error('review cap reached for this canvas')
@@ -849,6 +917,7 @@ export function upsertAnnotation(
       next.reviews.push(review)
     }
     if (review.annotationIds.length >= MAX_ANNOTATIONS_PER_REVIEW) throw new Error('note cap reached for this review')
+    if (draft.image === 'keep') throw new Error('no image to keep on a new note')
     annotationId = `a${next.nextAnnotation}`
     next.nextAnnotation += 1
     const annotation: Annotation = {
@@ -860,6 +929,7 @@ export function upsertAnnotation(
       state: 'open',
       ...(draft.scope !== 'general' && draft.focus ? { focus: draft.focus } : {}),
       ...(draft.sketch ? { sketch: { ...draft.sketch, pngPath: '' } } : {}),
+      ...(draft.image ? { image: writePastedImage(canvas.canvasId, annotationId, draft.image.pngBase64) } : {}),
     }
     next.annotations.push(annotation)
     review.annotationIds.push(annotationId)
@@ -890,6 +960,9 @@ export function deleteAnnotation(sessionId: string, annotationId: string): Canva
       .filter((r) => r.status !== 'draft' || r.annotationIds.length > 0),
   }
   commit(next)
+  // After the commit: a pasted image belongs to exactly this note, so the file
+  // goes with it. Best-effort — the record is already the truth.
+  unlinkPastedImage(canvas.canvasId, target.image)
   return toState(next)
 }
 
@@ -1171,8 +1244,11 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
   const generalNotes = all.filter((a) => a.scope === 'general')
   const anchored = all.filter((a) => a.scope !== 'general')
   const attachments = all
-    .filter((a) => a.sketch && a.sketch.pngPath !== '')
-    .map((a) => ({ annotationId: a.id, pngPath: a.sketch!.pngPath }))
+    .filter((a) => (a.sketch && a.sketch.pngPath !== '') || a.image)
+    .map((a) => ({
+      annotationId: a.id,
+      pngPath: a.sketch && a.sketch.pngPath !== '' ? a.sketch.pngPath : a.image!.pngPath,
+    }))
 
   return {
     payload: {

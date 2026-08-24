@@ -232,6 +232,24 @@ export interface AnnotationSketch {
   bboxPage: Rect
 }
 
+/**
+ * A pasted screenshot attached to a note (Ctrl+V, item B). Unlike a sketch the
+ * PNG exists at COMPOSE time — it is written when the note is saved, under
+ * 'reviews/pasted/<noteId>.png' (note ids are unique per canvas), and simply
+ * stays there through submit. A note carries ONE attachment: a sketch or a
+ * pasted image, never both.
+ */
+export interface AnnotationImage {
+  /** Relative to the canvas's own directory ('reviews/pasted/a7.png'). Never
+   *  empty — the file is written before the record references it. */
+  pngPath: string
+}
+
+/** Byte cap shared by every note-attachment PNG — sketch exports and pasted
+ *  images alike. The IPC base64 bound and the store's decoder both derive from
+ *  it. */
+export const MAX_ATTACHMENT_PNG_BYTES = 2 * 1024 * 1024
+
 /** One alternative the agent attached when it ADDRESSED a note (#373): "I did
  *  it three ways — pick which ships". Keys are minted by the store from
  *  position ('A'…'D'), never accepted from the agent; the label is agent
@@ -288,6 +306,9 @@ export interface Annotation {
   /** Element/region only. */
   focus?: FocusObject
   sketch?: AnnotationSketch
+  /** A pasted screenshot (Ctrl+V). Mutually exclusive with `sketch`. When
+   *  present the note's TEXT may be empty — the image is the note. */
+  image?: AnnotationImage
   /** The version the note was made against (a draft review can span versions;
    *  each note remembers its own). */
   versionId: string
@@ -426,6 +447,13 @@ export interface CanvasAnnotationDraft {
   focus?: FocusObject
   /** Sketch metadata only (ids + bbox). The PNG is exported at submit (D6). */
   sketch?: { excalidrawElementIds: string[]; bboxPage: Rect }
+  /**
+   * A pasted screenshot riding the save (item B). `{ pngBase64 }` sets or
+   * replaces it (written to disk immediately); `'keep'` leaves an existing one
+   * as it is (the renderer never holds the bytes after a reload); absent
+   * removes it. Mutually exclusive with `sketch`.
+   */
+  image?: 'keep' | { pngBase64: string }
   versionId: string
 }
 
