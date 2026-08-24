@@ -185,7 +185,7 @@ export default function SentinelPanel() {
               </svg>
               <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>No breaking changes</p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                Claude Code {version} is compatible with CCC.
+                Claude Code {version} is compatible with AI Code Conductor.
               </p>
             </div>
           )}

@@ -225,7 +225,7 @@ export default function GlobalLogsView({ initialSessionId, onInitialSessionConsu
     // deleteSlot does NOT protect a currently-running run — the worker marks the
     // live tail failed if its slot is deleted mid-run. Honest copy: this removes
     // INDEXED history; Claude's own conversation in ~/.claude/projects remains.
-    if (!window.confirm(`Delete indexed history for "${s.configLabel}"? This removes CCC's index for this slot (the conversation in ~/.claude/projects is not affected) and cannot be undone.`)) return
+    if (!window.confirm(`Delete indexed history for "${s.configLabel}"? This removes the app's index for this slot (the conversation in ~/.claude/projects is not affected) and cannot be undone.`)) return
     setBusy(true)
     try {
       await window.electronAPI.logs2.deleteSlot({ scope: scopeFor(s) })
@@ -238,7 +238,7 @@ export default function GlobalLogsView({ initialSessionId, onInitialSessionConsu
 
   const clearAll = useCallback(async () => {
     if (busy) return
-    if (!window.confirm('Delete ALL indexed conversation history? This removes CCC\'s index for every slot (your conversations in ~/.claude/projects are not affected) and cannot be undone.')) return
+    if (!window.confirm('Delete ALL indexed conversation history? This removes the app\'s index for every slot (your conversations in ~/.claude/projects are not affected) and cannot be undone.')) return
     setBusy(true)
     try {
       await window.electronAPI.logs2.clearAll()

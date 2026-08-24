@@ -103,7 +103,7 @@ export default function NewAccountPrompt({ email, onAdd, onDismiss }: Props) {
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
             You signed in to{' '}
             <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{email}</span>
-            {', '}an account CCC has not seen before. Add it so you can switch back to it later.
+            {', '}an account AI Code Conductor has not seen before. Add it so you can switch back to it later.
           </p>
 
           <div>

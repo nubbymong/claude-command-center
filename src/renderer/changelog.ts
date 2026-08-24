@@ -322,7 +322,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'improvement', description: 'Metrics only one account reported now get their own section instead of being dropped. In practice that is most of them, and it is often the most interesting part: a tool or a kind of error that shows up in one account and nowhere else says more than a metric you already had side by side. Each account\'s top tools, languages and goals are carried into the comparison too.' },
       { type: 'improvement', description: 'If the written analysis cannot be produced, you still get the measured comparison and the report says so rather than quietly leaving it out.' },
       { type: 'improvement', description: 'While a cross-account run is in progress it reports which account it is on, and finishing accounts no longer pull the report you are reading out from under you.' },
-      { type: 'improvement', description: 'Generating the combined report costs roughly a tenth of what it did: it is now handed the comparison CCC has already worked out rather than every account\'s full metric dump. That also makes it a better report, because the alignment is done before the analysis starts instead of during it.' },
+      { type: 'improvement', description: 'Generating the combined report costs roughly a tenth of what it did: it is now handed the comparison the app has already worked out rather than every account\'s full metric dump. That also makes it a better report, because the alignment is done before the analysis starts instead of during it.' },
       { type: 'improvement', description: 'Generating Insights is far cheaper. Each analysis was quietly loading everything your account has configured — every connected tool server, every skill, your instruction files — into a job that only needed to read one report. Measured on a real setup that was about 193,000 words of context per account; it is now about 14,000. Nothing about the analysis itself changes.' },
       { type: 'feature', description: 'The accounts view now tells you when each account will force you to sign in again — "Forced sign-in in 12 days" — and turns amber under a week, red under two days. It also offers "Refresh sign-in" on accounts that are working fine, so you can reset the clock at a convenient moment instead of finding out when something fails. The countdown deliberately tracks only the long-lived credential: the short one behind each session renews itself and is not shown, because showing it would look alarming for no reason.' },
       { type: 'fix', description: 'The accounts view now warns when two accounts are signed into the SAME Anthropic account, and explains why it matters: each time one refreshes, it invalidates the other, so they take turns mysteriously expiring. This is easy to cause by accident — sign one account in while your browser is still signed in as another and it happens silently.' },
@@ -336,10 +336,10 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '2.1.0-beta.5',
     date: '2026-08-02',
-    highlights: 'A runtime refresh. CCC now runs on Electron 43, with the terminal backend and the local database updated to match. No feature changes: this build exists so the beta channel is actually running what the beta line has been carrying.',
+    highlights: 'A runtime refresh. The app now runs on Electron 43, with the terminal backend and the local database updated to match. No feature changes: this build exists so the beta channel is actually running what the beta line has been carrying.',
     changes: [
-      { type: 'improvement', description: 'Updated the application runtime to Electron 43, which brings a newer Chromium and Node.js underneath CCC. A foundation update with no feature changes, carrying the browser and platform security fixes released with those versions.' },
-      { type: 'improvement', description: 'Updated the two native components CCC depends on: the terminal backend that runs your sessions, and the local database that stores transcripts and usage. Both were rebuilt against the new runtime and exercised in a real launch before this release. Existing data is unchanged and nothing needs migrating.' },
+      { type: 'improvement', description: 'Updated the application runtime to Electron 43, which brings a newer Chromium and Node.js underneath the app. A foundation update with no feature changes, carrying the browser and platform security fixes released with those versions.' },
+      { type: 'improvement', description: 'Updated the two native components the app depends on: the terminal backend that runs your sessions, and the local database that stores transcripts and usage. Both were rebuilt against the new runtime and exercised in a real launch before this release. Existing data is unchanged and nothing needs migrating.' },
       { type: 'improvement', description: 'Updated the screen-capture component used when you attach a screenshot to a session.' },
       { type: 'improvement', description: 'Updated the build pipeline that produces and publishes the installers. No effect on the application.' },
     ],
@@ -350,8 +350,8 @@ export const changelog: ChangelogEntry[] = [
     highlights: 'Security fixes for the session-launch path, and 1M-context models now launch correctly on macOS. Recommended for everyone on the beta channel.',
     changes: [
       { type: 'fix', description: 'Selecting a 1M-context model (Opus 1M) now launches correctly on macOS. The model name contains square brackets, which the macOS default shell treats as a filename pattern, so the whole launch command was aborted before the session started and nothing appeared to happen.' },
-      { type: 'fix', description: 'Restoring a session on Windows no longer mangles the paths CCC passes to Claude. The default data folder contains a space and the relaunch was splitting on it, which could silently drop per-session settings and turn the leftover text into an accidental first prompt.' },
-      { type: 'fix', description: 'Extra command-line arguments set on a config can no longer override the flags CCC manages for a session, including its per-session settings file. Certain spellings slipped past the existing check.' },
+      { type: 'fix', description: 'Restoring a session on Windows no longer mangles the paths the app passes to Claude. The default data folder contains a space and the relaunch was splitting on it, which could silently drop per-session settings and turn the leftover text into an accidental first prompt.' },
+      { type: 'fix', description: 'Extra command-line arguments set on a config can no longer override the flags the app manages for a session, including its per-session settings file. Certain spellings slipped past the existing check.' },
       { type: 'fix', description: 'Regenerating the changelog no longer fails when a comment in the source contains an apostrophe. Developer tooling only.' },
     ],
   },
@@ -360,30 +360,30 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-07-31',
     highlights: 'Ctrl+V pastes into terminals — which also makes voice dictation and text expanders work — Check for Updates can install the update it finds, and a broad round of security hardening lands across the local tools server, the updater and the bundled dependencies.',
     changes: [
-      { type: 'fix', description: 'Ctrl+V now pastes into terminals. Previously only right-click pasted: Ctrl+V was passed straight through to the session as a raw control code, which a shell happened to treat as its own paste command, while Claude ignored it entirely. Cmd+V, Shift+Insert and Ctrl+Shift+V work too, and if the clipboard has no text CCC now says so instead of appearing to do nothing.' },
+      { type: 'fix', description: 'Ctrl+V now pastes into terminals. Previously only right-click pasted: Ctrl+V was passed straight through to the session as a raw control code, which a shell happened to treat as its own paste command, while Claude ignored it entirely. Cmd+V, Shift+Insert and Ctrl+Shift+V work too, and if the clipboard has no text the app now says so instead of appearing to do nothing.' },
       { type: 'fix', description: 'Voice dictation and text-expander tools now work in terminals. Tools of that kind type into whatever is focused by copying text and sending Ctrl+V, so they were silently doing nothing in a Claude session — the same root cause as above.' },
-      { type: 'fix', description: 'Settings -> Check for Updates can now install the update it finds. It used to only report that one existed, leaving you to hunt for the small Update pill in the bottom bar. Open sessions are still saved before CCC restarts.' },
+      { type: 'fix', description: 'Settings -> Check for Updates can now install the update it finds. It used to only report that one existed, leaving you to hunt for the small Update pill in the bottom bar. Open sessions are still saved before the app restarts.' },
       { type: 'fix', description: 'Copying with Ctrl+Shift+C no longer fires for every open terminal at once, and no longer competes with a focused text box.' },
-      { type: 'fix', description: 'Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in CCC tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.' },
+      { type: 'fix', description: 'Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.' },
       { type: 'fix', description: 'Session, config, team and agent-template identifiers are now generated with a cryptographic random number generator instead of a predictable one. Existing items keep the identifiers they already have and nothing needs migrating.' },
       { type: 'improvement', description: 'Updated bundled dependencies to close 12 published security advisories, plus two more found while checking. No feature changes.' },
       { type: 'fix', description: 'The in-app updater now verifies every installer it downloads against the SHA-256 checksums published with the release, and refuses to run one that does not match. Previously it launched whatever it downloaded, with no client-side check on any platform. If a download fails the check it is discarded and you are told why, rather than the update silently doing nothing.' },
-      { type: 'fix', description: 'Fixed a flaw in how a session\'s conversation transcript was located. A machine you opened an SSH session to could name a file outside the Claude projects folder — a private key or token elsewhere on your drive — and CCC would open it and read its contents into that session\'s local transcript store. Transcript locations are now confined to the projects folder, and the status information a remote host sends is checked before it is used. Exploiting this needed you to connect to a host the attacker controlled, and the file contents stayed on your own machine. Advisory GHSA-hw7c-g5pw-w725.' },
+      { type: 'fix', description: 'Fixed a flaw in how a session\'s conversation transcript was located. A machine you opened an SSH session to could name a file outside the Claude projects folder — a private key or token elsewhere on your drive — and the app would open it and read its contents into that session\'s local transcript store. Transcript locations are now confined to the projects folder, and the status information a remote host sends is checked before it is used. Exploiting this needed you to connect to a host the attacker controlled, and the file contents stayed on your own machine. Advisory GHSA-hw7c-g5pw-w725.' },
     ],
   },
   {
     version: '2.1.0-beta.2',
     date: '2026-07-29',
-    highlights: 'Resuming your work is far easier to read, your own Claude hooks now run in CCC sessions, and each config can set its own permission mode and CLI arguments.',
+    highlights: 'Resuming your work is far easier to read, your own Claude hooks now run in the app\'s sessions, and each config can set its own permission mode and CLI arguments.',
     changes: [
       { type: 'improvement', description: 'The Resume Conversation picker shown in the terminal is much easier to scan: it now fills the width of your window instead of being capped at a narrow column, leads each entry with a recognisable title (your session\'s work name when you renamed it, otherwise Claude\'s own summary of the conversation), and strips the slash-command markup that used to crowd out the actual content. Conversations that only showed "(continued session)" now show what they were about.' },
-      { type: 'fix', description: 'Hooks you configure yourself now run in CCC sessions. CCC was replacing the whole hooks block with its own, so hooks from your user settings or a project\'s .claude/settings.json never fired in a CCC session even though they worked in a plain Claude session in the same folder. They are now merged, so a CCC session behaves like a normal Claude session in that folder, plus CCC\'s own hooks.' },
+      { type: 'fix', description: 'Hooks you configure yourself now run in the app\'s sessions. The app was replacing the whole hooks block with its own, so hooks from your user settings or a project\'s .claude/settings.json never fired in an app session even though they worked in a plain Claude session in the same folder. They are now merged, so an app session behaves like a normal Claude session in that folder, plus the app\'s own hooks.' },
       { type: 'feature', description: 'Each config can now set its own Claude permission mode and extra command-line arguments, instead of every session sharing one global setting.' },
       { type: 'feature', description: 'Sessions can be given a work name (renamed) independently of their config, so restored windows are recognisable at a glance. The startup "Resume previous sessions?" card is wider, lists each session on two lines so long names are not chopped, shows a count, and has a refresh button that picks up a session you restarted after launch.' },
       { type: 'feature', description: 'A development instance can now run alongside your installed copy with fully separate data, ports, and an amber DEV badge, so testing a change can no longer disturb your day-to-day sessions.' },
       { type: 'fix', description: 'The text cursor is visible and blinking again in shell terminals on Windows and macOS.' },
       { type: 'fix', description: 'Startup no longer freezes for roughly half a minute: two long synchronous sweeps during boot now run in the background.' },
-      { type: 'fix', description: 'macOS: fixed the "A keychain cannot be found to store" error at launch, which was caused by CCC redirecting your home directory away from your login keychain.' },
+      { type: 'fix', description: 'macOS: fixed the "A keychain cannot be found to store" error at launch, which was caused by the app redirecting your home directory away from your login keychain.' },
       { type: 'fix', description: 'Multi-account: sessions belonging to a signed-in account whose per-account project folder had been orphaned are recovered, so cross-account resume finds your conversations again.' },
     ],
   },
@@ -402,7 +402,7 @@ export const changelog: ChangelogEntry[] = [
     highlights: 'Release Candidate 2: terminal scrolling holds your place during live output, and relaunch reopens every session under its saved account — the first community-contributed fixes.',
     changes: [
       { type: 'fix', description: 'Scrolling up with the scrollbar or keyboard now holds your place while a session streams output. Previously only mouse-wheel scrolling was recognised, so any other way of scrolling up got yanked back to the bottom by the next burst of output.' },
-      { type: 'fix', description: 'Relaunching CCC reopens each session under the account it was closed with, instead of re-asking which account to use for every restored session.' },
+      { type: 'fix', description: 'Relaunching the app reopens each session under the account it was closed with, instead of re-asking which account to use for every restored session.' },
     ],
   },
   {
@@ -411,7 +411,7 @@ export const changelog: ChangelogEntry[] = [
     highlights: 'v2.0 Release Candidate 1: in-app updates work again, every signed-in account shows live usage, the stray blank browser window is gone, and a full dependency security refresh.',
     changes: [
       { type: 'fix', description: 'In-app update checks now find newer releases. Releases were being tagged against a stale commit, which mis-dated them so the updater never saw them; they are now tagged at the exact commit that was built, the updater scans the full release list, and it understands release-candidate versions.' },
-      { type: 'fix', description: 'The all-accounts usage panel now shows live usage for every signed-in account — even ones you have not opened a session with recently. It quietly refreshes each account\'s short-lived key in the background, only for accounts with no running session or sign-in in progress. Your primary account is deliberately left untouched (its credentials are shared with Claude outside CCC) — it shows last-known usage until you open a session.' },
+      { type: 'fix', description: 'The all-accounts usage panel now shows live usage for every signed-in account — even ones you have not opened a session with recently. It quietly refreshes each account\'s short-lived key in the background, only for accounts with no running session or sign-in in progress. Your primary account is deliberately left untouched (its credentials are shared with Claude outside the app) — it shows last-known usage until you open a session.' },
       { type: 'fix', description: 'Codex sessions no longer double-count cached input and reasoning tokens in the statusline and Tokenomics — token counts and dollar costs for cache-heavy Codex sessions were inflated (input could read nearly double).' },
       { type: 'fix', description: 'Fixed a blank browser window that could appear on startup (and linger after closing the app) when the browser/vision tool was enabled. The automation browser is now kept off-screen and is reliably shut down together with the app.' },
       { type: 'fix', description: 'The automation browser no longer runs Chrome\'s first-run setup on every launch, which was touching the desktop shortcuts and making the Chrome icon flicker on OneDrive-synced desktops.' },
@@ -444,16 +444,16 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-07-02',
     highlights: 'Claude Command Center 2.0: a guided first-run setup, an in-app Ask Command Center guide, a modernized engine, and a privacy pass that keeps every Claude config write per-session.',
     changes: [
-      { type: 'feature', description: 'New guided setup on first launch (and once after this upgrade): pick your theme, point CCC at your Claude install, see how accounts and GitHub connect, and switch on exactly the features you want. Every step shows real state from your machine, and nothing runs or gets enabled without you seeing it.' },
+      { type: 'feature', description: 'New guided setup on first launch (and once after this upgrade): pick your theme, point the app at your Claude install, see how accounts and GitHub connect, and switch on exactly the features you want. Every step shows real state from your machine, and nothing runs or gets enabled without you seeing it.' },
       { type: 'feature', description: 'A live guided tour follows setup: coach marks anchored to the real app walk you to your first session. The old static tour and the stack of first-launch popups are retired.' },
       { type: 'feature', description: 'Ask Command Center: the ? button in the sidebar opens a searchable guide to every feature, or hands your question to a Claude session primed with the app\'s docs so you can ask in plain language.' },
       { type: 'improvement', description: 'Engine modernization: Electron 42, React 19, xterm.js 6, Vite 7, and TypeScript 6. A faster renderer on a current Chromium security baseline.' },
       { type: 'improvement', description: 'Privacy pass: the status line and the Conductor MCP server are now delivered per session instead of being written into your global Claude config, legacy global entries are cleaned up on boot, per-session SSH files are swept on close, and your ~/.claude/CLAUDE.md is never touched.' },
       { type: 'feature', description: 'Built-in tools are now under your control: a master switch plus per-tool toggles (vision, code review, host transfer) in setup and Settings, enforced everywhere a session spawns: local, SSH, and Codex.' },
-      { type: 'feature', description: 'The status line has a real master switch: turn it off and CCC stops injecting it into sessions entirely, local and SSH alike.' },
+      { type: 'feature', description: 'The status line has a real master switch: turn it off and the app stops injecting it into sessions entirely, local and SSH alike.' },
       { type: 'feature', description: 'Codex support is now clearly marked Beta with its own master switch, and you can sign in during setup with the browser flow or an API key. Off means off: Codex configs are marked disabled (with the reason) and will not launch while the master is off.' },
-      { type: 'improvement', description: 'Claude Code 2.1.195+ renders its questions with clickable answer options; inside CCC a stray terminal click could select one, so they are switched off by default and answers stay keyboard-driven. Opt back in under Settings, General, Terminal.' },
-      { type: 'improvement', description: 'CCC Sentinel and cloud-agent permissions now default to off. Both are opt-in, with the ask made plainly during setup, so nothing spends tokens or grants permissions without your say-so.' },
+      { type: 'improvement', description: 'Claude Code 2.1.195+ renders its questions with clickable answer options; inside the app a stray terminal click could select one, so they are switched off by default and answers stay keyboard-driven. Opt back in under Settings, General, Terminal.' },
+      { type: 'improvement', description: 'Sentinel and cloud-agent permissions now default to off. Both are opt-in, with the ask made plainly during setup, so nothing spends tokens or grants permissions without your say-so.' },
       { type: 'improvement', description: 'Agent Hub is reorganized into Tasks, Pipelines, and Library, with clearer first-run guidance.' },
       { type: 'improvement', description: 'Insights reliability round: runs compare against the previous run of the same account, concurrent runs are locked per account, failed runs and KPI-extraction failures are surfaced instead of silently vanishing, and KPI extraction no longer bypasses permissions.' },
       { type: 'fix', description: 'Alt+V now pastes copied image files (not just screenshots), with inline feedback when the clipboard has no usable image.' },
@@ -464,7 +464,7 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.5.45',
     date: '2026-06-14',
-    highlights: 'CCC Sentinel\'s status dot now only turns amber when a finding actually affects your setup.',
+    highlights: 'Sentinel\'s status dot now only turns amber when a finding actually affects your setup.',
     changes: [
       { type: 'improvement', description: 'The Sentinel status dot is graded by reachability: amber means a compatibility finding reaches the accounts and features you actually use, and a calm grey state shows once you have reviewed the report.' },
     ],
@@ -474,7 +474,7 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-06-14',
     highlights: 'Light theme: Claude sessions now start with a matching light terminal theme.',
     changes: [
-      { type: 'fix', description: 'When CCC is in light mode, new Claude sessions are told about it (via the standard COLORFGBG signal) so Claude picks its light terminal theme instead of rendering dark-on-light. Applies to newly started sessions.' },
+      { type: 'fix', description: 'When the app is in light mode, new Claude sessions are told about it (via the standard COLORFGBG signal) so Claude picks its light terminal theme instead of rendering dark-on-light. Applies to newly started sessions.' },
     ],
   },
   {
@@ -500,7 +500,7 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.5.41',
     date: '2026-06-13',
-    highlights: 'Copy the CCC Sentinel compatibility report to your clipboard.',
+    highlights: 'Copy the Sentinel compatibility report to your clipboard.',
     changes: [
       { type: 'feature', description: 'The Sentinel report gains copy buttons: copy the whole report or a single finding, ready to paste into an issue or a Claude session.' },
     ],
@@ -508,9 +508,9 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.5.40',
     date: '2026-06-13',
-    highlights: 'Fix: conversations recorded outside a CCC session now show up in the resume picker.',
+    highlights: 'Fix: conversations recorded outside an app session now show up in the resume picker.',
     changes: [
-      { type: 'fix', description: 'The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside CCC sessions). Existing conversations are backfilled on the next scan.' },
+      { type: 'fix', description: 'The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside the app\'s sessions). Existing conversations are backfilled on the next scan.' },
     ],
   },
   {
@@ -523,7 +523,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'feature', description: 'Per-account feature toggles. Turn features like active PR, CI, reviews, linked issues, notifications, and AI credits on or off for each account independently, with the state held per account.' },
       { type: 'improvement', description: 'Honest re-auth surfacing. When a feature is switched on for an account whose token cannot power it yet, the account now shows a clear "switched on but needs re-auth" state instead of silently doing nothing, and a collapsible "what each feature needs" reference shows which scopes the features you enabled require.' },
       { type: 'fix', description: 'First-launch prompts (logging consent, What\'s New, setup steps) now appear one at a time in priority order instead of stacking on top of each other.' },
-      { type: 'fix', description: 'CCC Sentinel\'s background compatibility analysis no longer hangs on a shared login or leaves stray claude processes behind: it now runs against one of your signed-in accounts and tears the whole process tree down on timeout.' },
+      { type: 'fix', description: 'Sentinel\'s background compatibility analysis no longer hangs on a shared login or leaves stray claude processes behind: it now runs against one of your signed-in accounts and tears the whole process tree down on timeout.' },
       { type: 'fix', description: 'The Tokenomics cost donut no longer shows a "<synthetic>" slice; those system rows are labelled and excluded from the cost breakdown.' },
     ],
   },
@@ -542,9 +542,9 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.5.37',
     date: '2026-06-11',
-    highlights: 'New: CCC Sentinel -- an opt-in watcher that flags when a Claude Code update might affect the app, plus Memory and Hooks fixes.',
+    highlights: 'New: Sentinel -- an opt-in watcher that flags when a Claude Code update might affect the app, plus Memory and Hooks fixes.',
     changes: [
-      { type: 'feature', description: 'CCC Sentinel (opt-in, fail-open) detects Claude Code version changes on startup, checks the CC changelog against CCC\'s compatibility assumptions, and surfaces findings in a status dot plus a panel. It proposes model and effort registry fixes you apply yourself (never automatically) and reports compatibility for everything else. Toggle it in Settings, CCC Sentinel.' },
+      { type: 'feature', description: 'Sentinel (opt-in, fail-open) detects Claude Code version changes on startup, checks the CC changelog against the app\'s compatibility assumptions, and surfaces findings in a status dot plus a panel. It proposes model and effort registry fixes you apply yourself (never automatically) and reports compatibility for everything else. Toggle it in Settings, Sentinel.' },
       { type: 'improvement', description: 'A new hot-reloadable model and effort registry replaces around ten hardcoded model-identity sites, so an unknown or brand-new model now gets a colour, a label, and flagged pricing instead of vanishing.' },
       { type: 'improvement', description: 'Memory scanning now runs off the main thread, so opening Memory on a large store no longer stalls the UI. Spurious "unknown frontmatter field" warnings for the standard metadata block are gone, and the close button is back on sessions.' },
       { type: 'fix', description: 'Raised the hooks request body cap from 256 KiB to 4 MiB so large file-edit events are no longer dropped from the activity feed; the first oversized payload per session is now logged.' },
@@ -555,7 +555,7 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-06-11',
     highlights: 'Three big workstreams land: Logs v2 (a chat-transcript viewer), a ground-up Tokenomics rebuild, and the removal of the permission tray.',
     changes: [
-      { type: 'feature', description: 'Logs v2: a clean-slate transcript system. CCC indexes Claude\'s own conversation transcripts and renders them back as a readable chat with a timeline rail and full-text search. Restart and relaunch now resume the conversation you were actually in, worktree-aware. The old logging stack is removed.' },
+      { type: 'feature', description: 'Logs v2: a clean-slate transcript system. The app indexes Claude\'s own conversation transcripts and renders them back as a readable chat with a timeline rail and full-text search. Restart and relaunch now resume the conversation you were actually in, worktree-aware. The old logging stack is removed.' },
       { type: 'improvement', description: 'Tokenomics is rebuilt on its own background indexer that reads ALL transcripts including subagent and sidechain files (the old scan missed around half the events), dedups globally, computes cost at query time from live pricing, attributes by config, and opens instantly with an indexing state and a green nav badge.' },
       { type: 'improvement', description: 'Heads up: life-to-date spend will read LOWER than the old page. The old ledger priced Opus at a stale 3x tier and double-counted statusline costs. The new number is the deduped API-equivalent at current pricing.' },
       { type: 'fix', description: 'The permission tray has been removed. Claude\'s permission notifications are generic and fire for auto-approved subagent tools, producing phantom cards no heuristic could filter. The session attention pulse is kept.' },
@@ -652,7 +652,7 @@ export const changelog: ChangelogEntry[] = [
     changes: [
       { type: 'feature', description: 'No on/off switch any more. On first run your current Claude login is captured into a protected account, and every session runs under a saved account, so you are multi-account ready from the start.' },
       { type: 'fix', description: 'Your main login can no longer be overwritten. A session never runs on the bare global login, so running /login in a session can no longer replace the account you are signed in with globally.' },
-      { type: 'feature', description: 'New account detection: run /login as a different account inside a session and CCC offers to add it as a separate named account, keeping your original account intact.' },
+      { type: 'feature', description: 'New account detection: run /login as a different account inside a session and the app offers to add it as a separate named account, keeping your original account intact.' },
       { type: 'improvement', description: 'The Accounts list shows every account the same way, with the captured original marked as primary (and never deletable).' },
     ],
   },
@@ -684,7 +684,7 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.5.19',
     date: '2026-06-01',
-    highlights: 'Run multiple Claude accounts in CCC: add accounts, switch per session, keep them isolated.',
+    highlights: 'Run multiple Claude accounts in the app: add accounts, switch per session, keep them isolated.',
     changes: [
       { type: 'feature', description: 'Multiple accounts: add a second or third Claude account and run different sessions under different accounts. A first-run prompt walks you through it, and you can manage accounts anytime in Settings then Accounts.' },
       { type: 'feature', description: 'Switch a session to another account from the status strip pill or the right-click menu (it respawns and resumes under the chosen account). Signing in or out of an added account never touches your other accounts.' },

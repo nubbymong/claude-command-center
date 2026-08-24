@@ -75,7 +75,7 @@ export default function LogsWipeModal({ totalBytes, onComplete }: Props) {
         <DialogHeader titleId="logs-wipe-heading" title="Beta log reset" />
         <DialogBody>
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            CCC&apos;s recorded terminal logs from previous betas will now be deleted
+            AI Code Conductor&apos;s recorded terminal logs from previous betas will now be deleted
             ({formatGiB(totalBytes)}). This is not recoverable. Claude&apos;s own
             conversation transcripts are not affected.
           </p>

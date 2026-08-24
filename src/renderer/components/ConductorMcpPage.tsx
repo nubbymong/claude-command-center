@@ -66,8 +66,8 @@ export default function ConductorMcpPage() {
               className="rounded-xl p-4 text-sm text-subtext0 leading-relaxed"
               style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
             >
-              Local HTTP MCP server hosting all CCC-provided tools. It is registered per session:
-              each CCC-spawned session gets its own
+              Local HTTP MCP server hosting all of the app&apos;s built-in tools. It is registered per session:
+              each app-spawned session gets its own
               <code className="font-mono mx-1 text-xs">--mcp-config</code>
               pointing at the current port. Your global
               <code className="font-mono mx-1 text-xs">~/.claude.json</code>
