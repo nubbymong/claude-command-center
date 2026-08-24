@@ -282,3 +282,25 @@ describe('sidebar dock -- what the settings actually gate', () => {
     expect(q('sidebar-tip-pill')).not.toBeNull()
   })
 })
+
+describe('sidebar dock -- the row survives acknowledging a tip (owner bug, 2026-08-24)', () => {
+  it('markTipActed on the shown tip rotates the row to the next tip, never unmounts it', () => {
+    const tip = armTip()
+    render()
+    expect(q('sidebar-tip-pill')).not.toBeNull()
+    act(() => { useTipsStore.getState().markTipActed(tip.id) })
+    const row = q('sidebar-tip-pill')
+    expect(row, 'the tip row must survive "Got it"').not.toBeNull()
+    expect(row!.textContent).not.toContain(tip.variants.primary.shortText)
+  })
+
+  it('using the feature an excludes-only tip points at rotates the row too', () => {
+    // tip.memory-visualiser resolves to null once memory.memory-page is used
+    // (excludes with no postUse) -- the second path that used to unmount the row.
+    useTipsStore.setState({ currentTipId: 'tip.memory-visualiser', tracking: { ...EMPTY, tipsShown: { 'tip.memory-visualiser': 1 } } })
+    render()
+    expect(q('sidebar-tip-pill')).not.toBeNull()
+    act(() => { useTipsStore.getState().recordUsage('memory.memory-page') })
+    expect(q('sidebar-tip-pill'), 'the tip row must survive the excludes gate firing').not.toBeNull()
+  })
+})

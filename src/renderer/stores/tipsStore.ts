@@ -241,7 +241,21 @@ export const useTipsStore = create<TipsState>((set, get) => ({
       }
       const tracking = { ...state.tracking, features }
       saveConfigNow('usageTracking', tracking)
-      return { tracking }
+      // Usage can UNRESOLVE the current tip: an `excludes` gate firing on a tip
+      // with no postUse variant makes resolveContent null, and the dock row
+      // only renders while the current tip RESOLVES — with pickNextTip running
+      // once per launch, using the very feature a tip pointed at hid the whole
+      // row for the rest of the session (same symptom as the "Got it" bug,
+      // different trigger). Advance to a successor instead; the row lives on.
+      let currentTipId = state.currentTipId
+      if (currentTipId && !state.silencedUntilRestart) {
+        const tip = TIPS_LIBRARY.find((t) => t.id === currentTipId)
+        if (!tip || !resolveContent(tip, tracking)) {
+          const next = selectNextTip(tracking, currentTipId)
+          currentTipId = next ? next.id : null
+        }
+      }
+      return { tracking, currentTipId }
     })
   },
 
@@ -263,11 +277,22 @@ export const useTipsStore = create<TipsState>((set, get) => ({
         tipsActed: { ...state.tracking.tipsActed, [tipId]: Date.now() },
       }
       saveConfigNow('usageTracking', tracking)
-      // Acknowledged tips disappear from the pill for the rest of this session.
-      // They can come back in a future launch (unlike permanent dismiss).
+      // Acknowledging ADVANCES the rotation; it never empties it. This used to
+      // null currentTipId with no successor, and because the dock row only
+      // renders while a current tip exists, one "Got it" (or Discuss, or the
+      // tip's action button) hid the ENTIRE tip row for the rest of the
+      // session — read as the panel vanishing (owner bug, 2026-08-24). The
+      // acted tip itself cannot bounce straight back: it was stamped shown
+      // when drawn, and selectNextTip skips shown-within-7-days (plus the
+      // explicit exclude here). While silenced no successor is ever picked —
+      // the state cannot arise today (silencing nulls currentTipId), but a
+      // guard that surfaces tips through a silence would be the wrong default
+      // if it ever did.
+      const acted = state.currentTipId === tipId
+      const next = acted && !state.silencedUntilRestart ? selectNextTip(tracking, tipId) : null
       return {
         tracking,
-        currentTipId: state.currentTipId === tipId ? null : state.currentTipId,
+        currentTipId: acted ? (next ? next.id : null) : state.currentTipId,
       }
     })
   },

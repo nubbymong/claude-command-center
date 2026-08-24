@@ -202,3 +202,81 @@ describe('the gates the library depends on', () => {
     expect(Object.values(VIEW_FEATURE_IDS).every((id) => knownFeatureIds().has(id))).toBe(true)
   })
 })
+
+describe("acknowledging a tip advances the rotation — it never hides the row (owner bug, 2026-08-24)", () => {
+  // "Got it", Discuss, and the tip's action button all call markTipActed. It
+  // used to null currentTipId with no successor; the dock row only renders
+  // while a current tip exists, so one click hid the whole tip row for the
+  // rest of the session.
+  it('markTipActed on the current tip picks a successor', () => {
+    useTipsStore.getState().pickNextTip()
+    const first = useTipsStore.getState().currentTipId!
+    useTipsStore.getState().markTipActed(first)
+    const s = useTipsStore.getState()
+    expect(s.tracking.tipsActed[first]).toBeTypeOf('number')
+    expect(s.currentTipId).toBeTruthy() // the row lives on
+    expect(s.currentTipId).not.toBe(first) // and moved past the acknowledged tip
+    expect(saved.map(([k]) => k)).toContain('usageTracking')
+  })
+
+  it('goes null only when the acknowledged tip was the last eligible one', () => {
+    useTipsStore.getState().pickNextTip()
+    const current = useTipsStore.getState().currentTipId!
+    // Every OTHER tip permanently dismissed -> nothing left to rotate to.
+    const tipsDismissed = Object.fromEntries(
+      TIPS_LIBRARY.filter((t) => t.id !== current).map((t) => [t.id, 1]),
+    )
+    useTipsStore.setState({ tracking: { ...EMPTY, tipsDismissed } })
+    useTipsStore.getState().markTipActed(current)
+    expect(useTipsStore.getState().currentTipId).toBeNull()
+  })
+
+  it('acting on a NON-current tip leaves the rotation alone', () => {
+    // The current tip is deliberately NOT what selectNextTip would pick, so a
+    // mutant that always advances lands on a DIFFERENT id and fails here — the
+    // first cut used the natural successor as current and could not fail.
+    useTipsStore.setState({ currentTipId: 'tip.canvas-plan-mode' })
+    useTipsStore.getState().markTipActed('tip.notes')
+    expect(useTipsStore.getState().currentTipId).toBe('tip.canvas-plan-mode')
+  })
+
+  it('never picks a successor through a silence, even from a state silencing cannot produce', () => {
+    // silenceUntilRestart always nulls currentTipId, so current+silenced is
+    // unreachable today — the guard exists for whatever produces it tomorrow.
+    // Built directly, the test discriminates: without the silence term the
+    // acted tip would get a successor instead of null.
+    useTipsStore.setState({ currentTipId: 'tip.notes', silencedUntilRestart: true })
+    useTipsStore.getState().markTipActed('tip.notes')
+    expect(useTipsStore.getState().currentTipId).toBeNull()
+  })
+
+  it('using the feature a tip points at advances the rotation instead of hiding the row', () => {
+    // The second vanish path: an `excludes` gate firing on a tip with no
+    // postUse variant makes resolveContent null, and the dock row only renders
+    // while the current tip RESOLVES. tip.memory-visualiser is exactly that
+    // shape (excludes memory.memory-page, primary only).
+    useTipsStore.setState({ currentTipId: 'tip.memory-visualiser' })
+    useTipsStore.getState().recordUsage('memory.memory-page')
+    const s = useTipsStore.getState()
+    expect(s.currentTipId).toBeTruthy() // the row lives on
+    expect(s.currentTipId).not.toBe('tip.memory-visualiser')
+    expect(s.getCurrentTip()).not.toBeNull() // and it resolves
+  })
+
+  it('usage that does NOT unresolve the current tip leaves it alone', () => {
+    useTipsStore.setState({ currentTipId: 'tip.notes' })
+    useTipsStore.getState().recordUsage('memory.memory-page')
+    expect(useTipsStore.getState().currentTipId).toBe('tip.notes')
+  })
+
+  it('a postUse downgrade keeps the tip current -- it swaps variant, never rotates', () => {
+    // tip.notes excludes security.encrypted-notes but HAS a postUse variant, so
+    // firing its excludes still resolves. A mutant that advances whenever the
+    // resolved content merely CHANGES would rotate it away and fail here.
+    useTipsStore.setState({ currentTipId: 'tip.notes' })
+    useTipsStore.getState().recordUsage('security.encrypted-notes')
+    const s = useTipsStore.getState()
+    expect(s.currentTipId).toBe('tip.notes')
+    expect(s.getCurrentTip()?.content).toBe(TIPS_LIBRARY.find((t) => t.id === 'tip.notes')!.variants.postUse)
+  })
+})

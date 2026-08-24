@@ -218,18 +218,31 @@ describe('tip card -- the ways out', () => {
     expect(closed).toBe(1)
   })
 
-  it('closes itself when the CURRENT tip stops resolving, not only when the id clears', () => {
+  it('advances in place when the CURRENT tip stops resolving -- and never goes invisible-but-mounted', () => {
     // The app is live behind the card: acting on the tip's own feature can fire
-    // its `excludes`, and a tip with no postUse variant then resolves to null
-    // while currentTipId is still set. The card must close, not go
-    // invisible-but-mounted with a live Escape listener (the regression this pins).
+    // its `excludes`, and a tip with no postUse variant then resolves to null.
+    // The store now rotates to a successor (the same fix that keeps the dock
+    // row alive, owner bug 2026-08-24), so the card shows the next tip in
+    // place -- its own "Next advances in place" model. The original hazard this
+    // test pinned stays pinned: whatever happens, the card must never be
+    // mounted-but-unresolvable with a live Escape listener.
     const excluded = TIPS_LIBRARY.find((t) => t.excludes?.length && !t.variants.postUse && !t.requires?.length)
     expect(excluded, 'the library must contain an excludes-without-postUse tip').toBeDefined()
     useTipsStore.setState({ currentTipId: excluded!.id })
     act(() => { root.render(<TipCard onClose={() => { closed++ }} />) })
     expect(q('tip-card')).not.toBeNull()
     act(() => { useTipsStore.getState().recordUsage(excluded!.excludes![0]) })
-    expect(closed).toBeGreaterThanOrEqual(1)
+    const s = useTipsStore.getState()
+    if (s.currentTipId) {
+      // Rotated: card stays up on a RESOLVING successor.
+      expect(closed).toBe(0)
+      expect(s.currentTipId).not.toBe(excluded!.id)
+      expect(s.getCurrentTip()).not.toBeNull()
+      expect(q('tip-card')).not.toBeNull()
+    } else {
+      // Rotation ran dry: the card must have closed, not lingered invisibly.
+      expect(closed).toBeGreaterThanOrEqual(1)
+    }
   })
 })
 
@@ -393,9 +406,13 @@ describe('tip card -- the look', () => {
 describe('tip copy', () => {
   const lib = read('tips-library.ts')
 
-  it('names the Browser button by its current label', () => {
+  it('locates the Canvas button truthfully -- toolbar order is Snap, Canvas, Logs, Browser', () => {
     expect(lib).not.toContain('Snap and Web')
-    expect(lib).toContain('beside Browser')
+    // The old copy said "beside Browser"; Canvas actually sits next to Snap
+    // (CommandBar renders snap -> canvas -> logs -> browser), and the
+    // "Where to look" callout is followed literally.
+    expect(lib).not.toContain('beside Browser')
+    expect(lib).toContain('beside Snap')
   })
 
   it('carries no emoji in any headline -- the lightbulb is the only mark', () => {
@@ -421,5 +438,17 @@ describe('tip copy', () => {
       .map((c) => c!.shortText)
       .filter((s) => s.length > CEILING)
     expect(over).toEqual([])
+  })
+})
+
+describe('tip card -- Got it advances the rotation (owner bug, 2026-08-24)', () => {
+  it('clicking the primary closes the card and leaves a successor armed for the dock row', () => {
+    open()
+    const primary = q('tip-card-primary')!
+    act(() => { (primary as HTMLElement).click() })
+    expect(closed).toBe(1)
+    // The row outside this card renders only while a current tip exists; a null
+    // here is the vanished-tips-panel bug.
+    expect(useTipsStore.getState().currentTipId).toBeTruthy()
   })
 })
