@@ -599,6 +599,25 @@ export interface CanvasReviewCounts {
   closeableNotes: number
 }
 
+/**
+ * Whether a reviews.json is present on disk for this canvas.
+ *
+ * `getReviewCountsForCanvas` returns null for two very different cases — the
+ * store is CORRUPT (a file exists but will not read), or there is simply NO
+ * file yet (a canvas rendered but never annotated). The dismiss-all sweep must
+ * not call the second one "unreadable": a null-count PLUS a present file is a
+ * genuinely unreadable store; a null-count with no file is a healthy, empty
+ * one. Cheap (a single stat) and only ever called on the sweep's own rows.
+ */
+export function reviewStoreFileExists(canvasId: string): boolean {
+  if (!CANVAS_ID_RE.test(canvasId)) return false
+  try {
+    return fs.existsSync(reviewsJsonPath(canvasId))
+  } catch {
+    return false
+  }
+}
+
 export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts | null {
   if (!CANVAS_ID_RE.test(canvasId)) return null
   if (broken.has(canvasId)) return null

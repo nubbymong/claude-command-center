@@ -31,6 +31,7 @@ import {
   onReviewChanged,
   reopenAnnotation,
   resolveAnnotation,
+  reviewStoreFileExists,
   submitReview,
   upsertAnnotation,
 } from '../canvas/canvas-review-store'
@@ -463,10 +464,12 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
       // count. Join the same read `listAll` does, so the sweep clears exactly
       // what the queue number promised.
       const counts = getReviewCountsForCanvas(e.canvasId)
-      // Same blunt rule the queue's own `unknown` uses: an owned row is always
-      // swept, so a null read means the review store could not be read —
-      // reported, never presented as "nothing to clear".
-      if (!counts) unreadable++
+      // A null count is either a genuinely unreadable store (a file exists but
+      // will not read) or simply a canvas with no reviews.json yet (rendered,
+      // never annotated). Only the first is "unreadable"; calling a healthy
+      // note-less canvas unreadable would over-report the diagnostic. Distinguish
+      // by whether the file is actually present.
+      if (!counts && reviewStoreFileExists(e.canvasId)) unreadable++
       // Close out only where the label counted work (verdictRounds > 0), so
       // the gesture clears precisely what the number promised.
       if (counts && counts.verdictRounds > 0) {

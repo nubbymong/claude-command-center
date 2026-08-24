@@ -57,6 +57,9 @@ const reviewStore = vi.hoisted(() => ({
   onReviewChanged: vi.fn(() => () => {}),
   reopenAnnotation: vi.fn(),
   resolveAnnotation: vi.fn(),
+  // Present by default: a null count on an owned row is "unreadable" only when
+  // the file actually exists. Individual tests flip it for the absent case.
+  reviewStoreFileExists: vi.fn(() => true),
   submitReview: vi.fn(),
   upsertAnnotation: vi.fn(),
 }))
@@ -171,6 +174,20 @@ describe('gates — the sweep clears what the number promised, nothing else', ()
     reviewStore.getReviewCountsForCanvas.mockImplementation((id: string) => (id === 'own-1' ? null : counts()))
     const res = await invoke({ sessionId: SID })
     expect(res.unreadable).toBe(1)
+    expect(res.clearedAwaiting).toBe(1)
+  })
+
+  it('a null count with NO reviews.json is a healthy empty store, not unreadable', async () => {
+    // A canvas rendered but never annotated has no reviews.json, so counts read
+    // as null — but it is healthy, not unreadable. The file-presence check keeps
+    // the diagnostic honest.
+    canvasStore.listAllCanvases.mockReturnValue([
+      entry({ canvasId: 'own-1', ownedByThisSession: true, awaitingReview: true, awaitingReviewAt: '2026-08-24T00:00:00.000Z' }),
+    ])
+    reviewStore.getReviewCountsForCanvas.mockReturnValue(null)
+    reviewStore.reviewStoreFileExists.mockReturnValue(false)
+    const res = await invoke({ sessionId: SID })
+    expect(res.unreadable).toBe(0)
     expect(res.clearedAwaiting).toBe(1)
   })
 

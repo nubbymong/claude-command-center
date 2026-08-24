@@ -166,6 +166,28 @@ describe('end-to-end: the sweep actually closes verdict rounds and tallies hones
     expect(onDisk.annotations[0].closedBy).toBe('user')
   })
 
+  it('a rendered-but-never-annotated canvas is NOT reported unreadable', async () => {
+    // No reviews.json is written until the first note, so getReviewCountsForCanvas
+    // reads null — but the store is healthy, not unreadable. A ready render also
+    // stamps awaitingReview, so this exercises the clear-awaiting half too.
+    renderOwned(SID, PROJECT, 'never annotated')
+    const res = (await dismissAll({ sessionId: SID })) as { unreadable: number; clearedAwaiting: number; closedNotes: number }
+    expect(res.unreadable).toBe(0)
+    expect(res.clearedAwaiting).toBe(1)
+    expect(res.closedNotes).toBe(0)
+  })
+
+  it('a corrupt reviews.json IS reported unreadable and nothing is closed', async () => {
+    const { canvasId, versionId } = renderOwned(SID, PROJECT, 'corrupt')
+    seedAddressedReview(canvasId, versionId)
+    // Corrupt the file so getReviewCountsForCanvas reads null but the file exists.
+    fs.writeFileSync(reviewsPath(canvasId), '{ not valid json')
+    reviewStore._resetCanvasReviewStoreForTest()
+    const res = (await dismissAll({ sessionId: SID })) as { unreadable: number; closedNotes: number }
+    expect(res.unreadable).toBe(1)
+    expect(res.closedNotes).toBe(0)
+  })
+
   it('open (agent-side) notes are left alone — the sweep clears only what waits on the user', async () => {
     const { canvasId, versionId } = renderOwned(SID, PROJECT, 'open notes')
     // One submitted review with an OPEN note (waiting on the agent): not the
