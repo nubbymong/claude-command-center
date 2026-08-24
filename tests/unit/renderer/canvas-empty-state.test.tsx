@@ -28,6 +28,7 @@ const ptyWriteMock = vi.fn()
 const listReclaimableMock = vi.fn(async () => [] as unknown[])
 const reclaimMock = vi.fn(async () => ({ ok: true, state: null }))
 const deleteCanvasMock = vi.fn(async () => ({ ok: true }))
+const listAllMock = vi.fn(async () => [] as unknown[])
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
   pty: { ...((globalThis as any).window?.electronAPI?.pty ?? {}), write: ptyWriteMock },
@@ -36,6 +37,7 @@ const deleteCanvasMock = vi.fn(async () => ({ ok: true }))
     listReclaimable: listReclaimableMock,
     reclaim: reclaimMock,
     deleteCanvas: deleteCanvasMock,
+    listAll: listAllMock,
   },
 }
 
@@ -260,6 +262,7 @@ describe('deleting a canvas from the front page (#452)', () => {
     deleteCanvasMock.mockReset()
     deleteCanvasMock.mockResolvedValue({ ok: true })
     reclaimMock.mockClear()
+    listReclaimableMock.mockClear()
   })
 
   it('arms on the first click, deletes only on the confirm — and drops the row', async () => {
@@ -335,11 +338,19 @@ describe('deleting a canvas from the front page (#452)', () => {
     const sibling = { ...candidate, canvasId: 'def456abc123def456abc123', conversationShortId: '59596c8b' }
     await renderWith([candidate, sibling])
 
+    // 'ul > li' — the loop track's steps are an <ol>; the reclaim rows are the
+    // only <ul> on the default view.
+    const rows = () => Array.from(container.querySelectorAll('ul > li'))
     const arms = container.querySelectorAll('[data-testid="canvas-reclaim-delete"]')
     expect(arms).toHaveLength(2)
     click(arms[0])
+    expect(rows()[0].querySelector('[data-testid="canvas-reclaim-confirm-delete"]')).toBeTruthy()
+
+    // The first row is armed, so the one remaining arm button is row 2's.
     click(container.querySelector('[data-testid="canvas-reclaim-delete"]'))
     expect(container.querySelectorAll('[data-testid="canvas-reclaim-confirm-delete"]')).toHaveLength(1)
+    expect(rows()[0].querySelector('[data-testid="canvas-reclaim-confirm-delete"]')).toBeNull()
+    expect(rows()[1].querySelector('[data-testid="canvas-reclaim-confirm-delete"]')).toBeTruthy()
   })
 
   it('is disabled while a reclaim is in flight', async () => {
@@ -348,6 +359,27 @@ describe('deleting a canvas from the front page (#452)', () => {
 
     click(buttonByText('Reopen'))
     expect(testid('canvas-reclaim-delete')?.disabled).toBe(true)
+  })
+
+  it('re-reads the list when the library overlay closes — a library delete cannot strand a row', async () => {
+    // The library sits OVER the front page; deleting there used to leave the
+    // reclaim row behind, whose Delete then dead-ended on "could not be
+    // deleted" — for a canvas that was already gone.
+    await renderWith([candidate])
+    expect(listReclaimableMock).toHaveBeenCalledTimes(1)
+
+    click(buttonByText('Browse the canvas library'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    // The refetch after Done returns without the canvas the library deleted.
+    listReclaimableMock.mockResolvedValueOnce([])
+    click(buttonByText('Done'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(listReclaimableMock).toHaveBeenCalledTimes(2)
+    expect(container.textContent).not.toContain('Pick up where you left off')
   })
 })
 
