@@ -1,5 +1,8 @@
+import { useState } from 'react'
 import { releaseLine } from '../utils/versionLabel'
 import { useAppMetaStore } from '../stores/appMetaStore'
+import { showcasesFor, ShowcasePage } from './showcase-pages'
+import { ShowcaseVignette } from './ShowcaseVignette'
 
 declare const __APP_VERSION__: string
 
@@ -14,6 +17,9 @@ export interface WhatsNewItem {
   /** ONE line. If it needs two sentences, it belongs in the Feature Guide. */
   desc: string
   beta?: boolean
+  /** Id of a showcase page (showcase-pages.ts). Grows a "See it →" chip that
+   *  jumps to that page; an id with no matching page renders no chip. */
+  seeIt?: string
 }
 
 export interface WhatsNewSection {
@@ -68,12 +74,14 @@ const SECTIONS_21: WhatsNewSection[] = [
     items: [
       { title: 'Detachable SSH.', desc: 'Runs under tmux, so a dropped VPN no longer kills the work.' },
       { title: 'Partner terminal.', desc: 'A plain shell beside Claude, now labelled so you know which is which.' },
+      { title: 'One row.', desc: 'The tools and your command buttons sit in a single row under the terminal.', seeIt: 'oneRow' },
     ],
   },
   {
     heading: 'Working with Claude',
     items: [
-      { title: 'Agent Canvas.', desc: "Claude draws a mockup in the app. Mark up what's wrong; it picks the notes up." },
+      { title: 'Agent Canvas.', desc: "Claude draws a mockup in the app. Mark up what's wrong; it picks the notes up.", seeIt: 'canvas' },
+      { title: 'Session Watchdog.', desc: 'Waits out a rate limit and types the retry itself. Off by default.', seeIt: 'watchdog' },
       { title: 'Ask Conductor.', desc: 'A session that has read the docs. Docked at the bottom of the sidebar.' },
     ],
   },
@@ -112,6 +120,34 @@ export function sectionsFor(lastSeenVersion: string | undefined, currentVersion:
   return from === '2.0' || from === '2.1' ? SECTIONS_21 : [...SECTIONS_20, ...SECTIONS_21]
 }
 
+function ShowcasePageView({ page, index, total }: { page: ShowcasePage; index: number; total: number }) {
+  return (
+    <div className="p2">
+      <div className="p2-inner sc-page" style={{ width: 'min(1000px, 95vw)' }} data-ux-id={`showcase-page-${page.id}`}>
+        <div className="sc-copy">
+          <div className="sc-eyebrow" data-ux-id="showcase-eyebrow">Feature showcase · {index} of {total}</div>
+          <h2 className="sc-h" data-ux-id="showcase-heading">{page.heading}</h2>
+          <p className="sc-tagline" data-ux-id="showcase-tagline">{page.tagline}</p>
+          <div className="sc-points" data-ux-id="showcase-points">
+            {page.points.map((pt) => (
+              <div className="sc-pt" key={pt.lead}>
+                <span className="wn-dot sc-dot" />
+                <div><b>{pt.lead}</b> {pt.rest}</div>
+              </div>
+            ))}
+          </div>
+          <p className="sc-where" data-ux-id="showcase-where">
+            {page.where.pre}<b>{page.where.em}</b>{page.where.post}
+          </p>
+        </div>
+        <div className="sc-art" data-ux-id="showcase-art">
+          <ShowcaseVignette kind={page.art} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function WhatsNewV2Step({
   onNext,
   ctaLabel = 'Set it up →',
@@ -125,42 +161,88 @@ export function WhatsNewV2Step({
 }) {
   const sections = sectionsFor(useAppMetaStore.getState().meta.lastSeenVersion, LINE_SOURCE)
   const count = sections.reduce((n, s) => n + s.items.length, 0)
+  // The showcase (owner design 2026-08-24): the summary is page 0; each
+  // flagship feature of the line gets a full page behind it. With no pages
+  // authored for a line this collapses to exactly the old single-page step —
+  // no dots, no skip, the harness CTA — so nothing regresses.
+  const showcases = showcasesFor(LINE_SOURCE)
+  const [pageIx, setPageIx] = useState(0)
+  const total = 1 + showcases.length
+  const isLast = pageIx === total - 1
+  const jumpTo = (id: string) => {
+    const ix = showcases.findIndex((p) => p.id === id)
+    if (ix >= 0) setPageIx(1 + ix)
+  }
   return (
     <>
-      <div className="p2">
-        <div className="p2-inner" style={{ width: 'min(920px, 95vw)' }}>
-          <h2 className="h2" data-ux-id="whatsnew-heading">What&apos;s new in {LINE}</h2>
-          <p className="p2-sub" data-ux-id="whatsnew-sub">
-            {count} things worth knowing, in one line each.
-          </p>
+      {pageIx === 0 ? (
+        <div className="p2">
+          <div className="p2-inner" style={{ width: 'min(920px, 95vw)' }}>
+            <h2 className="h2" data-ux-id="whatsnew-heading">What&apos;s new in {LINE}</h2>
+            <p className="p2-sub" data-ux-id="whatsnew-sub">
+              {count} things worth knowing, in one line each{showcases.length > 0 ? ` — and ${showcases.length} of them have a page of their own, just behind this one` : ''}.
+            </p>
 
-          <div className="wn-sections" data-ux-id="whatsnew-sections">
-            {sections.map((s) => (
-              <section key={s.heading} data-ux-id={`section-${s.heading.toLowerCase().replace(/[^a-z]+/g, '-')}`}>
-                <h3 className="wn-sec-h">{s.heading}</h3>
-                {s.items.map((it) => (
-                  <div className="wn-item" key={it.title}>
-                    <span className="wn-dot" />
-                    <div>
-                      <span className="wn-t">{it.title}</span>{' '}
-                      <span className="wn-d">{it.desc}</span>
-                      {it.beta && <span className="gh-tag">Beta</span>}
+            <div className="wn-sections" data-ux-id="whatsnew-sections">
+              {sections.map((s) => (
+                <section key={s.heading} data-ux-id={`section-${s.heading.toLowerCase().replace(/[^a-z]+/g, '-')}`}>
+                  <h3 className="wn-sec-h">{s.heading}</h3>
+                  {s.items.map((it) => (
+                    <div className="wn-item" key={it.title}>
+                      <span className="wn-dot" />
+                      <div>
+                        <span className="wn-t">{it.title}</span>{' '}
+                        <span className="wn-d">{it.desc}</span>
+                        {it.beta && <span className="gh-tag">Beta</span>}
+                        {it.seeIt && showcases.some((p) => p.id === it.seeIt) && (
+                          <button
+                            type="button"
+                            className="wn-see"
+                            onClick={() => jumpTo(it.seeIt!)}
+                            data-ux-id={`see-${it.seeIt}`}
+                          >
+                            See it &rarr;
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </section>
+                  ))}
+                </section>
+              ))}
+            </div>
+
+            <p className="gh-freebie" data-ux-id="whatsnew-pointer">
+              The detail for any of these lives in <b>Feature Guide &rarr; What&apos;s New</b>, any time.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <ShowcasePageView page={showcases[pageIx - 1]} index={pageIx} total={showcases.length} />
+      )}
+      <div className="foot">
+        <span className="hint" data-ux-id="whatsnew-hint">
+          {isLast ? hint : `Page ${pageIx + 1} of ${total} — the tour continues afterwards.`}
+        </span>
+        {total > 1 && (
+          <div className="wn-foot-dots" data-ux-id="whatsnew-dots" role="tablist" aria-label="What's New pages">
+            <button type="button" className={`wn-fdot${pageIx === 0 ? ' on' : ''}`} onClick={() => setPageIx(0)} aria-label="Summary" data-ux-id="whatsnew-dot-summary"><i /></button>
+            {showcases.map((p, ix) => (
+              <button type="button" key={p.id} className={`wn-fdot${pageIx === ix + 1 ? ' on' : ''}`} onClick={() => setPageIx(ix + 1)} aria-label={p.heading} data-ux-id={`whatsnew-dot-${p.id}`}><i /></button>
             ))}
           </div>
-
-          <p className="gh-freebie" data-ux-id="whatsnew-pointer">
-            The detail for any of these lives in <b>Feature Guide &rarr; What&apos;s New</b>, any time.
-          </p>
-        </div>
-      </div>
-      <div className="foot">
-        <span className="hint">{hint}</span>
-        <button className="cta" onClick={onNext} type="button" data-ux-id="whatsnew-cta">
-          {ctaLabel}
+        )}
+        {!isLast && (
+          <button type="button" className="skip wn-skip" onClick={onNext} data-ux-id="whatsnew-skip">
+            Skip the showcase
+          </button>
+        )}
+        <button
+          className="cta"
+          onClick={() => (isLast ? onNext() : setPageIx(pageIx + 1))}
+          type="button"
+          data-ux-id="whatsnew-cta"
+        >
+          {isLast ? ctaLabel : 'Next →'}
         </button>
       </div>
     </>
