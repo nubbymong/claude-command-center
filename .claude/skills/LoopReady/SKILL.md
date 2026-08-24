@@ -17,10 +17,12 @@ here** — opus is for `StartLoop` execution, not planning.
 ## INPUT (scope)
 
 - `/LoopReady` with no argument → default scope is the open work for the current
-  release line: issues that are `release-2.1` AND NOT `in-beta` (an `in-beta`
-  issue is already merged; there is nothing to run). Confirm the current line
-  from AGENTS.md "Release Process" — it may be `release-2.2` later.
-- `/LoopReady <label>` → issues carrying that label, still open, not `in-beta`.
+  release line: issues that are `release-2.1` AND NOT `in-beta`/`in-release` (an
+  issue with either lifecycle label is already merged — on beta or in a cut rc;
+  there is nothing to run). Confirm the current line from AGENTS.md "Release
+  Process" — it may be `release-2.2` later.
+- `/LoopReady <label>` → issues carrying that label, still open, not
+  `in-beta`/`in-release`.
 - `/LoopReady #A #B #C` → exactly those issues.
 
 Resolve the set first and print it, so the scope is visible before any agent runs:

@@ -27,6 +27,8 @@ loop-ready | loop-needs-human      LoopReady's verdict
   → loop-in-progress                   being executed now
   → loop-done                          PR opened; awaiting a human merge + desktop test
   → in-beta                            a human merged the PR to beta
+  → in-release                         an rc cut rolled it in (automatic, release.yml roll-rc)
+  → closed                             promoted to main/stable (automatic, #134)
 ```
 
 `loop-claimed` + an assignee is how two workers avoid doing the same ticket: claim

@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 /**
- * Close `in-beta` issues covered by a promotion to `main`.
+ * Close `in-beta` / `in-release` issues covered by a promotion to `main`.
  *
  * Under the RC-branch model, fixes merge to `beta` long before they ship. An
  * issue therefore stays OPEN with the `in-beta` label until its change promotes
- * to `main` (see CONTRIBUTING.md -> "Issue lifecycle"). This script performs the
- * close-on-promotion step that was manual until now (#134).
+ * to `main` (see CONTRIBUTING.md -> "Issue lifecycle"). When an rc cut rolls
+ * the issue into a release candidate, `in-release` replaces `in-beta`
+ * (scripts/roll-issues-into-release.mjs) — still open, one step further along.
+ * This script performs the close-on-promotion step that was manual until now
+ * (#134), for both labels.
  *
  *   node scripts/close-in-beta-issues.js --dry-run
  *   node scripts/close-in-beta-issues.js --range <base>..<head>
@@ -30,15 +33,18 @@
  *
  * Over-collecting candidates is deliberately safe. The FAIL-SAFE is the filter,
  * not the harvest: a candidate is only ever closed if it is an issue (not a PR),
- * is currently OPEN, and carries the `in-beta` label. Anything else is skipped
- * and reported.
+ * is currently OPEN, and carries the `in-beta` or `in-release` label. Anything
+ * else is skipped and reported.
  */
 
 const { execFileSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 
-const LABEL = 'in-beta'
+// Lifecycle labels, in lifecycle order. An issue carries at most one (the roll
+// script swaps in-beta for in-release), but the close path removes every one it
+// finds so a mislabeled issue cannot keep a stale lifecycle label after close.
+const LIFECYCLE_LABELS = ['in-beta', 'in-release']
 // Ceiling on API lookups. A promotion spans one release; hundreds of distinct
 // refs means the range is wrong (e.g. a fallback that reached back too far), and
 // we would rather do nothing than hammer the API on a bad range.
@@ -95,9 +101,12 @@ function classifyCandidate(item) {
   if (!item || item.notFound) return { action: 'skip', reason: 'not found' }
   if (item.pull_request) return { action: 'skip', reason: 'is a pull request' }
   const labels = (item.labels || []).map((l) => (typeof l === 'string' ? l : l.name))
-  if (!labels.includes(LABEL)) return { action: 'skip', reason: `not labeled ${LABEL}` }
+  const carried = LIFECYCLE_LABELS.filter((l) => labels.includes(l))
+  if (!carried.length) return { action: 'skip', reason: `not labeled ${LIFECYCLE_LABELS.join(' or ')}` }
   if (item.state !== 'open') return { action: 'skip', reason: `already ${item.state}` }
-  return { action: 'close' }
+  // `label` is the furthest-along lifecycle label — that is the state the close
+  // comment describes if the issue somehow carries both.
+  return { action: 'close', label: carried[carried.length - 1], carried }
 }
 
 /** Split candidates into a close list and an annotated skip list. */
@@ -106,7 +115,9 @@ function planClosures(items) {
   const skipped = []
   for (const item of items) {
     const verdict = classifyCandidate(item)
-    if (verdict.action === 'close') toClose.push(item)
+    // The verdict's label facts ride along on a copy so the close loop knows
+    // which lifecycle label(s) to describe and remove.
+    if (verdict.action === 'close') toClose.push({ ...item, closeLabel: verdict.label, closeCarried: verdict.carried })
     else skipped.push({ number: item && item.number, reason: verdict.reason })
   }
   return { toClose, skipped }
@@ -128,13 +139,17 @@ function resolveRange({ explicit, before, after, isKnownCommit, previousTag }) {
   return null
 }
 
-/** Comment left on each issue as it closes. */
-function closeCommentBody({ version, sha, range }) {
+/** Comment left on each issue as it closes. `label` = the lifecycle label it carried. */
+function closeCommentBody({ version, sha, range, label = 'in-beta' }) {
   const shipped = version ? `**v${version}**` : 'a stable release'
+  const journey =
+    label === 'in-release'
+      ? `The fix was in a cut release candidate (labeled \`in-release\`); it has now promoted to`
+      : `The fix was on \`beta\` and in testing (labeled \`${label}\`); it has now promoted to`
   const lines = [
     `Shipped to \`main\` in ${shipped}${sha ? ` (${sha.slice(0, 7)})` : ''}.`,
     '',
-    `The fix was on \`beta\` and in testing (labeled \`${LABEL}\`); it has now promoted to`,
+    journey,
     '`main`, so this is closed as completed.',
   ]
   if (range) lines.push('', `<sub>Closed automatically from the promotion range \`${range}\`.</sub>`)
@@ -276,28 +291,31 @@ function main() {
   }
 
   if (!toClose.length) {
-    console.log(`\nNo open \`${LABEL}\` issues in this promotion. Done.`)
+    console.log(`\nNo open \`${LIFECYCLE_LABELS.join('`/`')}\` issues in this promotion. Done.`)
     return
   }
 
   const version = args.version || readPackageVersion()
-  const body = closeCommentBody({ version, sha: after, range })
 
   console.log(`\n${dryRun ? 'Would close' : 'Closing'} ${toClose.length} issue(s):`)
   for (const issue of toClose) {
-    console.log(`  #${issue.number}  ${issue.title}`)
+    console.log(`  #${issue.number}  ${issue.title}  [${issue.closeLabel}]`)
     if (dryRun) continue
     // Comment first: if the close call fails, the issue still carries the
     // explanation rather than being silently half-processed.
+    const body = closeCommentBody({ version, sha: after, range, label: issue.closeLabel })
     gh(['issue', 'comment', String(issue.number), '--repo', repo, '--body', body])
-    gh(['issue', 'edit', String(issue.number), '--repo', repo, '--remove-label', LABEL])
+    // Remove every lifecycle label the issue actually carries — never one it
+    // doesn't, and never leave one behind on a closed issue.
+    const removeFlags = issue.closeCarried.flatMap((l) => ['--remove-label', l])
+    gh(['issue', 'edit', String(issue.number), '--repo', repo, ...removeFlags])
     gh(['issue', 'close', String(issue.number), '--repo', repo, '--reason', 'completed'])
   }
   console.log(dryRun ? '\nDry run — nothing was changed.' : '\nDone.')
 }
 
 module.exports = {
-  LABEL,
+  LIFECYCLE_LABELS,
   MAX_CANDIDATES,
   extractRefs,
   refsFromCommitLog,

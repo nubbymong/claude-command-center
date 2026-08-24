@@ -75,7 +75,7 @@ We cut a dedicated RC branch for every release cycle so that `beta` stays open f
 - **`release/vX.Y.Z`:** bug fixes and stabilization only — **no features**. The RC branch is the proposed stable release; merging a feature into it invalidates the candidate.
 - Fixes made on the RC branch are back-ported to `beta` so the next cycle keeps them.
 - When the RC is accepted, merge `release/vX.Y.Z` → `main`, then delete the RC branch.
-- **Every cut is gated** (`scripts/release-gate.mjs`, run by `release.js` and as the first job of `release.yml`): the GitHub milestone titled after the version must have no open issue without the `excluded` label, and the model registry must cover every model in Anthropic's Claude Code model configuration article. No bypass — see [`docs/versioning.md`](docs/versioning.md#release-gate-the-cut-is-refused-until-it-passes).
+- **Every cut is gated** (`scripts/release-gate.mjs`, run by `release.js` and as the first job of `release.yml`): the GitHub milestone titled after the version must have no open issue without the `excluded`, `in-beta`, or `in-release` label, and the model registry must cover every model in Anthropic's Claude Code model configuration article. No bypass — see [`docs/versioning.md`](docs/versioning.md#release-gate-the-cut-is-refused-until-it-passes).
 - **Before a cut, re-read the [Claude Code model configuration](https://support.claude.com/en/articles/11940350-claude-code-model-configuration) article** and refresh `resources/claude-code-model-configuration.json` if it moved. That article is the reference for the model/effort options the app offers (aliases, `--model` values, 1M variants, effort levels) — see [`docs/versioning.md`](docs/versioning.md#the-model-configuration-article-is-the-reference).
 
 For the versioning scheme, prerelease suffixes (`-beta.N`/`-rc.N`), update channels, and when a rebuild ships to users vs. requires a version bump, see [`docs/versioning.md`](docs/versioning.md).
@@ -83,13 +83,19 @@ For the versioning scheme, prerelease suffixes (`-beta.N`/`-rc.N`), update chann
 ### Issue lifecycle (beta vs. main)
 
 Because fixes merge to `beta` (in testing) long before they ship in a stable
-`main` release, an issue has three states — don't close an issue the moment its
+`main` release, an issue has four states — don't close an issue the moment its
 fix hits `beta`:
 
 - **Open, no status label** — not yet fixed (todo / in progress).
 - **Open, labeled `in-beta`** — the fix is merged to `beta` and in testing, but
   not yet shipped. Apply `in-beta` when the fixing PR merges to `beta`, and add a
   comment naming that PR.
+- **Open, labeled `in-release`** — the fix is in a **cut release candidate**
+  (`-rc.N`), one step past "on beta". When an rc is cut, the open `in-beta`
+  issues on its milestone are relabeled `in-beta` → `in-release`
+  **automatically** by the release workflow's `roll-rc` job
+  (`scripts/roll-issues-into-release.mjs`); an issue carries one lifecycle
+  label at a time, never both.
 - **Closed (completed)** — the fix has promoted to `main` (shipped in a stable
   release). Only then close the issue.
 
@@ -101,14 +107,20 @@ closing them early hides "shipped" behind "merged, still baking." The generated
 At `main` promotion the close step is **automatic**: the `Close in-beta issues on
 promotion` workflow (`.github/workflows/close-in-beta-on-promotion.yml`) runs on
 every push to `main`, walks the promoted commit range, and for each referenced
-issue that is open **and** labeled `in-beta` it comments, removes the label, and
-closes it as completed. Anything else it finds — pull requests, unlabeled issues,
-already-closed issues, refs to other projects' issue numbers — is skipped and
-listed in the run log.
+issue that is open **and** labeled `in-beta` or `in-release` it comments, removes
+the lifecycle label, and closes it as completed. Anything else it finds — pull
+requests, unlabeled issues, already-closed issues, refs to other projects' issue
+numbers — is skipped and listed in the run log. An rc cut promotes nothing to
+`main`, so it closes nothing — it only advances labels to `in-release`.
 
 Applying `in-beta` on the beta merge is therefore the one step that stays manual,
-and it is what makes the automatic close possible. An issue that never got the
-label will not be closed by a promotion.
+and it is what makes both automatic steps (the rc roll and the promotion close)
+possible. An issue that never got the label will not be rolled or closed. To
+repair labels after a cut that predates the roll job, or to preview one:
+
+```bash
+node scripts/roll-issues-into-release.mjs --version 2.1.0-rc.1 --dry-run
+```
 
 To preview what a promotion would close, or to catch up after a promotion that
 predates this workflow, run it from the Actions tab (`workflow_dispatch`) with a
@@ -128,12 +140,12 @@ line** an issue belongs to:
   `release-2.1`, so a "what ships in 2.1?" query stays accurate.
 - **`release-2.2`** — **apply it** to work explicitly **deferred** past 2.1.
 
-**Invariant: `in-beta` and `release-2.2` must never sit on the same issue.**
-`in-beta` means the fix is already merged to `beta` (which ships as the next 2.1
-release), so also calling it `release-2.2` ("deferred") is self-contradictory. If
-a `release-2.2` issue later gets a fix merged to `beta`, drop `release-2.2` and
-add `in-beta`. This invariant is cheap to enforce in CI alongside the changelog
-gate.
+**Invariant: `in-beta`/`in-release` and `release-2.2` must never sit on the same
+issue.** Either lifecycle label means the fix is already merged to `beta` (which
+ships as the next 2.1 release) or in a cut 2.1 rc, so also calling it
+`release-2.2` ("deferred") is self-contradictory. If a `release-2.2` issue later
+gets a fix merged to `beta`, drop `release-2.2` and add `in-beta`. This invariant
+is cheap to enforce in CI alongside the changelog gate.
 
 ### Desktop-test gate (`desktop-tested` / `skip-desktop-test`)
 

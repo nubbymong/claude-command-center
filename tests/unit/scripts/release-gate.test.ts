@@ -108,7 +108,18 @@ describe('release-gate evaluateMilestone', () => {
     expect(r.blocking).toEqual([])
   })
 
-  it('the FAIL report lists blockers, the in-beta riders, and the in-beta remediation route', () => {
+  it('an open in-release issue (rolled into an rc) is likewise DONE, not outstanding', () => {
+    const issues: Issue[] = [
+      { number: 373, title: 'rolled into rc.1', labels: [{ name: 'in-release' }] },
+      { number: 377, title: 'merged after the rc cut', labels: [{ name: 'in-beta' }] },
+    ]
+    const r = evaluateMilestone({ version: '2.1.0-beta.17', milestones, issues })
+    expect(r.ok).toBe(true)
+    expect(r.shipped.map((i) => i.number)).toEqual([373, 377])
+    expect(r.blocking).toEqual([])
+  })
+
+  it('the FAIL report lists blockers, the shipped riders, and the in-beta remediation route', () => {
     const issues: Issue[] = [
       { number: 373, title: 'shipped', labels: ['in-beta'] },
       { number: 412, title: 'still outstanding', labels: ['enhancement'] },
@@ -116,8 +127,9 @@ describe('release-gate evaluateMilestone', () => {
     const mr = evaluateMilestone({ version: '2.1.0-beta.17', milestones, issues })
     const text = formatReport({ version: '2.1.0-beta.17', repo: 'o/r', milestoneResult: mr, modelsResult: null, expectedMeta: null }).join('\n')
     expect(text).toContain('#412  still outstanding')
-    expect(text).toContain('(in-beta, shipping in this release: #373)')
+    expect(text).toContain('(in-beta/in-release, shipping in this release: #373)')
     expect(text).toContain('Merge their fixes (label "in-beta")')
+    expect(mr.reason).toContain('"in-release"')
   })
 
   it('the OK report names what is shipping', () => {

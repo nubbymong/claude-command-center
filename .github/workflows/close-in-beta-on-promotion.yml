@@ -1,10 +1,11 @@
 name: Close in-beta issues on promotion
 
 # Issue lifecycle (CONTRIBUTING.md -> "Issue lifecycle"): a fix that merges to
-# `beta` leaves its issue OPEN with the `in-beta` label, because GitHub only
-# auto-closes issues on merges to the DEFAULT branch. When the change finally
-# promotes to `main`, those issues must be closed — which was a manual step
-# nobody could reliably remember (#134). This does it.
+# `beta` leaves its issue OPEN with the `in-beta` label (swapped for
+# `in-release` when an rc cut rolls it in), because GitHub only auto-closes
+# issues on merges to the DEFAULT branch. When the change finally promotes to
+# `main`, those issues must be closed — which was a manual step nobody could
+# reliably remember (#134). This does it, for both labels.
 #
 # Scoped to the promotion path only (push to `main`). Day-to-day `beta` merges
 # never run this. The `build(release):` version-bump pushes to `main` do trigger
@@ -53,7 +54,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Close in-beta issues covered by this promotion
+      - name: Close in-beta/in-release issues covered by this promotion
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}

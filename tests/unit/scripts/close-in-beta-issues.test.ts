@@ -4,11 +4,14 @@ import { describe, it, expect } from 'vitest'
 // require()-ing it here imports only the pure helpers — no git, no gh, no network.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const closer = require('../../../scripts/close-in-beta-issues.js') as {
-  LABEL: string
+  LIFECYCLE_LABELS: string[]
   extractRefs: (text: string) => number[]
   refsFromCommitLog: (log: string) => number[]
-  classifyCandidate: (item: unknown) => { action: string; reason?: string }
-  planClosures: (items: unknown[]) => { toClose: Array<{ number: number }>; skipped: Array<{ number: number; reason: string }> }
+  classifyCandidate: (item: unknown) => { action: string; reason?: string; label?: string; carried?: string[] }
+  planClosures: (items: unknown[]) => {
+    toClose: Array<{ number: number; closeLabel: string; closeCarried: string[] }>
+    skipped: Array<{ number: number; reason: string }>
+  }
   resolveRange: (opts: {
     explicit?: string
     before?: string
@@ -16,7 +19,7 @@ const closer = require('../../../scripts/close-in-beta-issues.js') as {
     isKnownCommit: (sha: string) => boolean
     previousTag?: string | null
   }) => string | null
-  closeCommentBody: (opts: { version?: string | null; sha?: string; range?: string }) => string
+  closeCommentBody: (opts: { version?: string | null; sha?: string; range?: string; label?: string }) => string
   parseArgv: (argv: string[]) => { dryRun: boolean; range?: string; version?: string; repo?: string }
 }
 
@@ -90,7 +93,20 @@ describe('refsFromCommitLog', () => {
 // ── classifyCandidate — the fail-safe ──────────────────────────────
 describe('classifyCandidate', () => {
   it('closes an open issue carrying in-beta', () => {
-    expect(classifyCandidate(issue())).toEqual({ action: 'close' })
+    expect(classifyCandidate(issue())).toEqual({ action: 'close', label: 'in-beta', carried: ['in-beta'] })
+  })
+
+  it('closes an open issue carrying in-release (rolled into an rc before promotion)', () => {
+    const verdict = classifyCandidate(issue({ labels: [{ name: 'in-release' }, { name: 'bug' }] }))
+    expect(verdict).toEqual({ action: 'close', label: 'in-release', carried: ['in-release'] })
+  })
+
+  it('an issue somehow carrying BOTH lifecycle labels closes as in-release and sheds both', () => {
+    // The roll script swaps rather than stacks, so both-at-once is a labeling
+    // accident — the close must still describe the furthest state and leave no
+    // lifecycle label behind.
+    const verdict = classifyCandidate(issue({ labels: ['in-beta', 'in-release'] }))
+    expect(verdict).toEqual({ action: 'close', label: 'in-release', carried: ['in-beta', 'in-release'] })
   })
 
   it('NEVER touches a pull request, even a labeled one', () => {
@@ -100,14 +116,14 @@ describe('classifyCandidate', () => {
     expect(verdict).toEqual({ action: 'skip', reason: 'is a pull request' })
   })
 
-  it('NEVER closes an issue that lacks the in-beta label', () => {
+  it('NEVER closes an issue that lacks a lifecycle label', () => {
     // The whole guard against over-eager ref matching: #134 and #116 get
     // referenced by promoted PR bodies but are not shipped by them.
     expect(classifyCandidate(issue({ number: 134, labels: [{ name: 'enhancement' }] }))).toEqual({
       action: 'skip',
-      reason: 'not labeled in-beta',
+      reason: 'not labeled in-beta or in-release',
     })
-    expect(classifyCandidate(issue({ labels: [] }))).toEqual({ action: 'skip', reason: 'not labeled in-beta' })
+    expect(classifyCandidate(issue({ labels: [] }))).toEqual({ action: 'skip', reason: 'not labeled in-beta or in-release' })
   })
 
   it('skips an already-closed issue instead of re-closing it', () => {
@@ -122,7 +138,7 @@ describe('classifyCandidate', () => {
   })
 
   it('accepts plain-string labels as well as label objects', () => {
-    expect(classifyCandidate(issue({ labels: ['in-beta'] }))).toEqual({ action: 'close' })
+    expect(classifyCandidate(issue({ labels: ['in-beta'] }))).toEqual({ action: 'close', label: 'in-beta', carried: ['in-beta'] })
   })
 })
 
@@ -131,14 +147,19 @@ describe('planClosures', () => {
   it('splits a realistic promotion into closes and annotated skips', () => {
     const { toClose, skipped } = planClosures([
       issue({ number: 74 }),
+      issue({ number: 75, labels: [{ name: 'in-release' }] }),
       issue({ number: 92, pull_request: { url: 'x' } }),
       issue({ number: 134, labels: [{ name: 'enhancement' }] }),
       issue({ number: 130, state: 'closed' }),
     ])
-    expect(toClose.map((i) => i.number)).toEqual([74])
+    expect(toClose.map((i) => i.number)).toEqual([74, 75])
+    // The close loop reads these off the plan: which label to describe in the
+    // comment, and which to remove.
+    expect(toClose.map((i) => i.closeLabel)).toEqual(['in-beta', 'in-release'])
+    expect(toClose.map((i) => i.closeCarried)).toEqual([['in-beta'], ['in-release']])
     expect(skipped).toEqual([
       { number: 92, reason: 'is a pull request' },
-      { number: 134, reason: 'not labeled in-beta' },
+      { number: 134, reason: 'not labeled in-beta or in-release' },
       { number: 130, reason: 'already closed' },
     ])
   })
@@ -187,6 +208,13 @@ describe('closeCommentBody', () => {
     expect(body).toContain('abcdef1')
     expect(body).toContain('v2.0.0..main')
     expect(body).toContain('in-beta')
+  })
+
+  it('describes the rc journey for an issue that carried in-release', () => {
+    const body = closeCommentBody({ version: '2.1.0', sha: 'abcdef1234567890', label: 'in-release' })
+    expect(body).toContain('release candidate')
+    expect(body).toContain('`in-release`')
+    expect(body).not.toContain('`in-beta`')
   })
 
   it('degrades gracefully with no version', () => {
