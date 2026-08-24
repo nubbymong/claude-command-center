@@ -95,12 +95,18 @@ function reviewSentLabel(review: { submittedAt?: string; createdAt: string; vers
  * The agent can reach two of these three states (`stale`, `dismissed`) when the
  * user tells it to, so a row that showed only the verdict would let "the agent
  * closed this because you asked" and "you decided this yourself" read
- * identically. `approved` is the user's alone — the store refuses a record that
- * claims otherwise — so it can never carry the agent's name here.
+ * identically. `approved` beside the agent's name exists in exactly one form —
+ * a variant pick the user stated in chat (`canvas_pick`, always stamped
+ * `pickSource: 'chat'`); the store refuses the pair without that stamp, and the
+ * row says "picked in chat" so it never reads as a click that didn't happen.
  */
 export function closedLabel(note: Annotation): string {
   const verdict =
     note.state === 'approved' ? 'approved' : note.state === 'stale' ? 'closed — work shipped' : 'dismissed'
+  // A chat pick (canvas_pick): the user named the winner in conversation and
+  // the agent recorded it. Its own words, because "by the agent on your
+  // instruction" would undersell that the DECISION was the user's.
+  if (note.closedBy === 'agent' && note.pickSource === 'chat') return `${verdict} · picked in chat`
   if (note.closedBy === 'agent') return `${verdict} · by the agent on your instruction`
   if (note.closedBy === 'user') return `${verdict} · by you`
   // A record from before close-out existed. Says the verdict and claims

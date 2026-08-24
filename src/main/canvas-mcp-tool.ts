@@ -151,6 +151,22 @@ export interface CanvasToolDeps {
     annotationIds: readonly string[] | null,
     verdict: AgentCloseVerdict,
   ) => { closed: string[]; skipped: string[]; reviewClosed: boolean }
+  /**
+   * Record the variant the USER picked in chat — see canvas_pick.
+   *
+   * The agent's third write, and the narrowest: one note, one key, and only a
+   * pick among alternatives the agent attached when it addressed that note.
+   * The store is what refuses everything else (wrong state, no variants, a key
+   * not offered) and what stamps the provenance (`closedBy: 'agent'` +
+   * `pickSource: 'chat'`) — a pass-through for the same reason closeByAgent
+   * is: one mutation point, one place the rules live.
+   */
+  recordChatPick: (
+    sessionId: string,
+    reviewId: string,
+    annotationId: string,
+    variantKey: string,
+  ) => { pickedLabel: string; reviewClosed: boolean }
 }
 
 function textResult(text: string, isError = false) {
@@ -1248,6 +1264,113 @@ function describeVerdictFailure(err: unknown): string {
   return 'the review store refused the change.'
 }
 
+// ── canvas_pick — the user's variant pick, stated in chat (#373 follow-on) ──
+
+/** The one shape a variant key has ever had: positional 'A'…'D'. */
+const VARIANT_KEY_SHAPE = /^[A-D]$/
+
+interface RawPickArgs {
+  reviewId?: unknown
+  annotationId?: unknown
+  variantKey?: unknown
+  cccSessionId?: unknown
+}
+
+/**
+ * The agent records which alternative the USER picked in chat, instead of the
+ * pick having to happen as a click in the Canvas pane.
+ *
+ * A sibling of canvas_verdict, not of canvas_resolve: it acts as a proxy for
+ * something the user said, so the same posture applies — its own verb, an
+ * explicit-instruction-only description, provenance stamped on the write
+ * (`closedBy: 'agent'` + `pickSource: 'chat'`), the pane showing it in those
+ * words, and one-click Reopen as the undo. What keeps it narrower than any
+ * free-form approval is structural: the store accepts only a key among the
+ * variants the agent attached when it ADDRESSED the note, so the universe of
+ * outcomes was fixed before this tool could speak — there is no argument that
+ * approves un-offered work.
+ */
+export function runCanvasPick(
+  rawArgs: RawPickArgs,
+  sessionId: string,
+  deps: Pick<CanvasToolDeps, 'recordChatPick' | 'getCanvasState' | 'getReviewCounts'>,
+): { text: string; isError: boolean } {
+  if (typeof rawArgs.reviewId !== 'string' || !REVIEW_ID_SHAPE.test(rawArgs.reviewId)) {
+    return { text: 'canvas_pick needs `reviewId` — the round the note is on, as the chat marker gave it (e.g. "R3").', isError: true }
+  }
+  if (typeof rawArgs.annotationId !== 'string' || !ANNOTATION_ID_SHAPE.test(rawArgs.annotationId)) {
+    return { text: 'canvas_pick needs `annotationId` — ONE note id as canvas_review reported it (e.g. "a3"). One pick per call.', isError: true }
+  }
+  if (typeof rawArgs.variantKey !== 'string' || !VARIANT_KEY_SHAPE.test(rawArgs.variantKey)) {
+    return {
+      text: 'canvas_pick needs `variantKey`: the single letter of the alternative the user picked — "A" through "D", exactly as the variants line names them.',
+      isError: true,
+    }
+  }
+
+  let result: { pickedLabel: string; reviewClosed: boolean }
+  try {
+    result = deps.recordChatPick(sessionId, rawArgs.reviewId, rawArgs.annotationId, rawArgs.variantKey)
+  } catch (err) {
+    return { text: `Could not record that pick: ${describePickFailure(err)}`, isError: true }
+  }
+
+  // Store-minted ids and a store-held label (validated clean at mint — the
+  // variant-label rules exist so this line cannot be forged from inside it).
+  const parts: string[] = []
+  parts.push(
+    `Recorded the user's pick on ${rawArgs.reviewId} ${rawArgs.annotationId}: variant ${rawArgs.variantKey} ("${result.pickedLabel}"). Build that alternative and drop the others.`,
+  )
+  if (result.reviewClosed) parts.push(`${rawArgs.reviewId} is now closed.`)
+  parts.push(
+    'Recorded as picked in chat — the Canvas pane shows the note as approved with that provenance, apart from the user’s own clicks, and Reopen undoes it in one click.',
+  )
+
+  // What is LEFT, read after the write — same discipline as the other verbs.
+  try {
+    const canvas = deps.getCanvasState(sessionId)
+    const counts = canvas ? deps.getReviewCounts(canvas.canvasId) : null
+    if (counts) {
+      if (counts.openReviewIds.length > 0) {
+        parts.push(`${counts.openReviewIds.length} review(s) on this canvas still have notes in play: ${listIds(counts.openReviewIds)}.`)
+      } else {
+        parts.push('Nothing else on this canvas is waiting on either of you.')
+      }
+    }
+  } catch {
+    /* never fail a completed write over a status line */
+  }
+  return { text: parts.join(' '), isError: false }
+}
+
+/** Operator-authored causes for a refused pick, each naming its remedy. */
+function describePickFailure(err: unknown): string {
+  const msg = err instanceof Error ? err.message : ''
+  if (msg === 'no canvas for session') return 'this session has no canvas.'
+  if (msg === 'review not on this canvas') {
+    return "that round is not on this session's current canvas. If your last render named a different subject, the canvas changed under you — re-render the subject the round belongs to, then record the pick."
+  }
+  if (msg === 'review is still a draft') return 'that round has not been submitted yet, so there is nothing on it to pick.'
+  if (msg === 'note not on this review') return 'that note id is not on that round. Fetch the round again with canvas_review and use the ids it reports.'
+  if (msg === 'note is still open') {
+    return 'that note is still waiting on YOU — variants only exist once you have addressed it. Do the work, attach the alternatives with canvas_resolve, and record the pick only after the user names a winner.'
+  }
+  if (msg === 'note is already ruled on') {
+    return 'that note has already been ruled on. If the user is changing their mind, they reopen it from the Canvas pane first; then a fresh pick can be recorded.'
+  }
+  if (msg === 'note has no variants') {
+    return 'that note carries no alternatives, so there is nothing to pick. A pick can only choose among variants you attached with canvas_resolve; if the user is approving the note itself, that is their click in the Canvas pane, not a tool call.'
+  }
+  if (msg === 'variant not offered on this note') {
+    return 'that key is not one of the alternatives on that note. Re-read the variants line from canvas_review and pass the letter the user actually named.'
+  }
+  if (msg === 'invalid variant key') return 'the key must be a single letter "A" through "D".'
+  if (msg === 'invalid review id') return "that is not a review id. Review ids look like 'R7' — take the one from the chat marker."
+  if (msg === 'invalid annotation id') return 'that is not a note id. Note ids look like "a3", as canvas_review reported them.'
+  if (msg.includes('review store')) return 'the review store for this canvas is unreadable.'
+  return 'the review store refused the change.'
+}
+
 export function registerCanvasTools(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   server: any, // McpServer — lazy-typed in conductor-mcp-server.ts
@@ -1439,6 +1562,33 @@ export function registerCanvasTools(
         )
       }
       const result = runCanvasVerdict(rawArgs, sessionId, deps)
+      return textResult(result.text, result.isError)
+    },
+  )
+
+  server.tool(
+    'canvas_pick',
+    'Record which alternative the USER picked, when they name it IN CHAT instead of clicking Approve in the Canvas pane — "go with B", "the thin rule one", "second option". Only ever call this when the user has explicitly named a winner in this conversation; never pick for them, never guess from silence, and if their words are ambiguous ask which one they mean. One note per call: pass the review id, the note id, and the letter of the variant they chose, exactly as the variants line from canvas_review names them. It can only choose among alternatives you attached with canvas_resolve — a note with no variants has nothing to pick and the app refuses anything else. The pick is recorded as made in chat: the Canvas pane shows the note as approved with "picked in chat" provenance, listed apart from the user\'s own clicks, and the user can reopen it in one click. Then build the chosen variant and drop the others.',
+    {
+      reviewId: zMod.string().describe('The round the note is on, e.g. "R3" — the same id you passed to canvas_review.'),
+      annotationId: zMod.string().describe('The ONE note the pick is for, exactly as canvas_review reported it (e.g. "a3").'),
+      variantKey: zMod
+        .string()
+        .describe('The letter of the alternative the user picked — "A" through "D", exactly as the variants line names them.'),
+      cccSessionId: zMod
+        .string()
+        .optional()
+        .describe('Ignored — the session is resolved from the MCP connection and cannot be set here. Leave unset.'),
+    },
+    async (rawArgs: RawPickArgs) => {
+      const sessionId = getBoundSessionId()
+      if (!sessionId) {
+        return textResult(
+          'Canvas unavailable: this MCP connection has no bound Conductor session. Restart the session from inside AI Code Conductor.',
+          true,
+        )
+      }
+      const result = runCanvasPick(rawArgs, sessionId, deps)
       return textResult(result.text, result.isError)
     },
   )

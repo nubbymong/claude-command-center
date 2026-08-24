@@ -52,7 +52,11 @@ function fmtAnnotation(a: Annotation, imageIndexByAnnotation: Map<string, number
   if (a.variants && a.variants.length > 0 && (a.state === 'addressed' || a.state === 'approved')) {
     lines.push(`  variants: ${a.variants.map((v) => `${v.key}=${v.label}`).join('; ')}`)
   }
-  if (a.chosenVariantKey) lines.push(`  chosen-variant: ${a.chosenVariantKey}`)
+  // `(picked in chat)` distinguishes an agent-recorded chat pick from the
+  // user's own Approve click; the suffix is this serializer's, never data.
+  if (a.chosenVariantKey) {
+    lines.push(`  chosen-variant: ${a.chosenVariantKey}${a.pickSource === 'chat' ? ' (picked in chat)' : ''}`)
+  }
   lines.push(`  note: ${fmtNote(a.note, '  ')}`)
   const imageIndex = imageIndexByAnnotation.get(a.id)
   if (imageIndex !== undefined && a.sketch) {

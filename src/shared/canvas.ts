@@ -321,11 +321,22 @@ export interface Annotation {
    */
   variants?: AnnotationVariant[]
   /**
-   * The variant the USER approved (#373). Only the user's own Approve can set
-   * it — it rides the same IPC the verdict does, and no tool can write it —
-   * and it only ever names a key that exists in `variants`. Cleared on reopen.
+   * The variant the USER picked (#373). Two ways in, both the user's decision:
+   * their own Approve click in the pane (rides the verdict IPC), or a pick they
+   * stated in chat that the agent records via `canvas_pick` — the latter always
+   * stamped `pickSource: 'chat'` so the two never read the same. It only ever
+   * names a key that exists in `variants`. Cleared on reopen.
    */
   chosenVariantKey?: string
+  /**
+   * How the pick was made, when it was NOT the user's own click. 'chat' means
+   * the user named the winner in conversation and the agent recorded it with
+   * `canvas_pick`. Present only beside an agent-recorded approval
+   * (`state: 'approved'`, `closedBy: 'agent'`, `chosenVariantKey` set) — the
+   * validator refuses it anywhere else, which keeps click-approve provenance
+   * the user's alone.
+   */
+  pickSource?: 'chat'
   /** Id of the re-annotation that replaced this note (state 'reannotated'). */
   supersededBy?: string
   /**
@@ -336,8 +347,10 @@ export interface Annotation {
    * sides: the user clicking "Accept as built", and the agent calling
    * `canvas_verdict` on the user's word. Those read very differently to the
    * person who has to trust the list, so the row says which one happened.
-   * `approved` is always the user's — no tool can write it — so this field can
-   * never be 'agent' beside that state.
+   * `approved` beside 'agent' exists in exactly one form: a chat pick the agent
+   * recorded via `canvas_pick`, which always carries `pickSource: 'chat'` — the
+   * validator refuses the pair without it, so a click-approval can never be
+   * imitated.
    */
   closedBy?: AnnotationClosedBy
   /**

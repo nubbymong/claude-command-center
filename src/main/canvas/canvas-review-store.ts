@@ -269,6 +269,14 @@ function isValidAnnotation(value: unknown): value is Annotation {
     if (a.state !== 'approved') return false
     if (!Array.isArray(a.variants) || !a.variants.some((v) => (v as AnnotationVariant).key === a.chosenVariantKey)) return false
   }
+  // Chat-pick provenance (`canvas_pick`): the one legal value, and only in the
+  // one legal position — an agent-recorded approval that names a variant. A
+  // hand-edited record wearing it anywhere else (on a user close, on a note
+  // with no choice) would launder provenance the panel presents as fact.
+  if (a.pickSource !== undefined) {
+    if (a.pickSource !== 'chat') return false
+    if (a.state !== 'approved' || a.closedBy !== 'agent' || a.chosenVariantKey === undefined) return false
+  }
   // Close-out provenance. Validated even though this store is the only writer,
   // for the same reason pngPath is: a hand-edited record must not be able to
   // present an agent-set closure as the user's, which is the one claim on the
@@ -298,9 +306,12 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // the flag on every open -> addressed move: it stops the flag being smuggled
   // onto an open note through the file in the first place.
   if (a.userSawAddressed === true && a.state === 'open') return false
-  // 'approved' is the user's alone, so a record claiming the agent set it is
-  // corrupt by definition — refuse it rather than render it.
-  if (a.state === 'approved' && a.closedBy === 'agent') return false
+  // 'approved' by the agent exists in exactly one form: a chat pick, which
+  // `recordChatPick` always stamps `pickSource: 'chat'`. The pair without that
+  // stamp is what a forged click-approval would look like — refuse it rather
+  // than render it. (The pickSource block above already pins the stamp itself
+  // to this position, so the two rules together are an iff.)
+  if (a.state === 'approved' && a.closedBy === 'agent' && a.pickSource !== 'chat') return false
   return true
 }
 
@@ -1604,6 +1615,88 @@ export function closeAnnotationsByAgent(
 }
 
 /**
+ * The USER's variant pick, stated in chat and recorded by the agent
+ * (`canvas_pick`).
+ *
+ * The agent's THIRD write into the review store, and the only one that can end
+ * in 'approved' — which is why it is the narrowest of the three: exactly one
+ * note, and only a pick among alternatives the agent itself attached when it
+ * addressed that note (#373). There is no free-form approval here: a note with
+ * no variants has nothing to pick, and a key the note does not offer approves
+ * nothing. Every gate fails closed with its own message so the tool can tell
+ * the agent what actually stood in the way.
+ *
+ * Provenance is the point. The write is stamped `closedBy: 'agent'` AND
+ * `pickSource: 'chat'` together: the panel renders it as "picked in chat",
+ * apart from the user's own Approve clicks, and the validator refuses either
+ * stamp without the other — so this function widens nothing for a forged
+ * click-approval. Reopen undoes it in one click, exactly like any other close.
+ *
+ * Deliberately NO seen-barrier, unlike `closeAnnotationsByAgent`: that barrier
+ * exists because "addressed" is the agent's own claim and closing on it lets
+ * one hand create and spend the permission. A pick is the opposite shape — the
+ * user themselves named the winner in conversation, so the user's engagement
+ * is the input, not something the write has to prove happened. What this
+ * function CANNOT verify is that the chat message exists; that stays on the
+ * tool description ("only on an explicit pick in this conversation") and on
+ * the visible provenance the user can audit and reopen.
+ */
+export function recordChatPick(
+  sessionId: string,
+  reviewId: string,
+  annotationId: string,
+  variantKey: string,
+): { state: CanvasReviewState; pickedLabel: string; reviewClosed: boolean } {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  requireHealthy(canvas.canvasId)
+  if (typeof reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(reviewId)) throw new Error('invalid review id')
+  if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
+  // Same shape the user's own approve path holds a key to — positional 'A'…'D',
+  // nothing else ever minted.
+  if (typeof variantKey !== 'string' || !/^[A-D]$/.test(variantKey)) throw new Error('invalid variant key')
+
+  const base = recordFor(sessionId, canvas)
+  // Same caveat as every agent write: a review id is an ordinal within the
+  // ACTIVE canvas, not a handle on one particular review. Membership below is
+  // checked on both halves for the same reason closeAnnotationsByAgent's is.
+  const review = base.reviews.find((r) => r.id === reviewId)
+  if (!review) throw new Error('review not on this canvas')
+  if (review.status === 'draft') throw new Error('review is still a draft')
+  const target = base.annotations.find((a) => a.id === annotationId)
+  if (!target || target.reviewId !== review.id || !review.annotationIds.includes(annotationId)) {
+    throw new Error('note not on this review')
+  }
+  // Only an ADDRESSED note carries a live offer. An open note has no variants
+  // to pick from yet; a closed one has already been ruled on — the two refusals
+  // are told apart so the tool can name the remedy (do the work vs. reopen).
+  if (target.state === 'open') throw new Error('note is still open')
+  if (target.state !== 'addressed') throw new Error('note is already ruled on')
+  if (!target.variants || target.variants.length === 0) throw new Error('note has no variants')
+  const offered = target.variants.find((v) => v.key === variantKey)
+  if (!offered) throw new Error('variant not offered on this note')
+
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+  const nextTarget = next.annotations.find((a) => a.id === annotationId)!
+  nextTarget.state = 'approved'
+  nextTarget.chosenVariantKey = variantKey
+  nextTarget.closedBy = 'agent'
+  nextTarget.closedFrom = 'addressed'
+  nextTarget.pickSource = 'chat'
+
+  settleReviewStatus(next, review.id)
+  const reviewClosed = next.reviews.find((r) => r.id === review.id)?.status === 'resolved'
+  commit(next)
+  // The label is store-held and was validated clean at mint; the tool echoes it
+  // so the agent can confirm WHICH alternative it is now building.
+  return { state: toState(next), pickedLabel: offered.label, reviewClosed }
+}
+
+/**
  * The USER puts a closed note back in play.
  *
  * The inverse of a verdict, and the reason close-out is safe to offer in bulk:
@@ -1654,8 +1747,11 @@ export function reopenAnnotation(sessionId: string, annotationId: string): Canva
   }
   // The CHOICE never survives a reopen: it was part of the approval being
   // undone. The variants themselves stay on an 'addressed' note — the
-  // alternatives still exist; the user simply has not re-ruled.
+  // alternatives still exist; the user simply has not re-ruled. The chat-pick
+  // stamp describes that choice, so it dies with it (and the validator refuses
+  // it on any state but 'approved' anyway).
   delete nextTarget.chosenVariantKey
+  delete nextTarget.pickSource
   // The seen flag does NOT survive a reopen either way. Reopening is the user
   // putting the note back in play, and letting the agent re-close it on the
   // strength of a look that happened before that would make Reopen a one-shot
