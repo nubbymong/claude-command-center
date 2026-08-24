@@ -7,6 +7,7 @@ import { CanvasLibrary } from './CanvasLibrary'
 import CanvasSubjectPicker from './CanvasSubjectPicker'
 import CanvasFiledStrip from './CanvasFiledStrip'
 import CanvasNotesPanel from './CanvasNotesPanel'
+import CanvasHistoryControl from './CanvasHistoryControl'
 import CanvasXrayReadout from './CanvasXrayReadout'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -38,11 +39,6 @@ import {
 } from '../canvas/xray-mode'
 import { openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
-import { relativeTime } from '../utils/relativeTime'
-
-/** JetBrains Mono ships with the app (@font-face in styles.css) but Tailwind's
- *  `font-mono` resolves to the generic stack, so mono is named explicitly. */
-const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
 /** How long a frame may sit silent before the pane stops claiming it is
  *  loading. A 404, a CSP-blocked bridge script and a crashed page otherwise
@@ -102,24 +98,6 @@ function isTypingTarget(el: Element | null): boolean {
   const tag = el.tagName.toLowerCase()
   if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
   return (el as HTMLElement).isContentEditable === true
-}
-
-/** Wall-clock of a render, or null when the stored stamp will not parse. */
-function versionClock(iso: string): string | null {
-  const ms = Date.parse(iso)
-  if (!Number.isFinite(ms)) return null
-  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-/** What KIND of thing this version is, in the user's words. A UAT render is
- *  the app under test, so its build label (when the agent supplied one) is the
- *  most useful thing we can say about it. */
-function versionKind(version: CanvasVersion): string {
-  if (version.source.mode === 'uat') return version.source.buildLabel?.trim() || 'Live site'
-  // `version.mode`, not `source.mode`: a plan is STORED as a design document and
-  // its source says so, which is exactly what keeps plan mode off every serving
-  // path. What kind of thing it is lives on the version. See CanvasRenderSource.
-  return version.mode === 'plan' ? 'Plan' : 'Mockup'
 }
 
 /**
@@ -187,21 +165,6 @@ function ToolIcon({ kind }: { kind: 'inspect' | 'sketch' | 'region' }) {
       <path d="M18 14l3 7-3.2-1.2L16 22z" />
     </svg>
   )
-}
-
-/** Full stamp for the label's tooltip — the human line is deliberately short. */
-function versionTooltip(version: CanvasVersion): string {
-  const ms = Date.parse(version.createdAt)
-  const when = Number.isFinite(ms) ? new Date(ms).toLocaleString() : version.createdAt
-  return `${version.id} — ${versionKind(version)}, rendered ${when}`
-}
-
-/** One picker row: `v3 · 14:07 · 2m ago`. Raw ids told the user nothing about
- *  which render they were switching to. */
-function versionOptionLabel(version: CanvasVersion, now: number): string {
-  const ms = Date.parse(version.createdAt)
-  if (!Number.isFinite(ms)) return `${version.id} · ${versionKind(version)}`
-  return `${version.id} · ${versionClock(version.createdAt)} · ${relativeTime(ms, now)}`
 }
 
 interface Props {
@@ -1226,7 +1189,6 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     void useSettingsStore.getState().updateSettings({ canvasXrayMode: next })
   }
 
-  const versionClockLabel = versionClock(version.createdAt)
   const modeLockup = canvasModeLockup(version)
 
   // Which tool owns the pointer (item C): Inspect = browse, Sketch = draw,
@@ -1297,31 +1259,15 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             {formatCanvasZoom(zoom)}
           </button>
         )}
-        <span
-          className="min-w-0 truncate text-[11.5px] text-[var(--text-primary)]"
-          title={versionTooltip(version)}
-        >
-          <span className="text-[var(--text-secondary)]" style={{ fontFamily: MONO }}>
-            {version.id}
-          </span>
-          {versionClockLabel ? ` · ${versionClockLabel}` : ''} · {versionKind(version)}
-        </span>
-        {versions.filter((v) => !v.draft).length > 1 && (
-          <select
-            value={version.id}
-            onChange={(e) => void setActiveVersion(sessionId, e.target.value)}
-            className="shrink-0 text-[11.5px] rounded px-1.5 py-0.5 bg-[var(--surface-panel)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] transition-colors focus-ring"
-            aria-label="Switch version"
-            title="Switch version"
-          >
-            {/* Drafts are the agent's own loop (#366) — never offered here. */}
-            {versions.filter((v) => !v.draft).map((v) => (
-              <option key={v.id} value={v.id}>
-                {versionOptionLabel(v, Date.now())}
-              </option>
-            ))}
-          </select>
-        )}
+        {/* Two-level history (item C, phase 4): a per-artifact version stepper
+            + a History ▾ picker, replacing the flat version select. A single
+            version of a single artifact renders neither (the control returns
+            null), so the empty-state chrome stays quiet. */}
+        <CanvasHistoryControl
+          versions={versions}
+          activeVersionId={version.id}
+          onSelectVersion={(id) => void setActiveVersion(sessionId, id)}
+        />
         {/* What is still owed on THIS canvas. From one, unlike the Canvas
             button's pill: in here you are already looking at the thing, so one
             outstanding round is worth naming rather than hiding. */}
