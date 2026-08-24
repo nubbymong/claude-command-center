@@ -593,7 +593,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial, liveSessio
               data-testid="edit-while-running-note"
             >
               {liveSessionCount === 1 ? 'A session launched from this config is running.' : `${liveSessionCount} sessions launched from this config are running.`}{' '}
-              They keep the settings they launched with; your edits apply to sessions started from now on. Restarting a live SSH session after changing its connection details will be refused.
+              They keep the settings they launched with; your edits apply to sessions started from now on. Restarting a live SSH session after changing its connection details will be refused, and a restarted shell whose command line changed will run without its secret argument.
             </div>
           )}
 

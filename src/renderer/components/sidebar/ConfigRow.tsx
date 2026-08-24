@@ -94,10 +94,14 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
           reflow that display:none would cause on hover. The backdrop keeps the
           buttons legible over the tail of a long label. */}
       {/* When the count pill occupies the right edge, the hover strip parks to
-          ITS LEFT — anchored over the pill it would otherwise paint across,
+          ITS LEFT — anchored clear of the pill it would otherwise paint across,
           leaving the pill visible and clickable (review HIGH: the overlay used
-          to swallow every mouse click aimed at the pill). */}
-      <div className={`absolute ${runningCount > 0 ? 'right-10' : 'right-2'} flex gap-0.5 items-center rounded pl-2 bg-gradient-to-l from-surface0 via-surface0 to-transparent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity`}>
+          to swallow every mouse click aimed at the pill). Budget: right-12 is
+          3rem; minus the row's px-2 inset that leaves ~2.5rem of pill room —
+          measured clear for 1-2 digit counts across every UI font and the 0.8
+          scale (text-[8.5px] is a fixed px size, so small scales are the tight
+          case). No jsdom test can pin layout; re-measure if this moves. */}
+      <div className={`absolute ${runningCount > 0 ? 'right-12' : 'right-2'} flex gap-0.5 items-center rounded pl-2 bg-gradient-to-l from-surface0 via-surface0 to-transparent opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto transition-opacity`}>
         <button
           onClick={launchBlocked ? undefined : onLaunch}
           disabled={launchBlocked}
