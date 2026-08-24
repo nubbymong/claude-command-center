@@ -5,9 +5,10 @@
  * go missing. xterm's own key handling stops keydown propagation at its
  * textarea, so the shortcut's original bubble-phase listener never heard the
  * chord in the one place it mattered (the beta.17 "Ctrl+Alt+G does nothing"
- * report). The handler now listens on the CAPTURE phase; this file simulates
- * xterm with a bubble-phase interceptor that stops propagation and proves the
- * capture listener still runs — and that the AltGr guard still holds.
+* report). The handler now listens on the CAPTURE phase; this file simulates
+ * xterm faithfully (a capture-phase interceptor on the textarea that cancels
+ * the chord) and proves the window capture listener still runs — plus the
+ * AltGr guard, and the yield to the Settings shortcut recorder.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React from 'react'
@@ -88,6 +89,17 @@ describe('Ctrl+Alt+G glyph capture survives xterm (#374, beta.17 silence)', () =
     container.appendChild(box)
     act(() => { box.dispatchEvent(chord()) })
     expect(captureGlyphDiagnostic).not.toHaveBeenCalled()
+  })
+
+  it('SettingsPage actually emits the attribute the yield keys on (both boxes)', () => {
+    // The other half of the contract: the handler honours data-shortcut-capture
+    // (test above), and the recorder + Test box must CARRY it — deleting the
+    // attribute from SettingsPage silently resurrects the regression.
+    const fs = require('node:fs') as typeof import('node:fs')
+    const path = require('node:path') as typeof import('node:path')
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/SettingsPage.tsx'), 'utf8')
+    const tagged = src.match(/data-shortcut-capture/g) ?? []
+    expect(tagged.length).toBeGreaterThanOrEqual(2)
   })
 
   it('the AltGr guard holds: a real AltGraph chord passes through untouched', () => {

@@ -11,6 +11,16 @@ arbitration the tip card's Escape uses), keeping the AltGr guard (#399) and
 the onboarding-overlay suppression. Success remains visible via main's
 shell.showItemInFolder reveal.
 
-Test `keyboard-glyph-capture.test.tsx` simulates xterm with a bubble-phase
-stopPropagation interceptor: fails on a bubble-only listener (verified by
-mutation), passes on capture; the AltGr chord is pinned inert.
+One arbitration rule came with the move: the Settings shortcut recorder and
+its Test box must WIN over the capture listener (or the chord could never be
+re-recorded or tested — pressing it in the Test box fired a REAL capture,
+disk write + Explorer reveal). Both boxes carry `data-shortcut-capture` and
+the handler yields to any target inside one; that attribute is the contract
+for any future capture-phase chord.
+
+Test `keyboard-glyph-capture.test.tsx` simulates xterm faithfully (capture-
+phase interceptor on the textarea cancelling the chord): fails on a
+bubble-only listener (verified by mutation), passes on capture. The AltGr
+chord is pinned to pass through unprevented (load-bearing before xterm), the
+recorder yield is pinned from both halves (handler honours the attribute;
+SettingsPage emits it), and the plain-window test is a regression guard.
