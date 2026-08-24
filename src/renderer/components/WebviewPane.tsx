@@ -37,7 +37,7 @@ const Icon = {
 }
 
 const toolBtn = 'px-1.5 py-0.5 text-xs rounded focus-ring transition-colors disabled:opacity-35 disabled:cursor-default'
-const toolBtnIdle = 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)]'
+const toolBtnIdle = 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)]'
 
 /**
  * The session's browser pane (item 26). A pane of its own, beside the
@@ -337,12 +337,12 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
               placeholder="Type an address — localhost:5173, example.com"
               spellCheck={false}
               autoComplete="off"
-              className="flex-1 min-w-0 bg-transparent outline-none font-mono text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
+              className="flex-1 min-w-0 bg-transparent outline-none font-mono text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
               aria-label="Address"
               aria-invalid={!!addressError}
               data-testid="browser-address"
             />
-            {page?.loading && <span className="text-[10px] text-[var(--text-secondary)] shrink-0">loading…</span>}
+            {page?.loading && <span className="text-[10px] text-[var(--text-muted)] shrink-0">loading…</span>}
           </div>
           {addressError && <div className="text-[10px] text-[var(--status-danger)] mt-0.5 px-1" role="alert" data-testid="browser-address-error">{addressError}</div>}
         </div>
@@ -375,7 +375,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       {showFavourites && (
         <div className="flex items-center gap-1 px-2 py-1 border-b border-[var(--border-subtle)] bg-[var(--surface-chrome)] shrink-0 overflow-x-auto" data-testid="browser-favourites-bar">
           {favourites.length === 0 && (
-            <span className="text-[10px] text-[var(--text-secondary)]">No favourites yet — press the star on a page you want to keep.</span>
+            <span className="text-[10px] text-[var(--text-muted)]">No favourites yet — press the star on a page you want to keep.</span>
           )}
           {favourites.map((f) => (
             <span key={f.id} className="group inline-flex items-center gap-1 pl-2 pr-1 h-5 rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] shrink-0" title={f.url}>
@@ -478,11 +478,11 @@ function StartPage(props: {
             placeholder="localhost:5173, example.com, https://…"
             spellCheck={false}
             autoComplete="off"
-            className={`flex-1 min-w-0 px-3 h-8 bg-[var(--surface-panel)] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] text-sm rounded border outline-none font-mono ${props.error ? 'border-[var(--status-danger)]' : 'border-[var(--border-subtle)] focus:border-[var(--brand)]'}`}
+            className={`flex-1 min-w-0 px-3 h-8 bg-[var(--surface-panel)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] text-sm rounded border outline-none font-mono ${props.error ? 'border-[var(--status-danger)]' : 'border-[var(--border-subtle)] focus:border-[var(--brand)]'}`}
             aria-label="Address"
             data-testid="browser-start-address"
           />
-          <button type="submit" className="px-3 h-8 text-sm bg-[var(--brand)] text-[var(--ob-on)] rounded hover:brightness-110 focus-ring" data-testid="browser-start-go">Open</button>
+          <button type="submit" className="px-3 h-8 text-sm bg-[var(--brand)] text-[var(--text-on-brand)] rounded hover:brightness-110 focus-ring" data-testid="browser-start-go">Open</button>
         </form>
         {props.error && <p className="mt-1 text-[11px] text-[var(--status-danger)]" role="alert">{props.error}</p>}
 
@@ -494,19 +494,19 @@ function StartPage(props: {
           >
             <span className="text-[var(--brand)]">{Icon.home}</span>
             <span className="text-xs text-[var(--text-primary)] truncate">{shortUrlLabel(props.home)}</span>
-            <span className="ml-auto text-[10px] text-[var(--text-secondary)]">home</span>
+            <span className="ml-auto text-[10px] text-[var(--text-muted)]">home</span>
           </button>
         )}
 
         {props.favourites.length > 0 && (
           <div className="mt-4">
-            <div className="text-[10px] uppercase tracking-wide text-[var(--text-secondary)] mb-1.5">Favourites</div>
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] mb-1.5">Favourites</div>
             <div className="flex flex-col gap-1">
               {props.favourites.map((f) => (
                 <div key={f.id} className="group flex items-center gap-2 px-3 py-1.5 rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] hover:border-[var(--border-strong)]" title={f.url}>
                   <button onClick={() => props.onOpenFavourite(f.url)} className="flex-1 min-w-0 text-left focus-ring" data-testid="browser-start-favourite">
                     <div className="text-xs text-[var(--text-primary)] truncate">{f.title || shortUrlLabel(f.url)}</div>
-                    {f.title && <div className="text-[10px] text-[var(--text-secondary)] truncate font-mono">{shortUrlLabel(f.url)}</div>}
+                    {f.title && <div className="text-[10px] text-[var(--text-muted)] truncate font-mono">{shortUrlLabel(f.url)}</div>}
                   </button>
                   <button onClick={() => props.onRemoveFavourite(f.id)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[var(--text-secondary)] hover:text-[var(--status-danger)] px-1" aria-label={`Remove favourite ${f.title || shortUrlLabel(f.url)}`}>{Icon.close}</button>
                 </div>
@@ -515,7 +515,7 @@ function StartPage(props: {
           </div>
         )}
 
-        <p className="mt-6 text-[10px] text-[var(--text-secondary)] leading-relaxed">
+        <p className="mt-6 text-[10px] text-[var(--text-muted)] leading-relaxed">
           A command button can point the browser at a page too: tick <span className="text-[var(--text-primary)]">Watch for a page</span> on a
           command that starts a server, or make an <span className="text-[var(--text-primary)]">Open a page</span> button. Pages open here in a
           sandbox with every permission off; for anything that needs more, use <span className="text-[var(--text-primary)]">open in your real browser</span>.
