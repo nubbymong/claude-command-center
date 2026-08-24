@@ -75,9 +75,11 @@ describe('showcase-pages — the curated set', () => {
   })
 
   it('every seeIt on the summary resolves to a real showcase page — no dead chips', () => {
-    // undefined lastSeen yields the widest summary (both section sets).
+    // undefined lastSeen yields the widest summary (both section sets), and
+    // the page set is the one the COMPONENT consumes (showcasesFor), not the
+    // raw constant — so this pins the pair that actually renders together.
     const items = sectionsFor(undefined, '2.1.0').flatMap((s) => s.items)
-    const pageIds = new Set(SHOWCASES_21.map((p) => p.id))
+    const pageIds = new Set(showcasesFor('2.1.0').map((p) => p.id))
     for (const it of items) {
       if (it.seeIt) expect(pageIds.has(it.seeIt), `seeIt "${it.seeIt}" on "${it.title}"`).toBe(true)
     }
@@ -150,6 +152,27 @@ describe('WhatsNewV2Step — multi-page showcase', () => {
     expect(q('showcase-art-watchdog')).not.toBeNull()
     click(q('whatsnew-dot-oneRow'))
     expect(q('showcase-art-oneRow')).not.toBeNull()
+  })
+
+  it('a chip renders ONLY when its showcase page exists — the anti-drift guard', async () => {
+    // Serve a page set holding only the canvas page: the summary still carries
+    // seeIt ids for watchdog and oneRow, so an unguarded chip would render for
+    // pages that cannot be jumped to. Deleting the `showcases.some` guard in
+    // WhatsNewV2Step fails this test.
+    vi.resetModules()
+    vi.doMock('../../../src/renderer/onboarding/showcase-pages', async (importOriginal) => {
+      const real: any = await importOriginal()
+      return { ...real, showcasesFor: () => real.SHOWCASES_21.filter((p: any) => p.id === 'canvas') }
+    })
+    const fresh = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
+    act(() => {
+      root.render(<fresh.WhatsNewV2Step onNext={() => { nexts++ }} ctaLabel="Continue" hint="h" />)
+    })
+    expect(container.querySelector('[data-ux-id="see-canvas"]')).not.toBeNull()
+    expect(container.querySelector('[data-ux-id="see-watchdog"]')).toBeNull()
+    expect(container.querySelector('[data-ux-id="see-oneRow"]')).toBeNull()
+    vi.doUnmock('../../../src/renderer/onboarding/showcase-pages')
+    vi.resetModules()
   })
 
   it('a line with no showcase collapses to the old single-page step', async () => {

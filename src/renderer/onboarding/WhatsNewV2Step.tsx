@@ -120,12 +120,15 @@ export function sectionsFor(lastSeenVersion: string | undefined, currentVersion:
   return from === '2.0' || from === '2.1' ? SECTIONS_21 : [...SECTIONS_20, ...SECTIONS_21]
 }
 
-function ShowcasePageView({ page, index, total }: { page: ShowcasePage; index: number; total: number }) {
+function ShowcasePageView({ page, index, ofShowcases }: { page: ShowcasePage; index: number; ofShowcases: number }) {
   return (
     <div className="p2">
       <div className="p2-inner sc-page" style={{ width: 'min(1000px, 95vw)' }} data-ux-id={`showcase-page-${page.id}`}>
         <div className="sc-copy">
-          <div className="sc-eyebrow" data-ux-id="showcase-eyebrow">Feature showcase · {index} of {total}</div>
+          {/* Counts SHOWCASES (1 of 3), not run pages — the footer's "Page 2 of
+              4" includes the summary. Named apart so the two denominators are
+              never confused for each other. */}
+          <div className="sc-eyebrow" data-ux-id="showcase-eyebrow">Feature showcase · {index} of {ofShowcases}</div>
           <h2 className="sc-h" data-ux-id="showcase-heading">{page.heading}</h2>
           <p className="sc-tagline" data-ux-id="showcase-tagline">{page.tagline}</p>
           <div className="sc-points" data-ux-id="showcase-points">
@@ -217,17 +220,22 @@ export function WhatsNewV2Step({
           </div>
         </div>
       ) : (
-        <ShowcasePageView page={showcases[pageIx - 1]} index={pageIx} total={showcases.length} />
+        <ShowcasePageView page={showcases[pageIx - 1]} index={pageIx} ofShowcases={showcases.length} />
       )}
       <div className="foot">
         <span className="hint" data-ux-id="whatsnew-hint">
-          {isLast ? hint : `Page ${pageIx + 1} of ${total} — the tour continues afterwards.`}
+          {/* Only the last page may promise what comes next — that is the
+              harness-supplied `hint`, which knows whether anything follows.
+              Earlier pages say only where you are: a hard-coded "the tour
+              continues" is a lie on the common notes-only upgrade, the exact
+              bug the hint plumbing exists to prevent (see OnboardingHarness). */}
+          {isLast ? hint : `Page ${pageIx + 1} of ${total}.`}
         </span>
         {total > 1 && (
-          <div className="wn-foot-dots" data-ux-id="whatsnew-dots" role="tablist" aria-label="What's New pages">
-            <button type="button" className={`wn-fdot${pageIx === 0 ? ' on' : ''}`} onClick={() => setPageIx(0)} aria-label="Summary" data-ux-id="whatsnew-dot-summary"><i /></button>
+          <div className="wn-foot-dots" data-ux-id="whatsnew-dots" aria-label="What's New pages">
+            <button type="button" className={`wn-fdot${pageIx === 0 ? ' on' : ''}`} onClick={() => setPageIx(0)} aria-label="Summary" aria-current={pageIx === 0 ? 'true' : undefined} data-ux-id="whatsnew-dot-summary"><i /></button>
             {showcases.map((p, ix) => (
-              <button type="button" key={p.id} className={`wn-fdot${pageIx === ix + 1 ? ' on' : ''}`} onClick={() => setPageIx(ix + 1)} aria-label={p.heading} data-ux-id={`whatsnew-dot-${p.id}`}><i /></button>
+              <button type="button" key={p.id} className={`wn-fdot${pageIx === ix + 1 ? ' on' : ''}`} onClick={() => setPageIx(ix + 1)} aria-label={p.heading} aria-current={pageIx === ix + 1 ? 'true' : undefined} data-ux-id={`whatsnew-dot-${p.id}`}><i /></button>
             ))}
           </div>
         )}

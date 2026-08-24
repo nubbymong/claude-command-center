@@ -60,7 +60,7 @@ export const SHOWCASES_21: ShowcasePage[] = [
       { lead: 'Careful hands.', rest: 'It never types over your draft or an open prompt.' },
       { lead: 'It watches the screen you see', rest: '— the rendered pane, not a stale log.' },
     ],
-    where: { pre: 'Where: ', em: 'Settings → Sessions → Session Watchdog', post: '.' },
+    where: { pre: 'Where: ', em: 'Settings → General → Session Watchdog', post: '.' },
     art: 'watchdog',
   },
   {
