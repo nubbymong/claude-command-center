@@ -78,17 +78,11 @@ export function useKeyboardShortcuts(
         e.preventDefault()
         setSidebarOpen(prev => !prev)
       }
-      // Capture a glyph-corruption diagnostic (#374): the moment a user sees
-      // characters go missing while backgrounds stay, this saves the always-on
-      // atlas event ring + a window screenshot and reveals them to share. Fixed
-      // action, not per-session, so it fires whatever the active view.
-      // Guard AltGraph: on international layouts AltGr reports ctrlKey && altKey,
-      // so a bare Ctrl+Alt+<key> binding would swallow AltGr text entry into the
-      // terminal. Skip when AltGr is really down (#399 ADR-009 pass).
-      if (matchesShortcut(e, shortcuts.captureGlyphDiagnostic) && !e.getModifierState?.('AltGraph')) {
-        e.preventDefault()
-        void captureGlyphDiagnostic(useSessionStore.getState().activeSessionId)
-      }
+      // (Ctrl+Alt+G lives in the CAPTURE-phase listener below, not here: the
+      // glyph shortcut is pressed while staring at a corrupted TERMINAL, and
+      // with the terminal focused xterm consumes the keydown before it can
+      // bubble to this listener — the one place the shortcut mattered was the
+      // one place it never fired.)
       // NOTE: rename (F2) is handled in Sidebar so it edits the active session
       // in the Active Sessions list (only when the sidebar is visible), not the
       // tab. Tab double-click / right-click still edit the tab inline.
@@ -119,8 +113,35 @@ export function useKeyboardShortcuts(
       }
     }
 
+    // Capture a glyph-corruption diagnostic (#374): the moment a user sees
+    // characters go missing while backgrounds stay, this saves the always-on
+    // atlas event ring + a window screenshot and reveals them to share. Fixed
+    // action, not per-session, so it fires whatever the active view — and on
+    // the CAPTURE phase, because the natural moment to press it is with the
+    // corrupted terminal FOCUSED, where xterm's own key handling stops the
+    // event before a bubble listener ever hears it (the beta.17 "Ctrl+Alt+G
+    // does nothing" report; same arbitration as the tip card's Escape).
+    // Guard AltGraph: on international layouts AltGr reports ctrlKey && altKey,
+    // so a bare Ctrl+Alt+<key> binding would swallow AltGr text entry into the
+    // terminal. Skip when AltGr is really down (#399 ADR-009 pass).
+    const handleGlyphCapture = (e: KeyboardEvent) => {
+      // Same onboarding-overlay suppression as handleKeyDown: a diagnostic
+      // capture under the covered shell would screenshot the overlay.
+      if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
+      const shortcuts = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
+      if (matchesShortcut(e, shortcuts.captureGlyphDiagnostic) && !e.getModifierState?.('AltGraph')) {
+        e.preventDefault()
+        e.stopPropagation()
+        void captureGlyphDiagnostic(useSessionStore.getState().activeSessionId)
+      }
+    }
+
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', handleGlyphCapture, true)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keydown', handleGlyphCapture, true)
+    }
     // view / openPageTabs / closePageTab / setView are read in the closure; keep
     // the listener bound to their current values so tab cycling stays correct.
   }, [activeSessionId, view, openPageTabs, closePageTab, setView, setSidebarOpen])
