@@ -44,28 +44,42 @@ describe('TeamBuilder mounts against the real agent library store (#442)', () =>
   afterEach(() => {
     act(() => root.unmount())
     container.remove()
+    // The REAL store is module-scoped: a failed assertion must not leave a
+    // fake user template behind for the next test.
+    act(() => { useAgentLibraryStore.setState({ templates: [] }) })
   })
 
-  it('New Pipeline renders instead of tripping the update-depth guard', () => {
+  const addStepButton = () =>
+    Array.from(container.querySelectorAll('button')).find((b) => (b.textContent ?? '').includes('Add Step')) as HTMLButtonElement
+
+  it('New Pipeline renders instead of tripping the update-depth guard, with built-ins on offer', () => {
     act(() => {
       root.render(<TeamBuilder onClose={() => {}} />)
     })
     expect(container.textContent).toContain('New Pipeline')
     // The step picker is fed by the store: built-ins must be offered even with
-    // no user templates, or "Add step" silently no-ops.
-    expect(BUILTIN_TEMPLATES.length).toBeGreaterThan(0)
+    // no user templates, or "Add step" silently no-ops. Assert the COMPONENT
+    // offers them — clicking Add Step must produce a select listing a
+    // built-in, not just the constant being non-empty.
+    expect(addStepButton().disabled).toBe(false)
+    act(() => { addStepButton().click() })
+    const options = Array.from(container.querySelectorAll('option')).map((o) => o.textContent)
+    expect(options).toContain(BUILTIN_TEMPLATES[0].name)
   })
 
   it('a user template arriving re-renders the open dialog without looping', () => {
     act(() => {
       root.render(<TeamBuilder onClose={() => {}} />)
     })
+    act(() => { addStepButton().click() })
     act(() => {
       useAgentLibraryStore.setState({
         templates: [{ id: 'u1', name: 'My Agent', description: '', systemPrompt: '', createdAt: 1, updatedAt: 1 } as any],
       })
     })
-    expect(container.textContent).toContain('New Pipeline')
-    act(() => { useAgentLibraryStore.setState({ templates: [] }) })
+    // Observable through the live subscription: the arriving template must
+    // appear among the step's template options.
+    const options = Array.from(container.querySelectorAll('option')).map((o) => o.textContent)
+    expect(options).toContain('My Agent')
   })
 })
