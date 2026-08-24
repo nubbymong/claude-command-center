@@ -53,9 +53,11 @@ const store = {
 }
 const bar = { toggleSection: vi.fn(), setOverflow: vi.fn(), hideCoreTool: vi.fn(), showCoreTool: vi.fn(), setBarCollapsed: vi.fn() }
 
-vi.mock('../../../src/renderer/stores/sessionStore', () => ({
-  useSessionStore: (sel: any) => sel({ sessions: SESSIONS, activeSessionId: 's-1', updateSession: vi.fn() }),
-}))
+vi.mock('../../../src/renderer/stores/sessionStore', () => {
+  const state = () => ({ sessions: SESSIONS, activeSessionId: 's-1', updateSession: vi.fn() })
+  const useSessionStore = Object.assign((sel: any) => sel(state()), { getState: state })
+  return { useSessionStore }
+})
 vi.mock('../../../src/renderer/stores/commandStore', () => {
   const snapshot = () => ({ commands: COMMANDS, sections: SECTIONS, ...store })
   const useCommandStore = Object.assign(() => snapshot(), { getState: snapshot })
@@ -87,6 +89,14 @@ const credDelete = vi.fn(() => Promise.resolve(true))
 const credSave = vi.fn(() => Promise.resolve(true))
 // The Notes tool lists names on mount; an empty index keeps it quiet.
 const notesApi = { list: vi.fn(() => Promise.resolve([])), load: vi.fn(() => Promise.resolve('')), save: vi.fn(() => Promise.resolve(true)), delete: vi.fn(() => Promise.resolve(true)) }
+// The dismiss-all sweep plus the reads the post-sweep refreshes make.
+const canvasDismissAll = vi.fn(() => Promise.resolve({ closedNotes: 2, closedReviews: 2, clearedAwaiting: 1, unreadable: 0 }))
+const canvasApi = {
+  reviewDismissAll: canvasDismissAll,
+  listAll: vi.fn(() => Promise.resolve([])),
+  getState: vi.fn(() => Promise.resolve(null)),
+  reviewGetState: vi.fn(() => Promise.resolve(null)),
+}
 // Augment the setup's electronAPI -- replacing it wholesale would drop the
 // registry/config/sentinel mocks other components on the bar read.
 ;(globalThis as any).window.electronAPI = {
@@ -94,6 +104,7 @@ const notesApi = { list: vi.fn(() => Promise.resolve([])), load: vi.fn(() => Pro
   pty: { write: ptyWrite },
   credentials: { save: credSave, delete: credDelete },
   notes: notesApi,
+  canvas: { ...((globalThis as any).window.electronAPI?.canvas ?? {}), ...canvasApi },
 }
 
 const { default: CommandBar } = await import('../../../src/renderer/components/CommandBar')
@@ -756,6 +767,56 @@ describe('right-click a Core tool: the core tool menu', () => {
     await flush()
     expect(menus()).toHaveLength(0)
     expect(byTestId('notes-popover')).not.toBeNull()
+  })
+
+  it('Canvas: no dismiss item while the queue is empty — right-click offers only Hide', async () => {
+    await mount()
+    rightClick(mustGet('core-tool-canvas'))
+    expect(headerOf(mustGet('core-tool-menu')).title).toBe('Canvas')
+    expect(byTestId('menu-canvas-dismiss-all')).toBeNull()
+  })
+
+  it('Canvas: "Dismiss everything waiting on me (N)…" raises the confirm card, and only its Dismiss button sweeps via canvas.reviewDismissAll', async () => {
+    SESSIONS = [LOCAL_CLAUDE]
+    const { useCanvasTotalsStore } = await import('../../../src/renderer/stores/canvasTotalsStore')
+    const seed = { loaded: true, canvases: 1, openReviews: 0, withOpenReviews: 0, unknown: 0, onActive: 0, queue: 3, queueOnActive: 1, queueRows: [] }
+    await mount()
+    act(() => { useCanvasTotalsStore.setState({ bySessionId: { 's-1': seed } }) })
+    try {
+      rightClick(mustGet('core-tool-canvas'))
+      const item = byTestId('menu-canvas-dismiss-all')
+      expect(item?.textContent).toBe('Dismiss everything waiting on me (3)…')
+
+      // "Show what's waiting" reaches the button's popover by event.
+      const heard: unknown[] = []
+      const onShow = (e: Event) => heard.push((e as CustomEvent).detail)
+      window.addEventListener('ccc:canvasShowQueue', onShow)
+      click(byTestId('menu-canvas-show-queue'))
+      window.removeEventListener('ccc:canvasShowQueue', onShow)
+      expect(heard).toEqual([{ sessionId: 's-1' }])
+      expect(menus()).toHaveLength(0)
+
+      rightClick(mustGet('core-tool-canvas'))
+
+      // Cancel clears nothing.
+      click(byTestId('menu-canvas-dismiss-all'))
+      expect(menus()).toHaveLength(0)
+      expect(byTestId('confirm-canvas-dismiss')).not.toBeNull()
+      click(byTestId('confirm-canvas-dismiss-cancel'))
+      expect(byTestId('confirm-canvas-dismiss')).toBeNull()
+      expect(canvasDismissAll).not.toHaveBeenCalled()
+
+      // Confirm sweeps, scoped to this session with the open tiles as marks.
+      rightClick(mustGet('core-tool-canvas'))
+      click(byTestId('menu-canvas-dismiss-all'))
+      click(byTestId('confirm-canvas-dismiss-ok'))
+      await flush()
+      expect(canvasDismissAll).toHaveBeenCalledTimes(1)
+      expect(canvasDismissAll).toHaveBeenCalledWith({ sessionId: 's-1', openTileSessionIds: ['s-1'] })
+      expect(byTestId('confirm-canvas-dismiss')).toBeNull()
+    } finally {
+      act(() => { useCanvasTotalsStore.setState({ bySessionId: {} }) })
+    }
   })
 
   it.todo('Move left/right on a Core tool -- not wired (D9 optional): CoreToolMenu draws the item only when the bar passes onMove')

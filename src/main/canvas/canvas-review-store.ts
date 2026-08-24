@@ -25,11 +25,13 @@ import {
   CANVAS_REVIEW_ID_RE,
   CANVAS_VERSION_ID_RE,
   MAX_ANNOTATION_VARIANTS,
+  MAX_ATTACHMENT_PNG_BYTES,
   isCleanVariantLabel,
   type AddressedBy,
   type AgentCloseVerdict,
   type AnchorRef,
   type Annotation,
+  type AnnotationImage,
   type AnnotationSketch,
   type AnnotationState,
   type AnnotationVariant,
@@ -58,9 +60,11 @@ const MAX_ANNOTATIONS_PER_REVIEW = 100
 const MAX_REVIEWS_PER_CANVAS = 200
 const MAX_SKETCH_ELEMENT_IDS = 100
 const SKETCH_ELEMENT_ID_MAX = 128
-/** One exported sketch PNG. Far beyond any real annotation sketch; small
- *  enough that a submit can't be turned into a disk-filling primitive. */
-export const MAX_SKETCH_PNG_BYTES = 2 * 1024 * 1024
+/** One attachment PNG (sketch export or pasted image). Far beyond any real
+ *  annotation attachment; small enough that a save can't be turned into a
+ *  disk-filling primitive. The shared constant is the single source; this
+ *  export keeps the name the IPC schemas import. */
+export const MAX_SKETCH_PNG_BYTES = MAX_ATTACHMENT_PNG_BYTES
 /** Ceiling on a reviews.json the COUNT path will read (see readRecordNoRebind).
  *  Generous next to any real record — a few hundred notes of prose — and well
  *  under what the per-field maxima would permit if every one were at its bound. */
@@ -70,6 +74,9 @@ const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** The one shape a stored pngPath may have — minted here, revalidated on load
  *  so a hand-edited record cannot point the MCP tool at an arbitrary file. */
 const PNG_PATH_RE = /^reviews\/R[0-9]{1,9}\/a[0-9]{1,9}\.png$/
+/** Same rule for a pasted image's path — its own directory, because the file
+ *  exists before the note's review is submitted (no review id yet). */
+const IMAGE_PNG_PATH_RE = /^reviews\/pasted\/a[0-9]{1,9}\.png$/
 
 // ── Record shape on disk ────────────────────────────────────────────────────
 
@@ -137,6 +144,12 @@ function isCleanString(value: unknown, max: number): value is string {
 
 function isCleanNote(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= NOTE_MAX_CHARS && !CONTROL_CHARS.test(value)
+}
+
+/** A note's text may be EMPTY only when a pasted image rides the note — the
+ *  image is the note then. Same cleanliness rules otherwise. */
+function isCleanNoteOrEmpty(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= NOTE_MAX_CHARS && !CONTROL_CHARS.test(value)
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -223,13 +236,20 @@ function isValidAnnotation(value: unknown): value is Annotation {
   if (typeof a.id !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(a.id)) return false
   if (typeof a.reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(a.reviewId)) return false
   if (typeof a.scope !== 'string' || !ANNOTATION_SCOPES.has(a.scope)) return false
-  if (!isCleanNote(a.note)) return false
+  if (!(a.image !== undefined ? isCleanNoteOrEmpty(a.note) : isCleanNote(a.note))) return false
   if (typeof a.versionId !== 'string' || !CANVAS_VERSION_ID_RE.test(a.versionId)) return false
   if (typeof a.state !== 'string' || !ANNOTATION_STATES.has(a.state)) return false
   if (a.scope === 'general') {
     if (a.focus !== undefined) return false
   } else if (!isValidFocus(a.focus)) return false
   if (a.sketch !== undefined && !isValidStoredSketch(a.sketch)) return false
+  // A pasted image: our minted path shape or absent, and never beside a sketch.
+  if (a.image !== undefined) {
+    const img = a.image as Partial<AnnotationImage> | null
+    if (typeof img !== 'object' || img === null) return false
+    if (typeof img.pngPath !== 'string' || !IMAGE_PNG_PATH_RE.test(img.pngPath)) return false
+    if (a.sketch !== undefined) return false
+  }
   if (a.supersededBy !== undefined && (typeof a.supersededBy !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(a.supersededBy))) return false
   // Alternatives (#373): OUR minted shape or absent — keys are positional
   // 'A'…, labels are held to note cleanliness, and a hand-edited set that
@@ -248,6 +268,14 @@ function isValidAnnotation(value: unknown): value is Annotation {
   if (a.chosenVariantKey !== undefined) {
     if (a.state !== 'approved') return false
     if (!Array.isArray(a.variants) || !a.variants.some((v) => (v as AnnotationVariant).key === a.chosenVariantKey)) return false
+  }
+  // Chat-pick provenance (`canvas_pick`): the one legal value, and only in the
+  // one legal position — an agent-recorded approval that names a variant. A
+  // hand-edited record wearing it anywhere else (on a user close, on a note
+  // with no choice) would launder provenance the panel presents as fact.
+  if (a.pickSource !== undefined) {
+    if (a.pickSource !== 'chat') return false
+    if (a.state !== 'approved' || a.closedBy !== 'agent' || a.chosenVariantKey === undefined) return false
   }
   // Close-out provenance. Validated even though this store is the only writer,
   // for the same reason pngPath is: a hand-edited record must not be able to
@@ -278,9 +306,12 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // the flag on every open -> addressed move: it stops the flag being smuggled
   // onto an open note through the file in the first place.
   if (a.userSawAddressed === true && a.state === 'open') return false
-  // 'approved' is the user's alone, so a record claiming the agent set it is
-  // corrupt by definition — refuse it rather than render it.
-  if (a.state === 'approved' && a.closedBy === 'agent') return false
+  // 'approved' by the agent exists in exactly one form: a chat pick, which
+  // `recordChatPick` always stamps `pickSource: 'chat'`. The pair without that
+  // stamp is what a forged click-approval would look like — refuse it rather
+  // than render it. (The pickSource block above already pins the stamp itself
+  // to this position, so the two rules together are an iff.)
+  if (a.state === 'approved' && a.closedBy === 'agent' && a.pickSource !== 'chat') return false
   return true
 }
 
@@ -476,16 +507,25 @@ function requireHealthy(canvasId: string): void {
 }
 
 function recordFor(sessionId: string, canvas: SessionCanvas): ReviewFileRecord {
-  return (
-    loadRecord(canvas.canvasId, sessionId) ?? {
-      canvasId: canvas.canvasId,
-      sessionId,
-      nextReview: 1,
-      nextAnnotation: 1,
-      reviews: [],
-      annotations: [],
-    }
-  )
+  const loaded = loadRecord(canvas.canvasId, sessionId)
+  if (loaded) return loaded
+  // loadRecord returned null for one of two very different reasons, and the
+  // fresh-record fallback is right for only ONE of them. "No file yet" is a
+  // healthy empty store; "a file exists but failed isValidRecord" is corruption
+  // loadRecord just moved into `broken`. requireHealthy runs BEFORE this on
+  // every mutation, but `broken` is populated as a side effect of THIS load —
+  // so on the FIRST touch of a corrupt file requireHealthy saw an empty set and
+  // passed, and without this check the fallback would overwrite preserved
+  // evidence with an empty record. Re-assert health now that the load has run.
+  requireHealthy(canvas.canvasId)
+  return {
+    canvasId: canvas.canvasId,
+    sessionId,
+    nextReview: 1,
+    nextAnnotation: 1,
+    reviews: [],
+    annotations: [],
+  }
 }
 
 /** Deep-ish copy so callers can never mutate the committed record. */
@@ -505,6 +545,7 @@ function cloneAnnotation(a: Annotation): Annotation {
       ? { focus: { ...a.focus, targets: a.focus.targets.map((t) => ({ ...t })), bboxPage: { ...a.focus.bboxPage } } }
       : {}),
     ...(a.sketch ? { sketch: { ...a.sketch, excalidrawElementIds: [...a.sketch.excalidrawElementIds], bboxPage: { ...a.sketch.bboxPage } } } : {}),
+    ...(a.image ? { image: { ...a.image } } : {}),
   }
 }
 
@@ -556,6 +597,25 @@ export interface CanvasReviewCounts {
    * the panel already had via `roundsWaitingOnYou` and the library did not.
    */
   closeableNotes: number
+}
+
+/**
+ * Whether a reviews.json is present on disk for this canvas.
+ *
+ * `getReviewCountsForCanvas` returns null for two very different cases — the
+ * store is CORRUPT (a file exists but will not read), or there is simply NO
+ * file yet (a canvas rendered but never annotated). The dismiss-all sweep must
+ * not call the second one "unreadable": a null-count PLUS a present file is a
+ * genuinely unreadable store; a null-count with no file is a healthy, empty
+ * one. Cheap (a single stat) and only ever called on the sweep's own rows.
+ */
+export function reviewStoreFileExists(canvasId: string): boolean {
+  if (!CANVAS_ID_RE.test(canvasId)) return false
+  try {
+    return fs.existsSync(reviewsJsonPath(canvasId))
+  } catch {
+    return false
+  }
 }
 
 export function getReviewCountsForCanvas(canvasId: string): CanvasReviewCounts | null {
@@ -778,7 +838,17 @@ function settleReviewStatus(record: ReviewFileRecord, reviewId: string): void {
 function validateDraft(draft: CanvasAnnotationDraft, canvas: SessionCanvas): void {
   if (typeof draft !== 'object' || draft === null) throw new Error('invalid draft')
   if (!ANNOTATION_SCOPES.has(draft.scope)) throw new Error('invalid draft scope')
-  if (!isCleanNote(draft.note)) throw new Error('invalid draft note')
+  // Empty text is allowed only when a pasted image rides the note.
+  if (!(draft.image !== undefined ? isCleanNoteOrEmpty(draft.note) : isCleanNote(draft.note))) throw new Error('invalid draft note')
+  if (draft.image !== undefined) {
+    if (draft.sketch !== undefined) throw new Error('a note carries one attachment: a sketch or an image')
+    if (draft.image !== 'keep') {
+      const img = draft.image as { pngBase64?: unknown } | null
+      if (typeof img !== 'object' || img === null || typeof img.pngBase64 !== 'string' || img.pngBase64.length === 0)
+        throw new Error('invalid draft image')
+      if (img.pngBase64.length > Math.ceil(MAX_ATTACHMENT_PNG_BYTES / 3) * 4 + 8) throw new Error('draft image too large')
+    }
+  }
   if (typeof draft.versionId !== 'string' || !canvas.versionIds.has(draft.versionId)) throw new Error('draft names an unknown version')
   // A user note can only be about a version the user was SHOWN. Agent drafts
   // (#366) are invisible by contract — and after a subject change their ids
@@ -793,6 +863,33 @@ function validateDraft(draft: CanvasAnnotationDraft, canvas: SessionCanvas): voi
     if (draft.scope === 'element' && draft.focus.targets.length === 0) throw new Error('an element note needs at least one anchor')
   }
   if (draft.sketch !== undefined && !isValidSketchMeta(draft.sketch)) throw new Error('invalid draft sketch')
+}
+
+/** Where a pasted image lives, relative to the canvas dir. Keyed by note id —
+ *  unique per canvas — because at compose time the review id is still fluid. */
+function pastedImagePath(annotationId: string): string {
+  return `reviews/pasted/${annotationId}.png`
+}
+
+/** Decode, cap-check and write a pasted image; returns the record to store.
+ *  Same PNG discipline as sketch exports (magic + byte cap), written BEFORE the
+ *  record commits so a failed write refuses the whole save. */
+function writePastedImage(canvasId: string, annotationId: string, pngBase64: string): AnnotationImage {
+  const bytes = decodeAttachmentPng(pngBase64)
+  mkdirSecure(path.join(canvasDir(canvasId), 'reviews', 'pasted'))
+  atomicWriteSecure(path.join(canvasDir(canvasId), pastedImagePath(annotationId)), bytes)
+  return { pngPath: pastedImagePath(annotationId) }
+}
+
+/** Best-effort removal — a leftover file no record references is harmless; a
+ *  throw here must never undo the record mutation it accompanies. */
+function unlinkPastedImage(canvasId: string, image: AnnotationImage | undefined): void {
+  if (!image?.pngPath || !IMAGE_PNG_PATH_RE.test(image.pngPath)) return
+  try {
+    fs.unlinkSync(path.join(canvasDir(canvasId), image.pngPath))
+  } catch {
+    /* already gone, or locked — either way the record is the truth */
+  }
 }
 
 /**
@@ -833,6 +930,25 @@ export function upsertAnnotation(
     else existing.focus = draft.focus
     if (draft.sketch) existing.sketch = { ...draft.sketch, pngPath: '' }
     else delete existing.sketch
+    // A removal's file is unlinked AFTER the commit, never before — the same
+    // persist-before-memory discipline deleteAnnotation states: if `persist`
+    // throws, the still-committed record must not reference a file we already
+    // deleted. Captured here (from the clone we are about to overwrite) and
+    // unlinked past the commit below.
+    let imageToUnlink: AnnotationImage | undefined
+    if (draft.image === 'keep') {
+      if (!existing.image) throw new Error('no image to keep on this note')
+    } else if (draft.image) {
+      // Write before commit (persist-before-memory); replacing overwrites the
+      // same path atomically.
+      existing.image = writePastedImage(canvas.canvasId, existing.id, draft.image.pngBase64)
+    } else if (existing.image) {
+      imageToUnlink = existing.image
+      delete existing.image
+    }
+    commit(next)
+    if (imageToUnlink) unlinkPastedImage(canvas.canvasId, imageToUnlink)
+    return { state: toState(next), annotationId }
   } else {
     if (!review) {
       if (next.reviews.length >= MAX_REVIEWS_PER_CANVAS) throw new Error('review cap reached for this canvas')
@@ -849,6 +965,7 @@ export function upsertAnnotation(
       next.reviews.push(review)
     }
     if (review.annotationIds.length >= MAX_ANNOTATIONS_PER_REVIEW) throw new Error('note cap reached for this review')
+    if (draft.image === 'keep') throw new Error('no image to keep on a new note')
     annotationId = `a${next.nextAnnotation}`
     next.nextAnnotation += 1
     const annotation: Annotation = {
@@ -860,6 +977,7 @@ export function upsertAnnotation(
       state: 'open',
       ...(draft.scope !== 'general' && draft.focus ? { focus: draft.focus } : {}),
       ...(draft.sketch ? { sketch: { ...draft.sketch, pngPath: '' } } : {}),
+      ...(draft.image ? { image: writePastedImage(canvas.canvasId, annotationId, draft.image.pngBase64) } : {}),
     }
     next.annotations.push(annotation)
     review.annotationIds.push(annotationId)
@@ -890,17 +1008,23 @@ export function deleteAnnotation(sessionId: string, annotationId: string): Canva
       .filter((r) => r.status !== 'draft' || r.annotationIds.length > 0),
   }
   commit(next)
+  // After the commit: a pasted image belongs to exactly this note, so the file
+  // goes with it. Best-effort — the record is already the truth.
+  unlinkPastedImage(canvas.canvasId, target.image)
   return toState(next)
 }
 
 /** PNG magic: the eight bytes every real PNG starts with. */
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
-function decodeSketchPng(pngBase64: string): Buffer {
-  if (typeof pngBase64 !== 'string' || pngBase64.length === 0) throw new Error('invalid sketch png')
+/** Decode + validate a note-attachment PNG. Shared by both attachment kinds —
+ *  a sketch export and a pasted screenshot — so the messages say "attachment",
+ *  not "sketch", or a paste failure reads as a sketch bug in the logs. */
+function decodeAttachmentPng(pngBase64: string): Buffer {
+  if (typeof pngBase64 !== 'string' || pngBase64.length === 0) throw new Error('invalid attachment png')
   const bytes = Buffer.from(pngBase64, 'base64')
-  if (bytes.length === 0 || bytes.length > MAX_SKETCH_PNG_BYTES) throw new Error('sketch png too large')
-  if (bytes.length < PNG_MAGIC.length || !bytes.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) throw new Error('sketch is not a png')
+  if (bytes.length === 0 || bytes.length > MAX_SKETCH_PNG_BYTES) throw new Error('attachment png too large')
+  if (bytes.length < PNG_MAGIC.length || !bytes.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) throw new Error('attachment is not a png')
   return bytes
 }
 
@@ -952,7 +1076,7 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
     const pngBase64 = exportsById.get(annotation.id)
     if (pngBase64 === undefined) throw new Error(`sketch export missing for note ${annotation.id}`)
     exportsById.delete(annotation.id)
-    const bytes = decodeSketchPng(pngBase64)
+    const bytes = decodeAttachmentPng(pngBase64)
     const relPath = `reviews/${reviewId}/${annotation.id}.png`
     annotation.sketch.pngPath = relPath
     pngWrites.push({ absPath: path.join(canvasDir(canvas.canvasId), 'reviews', reviewId, `${annotation.id}.png`), bytes })
@@ -1171,8 +1295,11 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
   const generalNotes = all.filter((a) => a.scope === 'general')
   const anchored = all.filter((a) => a.scope !== 'general')
   const attachments = all
-    .filter((a) => a.sketch && a.sketch.pngPath !== '')
-    .map((a) => ({ annotationId: a.id, pngPath: a.sketch!.pngPath }))
+    .filter((a) => (a.sketch && a.sketch.pngPath !== '') || a.image)
+    .map((a) => ({
+      annotationId: a.id,
+      pngPath: a.sketch && a.sketch.pngPath !== '' ? a.sketch.pngPath : a.image!.pngPath,
+    }))
 
   return {
     payload: {
@@ -1528,6 +1655,88 @@ export function closeAnnotationsByAgent(
 }
 
 /**
+ * The USER's variant pick, stated in chat and recorded by the agent
+ * (`canvas_pick`).
+ *
+ * The agent's THIRD write into the review store, and the only one that can end
+ * in 'approved' — which is why it is the narrowest of the three: exactly one
+ * note, and only a pick among alternatives the agent itself attached when it
+ * addressed that note (#373). There is no free-form approval here: a note with
+ * no variants has nothing to pick, and a key the note does not offer approves
+ * nothing. Every gate fails closed with its own message so the tool can tell
+ * the agent what actually stood in the way.
+ *
+ * Provenance is the point. The write is stamped `closedBy: 'agent'` AND
+ * `pickSource: 'chat'` together: the panel renders it as "picked in chat",
+ * apart from the user's own Approve clicks, and the validator refuses either
+ * stamp without the other — so this function widens nothing for a forged
+ * click-approval. Reopen undoes it in one click, exactly like any other close.
+ *
+ * Deliberately NO seen-barrier, unlike `closeAnnotationsByAgent`: that barrier
+ * exists because "addressed" is the agent's own claim and closing on it lets
+ * one hand create and spend the permission. A pick is the opposite shape — the
+ * user themselves named the winner in conversation, so the user's engagement
+ * is the input, not something the write has to prove happened. What this
+ * function CANNOT verify is that the chat message exists; that stays on the
+ * tool description ("only on an explicit pick in this conversation") and on
+ * the visible provenance the user can audit and reopen.
+ */
+export function recordChatPick(
+  sessionId: string,
+  reviewId: string,
+  annotationId: string,
+  variantKey: string,
+): { state: CanvasReviewState; pickedLabel: string; reviewClosed: boolean } {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  requireHealthy(canvas.canvasId)
+  if (typeof reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(reviewId)) throw new Error('invalid review id')
+  if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
+  // Same shape the user's own approve path holds a key to — positional 'A'…'D',
+  // nothing else ever minted.
+  if (typeof variantKey !== 'string' || !/^[A-D]$/.test(variantKey)) throw new Error('invalid variant key')
+
+  const base = recordFor(sessionId, canvas)
+  // Same caveat as every agent write: a review id is an ordinal within the
+  // ACTIVE canvas, not a handle on one particular review. Membership below is
+  // checked on both halves for the same reason closeAnnotationsByAgent's is.
+  const review = base.reviews.find((r) => r.id === reviewId)
+  if (!review) throw new Error('review not on this canvas')
+  if (review.status === 'draft') throw new Error('review is still a draft')
+  const target = base.annotations.find((a) => a.id === annotationId)
+  if (!target || target.reviewId !== review.id || !review.annotationIds.includes(annotationId)) {
+    throw new Error('note not on this review')
+  }
+  // Only an ADDRESSED note carries a live offer. An open note has no variants
+  // to pick from yet; a closed one has already been ruled on — the two refusals
+  // are told apart so the tool can name the remedy (do the work vs. reopen).
+  if (target.state === 'open') throw new Error('note is still open')
+  if (target.state !== 'addressed') throw new Error('note is already ruled on')
+  if (!target.variants || target.variants.length === 0) throw new Error('note has no variants')
+  const offered = target.variants.find((v) => v.key === variantKey)
+  if (!offered) throw new Error('variant not offered on this note')
+
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+  const nextTarget = next.annotations.find((a) => a.id === annotationId)!
+  nextTarget.state = 'approved'
+  nextTarget.chosenVariantKey = variantKey
+  nextTarget.closedBy = 'agent'
+  nextTarget.closedFrom = 'addressed'
+  nextTarget.pickSource = 'chat'
+
+  settleReviewStatus(next, review.id)
+  const reviewClosed = next.reviews.find((r) => r.id === review.id)?.status === 'resolved'
+  commit(next)
+  // The label is store-held and was validated clean at mint; the tool echoes it
+  // so the agent can confirm WHICH alternative it is now building.
+  return { state: toState(next), pickedLabel: offered.label, reviewClosed }
+}
+
+/**
  * The USER puts a closed note back in play.
  *
  * The inverse of a verdict, and the reason close-out is safe to offer in bulk:
@@ -1578,8 +1787,11 @@ export function reopenAnnotation(sessionId: string, annotationId: string): Canva
   }
   // The CHOICE never survives a reopen: it was part of the approval being
   // undone. The variants themselves stay on an 'addressed' note — the
-  // alternatives still exist; the user simply has not re-ruled.
+  // alternatives still exist; the user simply has not re-ruled. The chat-pick
+  // stamp describes that choice, so it dies with it (and the validator refuses
+  // it on any state but 'approved' anyway).
   delete nextTarget.chosenVariantKey
+  delete nextTarget.pickSource
   // The seen flag does NOT survive a reopen either way. Reopening is the user
   // putting the note back in play, and letting the agent re-close it on the
   // strength of a look that happened before that would make Reopen a one-shot

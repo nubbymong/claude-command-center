@@ -31,6 +31,17 @@ export default function AgentCanvasButton({ sessionId }: Props) {
   const queue = useCanvasQueue(sessionId)
   const [queueOpen, setQueueOpen] = React.useState(false)
 
+  // The command bar's right-click menu offers "Show what's waiting"; the
+  // popover state lives here, so the menu reaches it by event (the
+  // app:openSettings pattern — no ref surgery across the bar).
+  React.useEffect(() => {
+    const onShowQueue = (e: Event) => {
+      if ((e as CustomEvent<{ sessionId?: string }>).detail?.sessionId === sessionId) setQueueOpen(true)
+    }
+    window.addEventListener('ccc:canvasShowQueue', onShowQueue)
+    return () => window.removeEventListener('ccc:canvasShowQueue', onShowQueue)
+  }, [sessionId])
+
   const canvasLoaded = useCanvasStore((s) => !!s.bySessionId[sessionId]?.loaded)
   const refreshCanvas = useCanvasStore((s) => s.refresh)
   const reviewsLoaded = useCanvasReviewStore((s) => !!s.bySessionId[sessionId]?.loaded)
@@ -88,7 +99,7 @@ export default function AgentCanvasButton({ sessionId }: Props) {
           isOpen
             ? 'Back to the terminal (closes the Agent Canvas)'
             : waiting
-              ? `${queue} round${queue === 1 ? '' : 's'} waiting on your review — click the count for the list`
+              ? `${queue} round${queue === 1 ? '' : 's'} waiting on your review — click the count for the list, right-click to dismiss all`
               : 'Open Agent Canvas'
         }
         data-testid="canvas-button"

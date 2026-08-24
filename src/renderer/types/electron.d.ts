@@ -415,6 +415,10 @@ export interface ElectronAPI {
     /** Bulk close-out for one canvas whose work has shipped. Clears, never
      *  deletes. `ok: false` means the store could not be read. */
     reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
+    /** One sweep: everything waiting on the user across this session's own
+     *  canvases (close-outs + awaiting-first-review clears). The Canvas
+     *  button's right-click. `unreadable` mirrors the queue's "unknown". */
+    reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<{ closedNotes: number; closedReviews: number; clearedAwaiting: number; unreadable: number }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {

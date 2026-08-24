@@ -48,6 +48,7 @@ import {
   getReviewCountsForCanvas,
   getReviewPayload,
   markAnnotationsAddressed,
+  recordChatPick,
 } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 import { readCheckedFile } from './utils/safe-file-read'
@@ -870,6 +871,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         // purpose, so there is exactly one place either rule can be read or
         // changed, and it is the single mutation point.
         closeByAgent: (sessionId, reviewId, ids, verdict) => closeAnnotationsByAgent(sessionId, reviewId, ids, verdict),
+        // canvas_pick. Pass-through for the same reason: the store is what
+        // refuses everything but a pick among offered variants on an addressed
+        // note, and what stamps the chat-pick provenance.
+        recordChatPick: (sessionId, reviewId, annotationId, variantKey) => recordChatPick(sessionId, reviewId, annotationId, variantKey),
         // Read-only, by canvasId, counts and store-minted ids only. It is what
         // lets a tool reply say "the user is mid-review" instead of the agent
         // rendering over notes nobody has submitted yet.

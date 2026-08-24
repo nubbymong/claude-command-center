@@ -1353,8 +1353,11 @@ export function renderVersion(
 /**
  * The user has responded to the ready-marked round on this canvas — clear the
  * "review needed" entry (#366). Called by the review store on submit (it
- * already imports this store, so the dependency points the existing way).
- * Idempotent, and a no-op for a canvas that owes nothing.
+ * already imports this store, so the dependency points the existing way), and
+ * by the dismiss-all IPC sweep when the user clears their queue without
+ * reviewing (`canvas:reviewDismissAll`). Both callers are user gestures; no
+ * MCP path reaches this. Idempotent, and a no-op for a canvas that owes
+ * nothing.
  */
 export function clearAwaitingReview(canvasId: string): void {
   if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return

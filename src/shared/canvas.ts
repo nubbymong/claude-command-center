@@ -232,6 +232,24 @@ export interface AnnotationSketch {
   bboxPage: Rect
 }
 
+/**
+ * A pasted screenshot attached to a note (Ctrl+V, item B). Unlike a sketch the
+ * PNG exists at COMPOSE time — it is written when the note is saved, under
+ * 'reviews/pasted/<noteId>.png' (note ids are unique per canvas), and simply
+ * stays there through submit. A note carries ONE attachment: a sketch or a
+ * pasted image, never both.
+ */
+export interface AnnotationImage {
+  /** Relative to the canvas's own directory ('reviews/pasted/a7.png'). Never
+   *  empty — the file is written before the record references it. */
+  pngPath: string
+}
+
+/** Byte cap shared by every note-attachment PNG — sketch exports and pasted
+ *  images alike. The IPC base64 bound and the store's decoder both derive from
+ *  it. */
+export const MAX_ATTACHMENT_PNG_BYTES = 2 * 1024 * 1024
+
 /** One alternative the agent attached when it ADDRESSED a note (#373): "I did
  *  it three ways — pick which ships". Keys are minted by the store from
  *  position ('A'…'D'), never accepted from the agent; the label is agent
@@ -288,6 +306,9 @@ export interface Annotation {
   /** Element/region only. */
   focus?: FocusObject
   sketch?: AnnotationSketch
+  /** A pasted screenshot (Ctrl+V). Mutually exclusive with `sketch`. When
+   *  present the note's TEXT may be empty — the image is the note. */
+  image?: AnnotationImage
   /** The version the note was made against (a draft review can span versions;
    *  each note remembers its own). */
   versionId: string
@@ -300,11 +321,22 @@ export interface Annotation {
    */
   variants?: AnnotationVariant[]
   /**
-   * The variant the USER approved (#373). Only the user's own Approve can set
-   * it — it rides the same IPC the verdict does, and no tool can write it —
-   * and it only ever names a key that exists in `variants`. Cleared on reopen.
+   * The variant the USER picked (#373). Two ways in, both the user's decision:
+   * their own Approve click in the pane (rides the verdict IPC), or a pick they
+   * stated in chat that the agent records via `canvas_pick` — the latter always
+   * stamped `pickSource: 'chat'` so the two never read the same. It only ever
+   * names a key that exists in `variants`. Cleared on reopen.
    */
   chosenVariantKey?: string
+  /**
+   * How the pick was made, when it was NOT the user's own click. 'chat' means
+   * the user named the winner in conversation and the agent recorded it with
+   * `canvas_pick`. Present only beside an agent-recorded approval
+   * (`state: 'approved'`, `closedBy: 'agent'`, `chosenVariantKey` set) — the
+   * validator refuses it anywhere else, which keeps click-approve provenance
+   * the user's alone.
+   */
+  pickSource?: 'chat'
   /** Id of the re-annotation that replaced this note (state 'reannotated'). */
   supersededBy?: string
   /**
@@ -315,8 +347,10 @@ export interface Annotation {
    * sides: the user clicking "Accept as built", and the agent calling
    * `canvas_verdict` on the user's word. Those read very differently to the
    * person who has to trust the list, so the row says which one happened.
-   * `approved` is always the user's — no tool can write it — so this field can
-   * never be 'agent' beside that state.
+   * `approved` beside 'agent' exists in exactly one form: a chat pick the agent
+   * recorded via `canvas_pick`, which always carries `pickSource: 'chat'` — the
+   * validator refuses the pair without it, so a click-approval can never be
+   * imitated.
    */
   closedBy?: AnnotationClosedBy
   /**
@@ -426,6 +460,13 @@ export interface CanvasAnnotationDraft {
   focus?: FocusObject
   /** Sketch metadata only (ids + bbox). The PNG is exported at submit (D6). */
   sketch?: { excalidrawElementIds: string[]; bboxPage: Rect }
+  /**
+   * A pasted screenshot riding the save (item B). `{ pngBase64 }` sets or
+   * replaces it (written to disk immediately); `'keep'` leaves an existing one
+   * as it is (the renderer never holds the bytes after a reload); absent
+   * removes it. Mutually exclusive with `sketch`.
+   */
+  image?: 'keep' | { pngBase64: string }
   versionId: string
 }
 

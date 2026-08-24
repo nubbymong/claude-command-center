@@ -12,6 +12,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import {
+  clearAwaitingReview,
   deleteCanvas,
   getCanvasStateForSession,
   listAllCanvases,
@@ -30,6 +31,7 @@ import {
   onReviewChanged,
   reopenAnnotation,
   resolveAnnotation,
+  reviewStoreFileExists,
   submitReview,
   upsertAnnotation,
 } from '../canvas/canvas-review-store'
@@ -194,9 +196,17 @@ const annotationDraftSchema = z
   .object({
     annotationId: annotationIdSchema.optional(),
     scope: z.enum(['element', 'region', 'general']),
-    note: z.string().min(1).max(4000),
+    // min(0): empty text is legal ONLY beside a pasted image — the store is
+    // the gate (validateDraft), this schema only bounds the shape.
+    note: z.string().min(0).max(4000),
     focus: focusSchema.optional(),
     sketch: sketchMetaSchema.optional(),
+    // A pasted screenshot riding the save: fresh bytes, or 'keep' for an
+    // existing one the renderer no longer holds. Base64 bound reuses the
+    // sketch cap (declared below; hoisted const).
+    image: z
+      .union([z.literal('keep'), z.object({ pngBase64: z.string().min(8).max(Math.ceil(MAX_SKETCH_PNG_BYTES / 3) * 4 + 8) }).strict()])
+      .optional(),
     versionId: versionIdSchema,
   })
   .strict()
@@ -269,6 +279,15 @@ const annotationReopenSchema = z.object({ sessionId: sessionIdSchema, annotation
  *  never moves ownership, and it never removes a file. */
 const reviewCloseOutSchema = z
   .object({ canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
+  .strict()
+
+/** Dismiss-all sweeps the ASKING session's own canvases. The tile list feeds
+ *  the same library read `canvas:listAll` uses and can only mark rows as
+ *  on-screen — it can never widen the sweep beyond rows owned by (or active
+ *  for) sessionId, and the project scope is resolved in main from the session
+ *  id, never accepted as a path. */
+const reviewDismissAllSchema = z
+  .object({ sessionId: sessionIdSchema, openTileSessionIds: openTileSessionIdsSchema })
   .strict()
 
 // ---------------------------------------------------------------------------
@@ -415,6 +434,57 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     // null is "could not read the store", which must not render as "cleared 0".
     if (!result) return { ok: false as const }
     return { ok: true as const, closed: result.closed, reviews: result.reviews }
+  })
+
+  // "Clear my whole canvas queue" — the Canvas button's right-click. One sweep
+  // over exactly the rows the queue number counts (owned by or active for this
+  // session, per totalsFromEntries): rounds already waiting on the user close
+  // out per canvas, and a ready-marked render still awaiting its first review
+  // stops being owed. Scope is resolved HERE (cwd from main's own spawn
+  // record), so the renderer cannot aim the sweep at another project, and a
+  // canvas some other session owns is never touched. Composed from the two
+  // existing user-driven mutations rather than a new store path — this handler
+  // is the one place that already holds both stores (same reason listAll joins
+  // counts here).
+  ipcMain.handle(IPC.CANVAS_REVIEW_DISMISS_ALL, async (_e, args: unknown) => {
+    const { sessionId, openTileSessionIds } = reviewDismissAllSchema.parse(args)
+    const cwd = canvasCwdForSession(sessionId)
+    const entries = listAllCanvases(openTileSessionIds ?? [], cwd, sessionId)
+    let closedNotes = 0
+    let closedReviews = 0
+    let clearedAwaiting = 0
+    let unreadable = 0
+    for (const e of entries) {
+      if (!e.ownedByThisSession && !e.isActiveForThisSession) continue
+      // The review counts have to be READ here, per owned row: `listAllCanvases`
+      // does not carry `verdictRounds`/`openReviewCount` — only the `listAll`
+      // handler's own join loop above sets them, and this is a different call.
+      // Reading them off the entry made the whole close-out branch dead (the
+      // fields were always undefined) and inflated `unreadable` to the owned
+      // count. Join the same read `listAll` does, so the sweep clears exactly
+      // what the queue number promised.
+      const counts = getReviewCountsForCanvas(e.canvasId)
+      // A null count is either a genuinely unreadable store (a file exists but
+      // will not read) or simply a canvas with no reviews.json yet (rendered,
+      // never annotated). Only the first is "unreadable"; calling a healthy
+      // note-less canvas unreadable would over-report the diagnostic. Distinguish
+      // by whether the file is actually present.
+      if (!counts && reviewStoreFileExists(e.canvasId)) unreadable++
+      // Close out only where the label counted work (verdictRounds > 0), so
+      // the gesture clears precisely what the number promised.
+      if (counts && counts.verdictRounds > 0) {
+        const res = closeOutCanvasReviews(e.canvasId)
+        if (res) {
+          closedNotes += res.closed
+          closedReviews += res.reviews.length
+        }
+      }
+      if (e.awaitingReview) {
+        clearAwaitingReview(e.canvasId)
+        clearedAwaiting++
+      }
+    }
+    return { closedNotes, closedReviews, clearedAwaiting, unreadable }
   })
 
   onReviewChanged((event) => {

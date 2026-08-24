@@ -310,6 +310,12 @@ export interface ElectronAPI {
      *  already waiting on the user; deletes nothing. `ok: false` means the
      *  review store could not be read — never "there was nothing to clear". */
     reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
+    /** One sweep: everything waiting on the user across this session's own
+     *  canvases — the per-canvas close-out repeated, plus the clears for
+     *  ready-marked renders still awaiting a first review. The Canvas button's
+     *  right-click. `unreadable` counts canvases whose review store could not
+     *  be read (the queue's own "unknown" rule) — never folded into zero. */
+    reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<{ closedNotes: number; closedReviews: number; clearedAwaiting: number; unreadable: number }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {
@@ -903,6 +909,8 @@ const electronAPI: ElectronAPI = {
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_MARK_SEEN, args),
     reviewCloseOut: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_CLOSE_OUT, args),
+    reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_REVIEW_DISMISS_ALL, args),
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
       const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)
       ipcRenderer.on(IPC.CANVAS_REVIEW_CHANGED, handler)

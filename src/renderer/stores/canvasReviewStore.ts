@@ -477,7 +477,11 @@ export function reviewGroupsOf(state: CanvasReviewSessionState): ReviewGroup[] {
       const addressedCount = notes.length - openCount
       const waitingOn: ReviewGroup['waitingOn'] =
         notes.length === 0 ? 'closed' : openCount > 0 ? 'agent' : 'you'
-      const agentClosedCount = closedNotes.filter((n) => n.closedBy === 'agent').length
+      // The "N on your instruction — not approved" chip. A chat PICK is
+      // closedBy 'agent' too, but it IS an approval the user made (in chat), so
+      // it does not belong in a "not approved" count — it carries its own
+      // "picked in chat" provenance on the row instead.
+      const agentClosedCount = closedNotes.filter((n) => n.closedBy === 'agent' && n.pickSource !== 'chat').length
       return { review, notes, closedNotes, waitingOn, openCount, addressedCount, agentClosedCount }
     })
     .sort((a, b) => {

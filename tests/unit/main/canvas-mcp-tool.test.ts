@@ -324,8 +324,8 @@ describe('registration', () => {
   it('advertises canvas_snapshot with a schema the SDK can accept', () => {
     const registered = vi.fn()
     registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
-    // snapshot, render, review, resolve, verdict (#365).
-    expect(registered).toHaveBeenCalledTimes(5)
+    // snapshot, render, review, resolve, verdict (#365), pick (chat picks).
+    expect(registered).toHaveBeenCalledTimes(6)
     const [name, description, shape, handler] = registered.mock.calls[0]
     expect(name).toBe('canvas_snapshot')
     expect(String(description)).toMatch(/scoped/i)
@@ -373,6 +373,21 @@ describe('registration', () => {
     // It must say what it is NOT: the agent never approves for the user.
     expect(String(description)).toMatch(/never approves/i)
     expect(Object.keys(shape as object).sort()).toEqual(['annotationIds', 'cccSessionId', 'reviewId', 'variants'])
+    expect(typeof handler).toBe('function')
+  })
+
+  it('advertises canvas_pick, explicit-instruction-only, with the reopen escape hatch', () => {
+    const registered = vi.fn()
+    registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
+    const [name, description, shape, handler] = registered.mock.calls[5]
+    expect(name).toBe('canvas_pick')
+    // The description is the only place the "did the user actually say it"
+    // rule can live, so it must carry all three legs: explicit words only,
+    // never guess, and the user can undo it.
+    expect(String(description)).toMatch(/explicitly named a winner/i)
+    expect(String(description)).toMatch(/never pick for them/i)
+    expect(String(description)).toMatch(/reopen/i)
+    expect(Object.keys(shape as object).sort()).toEqual(['annotationId', 'cccSessionId', 'reviewId', 'variantKey'])
     expect(typeof handler).toBe('function')
   })
 })
@@ -849,6 +864,7 @@ describe('canvas_render', () => {
     }
     registerCanvasTools(server, z, () => null, deps())
     expect(Object.keys(tools).sort()).toEqual([
+      'canvas_pick',
       'canvas_render',
       'canvas_resolve',
       'canvas_review',
