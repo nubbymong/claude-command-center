@@ -470,7 +470,7 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
                         onClick={() => void removeCanvas(c.canvasId)}
                         disabled={reclaiming !== null || deleting !== null}
                         className={DANGER_CLASS}
-                        aria-label={`Confirm: permanently delete canvas ${canvasLabel(c)}`}
+                        aria-label={`Delete ${c.versionCount} version${c.versionCount === 1 ? '' : 's'} of canvas ${canvasLabel(c)}`}
                         data-testid="canvas-reclaim-confirm-delete"
                       >
                         {deleting === c.canvasId
