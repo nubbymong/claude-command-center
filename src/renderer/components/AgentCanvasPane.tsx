@@ -1468,10 +1468,27 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
       </div>
 
       <div className="relative flex-1 flex min-h-0">
-        {/* Stage: content iframe below, glass above, transient overlay on top.
-            overflow-hidden so highlight boxes for offscreen page coords can
-            never bleed over the chrome around the stage. */}
-        <div className="flex-1 min-w-0 relative overflow-hidden">
+        {/* Stage: the reviewed page in a framed card (item C) so the boundary
+            between the agent's content and the app is unmistakable. The padded
+            outer holds the "PAGE UNDER REVIEW" tag over the frame's top border;
+            the inner frame is overflow-hidden, which is what keeps highlight
+            boxes for offscreen page coords from bleeding over the chrome. The
+            iframe, glass and overlay all fill this frame 1:1, so their pinning
+            is unchanged — the frame is a smaller box they share, not a new
+            coordinate space. */}
+        <div className="flex-1 min-w-0 relative p-2.5">
+          <span
+            className="absolute z-10 top-2.5 left-5 -translate-y-1/2 px-2 py-px rounded text-[9.5px] tracking-[0.08em] pointer-events-none"
+            style={{ background: 'var(--surface-stage)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+            data-testid="canvas-content-tag"
+          >
+            PAGE UNDER REVIEW
+          </span>
+          <div
+            className="absolute inset-2.5 rounded-lg overflow-hidden"
+            style={{ border: '2px solid var(--border-subtle)', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.28)' }}
+            data-testid="canvas-content-frame"
+          >
           <iframe
             // Keyed on the URL so a version switch mounts a NEW element. Reusing
             // one iframe leaves the OLD document in contentWindow until the new
@@ -1705,6 +1722,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 </button>
               </div>
             )}
+          </div>
           </div>
         </div>
 
