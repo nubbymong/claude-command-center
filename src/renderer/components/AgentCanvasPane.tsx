@@ -147,6 +147,48 @@ function canvasModeBadge(version: CanvasVersion): { label: string; title: string
     : { label: 'Mockup', title: 'A standalone mockup document', tone: 'var(--border-subtle)' }
 }
 
+/**
+ * The MODE, as the redesigned chrome's leading title (item C): the word the
+ * user thinks in — PLAN / MOCKUP / TESTING — in its own colour, with a keel
+ * line under the bar echoing it. This is the same fact `canvasModeBadge`
+ * carried as a small badge; the redesign promotes it to the title because it is
+ * the first thing that should read, and because a plan, a mockup and a live
+ * test are annotated differently.
+ */
+function canvasModeLockup(version: CanvasVersion): { word: string; color: string } {
+  if (version.source.mode === 'uat') return { word: 'TESTING MODE', color: 'var(--color-green)' }
+  return version.mode === 'plan'
+    ? { word: 'PLAN MODE', color: 'var(--color-mauve)' }
+    : { word: 'MOCKUP MODE', color: 'var(--color-blue)' }
+}
+
+/** The tool-chip glyphs (item C): eye = Inspect, pencil = Sketch, dashed
+ *  rectangle + arrow = Region. Stroke-only, sized for a 26px chip. */
+function ToolIcon({ kind }: { kind: 'inspect' | 'sketch' | 'region' }) {
+  const common = { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
+  if (kind === 'inspect') {
+    return (
+      <svg {...common}>
+        <path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" />
+        <circle cx="12" cy="12" r="2.5" />
+      </svg>
+    )
+  }
+  if (kind === 'sketch') {
+    return (
+      <svg {...common}>
+        <path d="M4 20l3.5-.8L19 7.7a2 2 0 0 0-2.8-2.8L4.8 16.4z" />
+      </svg>
+    )
+  }
+  return (
+    <svg {...common}>
+      <rect x="4" y="6" width="12" height="10" rx="1" strokeDasharray="3 2.4" />
+      <path d="M18 14l3 7-3.2-1.2L16 22z" />
+    </svg>
+  )
+}
+
 /** Full stamp for the label's tooltip — the human line is deliberately short. */
 function versionTooltip(version: CanvasVersion): string {
   const ms = Date.parse(version.createdAt)
@@ -1150,21 +1192,27 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // review); the leftover chrome is hidden by the glass-scoped CSS.
   const glassUIOptions = useMemo(() => ({ welcomeScreen: false, tools: { image: false } }), [])
 
-  // What Browse actually does depends on the x-ray mode now, and the strip is
+  // What Inspect actually does depends on the x-ray mode now, and the hint is
   // the only thing that says so — a user who switched x-ray off and still read
   // "hover to inspect, click to select" would reasonably think it had failed.
-  const browseHint =
+  // The label carries the x-ray state (Inspect · Stealth) so the strip and the
+  // chip agree on one glance.
+  const inspectHint =
     xrayMode === 'off'
       ? 'the page is live and plain — x-ray is off, so hovering and clicking do nothing here'
       : xrayMode === 'stealth'
-        ? 'the page is live — hovering names the element in the panel and draws nothing · click to select · ↑ parent · Esc clear'
-        : 'the page is live — hover to inspect, click to select · ↑ parent · Esc clear'
+        ? 'hovering names the element in the panel and draws nothing on the page · click selects · ↑ parent · Esc clears'
+        : 'hover to inspect, click to select · ↑ parent · Esc clears'
 
   const modeStrip = marqueeArmed
     ? { color: 'text-peach', label: 'Region', hint: 'drag a rectangle over the area — Esc cancels' }
     : mode === 'draw'
-      ? { color: 'text-mauve', label: 'Draw', hint: 'sketch on the glass; select strokes, then attach them to a note' }
-      : { color: 'text-blue', label: 'Browse', hint: browseHint }
+      ? { color: 'text-mauve', label: 'Sketch', hint: 'the glass takes the pointer; draw over the content, then attach the strokes to a note' }
+      : {
+          color: 'text-blue',
+          label: xrayMode === 'on' ? 'Inspect' : `Inspect · ${xrayMode === 'off' ? 'Off' : 'Stealth'}`,
+          hint: inspectHint,
+        }
 
   /** Per USER, so it is written straight to settings rather than to any canvas
    *  state (#367). Fire-and-forget: the store applies the change synchronously
@@ -1174,43 +1222,64 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     void useSettingsStore.getState().updateSettings({ canvasXrayMode: next })
   }
 
-  const segmentClass = (active: boolean) =>
-    `px-2.5 py-[5px] rounded text-[11.5px] font-medium leading-none transition-colors focus-ring disabled:opacity-40 ${
-      active
-        ? 'bg-[var(--surface-overlay)] text-[var(--text-primary)]'
-        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-    }`
-
   const versionClockLabel = versionClock(version.createdAt)
+  const modeLockup = canvasModeLockup(version)
+
+  // Which tool owns the pointer (item C): Inspect = browse, Sketch = draw,
+  // Region = the marquee. These are the same three states the pointer layers
+  // already switch on (pointerOwner); the chips are their presentation.
+  const inspectActive = mode === 'browse' && !marqueeArmed
+  const sketchActive = mode === 'draw' && !marqueeArmed
+  const regionActive = marqueeArmed
+  // Sketch and Region take the pointer off the content, so Inspect — and the
+  // X-ray setting that only governs Inspect — visibly pause.
+  const inspectPaused = !inspectActive
+  const planLocked = version.mode === 'plan'
+
+  /** A tool chip: app-family pill, accented when it owns the pointer, dimmed
+   *  when another tool has paused it. */
+  const chipClass = (active: boolean, paused: boolean) =>
+    `flex items-center gap-1.5 h-[26px] px-2.5 rounded-md text-[12px] leading-none transition-colors focus-ring border ${
+      active
+        ? 'font-semibold text-[var(--brand)]'
+        : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+    } ${paused ? 'opacity-40' : ''}`
+  const chipStyle = (active: boolean): React.CSSProperties =>
+    active
+      ? { background: 'color-mix(in srgb, var(--brand) 15%, transparent)', borderColor: 'color-mix(in srgb, var(--brand) 52%, transparent)' }
+      : { background: 'color-mix(in srgb, var(--surface-panel) 60%, transparent)', borderColor: 'var(--border-subtle)' }
 
   return (
     <div ref={paneRootRef} className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
-      {/* Pane chrome — 38px, one type size, and the mode switch given real
-          weight because it decides where the user's clicks land. */}
-      <div className="h-[38px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)] border-b border-[var(--border-subtle)]">
-        <span className="w-[5px] h-[5px] shrink-0 rounded-full bg-[var(--brand)]" aria-hidden="true" />
-        {/* WHAT this canvas is of, leading, and the way to the others. "Agent
-            Canvas" was a label for a pane that could only ever show one thing;
-            a session authors many, so the pane has to say which one you are
-            looking at and let you reach the rest. */}
+      {/* Pane chrome — mode is the title (item C); the keel line under the bar
+          carries the mode colour, and the tool chips on the right decide where
+          the user's clicks land. */}
+      <div className="relative h-[42px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)]">
+        <span
+          aria-hidden
+          className="absolute left-0 right-0 bottom-0 h-[2px]"
+          style={{ background: `linear-gradient(90deg, ${modeLockup.color}, transparent 72%)` }}
+          data-testid="canvas-mode-keel"
+        />
+        {/* Mode-as-title: the word the user thinks in, in its own colour. */}
+        <span
+          className="shrink-0 text-[13px] font-extrabold tracking-[0.09em] leading-none"
+          style={{ color: modeLockup.color }}
+          title={canvasModeBadge(version).title}
+          data-testid="canvas-mode-word"
+          data-canvas-mode={version.mode}
+        >
+          {modeLockup.word}
+        </span>
+        {/* WHAT this canvas is of, and the way to the others. A session authors
+            many canvases, so the pane has to say which one you are looking at
+            and let you reach the rest. */}
         <CanvasSubjectPicker
           sessionId={sessionId}
           canvasId={canvasId}
           title={canvasTitle}
           onOpenLibrary={onOpenLibrary}
         />
-        {/* The version identity, in words a person can act on. It lives here
-            because a version EXISTS — the empty state's own chrome carries no
-            version label and no picker, because there is nothing to version. */}
-        <span
-          className="shrink-0 text-[10px] rounded px-1.5 py-0.5 border text-[var(--text-secondary)]"
-          style={{ borderColor: `color-mix(in srgb, ${canvasModeBadge(version).tone} 55%, transparent)` }}
-          title={canvasModeBadge(version).title}
-          data-testid="canvas-mode-badge"
-          data-canvas-mode={version.mode}
-        >
-          {canvasModeBadge(version).label}
-        </span>
         {/* Content zoom (#368) — shown only when it is not 1:1, click resets.
             The chip is the visibility the forged-zoom analysis leans on: a zoom
             the user did not ask for is never silent. */}
@@ -1290,76 +1359,94 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           Library
         </button>
         <div className="flex-1" />
-        {/* THE control of this surface: who owns the pointer (spec §6). */}
-        <div
-          className="shrink-0 flex items-center gap-[2px] p-[2px] rounded-md bg-[var(--surface-panel)] border border-[var(--border-subtle)]"
-          role="group"
-          aria-label="Canvas interaction mode"
-        >
-          <button
-            onClick={() => {
-              setMarqueeArmed(sessionId, false)
-              setInteractionMode(sessionId, 'browse')
-            }}
-            aria-pressed={mode === 'browse' && !marqueeArmed}
-            className={segmentClass(mode === 'browse' && !marqueeArmed)}
-            title="Browse mode — the content is interactive; hover to inspect, click to select"
-          >
-            Browse
-          </button>
+        {/* Tools — Inspect / Sketch / Region (item C): app-family chips that
+            decide who owns the pointer. The X-ray setting rides the Inspect
+            chip, since it only governs what Inspect does; Sketch and Region
+            visibly pause both. */}
+        <div className="shrink-0 flex items-center gap-1.5" role="group" aria-label="Canvas tools" data-testid="canvas-tool-chips">
+          {/* Inspect (browse) with the X-ray setting attached. */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => {
+                setMarqueeArmed(sessionId, false)
+                setInteractionMode(sessionId, 'browse')
+              }}
+              aria-pressed={inspectActive}
+              className={chipClass(inspectActive, false)}
+              style={chipStyle(inspectActive)}
+              title="Inspect — the content is live; hover identifies elements, click selects"
+              data-testid="canvas-tool-inspect"
+            >
+              <ToolIcon kind="inspect" />
+              Inspect
+            </button>
+            {/* X-ray Off · Stealth · On (#367), attached to Inspect: it is the
+                one setting that only changes what Inspect does. Locked to
+                Stealth on a plan (owner call, 2026-08-23) — the boxes-on-page
+                x-ray adds nothing over a document of steps, and Off would break
+                note anchoring — so the segments are shown, not hidden, but
+                inert with a lock. */}
+            <div
+              className={`flex items-center rounded-md overflow-hidden border text-[11px] ${inspectPaused ? 'opacity-40' : ''}`}
+              style={{ borderColor: 'color-mix(in srgb, var(--color-teal) 40%, transparent)' }}
+              role="group"
+              aria-label="Canvas x-ray hover"
+              data-testid="canvas-xray-mode"
+              title={planLocked ? 'X-ray is locked to Stealth on a plan — a document of steps needs no boxes on the page, and Off would break note anchoring.' : undefined}
+            >
+              {CANVAS_XRAY_MODE_OPTIONS.map((option) => {
+                const selected = xrayMode === option.value
+                return (
+                  <button
+                    key={option.value}
+                    onClick={() => { if (!planLocked) setXrayMode(option.value) }}
+                    aria-pressed={selected}
+                    disabled={planLocked}
+                    className="px-2 py-[3px] leading-none transition-colors focus-ring disabled:cursor-default"
+                    style={selected
+                      ? { background: 'color-mix(in srgb, var(--color-teal) 16%, transparent)', color: 'var(--color-teal)', fontWeight: 600 }
+                      : { color: 'var(--text-secondary)' }}
+                    title={option.title}
+                    data-testid={`canvas-xray-${option.value}`}
+                  >
+                    {option.label}
+                  </button>
+                )
+              })}
+              {planLocked && (
+                <span className="px-1.5 py-[3px] leading-none text-[10px]" style={{ color: 'var(--text-muted)' }} aria-hidden>
+                  🔒
+                </span>
+              )}
+            </div>
+          </div>
           <button
             onClick={() => {
               setMarqueeArmed(sessionId, false)
               setInteractionMode(sessionId, 'draw')
             }}
-            aria-pressed={mode === 'draw' && !marqueeArmed}
-            className={segmentClass(mode === 'draw' && !marqueeArmed)}
-            title="Draw mode — the glass is interactive; sketch over the content"
+            aria-pressed={sketchActive}
+            className={chipClass(sketchActive, false)}
+            style={chipStyle(sketchActive)}
+            title="Sketch — the glass takes the pointer; draw over the content, then attach the strokes to a note"
+            data-testid="canvas-tool-sketch"
           >
-            Draw
+            <ToolIcon kind="sketch" />
+            Sketch
           </button>
           <button
             onClick={() => setMarqueeArmed(sessionId, !marqueeArmed)}
-            aria-pressed={marqueeArmed}
+            aria-pressed={regionActive}
             disabled={!viewport}
-            className={segmentClass(marqueeArmed)}
+            className={chipClass(regionActive, false)}
+            style={chipStyle(regionActive)}
             title="Region — drag a rectangle to select an area for a note (Esc cancels)"
+            data-testid="canvas-tool-region"
           >
+            <ToolIcon kind="region" />
             Region
           </button>
         </div>
-        {/* X-ray (#367) — whether pointing at the page marks it up, names it
-            quietly beside the stage, or does nothing at all. Beside the mode
-            switch because the two together are the whole answer to "what
-            happens when I move the mouse over this". A PLAN page pins x-ray to
-            stealth (owner call, 2026-08-23), so the switch would be three dead
-            buttons there — it is dropped rather than disabled. */}
-        {version.mode !== 'plan' && (
-          <>
-            <span className="shrink-0 text-[10px] uppercase tracking-wide text-[var(--text-secondary)]" aria-hidden="true">
-              X-ray
-            </span>
-            <div
-              className="shrink-0 flex items-center gap-[2px] p-[2px] rounded-md bg-[var(--surface-panel)] border border-[var(--border-subtle)]"
-              role="group"
-              aria-label="Canvas x-ray hover"
-              data-testid="canvas-xray-mode"
-            >
-              {CANVAS_XRAY_MODE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  onClick={() => setXrayMode(option.value)}
-                  aria-pressed={xrayMode === option.value}
-                  className={segmentClass(xrayMode === option.value)}
-                  title={option.title}
-                  data-testid={`canvas-xray-${option.value}`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
         <button
           onClick={() => togglePane(sessionId)}
           aria-label="Close Agent Canvas"
