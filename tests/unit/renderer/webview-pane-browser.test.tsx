@@ -228,3 +228,49 @@ describe('with a page loaded', () => {
     expect(useBrowserStore.getState().homeByConfig).toEqual({})
   })
 })
+
+describe('the modern palette (#455)', () => {
+  // The pane regressed to the pre-redesign near-black palette once (#455: "the
+  // old black UX crept in again"). Detector copied from
+  // dialog-palette-retired.test.ts, whose header records why it is deliberately
+  // BROAD: the first hardcoded-list version of that guard certified a
+  // regression green. A 14-name list here repeated the mistake — it missed
+  // `text-crust`, which this very file carried.
+  const COLOURS =
+    'mantle|base|crust|surface[012]|subtext[01]|overlay[012]|text|mauve|blue|red|green|yellow|peach|lavender|sapphire|sky|teal|pink|maroon|flamingo|rosewater'
+  const PREFIXES = 'bg|text|border|ring|accent|from|to|via|divide|outline|placeholder|fill|stroke|shadow'
+  const PALETTE = new RegExp(`\\b(?:[a-z-]+:)*(?:${PREFIXES})-(?:${COLOURS})(?:\\/\\d+)?\\b`, 'g')
+  const PALETTE_VAR = /var\(\s*--color-[a-z0-9-]+/g
+  // `text-base` is the font-size utility, not a colour.
+  const FONT_SIZE_NOT_A_COLOUR = /^text-base$/
+  const stripComments = (s: string) =>
+    s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+  const paletteHits = (s: string): string[] => {
+    const hits = (s.match(PALETTE) ?? []).filter(
+      (m) => !FONT_SIZE_NOT_A_COLOUR.test(m.replace(/^(?:[a-z-]+:)*/, '')),
+    )
+    return hits.concat(s.match(PALETTE_VAR) ?? [])
+  }
+
+  it('styles with the token system — the legacy Catppuccin palette may not creep back', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const src = stripComments(
+      fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/WebviewPane.tsx'), 'utf8'),
+    )
+    expect(paletteHits(src)).toEqual([])
+    // …and the pane really is on the tokens, not simply colourless.
+    expect(src).toContain('var(--surface-stage)')
+    expect(src).toContain('var(--brand)')
+    expect(src).toContain('var(--status-danger)')
+  })
+
+  it('the detector can fail — it fires on the classes this file used to carry', () => {
+    expect(paletteHits('className="bg-red/80 text-crust hover:bg-red"')).toEqual([
+      'bg-red/80', 'text-crust', 'hover:bg-red',
+    ])
+    expect(paletteHits('style: color-mix(in srgb, var(--color-red) 15%, transparent)')).toHaveLength(1)
+    // …and not on the tokens or the font-size utility.
+    expect(paletteHits('bg-[var(--surface-panel)] text-[var(--text-primary)] text-base')).toEqual([])
+  })
+})

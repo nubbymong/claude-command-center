@@ -37,7 +37,7 @@ const Icon = {
 }
 
 const toolBtn = 'px-1.5 py-0.5 text-xs rounded focus-ring transition-colors disabled:opacity-35 disabled:cursor-default'
-const toolBtnIdle = 'text-overlay1 hover:text-text hover:bg-surface0'
+const toolBtnIdle = 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-raised)]'
 
 /**
  * The session's browser pane (item 26). A pane of its own, beside the
@@ -277,20 +277,32 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
 
   const status = state.status
   const watchPill = status === 'available'
-    ? { text: 'responding', cls: 'text-green border-green/40 bg-green/10', dot: 'bg-green' }
+    ? {
+        text: 'responding',
+        cls: 'text-[var(--status-success)] border-[color-mix(in_srgb,var(--status-success)_40%,transparent)] bg-[color-mix(in_srgb,var(--status-success)_10%,transparent)]',
+        dot: 'bg-[var(--status-success)]',
+      }
     : status === 'pending'
-      ? { text: 'waiting for the page…', cls: 'text-blue border-blue/40 bg-blue/10', dot: 'bg-blue animate-pulse' }
+      ? {
+          text: 'waiting for the page…',
+          cls: 'text-[var(--status-info)] border-[color-mix(in_srgb,var(--status-info)_40%,transparent)] bg-[color-mix(in_srgb,var(--status-info)_10%,transparent)]',
+          dot: 'bg-[var(--status-info)] animate-pulse',
+        }
       : status === 'failed'
-        ? { text: 'no answer', cls: 'text-red border-red/40 bg-red/10', dot: 'bg-red' }
+        ? {
+            text: 'no answer',
+            cls: 'text-[var(--status-danger)] border-[color-mix(in_srgb,var(--status-danger)_40%,transparent)] bg-[color-mix(in_srgb,var(--status-danger)_10%,transparent)]',
+            dot: 'bg-[var(--status-danger)]',
+          }
         : null
 
   const isHttps = shownUrl.startsWith('https:')
   const atHome = !!home && shownUrl === home
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-mantle relative" data-testid="browser-pane">
+    <div className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)] relative" data-testid="browser-pane">
       {/* Nav row: history, address, watch state, open-externally, favourites, freeze, close. */}
-      <div className="flex items-center gap-1 px-2 py-1 border-b border-surface0 bg-crust shrink-0 z-10" data-testid="browser-nav">
+      <div className="flex items-center gap-1 px-2 py-1 border-b border-[var(--border-subtle)] bg-[var(--surface-chrome)] shrink-0 z-10" data-testid="browser-nav">
         {/* Icon-only controls carry aria-labels: `title` alone is not a
             reliable accessible name. */}
         <button onClick={() => window.electronAPI.webview.navBack(sessionId)} disabled={!page?.canGoBack} className={`${toolBtn} ${toolBtnIdle}`} title="Back" aria-label="Back" data-testid="browser-back">{Icon.back}</button>
@@ -299,7 +311,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
         <button
           onClick={handleHome}
           disabled={!home}
-          className={`${toolBtn} ${atHome ? 'text-blue' : toolBtnIdle}`}
+          className={`${toolBtn} ${atHome ? 'text-[var(--brand)]' : toolBtnIdle}`}
           title={home ? `Home: ${home}` : 'No home page yet — open the favourites bar to set one'}
           aria-label={home ? `Home: ${home}` : 'Home (none set yet)'}
           data-testid="browser-home"
@@ -309,9 +321,9 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
 
         <div className="flex-1 min-w-0 flex flex-col">
           <div
-            className={`flex items-center gap-1.5 px-2 h-6 rounded border bg-surface0/70 ${addressError ? 'border-red' : 'border-surface1 focus-within:border-blue'}`}
+            className={`flex items-center gap-1.5 px-2 h-6 rounded border bg-[var(--surface-panel)] ${addressError ? 'border-[var(--status-danger)]' : 'border-[var(--border-subtle)] focus-within:border-[var(--brand)]'}`}
           >
-            <span className={`shrink-0 ${isHttps ? 'text-green' : 'text-overlay0'}`} title={isHttps ? 'https' : shownUrl ? 'http — not encrypted' : ''}>
+            <span className={`shrink-0 ${isHttps ? 'text-[var(--status-success)]' : 'text-[var(--text-secondary)]'}`} title={isHttps ? 'https' : shownUrl ? 'http — not encrypted' : ''}>
               {shownUrl ? Icon.lock : Icon.globe}
             </span>
             <input
@@ -325,14 +337,14 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
               placeholder="Type an address — localhost:5173, example.com"
               spellCheck={false}
               autoComplete="off"
-              className="flex-1 min-w-0 bg-transparent outline-none font-mono text-[11px] text-text placeholder:text-overlay0"
+              className="flex-1 min-w-0 bg-transparent outline-none font-mono text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
               aria-label="Address"
               aria-invalid={!!addressError}
               data-testid="browser-address"
             />
-            {page?.loading && <span className="text-[10px] text-overlay0 shrink-0">loading…</span>}
+            {page?.loading && <span className="text-[10px] text-[var(--text-muted)] shrink-0">loading…</span>}
           </div>
-          {addressError && <div className="text-[10px] text-red mt-0.5 px-1" role="alert" data-testid="browser-address-error">{addressError}</div>}
+          {addressError && <div className="text-[10px] text-[var(--status-danger)] mt-0.5 px-1" role="alert" data-testid="browser-address-error">{addressError}</div>}
         </div>
 
         {watchPill && (
@@ -342,10 +354,10 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
           </span>
         )}
 
-        <button onClick={handleStar} disabled={!shownUrl} className={`${toolBtn} ${isFav ? 'text-yellow' : toolBtnIdle}`} title={isFav ? 'Remove from favourites' : 'Save to favourites'} aria-label={isFav ? 'Remove from favourites' : 'Save to favourites'} aria-pressed={isFav} data-testid="browser-star">{Icon.star(isFav)}</button>
+        <button onClick={handleStar} disabled={!shownUrl} className={`${toolBtn} ${isFav ? 'text-[var(--status-warning)]' : toolBtnIdle}`} title={isFav ? 'Remove from favourites' : 'Save to favourites'} aria-label={isFav ? 'Remove from favourites' : 'Save to favourites'} aria-pressed={isFav} data-testid="browser-star">{Icon.star(isFav)}</button>
         <button
           onClick={() => setShowFavourites((v) => !v)}
-          className={`${toolBtn} ${showFavourites ? 'text-text bg-surface0' : toolBtnIdle} text-[11px]`}
+          className={`${toolBtn} ${showFavourites ? 'text-[var(--text-primary)] bg-[var(--surface-panel)]' : toolBtnIdle} text-[11px]`}
           title={showFavourites ? 'Hide the favourites bar' : 'Show the favourites bar'}
           aria-expanded={showFavourites}
           data-testid="browser-favourites-toggle"
@@ -353,33 +365,33 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
           Favourites{favourites.length > 0 ? ` ${favourites.length}` : ''}
         </button>
         <button onClick={handleOpenExternal} disabled={!shownUrl} className={`${toolBtn} ${toolBtnIdle}`} title="Open in your real browser" aria-label="Open in your real browser" data-testid="browser-open-external">{Icon.external}</button>
-        <div className="w-px h-4 bg-surface1 mx-0.5" />
-        <button onClick={handleFreeze} disabled={!currentUrl} className="px-2 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text transition-colors disabled:opacity-35" title="Freeze + annotate with Excalidraw">Freeze</button>
-        <button onClick={handleClose} className="px-2 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text transition-colors" title="Back to the terminal" data-testid="browser-close">Close</button>
+        <div className="w-px h-4 bg-[var(--border-strong)] mx-0.5" />
+        <button onClick={handleFreeze} disabled={!currentUrl} className="px-2 py-0.5 text-xs rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] transition-colors disabled:opacity-35" title="Freeze + annotate with Excalidraw">Freeze</button>
+        <button onClick={handleClose} className="px-2 py-0.5 text-xs rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] transition-colors" title="Back to the terminal" data-testid="browser-close">Close</button>
       </div>
 
       {/* Favourites bar -- a ROW, so it pushes the native view down instead
           of dropping a menu over it that the view would paint on top of. */}
       {showFavourites && (
-        <div className="flex items-center gap-1 px-2 py-1 border-b border-surface0 bg-crust/80 shrink-0 overflow-x-auto" data-testid="browser-favourites-bar">
+        <div className="flex items-center gap-1 px-2 py-1 border-b border-[var(--border-subtle)] bg-[var(--surface-chrome)] shrink-0 overflow-x-auto" data-testid="browser-favourites-bar">
           {favourites.length === 0 && (
-            <span className="text-[10px] text-overlay0">No favourites yet — press the star on a page you want to keep.</span>
+            <span className="text-[10px] text-[var(--text-muted)]">No favourites yet — press the star on a page you want to keep.</span>
           )}
           {favourites.map((f) => (
-            <span key={f.id} className="group inline-flex items-center gap-1 pl-2 pr-1 h-5 rounded border border-surface1 bg-surface0/60 text-[10px] text-overlay1 hover:text-text hover:bg-surface1 shrink-0" title={f.url}>
+            <span key={f.id} className="group inline-flex items-center gap-1 pl-2 pr-1 h-5 rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[10px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] shrink-0" title={f.url}>
               <button onClick={() => navigate(sessionId, f.url)} className="truncate max-w-[180px] focus-ring" data-testid="browser-favourite">{f.title || shortUrlLabel(f.url)}</button>
-              <button onClick={() => removeFavourite(f.id)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-overlay0 hover:text-red px-0.5" aria-label={`Remove favourite ${f.title || shortUrlLabel(f.url)}`}>{Icon.close}</button>
+              <button onClick={() => removeFavourite(f.id)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[var(--text-secondary)] hover:text-[var(--status-danger)] px-0.5" aria-label={`Remove favourite ${f.title || shortUrlLabel(f.url)}`}>{Icon.close}</button>
             </span>
           ))}
           <span className="flex-1" />
           {home ? (
-            <span className="inline-flex items-center gap-1 pl-1.5 pr-1 h-5 rounded border border-surface1 text-[10px] text-overlay1 shrink-0" title={home} data-testid="browser-home-chip">
+            <span className="inline-flex items-center gap-1 pl-1.5 pr-1 h-5 rounded border border-[var(--border-subtle)] text-[10px] text-[var(--text-secondary)] shrink-0" title={home} data-testid="browser-home-chip">
               {Icon.home}
               <span className="truncate max-w-[160px]">Home: {shortUrlLabel(home)}</span>
               {!atHome && shownUrl && (
-                <button onClick={handleSetHome} className="ml-1 text-blue hover:underline" data-testid="browser-set-home">use this page</button>
+                <button onClick={handleSetHome} className="ml-1 text-[var(--brand)] hover:underline" data-testid="browser-set-home">use this page</button>
               )}
-              <button onClick={handleClearHome} className="text-overlay0 hover:text-red px-0.5" aria-label="Clear home page">{Icon.close}</button>
+              <button onClick={handleClearHome} className="text-[var(--text-secondary)] hover:text-[var(--status-danger)] px-0.5" aria-label="Clear home page">{Icon.close}</button>
             </span>
           ) : (
             <button onClick={handleSetHome} disabled={!shownUrl} className={`${toolBtn} ${toolBtnIdle} text-[10px] flex items-center gap-1 shrink-0`} title={configId ? 'Sessions from this config will open the browser here' : 'This session will open the browser here'} data-testid="browser-set-home">
@@ -392,7 +404,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       {currentUrl ? (
         // Placeholder for the WebContentsView — the main process attaches a
         // real Chrome view at this rectangle. We just reserve space.
-        <div ref={containerRef} className="flex-1 min-h-0 bg-crust" data-testid="browser-viewport" />
+        <div ref={containerRef} className="flex-1 min-h-0 bg-[var(--surface-stage)]" data-testid="browser-viewport" />
       ) : (
         <StartPage
           favourites={favourites}
@@ -412,7 +424,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       {currentUrl && (
         <button
           onClick={handleClose}
-          className="absolute right-2 bottom-2 z-20 px-2 py-1 text-[11px] rounded-full bg-red/80 text-crust shadow-lg hover:bg-red transition-colors"
+          className="absolute right-2 bottom-2 z-20 px-2 py-1 text-[11px] rounded-full bg-[var(--status-danger)] text-[var(--ob-on)] shadow-lg hover:brightness-110 transition-colors"
           title="Force-close the browser pane"
         >
           ✕ back to terminal
@@ -447,13 +459,13 @@ function StartPage(props: {
     <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center px-6 py-8" data-testid="browser-start">
       <div className="w-full max-w-[520px]">
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-blue">{Icon.globe}</span>
+          <span className="text-[var(--brand)]">{Icon.globe}</span>
           {/* Colour ON the heading: an element-level h2 rule somewhere in the
               imported stylesheets beat the inherited text colour on the VM
               (the heading came out near-black on the dark start page). */}
-          <h2 className="text-base font-semibold text-text">Browser</h2>
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">Browser</h2>
         </div>
-        <p className="text-xs text-overlay1 mb-4">A page of your own, beside the terminal. Type an address, or pick a favourite.</p>
+        <p className="text-xs text-[var(--text-secondary)] mb-4">A page of your own, beside the terminal. Type an address, or pick a favourite.</p>
         <form
           onSubmit={(e) => { e.preventDefault(); props.onGo(value) }}
           className="flex items-center gap-2"
@@ -466,47 +478,47 @@ function StartPage(props: {
             placeholder="localhost:5173, example.com, https://…"
             spellCheck={false}
             autoComplete="off"
-            className={`flex-1 min-w-0 px-3 h-8 bg-surface0 text-text text-sm rounded border outline-none font-mono ${props.error ? 'border-red' : 'border-surface1 focus:border-blue'}`}
+            className={`flex-1 min-w-0 px-3 h-8 bg-[var(--surface-panel)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] text-sm rounded border outline-none font-mono ${props.error ? 'border-[var(--status-danger)]' : 'border-[var(--border-subtle)] focus:border-[var(--brand)]'}`}
             aria-label="Address"
             data-testid="browser-start-address"
           />
-          <button type="submit" className="px-3 h-8 text-sm bg-blue text-crust rounded hover:bg-blue/80" data-testid="browser-start-go">Open</button>
+          <button type="submit" className="px-3 h-8 text-sm bg-[var(--brand)] text-[var(--text-on-brand)] rounded hover:brightness-110 focus-ring" data-testid="browser-start-go">Open</button>
         </form>
-        {props.error && <p className="mt-1 text-[11px] text-red" role="alert">{props.error}</p>}
+        {props.error && <p className="mt-1 text-[11px] text-[var(--status-danger)]" role="alert">{props.error}</p>}
 
         {props.home && (
           <button
             onClick={() => props.onOpenFavourite(props.home!)}
-            className="mt-4 w-full flex items-center gap-2 px-3 py-2 rounded border border-surface1 bg-surface0/50 hover:bg-surface0 text-left focus-ring"
+            className="mt-4 w-full flex items-center gap-2 px-3 py-2 rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] hover:border-[var(--border-strong)] text-left focus-ring"
             data-testid="browser-start-home"
           >
-            <span className="text-blue">{Icon.home}</span>
-            <span className="text-xs text-text truncate">{shortUrlLabel(props.home)}</span>
-            <span className="ml-auto text-[10px] text-overlay0">home</span>
+            <span className="text-[var(--brand)]">{Icon.home}</span>
+            <span className="text-xs text-[var(--text-primary)] truncate">{shortUrlLabel(props.home)}</span>
+            <span className="ml-auto text-[10px] text-[var(--text-muted)]">home</span>
           </button>
         )}
 
         {props.favourites.length > 0 && (
           <div className="mt-4">
-            <div className="text-[10px] uppercase tracking-wide text-overlay0 mb-1.5">Favourites</div>
+            <div className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] mb-1.5">Favourites</div>
             <div className="flex flex-col gap-1">
               {props.favourites.map((f) => (
-                <div key={f.id} className="group flex items-center gap-2 px-3 py-1.5 rounded border border-surface1 bg-surface0/40 hover:bg-surface0" title={f.url}>
+                <div key={f.id} className="group flex items-center gap-2 px-3 py-1.5 rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] hover:border-[var(--border-strong)]" title={f.url}>
                   <button onClick={() => props.onOpenFavourite(f.url)} className="flex-1 min-w-0 text-left focus-ring" data-testid="browser-start-favourite">
-                    <div className="text-xs text-text truncate">{f.title || shortUrlLabel(f.url)}</div>
-                    {f.title && <div className="text-[10px] text-overlay0 truncate font-mono">{shortUrlLabel(f.url)}</div>}
+                    <div className="text-xs text-[var(--text-primary)] truncate">{f.title || shortUrlLabel(f.url)}</div>
+                    {f.title && <div className="text-[10px] text-[var(--text-muted)] truncate font-mono">{shortUrlLabel(f.url)}</div>}
                   </button>
-                  <button onClick={() => props.onRemoveFavourite(f.id)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-overlay0 hover:text-red px-1" aria-label={`Remove favourite ${f.title || shortUrlLabel(f.url)}`}>{Icon.close}</button>
+                  <button onClick={() => props.onRemoveFavourite(f.id)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-[var(--text-secondary)] hover:text-[var(--status-danger)] px-1" aria-label={`Remove favourite ${f.title || shortUrlLabel(f.url)}`}>{Icon.close}</button>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        <p className="mt-6 text-[10px] text-overlay0 leading-relaxed">
-          A command button can point the browser at a page too: tick <span className="text-subtext0">Watch for a page</span> on a
-          command that starts a server, or make an <span className="text-subtext0">Open a page</span> button. Pages open here in a
-          sandbox with every permission off; for anything that needs more, use <span className="text-subtext0">open in your real browser</span>.
+        <p className="mt-6 text-[10px] text-[var(--text-muted)] leading-relaxed">
+          A command button can point the browser at a page too: tick <span className="text-[var(--text-primary)]">Watch for a page</span> on a
+          command that starts a server, or make an <span className="text-[var(--text-primary)]">Open a page</span> button. Pages open here in a
+          sandbox with every permission off; for anything that needs more, use <span className="text-[var(--text-primary)]">open in your real browser</span>.
         </p>
       </div>
     </div>
