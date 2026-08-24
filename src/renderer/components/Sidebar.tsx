@@ -30,12 +30,9 @@ import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
-import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
-import SavedConfigsCards from './sidebar/SavedConfigsCards'
-import SavedConfigsFind from './sidebar/SavedConfigsFind'
-import { resolveSavedConfigsView, runningConfigIds } from './sidebar/savedConfigsView'
+import { runningConfigIds } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
-import { resolveConfigPanelExpanded, toggleConfigPanel, overrideAfterPinChange, type ConfigPanelOverride } from './sidebar/configPanelState'
+import { resolveDefaultPanelTab, type PanelTab } from './sidebar/sessionsPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
 import ConfigHydrationNotice from './ConfigHydrationNotice'
@@ -165,49 +162,27 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const [groupContextMenu, setGroupContextMenu] = useState<{ groupId: string; x: number; y: number } | null>(null)
   const [showNewSectionInput, setShowNewSectionInput] = useState(false)
   const [newSectionName, setNewSectionName] = useState('')
-  // null = the user has not expanded/collapsed by hand this session, so the
-  // persisted pin decides (#217). NOT seeded from configPanelPinned: settings
-  // hydrate after mount, so an initial value would latch `false`.
-  const [configPanelOpen, setConfigPanelOpen] = useState<ConfigPanelOverride>(null)
-  const configPanelPinned = useSettingsStore((s) => s.settings.configPanelPinned)
-  const configPanelExpanded = resolveConfigPanelExpanded(configPanelOpen, configPanelPinned)
-  const updateSettings = useSettingsStore((s) => s.updateSettings)
-  const setConfigPanelPinned = (val: boolean | ((prev: boolean) => boolean)) => {
-    const newVal = typeof val === 'function' ? val(configPanelPinned) : val
-    updateSettings({ configPanelPinned: newVal })
+  // Two-mode left panel (design pass 2026-08-24): 'saved' is the launcher,
+  // 'running' the live sessions. Replaces the #217 hover fly-out + pin
+  // machinery — the panel is a MODE now, not an overlay over the sessions.
+  // Starts on 'running' (the stored default's own default, plan Q1); once
+  // settings hydrate the stored choice is adopted, but never over a tab the
+  // user has already clicked this session.
+  const [panelTab, setPanelTab] = useState<PanelTab>('running')
+  const panelTabTouchedRef = useRef(false)
+  const settingsLoaded = useSettingsStore((s) => s.isLoaded)
+  const storedDefaultTab = useSettingsStore((s) => s.settings.sessionsPanelDefaultTab)
+  useEffect(() => {
+    if (settingsLoaded && !panelTabTouchedRef.current) setPanelTab(resolveDefaultPanelTab(storedDefaultTab))
+  }, [settingsLoaded, storedDefaultTab])
+  const selectPanelTab = (tab: PanelTab) => {
+    panelTabTouchedRef.current = true
+    setPanelTab(tab)
   }
   const [configSearchQuery, setConfigSearchQuery] = useState('')
-  // #362: which layout the panel body uses. The list is the default and is
-  // untouched; cards and find are the two views from the design pass.
-  const savedConfigsView = resolveSavedConfigsView(useSettingsStore((s) => s.settings.savedConfigsView))
-  // Configs with a live session: the cards and find views never list them and
-  // launch-all never starts them. `sessions` already excludes the Ask session.
+  // Configs with a live session: locked in the Saved list and excluded from
+  // launch-all. `sessions` already excludes the Ask session.
   const runningIds = useMemo(() => runningConfigIds(sessions), [sessions])
-  // Bumped when the panel is opened DELIBERATELY (header click), so the find
-  // box takes focus. Never on hover: a mouse passing over the sidebar must not
-  // steal the keyboard from the terminal.
-  const [configPanelFocusRequest, setConfigPanelFocusRequest] = useState(0)
-  // The panel used to cap itself at a flat 60vh, which cut the list off partway
-  // down a row while empty sidebar sat underneath it. Measure what is actually
-  // free below the panel's top edge instead, keeping SESSION_RESERVE px for the
-  // sessions list so a long config list can never own the whole sidebar.
-  const configPanelRef = useRef<HTMLDivElement | null>(null)
-  const [configPanelMax, setConfigPanelMax] = useState(0)
-  useEffect(() => {
-    if (!configPanelExpanded) return
-    // Sessions list + the Ask Conductor dock pinned under it (~62px). Without
-    // the dock's share a long config list expands over the pill.
-    const SESSION_RESERVE = 262
-    const measure = () => {
-      const el = configPanelRef.current
-      if (!el) return
-      const top = el.getBoundingClientRect().top
-      setConfigPanelMax(Math.max(220, Math.round(window.innerHeight - top - SESSION_RESERVE)))
-    }
-    measure()
-    window.addEventListener('resize', measure)
-    return () => window.removeEventListener('resize', measure)
-  }, [configPanelExpanded, configPanelPinned])
   const [dragConfigId, setDragConfigId] = useState<string | null>(null)
   const [dragOverConfigId, setDragOverConfigId] = useState<string | null>(null)
   // The LOOSE configs: in no group and no section (a stale id pointing at a
@@ -226,7 +201,6 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   }, [configs, groups, sections])
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [focusedSessionIndex, setFocusedSessionIndex] = useState(-1)
-  const configPanelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const sessionRenameRef = useRef<HTMLInputElement>(null)
   const sectionRenameRef = useRef<HTMLInputElement>(null)
@@ -356,15 +330,6 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const launchFromConfig = async (config: TerminalConfig) => {
     launchConfig(config)
     onViewChange('sessions')
-  }
-
-  // #362: launch-all from the cards / find views. They hand over an already
-  // filtered list (running and Codex-blocked configs removed) -- see
-  // launchAllTargets -- so this is just the loop.
-  const launchMany = async (targets: TerminalConfig[]) => {
-    for (const config of targets) {
-      await launchFromConfig(config)
-    }
   }
 
   const launchGroup = async (groupId: string) => {
@@ -734,161 +699,47 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onShowAccountUsage={onShowAccountUsage}
       />
 
-      {/* Saved Configs — hover trigger or pinned inline */}
-      <div
-        className="relative"
-        onMouseEnter={() => {
-          if (!configPanelPinned) {
-            if (configPanelTimeoutRef.current) clearTimeout(configPanelTimeoutRef.current)
-            setConfigPanelOpen(true)
-          }
-        }}
-        onMouseLeave={() => {
-          if (!configPanelPinned) {
-            configPanelTimeoutRef.current = setTimeout(() => setConfigPanelOpen(false), 150)
-          }
-        }}
-      >
-        <div className="p-3 flex items-center justify-between hover:bg-surface0/30 transition-colors">
-          <button
-            type="button"
-            /* Works while pinned too: a pinned panel stays collapsible. This used
-               to be blocked when pinned, so "pinned" also meant "stuck open". */
-            onClick={() => {
-              const next = toggleConfigPanel(configPanelOpen, configPanelPinned)
-              setConfigPanelOpen(next)
-              if (next) setConfigPanelFocusRequest((n) => n + 1)
-            }}
-            aria-expanded={configPanelExpanded}
-            className="flex items-center gap-1.5 rounded focus-ring"
-            title={configPanelExpanded ? 'Collapse saved configs' : 'Show all saved configs'}
-          >
-            <svg
-              width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
-              className="text-overlay0 transition-transform"
-              style={{ transform: configPanelExpanded ? 'rotate(0deg)' : 'rotate(-90deg)' }}
-            >
-              <polygon points="2,2 8,5 2,8" />
-            </svg>
-            <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Saved Configs</span>
-            <span className="text-[10px] text-overlay0">{configs.length}</span>
-          </button>
-          <div className="flex gap-0.5">
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                // Clear the session override so the derived default (the new pin
-                // value) decides. Forcing `true` would be defeated by a stale
-                // `false` from an earlier manual collapse — the original bug.
-                setConfigPanelOpen(overrideAfterPinChange())
-                setConfigPanelPinned(prev => !prev)
-              }}
-              className={`w-6 h-6 flex items-center justify-center rounded transition-colors focus-ring ${configPanelPinned ? 'bg-blue/20 text-blue' : 'hover:bg-surface0 text-overlay1 hover:text-text'}`}
-              title={configPanelPinned ? 'Unpin config panel' : 'Pin config panel open'}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
-              </svg>
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowNewSectionInput(true); setConfigPanelOpen(true); setTimeout(() => newSectionInputRef.current?.focus(), 0) }}
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
-              title="New section"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
-                <rect x="1" y="2" width="12" height="10" rx="1.5" />
-                <line x1="1" y1="5" x2="13" y2="5" />
-                <line x1="7" y1="7" x2="7" y2="11" />
-                <line x1="5" y1="9" x2="9" y2="9" />
-              </svg>
-            </button>
-            <button
-              data-tour="new-config"
-              onClick={(e) => { e.stopPropagation(); setShowNewDialog(true) }}
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
-              title="New config (Ctrl+T)"
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" strokeWidth="1.5"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" strokeWidth="1.5"/></svg>
-            </button>
-          </div>
-        </div>
+      {/* Saved ⇄ Running — the two-mode head (design pass 2026-08-24). The
+          whole left panel switches modes; the old hover fly-out, its notch and
+          the pin-open machinery are gone — a mode needs no overlay. */}
+      <div className="px-2 pt-2 pb-1.5 flex gap-1.5 shrink-0" role="tablist" aria-label="Sessions panel">
+        <button
+          role="tab"
+          aria-selected={panelTab === 'saved'}
+          onClick={() => selectPanelTab('saved')}
+          className={`flex-1 h-8 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors focus-ring ${
+            panelTab === 'saved' ? 'bg-surface0 border border-surface1 text-text' : 'border border-transparent text-overlay1 hover:text-text'
+          }`}
+          data-testid="panel-tab-saved"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className={panelTab === 'saved' ? 'text-blue' : ''}>
+            <line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" />
+            <circle cx="9" cy="7" r="1.6" fill="currentColor" stroke="none" /><circle cx="15" cy="12" r="1.6" fill="currentColor" stroke="none" /><circle cx="8" cy="17" r="1.6" fill="currentColor" stroke="none" />
+          </svg>
+          Saved
+          <span className={`text-[10px] rounded-full px-1.5 py-0.5 ${panelTab === 'saved' ? 'bg-blue/20 text-blue' : 'bg-surface0 text-overlay1'}`}>{configs.length}</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={panelTab === 'running'}
+          onClick={() => selectPanelTab('running')}
+          className={`flex-1 h-8 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold transition-colors focus-ring ${
+            panelTab === 'running' ? 'bg-surface0 border border-surface1 text-text' : 'border border-transparent text-overlay1 hover:text-text'
+          }`}
+          data-testid="panel-tab-running"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={panelTab === 'running' ? 'text-blue' : ''}>
+            <path d="M3 12h4l2 6 4-14 2 8h6" />
+          </svg>
+          Running
+          <span className={`text-[10px] rounded-full px-1.5 py-0.5 ${panelTab === 'running' ? 'bg-blue/20 text-blue' : 'bg-surface0 text-overlay1'}`}>{sessions.length}</span>
+        </button>
+      </div>
+      <div className="mx-2 border-t border-surface1 shrink-0" aria-hidden />
 
-      {/* The notch, floating-card only. A card inset from both walls has nothing
-          tying it to the header it came from; this points back at it.
-
-          A SIBLING of the panel, not a child: the panel is overflow-hidden (for
-          its rounded corners and the max-height animation), so a notch inside it
-          would be clipped away to nothing. It is a rotated square rather than a
-          border triangle so it can carry the card's own 1px border on two sides
-          and its fill on the other two, and so vanish into the card's top edge.
-
-          z-[51] puts it over the panel's own z-50: its lower half must sit ON
-          the card, or the card's top border would draw straight through it. */}
-      {!configPanelPinned && configPanelExpanded && (
-        <span
-          aria-hidden
-          data-ux-id="config-panel-notch"
-          className="absolute w-[9px] h-[9px] rotate-45 z-[51] pointer-events-none"
-          style={{
-            top: 'calc(100% + 2px)',
-            left: 22,
-            backgroundColor: 'color-mix(in srgb, var(--color-surface0) 55%, var(--color-base))',
-            borderLeft: '1px solid var(--color-surface2)',
-            borderTop: '1px solid var(--color-surface2)',
-            transition: 'opacity 180ms ease',
-          }}
-        />
-      )}
-
-      {/* Config panel — elevated popover when not pinned, inline raised panel when pinned */}
-      <div
-        ref={configPanelRef}
-        className={configPanelPinned
-          ? 'border-t border-b border-surface1 overflow-hidden flex flex-col'
-          // FLOATING CARD (user call 2026-08-21, option B on the canvas).
-          // Inset from BOTH sidebar walls — `left-2 right-2`, not `left-0
-          // right-0` — so the sidebar shows down each side and the panel reads
-          // as something laid on top rather than a slab wedged into the column.
-          // That squared, wall-to-wall edge was the "jarring" part.
-          : 'absolute left-2 right-2 z-50 rounded-xl border overflow-hidden flex flex-col'
-        }
-        style={configPanelPinned
-          ? {
-              backgroundColor: 'var(--color-surface0)',
-              maxHeight: configPanelExpanded ? configPanelMax : 0,
-              transition: 'max-height 200ms ease',
-            }
-          : {
-              top: '100%',
-              // 6, not 2: the gap is what lets the sidebar show THROUGH between
-              // the header and the card, which is most of what makes it float.
-              marginTop: 6,
-              // Between --color-base and --color-surface0 rather than surface0
-              // flat. The old #222 on a #1a1a1a sidebar was a lighter grey
-              // rectangle over near-black, and reading as "lighter grey" is
-              // exactly the complaint. A mix keeps that relationship correct in
-              // light mode too, where surface0 is LIGHTER than base and a
-              // hard-coded hex would invert the intent.
-              backgroundColor: 'color-mix(in srgb, var(--color-surface0) 55%, var(--color-base))',
-              // A brighter hairline than the panel fill, so the edge is drawn
-              // by the border rather than by the fill's contrast with the
-              // sidebar — which is what let it read as a slab.
-              borderColor: 'var(--color-surface2)',
-              // Depth, plus a faint brand rim. The rim is 1px of colour at low
-              // alpha: enough to lift the card off near-black, not enough to
-              // read as a selection state.
-              boxShadow: '0 18px 44px rgba(0,0,0,0.72), 0 0 0 1px color-mix(in srgb, var(--brand) 16%, transparent)',
-              maxHeight: configPanelExpanded ? configPanelMax : 0,
-              opacity: configPanelExpanded ? 1 : 0,
-              transform: configPanelExpanded ? 'translateY(0) scaleY(1)' : 'translateY(-4px) scaleY(0.98)',
-              transformOrigin: 'top center',
-              transition: 'max-height 200ms ease, opacity 180ms ease, transform 180ms ease',
-              pointerEvents: configPanelExpanded ? 'auto' : 'none',
-            }
-        }
-      >
-        {/* Search input (list view) */}
-        {savedConfigsView === 'list' && (
+      {/* ── Saved tab: the launcher ── */}
+      {panelTab === 'saved' && (
+      <div className="flex flex-col flex-1 min-h-0" data-testid="saved-tab">
         <div className="px-2 pt-2 pb-1 shrink-0">
           <input
             value={configSearchQuery}
@@ -897,14 +748,29 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             className="w-full bg-base border border-surface1 rounded px-2 py-1 text-xs text-text placeholder:text-overlay0 outline-none focus:border-blue"
           />
         </div>
-        )}
+        {/* The header icon buttons became labelled toolbar buttons here; the
+            pin-panel button retired with the fly-out. data-tour survives so the
+            walkthrough still finds New config. */}
+        <div className="px-2 pb-1.5 flex gap-1.5 shrink-0">
+          <button
+            data-tour="new-config"
+            onClick={() => setShowNewDialog(true)}
+            className="h-7 px-2.5 rounded-md bg-blue/20 border border-blue/45 text-blue text-[11px] font-semibold flex items-center gap-1 hover:bg-blue/30 transition-colors focus-ring"
+            title="New config (Ctrl+T)"
+          >
+            <span className="font-extrabold">+</span> New config
+          </button>
+          <button
+            onClick={() => { setShowNewSectionInput(true); setTimeout(() => newSectionInputRef.current?.focus(), 0) }}
+            className="h-7 px-2.5 rounded-md bg-surface0 border border-surface1 text-subtext1 text-[11px] font-semibold flex items-center gap-1 hover:bg-surface1 transition-colors focus-ring"
+            title="New section"
+          >
+            <span className="font-extrabold">+</span> Section
+          </button>
+        </div>
 
-        {/* Fills whatever height the panel got. Previously a second hard-coded
-            `calc(60vh - 40px)`, which had to be kept in step with the panel cap
-            AND with the search box's real height by hand. In the cards / find
-            views this holds only the empty state and the new-section input;
-            the view below owns the scrolling list. */}
-        <div className={savedConfigsView === 'list' ? 'px-2 space-y-0.5 overflow-y-auto pb-2 flex-1 min-h-0' : 'px-2 space-y-0.5 shrink-0'}>
+        {/* The scrolling launcher list — sections, groups, loose configs. */}
+        <div className="px-2 space-y-0.5 overflow-y-auto pb-2 flex-1 min-h-0">
         {configs.length === 0 && !showNewSectionInput && (
           <div className="text-xs text-overlay0 text-center py-4">
             No saved configs.<br />Click + to create one.
@@ -935,7 +801,6 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           </div>
         )}
 
-        {savedConfigsView === 'list' && (<>
         {/* Sectioned configs */}
         {sectionData.map(({ section, groups: sectionGroups, looseConfigs }) => (
           <div key={section.id} className="mb-1">
@@ -1021,40 +886,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           />
         )}
         {unsectionedUngroupedConfigs.map(renderConfigRow)}
-        </>)}
       </div>
-        {/* #362: the two alternative layouts, chosen in Settings -> General.
-            Both own their search box; the inline new-section input and the
-            empty state below stay with the panel. */}
-        {savedConfigsView === 'cards' && (
-          <SavedConfigsCards
-            configs={configs}
-            groups={groups}
-            sections={sections}
-            runningIds={runningIds}
-            onLaunch={launchFromConfig}
-            onLaunchMany={launchMany}
-            onContextMenu={handleConfigContextMenu}
-            focusRequest={configPanelFocusRequest}
-          />
-        )}
-        {savedConfigsView === 'find' && (
-          <SavedConfigsFind
-            configs={configs}
-            groups={groups}
-            sections={sections}
-            runningIds={runningIds}
-            onLaunch={launchFromConfig}
-            onLaunchMany={launchMany}
-            onEdit={setEditingConfig}
-            onDelete={(c) => handleDeleteConfig(c.id)}
-            onContextMenu={handleConfigContextMenu}
-            focusRequest={configPanelFocusRequest}
-          />
-        )}
-
-      </div>{/* end overlay */}
-      </div>{/* end relative hover wrapper */}
+      </div>
+      )}{/* end Saved tab */}
 
       {/* Config context menu */}
       {contextMenuConfig && (
@@ -1106,14 +940,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         />
       )}
 
-      {/* Pinned Configs — below config panel */}
-      <PinnedConfigsPanel
-        configs={configs.filter(c => c.pinned)}
-        onLaunch={(config) => launchFromConfig(config)}
-      />
-
-      {/* Active Sessions */}
-      <div className="p-3 flex items-center justify-between border-t border-surface0 mt-2">
+      {/* ── Running tab: the live sessions (rows untouched by design). The old
+          always-below PinnedConfigsPanel retired — Quick Start (launch-only,
+          collapsible) takes its place at the top of this tab. ── */}
+      {panelTab === 'running' && (<>
+      <div className="p-3 flex items-center justify-between" data-testid="running-tab">
         <span className="flex items-center gap-1.5">
           <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Active Sessions</span>
           <span className="text-[10px] text-overlay0">{sessions.length}</span>
@@ -1286,10 +1117,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           unsectionedUngroupedSessions.map(renderSessionRow)
         )}
       </div>
+      </>)}{/* end Running tab */}
 
-      {/* Ask Conductor, docked below the session list. Sibling of the scroller
-          (which is the only flex-1 child), so it stays pinned to the bottom
-          however long the list gets. */}
+      {/* Ask Conductor, docked below the session list. Sibling of the scrollers
+          (each tab's scroller is that tab's only flex-1 child), so it stays
+          pinned to the bottom whichever tab is active. */}
       <AskConductorDock
         onOpened={() => onViewChange('sessions')}
         isActive={currentView === 'sessions' && !!askSession && activeSessionId === askSession.id}
