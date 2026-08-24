@@ -600,6 +600,38 @@ describe('a request the frame never acknowledged', () => {
   })
 })
 
+describe('the redesigned chrome (item C)', () => {
+  it('leads with the mode as the title, with a keel line', async () => {
+    await renderPane('on')
+    // A 'design' version reads as MOCKUP MODE (plan/uat are the other two).
+    const word = container.querySelector('[data-testid="canvas-mode-word"]')
+    expect(word?.textContent).toBe('MOCKUP MODE')
+    expect(word?.getAttribute('data-canvas-mode')).toBe('design')
+    expect(container.querySelector('[data-testid="canvas-mode-keel"]')).not.toBeNull()
+  })
+
+  it('presents Inspect / Sketch / Region as tool chips, Inspect active in browse', async () => {
+    await renderPane('on')
+    expect(container.querySelector('[data-testid="canvas-tool-inspect"]')?.getAttribute('aria-pressed')).toBe('true')
+    expect(container.querySelector('[data-testid="canvas-tool-sketch"]')?.getAttribute('aria-pressed')).toBe('false')
+    expect(container.querySelector('[data-testid="canvas-tool-region"]')?.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('moves the active chip to Sketch when the pointer goes to the glass', async () => {
+    await renderPane('on')
+    await act(async () => useCanvasStore.getState().setInteractionMode(SID, 'draw'))
+    expect(container.querySelector('[data-testid="canvas-tool-inspect"]')?.getAttribute('aria-pressed')).toBe('false')
+    expect(container.querySelector('[data-testid="canvas-tool-sketch"]')?.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('carries the X-ray setting inside the Inspect group', async () => {
+    await renderPane('stealth')
+    const chips = container.querySelector('[data-testid="canvas-tool-chips"]')!
+    // The x-ray group is a descendant of the tool chips, not a separate control.
+    expect(chips.querySelector('[data-testid="canvas-xray-mode"]')).not.toBeNull()
+  })
+})
+
 describe('the header switch', () => {
   it('offers exactly three segments, with the current one pressed', async () => {
     await renderPane('stealth')

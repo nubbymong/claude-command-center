@@ -29,6 +29,7 @@ import {
   CanvasVersion,
   MAX_CANVAS_TITLE_CHARS,
   ReclaimableCanvas,
+  artifactRunContaining,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { deriveInstallKey } from '../install-secret'
@@ -546,6 +547,16 @@ interface CanvasRecord extends CanvasState {
    */
   cwd?: string
   conversationUuid?: string
+  /**
+   * The next version number to mint — a MONOTONIC high-water mark (item C,
+   * phase 5). Without it, `nextVersionId` derives the next id from `max(existing
+   * ids) + 1`, so deleting the LATEST artifact would let a later render reuse a
+   * deleted id — resurrecting a version the user permanently removed. This
+   * counter never decreases on a delete, so a deleted id is never reissued.
+   * Absent on records written before this: healed to `max(id) + 1` on load,
+   * which is exactly the old behaviour for a canvas that has never deleted.
+   */
+  nextVersion?: number
 }
 
 /**
@@ -778,6 +789,10 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   // (it means what absence means), so a future writer spelling ready-ness as
   // draft:false cannot silently destroy versions on load.
   if (ver.draft !== undefined && typeof ver.draft !== 'boolean') return false
+  // `archived` (item C, phase 5) is a BOOLEAN or absent, same posture as
+  // `draft`: a hand-edited truthy string must not survive into a field the
+  // history projection reads.
+  if (ver.archived !== undefined && typeof ver.archived !== 'boolean') return false
   // A hand-edited record must not smuggle a traversing/colon/device `entry`
   // past the live-render normalizer (the empty-path + SPA branches serve the
   // entry WITHOUT re-running the URL segment filter). distRoot containment is
@@ -857,6 +872,19 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     }
   }
 
+  // The monotonic version high-water mark (item C, phase 5). Healed to at least
+  // `max(surviving id) + 1` so it can never mint an id that already exists, and
+  // never below a value the file already recorded — a delete persists a counter
+  // ABOVE the survivors precisely so the deleted ids are not reissued, and that
+  // must survive a reload. A non-integer or too-low value is repaired UP, never
+  // trusted down.
+  const maxId = versions.reduce((m, v) => {
+    const n = Number.parseInt(v.id.slice(1), 10)
+    return Number.isFinite(n) && n > m ? n : m
+  }, 0)
+  const rawNext = (r as { nextVersion?: unknown }).nextVersion
+  const nextVersion = Number.isInteger(rawNext) && (rawNext as number) > maxId ? (rawNext as number) : maxId + 1
+
   // Built field by field, not spread from what was on disk.
   //
   // The MAC is the envelope rather than part of the record, so it has to come
@@ -877,6 +905,7 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     ...(r.title !== undefined ? { title: r.title } : {}),
     versions,
     activeVersionId,
+    nextVersion,
     ...(awaitingReview ? { awaitingReview } : {}),
   }
 }
@@ -1026,16 +1055,17 @@ export function getAgentCanvasStateForSession(sessionId: string): CanvasState | 
   return getCanvasStateForSession(sessionId)
 }
 
-/** The next linear version id: one past the highest number already present.
- *  Identical to `length + 1` for a contiguous list, and correct for one with a
- *  gap (a version dropped by sanitizeRecord). */
-function nextVersionId(versions: CanvasVersion[]): string {
+/** The next linear version NUMBER for a record with no counter yet: one past
+ *  the highest already present. The healing floor for a pre-counter record and
+ *  for a brand-new canvas; once a record has `nextVersion`, that is used
+ *  instead (it can sit ABOVE this after a delete). */
+function nextVersionNumber(versions: CanvasVersion[]): number {
   let max = 0
   for (const v of versions) {
     const n = Number.parseInt(v.id.slice(1), 10)
     if (Number.isFinite(n) && n > max) max = n
   }
-  return `v${max + 1}`
+  return max + 1
 }
 
 /**
@@ -1199,12 +1229,14 @@ export function renderVersion(
   // canvas state is created or mutated — a rejected render leaves nothing
   // behind (no empty canvas, no half-written version).
   const canvasId = existing?.canvasId ?? randomId()
-  // Highest existing number + 1, not `length + 1`. A record loaded from disk may
-  // legitimately have gaps now that sanitizeRecord drops individual versions
-  // ([v1, v3] has length 2), and `length + 1` would mint a SECOND 'v3' — two
-  // versions with one serve key. A superseding draft (or the promote of one)
-  // keeps the id it already holds.
-  const versionId = reuseLatest ? latest!.id : nextVersionId(existing?.versions ?? [])
+  // The next number from the MONOTONIC counter, not `max(existing) + 1`. A
+  // record loaded from disk always carries `nextVersion` (healed in
+  // sanitizeRecord to at least max+1), and a delete leaves it ABOVE the
+  // survivors — so a deleted id is never reissued. A brand-new canvas (no
+  // `existing`) starts at 1. A superseding draft (or the promote of one) keeps
+  // the id it already holds and mints nothing.
+  const mintNum = existing?.nextVersion ?? nextVersionNumber(existing?.versions ?? [])
+  const versionId = reuseLatest ? latest!.id : `v${mintNum}`
   const createdAt = nextRenderStamp()
   let version: CanvasVersion
 
@@ -1310,6 +1342,9 @@ export function renderVersion(
     ...(title && (comparable || !base.title) ? { title } : {}),
     versions: reuseLatest ? [...base.versions.slice(0, -1), version] : [...base.versions, version],
     activeVersionId: versionId,
+    // Advance the high-water mark only when a NEW id was minted — a superseding
+    // draft reuses its id and must not burn a number. Never goes backwards.
+    nextVersion: reuseLatest ? (base.nextVersion ?? mintNum) : mintNum + 1,
     ...(awaitingReview ? { awaitingReview } : {}),
   }
   persist(nextRecord)
@@ -1902,6 +1937,187 @@ export function deleteCanvas(canvasId: string): boolean {
     emitChanged({ ...record, activeVersionId: null })
   }
   return record !== undefined || outcome === 'removed'
+}
+
+/**
+ * Archive (or un-archive) the ARTIFACT a version belongs to (item C, phase 5).
+ *
+ * Reversible and non-destructive: it only sets the `archived` flag on every
+ * version of the artifact run, which moves it into the muted Archived history
+ * group. Nothing on disk is removed and no review note is touched. Keyed by
+ * canvasId (the pane passes its own), and it no-ops safely when the version or
+ * its run is not found.
+ */
+export function setArtifactArchived(canvasId: string, versionId: string, archived: boolean): CanvasState | null {
+  if (!CANVAS_ID_RE.test(canvasId) || !CANVAS_VERSION_ID_RE.test(versionId)) return null
+  const record = getRecord(canvasId)
+  if (!record) return null
+  const run = artifactRunContaining(record.versions, versionId)
+  if (!run) return toState(record)
+  const runIds = new Set(run.map((v) => v.id))
+  const nextRecord: CanvasRecord = {
+    ...record,
+    versions: record.versions.map((v) => {
+      if (!runIds.has(v.id)) return v
+      if (archived) return { ...v, archived: true as const }
+      const { archived: _drop, ...rest } = v
+      return rest
+    }),
+  }
+  persist(nextRecord)
+  canvases.set(canvasId, nextRecord)
+  emitChanged(nextRecord)
+  return toState(nextRecord)
+}
+
+/**
+ * Permanently delete the ARTIFACT a version belongs to (item C, phase 5): its
+ * versions, their rendered files on disk, and — via the caller, which holds the
+ * review store — their review notes. Irreversible, and DURABLE: the record's
+ * monotonic `nextVersion` counter is preserved untouched, so a later render
+ * mints a fresh id and never resurrects a deleted one.
+ *
+ * Returns the deleted version ids so the IPC handler can drop their reviews
+ * (the review store imports this one, so the cross-store step lives with the
+ * caller, exactly as `deleteCanvas` + `dropReviewsForCanvas` do). Refuses to
+ * delete the canvas's ONLY artifact — that is "delete the canvas", which the
+ * library owns and which has its own confirmation and path discipline.
+ *
+ * Path safety mirrors `deleteCanvas`: the canvas directory is realpath-confirmed
+ * to sit directly in the canvas root before anything is removed, and each
+ * version directory is removed through `removeTreeNoFollow`, which unlinks a
+ * planted junction AS a link rather than descending it.
+ */
+export function deleteArtifact(
+  canvasId: string,
+  versionId: string,
+): { ok: true; deletedVersionIds: string[] } | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' } {
+  if (!CANVAS_ID_RE.test(canvasId) || !CANVAS_VERSION_ID_RE.test(versionId)) return { ok: false, reason: 'not-found' }
+  const record = getRecord(canvasId)
+  if (!record) return { ok: false, reason: 'not-found' }
+  const run = artifactRunContaining(record.versions, versionId)
+  if (!run) return { ok: false, reason: 'not-found' }
+  // Deleting every version is deleting the canvas — a different operation, with
+  // its own confirmation, in the library. Refuse rather than silently emptying
+  // the pane to an id-less husk.
+  const readyCount = record.versions.filter((v) => !v.draft).length
+  const runReady = run.filter((v) => !v.draft).length
+  if (runReady >= readyCount) return { ok: false, reason: 'only-artifact' }
+
+  // Top-of-tree confinement (same as deleteCanvas): the canvas directory must
+  // realpath to <root>/<id> before any version directory under it is removed.
+  const root = canvasRoot()
+  let realRoot: string
+  try {
+    realRoot = fs.realpathSync(root)
+  } catch {
+    realRoot = root
+  }
+  let realCanvasDir: string | null = null
+  try {
+    realCanvasDir = fs.realpathSync(canvasDir(canvasId))
+    const expected = path.join(realRoot, canvasId)
+    const same =
+      process.platform === 'win32'
+        ? realCanvasDir.toLowerCase() === expected.toLowerCase()
+        : realCanvasDir === expected
+    if (!same) return { ok: false, reason: 'unsafe' }
+  } catch (err) {
+    // ENOENT — the canvas dir is already gone; the record mutation below is
+    // still the durable truth, so continue with no file removal. Any other
+    // error means we cannot vouch for the path and must not remove under it.
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return { ok: false, reason: 'unsafe' }
+    realCanvasDir = null
+  }
+
+  const deletedVersionIds = run.map((v) => v.id)
+  const deleted = new Set(deletedVersionIds)
+  // `versions/` itself is lstat'd as a FINAL component (which the OS does not
+  // follow), so a reparse point planted there is caught as a link and ALL file
+  // removal is skipped — the deterministic form of the intermediate-junction
+  // escape, closed the same way `deleteCanvas`'s walker catches it (ADR-009
+  // round 2). This is checked once, up front, before any per-version work.
+  if (realCanvasDir !== null) {
+    try {
+      const vst = fs.lstatSync(path.join(canvasDir(canvasId), 'versions'))
+      if (vst.isSymbolicLink() || !vst.isDirectory()) {
+        console.warn('[canvas-store] refusing version-file removal: versions/ is not a plain directory')
+        realCanvasDir = null // skip all file removal; the metadata delete still lands
+      }
+    } catch (err) {
+      // No versions dir at all — nothing to remove. Skip file removal; the
+      // record mutation below is still the durable truth.
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') realCanvasDir = null
+    }
+  }
+  // Realpath EACH version directory to its expected slot before removing it —
+  // not just the canvas dir. `removeTreeNoFollow` refuses to follow the FINAL
+  // path component, but the OS resolves an intermediate reparse point (a
+  // junction planted at `<canvasDir>/versions`) transparently, so starting the
+  // walk below the checked boundary let a `versions` junction redirect the
+  // per-version delete out of the canvas dir entirely (ADR-009, this change).
+  // The identity check catches exactly that: a redirected version dir realpaths
+  // somewhere other than `<realCanvasDir>/versions/<id>` and is skipped. Its
+  // metadata still goes below, so the delete is durable; only the out-of-tree
+  // unlink is refused. Skipped whole when the canvas dir was already gone.
+  if (realCanvasDir !== null) {
+    for (const id of deletedVersionIds) {
+      const dir = versionDir(canvasId, id)
+      try {
+        const realDir = fs.realpathSync(dir)
+        const expectedDir = path.join(realCanvasDir, 'versions', id)
+        const same =
+          process.platform === 'win32'
+            ? realDir.toLowerCase() === expectedDir.toLowerCase()
+            : realDir === expectedDir
+        if (!same) {
+          console.warn(`[canvas-store] refusing to remove ${dir}: it resolves outside the canvas dir`)
+          continue
+        }
+      } catch (err) {
+        // ENOENT — nothing there to remove. Anything else — cannot vouch for
+        // the path; leave it rather than risk removing out of tree.
+        if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+          console.warn('[canvas-store] artifact version dir not removable:', err)
+        }
+        continue
+      }
+      try {
+        removeTreeNoFollow(dir)
+      } catch (err) {
+        // Best-effort: the record mutation is what makes the delete durable, so
+        // a file that will not unlink leaves an orphan, never a resurrected
+        // version.
+        console.warn('[canvas-store] artifact version files left behind:', err)
+      }
+    }
+  }
+
+  const remaining = record.versions.filter((v) => !deleted.has(v.id))
+  // Repoint the active version if it was in the deleted run — to the newest
+  // survivor, the same fallback sanitizeRecord uses.
+  const activeVersionId =
+    record.activeVersionId && deleted.has(record.activeVersionId)
+      ? (remaining[remaining.length - 1]?.id ?? null)
+      : record.activeVersionId
+  // The review-needed stamp goes if it pointed at a deleted version.
+  const awaitingReview =
+    record.awaitingReview && deleted.has(record.awaitingReview.versionId) ? undefined : record.awaitingReview
+
+  const nextRecord: CanvasRecord = {
+    ...record,
+    versions: remaining,
+    activeVersionId,
+    // The counter is NEVER lowered — this is the durability guarantee.
+    nextVersion: record.nextVersion,
+    ...(awaitingReview ? { awaitingReview } : {}),
+  }
+  // A dropped awaitingReview must actually be removed, not left from the spread.
+  if (!awaitingReview) delete (nextRecord as { awaitingReview?: unknown }).awaitingReview
+  persist(nextRecord)
+  canvases.set(canvasId, nextRecord)
+  emitChanged(nextRecord)
+  return { ok: true, deletedVersionIds }
 }
 
 export function adoptCanvasForSession(

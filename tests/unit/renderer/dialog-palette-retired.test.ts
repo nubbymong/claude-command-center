@@ -108,6 +108,11 @@ const NOT_A_DIALOG: Record<string, string> = {
     'a pane, not a dialog: its inset-0 layers are the canvas/iframe/marquee ' +
     'layers, and its onClose props are passed DOWN to the dialogs it renders ' +
     '(CanvasLibrary, CanvasEmptyState), which are policed on their own',
+  'components/CanvasHistoryControl.tsx':
+    'pane chrome, not a dialog: the version stepper + History dropdown that ' +
+    'lives in AgentCanvasPane\'s toolbar (role="menu" is the dropdown). Its ' +
+    'palette classes are the mode/kind colours (mauve = plan, blue = mockup) ' +
+    'shared with that excluded chrome, which have no semantic token',
   'components/TerminalView.tsx':
     'queries [role="dialog"][aria-modal="true"] to detect whether a dialog is ' +
     'open; it does not render one',

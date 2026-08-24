@@ -46,38 +46,37 @@ export default function CanvasFiledStrip({ sessionId }: { sessionId: string }) {
 
   if (!notice) return null
 
+  // The provenance sentence (item C): one line, on the app's own surface, that
+  // says what was filed and offers the way back — not a coloured banner. The
+  // filed canvas KEEPS its notes; Reopen brings the whole thing back, so the
+  // line says "still there", not "gone".
   return (
     <div
       data-testid="canvas-filed-strip"
-      className="flex-none flex items-center gap-2 px-3 py-1.5 text-[11.5px]"
+      className="flex-none flex items-center gap-2 px-3.5 py-1.5 text-[12px]"
       style={{
-        background: 'color-mix(in srgb, var(--color-yellow) 10%, transparent)',
-        borderBottom: '1px solid color-mix(in srgb, var(--color-yellow) 30%, transparent)',
+        background: 'var(--surface-stage)',
+        borderBottom: '1px solid var(--border-subtle)',
         color: 'var(--text-secondary)',
       }}
     >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--color-yellow)' }} aria-hidden className="shrink-0">
-        <path d="M4 4h5l2 3h9v13H4z" />
-      </svg>
+      <span className="shrink-0" style={{ color: 'var(--text-muted)' }} aria-hidden>▣</span>
       <span className="min-w-0 truncate">
-        <b style={{ color: 'var(--text-primary)', fontWeight: 620 }}>{notice.title || 'That canvas'}</b>
-        {' was filed'}
+        {'I filed '}
+        <b style={{ color: 'var(--text-primary)', fontWeight: 620 }}>{notice.title || 'that canvas'}</b>
+        {' to the Library when the agent started a different subject'}
         {describeLoss(notice.openNotes, notice.draftNotes)}
-        {' — the agent started a different subject.'}
+        {'.'}
       </span>
       <button
         onClick={() => void goBack()}
         disabled={busy}
         data-testid="canvas-filed-back"
-        className="ml-auto shrink-0 px-2 py-0.5 rounded-md text-[11px] font-semibold focus-ring disabled:opacity-50"
-        style={{
-          color: 'var(--color-yellow)',
-          background: 'color-mix(in srgb, var(--color-yellow) 13%, transparent)',
-          border: '1px solid color-mix(in srgb, var(--color-yellow) 42%, transparent)',
-        }}
+        className="ml-auto shrink-0 text-[11.5px] font-semibold focus-ring rounded px-1 disabled:opacity-50"
+        style={{ color: 'var(--brand)' }}
         title="Bring that canvas back into this session"
       >
-        Go back
+        Reopen it
       </button>
       <button
         onClick={() => dismissFiled(sessionId)}
@@ -92,13 +91,14 @@ export default function CanvasFiledStrip({ sessionId }: { sessionId: string }) {
   )
 }
 
-/** The unsubmitted notes lead when there are any: those are work the user has
- *  not handed over, and they are the reason this strip exists. */
+/** What went with the filing, in the "still there" framing — the notes are
+ *  preserved on the filed canvas and Reopen brings them back. Unsubmitted notes
+ *  lead when there are any: those are work the user has not handed over. */
 function describeLoss(openNotes: number, draftNotes: number): string {
   if (draftNotes > 0 && openNotes > 0) {
-    return ` — ${draftNotes} unsubmitted and ${openNotes} open note${openNotes === 1 ? '' : 's'} went with it`
+    return ` — its ${draftNotes} unsubmitted and ${openNotes} open note${openNotes === 1 ? '' : 's'} are still there`
   }
-  if (draftNotes > 0) return ` — ${draftNotes} unsubmitted note${draftNotes === 1 ? '' : 's'} went with it`
-  if (openNotes > 0) return ` — ${openNotes} open note${openNotes === 1 ? '' : 's'} went with it`
+  if (draftNotes > 0) return ` — its ${draftNotes} unsubmitted note${draftNotes === 1 ? '' : 's'} ${draftNotes === 1 ? 'is' : 'are'} still there`
+  if (openNotes > 0) return ` — its ${openNotes} open note${openNotes === 1 ? '' : 's'} ${openNotes === 1 ? 'is' : 'are'} still there`
   return ''
 }

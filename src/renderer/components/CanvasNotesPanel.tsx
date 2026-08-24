@@ -33,6 +33,10 @@ interface Props {
    * user closes the round themselves).
    */
   isActive: boolean
+  /** Hide the panel (item C): the page takes the full width and a thin rail
+   *  keeps the count and the way back. Owned by the pane, since the panel does
+   *  not control its own column; optional so other mounts need not wire it. */
+  onHide?: () => void
 }
 
 /**
@@ -127,6 +131,10 @@ const SCOPE_BADGE: Record<Annotation['scope'], string> = {
   general: 'text-overlay1',
 }
 
+/** Reading order of the panel's sections (item C): what needs the user, then
+ *  what is with the agent, then what is closed. */
+const SECTION_ORDER: Record<ReviewGroup['waitingOn'], number> = { you: 0, agent: 1, closed: 2 }
+
 /**
  * The label of a locked target, attributed.
  *
@@ -151,7 +159,7 @@ function FocusLabel({ focus, className }: { focus: FocusObject; className?: stri
  * from earlier reviews, the composer for the note being written, the draft
  * list, and Submit. GitHub-review vocabulary throughout.
  */
-export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onReturnToTerminal, isActive }: Props) {
+export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onReturnToTerminal, isActive, onHide }: Props) {
   const state = useCanvasReviewStore((s) => s.bySessionId[sessionId])
   const refresh = useCanvasReviewStore((s) => s.refresh)
   const markAddressedSeen = useCanvasReviewStore((s) => s.markAddressedSeen)
@@ -215,9 +223,20 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     (reviewId: string) => `${state?.canvasId ?? ''}:${reviewId}`,
     [state?.canvasId],
   )
+  /** The default fold state (item C, seen-aware). Closed rounds fold. A round
+   *  waiting on the USER folds ONLY once every addressed note in it has been
+   *  seen — never before: keeping an unseen round expanded is what puts the
+   *  addressed note bodies on screen so the user actually sees them before the
+   *  dwell timer marks them seen (the release the canvas_verdict barrier reads).
+   *  A round with the agent stays open. */
+  const defaultCollapsedFor = useCallback((g: ReviewGroup): boolean => {
+    if (g.waitingOn === 'closed') return true
+    if (g.waitingOn === 'you') return g.notes.every((n) => n.state !== 'addressed' || n.userSawAddressed === true)
+    return false
+  }, [])
   const isGroupCollapsed = useCallback(
-    (g: ReviewGroup) => groupOverride[overrideKey(g.review.id)] ?? g.waitingOn === 'closed',
-    [groupOverride, overrideKey],
+    (g: ReviewGroup) => groupOverride[overrideKey(g.review.id)] ?? defaultCollapsedFor(g),
+    [groupOverride, overrideKey, defaultCollapsedFor],
   )
   const toggleGroup = useCallback((reviewId: string, defaultCollapsed: boolean) => {
     const key = overrideKey(reviewId)
@@ -673,12 +692,56 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     [sessionId, checklistStatus, setPanelHighlight],
   )
 
+  // Sections (item C): reviews grouped by who they wait on, in reading order —
+  // what NEEDS YOU first, then what is WITH THE AGENT, then what is CLOSED. The
+  // list is otherwise unchanged (newest-first within each section, same cards),
+  // so a header is injected wherever the section changes.
+  const sortedGroups = [...groups].sort((a, b) => SECTION_ORDER[a.waitingOn] - SECTION_ORDER[b.waitingOn])
+  const sectionCounts = {
+    you: groups.filter((g) => g.waitingOn === 'you').length,
+    agent: groups.filter((g) => g.waitingOn === 'agent').length,
+    closed: groups.filter((g) => g.waitingOn === 'closed').length,
+  }
+  const sectionHeader = (kind: ReviewGroup['waitingOn']) => {
+    const meta =
+      kind === 'you'
+        ? { label: 'NEEDS YOU', color: 'var(--color-peach)', count: sectionCounts.you }
+        : kind === 'agent'
+          ? { label: 'WITH THE AGENT', color: 'var(--color-blue)', count: sectionCounts.agent }
+          : { label: 'CLOSED', color: 'var(--text-muted)', count: sectionCounts.closed }
+    return (
+      <div
+        className="flex items-center gap-2 px-3 pt-2.5 pb-1 text-[10.5px] font-bold tracking-[0.09em]"
+        style={{ color: meta.color }}
+        data-testid={`review-section-${kind}`}
+      >
+        {meta.label}
+        <span
+          className="text-[10px] font-semibold rounded-full px-1.5 leading-[1.4]"
+          style={{ background: meta.color, color: 'var(--surface-chrome)' }}
+        >
+          {meta.count}
+        </span>
+      </div>
+    )
+  }
+
   return (
-    <div ref={panelRef} className="w-80 shrink-0 border-l border-surface0 bg-mantle flex flex-col min-h-0 text-[12px]">
-      <div className="px-3 py-2 border-b border-surface0 flex items-center gap-2 shrink-0">
+    <div ref={panelRef} className="w-80 shrink-0 border-l border-[var(--border-subtle)] bg-[var(--surface-panel)] flex flex-col min-h-0 text-[12px]">
+      <div className="px-3 py-2 border-b border-[var(--border-subtle)] flex items-center gap-2 shrink-0 bg-[var(--surface-chrome)]">
         <span className="font-medium text-subtext1">Review</span>
         {draftReview && <span className="text-overlay1">draft · {draftNotes.length} note{draftNotes.length === 1 ? '' : 's'}</span>}
         <div className="flex-1" />
+        {onHide && (
+          <button
+            onClick={onHide}
+            data-testid="canvas-panel-hide"
+            className="shrink-0 text-[11px] rounded px-1.5 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-ring"
+            title="Hide the review panel — the page widens; a thin rail keeps the count and brings it back"
+          >
+            hide ⟩
+          </button>
+        )}
       </div>
 
       {/* ── Close out everything waiting on YOU ──
@@ -725,7 +788,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto min-h-0">
+      <div className="flex-1 overflow-y-auto min-h-0 canvas-review-scroll">
         {/* ── First-use primer — until the first note exists or it's dismissed ── */}
         {!helpDismissed && draftNotes.length === 0 && (state?.reviews.length ?? 0) === 0 && (
           <div className="mx-3 mt-2 mb-1 rounded border border-mauve/40 bg-mauve/5 px-3 py-2.5">
@@ -753,13 +816,16 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
             open note under a single heading lost the round: nothing said a whole
             review was finished, there was no way to close one, and a note from
             this morning sat between two from ten minutes ago. */}
-        {groups.map((group) => {
+        {sortedGroups.map((group, i) => {
           const collapsed = isGroupCollapsed(group)
+          const showHeader = i === 0 || sortedGroups[i - 1].waitingOn !== group.waitingOn
           return (
-          <div key={group.review.id} className="border-b border-surface0" data-testid="review-group" data-review={group.review.id}>
+          <React.Fragment key={group.review.id}>
+          {showHeader && sectionHeader(group.waitingOn)}
+          <div className="border-b border-[var(--border-subtle)]" data-testid="review-group" data-review={group.review.id}>
             <button
               type="button"
-              onClick={() => toggleGroup(group.review.id, group.waitingOn === 'closed')}
+              onClick={() => toggleGroup(group.review.id, defaultCollapsedFor(group))}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface0/40 focus-ring"
               aria-expanded={!collapsed}
             >
@@ -1020,6 +1086,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
               </div>
             )}
           </div>
+          </React.Fragment>
           )
         })}
 

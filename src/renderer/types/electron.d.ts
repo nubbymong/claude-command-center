@@ -389,6 +389,12 @@ export interface ElectronAPI {
     listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ReclaimableCanvas[]>
     listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) => Promise<CanvasLibraryEntry[]>
     deleteCanvas: (args: { canvasId: string }) => Promise<{ ok: boolean }>
+    /** Archive/unarchive one artifact (item C): reversible, returns the state. */
+    archiveArtifact: (args: { canvasId: string; versionId: string; archived: boolean }) => Promise<{ ok: boolean; state: CanvasState | null }>
+    /** Permanently delete one artifact, its versions and their review notes. */
+    deleteArtifact: (args: { canvasId: string; versionId: string }) => Promise<
+      { ok: true; deletedVersions: number; notesDeleted: number } | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' }
+    >
     /** The user reclaims a named canvas — the only path that moves ownership. */
     reclaim: (args: {
       sessionId: string

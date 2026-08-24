@@ -282,6 +282,21 @@ body {
   background: var(--color-surface2);
 }
 
+/* Slim, self-coloured scrollbar for the canvas review panel (item C): a
+   transparent track so it sits on the panel's own surface rather than the
+   global mantle track, and a narrower thumb. */
+.canvas-review-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.canvas-review-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.canvas-review-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-surface2) 85%, transparent);
+  border-radius: 3px;
+}
+
 /* Title bar drag region */
 .titlebar-drag {
   -webkit-app-region: drag;

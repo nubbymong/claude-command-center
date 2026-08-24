@@ -45,6 +45,39 @@ export interface CanvasVersion {
    *  or counts — and the next draft render SUPERSEDES it in place rather than
    *  appending. Absent = ready (every version written before this field). */
   draft?: true
+  /** ARCHIVED (item C, phase 5): the user tucked this version's artifact into
+   *  the muted Archived history group — out of the way, recoverable. Set on
+   *  every version of the artifact together; a hand-edited value must be the
+   *  literal `true` (validated on load, like `draft`). Absent = live. */
+  archived?: true
+}
+
+/**
+ * The version runs that the two-level history (item C) groups into artifacts —
+ * shared so MAIN (archive/delete) and the RENDERER (the picker) agree on
+ * exactly which versions form one artifact. A run breaks when the KIND changes
+ * OR the archived state changes: two same-mode runs on either side of an
+ * archive are different artifacts, and a fresh render after an archived run
+ * starts a new LIVE artifact rather than joining the archived one. Drafts are
+ * the agent's own loop (#366) and never appear.
+ */
+export function artifactRuns(versions: readonly CanvasVersion[]): CanvasVersion[][] {
+  const runs: CanvasVersion[][] = []
+  for (const v of versions) {
+    if (v.draft) continue
+    const last = runs[runs.length - 1]
+    if (last && last[0].mode === v.mode && !!last[0].archived === !!v.archived) last.push(v)
+    else runs.push([v])
+  }
+  return runs
+}
+
+/** The version run (artifact) containing `versionId`, or null. */
+export function artifactRunContaining(versions: readonly CanvasVersion[], versionId: string): CanvasVersion[] | null {
+  for (const run of artifactRuns(versions)) {
+    if (run.some((v) => v.id === versionId)) return run
+  }
+  return null
 }
 
 /** The round the user owes a first review on: set when the agent deliberately
