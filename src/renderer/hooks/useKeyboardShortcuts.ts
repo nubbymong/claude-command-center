@@ -116,7 +116,9 @@ export function useKeyboardShortcuts(
     // Capture a glyph-corruption diagnostic (#374): the moment a user sees
     // characters go missing while backgrounds stay, this saves the always-on
     // atlas event ring + a window screenshot and reveals them to share. Fixed
-    // action, not per-session, so it fires whatever the active view — and on
+    // action, not per-session, so it fires whatever the active view (one
+    // residual gap: focus inside the browser pane's own WebContents keeps keys
+    // there — only Escape is forwarded) — and on
     // the CAPTURE phase, because the natural moment to press it is with the
     // corrupted terminal FOCUSED, where xterm's own key handling stops the
     // event before a bubble listener ever hears it (the beta.17 "Ctrl+Alt+G
@@ -128,6 +130,12 @@ export function useKeyboardShortcuts(
       // Same onboarding-overlay suppression as handleKeyDown: a diagnostic
       // capture under the covered shell would screenshot the overlay.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
+      // The Settings shortcut recorder / Test box must WIN over this capture
+      // listener, or the chord can never be re-recorded or tested (pressing it
+      // in the Test box would fire a real capture — disk write + Explorer
+      // reveal — instead of reporting a match). Those boxes carry
+      // data-shortcut-capture; yield to them.
+      if ((e.target as Element | null)?.closest?.('[data-shortcut-capture]')) return
       const shortcuts = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
       if (matchesShortcut(e, shortcuts.captureGlyphDiagnostic) && !e.getModifierState?.('AltGraph')) {
         e.preventDefault()

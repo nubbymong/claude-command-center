@@ -1420,6 +1420,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
           <div
             ref={inputRef}
             tabIndex={0}
+            data-shortcut-capture
             className="px-2.5 py-1 bg-crust border border-blue/50 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center outline-none animate-pulse"
             onKeyDown={(e) => {
               e.preventDefault()
@@ -1445,6 +1446,7 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
           <div
             ref={testRef}
             tabIndex={0}
+            data-shortcut-capture
             className="px-2.5 py-1 bg-crust border border-green/40 rounded-md text-[11px] text-text font-mono min-w-[120px] text-center outline-none"
             onKeyDown={(e) => {
               e.preventDefault()

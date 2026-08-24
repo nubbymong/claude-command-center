@@ -59,24 +59,43 @@ function chord(altGraph = false): KeyboardEvent {
 }
 
 describe('Ctrl+Alt+G glyph capture survives xterm (#374, beta.17 silence)', () => {
-  it('fires even when a bubble-phase handler (xterm) stops propagation', () => {
-    // Simulate xterm's textarea: a bubble listener on an inner element that
-    // stops the event cold — the shape that silenced the shortcut.
+  it('fires even when xterm-style handling stops propagation at its textarea', () => {
+    // Simulate xterm's textarea: its real listener is capture-phase on the
+    // textarea and cancels handled chords (preventDefault + stopPropagation)
+    // — the shape that silenced the shortcut for a focused terminal.
     const term = document.createElement('textarea')
     container.appendChild(term)
-    term.addEventListener('keydown', (e) => { e.stopPropagation(); e.preventDefault() })
+    term.addEventListener('keydown', (e) => { e.stopPropagation(); e.preventDefault() }, true)
     act(() => { term.dispatchEvent(chord()) })
     expect(captureGlyphDiagnostic).toHaveBeenCalledTimes(1)
     expect(captureGlyphDiagnostic).toHaveBeenCalledWith('s1')
   })
 
   it('still fires on a plain window keydown (no terminal focused)', () => {
+    // Regression guard, not a phase discriminator: a window-dispatched event
+    // reaches window listeners in either phase. Test 1 is the one that fails
+    // on a bubble-only binding.
     act(() => { window.dispatchEvent(chord()) })
     expect(captureGlyphDiagnostic).toHaveBeenCalledTimes(1)
   })
 
-  it('the AltGr guard holds: a real AltGraph chord types text, never captures', () => {
-    act(() => { window.dispatchEvent(chord(true)) })
+  it('yields to the Settings shortcut recorder / Test box', () => {
+    // Those boxes carry data-shortcut-capture and must WIN, or the chord can
+    // never be re-recorded or tested — pressing it in the Test box would fire
+    // a real capture (disk write + Explorer reveal) instead of matching.
+    const box = document.createElement('div')
+    box.setAttribute('data-shortcut-capture', '')
+    container.appendChild(box)
+    act(() => { box.dispatchEvent(chord()) })
     expect(captureGlyphDiagnostic).not.toHaveBeenCalled()
+  })
+
+  it('the AltGr guard holds: a real AltGraph chord passes through untouched', () => {
+    const e = chord(true)
+    act(() => { window.dispatchEvent(e) })
+    expect(captureGlyphDiagnostic).not.toHaveBeenCalled()
+    // Load-bearing now the listener runs BEFORE xterm: the event must reach
+    // the terminal unprevented so AltGr text entry still types.
+    expect(e.defaultPrevented).toBe(false)
   })
 })
