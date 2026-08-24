@@ -76,7 +76,7 @@ export default function SessionContextMenu({
             style={{ color: 'var(--text-primary)' }}
             data-testid="session-ctx-pin"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-yellow" aria-hidden>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--status-warning)' }} aria-hidden>
               <path d="M13 2L3 14h7l-1 8 11-13h-8z" />
             </svg>
             {pinMenuLabel(configPinned)}

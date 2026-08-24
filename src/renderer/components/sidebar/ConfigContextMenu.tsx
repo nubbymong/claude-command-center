@@ -72,7 +72,7 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
         style={{ color: 'var(--text-primary)' }}
         data-testid="ctx-pin"
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-yellow">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style={{ color: 'var(--status-warning)' }}>
           <path d="M13 2L3 14h7l-1 8 11-13h-8z" />
         </svg>
         {pinMenuLabel(isPinned)}
