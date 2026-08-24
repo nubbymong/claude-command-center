@@ -823,7 +823,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         <span className="block text-xs text-[var(--text-primary)] font-medium">Detachable (persistent remote session)</span>
                         <span className="block text-[11px] text-[var(--text-secondary)] leading-snug">
                           Keeps the remote session alive if the connection drops, so reconnecting
-                          resumes it in place. Needs tmux on the host — CCC installs a lightweight
+                          resumes it in place. Needs tmux on the host — the app installs a lightweight
                           copy if it's missing (you'll see it happen). Turn off to run a plain
                           session that resumes with --continue instead.
                         </span>

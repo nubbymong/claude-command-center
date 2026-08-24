@@ -364,7 +364,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'fix', description: 'Voice dictation and text-expander tools now work in terminals. Tools of that kind type into whatever is focused by copying text and sending Ctrl+V, so they were silently doing nothing in a Claude session — the same root cause as above.' },
       { type: 'fix', description: 'Settings -> Check for Updates can now install the update it finds. It used to only report that one existed, leaving you to hunt for the small Update pill in the bottom bar. Open sessions are still saved before the app restarts.' },
       { type: 'fix', description: 'Copying with Ctrl+Shift+C no longer fires for every open terminal at once, and no longer competes with a focused text box.' },
-      { type: 'fix', description: 'Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in the app tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.' },
+      { type: 'fix', description: 'Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.' },
       { type: 'fix', description: 'Session, config, team and agent-template identifiers are now generated with a cryptographic random number generator instead of a predictable one. Existing items keep the identifiers they already have and nothing needs migrating.' },
       { type: 'improvement', description: 'Updated bundled dependencies to close 12 published security advisories, plus two more found while checking. No feature changes.' },
       { type: 'fix', description: 'The in-app updater now verifies every installer it downloads against the SHA-256 checksums published with the release, and refuses to run one that does not match. Previously it launched whatever it downloaded, with no client-side check on any platform. If a download fails the check it is discarded and you are told why, rather than the update silently doing nothing.' },
@@ -374,10 +374,10 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '2.1.0-beta.2',
     date: '2026-07-29',
-    highlights: 'Resuming your work is far easier to read, your own Claude hooks now run in the app sessions, and each config can set its own permission mode and CLI arguments.',
+    highlights: 'Resuming your work is far easier to read, your own Claude hooks now run in the app\'s sessions, and each config can set its own permission mode and CLI arguments.',
     changes: [
       { type: 'improvement', description: 'The Resume Conversation picker shown in the terminal is much easier to scan: it now fills the width of your window instead of being capped at a narrow column, leads each entry with a recognisable title (your session\'s work name when you renamed it, otherwise Claude\'s own summary of the conversation), and strips the slash-command markup that used to crowd out the actual content. Conversations that only showed "(continued session)" now show what they were about.' },
-      { type: 'fix', description: 'Hooks you configure yourself now run in the app sessions. The app was replacing the whole hooks block with its own, so hooks from your user settings or a project\'s .claude/settings.json never fired in a the app session even though they worked in a plain Claude session in the same folder. They are now merged, so a the app session behaves like a normal Claude session in that folder, plus the app\'s own hooks.' },
+      { type: 'fix', description: 'Hooks you configure yourself now run in the app\'s sessions. The app was replacing the whole hooks block with its own, so hooks from your user settings or a project\'s .claude/settings.json never fired in an app session even though they worked in a plain Claude session in the same folder. They are now merged, so an app session behaves like a normal Claude session in that folder, plus the app\'s own hooks.' },
       { type: 'feature', description: 'Each config can now set its own Claude permission mode and extra command-line arguments, instead of every session sharing one global setting.' },
       { type: 'feature', description: 'Sessions can be given a work name (renamed) independently of their config, so restored windows are recognisable at a glance. The startup "Resume previous sessions?" card is wider, lists each session on two lines so long names are not chopped, shows a count, and has a refresh button that picks up a session you restarted after launch.' },
       { type: 'feature', description: 'A development instance can now run alongside your installed copy with fully separate data, ports, and an amber DEV badge, so testing a change can no longer disturb your day-to-day sessions.' },
@@ -508,9 +508,9 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.5.40',
     date: '2026-06-13',
-    highlights: 'Fix: conversations recorded outside a the app session now show up in the resume picker.',
+    highlights: 'Fix: conversations recorded outside an app session now show up in the resume picker.',
     changes: [
-      { type: 'fix', description: 'The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside the app sessions). Existing conversations are backfilled on the next scan.' },
+      { type: 'fix', description: 'The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside the app\'s sessions). Existing conversations are backfilled on the next scan.' },
     ],
   },
   {

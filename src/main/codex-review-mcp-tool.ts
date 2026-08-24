@@ -314,7 +314,7 @@ export function registerCodexReviewTool(
     'codex_review',
     'Get a Codex (gpt-5.5) code review on a change. Use when the user asks for a "Codex review" or "second opinion". The mode arg picks scope: "working" for uncommitted changes (no extra arg), "range" for a git revision range (provide range, e.g. "HEAD~1..HEAD"), "paths" for specific files (provide paths). Optional focus directs Codex\'s attention. Returns the review markdown plus a residual rate-limit footer so you can self-govern usage. The Conductor session id is resolved automatically from the MCP connection -- no need to pass it.',
     {
-      cccSessionId: zMod.string().optional().describe('Ignored — the CCC session id is resolved from the MCP connection and cannot be set here. Leave unset.'),
+      cccSessionId: zMod.string().optional().describe('Ignored — the session id is resolved from the MCP connection and cannot be set here. Leave unset.'),
       mode: zMod.enum(['working', 'range', 'paths']).describe('Scope: working diff, git range, or explicit paths'),
       range: zMod.string().optional().describe('Git range (e.g. "HEAD~1..HEAD") -- required when mode === "range"'),
       paths: zMod.array(zMod.string()).optional().describe('File paths -- required when mode === "paths"'),

@@ -382,14 +382,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Voice dictation and text-expander tools now work in terminals. Tools of that kind type into whatever is focused by copying text and sending Ctrl+V, so they were silently doing nothing in a Claude session — the same root cause as above.
 - Settings -> Check for Updates can now install the update it finds. It used to only report that one existed, leaving you to hunt for the small Update pill in the bottom bar. Open sessions are still saved before the app restarts.
 - Copying with Ctrl+Shift+C no longer fires for every open terminal at once, and no longer competes with a focused text box.
-- Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in the app tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.
+- Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.
 - Session, config, team and agent-template identifiers are now generated with a cryptographic random number generator instead of a predictable one. Existing items keep the identifiers they already have and nothing needs migrating.
 - The in-app updater now verifies every installer it downloads against the SHA-256 checksums published with the release, and refuses to run one that does not match. Previously it launched whatever it downloaded, with no client-side check on any platform. If a download fails the check it is discarded and you are told why, rather than the update silently doing nothing.
 - Fixed a flaw in how a session's conversation transcript was located. A machine you opened an SSH session to could name a file outside the Claude projects folder — a private key or token elsewhere on your drive — and the app would open it and read its contents into that session's local transcript store. Transcript locations are now confined to the projects folder, and the status information a remote host sends is checked before it is used. Exploiting this needed you to connect to a host the attacker controlled, and the file contents stayed on your own machine. Advisory GHSA-hw7c-g5pw-w725.
 
 ## [2.1.0-beta.2] - 2026-07-29
 
-> Resuming your work is far easier to read, your own Claude hooks now run in the app sessions, and each config can set its own permission mode and CLI arguments.
+> Resuming your work is far easier to read, your own Claude hooks now run in the app's sessions, and each config can set its own permission mode and CLI arguments.
 
 ### Added
 - Each config can now set its own Claude permission mode and extra command-line arguments, instead of every session sharing one global setting.
@@ -400,7 +400,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Resume Conversation picker shown in the terminal is much easier to scan: it now fills the width of your window instead of being capped at a narrow column, leads each entry with a recognisable title (your session's work name when you renamed it, otherwise Claude's own summary of the conversation), and strips the slash-command markup that used to crowd out the actual content. Conversations that only showed "(continued session)" now show what they were about.
 
 ### Fixed
-- Hooks you configure yourself now run in the app sessions. The app was replacing the whole hooks block with its own, so hooks from your user settings or a project's .claude/settings.json never fired in a the app session even though they worked in a plain Claude session in the same folder. They are now merged, so a the app session behaves like a normal Claude session in that folder, plus the app's own hooks.
+- Hooks you configure yourself now run in the app's sessions. The app was replacing the whole hooks block with its own, so hooks from your user settings or a project's .claude/settings.json never fired in an app session even though they worked in a plain Claude session in the same folder. They are now merged, so an app session behaves like a normal Claude session in that folder, plus the app's own hooks.
 - The text cursor is visible and blinking again in shell terminals on Windows and macOS.
 - Startup no longer freezes for roughly half a minute: two long synchronous sweeps during boot now run in the background.
 - macOS: fixed the "A keychain cannot be found to store" error at launch, which was caused by the app redirecting your home directory away from your login keychain.
@@ -529,10 +529,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.40] - 2026-06-13
 
-> Fix: conversations recorded outside a the app session now show up in the resume picker.
+> Fix: conversations recorded outside an app session now show up in the resume picker.
 
 ### Fixed
-- The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside the app sessions). Existing conversations are backfilled on the next scan.
+- The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside the app's sessions). Existing conversations are backfilled on the next scan.
 
 ## [1.5.39] - 2026-06-13
 

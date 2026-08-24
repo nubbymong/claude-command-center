@@ -428,7 +428,7 @@ function rootAdvice(
     return `the two folders this session ${verb} from are ${project} and ${worktree} (this session’s own worktree). Use whichever you are working in.`
   }
   if (project && roots.worktreePending) {
-    return `this session ${verb} from ${project}. If you claimed a session worktree, CCC set one aside for you and it is ${verb === 'reads' ? 'read' : 'served'} as soon as it exists.`
+    return `this session ${verb} from ${project}. If you claimed a session worktree, the app set one aside for you and it is ${verb === 'reads' ? 'read' : 'served'} as soon as it exists.`
   }
   if (project) return `this session ${verb} from ${project}.`
   if (worktree) return `this session ${verb} from ${worktree} (this session’s own worktree).`

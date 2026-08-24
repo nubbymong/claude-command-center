@@ -101,7 +101,7 @@ export default function LoggingConsentPrompt() {
             AI Code Conductor indexes Claude's own conversation transcripts so you can browse and review them here.
             Your conversations always live in Claude's own files (
             <code className="text-xs font-mono">~/.claude/projects</code>
-            ) — CCC only reads them to build a local index.
+            ) — the app only reads them to build a local index.
           </p>
           <DialogCallout tone="warning">
             <strong className="font-medium" style={{ color: 'var(--text-primary)' }}>Note:</strong> Transcripts may include
@@ -112,7 +112,7 @@ export default function LoggingConsentPrompt() {
             <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
               Settings &rarr; Security
             </span>
-            . Turning it off only stops CCC from indexing; it does not delete or move your conversations.
+            . Turning it off only stops the app from indexing; it does not delete or move your conversations.
           </p>
         </DialogBody>
 
