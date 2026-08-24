@@ -15,8 +15,9 @@
 // Checks
 //   1. MILESTONE  The GitHub milestone titled exactly <version> (e.g.
 //      "2.1.0-beta.17") must exist and have no open issue without the
-//      `excluded` or `in-beta` label (an open in-beta issue is done for this
-//      release — the lifecycle keeps it open until promotion auto-closes it).
+//      `excluded`, `in-beta`, or `in-release` label (an open in-beta or
+//      in-release issue is done for this release — the lifecycle keeps it
+//      open until promotion auto-closes it).
 //      Pull requests on the milestone are ignored (they are
 //      not book-of-work items). A MISSING milestone fails closed: the gate
 //      cannot tell "nothing outstanding" from "nobody made the list".
@@ -59,17 +60,20 @@ export const EXIT_CANNOT_EVALUATE = 2
 
 export const EXCLUDED_LABEL = 'excluded'
 /**
- * The issue-lifecycle label (CONTRIBUTING.md): applied when an issue's fix
- * MERGES TO BETA, removed never — the issue stays open until promotion to
- * main auto-closes it. The gate TRUSTS that label here: an open `in-beta`
- * issue is treated as done for the release being cut, because refusing on it
- * would make the gate and the lifecycle jointly forbid every cut. The label
- * is applied by hand on the beta merge, so this is a trust in the lifecycle
+ * The issue-lifecycle labels (CONTRIBUTING.md): `in-beta` is applied when an
+ * issue's fix MERGES TO BETA; `in-release` replaces it when an rc cut rolls
+ * the issue into a release candidate (scripts/roll-issues-into-release.mjs).
+ * Either way the issue stays open until promotion to main auto-closes it.
+ * The gate TRUSTS these labels here: an open `in-beta`/`in-release` issue is
+ * treated as done for the release being cut, because refusing on it would
+ * make the gate and the lifecycle jointly forbid every cut. `in-beta` is
+ * applied by hand on the beta merge, so this is a trust in the lifecycle
  * being followed, not a verification that a fix merged — the same trust
  * `excluded` already extends. Counted separately so the output still says
  * what is riding along.
  */
 export const IN_BETA_LABEL = 'in-beta'
+export const IN_RELEASE_LABEL = 'in-release'
 export const DEFAULT_REGISTRY_PATH = path.join(ROOT, 'resources', 'model-registry.json')
 // Lives under resources/ (not scripts/fixtures/) so the packaged app can read
 // the SAME snapshot: the Sentinel model check imports it at runtime (#385).
@@ -92,9 +96,10 @@ function labelNames(labels) {
  *        open issues ON that milestone (already filtered by the API; re-filtered here defensively)
  * @param {string} [input.excludedLabel]
  * @param {string} [input.inBetaLabel]
+ * @param {string} [input.inReleaseLabel]
  * @returns {{ ok: boolean, reason: string|null, milestone: object|null, blocking: Array<{number:number,title:string,labels:string[]}>, excluded: Array<{number:number,title:string}>, shipped: Array<{number:number,title:string}> }}
  */
-export function evaluateMilestone({ version, milestones, issues, excludedLabel = EXCLUDED_LABEL, inBetaLabel = IN_BETA_LABEL }) {
+export function evaluateMilestone({ version, milestones, issues, excludedLabel = EXCLUDED_LABEL, inBetaLabel = IN_BETA_LABEL, inReleaseLabel = IN_RELEASE_LABEL }) {
   const title = String(version || '').trim()
   const milestone = (milestones || []).find((m) => m && String(m.title).trim() === title) || null
   if (!milestone) {
@@ -113,9 +118,10 @@ export function evaluateMilestone({ version, milestones, issues, excludedLabel =
     const labels = labelNames(it.labels)
     if (labels.includes(excludedLabel)) excluded.push({ number: it.number, title: it.title })
     // The lifecycle keeps a DONE issue open until promotion, marked `in-beta`
-    // when its fix merged to beta. That is the release being cut, so it is
-    // shipping work, not outstanding work.
-    else if (labels.includes(inBetaLabel)) shipped.push({ number: it.number, title: it.title })
+    // when its fix merged to beta and `in-release` once an rc cut rolled it
+    // in. Either way it is the release being cut — shipping work, not
+    // outstanding work.
+    else if (labels.includes(inBetaLabel) || labels.includes(inReleaseLabel)) shipped.push({ number: it.number, title: it.title })
     else blocking.push({ number: it.number, title: it.title, labels })
   }
   blocking.sort((a, b) => a.number - b.number)
@@ -123,7 +129,7 @@ export function evaluateMilestone({ version, milestones, issues, excludedLabel =
   shipped.sort((a, b) => a.number - b.number)
   return {
     ok: blocking.length === 0,
-    reason: blocking.length === 0 ? null : `${blocking.length} open issue(s) on milestone "${title}" without the "${excludedLabel}" or "${inBetaLabel}" label`,
+    reason: blocking.length === 0 ? null : `${blocking.length} open issue(s) on milestone "${title}" without the "${excludedLabel}", "${inBetaLabel}", or "${inReleaseLabel}" label`,
     milestone, blocking, excluded, shipped,
   }
 }
@@ -198,7 +204,7 @@ export function formatReport({ version, repo, milestoneResult, modelsResult, exp
     } else {
       out.push(`  FAIL  milestone: ${mr.reason}`)
       for (const i of mr.blocking) out.push(`          #${i.number}  ${i.title}${i.labels.length ? `  [${i.labels.join(', ')}]` : ''}`)
-      if ((mr.shipped || []).length) out.push(`          (in-beta, shipping in this release: ${mr.shipped.map((i) => `#${i.number}`).join(' ')})`)
+      if ((mr.shipped || []).length) out.push(`          (in-beta/in-release, shipping in this release: ${mr.shipped.map((i) => `#${i.number}`).join(' ')})`)
       if (mr.excluded.length) out.push(`          (excluded, not counted: ${mr.excluded.map((i) => `#${i.number}`).join(' ')})`)
       if (mr.milestone) out.push(`          Merge their fixes (label "${IN_BETA_LABEL}"), close them, move them to a later milestone, or have the owner label them "${EXCLUDED_LABEL}".`)
     }

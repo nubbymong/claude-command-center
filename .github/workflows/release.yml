@@ -27,8 +27,8 @@ jobs:
   # ── Release gate (#375, #385) ──
   # Refuse the cut before a single installer is built: the GitHub milestone
   # titled after package.json's version must have no open issue without the
-  # `excluded` or `in-beta` label (an open in-beta issue is done for this
-  # release; a missing milestone fails closed), and
+  # `excluded`, `in-beta`, or `in-release` label (an open in-beta/in-release
+  # issue is done for this release; a missing milestone fails closed), and
   # resources/model-registry.json must cover every model in Anthropic's Claude
   # Code model configuration article (scripts/fixtures/ holds the expected set).
   # Every build job `needs` this one. Read-only: GITHUB_TOKEN with issues:read.
@@ -883,3 +883,34 @@ jobs:
                        echo "::error::Repair the assets and re-run, or publish by hand: gh release edit \"$TAG\" --draft=false"
                        exit 1 ;;
           esac
+
+  # ── Roll issues into the rc (in-beta → in-release) ──
+  # An rc cut moves its milestone's open `in-beta` issues one lifecycle step
+  # forward: `in-release` — the fix is in a cut release candidate, and closes
+  # on promotion to stable (CONTRIBUTING.md -> "Issue lifecycle"). Runs only
+  # after a successful `-rc.N` publish; on a rolling re-release of the same rc
+  # it is a no-op (already-rolled issues are skipped). Deliberately a separate
+  # LAST job: a relabel failure is a loud red X, but it blocks nothing — the
+  # release is already live when this runs. A job-level `if` with no status
+  # function still implies success(), so a failed publish never rolls labels.
+  roll-rc:
+    needs: [build-windows, release]
+    if: ${{ contains(needs.build-windows.outputs.tag, '-rc.') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Relabel the milestone's in-beta issues in-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          TAG="${{ needs.build-windows.outputs.tag }}"
+          node scripts/roll-issues-into-release.mjs --version "${TAG#v}"
