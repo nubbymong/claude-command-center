@@ -12,6 +12,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import {
+  clearAwaitingReview,
   deleteCanvas,
   getCanvasStateForSession,
   listAllCanvases,
@@ -271,6 +272,15 @@ const reviewCloseOutSchema = z
   .object({ canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
   .strict()
 
+/** Dismiss-all sweeps the ASKING session's own canvases. The tile list feeds
+ *  the same library read `canvas:listAll` uses and can only mark rows as
+ *  on-screen — it can never widen the sweep beyond rows owned by (or active
+ *  for) sessionId, and the project scope is resolved in main from the session
+ *  id, never accepted as a path. */
+const reviewDismissAllSchema = z
+  .object({ sessionId: sessionIdSchema, openTileSessionIds: openTileSessionIdsSchema })
+  .strict()
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -415,6 +425,47 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     // null is "could not read the store", which must not render as "cleared 0".
     if (!result) return { ok: false as const }
     return { ok: true as const, closed: result.closed, reviews: result.reviews }
+  })
+
+  // "Clear my whole canvas queue" — the Canvas button's right-click. One sweep
+  // over exactly the rows the queue number counts (owned by or active for this
+  // session, per totalsFromEntries): rounds already waiting on the user close
+  // out per canvas, and a ready-marked render still awaiting its first review
+  // stops being owed. Scope is resolved HERE (cwd from main's own spawn
+  // record), so the renderer cannot aim the sweep at another project, and a
+  // canvas some other session owns is never touched. Composed from the two
+  // existing user-driven mutations rather than a new store path — this handler
+  // is the one place that already holds both stores (same reason listAll joins
+  // counts here).
+  ipcMain.handle(IPC.CANVAS_REVIEW_DISMISS_ALL, async (_e, args: unknown) => {
+    const { sessionId, openTileSessionIds } = reviewDismissAllSchema.parse(args)
+    const cwd = canvasCwdForSession(sessionId)
+    const entries = listAllCanvases(openTileSessionIds ?? [], cwd, sessionId)
+    let closedNotes = 0
+    let closedReviews = 0
+    let clearedAwaiting = 0
+    let unreadable = 0
+    for (const e of entries) {
+      if (!e.ownedByThisSession && !e.isActiveForThisSession) continue
+      // Same blunt rule the queue's own `unknown` uses: an owned row is always
+      // swept, so an undefined count means the review store could not be read
+      // — reported, never presented as "nothing to clear".
+      if (e.openReviewCount === undefined) unreadable++
+      // Close out only where the label counted work (verdictRounds > 0), so
+      // the gesture clears precisely what the number promised.
+      if (e.verdictRounds && e.verdictRounds > 0) {
+        const res = closeOutCanvasReviews(e.canvasId)
+        if (res) {
+          closedNotes += res.closed
+          closedReviews += res.reviews.length
+        }
+      }
+      if (e.awaitingReview) {
+        clearAwaitingReview(e.canvasId)
+        clearedAwaiting++
+      }
+    }
+    return { closedNotes, closedReviews, clearedAwaiting, unreadable }
   })
 
   onReviewChanged((event) => {
