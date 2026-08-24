@@ -164,15 +164,21 @@ describe('WhatsNewV2Step — multi-page showcase', () => {
       const real: any = await importOriginal()
       return { ...real, showcasesFor: () => real.SHOWCASES_21.filter((p: any) => p.id === 'canvas') }
     })
-    const fresh = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
-    act(() => {
-      root.render(<fresh.WhatsNewV2Step onNext={() => { nexts++ }} ctaLabel="Continue" hint="h" />)
-    })
-    expect(container.querySelector('[data-ux-id="see-canvas"]')).not.toBeNull()
-    expect(container.querySelector('[data-ux-id="see-watchdog"]')).toBeNull()
-    expect(container.querySelector('[data-ux-id="see-oneRow"]')).toBeNull()
-    vi.doUnmock('../../../src/renderer/onboarding/showcase-pages')
-    vi.resetModules()
+    try {
+      const fresh = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
+      act(() => {
+        root.render(<fresh.WhatsNewV2Step onNext={() => { nexts++ }} ctaLabel="Continue" hint="h" />)
+      })
+      expect(container.querySelector('[data-ux-id="see-canvas"]')).not.toBeNull()
+      expect(container.querySelector('[data-ux-id="see-watchdog"]')).toBeNull()
+      expect(container.querySelector('[data-ux-id="see-oneRow"]')).toBeNull()
+    } finally {
+      // resetModules does NOT clear the mock registry — without the unmock a
+      // failed assertion above would leak the reduced page set into the next
+      // test's fresh import and fail it with a misleading message.
+      vi.doUnmock('../../../src/renderer/onboarding/showcase-pages')
+      vi.resetModules()
+    }
   })
 
   it('a line with no showcase collapses to the old single-page step', async () => {

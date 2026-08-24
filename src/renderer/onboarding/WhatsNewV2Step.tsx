@@ -232,10 +232,10 @@ export function WhatsNewV2Step({
           {isLast ? hint : `Page ${pageIx + 1} of ${total}.`}
         </span>
         {total > 1 && (
-          <div className="wn-foot-dots" data-ux-id="whatsnew-dots" aria-label="What's New pages">
-            <button type="button" className={`wn-fdot${pageIx === 0 ? ' on' : ''}`} onClick={() => setPageIx(0)} aria-label="Summary" aria-current={pageIx === 0 ? 'true' : undefined} data-ux-id="whatsnew-dot-summary"><i /></button>
+          <div className="wn-foot-dots" data-ux-id="whatsnew-dots" role="group" aria-label="What's New pages">
+            <button type="button" className={`wn-fdot${pageIx === 0 ? ' on' : ''}`} onClick={() => setPageIx(0)} aria-label="Summary" aria-current={pageIx === 0 ? 'page' : undefined} data-ux-id="whatsnew-dot-summary"><i /></button>
             {showcases.map((p, ix) => (
-              <button type="button" key={p.id} className={`wn-fdot${pageIx === ix + 1 ? ' on' : ''}`} onClick={() => setPageIx(ix + 1)} aria-label={p.heading} aria-current={pageIx === ix + 1 ? 'true' : undefined} data-ux-id={`whatsnew-dot-${p.id}`}><i /></button>
+              <button type="button" key={p.id} className={`wn-fdot${pageIx === ix + 1 ? ' on' : ''}`} onClick={() => setPageIx(ix + 1)} aria-label={p.heading} aria-current={pageIx === ix + 1 ? 'page' : undefined} data-ux-id={`whatsnew-dot-${p.id}`}><i /></button>
             ))}
           </div>
         )}

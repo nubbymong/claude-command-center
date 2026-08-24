@@ -388,7 +388,7 @@
 .ob-root .sc-pt b { color: var(--text-primary); font-weight: 650; }
 .ob-root .sc-dot { background: var(--status-warning); }
 .ob-root .sc-where { margin: 22px 0 0; font-size: 12px; color: var(--text-secondary); border-left: 2px solid var(--border-strong); padding-left: 10px; }
-.ob-root .sc-where b { color: var(--text-secondary); }
+
 .ob-root .sc-art { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; }
 @media (max-width: 900px) { .ob-root .sc-page { flex-direction: column; gap: 22px; } .ob-root .sc-copy { flex: none; } }
 
