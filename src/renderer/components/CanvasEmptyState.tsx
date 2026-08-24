@@ -98,6 +98,7 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   // before this the only way to be rid of an old canvas from here was to
   // open the library. Same two-step confirm + IPC as the library's delete.
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const refreshCanvas = useCanvasStore((s) => s.refresh)
 
@@ -150,6 +151,7 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   )
 
   const removeCanvas = useCallback(async (canvasId: string) => {
+    setDeleting(canvasId)
     setDeleteError(null)
     try {
       const res = await window.electronAPI.canvas.deleteCanvas({ canvasId })
@@ -158,6 +160,7 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
     } catch {
       setDeleteError('That canvas could not be deleted.')
     } finally {
+      setDeleting(null)
       setConfirmingDelete(null)
     }
   }, [])
@@ -441,7 +444,7 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
                     </div>
                     <button
                       onClick={() => void reclaim(c.canvasId)}
-                      disabled={reclaiming !== null}
+                      disabled={reclaiming !== null || deleting !== null}
                       className={GHOST_CLASS}
                       title="Reopen this canvas in this session, with its version history and notes"
                     >
@@ -450,16 +453,18 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
                     {confirmingDelete === c.canvasId ? (
                       <button
                         onClick={() => void removeCanvas(c.canvasId)}
-                        disabled={reclaiming !== null}
+                        disabled={reclaiming !== null || deleting !== null}
                         className="shrink-0 rounded-md px-3 py-2 text-[12px] font-medium bg-[color-mix(in_srgb,var(--status-danger)_15%,transparent)] border border-[color-mix(in_srgb,var(--status-danger)_50%,transparent)] text-[var(--status-danger)] hover:bg-[color-mix(in_srgb,var(--status-danger)_25%,transparent)] disabled:opacity-40 transition-colors focus-ring"
                         data-testid="canvas-reclaim-confirm-delete"
                       >
-                        Delete {c.versionCount} version{c.versionCount === 1 ? '' : 's'}
+                        {deleting === c.canvasId
+                          ? 'Deleting…'
+                          : `Delete ${c.versionCount} version${c.versionCount === 1 ? '' : 's'}`}
                       </button>
                     ) : (
                       <button
                         onClick={() => { setConfirmingDelete(c.canvasId); setDeleteError(null) }}
-                        disabled={reclaiming !== null}
+                        disabled={reclaiming !== null || deleting !== null}
                         className={`${GHOST_CLASS} hover:!text-[var(--status-danger)]`}
                         title="Permanently delete this canvas — its versions and review notes go with it"
                         data-testid="canvas-reclaim-delete"

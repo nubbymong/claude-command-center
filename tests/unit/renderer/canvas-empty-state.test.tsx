@@ -27,6 +27,7 @@ vi.mock('../../../src/renderer/components/ExcalidrawPane', () => ({
 const ptyWriteMock = vi.fn()
 const listReclaimableMock = vi.fn(async () => [] as unknown[])
 const reclaimMock = vi.fn(async () => ({ ok: true, state: null }))
+const deleteCanvasMock = vi.fn(async () => ({ ok: true }))
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
   pty: { ...((globalThis as any).window?.electronAPI?.pty ?? {}), write: ptyWriteMock },
@@ -34,6 +35,7 @@ const reclaimMock = vi.fn(async () => ({ ok: true, state: null }))
     ...((globalThis as any).window?.electronAPI?.canvas ?? {}),
     listReclaimable: listReclaimableMock,
     reclaim: reclaimMock,
+    deleteCanvas: deleteCanvasMock,
   },
 }
 
@@ -226,6 +228,126 @@ describe('reclaiming an earlier canvas (the user is the authorization)', () => {
       await Promise.resolve()
     })
     expect(container.textContent).not.toContain('Pick up where you left off')
+  })
+})
+
+describe('deleting a canvas from the front page (#452)', () => {
+  // The front page has no top bar, so before this the reclaim rows offered
+  // Reopen and nothing else — an old canvas could only be removed by opening
+  // the library. Same guarantees as the library's delete: permanent, two-step
+  // confirmed, and the second click names what will go.
+  const candidate = {
+    canvasId: 'abc123def456abc123def456',
+    versionCount: 3,
+    lastRenderedAt: '2026-08-13T19:15:53.893Z',
+    cwd: 'C:\\proj',
+    sameProject: true,
+    conversationShortId: '8c25bfdc',
+  }
+
+  const testid = (id: string): HTMLButtonElement | null =>
+    container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)
+
+  async function renderWith(candidates: unknown[]): Promise<void> {
+    listReclaimableMock.mockResolvedValueOnce(candidates)
+    render()
+    await act(async () => {
+      await Promise.resolve()
+    })
+  }
+
+  beforeEach(() => {
+    deleteCanvasMock.mockReset()
+    deleteCanvasMock.mockResolvedValue({ ok: true })
+    reclaimMock.mockClear()
+  })
+
+  it('arms on the first click, deletes only on the confirm — and drops the row', async () => {
+    await renderWith([candidate])
+
+    click(testid('canvas-reclaim-delete'))
+    // Armed, not done: the confirm names what will go, nothing has been deleted.
+    expect(deleteCanvasMock).not.toHaveBeenCalled()
+    expect(testid('canvas-reclaim-confirm-delete')?.textContent).toBe('Delete 3 versions')
+
+    click(testid('canvas-reclaim-confirm-delete'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(deleteCanvasMock).toHaveBeenCalledTimes(1)
+    expect(deleteCanvasMock).toHaveBeenCalledWith({ canvasId: candidate.canvasId })
+    // The row is gone, and with it the whole section (it was the only one).
+    expect(container.textContent).not.toContain('Pick up where you left off')
+  })
+
+  it('keeps the row and shows the error when the delete is refused', async () => {
+    deleteCanvasMock.mockResolvedValueOnce({ ok: false })
+    await renderWith([candidate])
+
+    click(testid('canvas-reclaim-delete'))
+    click(testid('canvas-reclaim-confirm-delete'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(testid('canvas-reclaim-delete-error')?.textContent).toContain('could not be deleted')
+    expect(container.textContent).toContain('Pick up where you left off')
+    // Disarmed — a retry is a fresh, deliberate two-step.
+    expect(testid('canvas-reclaim-confirm-delete')).toBeNull()
+    expect(testid('canvas-reclaim-delete')).toBeTruthy()
+  })
+
+  it('treats a thrown IPC the same as a refusal', async () => {
+    deleteCanvasMock.mockRejectedValueOnce(new Error('ipc gone'))
+    await renderWith([candidate])
+
+    click(testid('canvas-reclaim-delete'))
+    click(testid('canvas-reclaim-confirm-delete'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(testid('canvas-reclaim-delete-error')?.textContent).toContain('could not be deleted')
+    expect(container.textContent).toContain('Pick up where you left off')
+  })
+
+  it('disables the row while the delete is in flight — no double-fire, no reclaim mid-delete', async () => {
+    let settle: (v: { ok: boolean }) => void = () => {}
+    deleteCanvasMock.mockImplementationOnce(
+      () => new Promise<{ ok: boolean }>((resolve) => { settle = resolve }),
+    )
+    await renderWith([candidate])
+
+    click(testid('canvas-reclaim-delete'))
+    click(testid('canvas-reclaim-confirm-delete'))
+    const confirm = testid('canvas-reclaim-confirm-delete')
+    expect(confirm?.disabled).toBe(true)
+    expect(confirm?.textContent).toBe('Deleting…')
+    expect((buttonByText('Reopen') as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => {
+      settle({ ok: true })
+      await Promise.resolve()
+    })
+    expect(deleteCanvasMock).toHaveBeenCalledTimes(1)
+    expect(container.textContent).not.toContain('Pick up where you left off')
+  })
+
+  it('arming another row disarms the first — one confirm at a time', async () => {
+    const sibling = { ...candidate, canvasId: 'def456abc123def456abc123', conversationShortId: '59596c8b' }
+    await renderWith([candidate, sibling])
+
+    const arms = container.querySelectorAll('[data-testid="canvas-reclaim-delete"]')
+    expect(arms).toHaveLength(2)
+    click(arms[0])
+    click(container.querySelector('[data-testid="canvas-reclaim-delete"]'))
+    expect(container.querySelectorAll('[data-testid="canvas-reclaim-confirm-delete"]')).toHaveLength(1)
+  })
+
+  it('is disabled while a reclaim is in flight', async () => {
+    reclaimMock.mockImplementationOnce(() => new Promise(() => {}))
+    await renderWith([candidate])
+
+    click(buttonByText('Reopen'))
+    expect(testid('canvas-reclaim-delete')?.disabled).toBe(true)
   })
 })
 
