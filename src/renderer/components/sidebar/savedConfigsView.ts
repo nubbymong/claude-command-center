@@ -23,7 +23,3 @@ export function runningConfigCounts(sessions: ReadonlyArray<Pick<Session, 'confi
   return counts
 }
 
-/** Ids only — kept for callers that need set semantics. */
-export function runningConfigIds(sessions: ReadonlyArray<Pick<Session, 'configId' | 'kind'>>): Set<string> {
-  return new Set(runningConfigCounts(sessions).keys())
-}

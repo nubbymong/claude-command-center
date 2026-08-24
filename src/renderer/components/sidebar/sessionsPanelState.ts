@@ -45,16 +45,15 @@ export function quickStartConfigs(configs: ReadonlyArray<TerminalConfig>): Termi
 }
 
 /**
- * Whether a config may be DELETED right now. Editing while running is fine —
- * a template edit only shapes FUTURE launches, which is now the whole point
- * of relaunch — but deleting the template out from under live sessions is
- * still refused: the Running rows and any relaunch would point at nothing.
+ * The reason shown wherever delete is refused for a running config. The
+ * guard itself lives at the two surfaces (ConfigRow's disabled button, the
+ * context menu's `running` prop) — deleting the template out from under live
+ * sessions would strand the Running rows and any relaunch. Editing while
+ * running IS allowed: a template edit shapes future launches — with the
+ * caveat that a LIVE session restarting after an SSH/terminal edit re-binds
+ * against the saved config (SessionDialog warns; see the 2026-08-24 relaunch
+ * fragment).
  */
-export function canDeleteConfig(configId: string, running: ReadonlyMap<string, number>): boolean {
-  return !running.get(configId)
-}
-
-/** The reason shown wherever delete is refused for a running config. */
 export const DELETE_WHILE_RUNNING_REASON = 'Running — close its sessions before deleting the config'
 
 /**

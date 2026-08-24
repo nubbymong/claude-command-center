@@ -1,29 +1,27 @@
-/**
- * Running-config detection (the surviving pure helper of the old #362 module;
- * the cards/find views and their helpers retired with the two-mode Sessions
- * panel). A config with a live session is "running"; the config-less Ask
- * session can never mark one.
- */
 import { describe, it, expect } from 'vitest'
-import { runningConfigIds } from '../../../src/renderer/components/sidebar/savedConfigsView'
+// Live-session counting for the sessions panel (owner revision 2026-08-24:
+// counts, not a set — the surfaces show HOW MANY and relaunch is allowed).
+import { runningConfigCounts } from '../../../src/renderer/components/sidebar/savedConfigsView'
 
-describe('runningConfigIds', () => {
-  it('collects the configIds of live sessions', () => {
-    const ids = runningConfigIds([
+describe('runningConfigCounts', () => {
+  it('counts sessions per config id', () => {
+    const c = runningConfigCounts([
+      { configId: 'a', kind: undefined },
       { configId: 'a', kind: undefined },
       { configId: 'b', kind: undefined },
-      { configId: 'a', kind: undefined }, // second session of the same config
-      { configId: undefined, kind: undefined }, // adopted/config-less
+      { configId: undefined, kind: undefined },
     ] as never)
-    expect([...ids].sort()).toEqual(['a', 'b'])
+    expect(c.get('a')).toBe(2)
+    expect(c.get('b')).toBe(1)
+    expect(c.size).toBe(2)
   })
 
-  it('skips the Ask session even when it somehow carries a configId', () => {
-    const ids = runningConfigIds([{ configId: 'a', kind: 'ask' }] as never)
-    expect(ids.size).toBe(0)
+  it('the Ask Conductor session never marks a config running', () => {
+    const c = runningConfigCounts([{ configId: 'a', kind: 'ask' }] as never)
+    expect(c.size).toBe(0)
   })
 
   it('is empty for no sessions', () => {
-    expect(runningConfigIds([]).size).toBe(0)
+    expect(runningConfigCounts([]).size).toBe(0)
   })
 })

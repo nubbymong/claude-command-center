@@ -189,8 +189,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     ;(tab === 'saved' ? savedTabRef : runningTabRef).current?.focus()
   }
   const [configSearchQuery, setConfigSearchQuery] = useState('')
-  // Configs with a live session: locked in the Saved list and excluded from
-  // launch-all. `sessions` already excludes the Ask session.
+  // Live-session counts per config: the row/Quick Start pills and the
+  // delete guard read these; launch-all skips anything counted (bring-up).
+  // `sessions` already excludes the Ask session.
   const runningCounts = useMemo(() => runningConfigCounts(sessions), [sessions])
   const [dragConfigId, setDragConfigId] = useState<string | null>(null)
   const [dragOverConfigId, setDragOverConfigId] = useState<string | null>(null)
@@ -343,7 +344,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
   const launchGroup = async (groupId: string) => {
     // Running configs are skipped (launchableInGroup): launch-all is bring-up
-    // spawn the duplicate the locked row exists to prevent.
+    // — it fills in what is missing and never silently doubles what runs.
     for (const config of launchableInGroup(configs, groupId, runningCounts)) {
       await launchFromConfig(config)
     }
@@ -446,8 +447,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   }
 
   const launchSection = async (sectionId: string) => {
-    // Running configs skipped for the same reason as launchGroup: no duplicate
-    // sessions behind the locked row's back.
+    // Running configs skipped for the same reason as launchGroup: bring-up
+    // fills in what is missing, never silently doubles what runs.
     for (const config of launchableInSection(configs, groups, sectionId, runningCounts)) {
       await launchFromConfig(config)
     }
@@ -1274,6 +1275,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           onConfirm={handleEditConfig}
           onCancel={() => setEditingConfig(null)}
           initial={editingConfig}
+          liveSessionCount={runningCounts.get(editingConfig.id) ?? 0}
         />
       )}
 

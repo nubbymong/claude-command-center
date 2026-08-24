@@ -11,7 +11,6 @@ import {
   resolveDefaultPanelTab,
   resolveQuickStartCollapsed,
   quickStartConfigs,
-  canDeleteConfig,
   DELETE_WHILE_RUNNING_REASON,
   pinMenuLabel,
   PIN_WHILE_RUNNING_HINT,
@@ -82,24 +81,8 @@ describe('quickStartConfigs — every pinned config, running or not', () => {
   })
 })
 
-describe('canDeleteConfig — the one surviving guard', () => {
-  it('refuses while sessions run and frees when they close', () => {
-    const running = runningConfigCounts([
-      { configId: 'a', kind: undefined },
-      { configId: 'a', kind: undefined },
-      { configId: undefined, kind: undefined },
-    ] as never)
-    expect(canDeleteConfig('a', running)).toBe(false)
-    expect(canDeleteConfig('b', running)).toBe(true)
-    expect(canDeleteConfig('a', new Map())).toBe(true)
-  })
-
-  it('an ask session blocks nothing (config-less by design)', () => {
-    const running = runningConfigCounts([{ configId: 'a', kind: 'ask' }] as never)
-    expect(canDeleteConfig('a', running)).toBe(true)
-  })
-
-  it('the refusal reason says what to do', () => {
+describe('the delete-refusal reason (the guard itself lives at the two surfaces)', () => {
+  it('says what to do', () => {
     expect(DELETE_WHILE_RUNNING_REASON).toMatch(/close/i)
     expect(DELETE_WHILE_RUNNING_REASON).toMatch(/delet/i)
   })

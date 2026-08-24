@@ -86,9 +86,14 @@ interface Props {
   onConfirm: (config: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => void
   onCancel: () => void
   initial?: Partial<TerminalConfig>
+  /** Live sessions of the config being edited (0 / absent = none). Edits only
+   *  shape FUTURE launches — and a live session that restarts after an
+   *  SSH/terminal change re-binds against the saved config, so the dialog
+   *  says so up front instead of letting a restart fail as a surprise. */
+  liveSessionCount?: number
 }
 
-export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
+export default function SessionDialog({ onConfirm, onCancel, initial, liveSessionCount = 0 }: Props) {
   const groups = useConfigStore((s) => s.groups)
   const addGroup = useConfigStore((s) => s.addGroup)
   const sections = useConfigStore((s) => s.sections)
@@ -576,6 +581,21 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         />
 
         <div className="px-[18px] pb-4 overflow-y-auto flex-1 min-h-0">
+
+          {isEdit && liveSessionCount > 0 && (
+            <div
+              className="mt-4 px-3 py-2 rounded-lg text-[11.5px] leading-snug"
+              style={{
+                color: 'var(--status-warning)',
+                background: 'color-mix(in srgb, var(--status-warning) 9%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--status-warning) 40%, transparent)',
+              }}
+              data-testid="edit-while-running-note"
+            >
+              {liveSessionCount === 1 ? 'A session launched from this config is running.' : `${liveSessionCount} sessions launched from this config are running.`}{' '}
+              They keep the settings they launched with; your edits apply to sessions started from now on. Restarting a live SSH session after changing its connection details will be refused.
+            </div>
+          )}
 
           {/* ── 1 · WHAT THIS LAUNCHER RUNS ── */}
           <div className="flex items-center gap-2 pt-4 mb-2">

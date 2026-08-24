@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The Quick Start / running-lock contract on BOTH context menus (design pass
 // 2026-08-24): the pin verb flips with the pinned flag; Edit/Delete disable
-// with reasons while the config runs; the deferral hint shows only when
+// with reasons while the config runs; the while-running hint shows only when
 // running && !pinned; the session menu's pin item vanishes for config-less
 // sessions (Ask, adopted shells).
 import React from 'react'
