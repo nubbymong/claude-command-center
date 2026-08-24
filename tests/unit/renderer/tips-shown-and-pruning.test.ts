@@ -202,3 +202,48 @@ describe('the gates the library depends on', () => {
     expect(Object.values(VIEW_FEATURE_IDS).every((id) => knownFeatureIds().has(id))).toBe(true)
   })
 })
+
+describe("acknowledging a tip advances the rotation — it never hides the row (owner bug, 2026-08-24)", () => {
+  // "Got it", Discuss, and the tip's action button all call markTipActed. It
+  // used to null currentTipId with no successor; the dock row only renders
+  // while a current tip exists, so one click hid the whole tip row for the
+  // rest of the session.
+  it('markTipActed on the current tip picks a successor', () => {
+    useTipsStore.getState().pickNextTip()
+    const first = useTipsStore.getState().currentTipId!
+    useTipsStore.getState().markTipActed(first)
+    const s = useTipsStore.getState()
+    expect(s.tracking.tipsActed[first]).toBeTypeOf('number')
+    expect(s.currentTipId).toBeTruthy() // the row lives on
+    expect(s.currentTipId).not.toBe(first) // and moved past the acknowledged tip
+    expect(saved.map(([k]) => k)).toContain('usageTracking')
+  })
+
+  it('goes null only when the acknowledged tip was the last eligible one', () => {
+    useTipsStore.getState().pickNextTip()
+    const current = useTipsStore.getState().currentTipId!
+    // Every OTHER tip permanently dismissed -> nothing left to rotate to.
+    const tipsDismissed = Object.fromEntries(
+      TIPS_LIBRARY.filter((t) => t.id !== current).map((t) => [t.id, 1]),
+    )
+    useTipsStore.setState({ tracking: { ...EMPTY, tipsDismissed } })
+    useTipsStore.getState().markTipActed(current)
+    expect(useTipsStore.getState().currentTipId).toBeNull()
+  })
+
+  it('acting on a NON-current tip leaves the rotation alone', () => {
+    useTipsStore.getState().pickNextTip()
+    const current = useTipsStore.getState().currentTipId!
+    const other = TIPS_LIBRARY.find((t) => t.id !== current)!.id
+    useTipsStore.getState().markTipActed(other)
+    expect(useTipsStore.getState().currentTipId).toBe(current)
+  })
+
+  it('stays quiet while silenced', () => {
+    useTipsStore.getState().pickNextTip()
+    const current = useTipsStore.getState().currentTipId!
+    useTipsStore.getState().silenceUntilRestart()
+    useTipsStore.getState().markTipActed(current)
+    expect(useTipsStore.getState().currentTipId).toBeNull()
+  })
+})

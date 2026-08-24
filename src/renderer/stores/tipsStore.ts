@@ -263,11 +263,19 @@ export const useTipsStore = create<TipsState>((set, get) => ({
         tipsActed: { ...state.tracking.tipsActed, [tipId]: Date.now() },
       }
       saveConfigNow('usageTracking', tracking)
-      // Acknowledged tips disappear from the pill for the rest of this session.
-      // They can come back in a future launch (unlike permanent dismiss).
+      // Acknowledging ADVANCES the rotation; it never empties it. This used to
+      // null currentTipId with no successor, and because the dock row only
+      // renders while a current tip exists, one "Got it" (or Discuss, or the
+      // tip's action button) hid the ENTIRE tip row for the rest of the
+      // session — read as the panel vanishing (owner bug, 2026-08-24). The
+      // acted tip itself cannot bounce straight back: it was stamped shown
+      // when drawn, and selectNextTip skips shown-within-7-days (plus the
+      // explicit exclude here).
+      const advance = state.currentTipId === tipId && !state.silencedUntilRestart
+      const next = advance ? selectNextTip(tracking, tipId) : null
       return {
         tracking,
-        currentTipId: state.currentTipId === tipId ? null : state.currentTipId,
+        currentTipId: advance ? (next ? next.id : null) : state.currentTipId,
       }
     })
   },

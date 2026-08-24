@@ -69,6 +69,7 @@ describe('SessionHeader', () => {
     expect(gh?.getAttribute('title')).toContain('nubbymong/web')
     expect(container.textContent).toContain('GitHub')
     expect(container.textContent).not.toContain('nubbymong/web') // not inline
+    expect(gh?.querySelector('svg')).toBeNull() // dot + word only — no octocat logo (owner, 2026-08-24)
   })
 
   it('renders no repo slug when there is no GitHub integration', () => {
