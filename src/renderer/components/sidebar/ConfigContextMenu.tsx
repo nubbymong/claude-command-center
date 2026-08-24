@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react'
 import { ConfigGroup, ConfigSection } from '../../stores/configStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
-import { pinMenuLabel, PIN_WHILE_RUNNING_HINT } from './sessionsPanelState'
+import { pinMenuLabel, PIN_WHILE_RUNNING_HINT, DELETE_WHILE_RUNNING_REASON } from './sessionsPanelState'
 
 interface ConfigContextMenuProps {
   x: number
@@ -11,8 +11,9 @@ interface ConfigContextMenuProps {
   currentGroupId?: string
   currentSectionId?: string
   isPinned?: boolean
-  /** The config's session is live: Edit/Delete lock (a running template must
-   *  not be edited by accident) and the pin item explains its deferral. */
+  /** The config has live sessions. Delete locks (removing the template under
+   *  live sessions); Edit stays available — a template edit shapes future
+   *  launches, which is the point of relaunch (owner revision 2026-08-24). */
   running?: boolean
   onMoveToGroup: (groupId: string | undefined) => void
   onCreateGroup: (name: string) => void
@@ -55,12 +56,10 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
       style={{ left: x, top: y, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
       <button
-        onClick={running ? undefined : onEdit}
-        disabled={running}
-        aria-disabled={running}
-        className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${running ? 'cursor-not-allowed opacity-45' : 'hover:bg-[var(--surface-overlay)]'}`}
+        onClick={onEdit}
+        className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 hover:bg-[var(--surface-overlay)]"
         style={{ color: 'var(--text-primary)' }}
-        title={running ? 'Running — a live config cannot be edited' : undefined}
+        title={running ? 'Edits apply to sessions launched from now on' : undefined}
         data-testid="ctx-edit"
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
@@ -99,7 +98,7 @@ export default function ConfigContextMenu({ x, y, groups, sections, currentGroup
         aria-disabled={running}
         className={`w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 ${running ? 'cursor-not-allowed opacity-45' : 'hover:bg-[var(--surface-overlay)]'}`}
         style={{ color: 'var(--status-danger)' }}
-        title={running ? 'Running — close the session before deleting this config' : undefined}
+        title={running ? DELETE_WHILE_RUNNING_REASON : undefined}
         data-testid="ctx-delete"
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>

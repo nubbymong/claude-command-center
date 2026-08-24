@@ -1,24 +1,24 @@
 /**
- * Sessions panel (two-mode left panel, canvas design pass 2026-08-24): the
- * pure state helpers. The default tab resolves to Running unless 'saved' is
- * stored; Quick Start is launch-only (a pinned config with a live session is
- * omitted and returns when it closes — the old duplicate-pinned-at-top bug
- * cannot recur); a running config is locked against editing; the pin menu
- * verb flips with the pinned flag and pinning-while-running stays allowed.
+ * Sessions panel (two-mode left panel, canvas design pass 2026-08-24; REVISED
+ * by the owner 2026-08-24 rc.1 pass): the pure state helpers. A config is a
+ * TEMPLATE — it may relaunch while running, Quick Start keeps running pins,
+ * and the surfaces show a live-session COUNT. What stays guarded: DELETE
+ * while sessions run, and group/section launch-all fills in only what is not
+ * already running (bring-up, never a silent doubling).
  */
 import { describe, it, expect } from 'vitest'
 import {
   resolveDefaultPanelTab,
   resolveQuickStartCollapsed,
   quickStartConfigs,
-  quickStartRunningCount,
-  canEditConfig,
+  DELETE_WHILE_RUNNING_REASON,
   pinMenuLabel,
   PIN_WHILE_RUNNING_HINT,
+  runningCountLabel,
   launchableInGroup,
   launchableInSection,
 } from '../../../src/renderer/components/sidebar/sessionsPanelState'
-import { runningConfigIds } from '../../../src/renderer/components/sidebar/savedConfigsView'
+import { runningConfigCounts } from '../../../src/renderer/components/sidebar/savedConfigsView'
 import type { TerminalConfig } from '../../../src/renderer/stores/configStore'
 
 const cfg = (id: string, over: Partial<TerminalConfig> = {}): TerminalConfig => ({
@@ -30,6 +30,8 @@ const cfg = (id: string, over: Partial<TerminalConfig> = {}): TerminalConfig => 
   provider: 'claude',
   ...over,
 })
+
+const counts = (entries: Array<[string, number]>) => new Map(entries)
 
 describe('resolveDefaultPanelTab', () => {
   it("defaults to 'running' when absent (plan Q1)", () => {
@@ -55,7 +57,7 @@ describe('resolveQuickStartCollapsed', () => {
   })
 })
 
-describe('quickStartConfigs', () => {
+describe('quickStartConfigs — every pinned config, running or not', () => {
   const configs = [
     cfg('a', { pinned: true }),
     cfg('b', { pinned: true }),
@@ -63,48 +65,44 @@ describe('quickStartConfigs', () => {
     cfg('d', { pinned: true }),
   ]
 
-  it('is the pinned configs when nothing runs (pinned carries over, plan Q2)', () => {
-    expect(quickStartConfigs(configs, new Set()).map((c) => c.id)).toEqual(['a', 'b', 'd'])
+  it('is the pinned configs, in config order (pinned carries over, plan Q2)', () => {
+    expect(quickStartConfigs(configs).map((c) => c.id)).toEqual(['a', 'b', 'd'])
   })
 
-  it('omits a pinned config whose session is live — launch-only', () => {
-    const running = new Set(['b'])
-    expect(quickStartConfigs(configs, running).map((c) => c.id)).toEqual(['a', 'd'])
-    expect(quickStartRunningCount(configs, running)).toBe(1)
+  it('a running pin STAYS — Quick Start can spawn another (owner revision)', () => {
+    // The old design omitted running pins; the mutant that re-adds the filter
+    // has no `running` argument to lean on any more, but pin the outcome:
+    // membership is decided by `pinned` alone.
+    expect(quickStartConfigs(configs).map((c) => c.id)).toContain('b')
   })
 
-  it('returns the config when its session closes', () => {
-    const while_running = quickStartConfigs(configs, new Set(['a', 'b', 'd']))
-    expect(while_running).toEqual([])
-    expect(quickStartRunningCount(configs, new Set(['a', 'b', 'd']))).toBe(3)
-    const after_close = quickStartConfigs(configs, new Set(['b']))
-    expect(after_close.map((c) => c.id)).toEqual(['a', 'd'])
-  })
-
-  it('never shows an unpinned running config anywhere in Quick Start', () => {
-    expect(quickStartConfigs(configs, new Set(['c'])).map((c) => c.id)).toEqual(['a', 'b', 'd'])
-    expect(quickStartRunningCount(configs, new Set(['c']))).toBe(0)
+  it('never shows an unpinned config', () => {
+    expect(quickStartConfigs(configs).map((c) => c.id)).not.toContain('c')
   })
 })
 
-describe('canEditConfig — the running lock', () => {
-  it('locks a config with a live session and frees it after', () => {
-    const running = runningConfigIds([
+describe('the delete-refusal reason (the guard itself lives at the two surfaces)', () => {
+  it('says what to do', () => {
+    expect(DELETE_WHILE_RUNNING_REASON).toMatch(/close/i)
+    expect(DELETE_WHILE_RUNNING_REASON).toMatch(/delet/i)
+  })
+})
+
+describe('runningConfigCounts — the indicator source', () => {
+  it('counts per config, ask sessions excluded', () => {
+    const c = runningConfigCounts([
       { configId: 'a', kind: undefined },
-      { configId: undefined, kind: undefined },
+      { configId: 'a', kind: undefined },
+      { configId: 'b', kind: undefined },
+      { configId: 'a', kind: 'ask' },
     ] as never)
-    expect(canEditConfig('a', running)).toBe(false)
-    expect(canEditConfig('b', running)).toBe(true)
-    expect(canEditConfig('a', new Set())).toBe(true)
-  })
-
-  it('an ask session locks nothing (config-less by design)', () => {
-    const running = runningConfigIds([{ configId: 'a', kind: 'ask' }] as never)
-    expect(canEditConfig('a', running)).toBe(true)
+    expect(c.get('a')).toBe(2)
+    expect(c.get('b')).toBe(1)
+    expect(c.get('missing')).toBeUndefined()
   })
 })
 
-describe('launch-all skips running configs (no duplicate behind the locked row)', () => {
+describe('launch-all fills in what is missing (bring-up, not doubling)', () => {
   const configs = [
     cfg('g1', { groupId: 'G' }),
     cfg('g2', { groupId: 'G' }),
@@ -114,28 +112,32 @@ describe('launch-all skips running configs (no duplicate behind the locked row)'
   const groups = [{ id: 'G', name: 'Group', sectionId: 'S' }]
 
   it('group launch-all filters the running config out', () => {
-    expect(launchableInGroup(configs, 'G', new Set(['g1'])).map((c) => c.id)).toEqual(['g2'])
-    expect(launchableInGroup(configs, 'G', new Set()).map((c) => c.id)).toEqual(['g1', 'g2'])
+    expect(launchableInGroup(configs, 'G', counts([['g1', 1]])).map((c) => c.id)).toEqual(['g2'])
+    expect(launchableInGroup(configs, 'G', new Map()).map((c) => c.id)).toEqual(['g1', 'g2'])
   })
 
   it('group launch-all is empty when every member runs (silent no-op, like an empty group)', () => {
-    expect(launchableInGroup(configs, 'G', new Set(['g1', 'g2']))).toEqual([])
+    expect(launchableInGroup(configs, 'G', counts([['g1', 1], ['g2', 2]]))).toEqual([])
   })
 
   it("section launch-all covers the section's groups + loose configs, minus running", () => {
-    expect(launchableInSection(configs, groups, 'S', new Set(['g2'])).map((c) => c.id)).toEqual(['g1', 'loose'])
-    expect(launchableInSection(configs, groups, 'S', new Set()).map((c) => c.id)).toEqual(['g1', 'g2', 'loose'])
+    expect(launchableInSection(configs, groups, 'S', counts([['g2', 1]])).map((c) => c.id)).toEqual(['g1', 'loose'])
+    expect(launchableInSection(configs, groups, 'S', new Map()).map((c) => c.id)).toEqual(['g1', 'g2', 'loose'])
   })
 })
 
-describe('pin menu', () => {
+describe('pin menu + count labels', () => {
   it('verb flips with the pinned flag', () => {
     expect(pinMenuLabel(undefined)).toBe('Pin to Quick Start')
     expect(pinMenuLabel(false)).toBe('Pin to Quick Start')
     expect(pinMenuLabel(true)).toBe('Unpin from Quick Start')
   })
-  it('the while-running hint names the deferred behaviour', () => {
-    expect(PIN_WHILE_RUNNING_HINT).toMatch(/quick-start/i)
-    expect(PIN_WHILE_RUNNING_HINT).toMatch(/closes/i)
+  it('the while-running hint says Quick Start can spawn another — not that it waits', () => {
+    expect(PIN_WHILE_RUNNING_HINT).toMatch(/another/i)
+    expect(PIN_WHILE_RUNNING_HINT).not.toMatch(/closes/i)
+  })
+  it('the count pill label reads naturally for one and many', () => {
+    expect(runningCountLabel(1)).toMatch(/^1 session running/)
+    expect(runningCountLabel(3)).toMatch(/^3 sessions running/)
   })
 })

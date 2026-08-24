@@ -30,7 +30,7 @@ import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
-import { runningConfigIds } from './sidebar/savedConfigsView'
+import { runningConfigCounts } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import QuickStartPanel from './sidebar/QuickStartPanel'
 import { resolveDefaultPanelTab, launchableInGroup, launchableInSection, type PanelTab } from './sidebar/sessionsPanelState'
@@ -189,9 +189,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     ;(tab === 'saved' ? savedTabRef : runningTabRef).current?.focus()
   }
   const [configSearchQuery, setConfigSearchQuery] = useState('')
-  // Configs with a live session: locked in the Saved list and excluded from
-  // launch-all. `sessions` already excludes the Ask session.
-  const runningIds = useMemo(() => runningConfigIds(sessions), [sessions])
+  // Live-session counts per config: the row/Quick Start pills and the
+  // delete guard read these; launch-all skips anything counted (bring-up).
+  // `sessions` already excludes the Ask session.
+  const runningCounts = useMemo(() => runningConfigCounts(sessions), [sessions])
   const [dragConfigId, setDragConfigId] = useState<string | null>(null)
   const [dragOverConfigId, setDragOverConfigId] = useState<string | null>(null)
   // The LOOSE configs: in no group and no section (a stale id pointing at a
@@ -342,9 +343,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   }
 
   const launchGroup = async (groupId: string) => {
-    // Running configs are skipped (launchableInGroup): launch-all must never
-    // spawn the duplicate the locked row exists to prevent.
-    for (const config of launchableInGroup(configs, groupId, runningIds)) {
+    // Running configs are skipped (launchableInGroup): launch-all is bring-up
+    // — it fills in what is missing and never silently doubles what runs.
+    for (const config of launchableInGroup(configs, groupId, runningCounts)) {
       await launchFromConfig(config)
     }
   }
@@ -446,9 +447,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   }
 
   const launchSection = async (sectionId: string) => {
-    // Running configs skipped for the same reason as launchGroup: no duplicate
-    // sessions behind the locked row's back.
-    for (const config of launchableInSection(configs, groups, sectionId, runningIds)) {
+    // Running configs skipped for the same reason as launchGroup: bring-up
+    // fills in what is missing, never silently doubles what runs.
+    for (const config of launchableInSection(configs, groups, sectionId, runningCounts)) {
       await launchFromConfig(config)
     }
   }
@@ -644,7 +645,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
     // neither drag sources nor drop targets, so a stray drag over them shows
     // no drop affordance and does nothing.
     const loose = looseConfigIds.has(config.id)
-    const running = runningIds.has(config.id)
+    const runningCount = runningCounts.get(config.id) ?? 0
     return (
       <ConfigRow
         key={config.id}
@@ -654,18 +655,18 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onDelete={() => handleDeleteConfig(config.id)}
         onPin={() => togglePinned(config.id)}
         onContextMenu={(e) => handleConfigContextMenu(e, config.id)}
-        running={running}
-        onOpenSession={running ? () => {
-          // The locked row's affordance: jump to the live session — on the
-          // Running tab, in the sessions view.
-          const live = sessions.find((s) => s.configId === config.id)
+        runningCount={runningCount}
+        onOpenSession={runningCount > 0 ? () => {
+          // The count pill's affordance: jump to the LATEST live session of
+          // this config — on the Running tab, in the sessions view.
+          const live = [...sessions].reverse().find((s) => s.configId === config.id)
           if (live) {
             setActiveSession(live.id)
             selectPanelTab('running')
             onViewChange('sessions')
           }
         } : undefined}
-        draggable={loose && !running}
+        draggable={loose}
         onDragStart={loose ? (e) => handleConfigDragStart(e, config.id) : undefined}
         onDragOver={loose ? (e) => handleConfigDragOver(e, config.id) : undefined}
         onDrop={loose ? (e) => handleConfigDrop(e, config.id) : undefined}
@@ -939,7 +940,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           currentGroupId={configs.find((c) => c.id === contextMenuConfig.configId)?.groupId}
           currentSectionId={configs.find((c) => c.id === contextMenuConfig.configId)?.sectionId}
           isPinned={configs.find((c) => c.id === contextMenuConfig.configId)?.pinned}
-          running={runningIds.has(contextMenuConfig.configId)}
+          running={(runningCounts.get(contextMenuConfig.configId) ?? 0) > 0}
           onMoveToGroup={(gid) => handleMoveToGroup(contextMenuConfig.configId, gid)}
           onCreateGroup={(name) => handleCreateGroupAndMove(contextMenuConfig.configId, name)}
           onMoveToSection={(sid) => handleMoveConfigToSection(contextMenuConfig.configId, sid)}
@@ -987,7 +988,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       <div id="running-tabpanel" role="tabpanel" aria-labelledby="panel-tab-running" className="flex flex-col flex-1 min-h-0" data-testid="running-tab">
       <QuickStartPanel
         configs={configs}
-        running={runningIds}
+        running={runningCounts}
         onLaunch={launchFromConfig}
         onContextMenu={handleConfigContextMenu}
       />
@@ -1274,6 +1275,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           onConfirm={handleEditConfig}
           onCancel={() => setEditingConfig(null)}
           initial={editingConfig}
+          liveSessionCount={runningCounts.get(editingConfig.id) ?? 0}
         />
       )}
 

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// Quick Start (Running tab, design pass 2026-08-24): launch-only — a pinned
-// config with a live session is omitted and counted in the header; Start
+// Quick Start (Running tab, design pass 2026-08-24; owner revision the same
+// day): every pinned config shows, running or not — a config is a template
+// and Start spawns another instance. Running pins carry a count pill. Start
 // launches; the header collapse persists via settings; absent entirely when
 // nothing is pinned.
 import React from 'react'
@@ -35,15 +36,29 @@ describe('QuickStartPanel', () => {
 
   const render = (props: Record<string, unknown>) =>
     act(() => root.render(React.createElement(QuickStartPanel, {
-      onLaunch: () => {}, onContextMenu: () => {}, running: new Set(), ...props,
+      onLaunch: () => {}, onContextMenu: () => {}, running: new Map(), ...props,
     } as any)))
 
-  it('lists only launchable pins and counts the running ones in the header', () => {
-    render({ configs: [cfg('a'), cfg('b'), cfg('c', { pinned: false })], running: new Set(['b']) })
+  it('lists EVERY pin — a running one stays, with its count pill (owner revision)', () => {
+    render({ configs: [cfg('a'), cfg('b'), cfg('c', { pinned: false })], running: new Map([['b', 2]]) })
     const items = container.querySelectorAll('[data-testid="quick-start-item"]')
-    expect(items.length).toBe(1)
-    expect(items[0].textContent).toContain('a')
-    expect(container.querySelector('[data-testid="quick-start-header"]')!.textContent).toMatch(/1 running/)
+    expect(items.length).toBe(2)
+    const b = Array.from(items).find((el) => el.textContent!.includes('b'))!
+    const pill = b.querySelector('[data-testid="quick-start-running-count"]')!
+    expect(pill.textContent).toContain('2')
+    // The idle pin carries no pill.
+    const a = Array.from(items).find((el) => el.textContent!.includes('a'))!
+    expect(a.querySelector('[data-testid="quick-start-running-count"]')).toBeNull()
+  })
+
+  it('a running pin can still START another instance', () => {
+    const onLaunch = vi.fn()
+    render({ configs: [cfg('b')], running: new Map([['b', 1]]), onLaunch })
+    const start = Array.from(container.querySelectorAll('[data-testid="quick-start-item"] button'))
+      .find((el) => el.textContent!.includes('Start')) as HTMLButtonElement
+    expect(start.disabled).toBe(false)
+    act(() => { start.click() })
+    expect(onLaunch).toHaveBeenCalledTimes(1)
   })
 
   it('Start launches the config', () => {
@@ -70,10 +85,10 @@ describe('QuickStartPanel', () => {
     expect(container.querySelector('[data-testid="quick-start"]')).toBeNull()
   })
 
-  it('still shows the strip when every pin is running (the counter explains why it is empty)', () => {
-    render({ configs: [cfg('a')], running: new Set(['a']) })
+  it('every pin running: the strip shows them all, each with a pill — never empty rows', () => {
+    render({ configs: [cfg('a')], running: new Map([['a', 1]]) })
     expect(container.querySelector('[data-testid="quick-start"]')).toBeTruthy()
-    expect(container.querySelectorAll('[data-testid="quick-start-item"]').length).toBe(0)
-    expect(container.querySelector('[data-testid="quick-start-header"]')!.textContent).toMatch(/1 running/)
+    expect(container.querySelectorAll('[data-testid="quick-start-item"]').length).toBe(1)
+    expect(container.querySelector('[data-testid="quick-start-running-count"]')!.textContent).toContain('1')
   })
 })

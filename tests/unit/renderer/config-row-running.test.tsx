@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-// The locked launcher row (design pass 2026-08-24): a config with a live
-// session shows the type icon leading, greyed label, lock + Running pill, NO
-// launch/edit/delete affordances, and a click jumps to its session.
+// The launcher row under the owner's 2026-08-24 revision: a config is a
+// TEMPLATE. A running config keeps ALL its affordances except Delete — it can
+// be launched again — and shows a live-session COUNT pill whose click jumps
+// to the session. (This file replaced the locked-row suite the revision
+// retired: no more grey lock, no more launch refusal.)
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
@@ -21,6 +23,7 @@ vi.mock('../../../src/renderer/hooks/useLaunchConfig', () => ({
 }))
 
 const { default: ConfigRow } = await import('../../../src/renderer/components/sidebar/ConfigRow')
+const { DELETE_WHILE_RUNNING_REASON } = await import('../../../src/renderer/components/sidebar/sessionsPanelState')
 
 const config: any = {
   id: 'c1',
@@ -32,7 +35,7 @@ const config: any = {
   pinned: true,
 }
 
-describe('ConfigRow — running lock', () => {
+describe('ConfigRow — relaunch with a running-count indicator', () => {
   let container: HTMLDivElement; let root: Root
   beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
   afterEach(() => { act(() => root.unmount()); container.remove() })
@@ -47,23 +50,36 @@ describe('ConfigRow — running lock', () => {
       ...props,
     } as any)))
 
-  it('a running config locks: Running pill, no launch/edit/delete buttons, click opens the session', () => {
-    const opened = vi.fn()
-    renderRow({ running: true, onOpenSession: opened })
-    const row = container.querySelector('[data-testid="config-row-running"]') as HTMLElement
-    expect(row).toBeTruthy()
-    expect(row.textContent).toMatch(/running/i)
-    // The type icon still leads the row.
-    expect(row.querySelector('[data-testid="type-badge-claude"]')).toBeTruthy()
-    // No action buttons at all on a locked row.
-    expect(row.querySelectorAll('button').length).toBe(0)
-    act(() => { row.click() })
-    expect(opened).toHaveBeenCalledTimes(1)
+  it('a running config can be LAUNCHED AGAIN — Launch and Edit live, only Delete refused', () => {
+    const launched = vi.fn()
+    renderRow({ runningCount: 2, onLaunch: launched, onPin: () => {} })
+    const titles = Array.from(container.querySelectorAll('button')).map((b) => b.getAttribute('title'))
+    expect(titles).toContain('Launch')
+    expect(titles).toContain('Edit')
+    expect(titles).toContain(DELETE_WHILE_RUNNING_REASON) // Delete refused with the reason
+    expect(titles).not.toContain('Delete')
+    const launch = Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title') === 'Launch')!
+    act(() => { (launch as HTMLElement).click() })
+    expect(launched).toHaveBeenCalledTimes(1)
+    const del = Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title') === DELETE_WHILE_RUNNING_REASON)!
+    expect((del as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('a launchable config keeps the actions and the Quick Start pin verb', () => {
-    renderRow({ running: false, onPin: () => {} })
+  it('the count pill shows N and its click opens the session — not a row-wide hijack', () => {
+    const opened = vi.fn()
+    renderRow({ runningCount: 3, onOpenSession: opened })
+    const pill = container.querySelector('[data-testid="config-row-running-count"]') as HTMLElement
+    expect(pill).toBeTruthy()
+    expect(pill.textContent).toContain('3')
+    act(() => { pill.click() })
+    expect(opened).toHaveBeenCalledTimes(1)
+    // The retired locked row is gone for good.
     expect(container.querySelector('[data-testid="config-row-running"]')).toBeNull()
+  })
+
+  it('an idle config shows no pill and keeps every action, Delete included', () => {
+    renderRow({ runningCount: 0, onPin: () => {} })
+    expect(container.querySelector('[data-testid="config-row-running-count"]')).toBeNull()
     const titles = Array.from(container.querySelectorAll('button')).map((b) => b.getAttribute('title'))
     expect(titles).toContain('Launch')
     expect(titles).toContain('Edit')
