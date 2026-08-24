@@ -164,7 +164,7 @@ describe('the successful fetch', () => {
     const [outside, inside] = out.text.split('<untrusted-content')
     expect(outside).toContain('note: review R2, submitted, frozen against v3')
     expect(outside).toContain('2 note(s): 1 element, 0 region, 1 general; 2 open')
-    expect(outside).toContain('1 sketch image(s) attached')
+    expect(outside).toContain('1 image(s) attached')
     expect(outside).not.toContain('Make this')
 
     // The user's note text rides inside, with its angle bracket defanged.
@@ -191,7 +191,7 @@ describe('the successful fetch', () => {
     )
     expect(out.isError).toBe(false)
     expect(out.images).toHaveLength(0)
-    expect(out.text).toContain('1 sketch attachment(s) could not be loaded')
+    expect(out.text).toContain('1 image attachment(s) could not be loaded')
     expect(out.text).not.toContain('attached as image')
 
     const big = await runCanvasReview(
