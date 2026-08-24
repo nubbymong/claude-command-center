@@ -31,8 +31,8 @@ export interface CanvasArtifact {
   archived: boolean
 }
 
-/** "Plan" / "Mockup" / a uat build's label. Mirrors AgentCanvasPane.versionKind
- *  but at the artifact grain (the first version carries the kind). */
+/** "Plan" / "Mockup" / a uat build's label, at the artifact grain (the first
+ *  version carries the kind). */
 function artifactLabel(v: CanvasVersion): string {
   if (v.source.mode === 'uat') return v.source.buildLabel?.trim() || 'Test build'
   return v.mode === 'plan' ? 'Plan' : 'Mockup'

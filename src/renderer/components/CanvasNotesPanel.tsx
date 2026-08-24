@@ -225,9 +225,10 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   )
   /** The default fold state (item C, seen-aware). Closed rounds fold. A round
    *  waiting on the USER folds ONLY once every addressed note in it has been
-   *  seen — never before: the canvas_verdict seen-barrier releases from the
-   *  addressed note bodies actually rendering, so an unseen round MUST stay
-   *  expanded so its dwell timer can run. A round with the agent stays open. */
+   *  seen — never before: keeping an unseen round expanded is what puts the
+   *  addressed note bodies on screen so the user actually sees them before the
+   *  dwell timer marks them seen (the release the canvas_verdict barrier reads).
+   *  A round with the agent stays open. */
   const defaultCollapsedFor = useCallback((g: ReviewGroup): boolean => {
     if (g.waitingOn === 'closed') return true
     if (g.waitingOn === 'you') return g.notes.every((n) => n.state !== 'addressed' || n.userSawAddressed === true)

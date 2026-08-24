@@ -109,7 +109,9 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
             className="shrink-0 text-[9.5px] font-bold tracking-[0.06em] rounded px-1.5 py-px"
             style={{ background: `color-mix(in srgb, ${b.color} 18%, transparent)`, color: b.color }}
           >
-            {isArchivedGroup ? 'ARCHIVED' : b.label}
+            {/* A legacy uat build reads as ARCHIVED; a user-archived plan or
+                mockup keeps its KIND badge — it did not stop being a plan. */}
+            {a.kind === 'uat' ? 'ARCHIVED' : b.label}
           </span>
           <span className="min-w-0 truncate text-[12px]" style={{ color: 'var(--text-primary)' }}>
             {a.label}
@@ -141,7 +143,10 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
                 {a.archived ? 'unarchive' : 'archive'}
               </button>
             )}
-            {onDelete &&
+            {/* Delete is offered only when another artifact would remain — the
+                store refuses deleting a canvas's only artifact (that is the
+                library's delete-canvas), so showing it there is a dead end. */}
+            {onDelete && artifacts.length > 1 &&
               (confirming ? (
                 <button
                   type="button"
@@ -232,13 +237,13 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
           {archived.length > 0 && (
             <>
               <div className="px-2 pt-2 pb-1 text-[9.5px] font-semibold uppercase tracking-[0.09em]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)', marginTop: 4 }}>
-                Archived — legacy test builds
+                Archived
               </div>
               {archived.map((a) => artifactRow(a, true))}
             </>
           )}
           <div className="px-2 pt-2 pb-1 text-[10.5px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)', marginTop: 4 }}>
-            Pick an artifact here; step its versions with ‹ ›. Tests are live and never versioned — builds saved by older betas stay under Archived.
+            Pick an artifact here; step its versions with ‹ ›. Archived holds what you tucked away (recoverable) and legacy test builds from older betas; tests are live now and never versioned.
           </div>
         </div>
       )}
