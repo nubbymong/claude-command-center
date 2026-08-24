@@ -787,8 +787,19 @@ describe('right-click a Core tool: the core tool menu', () => {
       const item = byTestId('menu-canvas-dismiss-all')
       expect(item?.textContent).toBe('Dismiss everything waiting on me (3)…')
 
+      // "Show what's waiting" reaches the button's popover by event.
+      const heard: unknown[] = []
+      const onShow = (e: Event) => heard.push((e as CustomEvent).detail)
+      window.addEventListener('ccc:canvasShowQueue', onShow)
+      click(byTestId('menu-canvas-show-queue'))
+      window.removeEventListener('ccc:canvasShowQueue', onShow)
+      expect(heard).toEqual([{ sessionId: 's-1' }])
+      expect(menus()).toHaveLength(0)
+
+      rightClick(mustGet('core-tool-canvas'))
+
       // Cancel clears nothing.
-      click(item)
+      click(byTestId('menu-canvas-dismiss-all'))
       expect(menus()).toHaveLength(0)
       expect(byTestId('confirm-canvas-dismiss')).not.toBeNull()
       click(byTestId('confirm-canvas-dismiss-cancel'))

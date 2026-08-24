@@ -896,6 +896,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               ]
             : menu.tool === 'canvas' && canvasQueue > 0 ? [
                 { label: `Dismiss everything waiting on me (${canvasQueue})…`, onClick: () => { setMenu(null); setConfirm({ kind: 'canvas-dismiss' }) }, testId: 'menu-canvas-dismiss-all' },
+                { label: `Show what's waiting (${canvasQueue})`, onClick: () => { setMenu(null); window.dispatchEvent(new CustomEvent('ccc:canvasShowQueue', { detail: { sessionId } })) }, testId: 'menu-canvas-show-queue' },
               ]
             : undefined}
           onHide={(where) => requestHide(menu.tool, where)}
