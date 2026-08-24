@@ -78,10 +78,10 @@ export function classifyIssue(item, { inBetaLabel = IN_BETA_LABEL, inReleaseLabe
   const labels = labelNames(item.labels)
   if (labels.includes(inReleaseLabel)) return { action: 'skip', reason: `already labeled ${inReleaseLabel}` }
   // An excluded issue is the owner's business, not this script's — and it WINS
-  // over in-beta, exactly as it does in the gate (evaluateMilestone checks
-  // excluded first): an issue the owner excluded must never be commented as
-  // "rolled" and auto-closed on promotion. Distinct reason so the run log
-  // reads as "deliberately left", not "missed".
+  // over in-beta, matching the gate's precedence (evaluateMilestone buckets an
+  // excluded+in-beta issue as excluded): an issue the owner excluded must
+  // never be commented as "rolled". Distinct reason so the run log reads as
+  // "deliberately left", not "missed".
   if (labels.includes(excludedLabel)) return { action: 'skip', reason: `labeled ${excludedLabel} (owner-excluded)` }
   if (!labels.includes(inBetaLabel)) return { action: 'skip', reason: `not labeled ${inBetaLabel}` }
   return { action: 'roll' }
