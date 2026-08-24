@@ -476,6 +476,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const [loadTimedOut, setLoadTimedOut] = useState(false)
   // Bumping this re-mounts the iframe: the retry affordance for a dead render.
   const [reloadNonce, setReloadNonce] = useState(0)
+  // The review panel can be hidden (item C): the page takes the full width and
+  // a thin rail keeps the outstanding count and the way back. Pane-local, like
+  // the zoom — it resets when the pane closes.
+  const [panelHidden, setPanelHidden] = useState(false)
 
   const contentUrl = useMemo(
     () => canvasContentUrl(canvasId, version.id, version.source.entry),
@@ -1732,24 +1736,50 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             the review, and keeping it out means the panel's own file is
             untouched by this change. The panel keeps its own width and left
             border; this column just stacks the two. */}
-        <div className="shrink-0 flex flex-col min-h-0">
-          <div className="flex-1 min-h-0 flex">
-            <CanvasNotesPanel
-              sessionId={sessionId}
-              version={version}
-              getGlassApi={() => glassApiRef.current}
-              onReturnToTerminal={() => togglePane(sessionId)}
-              isActive={isActive}
-            />
+        {panelHidden ? (
+          /* Collapsed rail (item C): the panel is away, the page has the width,
+             and this keeps the outstanding count and the way back. */
+          <button
+            onClick={() => setPanelHidden(false)}
+            data-testid="canvas-panel-rail"
+            aria-label="Show the review panel"
+            title="Show the review panel"
+            className="shrink-0 w-[30px] flex flex-col items-center gap-2 py-2.5 border-l border-[var(--border-subtle)] bg-[var(--surface-chrome)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors focus-ring"
+          >
+            <span aria-hidden>⟨</span>
+            {openReviewCount > 0 && (
+              <span
+                className="text-[10px] font-bold rounded-full px-[5px] leading-[1.4]"
+                style={{ background: 'var(--color-peach)', color: 'var(--surface-chrome)' }}
+              >
+                {openReviewCount}
+              </span>
+            )}
+            <span className="text-[10px] tracking-[0.12em]" style={{ writingMode: 'vertical-rl' }} aria-hidden>
+              REVIEW
+            </span>
+          </button>
+        ) : (
+          <div className="shrink-0 flex flex-col min-h-0 transition-[width] duration-[240ms] ease-out">
+            <div className="flex-1 min-h-0 flex">
+              <CanvasNotesPanel
+                sessionId={sessionId}
+                version={version}
+                getGlassApi={() => glassApiRef.current}
+                onReturnToTerminal={() => togglePane(sessionId)}
+                isActive={isActive}
+                onHide={() => setPanelHidden(true)}
+              />
+            </div>
+            {xrayReadsOutInPanel(xrayMode) && (
+              <CanvasXrayReadout
+                hit={pointerOwner === 'content' ? (hover?.hit ?? null) : null}
+                label={hoverLabel}
+                pointerOwner={pointerOwner}
+              />
+            )}
           </div>
-          {xrayReadsOutInPanel(xrayMode) && (
-            <CanvasXrayReadout
-              hit={pointerOwner === 'content' ? (hover?.hit ?? null) : null}
-              label={hoverLabel}
-              pointerOwner={pointerOwner}
-            />
-          )}
-        </div>
+        )}
       </div>
     </div>
   )
