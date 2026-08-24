@@ -9,6 +9,22 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { IPC } from '../../../src/shared/ipc-channels'
 import type { CanvasLibraryEntry } from '../../../src/shared/canvas'
 
+/** A full CanvasReviewCounts, since the handler READS it per owned row (it does
+ *  NOT read verdictRounds/openReviewCount off the library entry — those are set
+ *  only by the listAll join, a different call). Mocking listAllCanvases with
+ *  those fields pre-injected was exactly what hid the dead-branch bug, so these
+ *  tests drive the real join through getReviewCountsForCanvas instead. */
+const counts = (over: Partial<{ verdictRounds: number; openReviewIds: string[]; closeableNotes: number }> = {}) => ({
+  draftNotes: 0,
+  draftVersionIds: [] as string[],
+  openReviewIds: [] as string[],
+  openNotes: 0,
+  addressedNotes: 0,
+  closeableNotes: 0,
+  verdictRounds: 0,
+  ...over,
+})
+
 const handlers = new Map<string, (...a: unknown[]) => unknown>()
 const listeners = new Map<string, (...a: unknown[]) => unknown>()
 vi.mock('electron', () => ({
@@ -103,9 +119,13 @@ describe('scope — exactly the rows the queue counts', () => {
 
   it('never touches a canvas belonging to another session', async () => {
     canvasStore.listAllCanvases.mockReturnValue([
-      entry({ canvasId: 'foreign-1', awaitingReview: true, awaitingReviewAt: '2026-08-24T00:00:00.000Z', verdictRounds: 3, openReviewCount: 3 }),
+      entry({ canvasId: 'foreign-1', awaitingReview: true, awaitingReviewAt: '2026-08-24T00:00:00.000Z' }),
     ])
+    // Even if the store WOULD report a full round on it, the row is skipped
+    // before any count is read.
+    reviewStore.getReviewCountsForCanvas.mockReturnValue(counts({ verdictRounds: 3 }))
     const res = await invoke({ sessionId: SID })
+    expect(reviewStore.getReviewCountsForCanvas).not.toHaveBeenCalled()
     expect(reviewStore.closeOutCanvasReviews).not.toHaveBeenCalled()
     expect(canvasStore.clearAwaitingReview).not.toHaveBeenCalled()
     expect(res).toEqual({ closedNotes: 0, closedReviews: 0, clearedAwaiting: 0, unreadable: 0 })
@@ -114,9 +134,12 @@ describe('scope — exactly the rows the queue counts', () => {
   it('sweeps owned rows and the active row alike', async () => {
     reviewStore.closeOutCanvasReviews.mockReturnValue({ closed: 2, reviews: ['R1', 'R2'] })
     canvasStore.listAllCanvases.mockReturnValue([
-      entry({ canvasId: 'own-1', ownedByThisSession: true, verdictRounds: 2, openReviewCount: 2 }),
-      entry({ canvasId: 'own-2', ownedByThisSession: true, isActiveForThisSession: true, awaitingReview: true, awaitingReviewAt: '2026-08-24T00:00:00.000Z', openReviewCount: 0 }),
+      entry({ canvasId: 'own-1', ownedByThisSession: true }),
+      entry({ canvasId: 'own-2', ownedByThisSession: true, isActiveForThisSession: true, awaitingReview: true, awaitingReviewAt: '2026-08-24T00:00:00.000Z' }),
     ])
+    reviewStore.getReviewCountsForCanvas.mockImplementation((id: string) =>
+      id === 'own-1' ? counts({ verdictRounds: 2, openReviewIds: ['R1', 'R2'] }) : counts(),
+    )
     const res = await invoke({ sessionId: SID })
     expect(reviewStore.closeOutCanvasReviews).toHaveBeenCalledTimes(1)
     expect(reviewStore.closeOutCanvasReviews).toHaveBeenCalledWith('own-1')
@@ -131,8 +154,9 @@ describe('gates — the sweep clears what the number promised, nothing else', ()
     canvasStore.listAllCanvases.mockReturnValue([
       // Open notes are with the AGENT; a close-out here would be refused
       // per-round anyway, but the handler must not even try.
-      entry({ canvasId: 'own-1', ownedByThisSession: true, verdictRounds: 0, openReviewCount: 3 }),
+      entry({ canvasId: 'own-1', ownedByThisSession: true }),
     ])
+    reviewStore.getReviewCountsForCanvas.mockReturnValue(counts({ verdictRounds: 0, openReviewIds: ['R1'] }))
     const res = await invoke({ sessionId: SID })
     expect(reviewStore.closeOutCanvasReviews).not.toHaveBeenCalled()
     expect(res.closedNotes).toBe(0)
@@ -140,9 +164,11 @@ describe('gates — the sweep clears what the number promised, nothing else', ()
 
   it('reports an unreadable review store, never folds it into zero', async () => {
     canvasStore.listAllCanvases.mockReturnValue([
-      entry({ canvasId: 'own-1', ownedByThisSession: true }), // counts undefined = unreadable/never-reviewed (the queue's own "unknown" rule)
-      entry({ canvasId: 'own-2', ownedByThisSession: true, awaitingReview: true, awaitingReviewAt: '2026-08-24T00:00:00.000Z', openReviewCount: 0 }),
+      entry({ canvasId: 'own-1', ownedByThisSession: true }),
+      entry({ canvasId: 'own-2', ownedByThisSession: true, awaitingReview: true, awaitingReviewAt: '2026-08-24T00:00:00.000Z' }),
     ])
+    // null read = unreadable store (the queue's own "unknown" rule).
+    reviewStore.getReviewCountsForCanvas.mockImplementation((id: string) => (id === 'own-1' ? null : counts()))
     const res = await invoke({ sessionId: SID })
     expect(res.unreadable).toBe(1)
     expect(res.clearedAwaiting).toBe(1)
@@ -151,8 +177,9 @@ describe('gates — the sweep clears what the number promised, nothing else', ()
   it('a close-out that returns null adds nothing to the tallies', async () => {
     reviewStore.closeOutCanvasReviews.mockReturnValue(null)
     canvasStore.listAllCanvases.mockReturnValue([
-      entry({ canvasId: 'own-1', ownedByThisSession: true, verdictRounds: 1, openReviewCount: 1 }),
+      entry({ canvasId: 'own-1', ownedByThisSession: true }),
     ])
+    reviewStore.getReviewCountsForCanvas.mockReturnValue(counts({ verdictRounds: 1, openReviewIds: ['R1'] }))
     const res = await invoke({ sessionId: SID })
     expect(res.closedNotes).toBe(0)
     expect(res.closedReviews).toBe(0)

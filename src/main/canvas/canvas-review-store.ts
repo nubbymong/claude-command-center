@@ -507,16 +507,25 @@ function requireHealthy(canvasId: string): void {
 }
 
 function recordFor(sessionId: string, canvas: SessionCanvas): ReviewFileRecord {
-  return (
-    loadRecord(canvas.canvasId, sessionId) ?? {
-      canvasId: canvas.canvasId,
-      sessionId,
-      nextReview: 1,
-      nextAnnotation: 1,
-      reviews: [],
-      annotations: [],
-    }
-  )
+  const loaded = loadRecord(canvas.canvasId, sessionId)
+  if (loaded) return loaded
+  // loadRecord returned null for one of two very different reasons, and the
+  // fresh-record fallback is right for only ONE of them. "No file yet" is a
+  // healthy empty store; "a file exists but failed isValidRecord" is corruption
+  // loadRecord just moved into `broken`. requireHealthy runs BEFORE this on
+  // every mutation, but `broken` is populated as a side effect of THIS load —
+  // so on the FIRST touch of a corrupt file requireHealthy saw an empty set and
+  // passed, and without this check the fallback would overwrite preserved
+  // evidence with an empty record. Re-assert health now that the load has run.
+  requireHealthy(canvas.canvasId)
+  return {
+    canvasId: canvas.canvasId,
+    sessionId,
+    nextReview: 1,
+    nextAnnotation: 1,
+    reviews: [],
+    annotations: [],
+  }
 }
 
 /** Deep-ish copy so callers can never mutate the committed record. */

@@ -455,13 +455,21 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     let unreadable = 0
     for (const e of entries) {
       if (!e.ownedByThisSession && !e.isActiveForThisSession) continue
+      // The review counts have to be READ here, per owned row: `listAllCanvases`
+      // does not carry `verdictRounds`/`openReviewCount` — only the `listAll`
+      // handler's own join loop above sets them, and this is a different call.
+      // Reading them off the entry made the whole close-out branch dead (the
+      // fields were always undefined) and inflated `unreadable` to the owned
+      // count. Join the same read `listAll` does, so the sweep clears exactly
+      // what the queue number promised.
+      const counts = getReviewCountsForCanvas(e.canvasId)
       // Same blunt rule the queue's own `unknown` uses: an owned row is always
-      // swept, so an undefined count means the review store could not be read
-      // — reported, never presented as "nothing to clear".
-      if (e.openReviewCount === undefined) unreadable++
+      // swept, so a null read means the review store could not be read —
+      // reported, never presented as "nothing to clear".
+      if (!counts) unreadable++
       // Close out only where the label counted work (verdictRounds > 0), so
       // the gesture clears precisely what the number promised.
-      if (e.verdictRounds && e.verdictRounds > 0) {
+      if (counts && counts.verdictRounds > 0) {
         const res = closeOutCanvasReviews(e.canvasId)
         if (res) {
           closedNotes += res.closed

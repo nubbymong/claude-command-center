@@ -147,3 +147,46 @@ describe('delete + egress + restart', () => {
     expect(state.annotations.find((a) => a.id === r.annotationId)!.image).toEqual({ pngPath: `reviews/pasted/${r.annotationId}.png` })
   })
 })
+
+// The paste change adds a new way for a stored record to fail the file
+// validator (a hand-edited / cross-process-torn image.pngPath the new
+// IMAGE_PNG_PATH_RE rejects), which surfaced a pre-existing fail-open:
+// requireHealthy runs BEFORE the load that populates `broken`, so the FIRST
+// mutation after a cold start used to overwrite a corrupt reviews.json with a
+// fresh empty record — destroying preserved review history. recordFor now
+// re-asserts health after the load.
+describe('a corrupt reviews.json is never overwritten on first touch (adversarial F2)', () => {
+  const reviewsPath = (canvasId: string) => path.join(getResourcesDirectory(), 'canvas', canvasId, 'reviews.json')
+
+  it('the FIRST mutation after a cold start refuses, leaving the corrupt file intact', () => {
+    const { canvasId, versionId } = renderCanvas()
+    // A real prior review, with a real pasted image, on disk.
+    store.upsertAnnotation(SID, { scope: 'general', note: 'prior feedback', versionId, image: { pngBase64: PNG_B64 } })
+    // Corrupt it the way the new path makes reachable: a traversal pngPath the
+    // load validator (IMAGE_PNG_PATH_RE) rejects → the whole record is invalid.
+    const rec = JSON.parse(fs.readFileSync(reviewsPath(canvasId), 'utf8'))
+    rec.annotations[0].image.pngPath = 'reviews/pasted/../../../evil.png'
+    const corruptText = JSON.stringify(rec)
+    fs.writeFileSync(reviewsPath(canvasId), corruptText)
+
+    // Cold start: no prior read, so `broken` is empty and requireHealthy alone
+    // would pass. This first mutation is the dangerous one.
+    store._resetCanvasReviewStoreForTest()
+    expect(() =>
+      store.upsertAnnotation(SID, { scope: 'general', note: 'new note on a corrupt store', versionId }),
+    ).toThrow(/review store unreadable/)
+
+    // The corrupt file is preserved byte-for-byte — evidence, not free space.
+    expect(fs.readFileSync(reviewsPath(canvasId), 'utf8')).toBe(corruptText)
+  })
+
+  it('still heals a genuinely ABSENT store to a fresh empty record (no over-refusal)', () => {
+    // The fix must distinguish "file exists but invalid" (refuse) from "no file
+    // yet" (heal). A brand-new canvas has no reviews.json; the first note must
+    // still land.
+    const { canvasId, versionId } = renderCanvas()
+    expect(fs.existsSync(reviewsPath(canvasId))).toBe(false)
+    const r = store.upsertAnnotation(SID, { scope: 'general', note: 'first ever note', versionId })
+    expect(r.state.annotations.find((a) => a.id === r.annotationId)!.note).toBe('first ever note')
+  })
+})

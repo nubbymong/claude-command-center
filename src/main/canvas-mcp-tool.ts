@@ -1315,11 +1315,17 @@ export function runCanvasPick(
     return { text: `Could not record that pick: ${describePickFailure(err)}`, isError: true }
   }
 
-  // Store-minted ids and a store-held label (validated clean at mint — the
-  // variant-label rules exist so this line cannot be forged from inside it).
+  // Store-minted ids and a store-held label. The label is validated clean at
+  // mint (isCleanVariantLabel bans every line-break and format char), so it
+  // cannot forge a line in this operator-voice reply — but this reply rides
+  // OUTSIDE the untrusted envelope, so its safety must not rest ONLY on a gate
+  // three call-sites away. Re-check here: a label that somehow arrived dirty is
+  // dropped to its key rather than interpolated, so a future writer that forgets
+  // the mint gate cannot turn this into a forged-status channel.
+  const safeLabel = isCleanVariantLabel(result.pickedLabel) ? result.pickedLabel : rawArgs.variantKey
   const parts: string[] = []
   parts.push(
-    `Recorded the user's pick on ${rawArgs.reviewId} ${rawArgs.annotationId}: variant ${rawArgs.variantKey} ("${result.pickedLabel}"). Build that alternative and drop the others.`,
+    `Recorded the user's pick on ${rawArgs.reviewId} ${rawArgs.annotationId}: variant ${rawArgs.variantKey} ("${safeLabel}"). Build that alternative and drop the others.`,
   )
   if (result.reviewClosed) parts.push(`${rawArgs.reviewId} is now closed.`)
   parts.push(
