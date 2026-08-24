@@ -1,0 +1,70 @@
+name: Issue disposition (nothing in limbo)
+
+# Enforces the #437 governance rule: every OPEN issue carries exactly one
+# disposition (a `release-<x.y>` line, or `backlog` / `triage` /
+# `wontfix` / `duplicate` / `excluded`), and any COMMITTED issue
+# (`in-beta` / `loop-claimed` / `loop-in-progress` / `loop-done`) carries a
+# release line. See CONTRIBUTING.md -> "Issue lifecycle".
+#
+# Security posture (public repo): this job reads only issue LABELS and
+# package.json — never a PR body, an issue title/body, a comment, or any other
+# attacker-writable free text. No `pull_request_target`, no `workflow_run` with a
+# write token, nothing checked out from a fork. The only event-derived value used
+# is `issue.number` (an integer), passed through an `env:` var, never inlined.
+#
+# The SCHEDULE is the reliable enforcer. A label applied with the Actions
+# GITHUB_TOKEN does not fire an `on: labeled` event, so an event listener would
+# silently miss bot-applied labels — the full scheduled scan has no blind spot.
+# (GitHub disables schedules after 60 days of repo inactivity; a continuously
+# shipping repo stays active, and `workflow_dispatch` / an external daily
+# heartbeat is the backstop if it ever idles.)
+
+on:
+  schedule:
+    - cron: '23 * * * *' # hourly full reconcile
+  issues:
+    types: [opened] # give a brand-new issue `triage` so it is never born in limbo
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report the plan without changing any labels'
+        required: false
+        default: true
+        type: boolean
+
+# Serialize full scans; let per-issue (opened) runs proceed independently.
+concurrency:
+  group: issue-disposition-${{ github.event.issue.number || 'scan' }}
+  cancel-in-progress: false
+
+# Least privilege: read the repo, write only issue labels. No pull-requests scope
+# (this job never touches PRs), no contents:write.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  reconcile:
+    name: Reconcile issue dispositions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7 # shallow is fine: only package.json is read
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+
+      - name: Reconcile
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # Only set on the `issues` event; an integer, passed via env (not inlined).
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          # Scheduled/opened runs always apply; only a manual dispatch may dry-run.
+          INPUT_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          ARGS=""
+          if [ -n "$ISSUE_NUMBER" ]; then ARGS="$ARGS --issue $ISSUE_NUMBER"; fi
+          if [ "$INPUT_DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          echo "Running: node scripts/reconcile-issue-dispositions.js$ARGS"
+          node scripts/reconcile-issue-dispositions.js $ARGS
