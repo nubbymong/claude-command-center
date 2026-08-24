@@ -268,4 +268,15 @@ describe("acknowledging a tip advances the rotation — it never hides the row (
     useTipsStore.getState().recordUsage('memory.memory-page')
     expect(useTipsStore.getState().currentTipId).toBe('tip.notes')
   })
+
+  it('a postUse downgrade keeps the tip current -- it swaps variant, never rotates', () => {
+    // tip.notes excludes security.encrypted-notes but HAS a postUse variant, so
+    // firing its excludes still resolves. A mutant that advances whenever the
+    // resolved content merely CHANGES would rotate it away and fail here.
+    useTipsStore.setState({ currentTipId: 'tip.notes' })
+    useTipsStore.getState().recordUsage('security.encrypted-notes')
+    const s = useTipsStore.getState()
+    expect(s.currentTipId).toBe('tip.notes')
+    expect(s.getCurrentTip()?.content).toBe(TIPS_LIBRARY.find((t) => t.id === 'tip.notes')!.variants.postUse)
+  })
 })
