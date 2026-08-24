@@ -145,7 +145,42 @@ issue.** Either lifecycle label means the fix is already merged to `beta` (which
 ships as the next 2.1 release) or in a cut 2.1 rc, so also calling it
 `release-2.2` ("deferred") is self-contradictory. If a `release-2.2` issue later
 gets a fix merged to `beta`, drop `release-2.2` and add `in-beta`. This invariant
-is cheap to enforce in CI alongside the changelog gate.
+is enforced by the reconcile job below.
+
+### Issue disposition — nothing in limbo (#437)
+
+Every **open** issue must carry exactly **one disposition**, so nothing falls
+through the cracks:
+
+- a release line — `release-<major.minor>` (scheduled to ship in that line), **or**
+- `backlog` — real work, accepted, not yet scheduled, **or**
+- `triage` — undecided; a human must decide (the default on a brand-new issue), **or**
+- `wontfix` / `duplicate` / `excluded` — will not ship.
+
+And once an issue reaches a **committed state** — `in-beta`, `in-release`,
+`loop-claimed`, `loop-in-progress`, or `loop-done` — it must carry a
+`release-<major.minor>` label: work started or shipped means the target line is
+decided. `in-beta` and `in-release` specifically must carry the **active** line
+(the invariant above); other committed states may target a future line.
+
+Enforcement is durable, not by hand — `.github/workflows/issue-disposition.yml`
+(schedule + `workflow_dispatch`, plus auto-`triage` on newly opened issues) runs
+`scripts/reconcile-issue-dispositions.js`, which:
+
+- adds `triage` to any open issue with no disposition (never leaves limbo);
+- adds the active `release-<x.y>` (computed from `package.json`) to an
+  `in-beta`/`in-release` issue that has no release line;
+- **flags for a human** — never guesses — a committed issue with no line, an
+  `in-beta`/`in-release` issue on a deferred line, or any issue carrying more than
+  one disposition.
+
+It runs on a **schedule**, not an `on: labeled` listener: a label applied with the
+Actions `GITHUB_TOKEN` does not fire `labeled`, so the scheduled full scan is the
+reliable path. Preview locally:
+
+```bash
+node scripts/reconcile-issue-dispositions.js --dry-run
+```
 
 ### Desktop-test gate (`desktop-tested` / `skip-desktop-test`)
 
