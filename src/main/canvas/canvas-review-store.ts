@@ -875,7 +875,7 @@ function pastedImagePath(annotationId: string): string {
  *  Same PNG discipline as sketch exports (magic + byte cap), written BEFORE the
  *  record commits so a failed write refuses the whole save. */
 function writePastedImage(canvasId: string, annotationId: string, pngBase64: string): AnnotationImage {
-  const bytes = decodeSketchPng(pngBase64)
+  const bytes = decodeAttachmentPng(pngBase64)
   mkdirSecure(path.join(canvasDir(canvasId), 'reviews', 'pasted'))
   atomicWriteSecure(path.join(canvasDir(canvasId), pastedImagePath(annotationId)), bytes)
   return { pngPath: pastedImagePath(annotationId) }
@@ -930,6 +930,12 @@ export function upsertAnnotation(
     else existing.focus = draft.focus
     if (draft.sketch) existing.sketch = { ...draft.sketch, pngPath: '' }
     else delete existing.sketch
+    // A removal's file is unlinked AFTER the commit, never before — the same
+    // persist-before-memory discipline deleteAnnotation states: if `persist`
+    // throws, the still-committed record must not reference a file we already
+    // deleted. Captured here (from the clone we are about to overwrite) and
+    // unlinked past the commit below.
+    let imageToUnlink: AnnotationImage | undefined
     if (draft.image === 'keep') {
       if (!existing.image) throw new Error('no image to keep on this note')
     } else if (draft.image) {
@@ -937,9 +943,12 @@ export function upsertAnnotation(
       // same path atomically.
       existing.image = writePastedImage(canvas.canvasId, existing.id, draft.image.pngBase64)
     } else if (existing.image) {
-      unlinkPastedImage(canvas.canvasId, existing.image)
+      imageToUnlink = existing.image
       delete existing.image
     }
+    commit(next)
+    if (imageToUnlink) unlinkPastedImage(canvas.canvasId, imageToUnlink)
+    return { state: toState(next), annotationId }
   } else {
     if (!review) {
       if (next.reviews.length >= MAX_REVIEWS_PER_CANVAS) throw new Error('review cap reached for this canvas')
@@ -1008,11 +1017,14 @@ export function deleteAnnotation(sessionId: string, annotationId: string): Canva
 /** PNG magic: the eight bytes every real PNG starts with. */
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
-function decodeSketchPng(pngBase64: string): Buffer {
-  if (typeof pngBase64 !== 'string' || pngBase64.length === 0) throw new Error('invalid sketch png')
+/** Decode + validate a note-attachment PNG. Shared by both attachment kinds —
+ *  a sketch export and a pasted screenshot — so the messages say "attachment",
+ *  not "sketch", or a paste failure reads as a sketch bug in the logs. */
+function decodeAttachmentPng(pngBase64: string): Buffer {
+  if (typeof pngBase64 !== 'string' || pngBase64.length === 0) throw new Error('invalid attachment png')
   const bytes = Buffer.from(pngBase64, 'base64')
-  if (bytes.length === 0 || bytes.length > MAX_SKETCH_PNG_BYTES) throw new Error('sketch png too large')
-  if (bytes.length < PNG_MAGIC.length || !bytes.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) throw new Error('sketch is not a png')
+  if (bytes.length === 0 || bytes.length > MAX_SKETCH_PNG_BYTES) throw new Error('attachment png too large')
+  if (bytes.length < PNG_MAGIC.length || !bytes.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) throw new Error('attachment is not a png')
   return bytes
 }
 
@@ -1064,7 +1076,7 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
     const pngBase64 = exportsById.get(annotation.id)
     if (pngBase64 === undefined) throw new Error(`sketch export missing for note ${annotation.id}`)
     exportsById.delete(annotation.id)
-    const bytes = decodeSketchPng(pngBase64)
+    const bytes = decodeAttachmentPng(pngBase64)
     const relPath = `reviews/${reviewId}/${annotation.id}.png`
     annotation.sketch.pngPath = relPath
     pngWrites.push({ absPath: path.join(canvasDir(canvas.canvasId), 'reviews', reviewId, `${annotation.id}.png`), bytes })
