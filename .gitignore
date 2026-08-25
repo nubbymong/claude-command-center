@@ -89,3 +89,6 @@ process-snapshot-*.txt
 # `.canvas-scratch/` is the older spelling, kept ignored for existing checkouts.
 .ccc-canvas/
 .canvas-scratch/
+
+# loop-tree session-integration bookkeeping (untracked; never part of a PR)
+.loop/
