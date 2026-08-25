@@ -40,12 +40,25 @@ interface PersistedShape {
 
 interface State {
   bySessionId: Record<string, ExcalidrawSessionState>
+  /** Sessions whose submit-triggered return-to-terminal is in flight (#478).
+   *  While set, the submit transition is the ONLY driver of pane state: the
+   *  toggles disable, and the landing CLOSES rather than toggles, so a user
+   *  click racing the timer cannot double-flip the pane. Volatile — never
+   *  persisted. */
+  submitReturnBySession: Record<string, boolean>
 }
 
 interface Actions {
   hydrate: (data: PersistedShape) => void
   togglePane: (sessionId: string) => void
   setOpen: (sessionId: string, open: boolean) => void
+  /** Arm the submit hand-off (#478): mark the session in flight and schedule
+   *  the landing. On fire the pane is CLOSED if still open — never toggled,
+   *  so a pane something else already closed stays closed. */
+  beginSubmitReturn: (sessionId: string, delayMs?: number) => void
+  /** Leave early / tear down: clear the flag and the pending landing without
+   *  touching pane state (the caller does its own navigation). */
+  cancelSubmitReturn: (sessionId: string) => void
   newDrawing: (sessionId: string, name?: string) => string
   selectDrawing: (sessionId: string, drawingId: string) => void
   renameDrawing: (sessionId: string, drawingId: string, newName: string) => void
@@ -66,7 +79,7 @@ const defaultState = (): ExcalidrawSessionState => ({
   isOpen: false,
 })
 
-const persist = (state: State, immediate = false) => {
+const persist = (state: Pick<State, 'bySessionId'>, immediate = false) => {
   // Strip the volatile `isOpen` flag — pane visibility shouldn't carry
   // across app restarts (we always restore with everything closed).
   const persisted: PersistedShape = { bySessionId: {} }
@@ -89,8 +102,55 @@ const nextUntitledName = (drawings: ExcalidrawDrawing[]): string => {
   return `Untitled ${Date.now()}`
 }
 
+/** Pending submit-return landings, outside the store state — timer handles are
+ *  not renderable data. Keyed like the flag; begin replaces, cancel clears. */
+const submitReturnTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** How long the post-submit confirmation stays up before the hand-back (#478).
+ *  Long enough to read as deliberate, short enough not to strand the user. */
+export const SUBMIT_RETURN_DELAY_MS = 1200
+
 export const useExcalidrawStore = create<State & Actions>((set, get) => ({
   bySessionId: {},
+  submitReturnBySession: {},
+
+  beginSubmitReturn: (sessionId, delayMs = SUBMIT_RETURN_DELAY_MS) => {
+    const prior = submitReturnTimers.get(sessionId)
+    if (prior) clearTimeout(prior)
+    set((s) => ({ submitReturnBySession: { ...s.submitReturnBySession, [sessionId]: true } }))
+    submitReturnTimers.set(
+      sessionId,
+      setTimeout(() => {
+        submitReturnTimers.delete(sessionId)
+        const flags = { ...get().submitReturnBySession }
+        delete flags[sessionId]
+        const cur = get().bySessionId[sessionId]
+        // CLOSE, never toggle: if anything else closed the pane inside the
+        // window, a toggle here would REOPEN it — the double-flip this exists
+        // to prevent.
+        if (cur?.isOpen) {
+          set((s) => ({
+            submitReturnBySession: flags,
+            bySessionId: { ...s.bySessionId, [sessionId]: { ...cur, isOpen: false } },
+          }))
+        } else {
+          set({ submitReturnBySession: flags })
+        }
+      }, delayMs),
+    )
+  },
+
+  cancelSubmitReturn: (sessionId) => {
+    const prior = submitReturnTimers.get(sessionId)
+    if (prior) clearTimeout(prior)
+    submitReturnTimers.delete(sessionId)
+    if (!get().submitReturnBySession[sessionId]) return
+    set((s) => {
+      const flags = { ...s.submitReturnBySession }
+      delete flags[sessionId]
+      return { submitReturnBySession: flags }
+    })
+  },
 
   hydrate: (data) => {
     const next: Record<string, ExcalidrawSessionState> = {}
@@ -128,7 +188,7 @@ export const useExcalidrawStore = create<State & Actions>((set, get) => ({
       createdAt: Date.now(),
       updatedAt: Date.now(),
     }
-    const newState: State = {
+    const newState: Pick<State, 'bySessionId'> = {
       bySessionId: {
         ...get().bySessionId,
         [sessionId]: {
@@ -145,7 +205,7 @@ export const useExcalidrawStore = create<State & Actions>((set, get) => ({
 
   selectDrawing: (sessionId, drawingId) => {
     const cur = get().bySessionId[sessionId] ?? defaultState()
-    const next: State = {
+    const next: Pick<State, 'bySessionId'> = {
       bySessionId: {
         ...get().bySessionId,
         [sessionId]: { ...cur, activeDrawingId: drawingId },
@@ -159,7 +219,7 @@ export const useExcalidrawStore = create<State & Actions>((set, get) => ({
     const cur = get().bySessionId[sessionId] ?? defaultState()
     const trimmed = newName.trim()
     if (!trimmed) return
-    const next: State = {
+    const next: Pick<State, 'bySessionId'> = {
       bySessionId: {
         ...get().bySessionId,
         [sessionId]: {
@@ -177,7 +237,7 @@ export const useExcalidrawStore = create<State & Actions>((set, get) => ({
   deleteDrawing: (sessionId, drawingId) => {
     const cur = get().bySessionId[sessionId] ?? defaultState()
     const remaining = cur.drawings.filter((d) => d.id !== drawingId)
-    const next: State = {
+    const next: Pick<State, 'bySessionId'> = {
       bySessionId: {
         ...get().bySessionId,
         [sessionId]: {
@@ -196,7 +256,7 @@ export const useExcalidrawStore = create<State & Actions>((set, get) => ({
   updateScene: (sessionId, drawingId, scene) => {
     const cur = get().bySessionId[sessionId] ?? defaultState()
     if (!cur.drawings.some((d) => d.id === drawingId)) return
-    const next: State = {
+    const next: Pick<State, 'bySessionId'> = {
       bySessionId: {
         ...get().bySessionId,
         [sessionId]: {
@@ -212,11 +272,11 @@ export const useExcalidrawStore = create<State & Actions>((set, get) => ({
   },
 
   reset: (sessionId) => {
+    get().cancelSubmitReturn(sessionId)
     const next = { ...get().bySessionId }
     delete next[sessionId]
-    const ns: State = { bySessionId: next }
-    set(ns)
-    persist(ns, true)
+    set({ bySessionId: next })
+    persist({ bySessionId: next }, true)
   },
 
   reconcile: (liveSessionIds) => {
@@ -228,7 +288,7 @@ export const useExcalidrawStore = create<State & Actions>((set, get) => ({
     for (const [sid, s] of Object.entries(current)) {
       if (live.has(sid)) next[sid] = s
     }
-    const ns: State = { bySessionId: next }
+    const ns: Pick<State, 'bySessionId'> = { bySessionId: next }
     set(ns)
     persist(ns, true)
   },

@@ -29,6 +29,10 @@ interface Props {
 export default function AgentCanvasButton({ sessionId }: Props) {
   const isOpen = useExcalidrawStore((s) => !!s.bySessionId[sessionId]?.isOpen)
   const togglePane = useExcalidrawStore((s) => s.togglePane)
+  // #478: while the submit-triggered hand-back is in flight it is the only
+  // driver of pane state — this toggle disables for the beat, then reads
+  // "Canvas" again once the landing closes the pane.
+  const returning = useExcalidrawStore((s) => !!s.submitReturnBySession[sessionId])
   const queue = useCanvasQueue(sessionId)
   const [queueOpen, setQueueOpen] = React.useState(false)
 
@@ -88,7 +92,8 @@ export default function AgentCanvasButton({ sessionId }: Props) {
           if (!isOpen) trackUsage('canvas.opened')
           togglePane(sessionId)
         }}
-        className={`relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
+        disabled={returning}
+        className={`relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border whitespace-nowrap shrink-0 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
           isOpen
             ? 'bg-mauve/20 border-mauve/70 text-mauve hover:bg-mauve/30'
             : waiting
@@ -97,11 +102,13 @@ export default function AgentCanvasButton({ sessionId }: Props) {
         }`}
         style={!isOpen && waiting ? warnStyle : undefined}
         title={
-          isOpen
-            ? 'Back to the terminal (closes the Agent Canvas)'
-            : waiting
-              ? `${queue} canvas${queue === 1 ? '' : 'es'} waiting on your review — click the count for the list, right-click to dismiss all`
-              : 'Open Agent Canvas'
+          returning
+            ? 'Returning to the terminal…'
+            : isOpen
+              ? 'Back to the terminal (closes the Agent Canvas)'
+              : waiting
+                ? `${queue} canvas${queue === 1 ? '' : 'es'} waiting on your review — click the count for the list, right-click to dismiss all`
+                : 'Open Agent Canvas'
         }
         data-testid="canvas-button"
         data-waiting={waiting ? 'true' : undefined}
