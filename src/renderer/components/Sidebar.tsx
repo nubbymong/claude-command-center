@@ -768,7 +768,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
       style={{ width: sidebarWidth, background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)', ...sideType }}
     >
       {/* #461: drag the right edge to resize; width persists on release.
-          Straddles the border (right: -2px) so it does NOT sit over the
+          Sits astride the aside's edge (right: -4px) fully CLEAR of the
           session list's 6px scrollbar — grabbing the scrollbar must scroll. */}
       <div
         onPointerDown={startSidebarResize}
@@ -778,7 +778,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           void useSettingsStore.getState().updateSettings({ sidebarWidth: undefined })
         }}
         className="absolute top-0 bottom-0 w-1 z-20 cursor-col-resize hover:bg-surface1"
-        style={{ right: -2 }}
+        style={{ right: -4 }}
         title="Drag to resize — double-click to reset"
         data-testid="sidebar-resize-handle"
         aria-hidden="true"

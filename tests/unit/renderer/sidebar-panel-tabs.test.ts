@@ -152,6 +152,9 @@ describe('Sidebar width (#461)', () => {
 
   const drag = (from: number, to: number) => {
     act(() => { handle().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: from })) })
+    // TWO moves, so a write leaked into onMove shows up as two calls — the
+    // one-write-per-drag assertion must be able to tell release from frame.
+    act(() => { window.dispatchEvent(new MouseEvent('pointermove', { clientX: Math.round((from + to) / 2) })) })
     act(() => { window.dispatchEvent(new MouseEvent('pointermove', { clientX: to })) })
     act(() => { window.dispatchEvent(new MouseEvent('pointerup', {})) })
   }
@@ -215,6 +218,10 @@ describe('Sidebar width (#461)', () => {
     expect(aside().style.width).toBe('380px')
     act(() => { handle().dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
     expect(aside().style.width).toBe('256px')
-    expect(updateSettingsSpy).toHaveBeenCalledWith({ sidebarWidth: undefined })
+    // Loose-equality trap: toHaveBeenCalledWith({sidebarWidth: undefined})
+    // also matches {}. Assert the key is genuinely present-and-undefined.
+    const resetArg = updateSettingsSpy.mock.calls.at(-1)![0] as Record<string, unknown>
+    expect(Object.hasOwn(resetArg, 'sidebarWidth')).toBe(true)
+    expect(resetArg.sidebarWidth).toBeUndefined()
   })
 })
