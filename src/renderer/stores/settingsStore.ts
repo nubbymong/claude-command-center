@@ -220,6 +220,13 @@ export interface AppSettings {
    *  shape on upgrade. Minimal mode reads the SAME footerHiddenUsageBuckets
    *  denylist, so hiding Fable there drops its dot here. */
   footerAccountDisplay?: 'meters' | 'dots'
+  /** Which Claude account a RESUMED session (an app-relaunch restore) runs
+   *  under (#446). 'auto-last' continues silently under the account it ran
+   *  under; 'ask' opens the account picker per restored session. Absent =>
+   *  'auto-last' (via resolveResumeAccountMode), so no existing install
+   *  changes on upgrade. Inert for anyone with fewer than two account
+   *  profiles — there is nothing to pick. */
+  resumeAccountMode?: 'ask' | 'auto-last'
   updateChannel: UpdateChannel
   /** True once the user has explicitly picked an update channel (onboarding
    *  Transparency recap, or Settings -> General). Absent/false means

@@ -1,6 +1,6 @@
 // tests/unit/renderer/session-launch.test.ts
 import { describe, it, expect } from 'vitest'
-import { shouldGateAccountChoice, canSwitchAccountForSession, formatSpawnError } from '../../../src/renderer/utils/sessionLaunch'
+import { shouldGateAccountChoice, canSwitchAccountForSession, formatSpawnError, resolveResumeAccountMode } from '../../../src/renderer/utils/sessionLaunch'
 
 describe('shouldGateAccountChoice', () => {
   it('gates a Claude session with >= 2 account profiles', () => {
@@ -23,6 +23,17 @@ describe('shouldGateAccountChoice', () => {
   })
   it('does NOT gate an SSH session even if provider is Claude (remote host uses its own login)', () => {
     expect(shouldGateAccountChoice({ hasSession: true, profileCount: 2, provider: 'claude', isSsh: true })).toBe(false)
+  })
+})
+
+describe('resolveResumeAccountMode (#446)', () => {
+  it("returns 'ask' only for the exact string 'ask'", () => {
+    expect(resolveResumeAccountMode('ask')).toBe('ask')
+  })
+  it("defaults to 'auto-last' for absent/unknown/legacy values", () => {
+    for (const v of [undefined, null, '', 'auto-last', 'AUTO', 'Ask', 1, {}, true]) {
+      expect(resolveResumeAccountMode(v)).toBe('auto-last')
+    }
   })
 })
 

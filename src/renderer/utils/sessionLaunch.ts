@@ -55,6 +55,20 @@ export function canSwitchAccountForSession(opts: {
 }
 
 /**
+ * How a RESUMED session (an app-relaunch restore) chooses its account (#446).
+ *   - 'auto-last' (default): continue silently under the account the session
+ *     ran under — restored sessions are marked predetermined, no gate.
+ *   - 'ask': the account picker opens per restored session (pre-selecting the
+ *     last account), by NOT marking it predetermined.
+ * Absent or unrecognised => 'auto-last', so no existing install changes on
+ * upgrade. Resolver-based default (the settings enum convention here), not a
+ * DEFAULT_SETTINGS entry.
+ */
+export function resolveResumeAccountMode(value: unknown): 'ask' | 'auto-last' {
+  return value === 'ask' ? 'ask' : 'auto-last'
+}
+
+/**
  * Render a PTY-spawn failure into a readable, single-line terminal message.
  *
  * The renderer used to fire `pty.spawn` without catching, so a main-process

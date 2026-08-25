@@ -19,6 +19,7 @@ import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import { SectionLabel } from './ui/SectionLabel'
 import { resolveDefaultPanelTab, type PanelTab } from './sidebar/sessionsPanelState'
+import { resolveResumeAccountMode } from '../utils/sessionLaunch'
 import { Kbd } from './ui/Kbd'
 import { trackUsage } from '../stores/tipsStore'
 import { useAddAccount } from '../hooks/useAddAccount'
@@ -569,7 +570,28 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
           )}
 
           {activeTab === 'accounts' && (
-            <AccountsPanel onAdd={handleAddAccount} />
+            <>
+              {/* #446: which account a RESUMED session (app-relaunch restore)
+                  runs under. Only meaningful with 2+ accounts; default keeps
+                  today's silent continue-under-last behaviour. */}
+              <Section title="Resuming sessions" icon={<path d="M8 3a5 5 0 1 0 4.5 2.8M8 3V1M8 3l2 1.2" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />}>
+                <Field label="Account for a resumed session">
+                  <select
+                    value={resolveResumeAccountMode(settings.resumeAccountMode)}
+                    onChange={(e) => save({ resumeAccountMode: e.target.value as 'ask' | 'auto-last' })}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                    data-ux-id="settings-resume-account-mode"
+                  >
+                    <option value="auto-last">Auto-resume last — the account it ran under (default)</option>
+                    <option value="ask">Ask each time — pick the account when a session resumes</option>
+                  </select>
+                </Field>
+                <p className="text-[11px] text-overlay0 mt-1">
+                  Only matters when you have two or more accounts. Applies when the app restarts and restores your sessions.
+                </p>
+              </Section>
+              <AccountsPanel onAdd={handleAddAccount} />
+            </>
           )}
 
           {activeTab === 'statusline' && (
