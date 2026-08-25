@@ -573,10 +573,18 @@ describe('superseded rounds settle instead of stacking (#470)', () => {
     store.submitReview(SID, reviewId, [])
     return { versionId, annotationId }
   }
+  /** Address the notes AND mark them seen — the sweep only touches rounds the
+   *  user has actually looked at (the seen-barrier, ADR-009 adversarial pass).
+   *  `markAddressedNotesSeen` is the renderer-only bit no MCP tool can write. */
+  function addressAndSee(reviewId: string, ids: string[]): void {
+    store.markAnnotationsAddressed(SID, reviewId, ids)
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    store.markAddressedNotesSeen(SID, canvasId, ids)
+  }
 
-  it("the user's ruling on a later round settles older fully-addressed rounds", () => {
+  it("the user's ruling on a later round settles older SEEN fully-addressed rounds", () => {
     const r1 = roundAgainstNewVersion('R1')
-    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    addressAndSee('R1', [r1.annotationId])
     const r2 = roundAgainstNewVersion('R2')
     const canvasId = store.getReviewStateForSession(SID)!.canvasId
     expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(1)
@@ -590,7 +598,33 @@ describe('superseded rounds settle instead of stacking (#470)', () => {
     expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
   })
 
-  it("notes still OPEN survive a later ruling whole — and settle only when addressed (the 3→2→3 bounce)", () => {
+  it('THE SEEN-BARRIER: an agent-addressed-but-UNSEEN round is NEVER swept, even under a user ruling', () => {
+    // The BLOCKER the adversarial pass found: canvas_resolve (agent) addresses
+    // a round the user never saw, and a later user ruling settles it in the
+    // same commit — a close past the seen-barrier canvas_verdict enforces.
+    const r1 = roundAgainstNewVersion('R1')
+    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId]) // addressed, NOT seen
+    const r2 = roundAgainstNewVersion('R2')
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+
+    store.resolveAnnotation(SID, r2.annotationId, 'approve', canvasId) // genuine user ruling on R2
+    const state = store.getReviewStateForSession(SID)!
+    // R1 stays owed — the user has not seen its note addressed, so the agent
+    // cannot close it, by the sweep any more than by canvas_verdict.
+    expect(state.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({ state: 'addressed' })
+    expect(state.reviews.find((r) => r.id === 'R1')?.status).toBe('submitted')
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(1)
+
+    // The user then glances at R1 (the panel marks it seen). The NEXT ruling —
+    // or any mutation — now settles it: one look, not a silent close.
+    store.markAddressedNotesSeen(SID, canvasId, [r1.annotationId])
+    const r3 = roundAgainstNewVersion('R3')
+    store.resolveAnnotation(SID, r3.annotationId, 'approve', canvasId)
+    expect(store.getReviewStateForSession(SID)!.annotations.find((a) => a.id === r1.annotationId))
+      .toMatchObject({ state: 'stale', closedBy: 'supersede' })
+  })
+
+  it("notes still OPEN survive a later ruling whole — and settle once addressed AND seen (the 3→2→3 bounce)", () => {
     const r1 = roundAgainstNewVersion('R1')
     const r2 = roundAgainstNewVersion('R2')
     const canvasId = store.getReviewStateForSession(SID)!.canvasId
@@ -600,22 +634,65 @@ describe('superseded rounds settle instead of stacking (#470)', () => {
     expect(afterRuling.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({ state: 'open' })
     expect(afterRuling.reviews.find((r) => r.id === 'R1')?.status).toBe('submitted')
 
-    // The agent now addresses it. Before #470 this re-entered "waiting on the
-    // user" and the pill bounced back up; it settles in the same commit instead.
-    const { state } = store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    // The agent addresses it; the user glances at it. Before #470 this
+    // re-entered "waiting on the user" and the pill bounced back up; it settles
+    // once seen instead.
+    addressAndSee('R1', [r1.annotationId])
+    // The seen mark alone does not settle; a mutation runs the sweep. Nudge it
+    // with a fresh ruling on a newer round.
+    const r3 = roundAgainstNewVersion('R3')
+    const { state } = store.resolveAnnotation(SID, r3.annotationId, 'approve', canvasId)
     expect(state.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({
       state: 'stale',
       closedBy: 'supersede',
     })
     expect(state.reviews.find((r) => r.id === 'R1')?.status).toBe('resolved')
-    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
+  })
+
+  it('a round the user is TRIAGING (ruled on one of its notes) is not swept from under them', () => {
+    // R1 has two notes; the user approves one and leaves the other addressed —
+    // they are working through R1. A later ruling on R2 must not stale the rest.
+    const { versionId: v1 } = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>r1</p>', ready: true })
+    const n1 = store.upsertAnnotation(SID, { scope: 'general', note: 'n1', versionId: v1 }).annotationId
+    const n2 = store.upsertAnnotation(SID, { scope: 'general', note: 'n2', versionId: v1 }).annotationId
+    store.submitReview(SID, 'R1', [])
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    addressAndSee('R1', [n1, n2])
+    store.resolveAnnotation(SID, n1, 'approve', canvasId) // a verdict INSIDE R1
+
+    const r2 = roundAgainstNewVersion('R2')
+    store.resolveAnnotation(SID, r2.annotationId, 'approve', canvasId)
+    // n2 survives — the R1 click ruled n1, not n2.
+    expect(store.getReviewStateForSession(SID)!.annotations.find((a) => a.id === n2))
+      .toMatchObject({ state: 'addressed' })
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(1)
+  })
+
+  it('the sweep never crosses ARTIFACTS: a plan ruling does not settle a mockup round', () => {
+    // A design (mockup) round R1, seen+addressed, then a PLAN artifact on the
+    // same canvas. Ruling on the plan says nothing about the mockup's feedback.
+    const { versionId: mockupV } = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>mock</p>', ready: true })
+    const m1 = store.upsertAnnotation(SID, { scope: 'general', note: 'mockup note', versionId: mockupV }).annotationId
+    store.submitReview(SID, 'R1', [])
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    addressAndSee('R1', [m1])
+
+    const { versionId: planV } = canvasStore.renderVersion(SID, { mode: 'plan', html: '<!doctype html><p>plan</p>', ready: true })
+    const p1 = store.upsertAnnotation(SID, { scope: 'general', note: 'plan note', versionId: planV }).annotationId
+    store.submitReview(SID, 'R2', [])
+    store.resolveAnnotation(SID, p1, 'approve', canvasId) // rule the PLAN round
+
+    // The mockup round is a different artifact — untouched.
+    expect(store.getReviewStateForSession(SID)!.annotations.find((a) => a.id === m1))
+      .toMatchObject({ state: 'addressed' })
+    expect(store.getReviewStateForSession(SID)!.reviews.find((r) => r.id === 'R1')?.status).toBe('submitted')
   })
 
   it('nothing settles while no later round has been ruled on', () => {
     const r1 = roundAgainstNewVersion('R1')
-    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    addressAndSee('R1', [r1.annotationId])
     const r2 = roundAgainstNewVersion('R2')
-    store.markAnnotationsAddressed(SID, 'R2', [r2.annotationId])
+    addressAndSee('R2', [r2.annotationId])
     const canvasId = store.getReviewStateForSession(SID)!.canvasId
     // Both rounds await verdicts; neither is superseded by a RULING yet.
     expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(2)
@@ -635,7 +712,7 @@ describe('superseded rounds settle instead of stacking (#470)', () => {
 
   it('a REOPENED note shields its round — the sweep never undoes an explicit reopen', () => {
     const r1 = roundAgainstNewVersion('R1')
-    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    addressAndSee('R1', [r1.annotationId])
     const r2 = roundAgainstNewVersion('R2')
     const canvasId = store.getReviewStateForSession(SID)!.canvasId
     store.resolveAnnotation(SID, r2.annotationId, 'approve', canvasId)
@@ -657,7 +734,7 @@ describe('superseded rounds settle instead of stacking (#470)', () => {
 
   it('the settled state round-trips: reload from disk accepts closedBy supersede', () => {
     const r1 = roundAgainstNewVersion('R1')
-    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    addressAndSee('R1', [r1.annotationId])
     const r2 = roundAgainstNewVersion('R2')
     const canvasId = store.getReviewStateForSession(SID)!.canvasId
     store.resolveAnnotation(SID, r2.annotationId, 'approve', canvasId)
@@ -700,8 +777,11 @@ describe('the supersede sweep is anchored in verifiable USER rulings (#470, secu
   it('ordinals compare numerically: a user ruling on R10 settles R9', () => {
     const rounds: Array<{ annotationId: string }> = []
     for (let i = 1; i <= 10; i++) rounds.push(roundAgainstNewVersion(`R${i}`))
-    for (let i = 0; i < 9; i++) store.markAnnotationsAddressed(SID, `R${i + 1}`, [rounds[i].annotationId])
     const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    for (let i = 0; i < 9; i++) {
+      store.markAnnotationsAddressed(SID, `R${i + 1}`, [rounds[i].annotationId])
+      store.markAddressedNotesSeen(SID, canvasId, [rounds[i].annotationId])
+    }
     // The USER rules on R10. Lexicographically 'R10' < 'R9'; numerically 10 > 9.
     store.resolveAnnotation(SID, rounds[9].annotationId, 'approve', canvasId)
     const state = store.getReviewStateForSession(SID)!
