@@ -403,6 +403,8 @@ export const IPC = {
   CANVAS_REVIEW_MARK_SEEN: 'canvas:reviewMarkSeen',    // renderer -> main: the USER has these addressed notes on screen (releases the agent close-out barrier; no MCP path here, ever)
   CANVAS_REVIEW_CLOSE_OUT: 'canvas:reviewCloseOut',    // renderer -> main: { canvasId } -> bulk-stale one canvas's rounds waiting on the user (the library)
   CANVAS_REVIEW_DISMISS_ALL: 'canvas:reviewDismissAll',// renderer -> main: { sessionId } -> one sweep over the session's own canvases: close-out per canvas + clear awaiting-first-review (the Canvas button's right-click)
+  CANVAS_COMPLETE: 'canvas:complete',                  // renderer -> main: { canvasId, sessionId } -> the USER signs the subject off (#476; refused while anything is owed)
+  CANVAS_COMPLETE_REOPEN: 'canvas:completeReopen',     // renderer -> main: { canvasId } -> clear a canvas's completed stamp (one-click Reopen)
   CANVAS_REVIEW_CHANGED: 'canvas:reviewChanged',       // push: main -> renderer (a review/annotation mutation happened)
 
   // Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard.

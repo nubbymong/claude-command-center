@@ -21,6 +21,7 @@ import { randomId } from '../../shared/id'
 import {
   CANVAS_ID_RE,
   type CanvasAwaitingReview,
+  type CanvasCompletion,
   type CanvasLibraryEntry,
   CANVAS_VERSION_ID_RE,
   CanvasChangedEvent,
@@ -639,12 +640,13 @@ export function onCanvasChanged(listener: CanvasChangedListener): () => void {
   return () => changeListeners.delete(listener)
 }
 
-function emitChanged(record: CanvasRecord, opts?: { draft?: boolean }): void {
+function emitChanged(record: CanvasRecord, opts?: { draft?: boolean; completed?: boolean }): void {
   const event: CanvasChangedEvent = {
     sessionId: record.sessionId,
     canvasId: record.canvasId,
     activeVersionId: record.activeVersionId,
     ...(opts?.draft ? { draft: true } : {}),
+    ...(opts?.completed ? { completed: true } : {}),
   }
   for (const listener of changeListeners) {
     try {
@@ -872,6 +874,17 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     }
   }
 
+  // The sign-off stamp (#476) is dropped, never repaired, when it is not OUR
+  // shape — a malformed stamp must not resurrect as "completed by you".
+  let completed: CanvasCompletion | undefined
+  const rawCompleted = (r as { completed?: unknown }).completed
+  if (rawCompleted && typeof rawCompleted === 'object') {
+    const c = rawCompleted as Partial<CanvasCompletion>
+    if (typeof c.at === 'string' && (c.by === 'user' || c.by === 'agent')) {
+      completed = { at: c.at, by: c.by }
+    }
+  }
+
   // The monotonic version high-water mark (item C, phase 5). Healed to at least
   // `max(surviving id) + 1` so it can never mint an id that already exists, and
   // never below a value the file already recorded — a delete persists a counter
@@ -907,6 +920,7 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     activeVersionId,
     nextVersion,
     ...(awaitingReview ? { awaitingReview } : {}),
+    ...(completed ? { completed } : {}),
   }
 }
 
@@ -1027,7 +1041,14 @@ function toState(record: CanvasRecord): CanvasState {
     versions: record.versions.map((v) => ({ ...v, source: { ...v.source } })),
     ...(record.title ? { title: record.title } : {}),
     ...(record.awaitingReview ? { awaitingReview: { ...record.awaitingReview } } : {}),
+    ...(record.completed ? { completed: { ...record.completed } } : {}),
   }
+}
+
+/** One canvas's state by id — the completion guard's read (#476). */
+export function getCanvasStateById(canvasId: string): CanvasState | null {
+  const record = getRecord(canvasId)
+  return record ? toState(record) : null
 }
 
 /** The renderer's view of a session's canvas; null until something rendered. */
@@ -1162,6 +1183,10 @@ function findFiledCanvas(sessionId: string, title: string): CanvasRecord | undef
   let best: CanvasRecord | undefined
   for (const record of canvases.values()) {
     if (record.sessionId !== sessionId || !record.title || !sameSubject(title, record.title)) continue
+    // A signed-off subject (#476) is terminal history: coming back to its
+    // TITLE starts a fresh canvas rather than silently resuming the one the
+    // user completed. Reopen from the library is the deliberate way back.
+    if (record.completed) continue
     if (!best || lastRenderedAt(record) > lastRenderedAt(best)) best = record
   }
   return best
@@ -1200,6 +1225,17 @@ export function renderVersion(
   // canvas, with its versions and its notes, not open a second one beside it.
   const returnedTo = subjectChanged && title ? findFiledCanvas(sessionId, title) : undefined
   const existing = subjectChanged ? returnedTo : held
+
+  // #476: a signed-off subject is terminal — a render against it is refused
+  // rather than silently resuming it. Only reachable when the user has
+  // deliberately re-opened a completed canvas into the pane (View) and the
+  // agent then renders at it: filing lookups above already skip completed
+  // records, so an ordinary same-title render starts a fresh canvas instead.
+  if (existing?.completed) {
+    throw new Error(
+      `this canvas was signed off as complete; the user can Reopen it from the library — otherwise render under a title as usual to start fresh`,
+    )
+  }
 
   // The ready flag (#366). `false` = a DRAFT that supersedes the previous
   // draft in place; `true` = the deliberate ready-mark that promotes it;
@@ -1406,6 +1442,72 @@ export function clearAwaitingReview(canvasId: string): void {
   persist(next)
   canvases.set(canvasId, next)
   emitChanged(next)
+}
+
+/**
+ * Sign the subject off (#476): stamp the canvas COMPLETE and, when it is the
+ * owning session's current canvas, detach it — the pane falls back to its
+ * front page, and the canvas lives on in the library as history.
+ *
+ * This is the RECORDING half only. The "nothing left owed either way" guard
+ * lives in canvas-completion.ts, which composes this store with the review
+ * store — this store cannot read reviews (the import points the other way).
+ * Callers other than that guard are a bug.
+ *
+ * `by: 'agent'` is written only on the user's explicit instruction (the MCP
+ * tool's contract) and renders as "completed by the agent on your
+ * instruction"; Reopen clears it in one click either way.
+ */
+export function setCanvasCompleted(
+  canvasId: string,
+  by: CanvasCompletion['by'],
+  requireOwnerSessionId?: string,
+): CanvasState | { error: string } {
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return { error: 'invalid canvas id' }
+  if (by !== 'user' && by !== 'agent') return { error: 'invalid completion source' }
+  ensureDiskScanned()
+  const record = canvases.get(canvasId)
+  if (!record) return { error: 'no such canvas' }
+  // Sign-off is the owner's act: both ingresses name the session they act for,
+  // and a canvas owned by another session is refused rather than signed off
+  // under the wrong name.
+  if (requireOwnerSessionId !== undefined && record.sessionId !== requireOwnerSessionId) {
+    return { error: 'not this session’s canvas' }
+  }
+  if (record.completed) return { error: 'already completed' }
+  const { awaitingReview: _cleared, ...rest } = record
+  const next: CanvasRecord = { ...rest, completed: { at: new Date().toISOString(), by } }
+  // Persist-before-commit, like clearAwaitingReview: a failed write leaves the
+  // canvas active rather than completed in memory only.
+  persist(next)
+  canvases.set(canvasId, next)
+  if (sessionIndex.get(record.sessionId) === canvasId) sessionIndex.delete(record.sessionId)
+  emitChanged(next, { completed: true })
+  return toState(next)
+}
+
+/**
+ * Reopen a completed canvas (#476): clear the stamp and, when the owning
+ * session is not currently showing another canvas, make it current again so
+ * the pane lands straight back on it. Recorded state only changes by removal;
+ * nothing else is touched.
+ */
+export function reopenCompletedCanvas(canvasId: string, requireOwnerSessionId?: string): CanvasState | { error: string } {
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return { error: 'invalid canvas id' }
+  ensureDiskScanned()
+  const record = canvases.get(canvasId)
+  if (!record) return { error: 'no such canvas' }
+  if (requireOwnerSessionId !== undefined && record.sessionId !== requireOwnerSessionId) {
+    return { error: 'not this session’s canvas' }
+  }
+  if (!record.completed) return { error: 'not completed' }
+  const { completed: _cleared, ...rest } = record
+  const next: CanvasRecord = rest
+  persist(next)
+  canvases.set(canvasId, next)
+  if (!sessionIndex.has(record.sessionId)) sessionIndex.set(record.sessionId, canvasId)
+  emitChanged(next)
+  return toState(next)
 }
 
 /** Windows reserved device basenames — a request for `CON`/`NUL`/`COM1`/… can
@@ -1737,6 +1839,7 @@ export function listAllCanvases(
       // From the record itself, not the review sweep, so it is present on every
       // row — a "review needed" round must never hide behind the sweep bound.
       ...(record.awaitingReview ? { awaitingReview: true, awaitingReviewAt: clampToNow(record.awaitingReview.at) } : {}),
+      ...(record.completed ? { completed: { ...record.completed } } : {}),
     })
   }
   // Banded, then newest-first inside each band: the canvas you are looking at,

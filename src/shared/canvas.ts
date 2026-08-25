@@ -89,6 +89,14 @@ export interface CanvasAwaitingReview {
   at: string
 }
 
+/** Canvas-level sign-off (#476): the subject reached its terminal COMPLETE
+ *  state. `by: 'agent'` is only ever written on the user's explicit
+ *  instruction and is rendered as such; reopening clears the stamp. */
+export interface CanvasCompletion {
+  at: string
+  by: 'user' | 'agent'
+}
+
 /** What the renderer holds per session (IPC `canvas:getState` result). */
 export interface CanvasState {
   canvasId: string
@@ -101,6 +109,9 @@ export interface CanvasState {
   title?: string
   /** Present while a ready-marked render awaits the user's first review. */
   awaitingReview?: CanvasAwaitingReview
+  /** Present once the subject is signed off (#476). Terminal: renders are
+   *  refused while it stands; Reopen clears it. */
+  completed?: CanvasCompletion
 }
 
 /** Longest canvas title kept. A title names a subject; it is not a description. */
@@ -114,6 +125,10 @@ export interface CanvasChangedEvent {
   /** True when this change is a DRAFT render (#366): the mirrors refresh, but
    *  nothing may surface to the user — no pulse, no count, no pane switch. */
   draft?: boolean
+  /** True when this change is the subject being signed off (#476), so the
+   *  renderer can show the front-page acknowledgment for THIS transition and
+   *  not for ordinary refreshes. */
+  completed?: boolean
 }
 
 /** Renderer → main render request (dev/test ingress; the `canvas_render` MCP
@@ -1020,6 +1035,10 @@ export interface CanvasLibraryEntry {
    *  where every remaining note is addressed (#364). `undefined` when the
    *  review store could not be read, same rule as openReviewCount. */
   verdictRounds?: number
+  /** The subject was signed off (#476). From the canvas record, so it is
+   *  always present when true — the row shows the Completed badge and offers
+   *  View/Reopen instead of the working controls. */
+  completed?: CanvasCompletion
 }
 
 export interface CanvasSnapshotRequestEvent {

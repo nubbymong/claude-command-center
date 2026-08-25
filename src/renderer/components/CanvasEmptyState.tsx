@@ -98,6 +98,25 @@ const DANGER_CLASS =
 export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   const emptyView = useCanvasStore((s) => s.bySessionId[sessionId]?.emptyView ?? 'intro')
   const setEmptyView = useCanvasStore((s) => s.setEmptyView)
+  const completedNotice = useCanvasStore((s) => s.bySessionId[sessionId]?.completedNotice ?? null)
+  const dismissCompleted = useCanvasStore((s) => s.dismissCompleted)
+  // Reopen from the acknowledgment: clear the stamp; main rebinds the canvas
+  // as current (the session shows nothing else right now, by construction),
+  // and the change push swaps the pane back onto it.
+  const reopenCompleted = useCallback(
+    async (canvasId: string) => {
+      try {
+        const res = await window.electronAPI.canvas.completeReopen({ sessionId, canvasId })
+        if (res?.ok) {
+          useCanvasStore.getState().dismissCompleted(sessionId)
+          await useCanvasStore.getState().refresh(sessionId)
+        }
+      } catch {
+        /* the notice stays; nothing was changed */
+      }
+    },
+    [sessionId],
+  )
   const [typed, setTyped] = useState(false)
   const [copied, setCopied] = useState(false)
   const [controlsOpen, setControlsOpen] = useState(false)
@@ -237,6 +256,44 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
       {/* The stage. `canvas-stage` makes this a container query root so the
           sheet answers to the PANE's width, not the window's. */}
       <div className="canvas-stage flex-1 min-h-0 overflow-y-auto px-5 py-7">
+        {/* One quiet acknowledgment for a subject just signed off (#476) —
+            session-local, gone on dismissal, Reopen, or the next render. */}
+        {completedNotice && (
+          <div
+            className="w-full max-w-[840px] mx-auto mb-4 flex items-center gap-2.5 rounded border px-3.5 py-2 text-[12px]"
+            style={{
+              background: 'var(--surface-panel)',
+              borderColor: 'color-mix(in srgb, var(--status-success) 35%, transparent)',
+              color: 'var(--text-secondary)',
+            }}
+            data-testid="canvas-completed-notice"
+          >
+            <span className="font-semibold" style={{ color: 'var(--status-success)' }}>
+              ✓ {completedNotice.title ? `“${completedNotice.title}”` : 'Canvas'} completed
+            </span>
+            <span>· in the Library</span>
+            <button
+              onClick={() => void reopenCompleted(completedNotice.canvasId)}
+              className="underline underline-offset-2 focus-ring rounded"
+              style={{ color: 'var(--brand)' }}
+              data-testid="canvas-completed-notice-reopen"
+              title="Put it back in play — the pane returns to it"
+            >
+              Reopen
+            </button>
+            <div className="flex-1" />
+            <button
+              onClick={() => dismissCompleted(sessionId)}
+              className="text-[11px] focus-ring rounded"
+              style={{ color: 'var(--text-muted)' }}
+              aria-label="Dismiss"
+              title="Dismiss"
+              data-testid="canvas-completed-notice-dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <div className="canvas-sheet relative w-full max-w-[840px] mx-auto flex flex-col rounded border border-[var(--border-subtle)] bg-[var(--surface-raised)]">
           <RegistrationMark corner="tl" />
           <RegistrationMark corner="tr" />

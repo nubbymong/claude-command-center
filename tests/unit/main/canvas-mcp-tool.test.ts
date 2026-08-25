@@ -324,8 +324,9 @@ describe('registration', () => {
   it('advertises canvas_snapshot with a schema the SDK can accept', () => {
     const registered = vi.fn()
     registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
-    // snapshot, render, review, resolve, verdict (#365), pick (chat picks).
-    expect(registered).toHaveBeenCalledTimes(6)
+    // snapshot, render, review, resolve, verdict (#365), pick (chat picks),
+    // complete (#476).
+    expect(registered).toHaveBeenCalledTimes(7)
     const [name, description, shape, handler] = registered.mock.calls[0]
     expect(name).toBe('canvas_snapshot')
     expect(String(description)).toMatch(/scoped/i)
@@ -864,6 +865,7 @@ describe('canvas_render', () => {
     }
     registerCanvasTools(server, z, () => null, deps())
     expect(Object.keys(tools).sort()).toEqual([
+      'canvas_complete',
       'canvas_pick',
       'canvas_render',
       'canvas_resolve',

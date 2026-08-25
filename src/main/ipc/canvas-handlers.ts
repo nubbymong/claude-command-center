@@ -38,6 +38,7 @@ import {
   submitReview,
   upsertAnnotation,
 } from '../canvas/canvas-review-store'
+import { completeCanvasGuarded, reopenCanvasGuarded } from '../canvas/canvas-completion'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 import {
   canvasCwdForSession,
@@ -140,6 +141,24 @@ const artifactDeleteSchema = z
   .object({
     canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
     versionId: z.string().regex(/^v[0-9]{1,9}$/),
+  })
+  .strict()
+
+/** Sign the subject off (#476): the acting session and the canvas it owns.
+ *  The guard module refuses while anything is owed; ownership is re-checked
+ *  in the store against the record itself. */
+const canvasCompleteSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
+  })
+  .strict()
+
+/** Reopen a completed canvas (#476). Same shapes; only ever restores work. */
+const canvasCompleteReopenSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/),
   })
   .strict()
 
@@ -531,6 +550,25 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
       }
     }
     return { closedNotes, closedReviews, clearedAwaiting, unreadable }
+  })
+
+  // Sign the subject off (#476). The guard module owns the "nothing left owed
+  // either way" rule (drafts, open notes, verdicts) and fails closed on an
+  // unreadable review store; the canvas store re-checks ownership against the
+  // record itself. Detaches the canvas as the session's current one, so the
+  // pane falls back to its front page.
+  ipcMain.handle(IPC.CANVAS_COMPLETE, async (_e, args: unknown) => {
+    const { sessionId, canvasId } = canvasCompleteSchema.parse(args)
+    const result = completeCanvasGuarded(canvasId, 'user', sessionId)
+    return 'error' in result ? { ok: false as const, reason: result.error } : { ok: true as const, state: result }
+  })
+
+  // The undo half (#476): clears the stamp, restores obligations, and rebinds
+  // the canvas as current when the owner session shows nothing else.
+  ipcMain.handle(IPC.CANVAS_COMPLETE_REOPEN, async (_e, args: unknown) => {
+    const { sessionId, canvasId } = canvasCompleteReopenSchema.parse(args)
+    const result = reopenCanvasGuarded(canvasId, sessionId)
+    return 'error' in result ? { ok: false as const, reason: result.error } : { ok: true as const, state: result }
   })
 
   onReviewChanged((event) => {

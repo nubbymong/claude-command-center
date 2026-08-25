@@ -415,6 +415,11 @@ export interface ElectronAPI {
      *  canvases (close-outs + awaiting-first-review clears). The Canvas
      *  button's right-click. `unreadable` mirrors the queue's "unknown". */
     reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<{ closedNotes: number; closedReviews: number; clearedAwaiting: number; unreadable: number }>
+    /** Sign the subject off (#476). Refused (`ok:false` + reason) while
+     *  anything is owed either way; the pane then shows its front page. */
+    complete: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** The one-click undo: clear a canvas's completed stamp. */
+    completeReopen: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {

@@ -167,6 +167,17 @@ export interface CanvasToolDeps {
     annotationId: string,
     variantKey: string,
   ) => { pickedLabel: string; reviewClosed: boolean }
+  /**
+   * Sign the session's canvas off (#476) — the agent's fourth write, and the
+   * only SUBJECT-level one. Wired to the guarded composition
+   * (canvas-completion.ts), which refuses while anything is owed either way
+   * — drafts, notes with the agent, notes awaiting verdicts — and fails
+   * closed on an unreadable review store. The stamp records by:'agent', which
+   * the pane renders as "completed by the agent on your instruction"; the
+   * user reopens it in one click. Like closeByAgent, the tool description's
+   * "only on their word" is a request — these refusals are the boundary.
+   */
+  completeCanvas: (sessionId: string, canvasId: string) => CanvasState | { error: string }
 }
 
 function textResult(text: string, isError = false) {
@@ -1222,6 +1233,54 @@ export function runCanvasVerdict(
 }
 
 /**
+ * Sign the session's canvas off (#476) — canvas_complete's whole
+ * implementation, verdict-shaped: resolve the bound session's canvas, hand
+ * the write to the guarded composition, and translate its refusals into
+ * words that lead somewhere. No arguments beyond the ignored session pin:
+ * the subject completed is always THIS session's current canvas, so there is
+ * no id for the model to point somewhere else.
+ */
+export function runCanvasComplete(
+  sessionId: string,
+  deps: Pick<CanvasToolDeps, 'completeCanvas' | 'getCanvasState'>,
+): { text: string; isError: boolean } {
+  const canvas = deps.getCanvasState(sessionId)
+  if (!canvas) {
+    return {
+      text: 'This session has no active canvas to complete — nothing has rendered yet, or the subject was already signed off and filed to the library.',
+      isError: true,
+    }
+  }
+  let result: ReturnType<CanvasToolDeps['completeCanvas']>
+  try {
+    result = deps.completeCanvas(sessionId, canvas.canvasId)
+  } catch (err) {
+    return { text: `Could not complete the canvas: ${err instanceof Error ? err.message : 'unknown failure'}.`, isError: true }
+  }
+  if ('error' in result) {
+    if (result.error.startsWith('not everything is settled')) {
+      return {
+        text:
+          `Refused: ${result.error}. A subject completes only when nothing is owed either way. ` +
+          'Address what is yours with canvas_resolve; what awaits the user’s verdict is theirs to rule on from the pane — hand back rather than closing it for them.',
+        isError: true,
+      }
+    }
+    if (result.error === 'already completed') {
+      return { text: 'This canvas is already signed off. Render under a title as usual if new work starts a fresh subject.', isError: true }
+    }
+    return { text: `Could not complete the canvas: ${result.error}.`, isError: true }
+  }
+  return {
+    text:
+      'Signed the canvas off as complete on the user’s instruction. Their pane returns to its front page; the canvas stays in the library with a Completed badge and a one-click Reopen. ' +
+      'Recorded as completed by you on their instruction — never as their own sign-off, so say you completed it because they asked. ' +
+      'New work starts a fresh canvas: render with a title as usual.',
+    isError: false,
+  }
+}
+
+/**
  * Operator-authored causes for a refused close-out.
  *
  * The scope refusals are the interesting ones: they have to tell the agent WHY
@@ -1598,6 +1657,28 @@ export function registerCanvasTools(
         )
       }
       const result = runCanvasPick(rawArgs, sessionId, deps)
+      return textResult(result.text, result.isError)
+    },
+  )
+
+  server.tool(
+    'canvas_complete',
+    'Sign this session\'s canvas subject off as COMPLETE — ONLY when the user has explicitly said so in words, in a submitted review note or in chat: "all good, mark it complete", "sign it off, no changes". Never call it on your own judgment of doneness: a board that looks finished, an approve click, or "looks good" is not an instruction to complete. The app refuses it while anything is still owed either way — unsubmitted notes, notes waiting on you, notes awaiting the user\'s verdicts — so address your side with canvas_resolve first and hand back for theirs; the refusal names what is left. On success the user\'s pane returns to its front page, the canvas stays in the library as history with a one-click Reopen, and the record says "completed by the agent on your instruction" — apart from anything the user signs off themselves. Further work on the subject starts a FRESH canvas: render with a title as usual.',
+    {
+      cccSessionId: zMod
+        .string()
+        .optional()
+        .describe('Ignored — the session is resolved from the MCP connection and cannot be set here. Leave unset.'),
+    },
+    async () => {
+      const sessionId = getBoundSessionId()
+      if (!sessionId) {
+        return textResult(
+          'Canvas unavailable: this MCP connection has no bound Conductor session. Restart the session from inside AI Code Conductor.',
+          true,
+        )
+      }
+      const result = runCanvasComplete(sessionId, deps)
       return textResult(result.text, result.isError)
     },
   )

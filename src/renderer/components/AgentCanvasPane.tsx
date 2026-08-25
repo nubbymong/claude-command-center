@@ -7,6 +7,7 @@ import { CanvasLibrary } from './CanvasLibrary'
 import CanvasSubjectPicker from './CanvasSubjectPicker'
 import CanvasFiledStrip from './CanvasFiledStrip'
 import CanvasNotesPanel from './CanvasNotesPanel'
+import CanvasCompleteButton from './CanvasCompleteButton'
 import CanvasHistoryControl from './CanvasHistoryControl'
 import CanvasXrayReadout from './CanvasXrayReadout'
 import { useCanvasStore } from '../stores/canvasStore'
@@ -311,6 +312,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // #478: the submit hand-back in flight — the close control disables so the
   // submit-triggered transition is the only driver of pane state.
   const returning = useExcalidrawStore((s) => !!s.submitReturnBySession[sessionId])
+  // #476: viewing a canvas already signed off. The review panel (and its rail)
+  // stay away — nothing is owed on it by invariant, and note-taking on a
+  // completed subject is off until the user Reopens it.
+  const viewingCompleted = useCanvasStore((s) => !!s.bySessionId[sessionId]?.completed)
   const mode = useCanvasStore((s) => s.bySessionId[sessionId]?.interactionMode ?? 'browse')
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
   const setActiveVersion = useCanvasStore((s) => s.setActiveVersion)
@@ -1433,6 +1438,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             Region
           </button>
         </div>
+        {/* Subject-level sign-off (#476): with the leave actions, away from the
+            per-round controls in the panel. Shows the Completed chip + Reopen
+            when the user is viewing a canvas already signed off. */}
+        <CanvasCompleteButton sessionId={sessionId} canvasId={canvasId} title={canvasTitle} />
         <button
           onClick={() => togglePane(sessionId)}
           disabled={returning}
@@ -1719,7 +1728,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             the review, and keeping it out means the panel's own file is
             untouched by this change. The panel keeps its own width and left
             border; this column just stacks the two. */}
-        {panelHidden ? (
+        {viewingCompleted ? null : panelHidden ? (
           /* Collapsed rail (item C): the panel is away, the page has the width,
              and this keeps the outstanding count and the way back. */
           <button

@@ -322,6 +322,11 @@ export interface ElectronAPI {
      *  right-click. `unreadable` counts canvases whose review store could not
      *  be read (the queue's own "unknown" rule) — never folded into zero. */
     reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<{ closedNotes: number; closedReviews: number; clearedAwaiting: number; unreadable: number }>
+    /** Sign the subject off (#476). Refused (`ok:false` + reason) while
+     *  anything is owed either way; the pane then falls back to its front page. */
+    complete: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** The one-click undo: clear a canvas's completed stamp. */
+    completeReopen: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
   }
   discovery: {
@@ -908,6 +913,8 @@ const electronAPI: ElectronAPI = {
     reviewCloseOut: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_CLOSE_OUT, args),
     reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_DISMISS_ALL, args),
+    complete: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE, args),
+    completeReopen: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE_REOPEN, args),
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
       const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)
       ipcRenderer.on(IPC.CANVAS_REVIEW_CHANGED, handler)
