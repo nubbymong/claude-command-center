@@ -1415,8 +1415,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 )
               })}
               {planLocked && (
-                <span className="px-1.5 leading-none text-[10px]" style={{ color: 'var(--text-muted)' }} aria-hidden>
-                  🔒
+                // A DRAWN padlock, not the lock emoji (#449): the repo's rule
+                // is no emoji in JSX — they render inconsistently across
+                // platforms and esbuild rejects the \u{...} escape form anyway.
+                <span className="px-1.5 inline-flex items-center" style={{ color: 'var(--text-muted)' }} aria-hidden>
+                  <svg width="9" height="11" viewBox="0 0 10 12" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="1.5" y="5" width="7" height="6" rx="1.2" />
+                    <path d="M3.2 5V3.4a1.8 1.8 0 0 1 3.6 0V5" />
+                  </svg>
                 </span>
               )}
             </div>
