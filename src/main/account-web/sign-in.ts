@@ -42,6 +42,11 @@ import {
 import { DEVTOOLS_PORT_FILE, authProfileDir, buildAuthBrowserArgs, type AuthBrowser } from './browser-launch'
 import { harvestClaudeCookies, type CdpCookie } from './cookie-harvest'
 import { closeInAppSignInWindow, runInAppSignIn } from './in-app-sign-in'
+// A wipe must forget the web-session record and close the account's pane
+// surfaces. Those owners subscribe via this zero-dependency seam so sign-in.ts
+// keeps its narrow module graph (#439 adversarial A9) — importing session-store
+// / account-pane here would drag their heavy transitive graph in.
+import { notifyPartitionRevoked } from './partition-revocation'
 
 /** Lazy require so a missing optional dep never crashes boot (mirrors vision-manager). */
 let CDP: any = null
@@ -91,6 +96,16 @@ export function resolveBrowserBinary(preferred: AuthBrowser = DEFAULT_AUTH_BROWS
     }
   }
   return null
+}
+
+/**
+ * Which of the drivable browsers are actually installed (#439): the Settings
+ * picker only shows when there is a real choice to make. resolveBrowserBinary
+ * falls back to the other browser, so "did MY paths resolve" is read off the
+ * returned browser matching the one asked for.
+ */
+export function detectAuthBrowsers(): AuthBrowser[] {
+  return (['edge', 'chrome'] as AuthBrowser[]).filter((b) => resolveBrowserBinary(b)?.browser === b)
 }
 
 /**
@@ -600,6 +615,22 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
         pollMs,
         shouldCancel: () => cancelled,
       })
+      // NON-COMPLETION IN-APP (#439 adversarial A3): the in-app window writes the
+      // session cookie straight into this partition as the user signs in, so a
+      // flow that ends WITHOUT a session — Cancel, the window X'd, a timeout —
+      // can leave a live cookie the pane may already have recorded. `res.session`
+      // is present only on a clean completion, so its absence is the signal to
+      // wipe (the X button is a likelier gesture than Cancel). This is the
+      // DEFAULT route for subscription accounts; the SSO branches wipe on revoke,
+      // so this must too — empty the partition and forget the record + pane.
+      if (!res.session) {
+        try {
+          await withTimeout(Promise.resolve(electronSession.fromPartition(partition).clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
+        } catch (err) {
+          logError(`[account-web] could not clear a cancelled in-app session for ${profileId}: ${(err as Error)?.message ?? err}`)
+        }
+        notifyPartitionRevoked(profileId)
+      }
       current = res.session
         ? { phase: 'done', profileId, session: res.session }
         : { phase: 'failed', profileId, error: res.error ?? (res.cancelled ? 'Sign-in cancelled.' : 'Sign-in failed.') }
@@ -797,6 +828,11 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
             // Loudly: what is left is cookies in a partition the user revoked.
             logError(`[account-web] could not clear a partially written session for ${profileId}: ${(err as Error)?.message}`)
           }
+          // The pane surface (#439) may have recorded during the brief signed-in
+          // window before the revoke landed — forget the record and close the
+          // pane so the wipe is complete on every teardown door, not just
+          // sign-out.
+          notifyPartitionRevoked(profileId)
           await closeQuietly(client)
           await cleanup(profileDir)
           logInfo(`[account-web] ${profileId}: sign-in abandoned — the session was revoked while it was being collected`)
@@ -823,6 +859,9 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
           } catch (err) {
             logError(`[account-web] could not clear a revoked session for ${profileId}: ${(err as Error)?.message}`)
           }
+          // Same as the aborted branch: a pane recording made in the signed-in
+          // window is forgotten with the partition it described.
+          notifyPartitionRevoked(profileId)
           logInfo(`[account-web] ${profileId}: sign-in discarded — the session was revoked during teardown`)
           current = tag({
             phase: 'failed',
@@ -900,8 +939,25 @@ export async function clearWebSession(profileId: string): Promise<void> {
   // BOUNDED, like every other IO in this module. This was the last raw await
   // left: a `clearStorageData` that never settles left the sign-out and
   // account-delete IPC calls unresolved forever, so the renderer's button stayed
-  // busy with nothing to show for it. It fails closed either way — the caller
-  // does not remove the record unless this succeeds.
+  // busy with nothing to show for it.
   await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
+  // Storage first, THEN the HTTP cache — the account partition is now a
+  // long-lived claude.ai browsing surface (#439), so it accumulates cached
+  // response bodies that clearStorageData does not touch; a wipe that left them
+  // holds page content on disk. Same order webview-manager uses for the
+  // throwaway partition. Best-effort: the storage wipe is the part that must
+  // succeed.
+  try {
+    await withTimeout(Promise.resolve(store.clearCache()), IO_CALL_TIMEOUT_MS, 'clearCache')
+  } catch (err) {
+    logError(`[account-web] could not clear the HTTP cache for ${profileId}: ${(err as Error)?.message ?? err}`)
+  }
+  // Forget the record + close the pane ONLY after the wipe SUCCEEDED (A4): the
+  // clearStorageData throw above propagates, so a failed wipe leaves the record
+  // intact — the account survives to be signed out again rather than showing
+  // "signed out" over a live session. The pane's own cookie-recheck guard means
+  // an in-flight recording between now and here fails closed (the cookie is
+  // gone), and a recording that saved just before the wipe is undone here.
+  notifyPartitionRevoked(profileId)
   logInfo(`[account-web] cleared the web session for ${profileId}`)
 }

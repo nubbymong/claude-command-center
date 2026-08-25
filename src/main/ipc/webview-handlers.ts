@@ -17,6 +17,7 @@ import {
   goHomeWebview,
   navigateWebview,
 } from '../webview-manager'
+import { closeAccountPane, closeAllAccountPanes } from '../account-web/account-pane'
 
 // Restrict to plain web schemes — without this the user could
 // (intentionally or via a typo) load file://, chrome://, javascript:,
@@ -62,6 +63,10 @@ export function registerWebviewHandlers(getWindow: () => BrowserWindow | null): 
     const parsedBounds = boundsSchema.parse(bounds)
     const win = getWindow()
     if (!win) return false
+    // MUTUAL EXCLUSION with the pane's account surface (#439): one rectangle,
+    // one view. The ordinary view must never sit under (or over) the
+    // account-partition view.
+    closeAccountPane(sessionId)
     // The NORMALISED href, never the renderer's raw string: the WHATWG parser
     // strips leading whitespace and ASCII tab/newline before it reads the
     // scheme, so a raw string that passes the gate can still carry a CR/LF --
@@ -142,9 +147,11 @@ export function registerWebviewHandlers(getWindow: () => BrowserWindow | null): 
 
   // Emergency escape hatch: destroy every WebContentsView. Called by
   // the renderer when the user presses Escape or hits the always-visible
-  // pill. Mirrors closeAllWebviews used on app quit.
+  // pill. Mirrors closeAllWebviews used on app quit. The account surfaces
+  // go with it — "get every native view off my screen" means all of them.
   ipcMain.handle(IPC.WEBVIEW_CLOSE_ALL, async () => {
     closeAllWebviews()
+    closeAllAccountPanes()
     return true
   })
 }

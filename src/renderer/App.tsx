@@ -191,6 +191,24 @@ export default function App() {
     return () => window.removeEventListener('app:openSettings', onOpenSettings)
   }, [])
 
+  // Settings → Accounts "Internal browser pane" sign-in (#439): bring the
+  // sessions view forward and open the target session's pane on its account
+  // surface. The dispatcher (AccountWebSession) has already validated that the
+  // session exists and belongs to this flow; a stale id is simply a no-op.
+  useEffect(() => {
+    const onOpenAccountPane = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { sessionId?: string; profileId?: string } | undefined
+      if (!detail?.sessionId || !detail?.profileId) return
+      const store = useSessionStore.getState()
+      if (!store.sessions.some((s) => s.id === detail.sessionId)) return
+      store.setActiveSession(detail.sessionId)
+      setView('sessions')
+      useWebviewStore.getState().openAccountPane(detail.sessionId, detail.profileId)
+    }
+    window.addEventListener('app:openAccountPane', onOpenAccountPane)
+    return () => window.removeEventListener('app:openAccountPane', onOpenAccountPane)
+  }, [])
+
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   // Live-app guided tour that follows the onboarding finish step (or the
   // Feature Guide button). Anchored coach-marks over the real UI, ending by

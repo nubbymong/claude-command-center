@@ -18,9 +18,15 @@ vi.mock('../../../src/renderer/utils/config-saver', () => ({
   saveConfigDebounced: vi.fn(),
 }))
 vi.mock('../../../src/renderer/components/ExcalidrawModal', () => ({ default: () => null }))
-vi.mock('../../../src/renderer/stores/sessionStore', () => ({
-  useSessionStore: (sel: any) => sel({ sessions: [{ id: 's1', configId: 'cfg1' }, { id: 's2' }] }),
-}))
+// Mutable so the account-surface tests can hand s1 a local session shape;
+// the default matches the original fixture (no sessionType -> no account entry).
+let SESSIONS: Array<Record<string, unknown>> = [{ id: 's1', configId: 'cfg1' }, { id: 's2' }]
+vi.mock('../../../src/renderer/stores/sessionStore', () => {
+  const state = () => ({ sessions: SESSIONS })
+  const useSessionStore = (sel?: any) => (sel ? sel(state()) : state())
+  useSessionStore.getState = state
+  return { useSessionStore }
+})
 
 // jsdom has no ResizeObserver and lays nothing out.
 ;(globalThis as any).ResizeObserver = class { observe() {} unobserve() {} disconnect() {} }
@@ -35,15 +41,21 @@ api.onNavigated = vi.fn((h: (s: any) => void) => { navHandler = h; return () => 
 const { default: WebviewPane } = await import('../../../src/renderer/components/WebviewPane')
 const { useWebviewStore } = await import('../../../src/renderer/stores/webviewStore')
 const { useBrowserStore } = await import('../../../src/renderer/stores/browserStore')
+const { useAccountProfilesStore } = await import('../../../src/renderer/stores/accountProfilesStore')
 
 let container: HTMLDivElement
 let root: Root
+const acct = (window as any).electronAPI.accountWeb
 beforeEach(() => {
+  SESSIONS = [{ id: 's1', configId: 'cfg1' }, { id: 's2' }]
   useWebviewStore.setState({ bySessionId: {} })
   useBrowserStore.setState({ favourites: [], homeByConfig: {}, isLoaded: true })
   for (const k of Object.keys(api)) if (typeof api[k]?.mockClear === 'function' && k !== 'onNavigated') api[k].mockClear()
+  for (const k of Object.keys(acct)) if (typeof acct[k]?.mockClear === 'function') acct[k].mockClear()
   api.open.mockResolvedValue(true)
   api.navigate.mockResolvedValue(true)
+  acct.paneOpen.mockResolvedValue({ ok: true })
+  acct.paneGetState.mockResolvedValue({ ok: true, state: null })
   saveConfigNow.mockClear()
   navHandler = null
   container = document.createElement('div')
@@ -395,5 +407,105 @@ describe('the modern palette (#455)', () => {
     expect(paletteHits('style: color-mix(in srgb, var(--color-red) 15%, transparent)')).toHaveLength(1)
     // …and not on the tokens or the font-size utility.
     expect(paletteHits('bg-[var(--surface-panel)] text-[var(--text-primary)] text-base')).toEqual([])
+  })
+})
+
+describe('the account surface (#439/#475) — claude.ai as this session’s account', () => {
+  const localSession = () => {
+    SESSIONS = [{ id: 's1', configId: 'cfg1', sessionType: 'local' }, { id: 's2' }]
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-aaa111', isPrimary: true, name: 'Work', accountEmail: 'w@x.y' } as never] })
+  }
+  afterEach(() => { useAccountProfilesStore.setState({ profiles: [] }) })
+
+  it('the start page carries the pinned claude.ai entry only when the session has an account to act as', async () => {
+    // Default fixture: no sessionType — the entry must not render.
+    open()
+    render()
+    await flush()
+    expect(byTest('browser-start-claudeai')).toBeNull()
+    // A local session with a resolvable (primary) profile gets it.
+    act(() => { root.unmount() })
+    root = createRoot(container)
+    localSession()
+    open()
+    render()
+    await flush()
+    expect(byTest('browser-start-claudeai')).not.toBeNull()
+  })
+
+  it('opening it swaps the pane to the account view: ordinary view closed, account view opened as the profile', async () => {
+    localSession()
+    act(() => { useWebviewStore.getState().navigate('s1', 'http://localhost:5173/') })
+    render()
+    await flush()
+    expect(api.open).toHaveBeenCalledTimes(1)
+    act(() => { useWebviewStore.getState().openAccountPane('s1', 'profile-aaa111') })
+    await flush()
+    // Mutual exclusion from the renderer side; main enforces it again.
+    expect(api.close).toHaveBeenCalledWith('s1')
+    expect(acct.paneOpen).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', profileId: 'profile-aaa111' }))
+    expect(byTest('account-pane-strip')).not.toBeNull()
+    expect(byTest('account-pane-viewport')).not.toBeNull()
+    expect(byTest('browser-nav')).toBeNull()
+    expect(byTest('browser-start')).toBeNull()
+    expect(byTest('account-pane-auth')!.textContent).toContain('checking')
+  })
+
+  it('a signed-in push updates the strip; pushes for another session or account are ignored', async () => {
+    localSession()
+    let push: ((st: any) => void) | null = null
+    acct.onPaneState.mockImplementation((h: (st: any) => void) => { push = h; return () => {} })
+    open()
+    render()
+    act(() => { useWebviewStore.getState().openAccountPane('s1', 'profile-aaa111') })
+    await flush()
+    act(() => { push!({ sessionId: 's2', profileId: 'profile-aaa111', authed: true, email: 'other@x.y' }) })
+    act(() => { push!({ sessionId: 's1', profileId: 'profile-zzz999', authed: true, email: 'wrong@x.y' }) })
+    expect(byTest('account-pane-auth')!.textContent).toContain('checking')
+    act(() => { push!({ sessionId: 's1', profileId: 'profile-aaa111', authed: true, email: 'w@x.y' }) })
+    expect(byTest('account-pane-auth')!.textContent).toContain('signed in as w@x.y')
+    act(() => { push!({ sessionId: 's1', profileId: 'profile-aaa111', authed: false, email: null }) })
+    expect(byTest('account-pane-auth')!.textContent).toContain('not signed in')
+  })
+
+  it('Back to browser closes the account view and restores the page that was loaded before', async () => {
+    localSession()
+    act(() => { useWebviewStore.getState().navigate('s1', 'http://localhost:5173/') })
+    render()
+    await flush()
+    act(() => { useWebviewStore.getState().openAccountPane('s1', 'profile-aaa111') })
+    await flush()
+    api.open.mockClear()
+    act(() => { byTest<HTMLButtonElement>('account-pane-back')!.click() })
+    await flush()
+    expect(acct.paneClose).toHaveBeenCalledWith('s1')
+    // The ordinary view came back through the same open path a fresh mount uses.
+    expect(api.open).toHaveBeenCalledWith('s1', 'http://localhost:5173/', expect.anything())
+    expect(byTest('browser-nav')).not.toBeNull()
+    expect(byTest('account-pane-strip')).toBeNull()
+  })
+
+  it('closing the pane (Esc, Close — anything via setOpen) leaves account mode — reopening starts at the ordinary browser', async () => {
+    localSession()
+    open()
+    render()
+    act(() => { useWebviewStore.getState().openAccountPane('s1', 'profile-aaa111') })
+    await flush()
+    expect(useWebviewStore.getState().bySessionId['s1'].accountPane).not.toBeNull()
+    act(() => { useWebviewStore.getState().setOpen('s1', false) })
+    expect(useWebviewStore.getState().bySessionId['s1'].accountPane).toBeNull()
+    // The native account view was closed by the unmount cleanup.
+    expect(acct.paneClose).toHaveBeenCalledWith('s1')
+  })
+
+  it('a paneOpen refusal falls back to the ordinary browser instead of a dead rectangle', async () => {
+    localSession()
+    acct.paneOpen.mockResolvedValue({ ok: false, error: 'invalid account' })
+    open()
+    render()
+    act(() => { useWebviewStore.getState().openAccountPane('s1', 'profile-aaa111') })
+    await flush()
+    expect(useWebviewStore.getState().bySessionId['s1'].accountPane).toBeNull()
+    expect(byTest('browser-start')).not.toBeNull()
   })
 })

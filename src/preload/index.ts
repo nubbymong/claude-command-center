@@ -249,6 +249,8 @@ export interface ElectronAPI {
           authCommand: string
           authMethod: 'claudeai' | 'sso' | 'console'
           authBrowser: 'chrome' | 'edge'
+          webSignInMode: 'auto' | 'internal-pane'
+          detectedBrowsers: Array<'chrome' | 'edge'>
         }
       | { ok: false; error: string }
     >
@@ -261,6 +263,16 @@ export interface ElectronAPI {
     openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthBrowser: (args: { profileId: string; browser: 'chrome' | 'edge' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    setSignInMode: (args: { profileId: string; mode: 'auto' | 'internal-pane' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    /** The pane's account surface (#439/#475): claude.ai on the account's partition. */
+    paneOpen: (args: { sessionId: string; profileId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean; error?: string }>
+    paneClose: (sessionId: string) => Promise<{ ok: boolean }>
+    paneBounds: (args: { sessionId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean }>
+    paneVisible: (args: { sessionId: string; visible: boolean }) => Promise<{ ok: boolean }>
+    paneReload: (sessionId: string) => Promise<{ ok: boolean }>
+    paneGetState: (sessionId: string) => Promise<{ ok: true; state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null } | null } | { ok: false; error: string }>
+    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => () => void
+    onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
   }
   canvas: {
     getState: (args: { sessionId: string }) => Promise<CanvasState | null>
@@ -868,6 +880,23 @@ const electronAPI: ElectronAPI = {
     openArtifacts: (profileId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_OPEN_ARTIFACTS, profileId),
     setAuthMethod: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_METHOD, args),
     setAuthBrowser: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_AUTH_BROWSER, args),
+    setSignInMode: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_SET_SIGN_IN_MODE, args),
+    paneOpen: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_OPEN, args),
+    paneClose: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_CLOSE, sessionId),
+    paneBounds: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_BOUNDS, args),
+    paneVisible: (args) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_VISIBLE, args),
+    paneReload: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_RELOAD, sessionId),
+    paneGetState: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_WEB_PANE_GET_STATE, sessionId),
+    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => {
+      const handler = (_e: unknown, state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => cb(state)
+      ipcRenderer.on(IPC.ACCOUNT_WEB_PANE_STATE, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_WEB_PANE_STATE, handler)
+    },
+    onPaneClosed: (cb: (e: { sessionId: string }) => void) => {
+      const handler = (_e: unknown, payload: { sessionId: string }) => cb(payload)
+      ipcRenderer.on(IPC.ACCOUNT_WEB_PANE_CLOSED, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_WEB_PANE_CLOSED, handler)
+    },
   },
   // Agent Canvas — per-session review surface state + change push. Content
   // itself loads straight into the canvas iframe over ccc-ux://, not IPC.

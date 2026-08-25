@@ -24,9 +24,14 @@ import {
   CLI_AUTH_METHOD_LABELS,
   DEFAULT_AUTH_BROWSER,
   DEFAULT_CLI_AUTH_METHOD,
+  DEFAULT_WEB_SIGN_IN_MODE,
+  WEB_SIGN_IN_MODES,
+  WEB_SIGN_IN_MODE_LABELS,
   type AuthBrowser,
   type CliAuthMethod,
+  type WebSignInMode,
 } from '../../../shared/account-web-session'
+import { useSessionStore } from '../../stores/sessionStore'
 
 interface Props {
   profileId: string
@@ -46,6 +51,8 @@ export function AccountWebSession({ profileId, accountName }: Props) {
   const [authCommand, setAuthCommand] = useState('claude auth login')
   const [authMethod, setAuthMethod] = useState<CliAuthMethod>(DEFAULT_CLI_AUTH_METHOD)
   const [authBrowser, setAuthBrowser] = useState<AuthBrowser>(DEFAULT_AUTH_BROWSER)
+  const [signInMode, setSignInMode] = useState<WebSignInMode>(DEFAULT_WEB_SIGN_IN_MODE)
+  const [detectedBrowsers, setDetectedBrowsers] = useState<AuthBrowser[]>([])
   const [phase, setPhase] = useState<string>('idle')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -58,11 +65,22 @@ export function AccountWebSession({ profileId, accountName }: Props) {
       setWeb(r.web); setCli(r.cli); setAuthCommand(r.authCommand)
       if (r.authMethod) setAuthMethod(r.authMethod)
       if (r.authBrowser) setAuthBrowser(r.authBrowser)
+      if (r.webSignInMode) setSignInMode(r.webSignInMode)
+      if (Array.isArray(r.detectedBrowsers)) setDetectedBrowsers(r.detectedBrowsers)
     }
     else setError(r.error)
   }, [profileId])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  // A pane-hosted sign-in (#439) completes outside this panel: main pushes the
+  // account surface's auth state, and a signed-in push for THIS account is the
+  // moment the promised "this panel updates itself" happens.
+  useEffect(() => {
+    return window.electronAPI.accountWeb?.onPaneState?.((st) => {
+      if (st.profileId === profileId && st.authed === true) void refresh()
+    })
+  }, [profileId, refresh])
 
   // A sign-in is human-paced (SSO, MFA), so the phase is polled while it runs.
   useEffect(() => {
@@ -94,7 +112,34 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     await refresh()     // re-read so the picker shows what was actually stored
   }
 
+  const changeSignInMode = async (m: WebSignInMode): Promise<void> => {
+    setSignInMode(m)    // optimistic: the picker should not lag the click
+    const r = await api.setSignInMode({ profileId, mode: m })
+    if (!r.ok) setError(r.error)
+    await refresh()
+  }
+
   const signIn = async (): Promise<void> => {
+    // #439: "Internal browser pane" routes the sign-in into a session's baked-in
+    // browser — a claude.ai-only view on THIS account's partition — instead of
+    // the dedicated window. It needs a session to host the pane; with none open,
+    // the default window flow runs so the button never dead-ends.
+    let fallbackNotice = ''
+    if (signInMode === 'internal-pane') {
+      const sessions = useSessionStore.getState()
+      // Same gate as the pane's own claude.ai entry (#475): only a local,
+      // non-shell session can host the account surface — an SSH or shell-only
+      // tile would show a surface its own start page never offers.
+      const eligible = sessions.sessions.filter((s) => !s.shellOnly && s.sessionType === 'local')
+      const host = eligible.find((s) => s.id === sessions.activeSessionId) ?? eligible[0]
+      if (host) {
+        window.dispatchEvent(new CustomEvent('app:openAccountPane', { detail: { sessionId: host.id, profileId } }))
+        setError('')
+        setNotice('The sign-in opened in that session’s browser pane — sign in there once, and this panel updates itself.')
+        return
+      }
+      fallbackNotice = 'No session is open to host the browser pane, so the sign-in window was used instead.'
+    }
     setBusy(true); setError(''); setNotice(''); setPhase('launching')
     const r = await api.signIn(profileId)
     setBusy(false)
@@ -103,6 +148,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     // Shown whether the sign-in succeeded or not: a browser substitution is the
     // likeliest explanation for an SSO step that behaved unexpectedly.
     if (r.ok && r.state?.notice) setNotice(r.state.notice)
+    else if (fallbackNotice) setNotice(fallbackNotice)
     setPhase('idle')
     await refresh()
   }
@@ -183,14 +229,38 @@ export function AccountWebSession({ profileId, accountName }: Props) {
               : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens a window to sign in.'}
           </div>
 
-          {/* SSO ONLY. Non-SSO accounts sign in inside an in-app window (#290),
-              which launches no system browser, so this picker would be inert for
-              them. For SSO the browser IS the user's call: on a managed machine
-              Chrome's force-installed SSO extension is not there yet when claude.ai
-              loads in a fresh profile, while Edge does Entra SSO natively — which
-              one an account needs depends on its org, so CCC asks. (Merge: keep
-              #290's SSO-only gate with #294's restyled control.) */}
-          {authMethod === 'sso' && (
+          {/* #439: where the web sign-in runs. Default keeps today's flow
+              untouched (the dedicated window; the system browser for SSO); the
+              alternative hosts it in a session's baked-in browser pane on this
+              account's partition. */}
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className="text-[10px] text-overlay0 shrink-0">Open claude.ai sign-in in</span>
+            <select
+              value={signInMode}
+              disabled={busy}
+              onChange={(e) => { void changeSignInMode(e.target.value as WebSignInMode) }}
+              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors disabled:opacity-40"
+              data-testid="web-sign-in-mode"
+            >
+              {WEB_SIGN_IN_MODES.map((m) => (
+                <option key={m} value={m}>{WEB_SIGN_IN_MODE_LABELS[m]}</option>
+              ))}
+            </select>
+            {signInMode === 'internal-pane' && (
+              <span className="text-[10px] text-overlay0">Signs in inside a session’s browser pane</span>
+            )}
+          </div>
+
+          {/* SSO ONLY, and only when there is a genuine CHOICE (#439: more than
+              one drivable browser detected). Non-SSO accounts sign in inside an
+              in-app window (#290), which launches no system browser, so this
+              picker would be inert for them. For SSO the browser IS the user's
+              call: on a managed machine Chrome's force-installed SSO extension
+              is not there yet when claude.ai loads in a fresh profile, while
+              Edge does Entra SSO natively — which one an account needs depends
+              on its org, so CCC asks. With exactly one browser installed the
+              launcher's not-silent fallback already says what ran. */}
+          {authMethod === 'sso' && detectedBrowsers.length > 1 && (
             <div className="flex items-center gap-2 mt-1.5">
               <span className="text-[10px] text-overlay0 shrink-0">Sign-in browser</span>
               <select

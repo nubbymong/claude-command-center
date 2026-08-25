@@ -12,16 +12,19 @@
 import {
   DEFAULT_AUTH_BROWSER,
   DEFAULT_CLI_AUTH_METHOD,
+  DEFAULT_WEB_SIGN_IN_MODE,
   isAuthBrowser,
   isCliAuthMethod,
+  isWebSignInMode,
   type AccountWebSession,
   type AuthBrowser,
   type CliAuthMethod,
+  type WebSignInMode,
 } from '../../shared/account-web-session'
 import { readJsonFile, writeJsonFile } from '../channel-storage'
 
 const FILE = 'account-web-sessions.json'
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 
 interface SessionsFile {
   schemaVersion: number
@@ -30,10 +33,12 @@ interface SessionsFile {
   authMethods: Record<string, CliAuthMethod>
   /** Per-account system browser for the web sign-in. Absent means the default. */
   authBrowsers: Record<string, AuthBrowser>
+  /** Per-account web sign-in routing (#439). Absent means 'auto'. */
+  webSignInModes: Record<string, WebSignInMode>
 }
 
 function seed(): SessionsFile {
-  return { schemaVersion: SCHEMA_VERSION, sessions: [], authMethods: {}, authBrowsers: {} }
+  return { schemaVersion: SCHEMA_VERSION, sessions: [], authMethods: {}, authBrowsers: {}, webSignInModes: {} }
 }
 
 function read(): SessionsFile {
@@ -41,14 +46,16 @@ function read(): SessionsFile {
   // MIGRATE a known older version rather than reseeding: discarding the file
   // would silently sign every account out of claude.ai on upgrade, which looks
   // like a bug in the sign-in rather than in the store.
-  //   v1 -> v2 added authMethods  (which CLI sign-in flow an account uses)
-  //   v2 -> v3 added authBrowsers (which system browser completes the web sign-in)
-  if (f.schemaVersion === 1 || f.schemaVersion === 2) {
+  //   v1 -> v2 added authMethods     (which CLI sign-in flow an account uses)
+  //   v2 -> v3 added authBrowsers    (which system browser completes the web sign-in)
+  //   v3 -> v4 added webSignInModes  (where the web sign-in runs, #439)
+  if (f.schemaVersion === 1 || f.schemaVersion === 2 || f.schemaVersion === 3) {
     return {
       schemaVersion: SCHEMA_VERSION,
       sessions: f.sessions ?? [],
       authMethods: f.authMethods ?? {},
-      authBrowsers: {},
+      authBrowsers: f.schemaVersion === 3 ? (f.authBrowsers ?? {}) : {},
+      webSignInModes: {},
     }
   }
   if (f.schemaVersion !== SCHEMA_VERSION) return seed()
@@ -57,6 +64,7 @@ function read(): SessionsFile {
     sessions: f.sessions ?? [],
     authMethods: f.authMethods ?? {},
     authBrowsers: f.authBrowsers ?? {},
+    webSignInModes: f.webSignInModes ?? {},
   }
 }
 
@@ -78,6 +86,20 @@ export function setAuthMethod(profileId: string, method: CliAuthMethod): void {
 export function getAuthBrowser(profileId: string): AuthBrowser {
   const v = read().authBrowsers[profileId]
   return isAuthBrowser(v) ? v : DEFAULT_AUTH_BROWSER
+}
+
+/** Where this account's web sign-in runs (#439), or the default ('auto'). */
+export function getWebSignInMode(profileId: string): WebSignInMode {
+  const v = read().webSignInModes[profileId]
+  return isWebSignInMode(v) ? v : DEFAULT_WEB_SIGN_IN_MODE
+}
+
+/** Record where this account's web sign-in runs. Refuses unknown values. */
+export function setWebSignInMode(profileId: string, mode: WebSignInMode): void {
+  if (!isWebSignInMode(mode)) throw new Error(`unknown web sign-in mode: ${mode}`)
+  const f = read()
+  f.webSignInModes = { ...f.webSignInModes, [profileId]: mode }
+  writeJsonFile(FILE, f)
 }
 
 /**

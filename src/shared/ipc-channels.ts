@@ -320,6 +320,18 @@ export const IPC = {
   ACCOUNT_WEB_OPEN_ARTIFACTS: 'accountWeb:openArtifacts',
   ACCOUNT_WEB_SET_AUTH_METHOD: 'accountWeb:setAuthMethod',
   ACCOUNT_WEB_SET_AUTH_BROWSER: 'accountWeb:setAuthBrowser',
+  ACCOUNT_WEB_SET_SIGN_IN_MODE: 'accountWeb:setSignInMode',
+  // The pane's ACCOUNT surface (#439/#475): a claude.ai-only view on the
+  // account's partition, hosted in the browser pane rectangle. Nav state
+  // rides WEBVIEW_NAVIGATED; auth/email state rides PANE_STATE.
+  ACCOUNT_WEB_PANE_OPEN: 'accountWeb:paneOpen',
+  ACCOUNT_WEB_PANE_CLOSE: 'accountWeb:paneClose',
+  ACCOUNT_WEB_PANE_BOUNDS: 'accountWeb:paneBounds',
+  ACCOUNT_WEB_PANE_VISIBLE: 'accountWeb:paneVisible',
+  ACCOUNT_WEB_PANE_RELOAD: 'accountWeb:paneReload',
+  ACCOUNT_WEB_PANE_GET_STATE: 'accountWeb:paneGetState',
+  ACCOUNT_WEB_PANE_STATE: 'accountWeb:paneState', // main → renderer: AccountPaneState
+  ACCOUNT_WEB_PANE_CLOSED: 'accountWeb:paneClosed', // main → renderer: main force-closed the surface (sign-out/delete/crash)
 
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',

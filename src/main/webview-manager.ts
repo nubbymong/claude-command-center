@@ -5,6 +5,7 @@ import type { Session as ElectronSession } from 'electron'
 import { logInfo, logError } from './debug-logger'
 import { IPC } from '../shared/ipc-channels'
 import { isAllowedBrowserUrl, isAllowedBrowserScheme, type WebviewNavState } from '../shared/browser-url'
+import { attachPaneView, detachPaneView } from './pane-slot'
 
 interface ManagedView {
   view: WebContentsView
@@ -147,6 +148,11 @@ export async function openWebview(
   const existing = views.get(sessionId)
   if (existing) {
     try {
+      // Re-attach through the arbiter: the account view (or another pane) may
+      // have evicted this one while it stayed alive-but-detached, so a reopen
+      // must put it back, not just answer true over a detached view (#439).
+      existing.attachedTo = parent
+      attachPaneView(parent, existing.view)
       existing.view.setBounds(bounds)
       if (existing.url !== url) {
         existing.view.webContents.loadURL(url)
@@ -250,7 +256,10 @@ export async function openWebview(
     wc.on('page-title-updated', () => emitNavState(parent, sessionId, view, false))
 
     view.setBounds(bounds)
-    parent.contentView.addChildView(view)
+    // Through the arbiter (#439): attaching the ordinary browser view evicts any
+    // account view on this window, so an arbitrary-URL view and a signed-in
+    // account view can never share the rectangle.
+    attachPaneView(parent, view)
     // loadURL rejects when the page fails (DNS, refused, etc.). Don't
     // let that take down the pane — Chromium has already rendered an
     // error page inside the view, the user can fix DNS / retry from
@@ -296,7 +305,7 @@ export function closeWebview(sessionId: string): boolean {
   if (!entry) return false
   try {
     if (entry.attachedTo && !entry.attachedTo.isDestroyed()) {
-      entry.attachedTo.contentView.removeChildView(entry.view)
+      detachPaneView(entry.attachedTo, entry.view)
     }
     entry.view.webContents.close()
   } catch (err) {
@@ -449,9 +458,9 @@ export function setWebviewVisible(sessionId: string, visible: boolean): void {
     const children = entry.attachedTo.contentView.children
     const isAttached = children.includes(entry.view)
     if (visible && !isAttached) {
-      entry.attachedTo.contentView.addChildView(entry.view)
+      attachPaneView(entry.attachedTo, entry.view)
     } else if (!visible && isAttached) {
-      entry.attachedTo.contentView.removeChildView(entry.view)
+      detachPaneView(entry.attachedTo, entry.view)
       // Belt-and-suspenders: also shrink to 1×1 in the corner. If
       // removeChildView silently failed (Windows compositor edge case
       // we've seen during HMR + session-switch), the view is at least

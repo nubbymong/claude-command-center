@@ -350,6 +350,8 @@ export interface ElectronAPI {
           authCommand: string
           authMethod: 'claudeai' | 'sso' | 'console'
           authBrowser: 'chrome' | 'edge'
+          webSignInMode: 'auto' | 'internal-pane'
+          detectedBrowsers: Array<'chrome' | 'edge'>
         }
       | { ok: false; error: string }
     >
@@ -362,6 +364,16 @@ export interface ElectronAPI {
     openArtifacts: (profileId: string) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthMethod: (args: { profileId: string; method: 'claudeai' | 'sso' | 'console' }) => Promise<{ ok: true } | { ok: false; error: string }>
     setAuthBrowser: (args: { profileId: string; browser: 'chrome' | 'edge' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    setSignInMode: (args: { profileId: string; mode: 'auto' | 'internal-pane' }) => Promise<{ ok: true } | { ok: false; error: string }>
+    /** The pane's account surface (#439/#475): claude.ai on the account's partition. */
+    paneOpen: (args: { sessionId: string; profileId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean; error?: string }>
+    paneClose: (sessionId: string) => Promise<{ ok: boolean }>
+    paneBounds: (args: { sessionId: string; bounds: { x: number; y: number; width: number; height: number } }) => Promise<{ ok: boolean }>
+    paneVisible: (args: { sessionId: string; visible: boolean }) => Promise<{ ok: boolean }>
+    paneReload: (sessionId: string) => Promise<{ ok: boolean }>
+    paneGetState: (sessionId: string) => Promise<{ ok: true; state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null } | null } | { ok: false; error: string }>
+    onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => () => void
+    onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
   }
   /** Agent Canvas — session review-surface state; content loads over ccc-ux://. */
   canvas: {

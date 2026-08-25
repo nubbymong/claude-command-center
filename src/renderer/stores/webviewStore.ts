@@ -65,6 +65,13 @@ export interface WebviewSessionState {
    */
   atStartPage: boolean
   /**
+   * The pane's ACCOUNT surface (#439/#475): non-null while the pane shows the
+   * claude.ai view bound to this account's partition instead of the ordinary
+   * browser view. The two are mutually exclusive — main enforces it too.
+   * `authed` is null until the first cookie read lands.
+   */
+  accountPane: { profileId: string; authed: boolean | null; email: string | null } | null
+  /**
    * Monotonically-incremented per session on every `startActivation`.
    * Long-running pollers capture this token and pass it back to
    * `markAvailable` / `markFailed` so a stale poll can't overwrite a
@@ -112,6 +119,13 @@ interface Actions {
   /** Clear the pane back to its start page (#481): drops the requested URL and
    *  the page report, keeps the pane open. The caller closes the native view. */
   clearPage: (sessionId: string) => void
+  /** Show the account surface (#439/#475). Opens the pane; the WebviewPane
+   *  component closes the ordinary view and opens the account view via IPC. */
+  openAccountPane: (sessionId: string, profileId: string) => void
+  /** Back to the ordinary browser. The component closes the account view. */
+  closeAccountPane: (sessionId: string) => void
+  /** Main's push of the account surface's auth state. */
+  setAccountPaneState: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void
   /** Main's report of where the view actually is. */
   setPage: (state: WebviewNavState) => void
   /** Session-scoped home (not persisted). */
@@ -136,6 +150,7 @@ const defaultState = (): WebviewSessionState => ({
   page: null,
   homeUrl: null,
   atStartPage: false,
+  accountPane: null,
   activationId: 0,
 })
 
@@ -214,7 +229,13 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: !cur.isOpen, atStartPage: cur.isOpen ? cur.atStartPage : false },
+        // Closing leaves account mode, same as setOpen — the gestures agree.
+        [sessionId]: {
+          ...cur,
+          isOpen: !cur.isOpen,
+          atStartPage: cur.isOpen ? cur.atStartPage : false,
+          accountPane: cur.isOpen ? null : cur.accountPane,
+        },
       },
     }))
   },
@@ -223,7 +244,15 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: open, atStartPage: open && !cur.isOpen ? false : cur.atStartPage },
+        // Closing the pane leaves account mode too (#439): Esc and the strip's
+        // Close must agree — reopening the browser later starts at the ordinary
+        // browser, never straight into claude.ai.
+        [sessionId]: {
+          ...cur,
+          isOpen: open,
+          atStartPage: open && !cur.isOpen ? false : cur.atStartPage,
+          accountPane: open ? cur.accountPane : null,
+        },
       },
     }))
   },
@@ -248,6 +277,42 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
       },
     }))
   },
+  openAccountPane: (sessionId, profileId) => {
+    const cur = get().bySessionId[sessionId] || defaultState()
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        // `page` is dropped: it described the ordinary view this mode replaces.
+        // `atStartPage` is deliberately KEPT — a Cleared start page must still
+        // be there on "Back to browser" (and clearing it here would fire the
+        // auto-home navigate underneath the account view); setPage instead
+        // lets account-mode nav reports through explicitly.
+        [sessionId]: { ...cur, isOpen: true, page: null, accountPane: { profileId, authed: null, email: null } },
+      },
+    }))
+  },
+  closeAccountPane: (sessionId) => {
+    const cur = get().bySessionId[sessionId]
+    if (!cur?.accountPane) return
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...cur, accountPane: null, page: null },
+      },
+    }))
+  },
+  setAccountPaneState: (state) => {
+    const cur = get().bySessionId[state.sessionId]
+    // Only while the surface is showing, and only for the account it shows — a
+    // late push from a replaced view must not repaint the new account's strip.
+    if (!cur?.accountPane || cur.accountPane.profileId !== state.profileId) return
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [state.sessionId]: { ...cur, accountPane: { profileId: state.profileId, authed: state.authed, email: state.email } },
+      },
+    }))
+  },
   setPage: (state) => {
     const cur = get().bySessionId[state.sessionId]
     // A report for a session whose pane has never existed is a stale event
@@ -255,7 +320,9 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     if (!cur) return
     // Same for a view Clear just closed (#481): a late navigation report must
     // not repopulate `page` under the start page (the address bar reads it).
-    if (cur.atStartPage) return
+    // The account surface (#439) is exempt: its reports are live — the strip's
+    // loading indicator reads them — and `page` is dropped again on mode exit.
+    if (cur.atStartPage && !cur.accountPane) return
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
@@ -294,7 +361,8 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => {
       const next: Record<string, WebviewSessionState> = {}
       for (const [id, st] of Object.entries(s.bySessionId)) {
-        next[id] = { ...st, isOpen: false }
+        // Account mode goes with the pane, same as every other close gesture.
+        next[id] = { ...st, isOpen: false, accountPane: null }
       }
       return { bySessionId: next }
     })

@@ -18,18 +18,31 @@ import { IPC } from '../../shared/ipc-channels'
 import { PROFILE_ID_RE } from '../../shared/account-web-session'
 import { logError } from '../debug-logger'
 import { getDataDirectory } from '../data-paths'
-import { cancelSignIn, clearWebSession, getSignInState, runSignIn } from '../account-web/sign-in'
+import { cancelSignIn, clearWebSession, detectAuthBrowsers, getSignInState, runSignIn } from '../account-web/sign-in'
 import {
   getAuthBrowser,
   getAuthMethod,
+  getWebSignInMode,
   removeWebSession,
   saveWebSession,
   setAuthBrowser,
   setAuthMethod,
+  setWebSignInMode,
   viewFor,
 } from '../account-web/session-store'
 import { readClaudeCliAuth, claudeAuthCommand } from '../account-web/claude-cli-auth'
 import { closeArtifacts, openArtifacts } from '../account-web/artifacts'
+import { listProfiles } from '../account-profiles'
+import {
+  closeAccountPane,
+  closeAccountPanesForProfile,
+  getAccountPaneState,
+  openAccountPane,
+  reloadAccountPane,
+  setAccountPaneBounds,
+  setAccountPaneVisible,
+} from '../account-web/account-pane'
+import { closeWebview } from '../webview-manager'
 
 type Err = { ok: false; error: string }
 
@@ -40,6 +53,19 @@ function fail(scope: string, err: unknown): Err {
 }
 
 const profileIdSchema = z.string().regex(PROFILE_ID_RE)
+
+/** True when the id names a real account. Shape-validation is not enough for
+ *  the handlers that MATERIALISE a partition or persist a settings row (#439
+ *  adversarial): a shape-valid but unknown id would mint an unbounded, never-
+ *  GC'd `persist:claude-web-*` partition (or an unbounded settings row) that no
+ *  UI can see or clear. */
+function isKnownProfile(profileId: string): boolean {
+  try {
+    return listProfiles().some((p) => p.id === profileId)
+  } catch {
+    return false
+  }
+}
 
 export function registerAccountWebHandlers(): void {
   /** Both halves of an account's auth in one payload — the UI shows them together. */
@@ -73,6 +99,10 @@ export function registerAccountWebHandlers(): void {
         cli,
         authMethod,
         authBrowser: getAuthBrowser(id),
+        webSignInMode: getWebSignInMode(id),
+        // Which drivable browsers are actually installed (#439): the Settings
+        // picker renders only when there is a genuine choice.
+        detectedBrowsers: detectAuthBrowsers(),
         // Built from the account's OWN setting and its reported address, so the
         // command shown is the one that will actually work for this account.
         authCommand: claudeAuthCommand(authMethod, cli.email),
@@ -134,7 +164,9 @@ export function registerAccountWebHandlers(): void {
       // clearWebSession rejects, an open window on that account is the worst
       // outcome. Then drop the cookies, then the record — a crash between the
       // last two leaves no usable session with a record claiming otherwise.
+      // The pane's account surfaces hold the same session — same rule (#439).
       closeArtifacts(id)
+      closeAccountPanesForProfile(id)
       await clearWebSession(id)
       removeWebSession(id)
       return { ok: true }
@@ -150,6 +182,7 @@ export function registerAccountWebHandlers(): void {
       const { profileId, method } = z
         .object({ profileId: profileIdSchema, method: z.enum(['claudeai', 'sso', 'console']) })
         .parse(args)
+      if (!isKnownProfile(profileId)) return { ok: false, error: 'unknown account' }
       setAuthMethod(profileId, method)
       return { ok: true }
     } catch (err) {
@@ -165,6 +198,7 @@ export function registerAccountWebHandlers(): void {
       const { profileId, browser } = z
         .object({ profileId: profileIdSchema, browser: z.enum(['chrome', 'edge']) })
         .parse(args)
+      if (!isKnownProfile(profileId)) return { ok: false, error: 'unknown account' }
       setAuthBrowser(profileId, browser)
       return { ok: true }
     } catch (err) {
@@ -179,6 +213,100 @@ export function registerAccountWebHandlers(): void {
       return res.ok ? { ok: true } : { ok: false, error: res.error ?? 'could not open artifacts' }
     } catch (err) {
       return fail('openArtifacts', err)
+    }
+  })
+
+  ipcMain.handle(IPC.ACCOUNT_WEB_SET_SIGN_IN_MODE, async (_e, args: unknown) => {
+    try {
+      // Enumerated at the boundary like the sibling settings: this value routes
+      // a credential flow, so it does not get to be arbitrary.
+      const { profileId, mode } = z
+        .object({ profileId: profileIdSchema, mode: z.enum(['auto', 'internal-pane']) })
+        .parse(args)
+      if (!isKnownProfile(profileId)) return { ok: false, error: 'unknown account' }
+      setWebSignInMode(profileId, mode)
+      return { ok: true }
+    } catch (err) {
+      return fail('setSignInMode', err)
+    }
+  })
+
+  // ---- the pane's account surface (#439/#475) --------------------------------
+  // Session ids become nothing on-disk here (the PARTITION is the account's,
+  // named from the validated profile id), but the same strict charset keeps the
+  // registry keys and log lines clean, and profileId is re-validated inside
+  // webPartitionForProfile as well — two gates for the string that names the
+  // cookie-jar boundary.
+  const sessionIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
+  const boundsSchema = z.object({
+    x: z.number().int().min(0).max(20000),
+    y: z.number().int().min(0).max(20000),
+    width: z.number().int().min(1).max(20000),
+    height: z.number().int().min(1).max(20000),
+  })
+
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_OPEN, async (e, args: unknown) => {
+    try {
+      const { sessionId, profileId, bounds } = z
+        .object({ sessionId: sessionIdSchema, profileId: profileIdSchema, bounds: boundsSchema })
+        .parse(args)
+      // A real account only: opening the surface for an unknown id would
+      // materialise a partition with no owner and no cleanup path (#439).
+      if (!isKnownProfile(profileId)) return { ok: false, error: 'unknown account' }
+      const win = BrowserWindow.fromWebContents(e.sender)
+      if (!win) return { ok: false, error: 'no window' }
+      // MUTUAL EXCLUSION: the ordinary pane view and the account view share one
+      // rectangle and must never both be attached (#439). The ordinary view is
+      // an arbitrary-URL surface; it goes first.
+      closeWebview(sessionId)
+      return openAccountPane(win, sessionId, profileId, bounds)
+    } catch (err) {
+      return fail('paneOpen', err)
+    }
+  })
+
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_CLOSE, async (_e, sessionId: unknown) => {
+    try {
+      return { ok: true, closed: closeAccountPane(sessionIdSchema.parse(sessionId)) }
+    } catch (err) {
+      return fail('paneClose', err)
+    }
+  })
+
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_BOUNDS, async (_e, args: unknown) => {
+    try {
+      const { sessionId, bounds } = z.object({ sessionId: sessionIdSchema, bounds: boundsSchema }).parse(args)
+      setAccountPaneBounds(sessionId, bounds)
+      return { ok: true }
+    } catch (err) {
+      return fail('paneBounds', err)
+    }
+  })
+
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_VISIBLE, async (_e, args: unknown) => {
+    try {
+      const { sessionId, visible } = z.object({ sessionId: sessionIdSchema, visible: z.boolean() }).parse(args)
+      setAccountPaneVisible(sessionId, visible)
+      return { ok: true }
+    } catch (err) {
+      return fail('paneVisible', err)
+    }
+  })
+
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_RELOAD, async (_e, sessionId: unknown) => {
+    try {
+      reloadAccountPane(sessionIdSchema.parse(sessionId))
+      return { ok: true }
+    } catch (err) {
+      return fail('paneReload', err)
+    }
+  })
+
+  ipcMain.handle(IPC.ACCOUNT_WEB_PANE_GET_STATE, async (_e, sessionId: unknown) => {
+    try {
+      return { ok: true, state: getAccountPaneState(sessionIdSchema.parse(sessionId)) }
+    } catch (err) {
+      return fail('paneGetState', err)
     }
   })
 }
