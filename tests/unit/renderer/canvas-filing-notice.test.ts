@@ -206,3 +206,45 @@ describe('filing notice', () => {
     expect(useCanvasStore.getState().bySessionId.s1.filedNotice).toBeNull()
   })
 })
+
+describe('completion stand-downs (#476)', () => {
+  beforeEach(() => {
+    seedCanvas('c-old', 'Checkout flow')
+    seedReviews('c-old', [], [])
+    // Pane CLOSED here, unlike above — the pulse cases need the closed shape.
+    useExcalidrawStore.setState({ bySessionId: { s1: { isOpen: false } } } as never)
+    getState.mockClear()
+  })
+
+  it('a REOPEN naming another canvas raises no filing strip and no pulse', () => {
+    emit({ sessionId: 's1', canvasId: 'c-done', activeVersionId: 'v1', reopened: true })
+    const s = useCanvasStore.getState().bySessionId.s1
+    expect(s.filedNotice).toBeNull()
+    expect(s.unseenRender).toBe(false)
+  })
+
+  it('a render while VIEWING a completed canvas starts fresh with no filing strip', () => {
+    // The dead-end fix mints a fresh canvas from a viewed completed one; the
+    // strip would claim "I filed <subject> when the agent started a different
+    // subject" — false twice over (already in the library; can be the same
+    // subject).
+    useCanvasStore.setState({
+      bySessionId: {
+        s1: {
+          ...useCanvasStore.getState().bySessionId.s1,
+          completed: { at: 'now', by: 'user' as const },
+        },
+      },
+    })
+    emit({ sessionId: 's1', canvasId: 'c-fresh', activeVersionId: 'v1' })
+    expect(useCanvasStore.getState().bySessionId.s1.filedNotice).toBeNull()
+  })
+
+  it('a sign-off event sets the acknowledgment, not the pulse or the strip', () => {
+    emit({ sessionId: 's1', canvasId: 'c-old', activeVersionId: 'v1', completed: true })
+    const s = useCanvasStore.getState().bySessionId.s1
+    expect(s.completedNotice).toEqual({ canvasId: 'c-old', title: 'Checkout flow' })
+    expect(s.unseenRender).toBe(false)
+    expect(s.filedNotice).toBeNull()
+  })
+})

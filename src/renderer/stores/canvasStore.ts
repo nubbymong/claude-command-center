@@ -317,9 +317,15 @@ export function setupCanvasListener(): void {
     // typed as the id it is, so the notice below keeps its narrowing.
     // A REOPEN can name a canvas that is not the session's current one — the
     // library row's Reopen — and nothing was filed by it; the detector must
-    // stand down or it announces a filing that never happened (#476).
+    // stand down or it announces a filing that never happened (#476). Same
+    // for a render while VIEWING a completed canvas: the fresh canvas that
+    // starts is not a filing of the signed-off one — it was already in the
+    // library, and "I filed it when the agent started a different subject"
+    // would be false twice over.
     const filedCanvasId: string | null =
-      !event.reopened && prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId ? prev.canvasId : null
+      !event.reopened && prev?.canvasId && !prev.completed && event.canvasId && event.canvasId !== prev.canvasId
+        ? prev.canvasId
+        : null
     const userAsked = filedCanvasId !== null && consumeExpectedSwitch(event.sessionId)
     if (!userAsked && filedCanvasId !== null) {
       // Counted from the review mirror as it stands NOW, before the refresh

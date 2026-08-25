@@ -182,6 +182,28 @@ describe('terminal means terminal', () => {
 })
 
 describe('survival and viewing', () => {
+  it('signing off the DRAFTING canvas clears the deferred-draft binding with it', () => {
+    // A subject-change DRAFT defers the repoint: the session still shows the
+    // old canvas, and draftIndex lets canvas_snapshot follow the draft. If
+    // that drafting canvas is signed off, the binding must die with the
+    // detach (the dropCanvas rule) — or the agent's self-check would keep
+    // reading a canvas nothing will ever promote.
+    const base = renderCanvas() // the session's current, user-facing canvas
+    canvasStore.clearAwaitingReview(base.canvasId)
+    const draft = canvasStore.renderVersion(SID, {
+      mode: 'design',
+      html: '<!doctype html><p>draft</p>',
+      title: `Deferred ${++seq}`,
+      ready: false,
+    })
+    expect(draft.canvasId).not.toBe(base.canvasId)
+    expect(canvasStore.getAgentCanvasStateForSession(SID)?.canvasId).toBe(draft.canvasId)
+    const res = completion.completeCanvasGuarded(draft.canvasId, 'user', SID)
+    expect(err(res)).toBe('')
+    // The agent-facing read falls back to the session's own canvas.
+    expect(canvasStore.getAgentCanvasStateForSession(SID)?.canvasId).toBe(base.canvasId)
+  })
+
   it('the stamp survives a reload, and a completed canvas never rebinds as current', () => {
     const { canvasId } = finishedCycle()
     completion.completeCanvasGuarded(canvasId, 'user', SID)

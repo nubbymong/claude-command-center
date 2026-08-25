@@ -20,17 +20,17 @@ import type { CanvasCompletion, CanvasState } from '../../shared/canvas'
  * over the SAME tallies the queue and the close-out use, so the button, the
  * pill and this refusal can never disagree.
  *
- * Seen-ness is carried transitively rather than re-checked. A round leaves
- * those tallies through four exits: the user's own verdict (their click), the
- * #470 supersede sweep (gated on `isAgentCloseable`, i.e. the seen barrier),
- * an agent close-out the store refuses until the user has SEEN the round —
- * or a chat pick (`canvas_pick`), which deliberately has no seen barrier and
- * rests instead on its own contract: it records the user's explicit words in
- * chat, stamps `pickSource: 'chat'` provenance, and reopens in one click.
- * That last exit is the same honor-system tier as this tool itself (both are
- * "the user said so in chat"), so completion inherits it rather than
- * pretending a mechanical barrier covers it; the mechanical barriers cover
- * the other three.
+ * Seen-ness is carried transitively rather than re-checked. Every exit from
+ * those tallies is either a USER GESTURE — their own verdicts, the library
+ * close-out, the dismiss-all sweep (which also clears the awaiting-review
+ * term checked above) — or an agent write behind a mechanical barrier: the
+ * #470 supersede sweep (gated on `isAgentCloseable`, i.e. the seen barrier)
+ * and the close-out the store refuses until the user has SEEN the round. The
+ * one agent write with NO seen barrier is the chat pick (`canvas_pick`),
+ * deliberately: it rests on its own contract — the user's explicit words in
+ * chat, `pickSource: 'chat'` provenance, one-click reopen — which is the
+ * same honor-system tier as this tool itself. Completion inherits that tier
+ * for the pick path rather than pretending a mechanical barrier covers it.
  *
  * Fail-closed on an unreadable review store: a reviews.json that exists but
  * will not read refuses completion — "could not tell" must never sign off as

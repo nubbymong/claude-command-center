@@ -335,6 +335,16 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const reviewSession = useCanvasReviewStore((s) => s.bySessionId[sessionId])
   const setMarqueeArmed = useCanvasReviewStore((s) => s.setMarqueeArmed)
 
+  // #476: the MODES go with the chips. interactionMode/marqueeArmed are
+  // per-session renderer state that survives the detach and the adopt, so
+  // without this a pane opened onto a completed canvas could arrive with the
+  // glass live in Sketch and no panel to receive the strokes.
+  useEffect(() => {
+    if (!viewingCompleted) return
+    setInteractionMode(sessionId, 'browse')
+    setMarqueeArmed(sessionId, false)
+  }, [viewingCompleted, sessionId, setInteractionMode, setMarqueeArmed])
+
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   /** The pane's root element — the scope of the HOST-side zoom gesture (#368):
    *  a Ctrl+wheel over the chrome, the glass or the notes panel zooms the
