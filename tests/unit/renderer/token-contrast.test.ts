@@ -18,9 +18,13 @@ import path from 'node:path'
 
 const CSS = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/styles.css'), 'utf8')
 
-/** Pull a token's value from the Nth block that defines it (0 = dark, 1 = light). */
+/** Pull a token's value from the Nth block that defines it (0 = dark, 1 = light).
+ *  Exactly two definitions are required: a third block (a new theme, a media
+ *  query override) would silently shift the indexing and leave the light
+ *  theme untested, so it fails loudly here instead. */
 function token(name: string, occurrence: number): string {
   const all = [...CSS.matchAll(new RegExp(`--${name}\\s*:\\s*(#[0-9a-fA-F]{3,8})`, 'g'))].map((m) => m[1])
+  if (all.length !== 2) throw new Error(`--${name} defined ${all.length} times in styles.css — expected exactly dark + light`)
   const v = all[occurrence]
   if (!v) throw new Error(`--${name} occurrence ${occurrence} not found in styles.css`)
   return v
@@ -131,12 +135,15 @@ describe('contrast — #458: muted text and the status-pill recipe', () => {
     'surface-raised',
     'surface-overlay',
   ]
-  // The pill recipe is drawn on the first four only (WebviewPane = chrome,
-  // Quick Start/BottomBar = panel/chrome, CanvasEmptyState and the library =
-  // stage). Raised/overlay are NOT pinned for the washes: the dark theme's
-  // bright pastels measure ~4.3-4.45 over washes there, so a pill moving
-  // onto a dialog or menu needs the dark --status-info/--brand values
-  // brightened first — extend this list when that happens.
+  // Where the wash pins run. The recipe also lives on raised — ui/Dialog's
+  // danger buttons (16%), NoteDialog/menus confirms, CommandDialog's Ask
+  // strip (brand 12%) — and those all clear at their ACTUAL strengths in
+  // both themes (danger@16% raised 4.93 dark, brand@12% raised 4.51 dark).
+  // Raised/overlay are still not in this list because pinning them at the
+  // generic 14/15% strengths would fail on ONE pre-existing case out of
+  // #458's scope: CodexSettingsTab's brand-15%-on-raised button, 4.27:1 in
+  // dark — fixing that means brightening dark --brand, the app's identity
+  // colour, which is an owner call. Extend the list when that lands.
   const WASH_SURFACES = ['surface-chrome', 'surface-panel', 'surface-stage', 'surface-stage-gutter']
 
   it('reads real values out of styles.css, not a copy', () => {

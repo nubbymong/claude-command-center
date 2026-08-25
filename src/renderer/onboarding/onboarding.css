@@ -246,9 +246,10 @@
 .ob-root .gh-cbtn:hover:not(.on) { color: var(--text-primary); }
 .ob-root .gh-cbtn.on { background: var(--ob); color: var(--ob-on, #04121f); }
 .ob-root .gh-tag { display: inline-block; font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: 1px; }
-/* --text-muted (#6a7480) measures 3.9:1 on --surface-base, below the 4.5:1
-   minimum — measured by canvas_snapshot on the What's New mockup, 2026-08-21.
-   Both of these are body copy, not decoration, so they take --text-secondary. */
+/* --text-muted (then #6a7480) measured 3.9:1 on --surface-base — below the
+   4.5:1 minimum (canvas_snapshot on the What's New mockup, 2026-08-21; the
+   token itself was later raised to AA in #458). Both of these are body copy,
+   not decoration, so they keep --text-secondary regardless. */
 .ob-root .gh-freebie { font-size: 12px; color: var(--text-secondary); text-align: center; margin: 0 0 16px; }
 .ob-root .gh-freebie b { color: var(--text-primary); }
 
