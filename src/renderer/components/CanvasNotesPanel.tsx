@@ -12,6 +12,7 @@ import {
   type ReviewGroup,
 } from '../stores/canvasReviewStore'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
+import { useArmedConfirm } from '../hooks/useArmedConfirm'
 import { imageFileFromClipboard, pastedImageToPng } from '../utils/canvasPasteImage'
 
 interface Props {
@@ -252,6 +253,10 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
    *  second does it and says how many. Nothing is deleted either way. */
   const [closeAllArmed, setCloseAllArmed] = useState(false)
   const [closingAll, setClosingAll] = useState(false)
+  // Double-click-proofing (#456, extended here by #485): each confirm kind
+  // guards its own arm moment.
+  const dismissRestConfirm = useArmedConfirm(confirmDismissId)
+  const closeAllConfirm = useArmedConfirm(closeAllArmed ? 'all' : null)
   /** Which rounds have their Closed list expanded. Closed work is kept, not
    *  hidden — but it folds away by default so it does not bury what is live. */
   const [closedOpen, setClosedOpen] = useState<Record<string, boolean>>({})
@@ -770,7 +775,8 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                 Cancel
               </button>
               <button
-                onClick={() => void closeAllWaiting()}
+                ref={closeAllConfirm.confirmRef}
+                onClick={closeAllConfirm.guarded(() => void closeAllWaiting())}
                 disabled={closingAll}
                 data-testid="close-all-waiting-confirm"
                 className="px-2 py-0.5 text-[10px] font-semibold rounded border border-peach/50 text-peach bg-peach/15 hover:bg-peach/25 disabled:opacity-40 focus-ring"
@@ -996,7 +1002,8 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                 <div className="flex-1" />
                 {confirmDismissId === group.review.id ? (
                   <button
-                    onClick={() => void resolveGroup(group, 'dismiss')}
+                    ref={dismissRestConfirm.confirmRef}
+                    onClick={dismissRestConfirm.guarded(() => void resolveGroup(group, 'dismiss'))}
                     disabled={actionsLocked}
                     className="px-2 py-0.5 text-[10px] font-semibold rounded border border-red/50 text-red bg-red/15 hover:bg-red/25 disabled:opacity-40"
                     title="Drop these notes without action. They will not come back."

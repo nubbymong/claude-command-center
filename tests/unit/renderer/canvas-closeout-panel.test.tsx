@@ -176,6 +176,16 @@ async function click(el: Element | null): Promise<void> {
   await act(async () => (el as HTMLElement).click())
 }
 
+// #456 (extended by #485): a freshly-armed confirm ignores activation for
+// CONFIRM_GUARD_MS so a double-click cannot arm and fire in one gesture.
+// Deliberate confirms jump a mocked clock past the window instead of waiting.
+let nowSpy: ReturnType<typeof vi.spyOn> | null = null
+function passGuard(): void {
+  const later = Date.now() + 60_000
+  nowSpy?.mockRestore()
+  nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => later)
+}
+
 beforeEach(async () => {
   current = boardWithMixedRounds()
   resolves = []
@@ -190,6 +200,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  nowSpy?.mockRestore()
+  nowSpy = null
 })
 
 describe('close all rounds waiting on me', () => {
@@ -214,6 +226,7 @@ describe('close all rounds waiting on me', () => {
   it('closes them as STALE and never as approved', async () => {
     await render()
     await click(byTestId('close-all-waiting-arm'))
+    passGuard()
     await click(byTestId('close-all-waiting-confirm'))
 
     // Newest round first, which is the order the panel lists them in.
@@ -225,6 +238,7 @@ describe('close all rounds waiting on me', () => {
   it('leaves the round still with the agent untouched', async () => {
     await render()
     await click(byTestId('close-all-waiting-arm'))
+    passGuard()
     await click(byTestId('close-all-waiting-confirm'))
 
     expect(resolves.map((r) => r.annotationId)).not.toContain('a4')
@@ -236,6 +250,7 @@ describe('close all rounds waiting on me', () => {
   it('disappears once nothing is waiting on you any more', async () => {
     await render()
     await click(byTestId('close-all-waiting-arm'))
+    passGuard()
     await click(byTestId('close-all-waiting-confirm'))
     await render()
     // R3 is still with the agent, so it is not "waiting on you" and the bar
@@ -372,6 +387,7 @@ describe('a bulk pass cannot land on the wrong canvas, or race itself', () => {
 
     await render()
     await click(byTestId('close-all-waiting-arm'))
+    passGuard()
     await click(byTestId('close-all-waiting-confirm'))
 
     // One resolve landed on the canvas the ids belonged to; the pass then
@@ -400,8 +416,10 @@ describe('a bulk pass cannot land on the wrong canvas, or race itself', () => {
 
     await render()
     await click(byTestId('close-all-waiting-arm'))
-    // Start the pass but do not let it finish.
-    void act(async () => (byTestId('close-all-waiting-confirm') as HTMLElement).click())
+    passGuard()
+    // Start the pass but do not let it finish. Keep the act() promise: left
+    // dangling, it overlaps every act() in later tests and their renders die.
+    const pass = act(async () => (byTestId('close-all-waiting-confirm') as HTMLElement).click())
     await act(async () => {})
 
     // Assert the controls are PRESENT and disabled — `?? true` on a missing
@@ -414,6 +432,65 @@ describe('a bulk pass cannot land on the wrong canvas, or race itself', () => {
     expect(perNote!.disabled).toBe(true)
 
     if (release) (release as () => void)()
+    await pass
     await act(async () => {})
+  })
+})
+
+describe('double-click-proofing (#456, extended by #485)', () => {
+  it('a double-click cannot arm and fire "Close all waiting on me" in one gesture', async () => {
+    await render()
+    await click(byTestId('close-all-waiting-arm'))
+    await click(byTestId('close-all-waiting-confirm'))
+    expect(resolves).toEqual([])
+    // Still armed — the close-out waits for a deliberate second decision.
+    expect(byTestId('close-all-waiting-confirm')).toBeTruthy()
+
+    passGuard()
+    await click(byTestId('close-all-waiting-confirm'))
+    expect(resolves.map((r) => r.annotationId)).toEqual(['a3', 'a1', 'a2'])
+  })
+
+  it('a double-click cannot arm and fire "Dismiss the rest" in one gesture', async () => {
+    await render()
+    await click(group('R1').querySelector('[data-testid="review-dismiss-rest"]'))
+    await click(group('R1').querySelector('[data-testid="review-dismiss-rest-confirm"]'))
+    expect(resolves).toEqual([])
+    expect(group('R1').querySelector('[data-testid="review-dismiss-rest-confirm"]')).toBeTruthy()
+
+    passGuard()
+    await click(group('R1').querySelector('[data-testid="review-dismiss-rest-confirm"]'))
+    expect(resolves.map((r) => r.annotationId)).toEqual(['a1', 'a2'])
+    expect(resolves.every((r) => r.action === 'dismiss')).toBe(true)
+  })
+
+  it('re-arming on a different round re-stamps the dismiss guard', async () => {
+    // Arm R1, wait out the window, then arm R2: the fresh arm must be guarded
+    // again — the stale R1 stamp must not leave R2's confirm live instantly.
+    current = {
+      canvasId: 'canvas-a',
+      sessionId: SID,
+      reviews: [review('R1', 'submitted', '01'), review('R2', 'submitted', '02')],
+      annotations: [
+        note('a1', 'R1', 'addressed'),
+        note('a2', 'R1', 'addressed'),
+        note('a3', 'R2', 'addressed'),
+        note('a6', 'R2', 'addressed'),
+      ],
+    }
+    await render()
+    await click(group('R1').querySelector('[data-testid="review-dismiss-rest"]'))
+    passGuard()
+    await click(group('R2').querySelector('[data-testid="review-dismiss-rest"]'))
+    await click(group('R2').querySelector('[data-testid="review-dismiss-rest-confirm"]'))
+    expect(resolves).toEqual([])
+  })
+
+  it('arming moves focus onto the confirm — both confirms', async () => {
+    await render()
+    await click(byTestId('close-all-waiting-arm'))
+    expect(document.activeElement).toBe(byTestId('close-all-waiting-confirm'))
+    await click(group('R1').querySelector('[data-testid="review-dismiss-rest"]'))
+    expect(document.activeElement).toBe(group('R1').querySelector('[data-testid="review-dismiss-rest-confirm"]'))
   })
 })
