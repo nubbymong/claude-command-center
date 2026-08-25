@@ -30,6 +30,7 @@ vi.mock('../../../src/renderer/stores/appMetaStore', () => {
 
 const { WhatsNewV2Step, sectionsFor } = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
 const { SHOWCASES_21, showcasesFor } = await import('../../../src/renderer/onboarding/showcase-pages')
+const { ShowcaseVignette } = await import('../../../src/renderer/onboarding/ShowcaseVignette')
 
 let container: HTMLDivElement
 let root: Root
@@ -98,20 +99,20 @@ describe('WhatsNewV2Step — multi-page showcase', () => {
     expect(q('whatsnew-heading')).not.toBeNull()
     expect(q('showcase-heading')).toBeNull()
     expect(q('whatsnew-dots')).not.toBeNull()
-    expect(q('whatsnew-hint')!.textContent).toContain('Page 1 of 4')
+    // Derived, not hardcoded: 1 summary + one page per flagship.
+    expect(q('whatsnew-hint')!.textContent).toContain(`Page 1 of ${1 + SHOWCASES_21.length}`)
   })
 
   it('Next pages inward without leaving the run; the last page carries the harness CTA', () => {
     render()
     const cta = () => q('whatsnew-cta')!
     expect(cta().textContent).toContain('Next')
-    click(cta()) // -> canvas
+    click(cta()) // -> the first flagship
     expect(nexts).toBe(0)
-    expect(q('showcase-page-canvas')).not.toBeNull()
-    expect(q('showcase-eyebrow')!.textContent).toContain('1 of 3')
-    click(cta()) // -> watchdog
-    click(cta()) // -> oneRow (last)
-    expect(q('showcase-page-oneRow')).not.toBeNull()
+    expect(q(`showcase-page-${SHOWCASES_21[0].id}`)).not.toBeNull()
+    expect(q('showcase-eyebrow')!.textContent).toContain(`1 of ${SHOWCASES_21.length}`)
+    for (let i = 1; i < SHOWCASES_21.length; i++) click(cta()) // -> walk to the last
+    expect(q(`showcase-page-${SHOWCASES_21[SHOWCASES_21.length - 1].id}`)).not.toBeNull()
     expect(cta().textContent).toBe('Continue')
     expect(q('whatsnew-hint')!.textContent).toBe('Nothing to set up.')
     expect(q('whatsnew-skip'), 'skip duplicates the CTA on the last page').toBeNull()
@@ -124,7 +125,8 @@ describe('WhatsNewV2Step — multi-page showcase', () => {
     render()
     click(q('see-watchdog'))
     expect(q('showcase-page-watchdog')).not.toBeNull()
-    expect(q('showcase-eyebrow')!.textContent).toContain('2 of 3')
+    const ix = SHOWCASES_21.findIndex((pg: { id: string }) => pg.id === 'watchdog')
+    expect(q('showcase-eyebrow')!.textContent).toContain(`${ix + 1} of ${SHOWCASES_21.length}`)
     expect(nexts).toBe(0)
   })
 
@@ -196,5 +198,74 @@ describe('WhatsNewV2Step — multi-page showcase', () => {
     expect(nexts).toBe(1)
     ;(globalThis as any).__APP_VERSION__ = '2.1.0-rc.1'
     vi.resetModules()
+  })
+})
+
+// ── #463: the showcase tours everything since 2.0, for both audiences ──
+describe('#463 — since-2.0 coverage and the first-run cohort', () => {
+  it('the flagship set covers the full 2.1-over-2.0 story, canvas first', () => {
+    const ids = SHOWCASES_21.map((p) => p.id)
+    for (const flagship of ['canvas', 'oneRow', 'panel', 'accounts', 'watchdog']) {
+      expect(ids, `missing flagship page "${flagship}"`).toContain(flagship)
+    }
+    expect(ids[0]).toBe('canvas')
+  })
+
+  it('no heading or tagline uses upgrade-only diff framing a first-runner cannot parse', () => {
+    // "Three rows became one" reads as gibberish to someone who never saw
+    // three rows. A tripwire, not a proof: it catches the phrasings that have
+    // actually slipped in ("became", "grew", "used to", "no longer", "now X"
+    // comparatives) — review still owns the judgment call.
+    for (const p of SHOWCASES_21) {
+      const copy = `${p.heading} ${p.tagline}`.toLowerCase()
+      for (const phrase of ['became', 'grew', 'used to', 'no longer', 'renamed']) {
+        expect(copy, `${p.id}: "${phrase}"`).not.toContain(phrase)
+      }
+    }
+  })
+
+  it('every showcase page\'s art kind renders a drawn vignette', () => {
+    for (const p of SHOWCASES_21) {
+      act(() => { root.render(<ShowcaseVignette kind={p.art} />) })
+      expect(
+        container.querySelector(`[data-ux-id="showcase-art-${p.art}"]`),
+        `no vignette rendered for art kind "${p.art}"`,
+      ).toBeTruthy()
+    }
+  })
+
+  it('the fresh cohort gets an introduction heading and the FULL story, not a diff', () => {
+    metaState.meta = {}
+    render({ fresh: true })
+    expect(q('whatsnew-heading')!.textContent).toContain("What you're getting")
+    expect(q('whatsnew-heading')!.textContent).not.toContain("What's new")
+    const text = container.textContent!
+    // One item from the 2.0 set and one from the 2.1 set — both present,
+    // because a first-runner missed everything.
+    expect(text).toContain('Guided setup.')
+    expect(text).toContain('Agent Canvas.')
+    // ...but a line that only makes sense against a BEFORE stays out.
+    expect(text).not.toContain('New name.')
+  })
+
+  it('no upgrade-only line carries a See-it link — the fresh page count must not desync', () => {
+    // The sub-line says "N of them have a page of their own"; an upgradeOnly
+    // item with a seeIt would make that true for upgraders and false for the
+    // fresh cohort, silently.
+    for (const s2 of sectionsFor(undefined, '2.1.0')) {
+      for (const it2 of s2.items) {
+        expect(!(it2.upgradeOnly && it2.seeIt), `${it2.title} is upgradeOnly with a seeIt`).toBe(true)
+      }
+    }
+  })
+
+  it('the upgrader still sees the upgrade-only lines', () => {
+    render()
+    expect(container.textContent).toContain('New name.')
+  })
+
+  it('an upgrader keeps the diff heading — fresh framing never leaks', () => {
+    render()
+    expect(q('whatsnew-heading')!.textContent).toContain("What's new in 2.1")
   })
 })
