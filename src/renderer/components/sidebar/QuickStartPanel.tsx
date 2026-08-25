@@ -65,11 +65,11 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
             key={config.id}
             className="mx-2 my-0.5 px-2 py-1 rounded-lg border flex items-center gap-1.5 transition-colors"
             style={{
-              // #462: the session-card recipe — a thin border in the config's
-              // own identity colour over a quiet tint of the same, instead of
-              // the old uniform brand wash (SessionRow.tsx is the reference).
+              // #462, canvas-approved 2026-08-25: identity on the BORDER ONLY
+              // (the session-card 55% mix); the interior stays the neutral
+              // stage surface like a non-active session card — no tint fill.
               borderColor: `color-mix(in srgb, ${chipColour} 55%, transparent)`,
-              background: chipColour + '12',
+              background: 'var(--surface-stage)',
             }}
             onContextMenu={(e) => onContextMenu(e, config.id)}
             data-testid="quick-start-item"
@@ -79,11 +79,10 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
             <span className="text-xs font-medium truncate flex-1 text-[var(--text-primary)]">{config.label}</span>
             {liveCount > 0 && (
               <span
-                className="flex items-center gap-1 text-[8.5px] font-semibold uppercase tracking-wide text-green bg-green/15 rounded-full px-1.5 py-0.5 shrink-0"
+                className="flex items-center text-[8.5px] font-semibold uppercase tracking-wide text-green bg-green/15 rounded-full px-1.5 py-0.5 shrink-0"
                 title={runningCountLabel(liveCount)}
                 data-testid="quick-start-running-count"
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-green" aria-hidden />
                 {liveCount}
               </span>
             )}
