@@ -453,7 +453,18 @@ export function openAccountPane(
       closed: false,
     }
 
-    const guard = (label: string) => (event: { preventDefault: () => void }, target: string): void => {
+    // MAIN-FRAME ONLY. The session-security invariant is about the top-level,
+    // session-bearing document: it must not roam off claude.ai. A cross-origin
+    // SUB-FRAME is a different matter — it is isolated by same-origin policy (it
+    // cannot read claude.ai's cookies or DOM), and claude.ai legitimately embeds
+    // third-party frames (Cloudflare Turnstile, Stripe). Guarding those would
+    // either break the embeds (block) or, worse, hand every embedded frame's URL
+    // to the OS browser (external) — an un-gestured tab-bomb any page could fire
+    // by creating an iframe. So sub-frames are left to same-origin policy, and
+    // the guard acts only when the event is confirmed NOT a sub-frame. This
+    // matches the sibling artifacts/sign-in windows, which carry no frame guard.
+    const guard = (label: string) => (event: { preventDefault: () => void; isMainFrame?: boolean }, target: string): void => {
+      if (event.isMainFrame === false) return
       const decision = accountPaneNavDecision(target, entry.authed)
       if (decision === 'allow') return
       event.preventDefault()
@@ -467,18 +478,6 @@ export function openAccountPane(
     }
     view.webContents.on('will-navigate', guard('will-navigate'))
     view.webContents.on('will-redirect', guard('will-redirect'))
-    // Sub-frame navigations too: without this an iframe can carry attacker code
-    // into the account's persistent partition (cross-origin isolation stops it
-    // reading claude.ai, but it should not be there at all). Electron 43 passes
-    // ONE details object here (url/isMainFrame/preventDefault), not (event, url)
-    // — the old positional form read undefined and blocked every navigation. The
-    // main frame is already covered by will-navigate/will-redirect, so skip it
-    // to avoid double-guarding (which fired shell.openExternal twice per click).
-    const frameGuard = guard('will-frame-navigate')
-    view.webContents.on('will-frame-navigate' as never, ((details: { preventDefault: () => void; url: string; isMainFrame: boolean }) => {
-      if (details.isMainFrame) return
-      frameGuard(details, details.url)
-    }) as never)
     view.webContents.on('will-prevent-unload', (event) => { event.preventDefault() })
     view.webContents.setWindowOpenHandler(({ url }) => {
       // A popup is only ever followed into THIS view when it is a claude.ai URL;

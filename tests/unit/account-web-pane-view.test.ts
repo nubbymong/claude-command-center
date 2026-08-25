@@ -222,20 +222,29 @@ describe('the account view', () => {
     closeAccountPane('sess-midnav')
   })
 
-  it('the sub-frame guard uses the Electron-43 details object and skips the main frame', () => {
+  it('guards the MAIN frame only — a cross-origin sub-frame (Turnstile/Stripe) is left to same-origin policy, never handed to the OS', async () => {
     const win = new FakeParentWindow()
     openAccountPane(win as never, 'sess-frame', 'profile-p1a', BOUNDS)
-    const frame = createdViews[0].view.webContents.handlers['will-frame-navigate'] as (d: { preventDefault: () => void; url: string; isMainFrame: boolean }) => void
-    expect(frame).toBeDefined()
-    // A main-frame claude.ai navigation must NOT be blocked here (will-navigate
-    // owns it) — the old (event,url) signature read undefined and blocked all.
-    const mainNav = { preventDefault: vi.fn(), url: 'https://claude.ai/chat/abc', isMainFrame: true }
-    frame(mainNav)
-    expect(mainNav.preventDefault).not.toHaveBeenCalled()
-    // A cross-origin sub-frame to an attacker is blocked.
-    const subNav = { preventDefault: vi.fn(), url: 'https://evil.example/frame', isMainFrame: false }
-    frame(subNav)
-    expect(subNav.preventDefault).toHaveBeenCalled()
+    const ses = partitions[webPartitionForProfile('profile-p1a')]
+    const nav = createdViews[0].view.webContents.handlers['will-navigate'] as (e: { preventDefault: () => void; isMainFrame?: boolean }, url: string) => void
+    // Sign in so an off-site main-frame nav would go external.
+    ses.cookies.get.mockResolvedValue([{ name: 'sessionKey', expirationDate: 4102444800 }])
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0))
+    openedExternal.length = 0
+
+    // A cross-origin SUB-frame (isMainFrame:false): NOT prevented, NOT sent to
+    // the OS browser — an iframe must not be able to launch OS tabs.
+    const sub = { preventDefault: vi.fn(), isMainFrame: false }
+    nav(sub, 'https://challenges.cloudflare.com/turnstile/x')
+    expect(sub.preventDefault).not.toHaveBeenCalled()
+    expect(openedExternal).toHaveLength(0)
+
+    // A MAIN-frame off-site nav IS handed to the OS browser (one tab, gestured).
+    const main = { preventDefault: vi.fn(), isMainFrame: true }
+    nav(main, 'https://example.com/paper')
+    expect(main.preventDefault).toHaveBeenCalled()
+    expect(openedExternal).toEqual(['https://example.com/paper'])
     closeAccountPane('sess-frame')
   })
 
