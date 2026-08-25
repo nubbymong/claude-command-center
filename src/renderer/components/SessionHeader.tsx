@@ -193,6 +193,11 @@ function SessionAuthPills({ session }: { session: Session }) {
   // web session. SSH (remote creds), Codex (not profile-scoped) and shell-only
   // sessions show nothing — same gate the context-menu auth items use.
   const applies = !session.shellOnly && session.sessionType === 'local' && (session.provider ?? 'claude') === 'claude'
+  // The Ask help session (#465) keeps ONLY the account pill: it still runs as an
+  // account (that requirement predates this), but the claude.ai / Claude Code
+  // auth pills and the GitHub pill are workspace chrome a help surface does not
+  // carry — and with no auth pills to feed, the status fetch is skipped too.
+  const isAsk = session.kind === 'ask'
   const profileId = session.profileId ?? primary?.id
   const profile = useAccountProfilesStore((s) => (profileId ? s.profiles.find((p) => p.id === profileId) : undefined))
   const status = useAccountAuthStore((s) => (profileId ? s.byProfile[profileId] : undefined))
@@ -200,8 +205,8 @@ function SessionAuthPills({ session }: { session: Session }) {
   React.useEffect(() => {
     // This header renders only the ACTIVE session, so mounting/param-change is
     // "on activate". Re-fetch when the session or its account changes.
-    if (applies && profileId) void refresh(profileId)
-  }, [applies, profileId, refresh, session.id])
+    if (applies && !isAsk && profileId) void refresh(profileId)
+  }, [applies, isAsk, profileId, refresh, session.id])
 
   const gitHub = <SessionGitHubPill session={session} />
   if (!applies || !profileId) {
@@ -236,6 +241,19 @@ function SessionAuthPills({ session }: { session: Session }) {
     resolveAccountColourKey(email, accountColourOverrides, profile?.colourKey),
     theme,
   )
+
+  // Slim Ask header (#465): the account pill alone. Everything below this point
+  // is auth-status wording for pills the Ask session does not render.
+  if (isAsk) {
+    return (
+      <HeaderPill
+        label={accountName}
+        tone={accountTone}
+        title={email ? `Account: ${email}` : 'This session’s Claude account'}
+        testId="session-pill-account"
+      />
+    )
+  }
 
   // A green dot = all good, no word; the word appears only when action is needed
   // (signed out / not connected / expired / unknown), mirroring the title bar.

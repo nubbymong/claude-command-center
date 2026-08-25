@@ -229,6 +229,75 @@ describe('with a page loaded', () => {
   })
 })
 
+describe('Clear — back to the start page (#481)', () => {
+  const loaded = async () => {
+    act(() => { useWebviewStore.getState().navigate('s1', 'http://localhost:5173/') })
+    render()
+    await flush()
+    expect(api.open).toHaveBeenCalledTimes(1)
+  }
+
+  it('destroys the native view and shows the start page; the pane stays open', async () => {
+    await loaded()
+    act(() => { byTest<HTMLButtonElement>('browser-clear')!.click() })
+    await flush()
+    expect(api.close).toHaveBeenCalledWith('s1')
+    expect(byTest('browser-start')).not.toBeNull()
+    expect(byTest('browser-viewport')).toBeNull()
+    const st = useWebviewStore.getState().bySessionId['s1']
+    expect(st.currentUrl).toBeNull()
+    expect(st.page).toBeNull()
+    expect(st.isOpen).toBe(true)
+  })
+
+  it('does NOT bounce back to the home page (that would make Clear a no-op for anyone with a home)', async () => {
+    useBrowserStore.getState().setHome('cfg1', 'http://localhost:4000/')
+    await loaded()
+    act(() => { byTest<HTMLButtonElement>('browser-clear')!.click() })
+    await flush()
+    expect(useWebviewStore.getState().bySessionId['s1'].currentUrl).toBeNull()
+    expect(byTest('browser-start')).not.toBeNull()
+    // …and no second native view was created for the suppressed auto-home.
+    expect(api.open).toHaveBeenCalledTimes(1)
+  })
+
+  it('a late navigation report from the closed view cannot repopulate the cleared pane', async () => {
+    await loaded()
+    act(() => { byTest<HTMLButtonElement>('browser-clear')!.click() })
+    act(() => { navHandler!({ sessionId: 's1', url: 'http://localhost:5173/stale', title: '', canGoBack: true, canGoForward: false, loading: false }) })
+    const st = useWebviewStore.getState().bySessionId['s1']
+    expect(st.page).toBeNull()
+    expect(byTest('browser-start')).not.toBeNull()
+  })
+
+  it('a background re-probe marking the watch available cannot yank the user off the start page', async () => {
+    await loaded()
+    act(() => { byTest<HTMLButtonElement>('browser-clear')!.click() })
+    act(() => { useWebviewStore.getState().markAvailable('s1', 'http://localhost:3000/') })
+    expect(useWebviewStore.getState().bySessionId['s1'].currentUrl).toBeNull()
+    expect(byTest('browser-start')).not.toBeNull()
+  })
+
+  it('navigating again after Clear creates a FRESH view (the old one was destroyed)', async () => {
+    await loaded()
+    act(() => { byTest<HTMLButtonElement>('browser-clear')!.click() })
+    await flush()
+    act(() => { type(byTest<HTMLInputElement>('browser-start-address')!, 'localhost:9999') })
+    act(() => { byTest<HTMLButtonElement>('browser-start-go')!.click() })
+    await flush()
+    expect(api.open).toHaveBeenCalledTimes(2)
+    expect(api.open).toHaveBeenLastCalledWith('s1', 'http://localhost:9999/', expect.anything())
+    expect(byTest('browser-viewport')).not.toBeNull()
+  })
+
+  it('is disabled on the start page (nothing to clear)', async () => {
+    open()
+    render()
+    await flush()
+    expect(byTest<HTMLButtonElement>('browser-clear')!.disabled).toBe(true)
+  })
+})
+
 describe('the modern palette (#455)', () => {
   // The pane regressed to the pre-redesign near-black palette once (#455: "the
   // old black UX crept in again"). Detector copied from

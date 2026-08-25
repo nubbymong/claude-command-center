@@ -749,7 +749,10 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         data-testid="command-row"
         data-overflow={overflowMode}
       >
-        {/* Add — far left, prominent (owner). Click adds a command; the caret offers the rest. */}
+        {/* Add — far left, prominent (owner). Click adds a command; the caret
+            offers the rest. Not on the Ask session (#465): its bar carries no
+            command bands, so there is nothing an Add could add to. */}
+        {!caps.isAsk && (
         <span className="inline-flex items-stretch rounded-md border shrink-0 overflow-hidden" style={{ borderColor: 'color-mix(in srgb, var(--brand) 55%, transparent)', background: 'color-mix(in srgb, var(--brand) 16%, transparent)' }} data-testid="command-add">
           <button
             type="button"
@@ -776,14 +779,19 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden><path d="M2.5 4l2.5 2.5L7.5 4" /></svg>
           </button>
         </span>
+        )}
 
-        {/* Core — the fixed tools. Components, never data, never drop targets. */}
+        {/* Core — the fixed tools. Components, never data, never drop targets.
+            The Ask session (#465) keeps only Snap and Canvas: it is a slim help
+            surface, so the project-facing tools — Logs (its runs are not
+            indexed), Browser, Artifacts (a claude.ai surface), Partner and the
+            encrypted Notes — never render there. */}
         <div role="toolbar" aria-label="Session tools" className="flex items-center gap-1 shrink-0" data-testid="command-band-core" onDragOver={(e) => { if (dragId) { e.dataTransfer.dropEffect = 'none' } }}>
           {!hiddenHere.has('snap') && caps.canSendImageToAgent && coreWrap('snap', <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />)}
           {!hiddenHere.has('canvas') && coreWrap('canvas', <AgentCanvasButton sessionId={sessionId} />)}
-          {!hiddenHere.has('logs') && coreWrap('logs', <LogsButton sessionId={sessionId} structuralReason={caps.logsEmptyReason} remoteHost={caps.remoteHost} />)}
-          {!hiddenHere.has('browser') && coreWrap('browser', <WebviewButton sessionId={webviewKey} />)}
-          {!hiddenHere.has('artifacts') && artifactsApplicable && coreWrap('artifacts', (
+          {!caps.isAsk && !hiddenHere.has('logs') && coreWrap('logs', <LogsButton sessionId={sessionId} structuralReason={caps.logsEmptyReason} remoteHost={caps.remoteHost} />)}
+          {!caps.isAsk && !hiddenHere.has('browser') && coreWrap('browser', <WebviewButton sessionId={webviewKey} />)}
+          {!caps.isAsk && !hiddenHere.has('artifacts') && artifactsApplicable && coreWrap('artifacts', (
             <button
               type="button"
               onClick={openArtifacts}
@@ -799,7 +807,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               Artifacts
             </button>
           ))}
-          {partnerEnabled && onTogglePartner && !hiddenHere.has('partner') && coreWrap('partner', (
+          {!caps.isAsk && partnerEnabled && onTogglePartner && !hiddenHere.has('partner') && coreWrap('partner', (
             <button
               onClick={onTogglePartner}
               className={`relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring ${
@@ -822,7 +830,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             </button>
           ))}
           {/* The encrypted notes, moved here from the session header (D10): one lock, a quiet count. */}
-          {!hiddenHere.has('notes') && coreWrap('notes', <NotesTool ref={notesRef} configId={configId} configName={configName} />)}
+          {!caps.isAsk && !hiddenHere.has('notes') && coreWrap('notes', <NotesTool ref={notesRef} configId={configId} configName={configName} />)}
         </div>
 
         {/* Codex keeps its two session pills -- session controls, not commands. */}
@@ -840,7 +848,9 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           </>
         )}
 
-        {plans.map(renderBand)}
+        {/* #465: no command bands on the Ask session — the user's Global and
+            per-config buttons are workspace tooling, not help-session tooling. */}
+        {!caps.isAsk && plans.map(renderBand)}
         <div className="flex-1 min-w-[4px]" />
       </div>
 
