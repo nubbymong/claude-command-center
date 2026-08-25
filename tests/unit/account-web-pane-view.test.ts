@@ -18,6 +18,8 @@ function fakeSession(partition: string) {
     setPermissionRequestHandler(fn: any) { this.permissionRequestHandlers.push(fn) },
     setPermissionCheckHandler: vi.fn(),
     setDevicePermissionHandler: vi.fn(),
+    sessionEvents: {} as Record<string, Function>,
+    on(ev: string, fn: Function) { this.sessionEvents[ev] = fn },
     cookies: {
       listeners: [] as any[],
       get: vi.fn(async () => []),
@@ -41,8 +43,10 @@ class FakeWebContentsView {
       setWindowOpenHandler: (fn: Function) => { handlers.__open = fn },
       loadURL: vi.fn(async () => {}),
       close() { this.destroyed = true },
+      isDestroyed() { return this.destroyed },
       executeJavaScript: vi.fn(async () => null),
-      getURL: () => 'https://claude.ai/artifacts',
+      currentUrl: 'https://claude.ai/artifacts',
+      getURL() { return this.currentUrl },
       getTitle: () => 'Artifacts',
       navigationHistory: { canGoBack: () => false, canGoForward: () => false },
       reloadIgnoringCache: vi.fn(),
@@ -52,13 +56,18 @@ class FakeWebContentsView {
   setBounds(b: any) { this.bounds = b }
 }
 
+let nextWindowId = 1
 class FakeParentWindow {
+  id = nextWindowId++
   contentView = {
     children: [] as any[],
     addChildView: (v: any) => { this.contentView.children.push(v) },
     removeChildView: (v: any) => { this.contentView.children = this.contentView.children.filter((x) => x !== v) },
   }
   webContents = { send: vi.fn() }
+  closedCb?: () => void
+  once(ev: string, fn: () => void) { if (ev === 'closed') this.closedCb = fn }
+  on(_ev: string, _fn: () => void) { /* noop */ }
   isDestroyed() { return false }
 }
 
@@ -110,7 +119,7 @@ describe('the account view', () => {
     expect(parts[0]).not.toContain('webview-')
   })
 
-  it('is sandboxed with no bridge into the main process, and every permission denied', () => {
+  it('is sandboxed with no bridge into the main process, denies permission REQUESTS but not CHECKS, and blocks downloads', () => {
     const win = new FakeParentWindow()
     openAccountPane(win as never, 'sess-c', 'profile-p1a', BOUNDS)
     const wp = createdViews[0].opts.webPreferences
@@ -119,10 +128,66 @@ describe('the account view', () => {
     expect(wp.nodeIntegration).toBe(false)
     expect(wp.preload).toBeUndefined()
     const ses = partitions[webPartitionForProfile('profile-p1a')]
+    // Active permission requests (camera/mic/etc.) denied…
     expect(ses.permissionRequestHandlers.length).toBeGreaterThan(0)
     const cb = vi.fn()
     ses.permissionRequestHandlers[0](null, 'media', cb)
     expect(cb).toHaveBeenCalledWith(false)
+    // …but NO blanket permission-CHECK handler (that would kill claude.ai's
+    // clipboard Copy, matching the artifacts window's posture, not the
+    // throwaway partition's).
+    expect(ses.setPermissionCheckHandler).not.toHaveBeenCalled()
+    // Downloads blocked (the hardening step the account partition lacked).
+    const dl = ses.sessionEvents['will-download']
+    expect(typeof dl).toBe('function')
+    const ev = { preventDefault: vi.fn() }
+    dl(ev, { getURL: () => 'https://claude.ai/x.exe' })
+    expect(ev.preventDefault).toHaveBeenCalled()
+  })
+
+  it('never stacks two pane views on one window (the arbiter): a second account view detaches the first', () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-a1', 'profile-p1a', BOUNDS)
+    expect(win.contentView.children).toHaveLength(1)
+    openAccountPane(win as never, 'sess-a2', 'profile-p1b', BOUNDS)
+    // Two entries, but only ONE view attached — no overlay/clickjack surface.
+    expect(win.contentView.children).toHaveLength(1)
+    expect(win.contentView.children[0]).toBe(createdViews[1].view)
+    closeAccountPane('sess-a1'); closeAccountPane('sess-a2')
+  })
+
+  it('refuses to record when the VIEW is not on claude.ai (a page reached via any nav gap cannot answer as the account)', async () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-inj', 'profile-inj1', BOUNDS)
+    const ses = partitions[webPartitionForProfile('profile-inj1')]
+    const view = createdViews[0].view
+    const flush = () => new Promise((r) => setTimeout(r, 0))
+    await flush()
+    // The pane is parked on a hostile origin; the page would happily answer an
+    // attacker email, but recording is gated on the current URL.
+    view.webContents.currentUrl = 'https://evil.example/landing'
+    view.webContents.executeJavaScript.mockResolvedValue('attacker@evil.example')
+    ses.cookies.get.mockResolvedValue([{ name: 'sessionKey', expirationDate: 4102444800 }])
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    await flush(); await flush(); await flush()
+    const stored = ((fake.disk as { sessions?: unknown[] } | null)?.sessions ?? [])
+    // A record may exist (the cookie is real), but it never carries the
+    // attacker email the off-claude.ai page tried to inject.
+    for (const r of stored as Array<{ accountEmail: string | null }>) {
+      expect(r.accountEmail).not.toBe('attacker@evil.example')
+    }
+    closeAccountPane('sess-inj')
+  })
+
+  it('a crashed view is evicted and the renderer told to leave account mode', () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-crash', 'profile-p1a', BOUNDS)
+    expect(getAccountPaneState('sess-crash')).not.toBeNull()
+    createdViews[0].view.webContents.handlers['render-process-gone']()
+    expect(getAccountPaneState('sess-crash')).toBeNull()
+    // The renderer got a PANE_CLOSED for this session.
+    const sent = (win.webContents.send as any).mock.calls.map((c: any[]) => c[1])
+    expect(sent.some((p: any) => p?.sessionId === 'sess-crash')).toBe(true)
   })
 
   it('refuses a malformed profile id or session id, creating nothing', () => {
@@ -132,11 +197,13 @@ describe('the account view', () => {
     expect(createdViews).toHaveLength(0)
   })
 
-  it('wires the nav guard: non-https prevented; claude.ai allowed; post-auth off-site pushed external', async () => {
+  const flushNav = () => new Promise((r) => setTimeout(r, 0))
+
+  it('wires the nav guard: non-https prevented; claude.ai allowed; unknown fails closed; confirmed-signed-out allows the IdP hop; post-auth off-site → external', async () => {
     const win = new FakeParentWindow()
     openAccountPane(win as never, 'sess-nav', 'profile-nav1', BOUNDS)
-    const handlers = createdViews[0].view.webContents.handlers
-    const nav = handlers['will-navigate'] as (e: { preventDefault: () => void }, url: string) => void
+    const ses = partitions[webPartitionForProfile('profile-nav1')]
+    const nav = createdViews[0].view.webContents.handlers['will-navigate'] as (e: { preventDefault: () => void }, url: string) => void
     expect(nav).toBeDefined()
 
     const blocked = { preventDefault: vi.fn() }
@@ -147,11 +214,27 @@ describe('the account view', () => {
     nav(allowed, 'https://claude.ai/login')
     expect(allowed.preventDefault).not.toHaveBeenCalled()
 
-    // Pre-auth (authed=null at open): an https IdP hop stays in-view.
+    // authed=null (first read may still be in flight): off-site FAILS CLOSED.
+    const unknownIdp = { preventDefault: vi.fn() }
+    nav(unknownIdp, 'https://login.microsoftonline.com/x')
+    expect(unknownIdp.preventDefault).toHaveBeenCalled()
+
+    // Once the first read confirms NO cookie (authed=false), the IdP hop opens.
+    ses.cookies.get.mockResolvedValue([])
+    await flushNav()
     const idp = { preventDefault: vi.fn() }
     nav(idp, 'https://login.microsoftonline.com/x')
     expect(idp.preventDefault).not.toHaveBeenCalled()
     expect(openedExternal).toHaveLength(0)
+
+    // Signed in (authed=true): an off-site link is handed to the real browser.
+    ses.cookies.get.mockResolvedValue([{ name: 'sessionKey', expirationDate: 4102444800 }])
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    await flushNav(); await flushNav()
+    const offsite = { preventDefault: vi.fn() }
+    nav(offsite, 'https://example.com/paper')
+    expect(offsite.preventDefault).toHaveBeenCalled()
+    expect(openedExternal).toContain('https://example.com/paper')
     closeAccountPane('sess-nav')
   })
 
@@ -159,8 +242,11 @@ describe('the account view', () => {
     const win = new FakeParentWindow()
     openAccountPane(win as never, 'sess-t1', 'profile-teardown', BOUNDS)
     openAccountPane(win as never, 'sess-t2', 'profile-teardown', BOUNDS)
-    expect(win.contentView.children).toHaveLength(2)
+    // The arbiter keeps ONE view attached per window — opening t2 detached t1 —
+    // but both entries are tracked and both are torn down.
+    expect(win.contentView.children).toHaveLength(1)
     expect(getAccountPaneState('sess-t1')).not.toBeNull()
+    expect(getAccountPaneState('sess-t2')).not.toBeNull()
     closeAccountPanesForProfile('profile-teardown')
     expect(win.contentView.children).toHaveLength(0)
     expect(getAccountPaneState('sess-t1')).toBeNull()

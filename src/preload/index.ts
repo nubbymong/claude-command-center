@@ -272,6 +272,7 @@ export interface ElectronAPI {
     paneReload: (sessionId: string) => Promise<{ ok: boolean }>
     paneGetState: (sessionId: string) => Promise<{ ok: true; state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null } | null } | { ok: false; error: string }>
     onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => () => void
+    onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
   }
   canvas: {
     getState: (args: { sessionId: string }) => Promise<CanvasState | null>
@@ -890,6 +891,11 @@ const electronAPI: ElectronAPI = {
       const handler = (_e: unknown, state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => cb(state)
       ipcRenderer.on(IPC.ACCOUNT_WEB_PANE_STATE, handler)
       return () => ipcRenderer.removeListener(IPC.ACCOUNT_WEB_PANE_STATE, handler)
+    },
+    onPaneClosed: (cb: (e: { sessionId: string }) => void) => {
+      const handler = (_e: unknown, payload: { sessionId: string }) => cb(payload)
+      ipcRenderer.on(IPC.ACCOUNT_WEB_PANE_CLOSED, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_WEB_PANE_CLOSED, handler)
     },
   },
   // Agent Canvas — per-session review surface state + change push. Content

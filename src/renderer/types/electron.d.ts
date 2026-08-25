@@ -373,6 +373,7 @@ export interface ElectronAPI {
     paneReload: (sessionId: string) => Promise<{ ok: boolean }>
     paneGetState: (sessionId: string) => Promise<{ ok: true; state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null } | null } | { ok: false; error: string }>
     onPaneState: (cb: (state: { sessionId: string; profileId: string; authed: boolean | null; email: string | null }) => void) => () => void
+    onPaneClosed: (cb: (e: { sessionId: string }) => void) => () => void
   }
   /** Agent Canvas — session review-surface state; content loads over ccc-ux://. */
   canvas: {

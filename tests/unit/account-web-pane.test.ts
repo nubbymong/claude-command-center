@@ -28,7 +28,7 @@ const {
   getAuthMethod,
 } = await import('../../src/main/account-web/session-store')
 
-const { accountPaneNavDecision, ACCOUNT_PANE_START_URL } = await import('../../src/main/account-web/account-pane')
+const { accountPaneNavDecision, isClaudePaneUrl, ACCOUNT_PANE_START_URL } = await import('../../src/main/account-web/account-pane')
 
 const A = 'profile-aaa111'
 
@@ -120,5 +120,30 @@ describe('accountPaneNavDecision — the session-bearing view does not roam', ()
     expect(accountPaneNavDecision('https://evil.com/claude.ai', true)).toBe('external')
     expect(accountPaneNavDecision('https://claude.ai@evil.com/', true)).toBe('external')
     expect(accountPaneNavDecision('https://api.claude.ai/', true)).toBe('external')
+  })
+
+  it('FAILS CLOSED on the unknown cookie state (authed=null): off-site is blocked, not roamed', () => {
+    // The dangerous case the adversarial pass found: a failed/racing cookie read
+    // leaves authed unknown, and "unknown" must NOT mean "signed out → allow".
+    expect(accountPaneNavDecision('https://login.microsoftonline.com/x', null)).toBe('block')
+    expect(accountPaneNavDecision('https://evil.example/steal', null)).toBe('block')
+    // claude.ai itself is still allowed at any state (it is the surface).
+    expect(accountPaneNavDecision('https://claude.ai/artifacts', null)).toBe('allow')
+    // non-https still blocked at any state.
+    expect(accountPaneNavDecision('http://claude.ai/', null)).toBe('block')
+  })
+
+  it('treats a claude.ai URL with an explicit port as NOT the service (off-site rules apply)', () => {
+    expect(isClaudePaneUrl('https://claude.ai:8443/x')).toBe(false)
+    expect(accountPaneNavDecision('https://claude.ai:8443/x', true)).toBe('external')
+    expect(accountPaneNavDecision('https://claude.ai:8443/x', null)).toBe('block')
+    // The default port (implicit) is the real service.
+    expect(isClaudePaneUrl('https://claude.ai/artifacts')).toBe(true)
+  })
+
+  it('recognises the fully-qualified trailing-dot form as claude.ai (availability)', () => {
+    expect(isClaudePaneUrl('https://claude.ai./artifacts')).toBe(true)
+    expect(accountPaneNavDecision('https://claude.ai./artifacts', true)).toBe('allow')
+    expect(accountPaneNavDecision('https://www.claude.ai./login', null)).toBe('allow')
   })
 })

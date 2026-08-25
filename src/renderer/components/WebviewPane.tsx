@@ -318,6 +318,14 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     })
   }, [sessionId, setAccountPaneState])
 
+  // Main force-closed the surface (sign-out, account delete, a crash): leave
+  // account mode so the strip does not keep painting "signed in" over nothing.
+  useEffect(() => {
+    return window.electronAPI.accountWeb?.onPaneClosed?.((e) => {
+      if (e.sessionId === sessionId) closeAccountPaneStore(sessionId)
+    })
+  }, [sessionId, closeAccountPaneStore])
+
   // Bounds + visibility for the account view — same mechanics as the ordinary
   // view; native views ignore CSS.
   useEffect(() => {

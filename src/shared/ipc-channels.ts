@@ -331,6 +331,7 @@ export const IPC = {
   ACCOUNT_WEB_PANE_RELOAD: 'accountWeb:paneReload',
   ACCOUNT_WEB_PANE_GET_STATE: 'accountWeb:paneGetState',
   ACCOUNT_WEB_PANE_STATE: 'accountWeb:paneState', // main → renderer: AccountPaneState
+  ACCOUNT_WEB_PANE_CLOSED: 'accountWeb:paneClosed', // main → renderer: main force-closed the surface (sign-out/delete/crash)
 
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',

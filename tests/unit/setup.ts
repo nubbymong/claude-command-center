@@ -189,6 +189,7 @@ const mockElectronAPI = {
     paneReload: vi.fn(() => Promise.resolve({ ok: true })),
     paneGetState: vi.fn(() => Promise.resolve({ ok: true, state: null })),
     onPaneState: vi.fn(() => () => {}),
+    onPaneClosed: vi.fn(() => () => {}),
   },
   webview: {
     check: vi.fn(() => Promise.resolve({ reachable: false })),

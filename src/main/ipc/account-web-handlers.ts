@@ -32,6 +32,7 @@ import {
 } from '../account-web/session-store'
 import { readClaudeCliAuth, claudeAuthCommand } from '../account-web/claude-cli-auth'
 import { closeArtifacts, openArtifacts } from '../account-web/artifacts'
+import { listProfiles } from '../account-profiles'
 import {
   closeAccountPane,
   closeAccountPanesForProfile,
@@ -52,6 +53,19 @@ function fail(scope: string, err: unknown): Err {
 }
 
 const profileIdSchema = z.string().regex(PROFILE_ID_RE)
+
+/** True when the id names a real account. Shape-validation is not enough for
+ *  the handlers that MATERIALISE a partition or persist a settings row (#439
+ *  adversarial): a shape-valid but unknown id would mint an unbounded, never-
+ *  GC'd `persist:claude-web-*` partition (or an unbounded settings row) that no
+ *  UI can see or clear. */
+function isKnownProfile(profileId: string): boolean {
+  try {
+    return listProfiles().some((p) => p.id === profileId)
+  } catch {
+    return false
+  }
+}
 
 export function registerAccountWebHandlers(): void {
   /** Both halves of an account's auth in one payload — the UI shows them together. */
@@ -207,6 +221,7 @@ export function registerAccountWebHandlers(): void {
       const { profileId, mode } = z
         .object({ profileId: profileIdSchema, mode: z.enum(['auto', 'internal-pane']) })
         .parse(args)
+      if (!isKnownProfile(profileId)) return { ok: false, error: 'unknown account' }
       setWebSignInMode(profileId, mode)
       return { ok: true }
     } catch (err) {
@@ -233,6 +248,9 @@ export function registerAccountWebHandlers(): void {
       const { sessionId, profileId, bounds } = z
         .object({ sessionId: sessionIdSchema, profileId: profileIdSchema, bounds: boundsSchema })
         .parse(args)
+      // A real account only: opening the surface for an unknown id would
+      // materialise a partition with no owner and no cleanup path (#439).
+      if (!isKnownProfile(profileId)) return { ok: false, error: 'unknown account' }
       const win = BrowserWindow.fromWebContents(e.sender)
       if (!win) return { ok: false, error: 'no window' }
       // MUTUAL EXCLUSION: the ordinary pane view and the account view share one

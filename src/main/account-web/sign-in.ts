@@ -42,6 +42,8 @@ import {
 import { DEVTOOLS_PORT_FILE, authProfileDir, buildAuthBrowserArgs, type AuthBrowser } from './browser-launch'
 import { harvestClaudeCookies, type CdpCookie } from './cookie-harvest'
 import { closeInAppSignInWindow, runInAppSignIn } from './in-app-sign-in'
+import { removeWebSession } from './session-store'
+import { closeAccountPanesForProfile } from './account-pane'
 
 /** Lazy require so a missing optional dep never crashes boot (mirrors vision-manager). */
 let CDP: any = null
@@ -807,6 +809,11 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
             // Loudly: what is left is cookies in a partition the user revoked.
             logError(`[account-web] could not clear a partially written session for ${profileId}: ${(err as Error)?.message}`)
           }
+          // The pane surface (#439) may have recorded during the brief signed-in
+          // window before the revoke landed — close it and forget the record so
+          // the wipe is complete on every teardown door, not just sign-out.
+          closeAccountPanesForProfile(profileId)
+          removeWebSession(profileId)
           await closeQuietly(client)
           await cleanup(profileDir)
           logInfo(`[account-web] ${profileId}: sign-in abandoned — the session was revoked while it was being collected`)
@@ -833,6 +840,10 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
           } catch (err) {
             logError(`[account-web] could not clear a revoked session for ${profileId}: ${(err as Error)?.message}`)
           }
+          // Same as the aborted branch: a pane recording made in the signed-in
+          // window is forgotten with the partition it described.
+          closeAccountPanesForProfile(profileId)
+          removeWebSession(profileId)
           logInfo(`[account-web] ${profileId}: sign-in discarded — the session was revoked during teardown`)
           current = tag({
             phase: 'failed',
@@ -906,6 +917,14 @@ export async function clearWebSession(profileId: string): Promise<void> {
   // second entry point for sign-in (the session right-click), so the two can
   // overlap without the settings panel ever disabling its own button.
   cancelSignIn(profileId)
+  // The account's pane surface (#439) holds this same session and rides the same
+  // partition — close it (sets its `closed` flag so an in-flight recording
+  // aborts) and forget any record it wrote in the brief signed-in window BEFORE
+  // the partition goes. This is the revocation door #439's adversarial pass
+  // found the pane could survive: whatever emptied the partition must also
+  // forget the record, or a stale "signed in" is left behind.
+  closeAccountPanesForProfile(profileId)
+  removeWebSession(profileId)
   const store = electronSession.fromPartition(webPartitionForProfile(profileId))
   // BOUNDED, like every other IO in this module. This was the last raw await
   // left: a `clearStorageData` that never settles left the sign-out and
@@ -913,5 +932,16 @@ export async function clearWebSession(profileId: string): Promise<void> {
   // busy with nothing to show for it. It fails closed either way — the caller
   // does not remove the record unless this succeeds.
   await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
+  // Storage first, THEN the HTTP cache — the account partition is now a
+  // long-lived claude.ai browsing surface (#439), so it accumulates cached
+  // response bodies that clearStorageData does not touch; a wipe that left them
+  // holds page content on disk. Same order webview-manager uses for the
+  // throwaway partition. Best-effort: the storage wipe is the part that must
+  // succeed.
+  try {
+    await withTimeout(Promise.resolve(store.clearCache()), IO_CALL_TIMEOUT_MS, 'clearCache')
+  } catch (err) {
+    logError(`[account-web] could not clear the HTTP cache for ${profileId}: ${(err as Error)?.message ?? err}`)
+  }
   logInfo(`[account-web] cleared the web session for ${profileId}`)
 }

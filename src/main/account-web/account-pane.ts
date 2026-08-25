@@ -14,14 +14,17 @@
  * Mutual exclusion (one of the two views per session) is enforced at the IPC
  * handler layer, which owns both modules.
  *
- * NAVIGATION POLICY (accountPaneNavDecision, pure and unit-tested):
- *   - claude.ai / www.claude.ai over https: allowed, always.
- *   - other https, top level, while the partition has NO session cookie yet:
- *     allowed — an SSO sign-in hops to an identity provider and back, exactly
- *     as the in-app sign-in window permits.
- *   - other https once SIGNED IN: blocked in-view and handed to the user's
- *     real browser — a link out of claude.ai must not carry a session-bearing
- *     view onto an arbitrary site (same rule as the artifacts window).
+ * NAVIGATION POLICY (accountPaneNavDecision, pure and unit-tested). `authed` is
+ * TRI-STATE and the policy FAILS CLOSED on the unknown:
+ *   - claude.ai / www.claude.ai over https (default port only): allowed, always.
+ *   - other https, top level, ONLY when we have positively confirmed the
+ *     partition holds NO session cookie (authed === false): allowed — an SSO
+ *     sign-in hops to an identity provider and back, as the in-app window permits.
+ *   - other https once SIGNED IN (authed === true): blocked in-view and handed
+ *     to the user's real browser — a session-bearing view must not roam.
+ *   - other https while the cookie state is UNKNOWN (authed === null: first read
+ *     in flight, or a read that FAILED): blocked. A rejected cookie read must not
+ *     silently open the off-site door with a live session possibly present.
  *   - anything non-https: blocked outright.
  *
  * SIGN-IN RECORDING: when the partition transitions to holding a session
@@ -41,7 +44,8 @@ import { shell } from 'electron'
 import type { WebviewNavState } from '../../shared/browser-url'
 import { webSessionFromElectronCookies } from './cookie-harvest'
 import { toChromeUserAgent } from './in-app-sign-in'
-import { getWebSession, saveWebSession } from './session-store'
+import { getWebSession, saveWebSession, removeWebSession } from './session-store'
+import { attachPaneView, detachPaneView } from '../pane-slot'
 
 /** Where the account surface starts: the account's artifacts. claude.ai
  *  redirects an unauthenticated visit to its login page by itself. */
@@ -51,11 +55,33 @@ const CLAUDE_HOSTS = new Set(['claude.ai', 'www.claude.ai'])
 
 export type AccountPaneNavDecision = 'allow' | 'block' | 'external'
 
+/** True for a URL that is https, on claude.ai / www.claude.ai, default port. */
+export function isClaudePaneUrl(url: string): boolean {
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return false
+  }
+  if (u.protocol !== 'https:') return false
+  // Reject an explicit port: real claude.ai is 443 (u.port === ''). A
+  // `claude.ai:8443` is not the service and must not be treated as it.
+  if (u.port !== '') return false
+  // Strip a single trailing dot (fully-qualified form) so a genuine
+  // `claude.ai.` is recognised rather than handed to the off-site rules.
+  const host = u.hostname.toLowerCase().replace(/\.$/, '')
+  return CLAUDE_HOSTS.has(host)
+}
+
 /**
  * PURE: what to do with a top-level navigation in the account view.
- * `authed` is whether the partition currently holds a session cookie.
+ *
+ * `authed` is TRI-STATE: true (confirmed session cookie), false (confirmed
+ * none), null (unknown — first read in flight, or a read that failed). The
+ * off-site decision fails CLOSED on null: only a POSITIVELY-confirmed
+ * signed-out state opens the IdP-hop door.
  */
-export function accountPaneNavDecision(url: string, authed: boolean): AccountPaneNavDecision {
+export function accountPaneNavDecision(url: string, authed: boolean | null): AccountPaneNavDecision {
   let u: URL
   try {
     u = new URL(url)
@@ -63,11 +89,14 @@ export function accountPaneNavDecision(url: string, authed: boolean): AccountPan
     return 'block'
   }
   if (u.protocol !== 'https:') return 'block'
-  if (CLAUDE_HOSTS.has(u.hostname.toLowerCase())) return 'allow'
-  // Pre-auth: an IdP hop must complete in-view or SSO sign-in cannot work.
-  // Post-auth: a session-bearing view does not roam; the link goes to the
-  // user's real browser instead.
-  return authed ? 'external' : 'allow'
+  if (isClaudePaneUrl(url)) return 'allow'
+  // Off-site https. Only a confirmed-signed-out partition may roam in-view
+  // (the SSO IdP hop); a signed-in view hands the link to the real browser;
+  // an UNKNOWN state blocks — a failed/racing cookie read must never open the
+  // door with a live session possibly present.
+  if (authed === false) return 'allow'
+  if (authed === true) return 'external'
+  return 'block'
 }
 
 export interface AccountPaneBounds {
@@ -97,6 +126,12 @@ interface PaneEntry {
   unsubscribeCookies: () => void
   /** Guards the once-per-transition recording. */
   recording: boolean
+  /** A cookie-change arriving while a recording was in flight: re-run once the
+   *  latch releases so a concurrent update is not lost. */
+  recordDirty: boolean
+  /** The null-email backfill has run once for this pane — don't re-poll
+   *  `/api/bootstrap` on every navigation for an account that never yields one. */
+  backfilled: boolean
   /** Set by closeAccountPane: an in-flight recording must not write after the
    *  pane (or the whole web session, on sign-out) is gone. */
   closed: boolean
@@ -119,6 +154,15 @@ function sendState(entry: PaneEntry, sessionId: string): void {
   } catch { /* window gone */ }
 }
 
+/** Tell the renderer the account surface is gone (main force-closed it —
+ *  sign-out, account delete, a crash). The renderer leaves account mode; without
+ *  this the strip would keep painting "signed in as …" over an empty rectangle. */
+function notifyPaneClosed(parent: BrowserWindow, sessionId: string): void {
+  try {
+    if (!parent.isDestroyed()) parent.webContents.send(IPC.ACCOUNT_WEB_PANE_CLOSED, { sessionId })
+  } catch { /* window gone */ }
+}
+
 function emitNav(entry: PaneEntry, sessionId: string, loading: boolean): void {
   try {
     if (entry.attachedTo.isDestroyed()) return
@@ -135,8 +179,25 @@ function emitNav(entry: PaneEntry, sessionId: string, loading: boolean): void {
   } catch { /* view or window gone */ }
 }
 
-/** Read the signed-in email from the live view, origin-gated — the same
- *  [LegacyUnforgeable]-location reasoning as the in-app sign-in window. */
+/** A plausible email, capped. The read runs in a page world, so its result is
+ *  page-influenced: shape-validate and length-cap before it becomes an account
+ *  label (never trust it into anything but display). */
+const EMAIL_RE = /^[^\s@"'<>]{1,128}@[^\s@"'<>]{1,128}\.[^\s@"'<>]{1,64}$/
+function sanitizeEmail(v: unknown): string | null {
+  return typeof v === 'string' && EMAIL_RE.test(v) ? v : null
+}
+
+/**
+ * Read the signed-in email from the live view.
+ *
+ * Runs in an ISOLATED world (not the page main world): the fetch still carries
+ * the page's credentials, but the surrounding expression — the `Promise`,
+ * `.then`, the origin read — cannot be shadowed by page script. A hostile page
+ * that overrode `Promise.resolve` in its own world could otherwise make this
+ * expression yield an attacker-chosen string. The CALLER additionally refuses
+ * to record unless the view's current URL is claude.ai, so a page reached via
+ * any nav gap cannot answer as the account either way.
+ */
 async function readEmail(view: WebContentsView): Promise<string | null> {
   const expr =
     `(location.origin === 'https://claude.ai' || location.origin === 'https://www.claude.ai') ` +
@@ -144,13 +205,30 @@ async function readEmail(view: WebContentsView): Promise<string | null> {
     `.then(j=>(j&&j.account&&j.account.email_address)||null).catch(()=>null) ` +
     `: Promise.resolve(null)`
   try {
+    const wc = view.webContents as unknown as {
+      executeJavaScriptInIsolatedWorld?: (id: number, scripts: Array<{ code: string }>) => Promise<unknown>
+      executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>
+    }
+    const run = typeof wc.executeJavaScriptInIsolatedWorld === 'function'
+      ? wc.executeJavaScriptInIsolatedWorld(1, [{ code: expr }])
+      : wc.executeJavaScript(expr, true)
     const v = await Promise.race([
-      Promise.resolve(view.webContents.executeJavaScript(expr, true)),
+      Promise.resolve(run),
       new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
     ])
-    return typeof v === 'string' ? v : null
+    return sanitizeEmail(v)
   } catch {
     return null
+  }
+}
+
+/** The view is currently on claude.ai — a precondition for trusting anything
+ *  the page tells us (the email) OR recording a session against it. */
+function viewIsOnClaude(view: WebContentsView): boolean {
+  try {
+    return isClaudePaneUrl(view.webContents.getURL())
+  } catch {
+    return false
   }
 }
 
@@ -173,15 +251,19 @@ const EMAIL_POLL_MS = 800
  * was just emptied (every request under it would 401).
  */
 async function recordSession(entry: PaneEntry, expiresAt: number | null): Promise<void> {
-  if (entry.recording) return
+  if (entry.recording) { entry.recordDirty = true; return }
   entry.recording = true
   try {
+    // The email is only trustworthy when the VIEW is actually on claude.ai:
+    // a page reached via any nav gap (or one the pane happens to be parked on
+    // when a sign-in completes in another surface) must never answer as the
+    // account. This gates the write itself, not just the read.
     const deadline = Date.now() + EMAIL_GRACE_MS
-    let email = await readEmail(entry.view)
+    let email = viewIsOnClaude(entry.view) ? await readEmail(entry.view) : null
     while (email === null && Date.now() < deadline && !entry.closed) {
       await new Promise((r) => setTimeout(r, EMAIL_POLL_MS))
       if (entry.closed) break
-      email = await readEmail(entry.view)
+      if (viewIsOnClaude(entry.view)) email = await readEmail(entry.view)
     }
     if (entry.closed) return
     let recheck
@@ -192,19 +274,34 @@ async function recordSession(entry: PaneEntry, expiresAt: number | null): Promis
       return
     }
     if (!webSessionFromElectronCookies(recheck).hasSessionCookie || entry.closed) return
+    // A sign-in the user CANCELS wipes the partition and then forgets the record
+    // + closes this pane (clearWebSession / the sign-in revoke cleanup both call
+    // closeAccountPanesForProfile, which sets entry.closed). So the guards above
+    // catch a cancel that lands before/during this write; a cancel that lands
+    // just AFTER is undone by the wipe path removing the record. No cross-import
+    // into sign-in.ts is needed (it would cycle).
+    // Never clobber a good record (a window flow's, or an earlier pane one that
+    // captured the email) with a null-email one.
+    const prior = getWebSession(entry.profileId)
+    if (email === null && prior && prior.accountEmail) { entry.backfilled = true; return }
     const session: AccountWebSession = {
       profileId: entry.profileId,
       accountEmail: email,
-      acquiredAt: Date.now(),
+      acquiredAt: prior?.acquiredAt ?? Date.now(),
       expiresAt,
       origin: 'in-pane',
     }
     saveWebSession(session)
+    if (email !== null) entry.backfilled = true
     logInfo(`[account-pane] recorded claude.ai session for ${entry.profileId} (signed in via the pane)`)
   } catch (err) {
     logError(`[account-pane] could not record session: ${(err as Error)?.message ?? err}`)
   } finally {
     entry.recording = false
+    if (entry.recordDirty && !entry.closed) {
+      entry.recordDirty = false
+      void recordSession(entry, expiresAt)
+    }
   }
 }
 
@@ -217,6 +314,13 @@ async function refreshAuthed(sessionId: string): Promise<void> {
     const ses = electronSession.fromPartition(webPartitionForProfile(entry.profileId))
     cookies = await ses.cookies.get({ url: 'https://claude.ai' })
   } catch {
+    // A read we could not complete leaves the cookie state UNKNOWN, not "as it
+    // was": pin it to null so the nav policy fails closed (off-site blocked)
+    // rather than trusting a possibly-stale `false` with a live session. The
+    // next cookie-change / navigation re-reads.
+    const before = entry.authed
+    entry.authed = null
+    if (before !== null) sendState(entry, sessionId)
     return
   }
   const { hasSessionCookie, expiresAt } = webSessionFromElectronCookies(cookies)
@@ -229,11 +333,19 @@ async function refreshAuthed(sessionId: string): Promise<void> {
       (before === null && !stored) ||
       // Email backfill: an earlier pane recording that beat the redirect can
       // hold a null email; a later navigation (now on claude.ai) is the moment
-      // the origin-gated read can finally answer. Only our own pane records —
-      // the window flows manage their own.
-      (stored?.origin === 'in-pane' && stored.accountEmail === null))
+      // the origin-gated read can finally answer. Once-per-pane (backfilled) so
+      // an account whose bootstrap never yields an email does not re-poll on
+      // every navigation. Only our own pane records — the window flows manage
+      // their own.
+      (stored?.origin === 'in-pane' && stored.accountEmail === null && !entry.backfilled))
   ) {
     void recordSession(entry, expiresAt).then(() => sendState(entry, sessionId))
+  }
+  // A confirmed sign-out observed in the pane (true -> false) forgets the
+  // record: an in-page claude.ai logout clears the cookie, and leaving a stored
+  // "active" session behind would show a green dot for a session that 401s.
+  if (before === true && !hasSessionCookie && getWebSession(entry.profileId)) {
+    removeWebSession(entry.profileId)
   }
   if (before !== entry.authed) sendState(entry, sessionId)
 }
@@ -260,11 +372,19 @@ export function openAccountPane(
 
   const existing = panes.get(sessionId)
   if (existing) {
-    if (existing.profileId === profileId) {
+    // Reuse only when it is the SAME account AND still parented to THIS window
+    // and alive. A different account, a different window (the old host closed
+    // and a new one opened), or a dead view all fall through to a rebuild —
+    // otherwise a reopen returns ok over a view attached to a gone window.
+    const reusable =
+      existing.profileId === profileId &&
+      existing.attachedTo === parent &&
+      !parent.isDestroyed() &&
+      !existing.view.webContents.isDestroyed()
+    if (reusable) {
       try { existing.view.setBounds(bounds) } catch { /* view gone */ }
       return { ok: true }
     }
-    // Same pane, different account (the session's account switched): replace.
     closeAccountPane(sessionId)
   }
 
@@ -278,11 +398,26 @@ export function openAccountPane(
     // The same plain-Chrome UA the in-app sign-in sets: claude.ai's
     // bot-detection flags an "Electron" token.
     try { ses.setUserAgent(toChromeUserAgent(ses.getUserAgent())) } catch { /* non-fatal */ }
-    // Same lock-down as every account surface: nothing on a page's say-so.
+    // Harden the account partition. This partition is SHARED with the artifacts
+    // and in-app-sign-in windows, so match THEIR posture rather than the
+    // throwaway browsing partition's: deny active permission REQUESTS
+    // (camera/mic/geo/etc.), but do NOT install a blanket permission-CHECK
+    // handler — that silently kills `navigator.clipboard` (every Copy button on
+    // claude.ai and in the sibling windows) and some SSO storage-access flows.
+    // Device permissions (WebUSB/serial/HID) default-deny with no handler.
+    // Block downloads (the one hardening step the account partition otherwise
+    // lacked): a session-bearing view must not hand the OS an unmediated
+    // Save-As. Guarded so the shared session gets exactly one listener.
     try {
       ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
-      ses.setPermissionCheckHandler(() => false)
-      ses.setDevicePermissionHandler(() => false)
+      const flagged = ses as typeof ses & { __cccAccountDownloadsBlocked?: boolean }
+      if (!flagged.__cccAccountDownloadsBlocked) {
+        flagged.__cccAccountDownloadsBlocked = true
+        ses.on('will-download', (event, item) => {
+          event.preventDefault()
+          logError(`[account-pane] blocked download: ${String(item?.getURL?.() ?? '').slice(0, 200)}`)
+        })
+      }
     } catch { /* harden best-effort; the webPreferences below still hold */ }
 
     const view = new WebContentsView({
@@ -304,11 +439,13 @@ export function openAccountPane(
       authed: null,
       unsubscribeCookies: () => { /* replaced below */ },
       recording: false,
+      recordDirty: false,
+      backfilled: false,
       closed: false,
     }
 
     const guard = (label: string) => (event: { preventDefault: () => void }, target: string): void => {
-      const decision = accountPaneNavDecision(target, entry.authed === true)
+      const decision = accountPaneNavDecision(target, entry.authed)
       if (decision === 'allow') return
       event.preventDefault()
       if (decision === 'external') {
@@ -321,14 +458,23 @@ export function openAccountPane(
     }
     view.webContents.on('will-navigate', guard('will-navigate'))
     view.webContents.on('will-redirect', guard('will-redirect'))
+    // Sub-frame navigations too: without this an iframe can carry attacker code
+    // into the account's persistent partition (cross-origin isolation stops it
+    // reading claude.ai, but it should not be there at all).
+    const frameGuard = guard('will-frame-navigate')
+    view.webContents.on('will-frame-navigate' as never, ((event: { preventDefault: () => void }, target: string) => {
+      frameGuard(event, target)
+    }) as never)
     view.webContents.on('will-prevent-unload', (event) => { event.preventDefault() })
     view.webContents.setWindowOpenHandler(({ url }) => {
-      // claude.ai popups load in THIS view; anything else follows the nav
-      // policy (external when signed in, dropped otherwise). Never a new window.
-      const decision = accountPaneNavDecision(url, entry.authed === true)
-      if (decision === 'allow') {
+      // A popup is only ever followed into THIS view when it is a claude.ai URL;
+      // a signed-in off-site popup goes to the real browser; everything else is
+      // dropped. Never a new window, and — unlike a plain nav — loadURL here
+      // bypasses the will-navigate guard, so the claude.ai check is explicit and
+      // does NOT trust the pre-auth allowance (which a stale authed could widen).
+      if (isClaudePaneUrl(url)) {
         try { view.webContents.loadURL(new URL(url).href) } catch { /* view gone */ }
-      } else if (decision === 'external') {
+      } else if (accountPaneNavDecision(url, entry.authed) === 'external') {
         const href = safeExternalHttpsHref(url)
         if (href) void shell.openExternal(href)
       }
@@ -347,8 +493,18 @@ export function openAccountPane(
     wc.on('did-start-loading', () => emitNav(entry, sessionId, true))
     wc.on('did-stop-loading', () => emitNav(entry, sessionId, false))
     wc.on('did-navigate', () => { emitNav(entry, sessionId, false); void refreshAuthed(sessionId) })
-    wc.on('did-navigate-in-page', () => emitNav(entry, sessionId, false))
+    // In-page nav too (claude.ai is an SPA): a client-side route change is where
+    // a sign-in / sign-out becomes visible without a full navigation, so the
+    // authed state must be re-read here as well or it can stick stale.
+    wc.on('did-navigate-in-page', () => { emitNav(entry, sessionId, false); void refreshAuthed(sessionId) })
     wc.on('page-title-updated', () => emitNav(entry, sessionId, false))
+    // The view's own process died (crash/OOM): evict the entry so a reopen
+    // rebuilds rather than returning ok over a dead view, and tell the renderer
+    // to leave account mode.
+    wc.on('render-process-gone', () => { closeAccountPane(sessionId) })
+    // The host window closing (macOS keeps the app alive) would otherwise leak
+    // this entry + its listener on the long-lived account session.
+    parent.once('closed', () => { closeAccountPane(sessionId) })
 
     // Watch the partition for the session cookie appearing or going: this is
     // both the sign-in detector and the strip's live authed dot. The listener
@@ -365,7 +521,10 @@ export function openAccountPane(
     unsubscribe = entry.unsubscribeCookies
 
     view.setBounds(bounds)
-    parent.contentView.addChildView(view)
+    // Through the arbiter: attaching the account view evicts any ordinary
+    // browser view this window holds (and vice versa), so the two can never
+    // stack on one rectangle.
+    attachPaneView(parent, view)
     void wc.loadURL(ACCOUNT_PANE_START_URL).catch((err) => {
       logError(`[account-pane] loadURL failed: ${(err as Error)?.message ?? err} — view stays open with the error page`)
     })
@@ -390,13 +549,19 @@ export function closeAccountPane(sessionId: string): boolean {
   // refuse to write (sign-out empties the partition right after this).
   entry.closed = true
   entry.unsubscribeCookies()
+  const parent = entry.attachedTo
   try {
-    if (!entry.attachedTo.isDestroyed()) entry.attachedTo.contentView.removeChildView(entry.view)
+    if (!parent.isDestroyed()) detachPaneView(parent, entry.view)
     entry.view.webContents.close()
   } catch (err) {
     logError(`[account-pane] close failed: ${(err as Error)?.message ?? err}`)
   }
   panes.delete(sessionId)
+  // Tell the renderer to leave account mode. Harmless when the renderer
+  // initiated the close (its store guard makes the second leave a no-op); the
+  // point is the main-initiated closes — sign-out, account delete — where the
+  // renderer would otherwise keep the strip up over nothing.
+  notifyPaneClosed(parent, sessionId)
   return true
 }
 
@@ -414,9 +579,9 @@ export function setAccountPaneVisible(sessionId: string, visible: boolean): void
     const children = entry.attachedTo.contentView.children
     const isAttached = children.includes(entry.view)
     if (visible && !isAttached) {
-      entry.attachedTo.contentView.addChildView(entry.view)
+      attachPaneView(entry.attachedTo, entry.view)
     } else if (!visible && isAttached) {
-      entry.attachedTo.contentView.removeChildView(entry.view)
+      detachPaneView(entry.attachedTo, entry.view)
       try { entry.view.setBounds({ x: 0, y: 0, width: 1, height: 1 }) } catch { /* noop */ }
     }
   } catch (err) {
