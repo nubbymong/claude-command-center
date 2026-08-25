@@ -62,6 +62,16 @@ export function useSwitchAccount(
       //    eagerly so a crash can't lose the switch. updateSession runs
       //    synchronously inside, before restart() reads session.profileId.
       void persistLastUsedAccount(sessionId, newProfileId)
+      // 2b. Refresh the picked account's usage snapshot (#447). The pick is the
+      //     one moment we know the user cares about this account's numbers, and
+      //     BEFORE the respawn is the only window its token is not yet in use by
+      //     THIS session — fetchAccountUsage refuses an in-use profile's silent
+      //     refresh and falls back to the stale snapshot. Fire-and-forget and
+      //     null-guarded: the default account (undefined) has no profile row to
+      //     fetch, and a usage fetch must never block or fail the switch.
+      if (newProfileId) {
+        void window.electronAPI.accountUsage.fetchOne(newProfileId).catch(() => {})
+      }
       // 3. Respawn via the existing Restart path, forcing the new profileId so
       //    the remount reads the new account; resume is inherited from Restart.
       restart({ profileId: newProfileId })

@@ -38,10 +38,12 @@ vi.mock('../../../src/renderer/utils/resumePicker', () => ({
 }))
 
 const ptyKillMock = vi.fn()
+const fetchOneMock = vi.fn(async () => null)
 ;(globalThis as any).window = (globalThis as any).window ?? {}
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
   pty: { kill: ptyKillMock },
+  accountUsage: { fetchOne: (id: string) => fetchOneMock(id) },
 }
 
 const { useSwitchAccount } = await import('../../../src/renderer/hooks/useSwitchAccount')
@@ -105,6 +107,8 @@ describe('useSwitchAccount', () => {
     clearSpawnedMock.mockReset()
     ptyKillMock.mockReset()
     markSessionForResumePickerMock.mockReset()
+    fetchOneMock.mockReset()
+    fetchOneMock.mockResolvedValue(null)
     captured = null
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -204,6 +208,43 @@ describe('useSwitchAccount', () => {
     const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
     expect(stored!.profileId).toBe('profile-b')
     expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+  })
+
+  it('#447: refreshes the picked account’s usage snapshot on the switch', () => {
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-b') })
+    expect(fetchOneMock).toHaveBeenCalledWith('profile-b')
+  })
+
+  it('#447: does NOT fetch usage when switching to the default account (no profile row)', () => {
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { captured!('sess-1', undefined) })
+    expect(fetchOneMock).not.toHaveBeenCalled()
+    // ...and the switch itself still happens.
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+  })
+
+  it('#447: a failed usage fetch never blocks or fails the switch', () => {
+    fetchOneMock.mockRejectedValueOnce(new Error('offline'))
+    const session = makeSession({ profileId: 'profile-a', sessionType: 'local', shellOnly: false })
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-b') })
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1')
+    expect(stored!.profileId).toBe('profile-b')
+    expect(killSessionPtyMock).toHaveBeenCalledWith('sess-1')
+  })
+
+  it('#447: a no-op switch (same account) does not fetch usage', () => {
+    const session = makeSession({ profileId: 'profile-a' })
+    useSessionStore.getState().addSession(session)
+    renderHarness(session)
+    act(() => { captured!('sess-1', 'profile-a') })
+    expect(fetchOneMock).not.toHaveBeenCalled()
   })
 
   it('is a no-op when the sessionId does not match the hook session', () => {
