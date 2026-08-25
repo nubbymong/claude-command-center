@@ -37,7 +37,7 @@ export const CANVAS_XRAY_MODE_OPTIONS: readonly CanvasXrayModeOption[] = [
   {
     value: 'off',
     label: 'Off',
-    title: 'X-ray off — the page behaves like a normal browser tab. Hover resolves nothing and draws nothing, and a click selects nothing.',
+    title: 'X-Ray off — the page behaves like a normal browser tab. Hover resolves nothing and draws nothing, and a click selects nothing.',
   },
   {
     value: 'stealth',
@@ -47,7 +47,7 @@ export const CANVAS_XRAY_MODE_OPTIONS: readonly CanvasXrayModeOption[] = [
   {
     value: 'on',
     label: 'On',
-    title: 'X-ray on — hovering outlines the element on the page and labels it (the default).',
+    title: 'X-Ray on — hovering outlines the element on the page and labels it (the default).',
   },
 ] as const
 

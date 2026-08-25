@@ -848,10 +848,10 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['canvas.opened'],
     variants: {
       primary: {
-        shortText: 'X-ray and zoom: inspect a render without disturbing it',
-        title: 'Canvas X-ray and Zoom',
-        body: 'The pane header carries three tool chips -- **Inspect**, **Sketch** and **Region** -- and X-ray belongs to Inspect (it only governs inspecting, so the Off/Stealth/On setting rides that chip):\n\n**X-ray** decides what hovering does while you Inspect. **On** outlines and labels the element under the pointer (the default). **Stealth** still identifies it -- the identity and box are read out in the panel -- but draws nothing on the page, so a hover-sensitive design stays undisturbed. **Off** makes the page behave like a normal browser tab. Plan pages lock to Stealth: the flow itself is the picture, and boxes on top of it were noise.\n\n**Zoom** is **Ctrl+wheel** anywhere over the pane -- chrome, render or notes panel. The level shows in the header while you are zoomed and holds for as long as the pane is open, so a dense mockup can be read at 150% without asking the agent to render it bigger.',
-        focusHint: 'Canvas pane header -- the Inspect chip (X-ray rides it) and the zoom readout',
+        shortText: 'X-Ray and zoom: inspect a render without disturbing it',
+        title: 'Canvas X-Ray and Zoom',
+        body: 'The pane header carries three tool chips -- **Inspect**, **Sketch** and **Region** -- and X-Ray belongs to Inspect (it only governs inspecting, so the Off/Stealth/On setting rides that chip):\n\n**X-Ray** decides what hovering does while you Inspect. **On** outlines and labels the element under the pointer (the default). **Stealth** still identifies it -- the identity and box are read out in the panel -- but draws nothing on the page, so a hover-sensitive design stays undisturbed. **Off** makes the page behave like a normal browser tab. Plan pages lock to Stealth: the flow itself is the picture, and boxes on top of it were noise.\n\n**Zoom** is **Ctrl+wheel** anywhere over the pane -- chrome, render or notes panel. The level shows in the header while you are zoomed and holds for as long as the pane is open, so a dense mockup can be read at 150% without asking the agent to render it bigger.',
+        focusHint: 'Canvas pane header -- the Inspect chip (X-Ray rides it) and the zoom readout',
       },
     },
   },
