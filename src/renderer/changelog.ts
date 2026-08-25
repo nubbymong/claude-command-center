@@ -21,6 +21,22 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.3',
+    date: '2026-08-25',
+    highlights: 'claude.ai comes into the app. The browser pane gains a pinned "claude.ai — your artifacts" entry that opens signed in as the session\'s own account, and Settings → Accounts can route the whole claude.ai sign-in into that in-app pane instead of a separate window — signed in once, it stays signed in for every surface that account owns. Ask Conductor becomes a slim help session that drops the project chrome it never needed, the browser pane gets a Clear back to its start page, and the Agent Canvas gains a real sign-off state. Plus a crop of fixes from the rc pass: multiple sessions of one config are told apart in the Running list, a resume-account setting, and a batch of contrast and canvas-confirm hardening.',
+    changes: [
+      { type: 'feature', description: 'claude.ai in the browser pane, as your account. The pane\'s start page carries a pinned "claude.ai — your artifacts" entry that opens a claude.ai view bound to the session\'s own account — sign in once and it stays signed in, no re-entering credentials, no copying anything between browsers. Settings → Accounts adds "Open claude.ai sign-in in": keep the default sign-in window, or route it into that in-app pane. The default flow is unchanged.' },
+      { type: 'feature', description: 'Ask Conductor is a slim help session now. It keeps Snap, Canvas and the statusline, and drops the surfaces a help session never needed — the command buttons, Browser, Partner, GitHub and the claude.ai auth pills. Its chatter stays out of the Logs index and its spend is filed under its own "Ask Conductor" row instead of your projects.' },
+      { type: 'feature', description: 'The Agent Canvas has a completion state. A reviewed subject can be signed off — the canvas marks it complete and returns to the front page, with a Completed badge in the Library — instead of leaving a finished review sitting in the queue.' },
+      { type: 'fix', description: 'The browser pane has a way back. A Clear control returns the pane to its start page without closing it — the only way off a page used to be Close, which hid the whole pane.' },
+      { type: 'fix', description: 'Multiple sessions of one saved config are told apart. Same-config live sessions in the Running list now carry a muted #2 / #3 instance number; a config with a single session shows none.' },
+      { type: 'feature', description: 'A resume-account setting: choose whether resuming a session asks which account to use each time, or auto-resumes the one it was last on.' },
+      { type: 'fix', description: 'The Agent Canvas review flow is steadier: a "Review needed" count no longer climbs per re-render of the same canvas (stale rounds are superseded), and submitting a review no longer races your own "back to terminal" click into a double toggle. The x-ray Off/Stealth/On control reads more clearly beside Inspect, and all three canvas delete confirms are proof against a double-click.' },
+      { type: 'fix', description: 'A terminal that ssh painted over directly (an ssh host-key prompt spliced into the pane) can be repaired with Ctrl+Alt+R or right-click → Repaint terminal — and a long-standing bug where newly-added keyboard shortcuts were dead for existing users is fixed.' },
+      { type: 'improvement', description: 'Contrast and polish: muted text and the light-theme status pills now meet AA, and command-bar tool buttons no longer change size when you click them.' },
+    ],
+  },
+  {
     version: '2.1.0-rc.2',
     date: '2026-08-25',
     highlights: 'Fixes from the rc.1 install pass. A saved config that is running shows a session-count pill and can be relaunched — with a clear warning before editing anything a restart would change; the canvas front page can delete an old canvas right from its "Pick up where you left off" rows; and the browser pane finally wears the app’s modern design language instead of the old black one.',
