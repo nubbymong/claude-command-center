@@ -127,3 +127,101 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     expect(anchor).toBe(tabs().saved)
   })
 })
+
+describe('Sidebar width (#461)', () => {
+  let container: HTMLDivElement; let root: Root
+  const updateSettingsSpy = vi.fn()
+  beforeEach(() => {
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container)
+    SETTINGS_STATE.isLoaded = true
+    SETTINGS_STATE.updateSettings = updateSettingsSpy
+    updateSettingsSpy.mockClear()
+    delete SETTINGS_STATE.settings.sidebarWidth
+  })
+  afterEach(() => {
+    act(() => root.unmount()); container.remove()
+    delete SETTINGS_STATE.settings.sidebarWidth
+    SETTINGS_STATE.isLoaded = false
+    SETTINGS_STATE.updateSettings = () => {}
+  })
+
+  const render = () =>
+    act(() => root.render(React.createElement(Sidebar, { currentView: 'sessions', onViewChange: () => {} } as any)))
+  const aside = () => container.querySelector('aside') as HTMLElement
+  const handle = () => container.querySelector('[data-testid="sidebar-resize-handle"]') as HTMLElement
+
+  const drag = (from: number, to: number) => {
+    act(() => { handle().dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: from })) })
+    // TWO moves, so a write leaked into onMove shows up as two calls — the
+    // one-write-per-drag assertion must be able to tell release from frame.
+    act(() => { window.dispatchEvent(new MouseEvent('pointermove', { clientX: Math.round((from + to) / 2) })) })
+    act(() => { window.dispatchEvent(new MouseEvent('pointermove', { clientX: to })) })
+    act(() => { window.dispatchEvent(new MouseEvent('pointerup', {})) })
+  }
+
+  it('defaults to the built-in width and carries the resize handle', () => {
+    render()
+    expect(aside().style.width).toBe('256px')
+    expect(handle()).toBeTruthy()
+  })
+
+  it('adopts a stored width once settings are loaded', () => {
+    SETTINGS_STATE.settings.sidebarWidth = 320
+    render()
+    expect(aside().style.width).toBe('320px')
+  })
+
+  it('clamps a hand-edited stored width — a bad value cannot wedge the panel', () => {
+    SETTINGS_STATE.settings.sidebarWidth = 99999
+    render()
+    expect(aside().style.width).toBe('420px')
+    act(() => root.unmount())
+    root = createRoot(container)
+    SETTINGS_STATE.settings.sidebarWidth = 3
+    render()
+    expect(aside().style.width).toBe('200px')
+  })
+
+  it('a drag resizes live, writes settings ONCE on release, and clamps', () => {
+    render()
+    drag(256, 316)
+    expect(aside().style.width).toBe('316px')
+    expect(updateSettingsSpy).toHaveBeenCalledTimes(1)
+    expect(updateSettingsSpy).toHaveBeenCalledWith({ sidebarWidth: 316 })
+    // A second drag past the max clamps and still writes once.
+    updateSettingsSpy.mockClear()
+    drag(316, 2000)
+    expect(aside().style.width).toBe('420px')
+    expect(updateSettingsSpy).toHaveBeenCalledTimes(1)
+    expect(updateSettingsSpy).toHaveBeenCalledWith({ sidebarWidth: 420 })
+  })
+
+  it('a bare click on the handle writes nothing', () => {
+    render()
+    drag(256, 256)
+    expect(updateSettingsSpy).not.toHaveBeenCalled()
+    expect(aside().style.width).toBe('256px')
+  })
+
+  it('a later settings hydrate does not stomp a width the user dragged', () => {
+    render()
+    drag(256, 300)
+    expect(aside().style.width).toBe('300px')
+    SETTINGS_STATE.settings.sidebarWidth = 250
+    render()
+    expect(aside().style.width).toBe('300px')
+  })
+
+  it('double-click on the handle resets to the default and persists the reset', () => {
+    SETTINGS_STATE.settings.sidebarWidth = 380
+    render()
+    expect(aside().style.width).toBe('380px')
+    act(() => { handle().dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+    expect(aside().style.width).toBe('256px')
+    // Loose-equality trap: toHaveBeenCalledWith({sidebarWidth: undefined})
+    // also matches {}. Assert the key is genuinely present-and-undefined.
+    const resetArg = updateSettingsSpy.mock.calls.at(-1)![0] as Record<string, unknown>
+    expect(Object.hasOwn(resetArg, 'sidebarWidth')).toBe(true)
+    expect(resetArg.sidebarWidth).toBeUndefined()
+  })
+})

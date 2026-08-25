@@ -92,3 +92,57 @@ describe('QuickStartPanel', () => {
     expect(container.querySelector('[data-testid="quick-start-running-count"]')!.textContent).toContain('1')
   })
 })
+
+describe('the #462 restyle — session-card language, no loud fill', () => {
+  const start = () =>
+    Array.from(container.querySelectorAll('[data-testid="quick-start-item"] button'))
+      .find((el) => el.textContent!.includes('Start')) as HTMLButtonElement
+  let container: HTMLDivElement; let root: Root
+  beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container); SETTINGS.settings.quickStartCollapsed = false; SETTINGS.settings.codexEnabled = true })
+  afterEach(() => { act(() => root.unmount()); container.remove() })
+  const render = (props: Record<string, unknown>) =>
+    act(() => root.render(React.createElement(QuickStartPanel, {
+      onLaunch: () => {}, onContextMenu: () => {}, running: new Map(), ...props,
+    } as any)))
+
+  it('Start is the subtle tinted-brand treatment, not a solid fill', () => {
+    render({ configs: [cfg('a')] })
+    const cls = start().className
+    expect(cls).not.toContain('bg-blue')
+    expect(cls).not.toContain('text-crust')
+    expect(cls).toContain('var(--brand)')
+    expect(cls).toContain('h-5')
+  })
+
+  it('each row carries ITS OWN identity colour — not a uniform wash of any kind', () => {
+    // Two valid palette keys (see identity-colors.ts) — an invalid key would
+    // silently fall back to mauve and make this a false pass.
+    render({ configs: [cfg('a', { identityColorKey: 'pink' }), cfg('b', { identityColorKey: 'indigo' })] })
+    const rows = Array.from(container.querySelectorAll('[data-testid="quick-start-item"]')) as HTMLElement[]
+    expect(rows).toHaveLength(2)
+    const channelsOf = (el: HTMLElement) => {
+      // jsdom normalizes the chip hex to rgb(r, g, b) — the row's hex8 tint
+      // normalizes to rgba(r, g, b, a) — so the channel triplet links them.
+      const chip = el.querySelector('span[aria-hidden]') as HTMLElement
+      const m = chip.style.backgroundColor.match(/rgb\((.+)\)/)
+      expect(m, 'chip colour must resolve').toBeTruthy()
+      return m![1]
+    }
+    for (const row of rows) {
+      const styleAttr = row.getAttribute('style') ?? ''
+      expect(styleAttr).not.toContain('--brand')
+      // The row's tint background carries the SAME channels as its own chip.
+      expect(styleAttr).toContain(channelsOf(row))
+    }
+    // ...and the two rows genuinely differ.
+    expect(channelsOf(rows[0])).not.toBe(channelsOf(rows[1]))
+  })
+
+  it('a blocked Codex pin still reads as disabled in the new language', () => {
+    SETTINGS.settings.codexEnabled = false
+    render({ configs: [cfg('a', { provider: 'codex' })] })
+    expect(start().disabled).toBe(true)
+    expect(start().className).toContain('cursor-not-allowed')
+    expect(start().className).not.toContain('bg-blue')
+  })
+})

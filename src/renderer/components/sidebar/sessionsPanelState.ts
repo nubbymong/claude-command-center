@@ -34,6 +34,20 @@ export function resolveQuickStartCollapsed(value: unknown): boolean {
   return value === true
 }
 
+/** Sidebar width bounds (#461). The floor protects ConfigRow's measured
+ *  right-12 hover-strip budget and keeps the Saved⇄Running tabs from hitting
+ *  min-content overflow (~170px); the ceiling keeps the terminal usable. */
+export const SIDEBAR_WIDTH_DEFAULT = 256
+export const SIDEBAR_WIDTH_MIN = 200
+export const SIDEBAR_WIDTH_MAX = 420
+
+/** Absent, non-numeric, or out-of-range (hand-edited settings) => clamped or
+ *  the default — a bad stored value must never wedge the panel off-screen. */
+export function resolveSidebarWidth(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return SIDEBAR_WIDTH_DEFAULT
+  return Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, Math.round(value)))
+}
+
 /**
  * The Quick Start strip: every pinned config, in config order, running or
  * not — a config is a template, and Quick Start may spawn another instance

@@ -252,6 +252,10 @@ export interface AppSettings {
   /** Sessions panel: the Quick Start section on the Running tab is collapsed.
    *  Absent = expanded. Persisted so the choice survives restarts. */
   quickStartCollapsed?: boolean
+  /** #461: the expanded sidebar's width in px, set by the drag handle on its
+   *  right edge. Absent = the built-in default. Read via resolveSidebarWidth,
+   *  which clamps — never trust the raw number. */
+  sidebarWidth?: number
   /** #367: the Agent Canvas x-ray hover mode. 'on' is the outline + label chip
    *  drawn over the content (what shipped); 'stealth' still resolves the
    *  hovered element but draws nothing, reading it out in the canvas side panel
