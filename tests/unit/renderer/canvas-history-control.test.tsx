@@ -37,7 +37,19 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  nowSpy?.mockRestore()
+  nowSpy = null
 })
+
+// #456: a freshly-armed confirm ignores activation for CONFIRM_GUARD_MS so a
+// double-click cannot arm and fire in one gesture. Deliberate confirms jump a
+// mocked clock past the window instead of really waiting.
+let nowSpy: ReturnType<typeof vi.spyOn> | null = null
+function passGuard(): void {
+  const later = Date.now() + 60_000
+  nowSpy?.mockRestore()
+  nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => later)
+}
 
 describe('the version stepper', () => {
   it('renders nothing for a single version of a single artifact', async () => {
@@ -101,6 +113,27 @@ describe('the History picker', () => {
     await act(async () => del.click())
     expect(container.querySelector('[data-testid="canvas-history-delete-confirm"]')).not.toBeNull()
     expect(onDelete).not.toHaveBeenCalled()
+    passGuard()
+    await act(async () => (container.querySelector('[data-testid="canvas-history-delete-confirm"]') as HTMLButtonElement).click())
+    expect(onDelete).toHaveBeenCalledTimes(1)
+  })
+
+  it('a double-click cannot arm and fire in one gesture, and arming moves focus to the confirm (#456)', async () => {
+    const onDelete = vi.fn()
+    await render({ versions: [v('v1', 'plan'), v('v2', 'design')], activeVersionId: 'v1', onDelete })
+    await act(async () => (container.querySelector('[data-testid="canvas-history-button"]') as HTMLButtonElement).click())
+
+    // Both clicks of a double-click land at one point: arm, then the freshly
+    // armed confirm. Inside the guard window nothing may fire.
+    await act(async () => (container.querySelector('[data-testid="canvas-history-delete"]') as HTMLButtonElement).click())
+    const confirm = container.querySelector('[data-testid="canvas-history-delete-confirm"]') as HTMLButtonElement
+    expect(document.activeElement).toBe(confirm)
+    await act(async () => confirm.click())
+    expect(onDelete).not.toHaveBeenCalled()
+    // Still armed — the delete waits for a deliberate second decision.
+    expect(container.querySelector('[data-testid="canvas-history-delete-confirm"]')).not.toBeNull()
+
+    passGuard()
     await act(async () => (container.querySelector('[data-testid="canvas-history-delete-confirm"]') as HTMLButtonElement).click())
     expect(onDelete).toHaveBeenCalledTimes(1)
   })

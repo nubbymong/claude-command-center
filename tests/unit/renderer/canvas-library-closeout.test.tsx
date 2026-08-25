@@ -84,7 +84,19 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   container.remove()
+  nowSpy?.mockRestore()
+  nowSpy = null
 })
+
+// #456: a freshly-armed confirm ignores activation for CONFIRM_GUARD_MS so a
+// double-click cannot arm and fire in one gesture. Deliberate confirms jump a
+// mocked clock past the window instead of really waiting.
+let nowSpy: ReturnType<typeof vi.spyOn> | null = null
+function passGuard(): void {
+  const later = Date.now() + 60_000
+  nowSpy?.mockRestore()
+  nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => later)
+}
 
 describe('when the button is offered', () => {
   it('appears when there is something a close-out would clear', async () => {
@@ -136,6 +148,7 @@ describe('what it says and does', () => {
   it('calls close-out for that canvas and reports how many were cleared', async () => {
     await render()
     await click(byTestId('canvas-library-close'))
+    passGuard()
     await click(byTestId('canvas-library-close-confirm'))
 
     expect(closeOutCalls).toEqual(['canvas-a'])
@@ -145,6 +158,7 @@ describe('what it says and does', () => {
   it('never deletes — the delete path is a different call entirely', async () => {
     await render()
     await click(byTestId('canvas-library-close'))
+    passGuard()
     await click(byTestId('canvas-library-close-confirm'))
     expect((window as any).electronAPI.canvas.deleteCanvas).not.toHaveBeenCalled()
     // The row is still there afterwards; a cleared canvas is not a gone one.
@@ -158,6 +172,7 @@ describe('what it says and does', () => {
     closeOutReply = { ok: false }
     await render()
     await click(byTestId('canvas-library-close'))
+    passGuard()
     await click(byTestId('canvas-library-close-confirm'))
 
     expect(byTestId('canvas-library-closed-count')).toBeNull()
@@ -180,5 +195,42 @@ describe('what it says and does', () => {
     await click(byTestId('canvas-library-close'))
     expect(byTestId('canvas-library-confirm-delete')).toBeNull()
     expect(byTestId('canvas-library-close-confirm')).toBeTruthy()
+  })
+})
+
+describe('double-click-proofing (#456)', () => {
+  it('a double-click cannot arm and fire delete in one gesture', async () => {
+    await render()
+    const deleteCanvas = (window as any).electronAPI.canvas.deleteCanvas
+    deleteCanvas.mockClear()
+    await click(byTestId('canvas-library-delete'))
+    await click(byTestId('canvas-library-confirm-delete'))
+    expect(deleteCanvas).not.toHaveBeenCalled()
+    // Still armed — the delete waits for a deliberate second decision.
+    expect(byTestId('canvas-library-confirm-delete')).toBeTruthy()
+
+    passGuard()
+    await click(byTestId('canvas-library-confirm-delete'))
+    expect(deleteCanvas).toHaveBeenCalledTimes(1)
+  })
+
+  it('a double-click cannot arm and fire close-out in one gesture', async () => {
+    await render()
+    await click(byTestId('canvas-library-close'))
+    await click(byTestId('canvas-library-close-confirm'))
+    expect(closeOutCalls).toEqual([])
+    expect(byTestId('canvas-library-close-confirm')).toBeTruthy()
+
+    passGuard()
+    await click(byTestId('canvas-library-close-confirm'))
+    expect(closeOutCalls).toEqual(['canvas-a'])
+  })
+
+  it('arming moves focus onto the confirm — delete and close both', async () => {
+    await render()
+    await click(byTestId('canvas-library-delete'))
+    expect(document.activeElement).toBe(byTestId('canvas-library-confirm-delete'))
+    await click(byTestId('canvas-library-close'))
+    expect(document.activeElement).toBe(byTestId('canvas-library-close-confirm'))
   })
 })

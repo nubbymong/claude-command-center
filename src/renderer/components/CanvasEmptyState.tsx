@@ -5,6 +5,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { relativeTime } from '../utils/relativeTime'
 import type { ReclaimableCanvas } from '../../shared/canvas'
 import { CanvasLibrary } from './CanvasLibrary'
+import { useArmedConfirm } from '../hooks/useArmedConfirm'
 
 interface Props {
   sessionId: string
@@ -107,6 +108,8 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   // before this the only way to be rid of an old canvas from here was to
   // open the library. Same two-step confirm + IPC as the library's delete.
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
+  // Double-click-proofing (#456).
+  const delConfirm = useArmedConfirm(confirmingDelete)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const refreshCanvas = useCanvasStore((s) => s.refresh)
@@ -467,7 +470,8 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
                     </button>
                     {confirmingDelete === c.canvasId ? (
                       <button
-                        onClick={() => void removeCanvas(c.canvasId)}
+                        ref={delConfirm.confirmRef}
+                        onClick={delConfirm.guarded(() => void removeCanvas(c.canvasId))}
                         disabled={reclaiming !== null || deleting !== null}
                         className={DANGER_CLASS}
                         aria-label={`Delete ${c.versionCount} version${c.versionCount === 1 ? '' : 's'} of canvas ${canvasLabel(c)}`}

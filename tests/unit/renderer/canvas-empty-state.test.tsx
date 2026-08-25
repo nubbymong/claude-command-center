@@ -7,7 +7,7 @@
 // WITHOUT a newline (the user confirms), and the classic sketchpad still one
 // click away in both directions.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
@@ -61,6 +61,20 @@ function click(el: Element | null): void {
 function buttonByText(text: string): Element | null {
   return Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes(text)) ?? null
 }
+
+// #456: a freshly-armed confirm ignores activation for CONFIRM_GUARD_MS so a
+// double-click cannot arm and fire in one gesture. Deliberate confirms jump a
+// mocked clock past the window instead of really waiting.
+let nowSpy: ReturnType<typeof vi.spyOn> | null = null
+function passGuard(): void {
+  const later = Date.now() + 60_000
+  nowSpy?.mockRestore()
+  nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => later)
+}
+afterEach(() => {
+  nowSpy?.mockRestore()
+  nowSpy = null
+})
 
 beforeEach(() => {
   ptyWriteMock.mockClear()
@@ -273,6 +287,7 @@ describe('deleting a canvas from the front page (#452)', () => {
     expect(deleteCanvasMock).not.toHaveBeenCalled()
     expect(testid('canvas-reclaim-confirm-delete')?.textContent).toBe('Delete 3 versions')
 
+    passGuard()
     click(testid('canvas-reclaim-confirm-delete'))
     await act(async () => {
       await Promise.resolve()
@@ -283,11 +298,41 @@ describe('deleting a canvas from the front page (#452)', () => {
     expect(container.textContent).not.toContain('Pick up where you left off')
   })
 
+  it('a double-click cannot arm and fire in one gesture (#456)', async () => {
+    await renderWith([candidate])
+
+    // The confirm swaps into the arm button's footprint, so both clicks of a
+    // double-click land at one point: the first arms, the second hits the
+    // freshly-armed confirm. Inside the guard window nothing may fire.
+    click(testid('canvas-reclaim-delete'))
+    click(testid('canvas-reclaim-confirm-delete'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(deleteCanvasMock).not.toHaveBeenCalled()
+    // Still armed — the delete waits for a deliberate second decision.
+    expect(testid('canvas-reclaim-confirm-delete')).toBeTruthy()
+
+    passGuard()
+    click(testid('canvas-reclaim-confirm-delete'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(deleteCanvasMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('arming moves focus onto the confirm — the element swap no longer drops it to body', async () => {
+    await renderWith([candidate])
+    click(testid('canvas-reclaim-delete'))
+    expect(document.activeElement).toBe(testid('canvas-reclaim-confirm-delete'))
+  })
+
   it('keeps the row and shows the error when the delete is refused', async () => {
     deleteCanvasMock.mockResolvedValueOnce({ ok: false })
     await renderWith([candidate])
 
     click(testid('canvas-reclaim-delete'))
+    passGuard()
     click(testid('canvas-reclaim-confirm-delete'))
     await act(async () => {
       await Promise.resolve()
@@ -304,6 +349,7 @@ describe('deleting a canvas from the front page (#452)', () => {
     await renderWith([candidate])
 
     click(testid('canvas-reclaim-delete'))
+    passGuard()
     click(testid('canvas-reclaim-confirm-delete'))
     await act(async () => {
       await Promise.resolve()
@@ -320,6 +366,7 @@ describe('deleting a canvas from the front page (#452)', () => {
     await renderWith([candidate])
 
     click(testid('canvas-reclaim-delete'))
+    passGuard()
     click(testid('canvas-reclaim-confirm-delete'))
     const confirm = testid('canvas-reclaim-confirm-delete')
     expect(confirm?.disabled).toBe(true)
