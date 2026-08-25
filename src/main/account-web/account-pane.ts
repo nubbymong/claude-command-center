@@ -149,7 +149,9 @@ const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 
 function sendState(entry: PaneEntry, sessionId: string): void {
   try {
-    if (entry.attachedTo.isDestroyed()) return
+    // A recording that resolves after the pane closed must not push a stale
+    // "signed in" state behind the PANE_CLOSED the renderer already got.
+    if (entry.closed || entry.attachedTo.isDestroyed()) return
     const state: AccountPaneState = {
       sessionId,
       profileId: entry.profileId,
@@ -320,11 +322,15 @@ async function refreshAuthed(sessionId: string): Promise<void> {
   const { hasSessionCookie, expiresAt } = webSessionFromElectronCookies(cookies)
   const before = entry.authed
   entry.authed = hasSessionCookie
-  // A1: the session just went live while the view is parked OFF claude.ai (an
-  // IdP hop / open-redirect / link the pre-auth rule allowed). A session-bearing
-  // view must not sit on an attacker origin under chrome that says "signed in" —
-  // recall it to the account start page.
-  if (before !== true && hasSessionCookie && !viewIsOnClaude(entry.view)) {
+  // A1: a signed-in view must never sit OFF claude.ai (an IdP hop / open-redirect
+  // / link the pre-auth rule allowed), under chrome that says "signed in". Recall
+  // it to the account start page whenever the partition is live and the view is
+  // off-site — NOT gated on the false->true edge: the cookie can land while a
+  // renderer-initiated nav to the attacker origin is still pending, so getURL()
+  // reads the last-committed claude.ai URL at the edge and only goes off-site on
+  // the later commit. `!viewIsOnClaude` alone terminates (once back on claude.ai
+  // it stops firing), so there is no loop.
+  if (hasSessionCookie && !viewIsOnClaude(entry.view)) {
     try { void entry.view.webContents.loadURL(ACCOUNT_PANE_START_URL) } catch { /* view gone */ }
   }
   const stored = getWebSession(entry.profileId)
@@ -463,10 +469,15 @@ export function openAccountPane(
     view.webContents.on('will-redirect', guard('will-redirect'))
     // Sub-frame navigations too: without this an iframe can carry attacker code
     // into the account's persistent partition (cross-origin isolation stops it
-    // reading claude.ai, but it should not be there at all).
+    // reading claude.ai, but it should not be there at all). Electron 43 passes
+    // ONE details object here (url/isMainFrame/preventDefault), not (event, url)
+    // — the old positional form read undefined and blocked every navigation. The
+    // main frame is already covered by will-navigate/will-redirect, so skip it
+    // to avoid double-guarding (which fired shell.openExternal twice per click).
     const frameGuard = guard('will-frame-navigate')
-    view.webContents.on('will-frame-navigate' as never, ((event: { preventDefault: () => void }, target: string) => {
-      frameGuard(event, target)
+    view.webContents.on('will-frame-navigate' as never, ((details: { preventDefault: () => void; url: string; isMainFrame: boolean }) => {
+      if (details.isMainFrame) return
+      frameGuard(details, details.url)
     }) as never)
     view.webContents.on('will-prevent-unload', (event) => { event.preventDefault() })
     view.webContents.setWindowOpenHandler(({ url }) => {

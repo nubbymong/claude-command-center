@@ -615,13 +615,15 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
         pollMs,
         shouldCancel: () => cancelled,
       })
-      // CANCELLED IN-APP (#439 adversarial A3): the in-app window writes the
+      // NON-COMPLETION IN-APP (#439 adversarial A3): the in-app window writes the
       // session cookie straight into this partition as the user signs in, so a
-      // Cancel AFTER that point leaves a live cookie — and the pane surface may
-      // already have recorded it. This is the DEFAULT route for subscription
-      // accounts; the SSO branches below wipe on revoke, so this must too. Empty
-      // the partition and forget the record + close the pane, matching them.
-      if (res.cancelled) {
+      // flow that ends WITHOUT a session — Cancel, the window X'd, a timeout —
+      // can leave a live cookie the pane may already have recorded. `res.session`
+      // is present only on a clean completion, so its absence is the signal to
+      // wipe (the X button is a likelier gesture than Cancel). This is the
+      // DEFAULT route for subscription accounts; the SSO branches wipe on revoke,
+      // so this must too — empty the partition and forget the record + pane.
+      if (!res.session) {
         try {
           await withTimeout(Promise.resolve(electronSession.fromPartition(partition).clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
         } catch (err) {
@@ -933,18 +935,11 @@ export async function clearWebSession(profileId: string): Promise<void> {
   // second entry point for sign-in (the session right-click), so the two can
   // overlap without the settings panel ever disabling its own button.
   cancelSignIn(profileId)
-  // Close the account's pane surface (#439) FIRST: it holds this same session
-  // on this partition, and closing it sets the pane's `closed` flag so any
-  // in-flight recording aborts before the storage goes. (notifyPartitionRevoked
-  // also forgets the record; we re-forget AFTER the wipe below so a failed wipe
-  // leaves the record intact — see the ordering note there.)
-  notifyPartitionRevoked(profileId)
   const store = electronSession.fromPartition(webPartitionForProfile(profileId))
   // BOUNDED, like every other IO in this module. This was the last raw await
   // left: a `clearStorageData` that never settles left the sign-out and
   // account-delete IPC calls unresolved forever, so the renderer's button stayed
-  // busy with nothing to show for it. It fails closed — a throw propagates and
-  // the record is re-forgotten only on success.
+  // busy with nothing to show for it.
   await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
   // Storage first, THEN the HTTP cache — the account partition is now a
   // long-lived claude.ai browsing surface (#439), so it accumulates cached
@@ -957,9 +952,12 @@ export async function clearWebSession(profileId: string): Promise<void> {
   } catch (err) {
     logError(`[account-web] could not clear the HTTP cache for ${profileId}: ${(err as Error)?.message ?? err}`)
   }
-  // Forget the record AFTER the wipe succeeded (A4): a pane that reopened during
-  // the wipe's await window could have re-adopted the still-present cookie and
-  // re-recorded, so the record removal must be the last step, not the first.
+  // Forget the record + close the pane ONLY after the wipe SUCCEEDED (A4): the
+  // clearStorageData throw above propagates, so a failed wipe leaves the record
+  // intact — the account survives to be signed out again rather than showing
+  // "signed out" over a live session. The pane's own cookie-recheck guard means
+  // an in-flight recording between now and here fails closed (the cookie is
+  // gone), and a recording that saved just before the wipe is undone here.
   notifyPartitionRevoked(profileId)
   logInfo(`[account-web] cleared the web session for ${profileId}`)
 }

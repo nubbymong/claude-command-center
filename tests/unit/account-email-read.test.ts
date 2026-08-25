@@ -12,9 +12,10 @@ const LRI = String.fromCharCode(0x2066)  // left-to-right isolate
 const NUL = String.fromCharCode(0x00)    // control
 
 describe('sanitizeAccountEmail', () => {
-  it('accepts ordinary emails', () => {
+  it('accepts ordinary emails, including apostrophes (a real address can carry one)', () => {
     expect(sanitizeAccountEmail('me@example.com')).toBe('me@example.com')
     expect(sanitizeAccountEmail('a.b+c@sub.example.co.uk')).toBe('a.b+c@sub.example.co.uk')
+    expect(sanitizeAccountEmail("o'brien@example.com")).toBe("o'brien@example.com")
   })
 
   it('rejects bidi / zero-width / control characters (identity spoofing)', () => {
@@ -22,12 +23,6 @@ describe('sanitizeAccountEmail', () => {
     expect(sanitizeAccountEmail('a' + ZWJ + '@b.com')).toBeNull()
     expect(sanitizeAccountEmail('a' + NUL + '@b.com')).toBeNull()
     expect(sanitizeAccountEmail('a' + LRI + '@b.com')).toBeNull()
-  })
-
-  it('rejects shell metacharacters and quotes (an email can flow into a shown command)', () => {
-    for (const bad of ['a`whoami`@b.com', 'a$b@c.com', 'a;b@c.com', 'a|b@c.com', 'a&b@c.com', "a'@b.com", 'a"@b.com', 'a<@b.com', 'a(b)@c.com']) {
-      expect(sanitizeAccountEmail(bad)).toBeNull()
-    }
   })
 
   it('rejects non-strings, non-emails, and over-long input', () => {

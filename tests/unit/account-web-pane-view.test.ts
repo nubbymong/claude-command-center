@@ -198,6 +198,47 @@ describe('the account view', () => {
     closeAccountPane('sess-recall')
   })
 
+  it('recalls the view even when the cookie lands mid-navigation (getURL still on claude.ai at the edge)', async () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-midnav', 'profile-midnav1', BOUNDS)
+    const ses = partitions[webPartitionForProfile('profile-midnav1')]
+    const view = createdViews[0].view
+    const flush = () => new Promise((r) => setTimeout(r, 0))
+    await flush() // authed=false
+    // The cookie lands while a nav to the attacker origin is still PENDING:
+    // getURL() is still the committed claude.ai URL, so the edge check would
+    // have skipped a false->true-gated recall.
+    view.webContents.loadURL.mockClear()
+    ses.cookies.get.mockResolvedValue([{ name: 'sessionKey', expirationDate: 4102444800 }])
+    ses.cookies.listeners[0](null, { name: 'sessionKey' }) // authed -> true, still on claude.ai
+    await flush(); await flush()
+    expect(view.webContents.loadURL).not.toHaveBeenCalled() // nothing to recall yet
+    // The pending nav now commits off-site; the next refresh (a did-navigate)
+    // sees authed already true AND off-claude.ai — the recall is NOT edge-gated.
+    view.webContents.currentUrl = 'https://evil.example/landing'
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    await flush(); await flush()
+    expect(view.webContents.loadURL).toHaveBeenCalledWith('https://claude.ai/artifacts')
+    closeAccountPane('sess-midnav')
+  })
+
+  it('the sub-frame guard uses the Electron-43 details object and skips the main frame', () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-frame', 'profile-p1a', BOUNDS)
+    const frame = createdViews[0].view.webContents.handlers['will-frame-navigate'] as (d: { preventDefault: () => void; url: string; isMainFrame: boolean }) => void
+    expect(frame).toBeDefined()
+    // A main-frame claude.ai navigation must NOT be blocked here (will-navigate
+    // owns it) — the old (event,url) signature read undefined and blocked all.
+    const mainNav = { preventDefault: vi.fn(), url: 'https://claude.ai/chat/abc', isMainFrame: true }
+    frame(mainNav)
+    expect(mainNav.preventDefault).not.toHaveBeenCalled()
+    // A cross-origin sub-frame to an attacker is blocked.
+    const subNav = { preventDefault: vi.fn(), url: 'https://evil.example/frame', isMainFrame: false }
+    frame(subNav)
+    expect(subNav.preventDefault).toHaveBeenCalled()
+    closeAccountPane('sess-frame')
+  })
+
   it('a slower earlier cookie read cannot clobber a newer one (A8 generation guard)', async () => {
     const win = new FakeParentWindow()
     openAccountPane(win as never, 'sess-seq', 'profile-seq1', BOUNDS)

@@ -156,6 +156,34 @@ describe('runSignIn — routing by auth method (#265 follow-up)', () => {
     expect(s.session?.origin).toBe('in-app')
   })
 
+  it('a non-completed in-app sign-in (Cancel / X / timeout) wipes the partition and revokes (#439 A3)', async () => {
+    const { onPartitionRevoked, _resetPartitionRevocationForTest } = await import('../../src/main/account-web/partition-revocation')
+    _resetPartitionRevocationForTest()
+    const revoked: string[] = []
+    onPartitionRevoked((id) => revoked.push(id))
+    // The in-app window ends WITHOUT a session (cancelled / X'd / timed out) —
+    // any of these can leave a live cookie the pane already recorded.
+    runInAppSignInMock.mockResolvedValueOnce({ ok: false, cancelled: true, error: 'Sign-in cancelled.' } as never)
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5 })
+    expect(s.phase).toBe('failed')
+    expect(clearStorageData).toHaveBeenCalled()          // partition emptied
+    expect(revoked).toContain('profile-aaa111')          // record forgotten + pane closed
+    _resetPartitionRevocationForTest()
+  })
+
+  it('a clean in-app completion does NOT wipe (the happy path is untouched)', async () => {
+    const { onPartitionRevoked, _resetPartitionRevocationForTest } = await import('../../src/main/account-web/partition-revocation')
+    _resetPartitionRevocationForTest()
+    const revoked: string[] = []
+    onPartitionRevoked((id) => revoked.push(id))
+    // default mock returns a session
+    const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5 })
+    expect(s.phase).toBe('done')
+    expect(clearStorageData).not.toHaveBeenCalled()
+    expect(revoked).toHaveLength(0)
+    _resetPartitionRevocationForTest()
+  })
+
   it('an SSO account keeps the system-browser path: in-app is NOT used', async () => {
     _setCdpForTest(fakeCdp('me@example.com', [sessionCookie]))
     const s = await runSignIn({ profileId: 'profile-aaa111', dataDir: 'C:/data', timeoutMs: 3000, pollMs: 5, method: 'sso' })

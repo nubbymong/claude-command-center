@@ -25,11 +25,15 @@
  */
 
 /**
- * A conservative email shape. `\p{Cc}`/`\p{Cf}` (control + format, incl. the
- * bidi overrides and zero-width joiners) are excluded, as are the shell
- * metacharacters and quotes claudeAuthCommand rejects for the same reason.
+ * A conservative email shape. The load-bearing exclusions are whitespace and
+ * `\p{Cc}`/`\p{Cf}` (control + format, i.e. the bidi overrides and zero-width
+ * characters) — that is the DISPLAY-SPOOFING class, and the whole reason to
+ * validate a label read from a page. Shell metacharacters and quotes are NOT
+ * excluded here: an email legitimately contains an apostrophe (o'brien@…), and
+ * the one consumer that builds a shown command (claudeAuthCommand) re-gates
+ * those itself, so excluding them here only drops valid addresses.
  */
-const EMAIL_RE = /^[^\s@"'`;&|<>$()\\\p{Cc}\p{Cf}]{1,128}@[^\s@"'`;&|<>$()\\\p{Cc}\p{Cf}]{1,128}\.[^\s@"'`;&|<>$()\\\p{Cc}\p{Cf}]{1,64}$/u
+const EMAIL_RE = /^[^\s@\p{Cc}\p{Cf}]{1,128}@[^\s@\p{Cc}\p{Cf}]{1,128}\.[^\s@\p{Cc}\p{Cf}]{1,64}$/u
 
 /** null unless `v` is a string matching the conservative email shape. */
 export function sanitizeAccountEmail(v: unknown): string | null {
@@ -57,16 +61,24 @@ interface EmailReadableWebContents {
  * returns null on any failure or a value that fails validation.
  */
 export async function readAccountEmail(wc: EmailReadableWebContents): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
     const run = typeof wc.executeJavaScriptInIsolatedWorld === 'function'
       ? wc.executeJavaScriptInIsolatedWorld(1, [{ code: EMAIL_EXPR }])
       : wc.executeJavaScript(EMAIL_EXPR, true)
     const v = await Promise.race([
       Promise.resolve(run),
-      new Promise<null>((r) => setTimeout(() => r(null), IO_TIMEOUT_MS)),
+      // Timer kept + cleared in finally so a resolved read does not leave a
+      // 10 s handle alive (the poll fires this up to ~250 times over a sign-in).
+      new Promise<null>((r) => {
+        timer = setTimeout(() => r(null), IO_TIMEOUT_MS)
+        if (typeof (timer as { unref?: () => void }).unref === 'function') (timer as { unref: () => void }).unref()
+      }),
     ])
     return sanitizeAccountEmail(v)
   } catch {
     return null
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
