@@ -423,17 +423,22 @@ describe('a bulk pass cannot land on the wrong canvas, or race itself', () => {
     await act(async () => {})
 
     // Assert the controls are PRESENT and disabled — `?? true` on a missing
-    // element would pass this test without the lock existing at all.
-    const accept = group('R1').querySelector('[data-testid="review-accept-as-built"]') as HTMLButtonElement | null
-    const perNote = group('R1').querySelector('[data-testid="note-close-stale"]') as HTMLButtonElement | null
-    expect(accept).toBeTruthy()
-    expect(perNote).toBeTruthy()
-    expect(accept!.disabled).toBe(true)
-    expect(perNote!.disabled).toBe(true)
-
-    if (release) (release as () => void)()
-    await pass
-    await act(async () => {})
+    // element would pass this test without the lock existing at all. The
+    // finally releases the latch even when an assertion throws: an unreleased
+    // pass is the same dangling act() the comment above describes, showing up
+    // only on failure, when cascade noise is most expensive.
+    try {
+      const accept = group('R1').querySelector('[data-testid="review-accept-as-built"]') as HTMLButtonElement | null
+      const perNote = group('R1').querySelector('[data-testid="note-close-stale"]') as HTMLButtonElement | null
+      expect(accept).toBeTruthy()
+      expect(perNote).toBeTruthy()
+      expect(accept!.disabled).toBe(true)
+      expect(perNote!.disabled).toBe(true)
+    } finally {
+      if (release) (release as () => void)()
+      await pass
+      await act(async () => {})
+    }
   })
 })
 

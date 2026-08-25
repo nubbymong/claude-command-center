@@ -1005,7 +1005,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
                     ref={dismissRestConfirm.confirmRef}
                     onClick={dismissRestConfirm.guarded(() => void resolveGroup(group, 'dismiss'))}
                     disabled={actionsLocked}
-                    className="px-2 py-0.5 text-[10px] font-semibold rounded border border-red/50 text-red bg-red/15 hover:bg-red/25 disabled:opacity-40"
+                    className="px-2 py-0.5 text-[10px] font-semibold rounded border border-red/50 text-red bg-red/15 hover:bg-red/25 disabled:opacity-40 focus-ring"
                     title="Drop these notes without action. They will not come back."
                     data-testid="review-dismiss-rest-confirm"
                   >
