@@ -4,6 +4,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { requestCloseSession } from '../stores/sshCloseStore'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { captureGlyphDiagnostic } from '../utils/glyphDiagnostic'
+import { requestResync } from '../components/terminal/repaintRegistry'
 import { sendImageToSession } from '../utils/imageTransfer'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
@@ -46,7 +47,12 @@ export function useKeyboardShortcuts(
       // sessions, paste into a hidden prompt), so suppress them until the
       // flow settles. Same gate expression as App.tsx's bootGate input.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
-      const shortcuts = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
+      // MERGE over the defaults, never substitute: a persisted map predating a
+      // release lacks that release's new actions, and `|| DEFAULT_SHORTCUTS`
+      // only helps when the whole object is absent — every existing user would
+      // have the new chord silently dead (#503 review; StageEmptyState already
+      // merges this way).
+      const shortcuts = { ...DEFAULT_SHORTCUTS, ...(useSettingsStore.getState().settings.keyboardShortcuts || {}) }
 
       // Close current tab: a page tab closes the page; a session tab routes
       // through the End-vs-Leave-running choice.
@@ -136,11 +142,38 @@ export function useKeyboardShortcuts(
       // reveal — instead of reporting a match). Those boxes carry
       // data-shortcut-capture; yield to them.
       if ((e.target as Element | null)?.closest?.('[data-shortcut-capture]')) return
-      const shortcuts = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
+      // Merge over defaults for the same reason as handleKeyDown: a persisted
+      // pre-release map must not leave newer chords dead.
+      const shortcuts = { ...DEFAULT_SHORTCUTS, ...(useSettingsStore.getState().settings.keyboardShortcuts || {}) }
       if (matchesShortcut(e, shortcuts.captureGlyphDiagnostic) && !e.getModifierState?.('AltGraph')) {
+        // Consume repeats but never act on them: each fire is a disk write +
+        // Explorer reveal, and an unconsumed repeat would stream the chord's
+        // xterm encoding (ESC + ctrl-char) into the pty instead.
         e.preventDefault()
         e.stopPropagation()
+        if (e.repeat) return
         void captureGlyphDiagnostic(useSessionStore.getState().activeSessionId)
+      }
+      // Repaint + geometry re-sync (#503): pressed while staring at a pane
+      // something printed over — same capture-phase + AltGr reasoning as the
+      // glyph capture above.
+      if (matchesShortcut(e, shortcuts.repaintTerminal) && !e.getModifierState?.('AltGraph')) {
+        // Same repeat rule: consumed, not acted on — a held chord auto-repeats
+        // ~16Hz and each fire is a pty resize pair.
+        e.preventDefault()
+        e.stopPropagation()
+        if (e.repeat) return
+        // Repair the terminal the chord was pressed IN, resolved by DOM
+        // ancestry: the focused pane may be the partner shell or an alt pane,
+        // registered under its own key — the active session id alone would
+        // nudge a hidden pty. With focus outside any terminal, the pane
+        // actually on screen (data-terminal-active — at most one) is the
+        // target; the bare active id is the last resort.
+        const from = (e.target as Element | null)?.closest?.('[data-terminal-session]')
+        const sid = from?.getAttribute('data-terminal-session')
+          || document.querySelector('[data-terminal-session][data-terminal-active]')?.getAttribute('data-terminal-session')
+          || useSessionStore.getState().activeSessionId
+        if (sid) requestResync(sid)
       }
     }
 

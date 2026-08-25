@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   registerRepainter,
   requestSettleRepaint,
+  requestResync,
   scheduleBleedRepaints,
   __clearRepaintRegistry,
   BLEED_REPAINT_DELAYS_MS,
@@ -51,6 +52,38 @@ describe('repaintRegistry', () => {
     registerRepainter('s1', { settleStrong: () => { throw new Error('disposed') } })
     expect(() => requestSettleRepaint('s1')).not.toThrow()
     expect(requestSettleRepaint('s1')).toBe(false)
+  })
+})
+
+// #503: the resync request — the geometry-nudge repaint for console-direct
+// splice damage, routed the same way.
+describe('requestResync', () => {
+  beforeEach(() => __clearRepaintRegistry())
+
+  it('routes to the registered resync, not the plain repaint', () => {
+    const settleStrong = vi.fn()
+    const resync = vi.fn()
+    registerRepainter('s1', { settleStrong, resync })
+    expect(requestResync('s1')).toBe(true)
+    expect(resync).toHaveBeenCalledTimes(1)
+    expect(settleStrong).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the plain repaint on a stub without resync', () => {
+    const settleStrong = vi.fn()
+    registerRepainter('s1', { settleStrong })
+    expect(requestResync('s1')).toBe(true)
+    expect(settleStrong).toHaveBeenCalledTimes(1)
+  })
+
+  it('is a no-op for a session with no terminal', () => {
+    expect(requestResync('nobody')).toBe(false)
+  })
+
+  it('survives a terminal disposed between lookup and call', () => {
+    registerRepainter('s1', { settleStrong: vi.fn(), resync: () => { throw new Error('disposed') } })
+    expect(() => requestResync('s1')).not.toThrow()
+    expect(requestResync('s1')).toBe(false)
   })
 })
 

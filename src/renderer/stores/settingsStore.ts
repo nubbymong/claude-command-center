@@ -463,6 +463,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(settings.terminal || {}) },
       conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, ...(settings.conductorTools || {}) },
       watchdog: { ...DEFAULT_WATCHDOG_SETTINGS, ...(settings.watchdog || {}) },
+      // keyboardShortcuts joined the deep-merge with #503: a persisted map
+      // predating a release lacks that release's new actions, and every
+      // consumer that substituted the whole object had its new chords dead
+      // (the Sidebar #124 renameSession patch was this same bug).
+      keyboardShortcuts: { ...DEFAULT_SHORTCUTS, ...(settings.keyboardShortcuts || {}) },
       typography: migrateTypography(settings),
     }
     const font = migrateV2Font(merged)

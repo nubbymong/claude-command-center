@@ -26,6 +26,14 @@
 export interface SessionRepainter {
   /** Wait for output to go quiet, then clear the atlas and repaint every row. */
   settleStrong: (quietMs?: number, intervalMs?: number) => void
+  /**
+   * Full repaint + geometry re-sync (#503): the shrink→restore pty nudge that
+   * makes the TUI re-lay-out, then the strong repaint. For damage a repaint
+   * alone cannot fix — a console-direct writer (ssh's host-key prompt) left
+   * the TUI's live region desynced from the real rows. Optional: registered
+   * by TerminalView; absent only in stub registrations.
+   */
+  resync?: () => void
 }
 
 const repainters = new Map<string, SessionRepainter>()
@@ -53,6 +61,24 @@ export function requestSettleRepaint(sessionId: string): boolean {
   if (!repainter) return false
   try {
     repainter.settleStrong()
+    return true
+  } catch {
+    // A terminal disposed between the lookup and the call. Nothing to repair.
+    return false
+  }
+}
+
+/**
+ * Ask a session's terminal for the full repaint + geometry re-sync (#503).
+ * Falls back to the plain settle repaint when the registration predates the
+ * resync (a stub), and no-ops without a live terminal, like the above.
+ */
+export function requestResync(sessionId: string): boolean {
+  const repainter = repainters.get(sessionId)
+  if (!repainter) return false
+  try {
+    if (repainter.resync) repainter.resync()
+    else repainter.settleStrong()
     return true
   } catch {
     // A terminal disposed between the lookup and the call. Nothing to repair.

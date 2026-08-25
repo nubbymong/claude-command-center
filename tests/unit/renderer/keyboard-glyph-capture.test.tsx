@@ -23,6 +23,10 @@ const captureGlyphDiagnostic = vi.fn(async () => ({ ok: true }))
 vi.mock('../../../src/renderer/utils/glyphDiagnostic', () => ({
   captureGlyphDiagnostic: (...args: unknown[]) => captureGlyphDiagnostic(...args),
 }))
+const requestResync = vi.fn(() => true)
+vi.mock('../../../src/renderer/components/terminal/repaintRegistry', () => ({
+  requestResync: (...args: unknown[]) => requestResync(...args),
+}))
 
 const { useKeyboardShortcuts } = await import('../../../src/renderer/hooks/useKeyboardShortcuts')
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
@@ -39,6 +43,7 @@ let root: Root
 
 beforeEach(() => {
   captureGlyphDiagnostic.mockClear()
+  requestResync.mockClear()
   useSessionStore.setState({ sessions: [], activeSessionId: 's1', renamingSessionId: null } as any)
   useSettingsStore.setState({ settings: { keyboardShortcuts: DEFAULT_SHORTCUTS } as any })
   container = document.createElement('div')
@@ -109,5 +114,106 @@ describe('Ctrl+Alt+G glyph capture survives xterm (#374, beta.17 silence)', () =
     // Load-bearing now the listener runs BEFORE xterm: the event must reach
     // the terminal unprevented so AltGr text entry still types.
     expect(e.defaultPrevented).toBe(false)
+  })
+})
+
+/** A keydown for Ctrl+Alt+R (#503), with the same knobs plus key-repeat. */
+function chordR(opts: { altGraph?: boolean; repeat?: boolean } = {}): KeyboardEvent {
+  const e = new KeyboardEvent('keydown', {
+    key: 'r', ctrlKey: true, altKey: true, repeat: opts.repeat ?? false, bubbles: true, cancelable: true,
+  })
+  Object.defineProperty(e, 'getModifierState', { value: (m: string) => (m === 'AltGraph' ? (opts.altGraph ?? false) : false) })
+  return e
+}
+
+describe('Ctrl+Alt+R repaint + re-sync (#503)', () => {
+  it('fires even when xterm-style handling stops propagation at its textarea', () => {
+    const term = document.createElement('textarea')
+    container.appendChild(term)
+    term.addEventListener('keydown', (e) => { e.stopPropagation(); e.preventDefault() }, true)
+    act(() => { term.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledTimes(1)
+  })
+
+  it('repairs the terminal the chord was pressed IN, resolved by DOM ancestry', () => {
+    // The partner shell registers under `${id}-partner` and stays mounted while
+    // hidden — the active session id alone would nudge the hidden main pty.
+    const pane = document.createElement('div')
+    pane.setAttribute('data-terminal-session', 's1-partner')
+    const term = document.createElement('textarea')
+    pane.appendChild(term)
+    container.appendChild(pane)
+    act(() => { term.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledWith('s1-partner')
+  })
+
+  it('with focus outside any terminal, targets the pane actually on screen', () => {
+    // The partner pane is showing (it carries data-terminal-active); the user
+    // clicks the command bar, then presses the chord. Ancestry misses, but the
+    // marked pane — not the hidden main pty — must win.
+    const pane = document.createElement('div')
+    pane.setAttribute('data-terminal-session', 's1-partner')
+    pane.setAttribute('data-terminal-active', '')
+    container.appendChild(pane)
+    act(() => { window.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledWith('s1-partner')
+  })
+
+  it('falls back to the active session id with no terminal marked at all', () => {
+    act(() => { window.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledWith('s1')
+  })
+
+  it('TerminalView actually emits both attributes the resolution keys on', () => {
+    // Same contract shape as the data-shortcut-capture test above: the handler
+    // honours the attributes, and TerminalView must CARRY them — deleting them
+    // silently degrades the chord to the last-resort fallback, suite green.
+    const fs = require('node:fs') as typeof import('node:fs')
+    const path = require('node:path') as typeof import('node:path')
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/TerminalView.tsx'), 'utf8')
+    expect(src).toMatch(/data-terminal-session=\{sessionId\}/)
+    expect(src).toMatch(/data-terminal-active=\{isActive/)
+  })
+
+  it('consumes key-repeat without acting — no resync storm, nothing leaks to xterm', () => {
+    // An UNCONSUMED repeat reaches xterm, which encodes Ctrl+Alt+R as
+    // ESC+\x12 straight into the pty — worse than the storm it avoids.
+    const e = chordR({ repeat: true })
+    act(() => { window.dispatchEvent(e) })
+    expect(requestResync).not.toHaveBeenCalled()
+    expect(e.defaultPrevented).toBe(true)
+  })
+
+  it('the glyph chord consumes its repeats too — each fire is a disk write', () => {
+    const e = chord()
+    Object.defineProperty(e, 'repeat', { value: true })
+    act(() => { window.dispatchEvent(e) })
+    expect(captureGlyphDiagnostic).not.toHaveBeenCalled()
+    expect(e.defaultPrevented).toBe(true)
+  })
+
+  it('the AltGr guard holds here too', () => {
+    const e = chordR({ altGraph: true })
+    act(() => { window.dispatchEvent(e) })
+    expect(requestResync).not.toHaveBeenCalled()
+    expect(e.defaultPrevented).toBe(false)
+  })
+
+  it('yields to the Settings shortcut recorder / Test box', () => {
+    const box = document.createElement('div')
+    box.setAttribute('data-shortcut-capture', '')
+    container.appendChild(box)
+    act(() => { box.dispatchEvent(chordR()) })
+    expect(requestResync).not.toHaveBeenCalled()
+  })
+
+  it('still fires for a user whose persisted shortcut map predates the chord', () => {
+    // The hydration shape that killed new chords: a saved keyboardShortcuts
+    // object from an older release has no repaintTerminal key, and a plain
+    // `|| DEFAULT_SHORTCUTS` substitution never fires because the object
+    // EXISTS. The handler must merge over the defaults instead.
+    useSettingsStore.setState({ settings: { keyboardShortcuts: { closeSession: 'Ctrl+W' } } as any })
+    act(() => { window.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledTimes(1)
   })
 })

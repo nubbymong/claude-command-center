@@ -31,6 +31,7 @@ function renderMenu(over: Partial<React.ComponentProps<typeof TerminalContextMen
     hasSelection: false,
     onCopy: noop,
     onPaste: noop,
+    onRepaint: noop,
     onClose: noop,
     ...over,
   }
@@ -75,6 +76,22 @@ describe('TerminalContextMenu', () => {
     expect(onPaste).not.toHaveBeenCalled() // rendering the menu never pastes
     act(() => { buttonByText(r.container, 'Paste').click() })
     expect(onPaste).toHaveBeenCalledTimes(1)
+    r.unmount()
+  })
+
+  it('fires onRepaint from the Repaint row, and only from it (#503)', () => {
+    const onRepaint = vi.fn()
+    const onCopy = vi.fn()
+    const onPaste = vi.fn()
+    const r = renderMenu({ hasSelection: true, onRepaint, onCopy, onPaste })
+    const row = r.container.querySelector('[data-testid="terminal-ctx-repaint"]') as HTMLButtonElement
+    expect(row).toBeTruthy()
+    // Always enabled — the rescue must be reachable exactly when the pane is a mess.
+    expect(row.disabled).toBe(false)
+    act(() => { row.click() })
+    expect(onRepaint).toHaveBeenCalledTimes(1)
+    expect(onCopy).not.toHaveBeenCalled()
+    expect(onPaste).not.toHaveBeenCalled()
     r.unmount()
   })
 
