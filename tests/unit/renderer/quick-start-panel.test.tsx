@@ -45,7 +45,9 @@ describe('QuickStartPanel', () => {
     expect(items.length).toBe(2)
     const b = Array.from(items).find((el) => el.textContent!.includes('b'))!
     const pill = b.querySelector('[data-testid="quick-start-running-count"]')!
-    expect(pill.textContent).toContain('2')
+    expect(pill.textContent!.trim()).toBe('2')
+    // Canvas note R1: number only — no dot glyph inside the pill.
+    expect(pill.querySelector('span')).toBeNull()
     // The idle pin carries no pill.
     const a = Array.from(items).find((el) => el.textContent!.includes('a'))!
     expect(a.querySelector('[data-testid="quick-start-running-count"]')).toBeNull()
@@ -131,8 +133,11 @@ describe('the #462 restyle — session-card language, no loud fill', () => {
     for (const row of rows) {
       const styleAttr = row.getAttribute('style') ?? ''
       expect(styleAttr).not.toContain('--brand')
-      // The row's tint background carries the SAME channels as its own chip.
+      // Canvas-approved 2026-08-25: identity on the BORDER only — its
+      // color-mix carries the same channels as the row's own chip — and the
+      // interior is the neutral stage surface, not a tint.
       expect(styleAttr).toContain(channelsOf(row))
+      expect(styleAttr).toContain('var(--surface-stage)')
     }
     // ...and the two rows genuinely differ.
     expect(channelsOf(rows[0])).not.toBe(channelsOf(rows[1]))
