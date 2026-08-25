@@ -240,6 +240,30 @@ describe('completion stand-downs (#476)', () => {
     expect(useCanvasStore.getState().bySessionId.s1.filedNotice).toBeNull()
   })
 
+  it('an announced switch AWAY FROM a completed canvas still consumes its expectation', () => {
+    // The stand-down must not leak the switch expectation: View a completed
+    // canvas, ask for a switch (picker/queue/strip all announce), and the
+    // expectation must be CONSUMED by that identity change even though no
+    // strip shows — or it lingers and swallows the next GENUINE filing.
+    useCanvasStore.setState({
+      bySessionId: {
+        s1: {
+          ...useCanvasStore.getState().bySessionId.s1,
+          completed: { at: 'now', by: 'user' as const },
+        },
+      },
+    })
+    useCanvasStore.getState().expectSwitch('s1')
+    emit({ sessionId: 's1', canvasId: 'c-next', activeVersionId: 'v1' })
+    expect(useCanvasStore.getState().bySessionId.s1.filedNotice).toBeNull()
+
+    // Now a REAL filing on the new canvas must still announce.
+    seedCanvas('c-next', 'Next subject')
+    emit({ sessionId: 's1', canvasId: 'c-third', activeVersionId: 'v1' })
+    const notice = useCanvasStore.getState().bySessionId.s1.filedNotice
+    expect(notice?.canvasId).toBe('c-next')
+  })
+
   it('a sign-off event sets the acknowledgment, not the pulse or the strip', () => {
     emit({ sessionId: 's1', canvasId: 'c-old', activeVersionId: 'v1', completed: true })
     const s = useCanvasStore.getState().bySessionId.s1

@@ -322,11 +322,17 @@ export function setupCanvasListener(): void {
     // starts is not a filing of the signed-off one — it was already in the
     // library, and "I filed it when the agent started a different subject"
     // would be false twice over.
-    const filedCanvasId: string | null =
-      !event.reopened && prev?.canvasId && !prev.completed && event.canvasId && event.canvasId !== prev.canvasId
-        ? prev.canvasId
-        : null
-    const userAsked = filedCanvasId !== null && consumeExpectedSwitch(event.sessionId)
+    // SWITCHED (identity changed) and FILED (that change is worth announcing)
+    // are separate questions: an announced switch AWAY FROM a completed canvas
+    // is a real identity change whose expectation must still be CONSUMED, or
+    // the leftover expectation would swallow the next genuine filing — even
+    // though nothing was filed by it (the completed canvas was already
+    // library history, so the strip stands down).
+    const switched = Boolean(
+      !event.reopened && prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId,
+    )
+    const userAsked = switched && consumeExpectedSwitch(event.sessionId)
+    const filedCanvasId: string | null = switched && !prev!.completed ? prev!.canvasId : null
     if (!userAsked && filedCanvasId !== null) {
       // Counted from the review mirror as it stands NOW, before the refresh
       // below follows the session to its new canvas. This is the only moment
