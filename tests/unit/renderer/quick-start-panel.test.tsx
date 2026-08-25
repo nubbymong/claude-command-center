@@ -45,7 +45,7 @@ describe('QuickStartPanel', () => {
     expect(items.length).toBe(2)
     const b = Array.from(items).find((el) => el.textContent!.includes('b'))!
     const pill = b.querySelector('[data-testid="quick-start-running-count"]')!
-    expect(pill.textContent).toContain('2')
+    expect(pill.textContent!.trim()).toBe('2')
     // Canvas note R1: number only — no dot glyph inside the pill.
     expect(pill.querySelector('span')).toBeNull()
     // The idle pin carries no pill.

@@ -79,7 +79,7 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
             <span className="text-xs font-medium truncate flex-1 text-[var(--text-primary)]">{config.label}</span>
             {liveCount > 0 && (
               <span
-                className="flex items-center text-[8.5px] font-semibold uppercase tracking-wide text-green bg-green/15 rounded-full px-1.5 py-0.5 shrink-0"
+                className="flex items-center text-[8.5px] font-semibold text-green bg-green/15 rounded-full px-1.5 py-0.5 shrink-0"
                 title={runningCountLabel(liveCount)}
                 data-testid="quick-start-running-count"
               >
