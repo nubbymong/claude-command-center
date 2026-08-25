@@ -25,10 +25,11 @@ import CommandDialog from '../CommandDialog'
  * operations, a sections panel, a secrets list, import/export.
  */
 
-const TOOL_LABEL: Record<CoreToolId, string> = { snap: 'Snap', canvas: 'Canvas', logs: 'Logs', browser: 'Browser', partner: 'Partner', notes: 'Notes' }
+const TOOL_LABEL: Record<CoreToolId, string> = { snap: 'Snap', canvas: 'Canvas', logs: 'Logs', browser: 'Browser', artifacts: 'Artifacts', partner: 'Partner', notes: 'Notes' }
 const TOOL_NOTE: Partial<Record<CoreToolId, string>> = {
   snap: 'not in terminal-only sessions',
   logs: 'also needs General → Index conversation logs',
+  artifacts: 'local sessions with an account only',
 }
 
 function Card({ title, sub, children, testId }: { title: string; sub?: string; children: React.ReactNode; testId?: string }) {

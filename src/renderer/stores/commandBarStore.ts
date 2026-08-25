@@ -12,7 +12,7 @@ import { saveConfigDebounced, saveConfigNow } from '../utils/config-saver'
 
 /** The fixed tools in the Core band. A future tool is appended here and appears
  *  by default: hide state is a denylist, absent = shown. */
-export const CORE_TOOL_IDS = ['snap', 'canvas', 'logs', 'browser', 'partner', 'notes'] as const
+export const CORE_TOOL_IDS = ['snap', 'canvas', 'logs', 'browser', 'artifacts', 'partner', 'notes'] as const
 export type CoreToolId = typeof CORE_TOOL_IDS[number]
 
 /** One row and fold the rest (default), or wrap to at most a second row then fold. */

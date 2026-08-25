@@ -98,6 +98,7 @@ const DIRECT_FEATURE_IDS: readonly string[] = [
   'commands.ctrl-click-args',
   'security.encrypted-notes',
   'webview.opened',
+  'artifacts.opened',
   'productivity.statusline-config',
   'github.signed-in',
   'github.panel-toggled',
