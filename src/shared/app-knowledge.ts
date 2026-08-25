@@ -71,7 +71,7 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
   {
     id: 'draw',
     title: 'Canvas, Snap, and the webview',
-    body: `Inside a session you can swap the terminal for a webview pane (Web), freeze that page into the Excalidraw scratchpad to sketch over it (Freeze), or take a Snap screenshot that lands in the conversation. The alternative pane replaces the terminal while it is open, and closing it brings the terminal straight back.`,
+    body: `Inside a session you can swap the terminal for a webview pane (Web), freeze that page into the Excalidraw scratchpad to sketch over it (Freeze), or take a Snap screenshot that lands in the conversation. The alternative pane replaces the terminal while it is open, and closing it brings the terminal straight back. Next to Browser, the Artifacts button opens this account's artifacts on claude.ai in one click; it appears for a local session signed into an account and uses that session's account.`,
   },
   {
     id: 'sentinel',
