@@ -46,6 +46,15 @@ describe('SessionRow card', () => {
   beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
   afterEach(() => { act(() => root.unmount()); container.remove() })
 
+  it('#454: renders the instance ordinal when given one, and omits it otherwise', () => {
+    render(root, { label: 'App Dev' }, { ordinal: 2 })
+    const o = container.querySelector('[data-testid="session-row-ordinal"]')
+    expect(o?.textContent).toBe('#2')
+    act(() => root.unmount()); root = createRoot(container)
+    render(root, { label: 'App Dev' }) // no ordinal prop
+    expect(container.querySelector('[data-testid="session-row-ordinal"]')).toBeNull()
+  })
+
   it('does NOT render a Claude provider badge for the default (claude) provider', () => {
     render(root, { provider: 'claude' })
     expect(container.querySelector('[title="Claude is working"]')).toBeNull()
