@@ -2,7 +2,7 @@
  * #371 BLOCKER-1 — `cloudAgent:remove` and `cloudAgent:clearCompleted` used to
  * answer a bare boolean / count that the store discarded, filtering the local
  * list unconditionally. A refused write (main could not read cloud-agents.json,
- * so it left the file alone) therefore made rows vanish from the Agent Hub and
+ * so it left the file alone) therefore made rows vanish from the Cloud Agents and
  * reappear at the next restart. Main now rolls its own list back and answers
  * `{ ok:false, error }`; the renderer must keep its rows.
  *
