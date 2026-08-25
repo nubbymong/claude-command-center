@@ -18,6 +18,7 @@ import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useLaunchConfig } from '../hooks/useLaunchConfig'
+import { useClickOutside } from '../hooks/useClickOutside'
 import { useRegionTypography } from '../hooks/useTypography'
 import SidebarNav from './sidebar/SidebarNav'
 import ConfigRow from './sidebar/ConfigRow'
@@ -162,6 +163,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const [sessionSectionCollapsed, setSessionSectionCollapsed] = useState<Record<string, boolean>>({})
   const [groupContextMenu, setGroupContextMenu] = useState<{ groupId: string; x: number; y: number } | null>(null)
   const [showNewSectionInput, setShowNewSectionInput] = useState(false)
+  // One central + New button (#483); the menu offers Config / Section.
+  const [showNewMenu, setShowNewMenu] = useState(false)
   const [newSectionName, setNewSectionName] = useState('')
   // Two-mode left panel (design pass 2026-08-24): 'saved' is the launcher,
   // 'running' the live sessions. Replaces the #217 hover fly-out + pin
@@ -278,6 +281,14 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const sessionRenameRef = useRef<HTMLInputElement>(null)
   const sectionRenameRef = useRef<HTMLInputElement>(null)
   const newSectionInputRef = useRef<HTMLInputElement>(null)
+  const newMenuRef = useRef<HTMLDivElement>(null)
+  useClickOutside(newMenuRef, () => setShowNewMenu(false))
+  // The menu's DOM unmounts with the Saved body (tab switch, rail collapse) —
+  // both reachable keyboard-only, where no outside mousedown fires. Without
+  // this the state latches and the menu reappears unrequested (#483 review).
+  useEffect(() => {
+    if (panelTab !== 'saved' || collapsed) setShowNewMenu(false)
+  }, [panelTab, collapsed])
   // Read current collapse state inside the stable ([]) keydown effect below.
   const collapsedRef = useRef(collapsed)
   collapsedRef.current = collapsed
@@ -822,7 +833,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           }`}
           data-testid="panel-tab-saved"
           /* The tour's "Saved configs live here" anchor: on the always-mounted
-             tab, NOT the "+ New config" button inside the Saved body — the
+             tab, NOT the "+ New" button inside the Saved body — the
              panel defaults to Running, and an unresolvable selector makes
              GuidedTour.available() silently skip the step. */
           data-tour="new-config"
@@ -870,22 +881,47 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         {/* The header icon buttons became labelled toolbar buttons here; the
             pin-panel button retired with the fly-out. The tour anchor lives on
             the Saved TAB (always mounted), not here. */}
-        <div className="px-2 pb-1.5 flex gap-1.5 shrink-0">
+        {/* One central + New button (#483) — what to create is the second
+            click's question, so the two answers live in a menu, not the row. */}
+        <div ref={newMenuRef} className="px-2 pb-1.5 flex justify-center shrink-0 relative">
           <button
-            data-testid="new-config-button"
-            onClick={() => setShowNewDialog(true)}
-            className="h-7 px-2.5 rounded-md bg-blue/20 border border-blue/45 text-blue text-[11px] font-semibold flex items-center gap-1 hover:bg-blue/30 transition-colors focus-ring"
-            title="New config (Ctrl+T)"
+            data-testid="new-button"
+            onClick={() => setShowNewMenu((v) => !v)}
+            aria-expanded={showNewMenu}
+            aria-haspopup="menu"
+            className="h-7 px-4 rounded-md bg-blue/20 border border-blue/45 text-blue text-[11px] font-semibold flex items-center gap-1 hover:bg-blue/30 transition-colors focus-ring"
+            title="New config (Ctrl+T) or section"
           >
-            <span className="font-extrabold">+</span> New config
+            <span className="font-extrabold">+</span> New
           </button>
-          <button
-            onClick={() => { setShowNewSectionInput(true); setTimeout(() => newSectionInputRef.current?.focus(), 0) }}
-            className="h-7 px-2.5 rounded-md bg-surface0 border border-surface1 text-subtext1 text-[11px] font-semibold flex items-center gap-1 hover:bg-surface1 transition-colors focus-ring"
-            title="New section"
-          >
-            <span className="font-extrabold">+</span> Section
-          </button>
+          {showNewMenu && (
+            <div
+              role="menu"
+              data-testid="new-menu"
+              className="absolute top-full left-1/2 -translate-x-1/2 z-50 rounded-lg shadow-xl py-1 min-w-[150px]"
+              style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+            >
+              <button
+                role="menuitem"
+                data-testid="new-menu-config"
+                onClick={() => { setShowNewMenu(false); setShowNewDialog(true) }}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors flex items-center justify-between gap-3"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Config
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Ctrl+T</span>
+              </button>
+              <button
+                role="menuitem"
+                data-testid="new-menu-section"
+                onClick={() => { setShowNewMenu(false); setShowNewSectionInput(true); setTimeout(() => newSectionInputRef.current?.focus(), 0) }}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--surface-overlay)] transition-colors"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Section
+              </button>
+            </div>
+          )}
         </div>
 
         {/* The scrolling launcher list — sections, groups, loose configs. */}

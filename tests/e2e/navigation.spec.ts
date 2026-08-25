@@ -114,7 +114,7 @@ test.describe('Sidebar Navigation', () => {
     await expect(runningTab).toHaveAttribute('aria-selected', 'true')
   })
 
-  test('Saved tab reveals the launcher (+ New config); Running returns to sessions', async () => {
+  test('Saved tab reveals the launcher (+ New); Running returns to sessions', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
@@ -123,7 +123,7 @@ test.describe('Sidebar Navigation', () => {
 
     await sidebar.locator('[data-testid="panel-tab-saved"]').click()
     await expect(sidebar.locator('[data-testid="saved-tab"]')).toBeVisible()
-    await expect(sidebar.locator('[data-testid="new-config-button"]')).toBeVisible()
+    await expect(sidebar.locator('[data-testid="new-button"]')).toBeVisible()
 
     await sidebar.locator('[data-testid="panel-tab-running"]').click()
     await expect(sidebar.locator('[data-testid="running-tab"]')).toBeVisible()

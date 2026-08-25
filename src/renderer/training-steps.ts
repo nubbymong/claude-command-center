@@ -57,7 +57,7 @@ export const trainingSteps: TrainingStep[] = [
       'Local or SSH -- one config form, full Claude support either way',
     ],
     howToTrigger: [
-      { label: 'Create', value: 'Saved tab → + New config' },
+      { label: 'Create', value: 'Saved tab → + New → Config' },
       { label: 'Edit', value: 'Hover a config → pencil icon' },
       { label: 'Pin', value: 'Right-click a config → Pin to Quick Start' },
     ],
@@ -169,7 +169,7 @@ export const trainingSteps: TrainingStep[] = [
       '**Tokenomics** segments Codex spend automatically alongside Claude, per-day and per-model',
     ],
     howToTrigger: [
-      { label: 'Spawn', value: 'New config -> provider card -> Codex' },
+      { label: 'Spawn', value: '+ New -> Config -> provider card -> Codex' },
       { label: 'Auth', value: 'Settings -> Codex -> Login' },
       { label: 'Model', value: 'Edit the Codex config -> model' },
     ],
