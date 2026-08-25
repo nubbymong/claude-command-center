@@ -18,9 +18,13 @@ import path from 'node:path'
 
 const CSS = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/styles.css'), 'utf8')
 
-/** Pull a token's value from the Nth block that defines it (0 = dark, 1 = light). */
+/** Pull a token's value from the Nth block that defines it (0 = dark, 1 = light).
+ *  Exactly two definitions are required: a third block (a new theme, a media
+ *  query override) would silently shift the indexing and leave the light
+ *  theme untested, so it fails loudly here instead. */
 function token(name: string, occurrence: number): string {
   const all = [...CSS.matchAll(new RegExp(`--${name}\\s*:\\s*(#[0-9a-fA-F]{3,8})`, 'g'))].map((m) => m[1])
+  if (all.length !== 2) throw new Error(`--${name} defined ${all.length} times in styles.css — expected exactly dark + light`)
   const v = all[occurrence]
   if (!v) throw new Error(`--${name} occurrence ${occurrence} not found in styles.css`)
   return v
@@ -104,5 +108,102 @@ describe('contrast — sidebar secondary text', () => {
     expect(contrast('#777777', '#1a1a1a')).toBeCloseTo(contrast('#1a1a1a', '#777777'), 5)
     // The value that started this, at the ratio that was reported.
     expect(contrast('#777777', '#1a1a1a')).toBeCloseTo(3.89, 1)
+  })
+})
+
+/* ---- #458: --text-muted and the status-pill recipe ----------------------- */
+
+/** `color-mix(in srgb, A p%, transparent)` painted over an opaque surface:
+ *  per-channel sRGB blend, which is exactly what the browser composites. */
+function wash(fg: string, pct: number, surface: string): string {
+  const px = (h: string) => (h.replace('#', '').match(/../g) as string[]).map((x) => parseInt(x, 16))
+  const [a, b] = [px(fg), px(surface)]
+  return '#' + a.map((c, i) => Math.round(c * pct + b[i] * (1 - pct)).toString(16).padStart(2, '0')).join('')
+}
+
+describe('contrast — #458: muted text and the status-pill recipe', () => {
+  // The surfaces the 10-11px muted strings actually sit on: the chrome and
+  // panel, the canvas stage and its gutter, and — where MOST of them live —
+  // the raised dialogs and overlay menus/popovers (review round 1: the first
+  // cut listed only the first four and certified a value that still failed
+  // 3.9-4.3:1 on raised/overlay).
+  const MUTED_SURFACES = [
+    'surface-chrome',
+    'surface-panel',
+    'surface-stage',
+    'surface-stage-gutter',
+    'surface-raised',
+    'surface-overlay',
+  ]
+  // Where the wash pins run. The recipe also lives on raised — ui/Dialog's
+  // danger buttons (16%), NoteDialog/menus confirms, CommandDialog's Ask
+  // strip (brand 12%) — and those all clear at their ACTUAL strengths in
+  // both themes (danger@16% raised 4.93 dark, brand@12% raised 4.51 dark).
+  // Raised/overlay are still not in this list because pinning them at the
+  // generic 14/15% strengths would fail on ONE pre-existing case out of
+  // #458's scope: CodexSettingsTab's brand-15%-on-raised button, 4.27:1 in
+  // dark — fixing that means brightening dark --brand, the app's identity
+  // colour, which is an owner call. Extend the list when that lands.
+  const WASH_SURFACES = ['surface-chrome', 'surface-panel', 'surface-stage', 'surface-stage-gutter']
+
+  it('reads real values out of styles.css, not a copy', () => {
+    // Guards the guard, same as the overlay1 block: a theme block inserted
+    // between dark and light would silently shift occurrence indexing.
+    for (const t of ['text-muted', 'brand', 'status-success', 'status-warning', 'status-danger', 'status-info', ...MUTED_SURFACES]) {
+      expect(token(t, 0)).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(token(t, 1)).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(token(t, 0), `--${t} dark and light must differ`).not.toBe(token(t, 1))
+    }
+  })
+
+  it('--text-muted clears 4.5:1 on every surface it is drawn on, both themes', () => {
+    for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
+      const fg = token('text-muted', mode)
+      for (const bg of MUTED_SURFACES) {
+        const r = contrast(fg, token(bg, mode))
+        expect(r, `${name}: ${fg} on --${bg} (${token(bg, mode)}) = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+      }
+    }
+  })
+
+  // The house pill recipe: `text-[var(--status-X)]` over a wash of ITSELF
+  // (10% pills, 14% library badges, 15% brand Start/Beta pills). In the
+  // dark theme the bright status colours clear on these surfaces; the light
+  // theme is where the old values measured 2.7-4.4:1. Both themes are pinned
+  // so neither can regress.
+  it('status text over its own wash clears 4.5:1 at every resting wash strength, both themes', () => {
+    for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
+      for (const status of ['status-success', 'status-warning', 'status-danger', 'status-info']) {
+        const fg = token(status, mode)
+        for (const bg of WASH_SURFACES) {
+          for (const pct of [0.10, 0.14, 0.15]) {
+            const r = contrast(fg, wash(fg, pct, token(bg, mode)))
+            expect(
+              r,
+              `${name}: --${status} (${fg}) over its ${pct * 100}% wash on --${bg} = ${r.toFixed(2)}:1`,
+            ).toBeGreaterThanOrEqual(MIN)
+          }
+        }
+      }
+    }
+  })
+
+  it('brand text over its own 15% wash clears 4.5:1, both themes', () => {
+    // Quick Start's Start pill and the BottomBar Beta pill: text-[var(--brand)]
+    // over color-mix(var(--brand) 15%, transparent).
+    for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
+      const fg = token('brand', mode)
+      for (const bg of WASH_SURFACES) {
+        const r = contrast(fg, wash(fg, 0.15, token(bg, mode)))
+        expect(r, `${name}: --brand (${fg}) over its 15% wash on --${bg} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+      }
+    }
+  })
+
+  it('the wash maths is right — anchors', () => {
+    // 100% wash is the colour itself; 0% is the surface; a mid wash sits between.
+    expect(wash('#ff0000', 1, '#ffffff')).toBe('#ff0000')
+    expect(wash('#ff0000', 0, '#ffffff')).toBe('#ffffff')
+    expect(wash('#000000', 0.5, '#ffffff')).toBe('#808080')
   })
 })

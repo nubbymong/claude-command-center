@@ -1,6 +1,7 @@
 import React from 'react'
 import type { CustomCommand } from '../../stores/commandStore'
 import { isContextMenuGesture } from '../../lib/pointer'
+import { ON_BRAND } from '../ui/Dialog'
 
 /** Popover for customizing command arguments (shown on Ctrl+click, Alt+Enter, or "Run with arguments…"). */
 export default function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }: {
@@ -136,7 +137,7 @@ export default function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }:
         </div>
 
         <div className="flex gap-1.5">
-          <button onClick={() => onRun(getSelectedArgs())} className="flex-1 px-3 py-1.5 text-xs rounded font-medium" style={{ background: 'var(--brand)', color: '#0a0e13' }}>Run</button>
+          <button onClick={() => onRun(getSelectedArgs())} className="flex-1 px-3 py-1.5 text-xs rounded font-medium" style={{ background: 'var(--brand)', color: ON_BRAND }}>Run</button>
           <button onClick={() => onSetDefault(getSelectedArgs())} className="px-3 py-1.5 text-xs rounded" style={{ background: 'var(--surface-raised)', color: 'var(--text-primary)' }} title="Save selected args as the new default">Set as Default</button>
         </div>
       </div>

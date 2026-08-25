@@ -14,7 +14,7 @@ const FALLBACK_DARK = {
   magenta: '#c47b4a',
   cyan: '#3fbecb',
   white: '#a8b2c0',
-  brightBlack: '#6a7480',
+  brightBlack: '#8c949d',
 }
 
 function readVar(name: string, fallback: string): string {

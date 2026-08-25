@@ -10,6 +10,7 @@ import { CommandChip, TargetMark } from './command-bar/chips'
 import { clusterOf, effectiveKind } from './command-bar/layout'
 import { IconColourPicker } from './command-bar/menus'
 import { CommandIcon } from './command-icons'
+import { ON_BRAND } from './ui/Dialog'
 
 /**
  * What a command button DOES. This is the first question the dialog asks,
@@ -436,10 +437,10 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                     <li key={r} className="flex items-start gap-2" data-testid={`command-review-reason-${r}`}>
                       <span className="flex-1 leading-snug">{describeReviewReason(r)}</span>
                       {r === 'secret-like-arg' && kind === 'shell' && secretAllowed && secretMove && (
-                        <button type="button" onClick={makeArgSecret} className="shrink-0 h-6 px-2 rounded-md text-[11px] font-medium" style={{ background: 'var(--brand)', color: '#0a0e13' }} title={`Moves the value of "${defaultArgs[secretMove.index]}" to the keychain`} data-testid="command-review-fix-secret">Make this argument a secret</button>
+                        <button type="button" onClick={makeArgSecret} className="shrink-0 h-6 px-2 rounded-md text-[11px] font-medium" style={{ background: 'var(--brand)', color: ON_BRAND }} title={`Moves the value of "${defaultArgs[secretMove.index]}" to the keychain`} data-testid="command-review-fix-secret">Make this argument a secret</button>
                       )}
                       {r === 'prompt-inert-on-shell-configs' && configId && scope === 'global' && (
-                        <button type="button" onClick={() => { changeScope('config'); markFixed('prompt-inert-on-shell-configs') }} className="shrink-0 h-6 px-2 rounded-md text-[11px] font-medium" style={{ background: 'var(--brand)', color: '#0a0e13' }} data-testid="command-review-fix-session">Make it Session-only</button>
+                        <button type="button" onClick={() => { changeScope('config'); markFixed('prompt-inert-on-shell-configs') }} className="shrink-0 h-6 px-2 rounded-md text-[11px] font-medium" style={{ background: 'var(--brand)', color: ON_BRAND }} data-testid="command-review-fix-session">Make it Session-only</button>
                       )}
                     </li>
                   ))}
@@ -748,7 +749,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
                         autoFocus
                         data-testid="command-new-section-name"
                       />
-                      <button type="button" onClick={handleCreateSection} disabled={!newSectionName.trim()} className="h-8 px-2.5 text-xs rounded-lg font-semibold disabled:opacity-40" style={{ background: 'var(--brand)', color: '#0a0e13' }} data-testid="command-new-section-create">Create</button>
+                      <button type="button" onClick={handleCreateSection} disabled={!newSectionName.trim()} className="h-8 px-2.5 text-xs rounded-lg font-semibold disabled:opacity-40" style={{ background: 'var(--brand)', color: ON_BRAND }} data-testid="command-new-section-create">Create</button>
                       <button type="button" onClick={() => { setShowNewSection(false); setNewSectionName('') }} className="h-8 px-2.5 text-xs rounded-lg" style={{ background: 'var(--surface-overlay)', color: 'var(--text-secondary)' }}>Cancel</button>
                     </div>
                   )}
@@ -787,7 +788,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId, 
             <button type="button" onClick={onCancel} className="h-7 px-3 rounded-[7px] text-xs" style={{ background: 'var(--surface-overlay)', color: 'var(--text-secondary)' }}>
               Cancel
             </button>
-            <button type="submit" disabled={!canSubmit} data-testid="command-submit" className="h-7 px-3 rounded-[7px] text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed" style={{ background: 'var(--brand)', color: '#0a0e13' }}>
+            <button type="submit" disabled={!canSubmit} data-testid="command-submit" className="h-7 px-3 rounded-[7px] text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed" style={{ background: 'var(--brand)', color: ON_BRAND }}>
               {isEdit ? 'Save' : 'Create button'}
             </button>
           </div>
