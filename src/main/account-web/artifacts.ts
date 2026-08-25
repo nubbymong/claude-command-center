@@ -91,7 +91,12 @@ export function openArtifacts(profileId: string, parent?: BrowserWindow): { ok: 
     },
   })
 
-  const leaveForBrowser = (e: { preventDefault: () => void }, url: string): void => {
+  const leaveForBrowser = (e: { preventDefault: () => void; isMainFrame?: boolean }, url: string): void => {
+    // Main frame only: a third-party SUB-frame (an embed, or one whose request
+    // 302s) must not launch the OS browser un-gestured — same tab-bomb class as
+    // #439's account pane. A sub-frame is isolated by same-origin policy; leave
+    // it to that. (Parity fix carried over from the account-pane guard.)
+    if (e.isMainFrame === false) return
     if (isAllowed(url)) return
     e.preventDefault()
     // A link out of claude.ai belongs in the user's real browser, not in a

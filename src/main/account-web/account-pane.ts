@@ -464,7 +464,16 @@ export function openAccountPane(
     // the guard acts only when the event is confirmed NOT a sub-frame. This
     // matches the sibling artifacts/sign-in windows, which carry no frame guard.
     const guard = (label: string) => (event: { preventDefault: () => void; isMainFrame?: boolean }, target: string): void => {
-      if (event.isMainFrame === false) return
+      if (event.isMainFrame === false) {
+        // Sub-frame: left to same-origin policy (never blocked for being
+        // third-party, never handed to the OS browser), but a non-https target
+        // is still refused — parity with the throwaway browser pane's scheme
+        // filter, at zero risk of the iframe tab-bomb.
+        let https = false
+        try { https = new URL(target).protocol === 'https:' } catch { https = false }
+        if (!https) { event.preventDefault(); logError(`[account-pane] blocked non-https sub-frame: ${String(target).slice(0, 200)}`) }
+        return
+      }
       const decision = accountPaneNavDecision(target, entry.authed)
       if (decision === 'allow') return
       event.preventDefault()

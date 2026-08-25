@@ -233,11 +233,17 @@ describe('the account view', () => {
     await new Promise((r) => setTimeout(r, 0)); await new Promise((r) => setTimeout(r, 0))
     openedExternal.length = 0
 
-    // A cross-origin SUB-frame (isMainFrame:false): NOT prevented, NOT sent to
-    // the OS browser — an iframe must not be able to launch OS tabs.
+    // A cross-origin https SUB-frame (isMainFrame:false): NOT prevented, NOT
+    // sent to the OS browser — an iframe must not be able to launch OS tabs.
     const sub = { preventDefault: vi.fn(), isMainFrame: false }
     nav(sub, 'https://challenges.cloudflare.com/turnstile/x')
     expect(sub.preventDefault).not.toHaveBeenCalled()
+    expect(openedExternal).toHaveLength(0)
+
+    // A NON-https sub-frame is still refused (scheme parity), but never external.
+    const badSub = { preventDefault: vi.fn(), isMainFrame: false }
+    nav(badSub, 'file:///C:/secrets')
+    expect(badSub.preventDefault).toHaveBeenCalled()
     expect(openedExternal).toHaveLength(0)
 
     // A MAIN-frame off-site nav IS handed to the OS browser (one tab, gestured).
