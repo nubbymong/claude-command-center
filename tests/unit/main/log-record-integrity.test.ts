@@ -25,6 +25,12 @@ vi.mock('fs', async () => {
     existsSync: () => true,
     mkdirSync: vi.fn(),
     statSync: () => ({ size: 0 }),
+    // The write path now opens the fd synchronously (fs.openSync) and hands it to
+    // createWriteStream (#487 rotation fix, so a sync burst rotates deterministically).
+    // Mock openSync too: otherwise the REAL openSync runs against a dir mkdirSync
+    // was mocked away, throws ENOENT in a clean env (CI), drops the logger to
+    // console-only, and captures nothing — the formatting under test never runs.
+    openSync: () => 1,
     createWriteStream: () => ({
       write: (chunk: string) => { writes.push(String(chunk)); return true },
       end: vi.fn(),
