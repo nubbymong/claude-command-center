@@ -139,10 +139,16 @@ function seedCleanConfig(dataDir: string): void {
   )
 }
 
-export async function launchIsolatedApp(): Promise<IsolatedApp> {
+export async function launchIsolatedApp(opts?: {
+  /** Seed extra files into the isolated data dir AFTER the clean config and
+   *  BEFORE launch — e.g. an account profiles.json or a restored session-state.
+   *  Receives the data dir root. */
+  seedExtra?: (dataDir: string) => void
+}): Promise<IsolatedApp> {
   sweepStaleTempDirs()
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-e2e-'))
   seedCleanConfig(dataDir)
+  opts?.seedExtra?.(dataDir)
   const app = await electron.launch({
     args: [APP_PATH, `--user-data-dir=${path.join(dataDir, 'electron-userdata')}`],
     env: {
