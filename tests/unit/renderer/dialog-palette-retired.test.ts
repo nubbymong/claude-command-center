@@ -136,6 +136,10 @@ const PARTIAL_MAX: Record<string, { max: number; what: string }> = {
     max: 3,
     what: 'the account overflow popover (already on E5; the hits are footer chrome)',
   },
+  'components/Sidebar.tsx': {
+    max: 52,
+    what: 'the + New menu (#483) — the menu itself is token-clean (role="menu" is what pulled the file in); the hits are the surrounding sidebar chrome, out of #360\'s dialog scope',
+  },
 }
 
 const EXCLUDED = new Set([

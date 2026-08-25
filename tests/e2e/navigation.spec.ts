@@ -123,7 +123,7 @@ test.describe('Sidebar Navigation', () => {
 
     await sidebar.locator('[data-testid="panel-tab-saved"]').click()
     await expect(sidebar.locator('[data-testid="saved-tab"]')).toBeVisible()
-    await expect(sidebar.locator('[data-testid="new-config-button"]')).toBeVisible()
+    await expect(sidebar.locator('[data-testid="new-button"]')).toBeVisible()
 
     await sidebar.locator('[data-testid="panel-tab-running"]').click()
     await expect(sidebar.locator('[data-testid="running-tab"]')).toBeVisible()

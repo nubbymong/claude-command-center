@@ -30,6 +30,9 @@ vi.mock('../../../src/renderer/stores/cloudAgentStore', () => ({ useCloudAgentSt
 vi.mock('../../../src/renderer/stores/conductorMcpStore', () => ({ useConductorMcpStore: (sel: any) => sel({ browserRunning: false, serverRunning: true }) }))
 vi.mock('../../../src/renderer/stores/appMetaStore', () => ({ useAppMetaStore: (sel: any) => sel({ meta: { hasCreatedFirstConfig: true, firstRunCardDismissed: true }, update: () => {} }) }))
 ;(globalThis as any).window.electronAPI = { update: { check: () => Promise.resolve(false), onAvailable: () => () => {}, getVersion: () => Promise.resolve('') } }
+// The New menu's Config action opens the real dialog — heavy and store-hungry;
+// the menu's own behaviour is what's under test.
+vi.mock('../../../src/renderer/components/SessionDialog', () => ({ default: () => React.createElement('div', { 'data-testid': 'session-dialog' }) }))
 
 const { default: Sidebar } = await import('../../../src/renderer/components/Sidebar')
 
@@ -70,12 +73,36 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     expect(tabs().saved!.getAttribute('aria-selected')).toBe('true')
     expect(container.querySelector('[data-testid="saved-tab"]')).toBeTruthy()
     expect(container.querySelector('[data-testid="running-tab"]')).toBeNull()
-    const newConfig = container.querySelector('[data-testid="new-config-button"]')
-    expect(newConfig).toBeTruthy()
-    expect(newConfig!.textContent).toMatch(/new config/i)
-    // The old fly-out disclosure is gone with the overlay it opened.
-    const disclosure = Array.from(container.querySelectorAll('button')).find(b => b.getAttribute('aria-expanded') !== null)
-    expect(disclosure).toBeUndefined()
+    // One central + New button (#483): the two creations live in its menu.
+    const newButton = container.querySelector('[data-testid="new-button"]')
+    expect(newButton).toBeTruthy()
+    expect(newButton!.textContent).toMatch(/new/i)
+    expect(container.querySelector('[data-testid="new-menu"]')).toBeNull()
+    // The old fly-out disclosure stays gone — the only expander is the New menu button.
+    const disclosures = Array.from(container.querySelectorAll('button')).filter(b => b.getAttribute('aria-expanded') !== null)
+    expect(disclosures).toEqual([newButton])
+  })
+
+  it('the New menu offers Config and Section, and each option does its job (#483)', () => {
+    render()
+    act(() => { tabs().saved!.click() })
+    const newButton = () => container.querySelector('[data-testid="new-button"]') as HTMLButtonElement
+
+    act(() => { newButton().click() })
+    expect(newButton().getAttribute('aria-expanded')).toBe('true')
+    expect(container.querySelector('[data-testid="new-menu-config"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="new-menu-section"]')).toBeTruthy()
+
+    // Section: menu closes, the inline section-name input appears.
+    act(() => { (container.querySelector('[data-testid="new-menu-section"]') as HTMLButtonElement).click() })
+    expect(container.querySelector('[data-testid="new-menu"]')).toBeNull()
+    expect(container.querySelector('input[placeholder="Section name"]')).toBeTruthy()
+
+    // Config: menu closes, the New Config dialog opens.
+    act(() => { newButton().click() })
+    act(() => { (container.querySelector('[data-testid="new-menu-config"]') as HTMLButtonElement).click() })
+    expect(container.querySelector('[data-testid="new-menu"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-dialog"]')).toBeTruthy()
   })
 
   it('clicking Running returns to the session list', () => {
