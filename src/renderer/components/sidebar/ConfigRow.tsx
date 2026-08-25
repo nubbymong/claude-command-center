@@ -77,12 +77,11 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
       {runningCount > 0 && (
         <button
           onClick={(e) => { e.stopPropagation(); onOpenSession?.() }}
-          className="flex items-center gap-1 text-[8.5px] font-semibold uppercase tracking-wide text-green bg-green/15 hover:bg-green/25 rounded-full px-1.5 py-0.5 shrink-0 focus-ring transition-colors"
+          className="flex items-center text-[8.5px] font-semibold text-green bg-green/15 hover:bg-green/25 rounded-full px-1.5 py-0.5 shrink-0 focus-ring transition-colors"
           title={runningCountLabel(runningCount)}
           aria-label={runningCountLabel(runningCount)}
           data-testid="config-row-running-count"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-green" aria-hidden />
           {runningCount}
         </button>
       )}

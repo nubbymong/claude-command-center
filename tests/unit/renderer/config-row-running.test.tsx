@@ -70,7 +70,9 @@ describe('ConfigRow — relaunch with a running-count indicator', () => {
     renderRow({ runningCount: 3, onOpenSession: opened })
     const pill = container.querySelector('[data-testid="config-row-running-count"]') as HTMLElement
     expect(pill).toBeTruthy()
-    expect(pill.textContent).toContain('3')
+    // #473: number only — no dot glyph (the canvas-approved pill language).
+    expect(pill.textContent!.trim()).toBe('3')
+    expect(pill.querySelector('span')).toBeNull()
     act(() => { pill.click() })
     expect(opened).toHaveBeenCalledTimes(1)
     // The retired locked row is gone for good.
