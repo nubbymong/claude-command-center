@@ -66,10 +66,10 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
             className="mx-2 my-0.5 px-2 py-1 rounded-lg border flex items-center gap-1.5 transition-colors"
             style={{
               // #462, canvas-approved 2026-08-25: identity on the BORDER ONLY
-              // (the session-card 55% mix); the interior stays the neutral
-              // stage surface like a non-active session card — no tint fill.
+              // (the session-card 55% mix). The interior is TRANSPARENT like a
+              // real non-active session card — the approved mockup's stage
+              // surface matched that in dark but read too bright in light.
               borderColor: `color-mix(in srgb, ${chipColour} 55%, transparent)`,
-              background: 'var(--surface-stage)',
             }}
             onContextMenu={(e) => onContextMenu(e, config.id)}
             data-testid="quick-start-item"

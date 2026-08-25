@@ -135,9 +135,10 @@ describe('the #462 restyle — session-card language, no loud fill', () => {
       expect(styleAttr).not.toContain('--brand')
       // Canvas-approved 2026-08-25: identity on the BORDER only — its
       // color-mix carries the same channels as the row's own chip — and the
-      // interior is the neutral stage surface, not a tint.
+      // interior is transparent like a real idle session card (no background
+      // property at all: stage read too bright in the light theme).
       expect(styleAttr).toContain(channelsOf(row))
-      expect(styleAttr).toContain('var(--surface-stage)')
+      expect(styleAttr.toLowerCase()).not.toContain('background')
     }
     // ...and the two rows genuinely differ.
     expect(channelsOf(rows[0])).not.toBe(channelsOf(rows[1]))
