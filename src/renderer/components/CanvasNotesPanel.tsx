@@ -13,6 +13,7 @@ import {
 } from '../stores/canvasReviewStore'
 import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported'
 import { useArmedConfirm } from '../hooks/useArmedConfirm'
+import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { imageFileFromClipboard, pastedImageToPng } from '../utils/canvasPasteImage'
 
 interface Props {
@@ -191,10 +192,10 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [justSubmitted, setJustSubmitted] = useState<{ id: string; count: number } | null>(null)
-  /** Pending auto-return, cleared on unmount so a torn-down panel cannot toggle
-   *  a pane that no longer belongs to it. */
-  const returnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => { if (returnTimerRef.current) clearTimeout(returnTimerRef.current) }, [])
+  // The auto-return timer moved into excalidrawStore with #478
+  // (beginSubmitReturn) — the landing must outlive this panel, since the
+  // landing itself is what unmounts it, and it CLOSES rather than toggles so
+  // it can never reopen a pane something else already closed.
 
   /** Notes with a variant approval in flight — one marker per click, never one
    *  per state-read (see resolveOne). */
@@ -624,10 +625,11 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
       // and the Canvas button pulses again the moment the agent re-renders,
       // which is what brings them back. The manual control stays for anyone who
       // wants to leave sooner.
-      returnTimerRef.current = setTimeout(() => {
-        returnTimerRef.current = null
-        onReturnToTerminal()
-      }, 1200)
+      // #478: the hand-off lives in the store, which lands it by CLOSING the
+      // pane (never toggling) and flags the session so the pane toggles
+      // disable meanwhile — a user click racing this window cannot double-flip
+      // the pane. The store timer also survives this panel unmounting.
+      useExcalidrawStore.getState().beginSubmitReturn(sessionId)
     } finally {
       setSubmitting(false)
     }
@@ -1252,7 +1254,9 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
             <div className="flex-1" />
             <button
               onClick={() => {
-                if (returnTimerRef.current) { clearTimeout(returnTimerRef.current); returnTimerRef.current = null }
+                // Leaving EARLY is race-safe by construction: cancel the
+                // store's pending landing first, then do the one navigation.
+                useExcalidrawStore.getState().cancelSubmitReturn(sessionId)
                 onReturnToTerminal()
               }}
               className="px-2 py-1 text-[11px] rounded border border-blue/50 text-blue hover:bg-blue/10"

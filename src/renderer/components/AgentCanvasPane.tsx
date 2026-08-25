@@ -308,6 +308,9 @@ const MARQUEE_MIN_PX = 8
 
 function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versions, onOpenLibrary, isActive }: SurfaceProps) {
   const togglePane = useExcalidrawStore((s) => s.togglePane)
+  // #478: the submit hand-back in flight — the close control disables so the
+  // submit-triggered transition is the only driver of pane state.
+  const returning = useExcalidrawStore((s) => !!s.submitReturnBySession[sessionId])
   const mode = useCanvasStore((s) => s.bySessionId[sessionId]?.interactionMode ?? 'browse')
   const setInteractionMode = useCanvasStore((s) => s.setInteractionMode)
   const setActiveVersion = useCanvasStore((s) => s.setActiveVersion)
@@ -1432,9 +1435,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         </div>
         <button
           onClick={() => togglePane(sessionId)}
+          disabled={returning}
           aria-label="Close Agent Canvas"
-          title="Close Agent Canvas"
-          className="shrink-0 p-[5px] rounded leading-none text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring"
+          title={returning ? 'Returning to the terminal…' : 'Close Agent Canvas'}
+          className="shrink-0 p-[5px] rounded leading-none text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
             <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" />
