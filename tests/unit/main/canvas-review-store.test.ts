@@ -615,13 +615,13 @@ describe('superseded rounds settle instead of stacking (#470)', () => {
     expect(state.reviews.find((r) => r.id === 'R1')?.status).toBe('submitted')
     expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(1)
 
-    // The user then glances at R1 (the panel marks it seen). The NEXT ruling —
-    // or any mutation — now settles it: one look, not a silent close.
+    // The user then glances at R1 (the panel marks it seen). The glance IS the
+    // barrier's release, and the sweep runs on it — the pill clears on the
+    // look, not one mutation later. One look, never a silent close.
     store.markAddressedNotesSeen(SID, canvasId, [r1.annotationId])
-    const r3 = roundAgainstNewVersion('R3')
-    store.resolveAnnotation(SID, r3.annotationId, 'approve', canvasId)
     expect(store.getReviewStateForSession(SID)!.annotations.find((a) => a.id === r1.annotationId))
       .toMatchObject({ state: 'stale', closedBy: 'supersede' })
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
   })
 
   it("notes still OPEN survive a later ruling whole — and settle once addressed AND seen (the 3→2→3 bounce)", () => {
@@ -635,18 +635,16 @@ describe('superseded rounds settle instead of stacking (#470)', () => {
     expect(afterRuling.reviews.find((r) => r.id === 'R1')?.status).toBe('submitted')
 
     // The agent addresses it; the user glances at it. Before #470 this
-    // re-entered "waiting on the user" and the pill bounced back up; it settles
-    // once seen instead.
+    // re-entered "waiting on the user" and the pill bounced back up; the glance
+    // settles it in the same commit (R2 is already resolved above).
     addressAndSee('R1', [r1.annotationId])
-    // The seen mark alone does not settle; a mutation runs the sweep. Nudge it
-    // with a fresh ruling on a newer round.
-    const r3 = roundAgainstNewVersion('R3')
-    const { state } = store.resolveAnnotation(SID, r3.annotationId, 'approve', canvasId)
-    expect(state.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({
+    const settled = store.getReviewStateForSession(SID)!
+    expect(settled.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({
       state: 'stale',
       closedBy: 'supersede',
     })
-    expect(state.reviews.find((r) => r.id === 'R1')?.status).toBe('resolved')
+    expect(settled.reviews.find((r) => r.id === 'R1')?.status).toBe('resolved')
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
   })
 
   it('a round the user is TRIAGING (ruled on one of its notes) is not swept from under them', () => {
@@ -666,6 +664,31 @@ describe('superseded rounds settle instead of stacking (#470)', () => {
     expect(store.getReviewStateForSession(SID)!.annotations.find((a) => a.id === n2))
       .toMatchObject({ state: 'addressed' })
     expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(1)
+  })
+
+  it('a round whose NOTE and frozen version disagree on artifact is isolated — a freeze-slip cannot carry a mockup note into a plan ruling', () => {
+    // The re-attack MAJOR: the agent renders a plan BETWEEN the user writing a
+    // mockup note and submitting, so the review freezes against the plan
+    // version while its note points at the mockup. Keyed on the frozen version
+    // alone, a plan ruling would stale the mockup note; keyed on notes+frozen,
+    // the round spans artifacts and is isolated (neither anchors nor is swept).
+    const { versionId: mockupV } = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>mock</p>', ready: true })
+    const m1 = store.upsertAnnotation(SID, { scope: 'general', note: 'mockup note', versionId: mockupV }).annotationId
+    // Agent renders a PLAN, moving activeVersionId, before the user submits.
+    canvasStore.renderVersion(SID, { mode: 'plan', html: '<!doctype html><p>plan</p>', ready: true })
+    store.submitReview(SID, 'R1', []) // freezes against the plan version
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    expect(store.getReviewStateForSession(SID)!.reviews.find((r) => r.id === 'R1')!.versionId)
+      .not.toBe(mockupV) // proves the slip happened
+    addressAndSee('R1', [m1])
+
+    // A later PLAN round, ruled on. R1 spans artifacts → untouched.
+    const { versionId: planV2 } = canvasStore.renderVersion(SID, { mode: 'plan', html: '<!doctype html><p>plan2</p>', ready: true })
+    const p1 = store.upsertAnnotation(SID, { scope: 'general', note: 'plan note', versionId: planV2 }).annotationId
+    store.submitReview(SID, 'R2', [])
+    store.resolveAnnotation(SID, p1, 'approve', canvasId)
+    expect(store.getReviewStateForSession(SID)!.annotations.find((a) => a.id === m1))
+      .toMatchObject({ state: 'addressed' })
   })
 
   it('the sweep never crosses ARTIFACTS: a plan ruling does not settle a mockup round', () => {

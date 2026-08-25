@@ -874,10 +874,23 @@ function settleReviewStatus(record: ReviewFileRecord, reviewId: string): void {
  */
 function supersededOwedReviewIds(record: ReviewFileRecord, artifactKeyByVersion: Map<string, string>): Set<string> {
   const ord = (id: string): number => Number(id.slice(1))
-  // A round's artifact — the run its frozen version belongs to. A version not
-  // in the map (should not happen: rounds freeze against ready versions) is
-  // isolated to its own key so it can only ever supersede within itself.
-  const artifactOf = (r: Review): string => artifactKeyByVersion.get(r.versionId) ?? `v:${r.versionId}`
+  // A round's artifact — derived from its NOTES' versions, not its frozen
+  // version alone. A round can freeze against a version of a DIFFERENT artifact
+  // than its notes point at: the agent's `canvas_render` moves activeVersionId,
+  // and submitReview freezes against active, so a mockup note submitted just
+  // after a plan render freezes on the plan version (re-attack round 2, MAJOR).
+  // Keyed on the frozen version alone, a plan ruling would then stale that
+  // mockup note. So a round belongs to an artifact only when its notes AND its
+  // frozen version all agree; one that spans artifacts is isolated to its own
+  // key (`span:`) — it neither anchors a sweep nor is swept, the fail-closed
+  // side. A version absent from the map keys to `v:<id>` (rounds freeze against
+  // ready versions, so this is the belt, not the norm).
+  const keyOf = (versionId: string): string => artifactKeyByVersion.get(versionId) ?? `v:${versionId}`
+  const artifactOf = (r: Review): string => {
+    const keys = new Set<string>([keyOf(r.versionId)])
+    for (const a of notesOfReview(record, r)) keys.add(keyOf(a.versionId))
+    return keys.size === 1 ? [...keys][0] : `span:${r.id}`
+  }
   // Per ARTIFACT, the highest-ordinal round the USER verifiably ruled on. Per
   // artifact, not per canvas (review round 2, security lens): a canvas holds
   // many artifacts (a plan, a mockup, a legacy build), and "the user answered
@@ -933,10 +946,14 @@ function supersededOwedReviewIds(record: ReviewFileRecord, artifactKeyByVersion:
     // true: the notes were on the user's screen before the sweep touched them.
     if (notes.some((a) => a.state === 'addressed' && !isAgentCloseable(a))) continue
     // A round the user is THEMSELVES triaging — they have ruled on one of its
-    // notes — is not settled debt. The click that ruled one note is a verdict
-    // on that note, never on its siblings, so a later round resolving must not
-    // sweep the rest of a round the user is actively working through.
-    if (notes.some((a) => a.closedBy === 'user' || a.state === 'reannotated')) continue
+    // notes with their own click (closedBy 'user') — is not settled debt. The
+    // click that ruled one note is a verdict on that note, never on its
+    // siblings, so a later round resolving must not sweep the rest of a round
+    // the user is actively working through. A 'reannotated' note is NOT a
+    // shield: the user finished with it and its replacement lives in a newer
+    // round, so its addressed round-mates are ordinary settle-able debt
+    // (re-attack round 2).
+    if (notes.some((a) => a.closedBy === 'user')) continue
     out.add(r.id)
   }
   return out
@@ -1643,6 +1660,12 @@ export function markAddressedNotesSeen(
     seen.push(a.id)
   }
   if (seen.length === 0) return { state: toState(base), seen }
+  // The glance IS the seen-barrier's release, so it is exactly the moment a
+  // round the user had already answered (by ruling a later round) becomes
+  // settle-able (#470 re-attack round 2): run the sweep here so the pill
+  // clears on the look, not one mutation later. Renderer-only path, so this
+  // adds no agent capability — it settles only what the user has now seen.
+  settleSupersededRounds(next, canvas.artifactKeyByVersion)
   commit(next)
   return { state: toState(next), seen }
 }
