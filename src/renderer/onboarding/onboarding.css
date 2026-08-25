@@ -442,3 +442,15 @@
 .ob-root .sv-caret { display: inline-block; width: 7px; height: 13px; background: var(--status-success); vertical-align: -2px; animation: sv-pulse 1s infinite; }
 @keyframes sv-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .ob-root .sv-wd-dot, .ob-root .sv-caret { animation: none; } }
+
+/* Panel + accounts vignettes (#463). Same drawn-mini language as the rest of
+   the sv- set: token colours only, pictures OF the features. */
+.ob-root .sv-panel-body { padding: 10px 14px 14px; }
+.ob-root .sv-qs { display: flex; align-items: center; gap: 8px; margin: 10px 0 12px; border: 1px solid var(--ob-line); background: var(--ob-soft); border-radius: 8px; padding: 6px 10px; font-size: 11px; color: var(--text-secondary); }
+.ob-root .sv-qs-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--ob); }
+.ob-root .sv-qs-count { font-size: 9.5px; border: 1px solid var(--border-strong); border-radius: 999px; padding: 1px 6px; color: var(--text-muted); }
+.ob-root .sv-qs-start { margin-left: auto; }
+.ob-root .sv-acct { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 11px; color: var(--text-secondary); }
+.ob-root .sv-acct-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; }
+.ob-root .sv-meter { flex: 1; height: 5px; border-radius: 999px; background: var(--surface-overlay); overflow: hidden; }
+.ob-root .sv-meter > i { display: block; height: 100%; border-radius: 999px; background: var(--ob); }

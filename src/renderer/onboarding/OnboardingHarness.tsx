@@ -85,6 +85,24 @@ const PAGES: BuiltStep[] = [
     ),
   },
   { id: 'welcome', phase: 0, render: (nav) => <WelcomeStep onNext={nav.onNext} /> },
+  {
+    id: 'whatsNewV2Fresh',
+    phase: 0,
+    // First-runners (#463): the same showcase, right after Welcome — the
+    // flagships ARE the app's introduction, so a fresh install meets them
+    // here instead of never. The component swaps its heading off the
+    // "what's new" diff framing; sectionsFor already yields the full
+    // 2.0 + 2.1 story when there is no lastSeenVersion.
+    when: () => !useAppMetaStore.getState().meta.lastSeenVersion,
+    render: (nav, _ctx, _done, run) => (
+      <WhatsNewV2Step
+        onNext={nav.onNext}
+        fresh
+        ctaLabel={run.isLast ? 'Continue' : 'Set it up →'}
+        hint={run.isLast ? 'That’s the tour.' : 'The next pages set these up, one at a time.'}
+      />
+    ),
+  },
   // The one-row command bar (#382): new in 2.1.0-beta.17, so an upgrader's
   // notes run shows it right after the release notes; the full flow shows it
   // after Welcome. Back is offered only when there is a page before it.

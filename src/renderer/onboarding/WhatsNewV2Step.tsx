@@ -75,6 +75,7 @@ const SECTIONS_21: WhatsNewSection[] = [
       { title: 'Detachable SSH.', desc: 'Runs under tmux, so a dropped VPN no longer kills the work.' },
       { title: 'Partner terminal.', desc: 'A plain shell beside Claude, now labelled so you know which is which.' },
       { title: 'One row.', desc: 'The tools and your command buttons sit in a single row under the terminal.', seeIt: 'oneRow' },
+      { title: 'Two-mode panel.', desc: 'Saved configs and Running sessions each get a tab, with Quick Start pins — and the panel resizes.', seeIt: 'panel' },
     ],
   },
   {
@@ -88,7 +89,7 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'Accounts & usage',
     items: [
-      { title: 'Switch mid-session.', desc: 'Sign in to claude.ai in-app, change account without losing the session.' },
+      { title: 'Switch mid-session.', desc: 'Sign in to claude.ai in-app, change account without losing the session.', seeIt: 'accounts' },
       { title: 'Insights.', desc: 'Usage reports across every account at once, not one at a time.' },
     ],
   },
@@ -155,12 +156,17 @@ export function WhatsNewV2Step({
   onNext,
   ctaLabel = 'Set it up →',
   hint = 'The next pages set these up, one at a time.',
+  fresh = false,
 }: {
   onNext: () => void
   /** Footer CTA. The harness passes "Continue" when this page ends the run —
    *  on an ordinary upgrade there is usually nothing left to set up. */
   ctaLabel?: string
   hint?: string
+  /** #463: first-run cohort — nothing is "new" to them, so the heading
+   *  introduces the app instead of diffing it. sectionsFor already returns
+   *  the full 2.0+2.1 story when there is no lastSeenVersion. */
+  fresh?: boolean
 }) {
   const sections = sectionsFor(useAppMetaStore.getState().meta.lastSeenVersion, LINE_SOURCE)
   const count = sections.reduce((n, s) => n + s.items.length, 0)
@@ -181,7 +187,7 @@ export function WhatsNewV2Step({
       {pageIx === 0 ? (
         <div className="p2">
           <div className="p2-inner" style={{ width: 'min(920px, 95vw)' }}>
-            <h2 className="h2" data-ux-id="whatsnew-heading">What&apos;s new in {LINE}</h2>
+            <h2 className="h2" data-ux-id="whatsnew-heading">{fresh ? 'What you’re getting' : <>What&apos;s new in {LINE}</>}</h2>
             <p className="p2-sub" data-ux-id="whatsnew-sub">
               {count} things worth knowing, in one line each{showcases.length > 0 ? ` — and ${showcases.length} of them have a page of their own, just behind this one` : ''}.
             </p>
