@@ -84,6 +84,7 @@ import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
 import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
+import { useAccountGateStore } from './stores/accountGateStore'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -698,8 +699,14 @@ export default function App() {
       // marking is skipped so the picker opens per restored session
       // (pre-selecting that saved account). With <2 profiles the gate is inert
       // regardless, so the branch only bites a genuine multi-account user.
+      // Mark them RESTORED regardless of mode (#446): "was restored" is a
+      // property of the session, and it is what lets a cancelled resume-gate
+      // keep the session rather than discard it. Only the predetermined mark
+      // (which SKIPS the gate) is mode-conditional.
+      const restoredIds = restoredSessions.map((s) => s.id)
+      useAccountGateStore.getState().markRestored(restoredIds)
       if (shouldPredetermineRestoredAccount(useSettingsStore.getState().settings.resumeAccountMode)) {
-        markRestoredSessionsPredetermined(restoredSessions.map((s) => s.id))
+        markRestoredSessionsPredetermined(restoredIds)
       }
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)

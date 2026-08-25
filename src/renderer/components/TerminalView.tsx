@@ -791,16 +791,23 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               .then((chosen) => {
                 if (chosen === GATE_CANCELLED) {
                   // Cancel means different things for a NEW tab vs a RESUME
-                  // (#446). A session that already ran under an account
-                  // (session.profileId set) only reaches this gate on the
-                  // 'ask' resume path — cancelling there must NOT throw away a
-                  // session the user just chose to restore, so fall back to its
-                  // saved account and spawn (the same fail-open as .catch
-                  // below). A brand-new tab has no saved account and nothing to
-                  // keep, so cancel still discards it (its browser profile goes
-                  // with it — a no-op for a pane that never opened, #371).
-                  if (session?.profileId) {
-                    doSpawn(session.profileId)
+                  // (#446). A session RESTORED this run only reaches this gate
+                  // on the 'ask' resume path, and cancelling there must NOT
+                  // throw away a session the user chose to restore — continue
+                  // under its saved account instead. The signal is "was
+                  // restored" (gate store), not session.profileId, which
+                  // cannot tell a resume from a fresh tab (legacy
+                  // config.profileId can pin a new tab; a single-account resume
+                  // carries no pin). A brand-new tab is discarded as before
+                  // (its browser profile goes with it — a no-op for a pane that
+                  // never opened, #371).
+                  if (gate.wasRestored(sessionId)) {
+                    // Same !disposed handling as the success path: if the view
+                    // is gone, mark predetermined so the remount spawns the
+                    // saved account without re-prompting (never spawn a PTY for
+                    // a torn-down view).
+                    if (!disposed) doSpawn(session?.profileId)
+                    else gate.markPredetermined(sessionId)
                     return
                   }
                   forgetSessionBrowserProfile(sessionId)
