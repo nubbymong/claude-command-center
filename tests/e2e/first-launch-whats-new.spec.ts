@@ -24,8 +24,24 @@ const APP_VERSION = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8'),
 ).version as string
 
-/** A build the user could plausibly have come FROM: same line, one behind. */
-const PREV_VERSION = '2.1.0-beta.14'
+/**
+ * A build the user came FROM. It must be >= the NEWEST step `sinceVersion`
+ * (currently `commandBar` at 2.1.0-beta.17), so `stepsNewSince` returns
+ * nothing and the What's-New page is the WHOLE upgrade run — which is what
+ * lets this spec test the notes→resume handover directly. beta.14 (the old
+ * value) was older than beta.17, so the run also included the commandBar setup
+ * step: the last CTA read "Set it up →", not "Continue", and dismissing the
+ * notes handed to that step rather than to resume — the staleness #448 is about.
+ * Bump this when EITHER trigger fires: a later step ships with a newer
+ * `sinceVersion` (the frozen table in tests/unit/renderer/onboarding-registry.test.ts
+ * is where you will see it change), OR this build crosses into a new release
+ * line (e.g. 2.2.0) — a line crossing forces the FULL flow, not the notes-only
+ * run, and re-breaks these assertions the same way #448 did. Set it to a
+ * version on the CURRENT line, at or past the newest step. The last test guards
+ * the coupling: the final CTA reads "Continue" only when the notes page is
+ * genuinely last.
+ */
+const PREV_VERSION = '2.1.0-beta.17'
 
 let app: ElectronApplication | undefined
 let page: Page
@@ -115,11 +131,23 @@ test('an upgrade opens the full-screen page, not the What\'s New modal', async (
   await expect(page.getByRole('heading', { name: 'What\'s New', exact: true })).toHaveCount(0)
 })
 
-test('the release-notes run is one page, with no setup breadcrumbs', async () => {
-  // Nothing in this build carries a newer sinceVersion, so the notes are the
-  // whole run: the CTA ends it rather than promising pages that do not exist.
+test('the notes open on the summary page of the multi-page showcase', async () => {
+  // The 2.1 line has a per-feature showcase behind the summary (#441): the
+  // footer carries dot navigation, page 0 is the summary, and its CTA advances
+  // rather than ending the run. Assert the SHAPE (summary + N showcases), not a
+  // fixed page count, so adding a showcase page does not re-break this.
+  await expect(page.locator('[data-ux-id="whatsnew-heading"]')).toContainText("What's new in")
+  const dots = page.locator('[data-ux-id="whatsnew-dots"] .wn-fdot')
+  const total = await dots.count()
+  expect(total).toBeGreaterThan(1) // summary + at least one showcase
+  await expect(page.locator('[data-ux-id="whatsnew-dot-summary"]')).toHaveClass(/(^|\s)on(\s|$)/)
+  // On the summary the CTA advances and a Skip is offered — it does not end here.
+  await expect(page.locator('.ob-root .cta')).toHaveText('Next →')
+  await expect(page.locator('[data-ux-id="whatsnew-skip"]')).toBeVisible()
+  // A notes-only run shows NO setup breadcrumbs (the shell hides them when the
+  // run is What's-New-only). This is the sole guard on that behaviour, so it
+  // rides here rather than being dropped with the old single-page test.
   await expect(page.locator('.ob-root .crumbs')).toHaveCount(0)
-  await expect(page.locator('.ob-root .cta')).toHaveText('Continue')
 })
 
 test('the resume prompt does not paint over it', async () => {
@@ -133,12 +161,32 @@ test('the resume prompt does not paint over it', async () => {
   await expect(page.locator('#resume-sessions-heading')).toHaveCount(0)
 })
 
-test('dismissing the notes hands over to the resume prompt, then the app', async () => {
-  await page.locator('.ob-root .cta').click()
+test('paging to the last showcase page ends the run and hands over to resume', async () => {
+  // Advance through the showcase with the footer CTA. On every inner page it
+  // reads "Next →"; on the LAST page it becomes the run-ending label. Because
+  // PREV_VERSION leaves the notes as the only step, that label is "Continue"
+  // (the harness passes it when the page ends the run) — which is also the
+  // guard on PREV_VERSION's coupling: a setup step slipping in after the notes
+  // would make this read "Set it up →" instead.
+  const cta = page.locator('.ob-root .cta')
+  // Bound the walk by the actual page count (summary + showcases), not a magic
+  // number, and settle each click with a web-first assertion so the read is
+  // never racing React's flush.
+  const dots = page.locator('[data-ux-id="whatsnew-dots"] .wn-fdot')
+  const pages = await dots.count()
+  for (let i = 0; i < pages; i++) {
+    if ((await cta.textContent())?.trim() !== 'Next →') break
+    await cta.click()
+    // A real settle (not a decorative enabled-check — the CTA has no disabled
+    // state): wait for the page to actually advance, i.e. dot i+1 is now active.
+    await expect(dots.nth(i + 1)).toHaveClass(/(^|\s)on(\s|$)/)
+  }
+  await expect(cta).toHaveText('Continue')
+  await cta.click()
   await expect(page.locator('.ob-root')).toHaveCount(0, { timeout: 10000 })
   // The saved session seeded above is now the pending decision — and this is
-  // also what proves the previous assertion was not vacuous: the prompt DOES
-  // arrive, it was simply waiting its turn.
+  // also what proves the resume assertion above was not vacuous: the prompt DOES
+  // arrive, it was simply waiting its turn behind the notes.
   await expect(page.locator('#resume-sessions-heading')).toBeVisible({ timeout: 10000 })
   await expect(page.getByText('alpha')).toBeVisible()
 })
