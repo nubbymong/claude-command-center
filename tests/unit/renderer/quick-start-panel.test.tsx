@@ -92,3 +92,46 @@ describe('QuickStartPanel', () => {
     expect(container.querySelector('[data-testid="quick-start-running-count"]')!.textContent).toContain('1')
   })
 })
+
+describe('the #462 restyle — session-card language, no loud fill', () => {
+  const start = () =>
+    Array.from(container.querySelectorAll('[data-testid="quick-start-item"] button'))
+      .find((el) => el.textContent!.includes('Start')) as HTMLButtonElement
+  let container: HTMLDivElement; let root: Root
+  beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container); SETTINGS.settings.quickStartCollapsed = false; SETTINGS.settings.codexEnabled = true })
+  afterEach(() => { act(() => root.unmount()); container.remove() })
+  const render = (props: Record<string, unknown>) =>
+    act(() => root.render(React.createElement(QuickStartPanel, {
+      onLaunch: () => {}, onContextMenu: () => {}, running: new Map(), ...props,
+    } as any)))
+
+  it('Start is the subtle tinted-brand treatment, not a solid fill', () => {
+    render({ configs: [cfg('a')] })
+    const cls = start().className
+    expect(cls).not.toContain('bg-blue')
+    expect(cls).not.toContain('text-crust')
+    expect(cls).toContain('var(--brand)')
+    expect(cls).toContain('h-5')
+  })
+
+  it('the row border carries the config identity colour, not a uniform brand wash', () => {
+    render({ configs: [cfg('a', { identityColorKey: 'red' })] })
+    const row = container.querySelector('[data-testid="quick-start-item"]') as HTMLElement
+    const styleAttr = row.getAttribute('style') ?? ''
+    const chip = row.querySelector('span[aria-hidden]') as HTMLElement
+    const chipHex = chip.style.backgroundColor
+    // The tint background is the identity hex + alpha; the border mixes the
+    // same colour. Neither mentions the brand token any more.
+    expect(styleAttr).not.toContain('--brand')
+    expect(styleAttr).toContain('color-mix')
+    expect(chipHex.length).toBeGreaterThan(0)
+  })
+
+  it('a blocked Codex pin still reads as disabled in the new language', () => {
+    SETTINGS.settings.codexEnabled = false
+    render({ configs: [cfg('a', { provider: 'codex' })] })
+    expect(start().disabled).toBe(true)
+    expect(start().className).toContain('cursor-not-allowed')
+    expect(start().className).not.toContain('bg-blue')
+  })
+})

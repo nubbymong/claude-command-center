@@ -63,17 +63,20 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
         return (
           <div
             key={config.id}
-            className="mx-2 my-0.5 px-2 py-1.5 rounded-lg border flex items-center gap-1.5 transition-colors"
+            className="mx-2 my-0.5 px-2 py-1 rounded-lg border flex items-center gap-1.5 transition-colors"
             style={{
-              borderColor: 'color-mix(in srgb, var(--brand) 40%, var(--color-surface1))',
-              background: 'color-mix(in srgb, var(--brand) 9%, var(--color-surface0))',
+              // #462: the session-card recipe — a thin border in the config's
+              // own identity colour over a quiet tint of the same, instead of
+              // the old uniform brand wash (SessionRow.tsx is the reference).
+              borderColor: `color-mix(in srgb, ${chipColour} 55%, transparent)`,
+              background: chipColour + '12',
             }}
             onContextMenu={(e) => onContextMenu(e, config.id)}
             data-testid="quick-start-item"
           >
             <SessionTypeBadge kind={typeKind} />
             <span className="w-2 h-2 rounded-[3px] shrink-0" style={{ backgroundColor: chipColour }} aria-hidden />
-            <span className="text-xs font-medium truncate flex-1 text-text">{config.label}</span>
+            <span className="text-xs font-medium truncate flex-1 text-[var(--text-primary)]">{config.label}</span>
             {liveCount > 0 && (
               <span
                 className="flex items-center gap-1 text-[8.5px] font-semibold uppercase tracking-wide text-green bg-green/15 rounded-full px-1.5 py-0.5 shrink-0"
@@ -90,9 +93,11 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
               disabled={blocked}
               aria-disabled={blocked}
               className={
+                // #462: no solid brand fill — the subtle tinted language the
+                // command bar's + Add uses, sized down so the row stays short.
                 blocked
-                  ? 'h-6 px-2 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0 bg-surface1 text-overlay0/60 cursor-not-allowed'
-                  : 'h-6 px-2 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0 bg-blue text-crust hover:bg-blue/90 transition-colors focus-ring'
+                  ? 'h-5 px-2 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0 border border-[var(--border-subtle)] bg-[var(--surface-raised)] text-[var(--text-muted)] cursor-not-allowed'
+                  : 'h-5 px-2 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0 border border-[color-mix(in_srgb,var(--brand)_50%,transparent)] bg-[color-mix(in_srgb,var(--brand)_15%,transparent)] text-[var(--brand)] hover:bg-[color-mix(in_srgb,var(--brand)_25%,transparent)] transition-colors focus-ring'
               }
               title={blocked ? CODEX_OFF_LAUNCH_REASON : `Start ${config.label}`}
             >

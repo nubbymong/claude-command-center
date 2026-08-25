@@ -10,6 +10,10 @@ import { describe, it, expect } from 'vitest'
 import {
   resolveDefaultPanelTab,
   resolveQuickStartCollapsed,
+  resolveSidebarWidth,
+  SIDEBAR_WIDTH_DEFAULT,
+  SIDEBAR_WIDTH_MIN,
+  SIDEBAR_WIDTH_MAX,
   quickStartConfigs,
   DELETE_WHILE_RUNNING_REASON,
   pinMenuLabel,
@@ -139,5 +143,24 @@ describe('pin menu + count labels', () => {
   it('the count pill label reads naturally for one and many', () => {
     expect(runningCountLabel(1)).toMatch(/^1 session running/)
     expect(runningCountLabel(3)).toMatch(/^3 sessions running/)
+  })
+})
+
+describe('resolveSidebarWidth (#461)', () => {
+  it('absent or garbage falls back to the default', () => {
+    expect(resolveSidebarWidth(undefined)).toBe(SIDEBAR_WIDTH_DEFAULT)
+    expect(resolveSidebarWidth(null)).toBe(SIDEBAR_WIDTH_DEFAULT)
+    expect(resolveSidebarWidth('wide')).toBe(SIDEBAR_WIDTH_DEFAULT)
+    expect(resolveSidebarWidth(NaN)).toBe(SIDEBAR_WIDTH_DEFAULT)
+    expect(resolveSidebarWidth(Infinity)).toBe(SIDEBAR_WIDTH_DEFAULT)
+  })
+  it('clamps a hand-edited value into the working range', () => {
+    expect(resolveSidebarWidth(0)).toBe(SIDEBAR_WIDTH_MIN)
+    expect(resolveSidebarWidth(-50)).toBe(SIDEBAR_WIDTH_MIN)
+    expect(resolveSidebarWidth(99999)).toBe(SIDEBAR_WIDTH_MAX)
+  })
+  it('keeps an in-range value (rounded)', () => {
+    expect(resolveSidebarWidth(300)).toBe(300)
+    expect(resolveSidebarWidth(300.6)).toBe(301)
   })
 })

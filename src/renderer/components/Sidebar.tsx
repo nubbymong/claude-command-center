@@ -33,7 +33,7 @@ import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
 import { runningConfigCounts } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import QuickStartPanel from './sidebar/QuickStartPanel'
-import { resolveDefaultPanelTab, launchableInGroup, launchableInSection, type PanelTab } from './sidebar/sessionsPanelState'
+import { resolveDefaultPanelTab, resolveSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, launchableInGroup, launchableInSection, type PanelTab } from './sidebar/sessionsPanelState'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
 import ConfigHydrationNotice from './ConfigHydrationNotice'
@@ -179,6 +179,49 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const selectPanelTab = (tab: PanelTab) => {
     panelTabTouchedRef.current = true
     setPanelTab(tab)
+  }
+  // #461: draggable width. Live width is component state (per-frame updates);
+  // the settings write happens ONCE, on pointerup. The stored value is adopted
+  // when settings hydrate — but never over a width the user is/was dragging
+  // this session (same rule as the panel tab above).
+  const storedSidebarWidth = useSettingsStore((s) => s.settings.sidebarWidth)
+  const [sidebarWidth, setSidebarWidth] = useState(() => resolveSidebarWidth(storedSidebarWidth))
+  const sidebarWidthTouchedRef = useRef(false)
+  const [resizing, setResizing] = useState(false)
+  useEffect(() => {
+    if (settingsLoaded && !sidebarWidthTouchedRef.current) setSidebarWidth(resolveSidebarWidth(storedSidebarWidth))
+  }, [settingsLoaded, storedSidebarWidth])
+  // Detach mid-drag listeners if the sidebar unmounts or collapses mid-drag
+  // (the GitHubPanel resize pattern).
+  const resizeCleanupRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => resizeCleanupRef.current?.(), [])
+  const startSidebarResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    resizeCleanupRef.current?.()
+    sidebarWidthTouchedRef.current = true
+    setResizing(true)
+    const startX = e.clientX
+    const startW = sidebarWidth
+    let latest = startW
+    const onMove = (ev: PointerEvent) => {
+      // Handle is on the sidebar's RIGHT edge: dragging right widens it.
+      latest = Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, startW + (ev.clientX - startX)))
+      setSidebarWidth(latest)
+    }
+    const cleanup = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      resizeCleanupRef.current = null
+      setResizing(false)
+    }
+    const onUp = () => {
+      cleanup()
+      // One settings write per drag, not one per frame.
+      void useSettingsStore.getState().updateSettings({ sidebarWidth: latest })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    resizeCleanupRef.current = cleanup
   }
   // Roving tabIndex needs focus to FOLLOW arrow-key selection (APG tabs
   // pattern) — selection alone would leave focus on a tabIndex={-1} button.
@@ -701,9 +744,22 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
   return (
     <aside
-      className="w-64 flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag relative transition-[width] duration-200"
-      style={{ background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)', ...sideType }}
+      className={`flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag relative ${resizing ? '' : 'transition-[width] duration-200'}`}
+      style={{ width: sidebarWidth, background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)', ...sideType }}
     >
+      {/* #461: drag the right edge to resize; width persists on release. */}
+      <div
+        onPointerDown={startSidebarResize}
+        onDoubleClick={() => {
+          sidebarWidthTouchedRef.current = true
+          setSidebarWidth(resolveSidebarWidth(undefined))
+          void useSettingsStore.getState().updateSettings({ sidebarWidth: undefined })
+        }}
+        className="absolute right-0 top-0 bottom-0 w-1 z-20 cursor-col-resize hover:bg-surface1"
+        title="Drag to resize — double-click to reset"
+        data-testid="sidebar-resize-handle"
+        aria-hidden="true"
+      />
       {/* Navigation */}
       <SidebarNav
         currentView={currentView}

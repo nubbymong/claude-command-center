@@ -127,3 +127,40 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     expect(anchor).toBe(tabs().saved)
   })
 })
+
+describe('Sidebar width (#461)', () => {
+  let container: HTMLDivElement; let root: Root
+  beforeEach(() => {
+    container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container)
+    SETTINGS_STATE.isLoaded = true
+    delete SETTINGS_STATE.settings.sidebarWidth
+  })
+  afterEach(() => { act(() => root.unmount()); container.remove(); delete SETTINGS_STATE.settings.sidebarWidth })
+
+  const render = () =>
+    act(() => root.render(React.createElement(Sidebar, { currentView: 'sessions', onViewChange: () => {} } as any)))
+  const aside = () => container.querySelector('aside') as HTMLElement
+
+  it('defaults to the built-in width and carries the resize handle', () => {
+    render()
+    expect(aside().style.width).toBe('256px')
+    expect(container.querySelector('[data-testid="sidebar-resize-handle"]')).toBeTruthy()
+  })
+
+  it('adopts a stored width once settings are loaded', () => {
+    SETTINGS_STATE.settings.sidebarWidth = 320
+    render()
+    expect(aside().style.width).toBe('320px')
+  })
+
+  it('clamps a hand-edited stored width — a bad value cannot wedge the panel', () => {
+    SETTINGS_STATE.settings.sidebarWidth = 99999
+    render()
+    expect(aside().style.width).toBe('420px')
+    act(() => root.unmount())
+    root = createRoot(container)
+    SETTINGS_STATE.settings.sidebarWidth = 3
+    render()
+    expect(aside().style.width).toBe('200px')
+  })
+})
