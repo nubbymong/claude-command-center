@@ -26,6 +26,13 @@ interface AccountGateState {
   queue: PendingAccountGate[]
   /** Sessions whose next spawn already has an explicit account (restart/switch). */
   predetermined: string[]
+  /** Sessions RESTORED this app-run (#446). A property of the session, not of
+   *  the resume-account setting, so it is marked in BOTH modes. It is what
+   *  makes a cancelled resume-gate keep the session (continue under its saved
+   *  account) instead of discarding it the way a cancelled NEW-tab gate does —
+   *  session.profileId cannot tell the two apart (legacy config.profileId, and
+   *  single-account sessions that carry no pin). Never persisted. */
+  restored: string[]
 
   /** Enqueue a choice request; resolves when the modal is answered. */
   requestChoice: (
@@ -43,11 +50,16 @@ interface AccountGateState {
   markPredetermined: (sessionId: string) => void
   /** Read + clear the predetermined flag for a session. */
   consumePredetermined: (sessionId: string) => boolean
+  /** Mark sessions as restored-this-run (#446). Idempotent. */
+  markRestored: (sessionIds: string[]) => void
+  /** Was this session restored this app-run? (Not consumed — a lasting fact.) */
+  wasRestored: (sessionId: string) => boolean
 }
 
 export const useAccountGateStore = create<AccountGateState>((set, get) => ({
   queue: [],
   predetermined: [],
+  restored: [],
 
   requestChoice: (sessionId, sessionLabel, currentProfileId) =>
     new Promise<GateChoice>((resolve) => {
@@ -83,4 +95,12 @@ export const useAccountGateStore = create<AccountGateState>((set, get) => ({
     if (had) set((s) => ({ predetermined: s.predetermined.filter((id) => id !== sessionId) }))
     return had
   },
+
+  markRestored: (sessionIds) =>
+    set((s) => {
+      const add = sessionIds.filter((id) => !s.restored.includes(id))
+      return add.length ? { restored: [...s.restored, ...add] } : s
+    }),
+
+  wasRestored: (sessionId) => get().restored.includes(sessionId),
 }))

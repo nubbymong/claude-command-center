@@ -9,7 +9,7 @@ import { act } from 'react'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-const gateState: any = { queue: [], resolveChoice: vi.fn(), cancelChoice: vi.fn() }
+const gateState: any = { queue: [], restored: [], resolveChoice: vi.fn(), cancelChoice: vi.fn() }
 const profilesState: any = { profiles: [] }
 const settingsState: any = { settings: { accountAliases: {}, accountColourOverrides: {}, lastUsedAccountId: undefined } }
 
@@ -32,6 +32,7 @@ beforeEach(() => {
   root = createRoot(container)
   gateState.resolveChoice = vi.fn()
   gateState.queue = [{ sessionId: 's1', sessionLabel: 'web', currentProfileId: undefined, resolve: () => {} }]
+  gateState.restored = []
   profilesState.profiles = []
   settingsState.settings = { accountAliases: {}, accountColourOverrides: {}, lastUsedAccountId: undefined }
 })
@@ -77,6 +78,35 @@ describe('AccountLaunchGate — Last used line', () => {
     settingsState.settings.lastUsedAccountId = 'gone'
     render()
     expect(q('[data-testid="account-launch-lastused"]')).toBeNull()
+  })
+
+  it('#446: a session pinned to a DELETED account pre-selects a real account, not blank', () => {
+    // The 'ask' resume path routes an already-pinned profileId through this
+    // gate; if that account was deleted, the pre-select must fall through to
+    // primary rather than pointing at a non-existent <option> (a blank picker
+    // that then launches a dead id).
+    profilesState.profiles = [profile({ id: 'primary', isPrimary: true }), profile({ id: 'p-other', accountEmail: 'o@b.co' })]
+    gateState.queue = [{ sessionId: 's1', sessionLabel: 'web', currentProfileId: 'deleted-acct', resolve: () => {} }]
+    render()
+    const select = q('[data-testid="account-launch-select"]') as HTMLSelectElement | null
+    expect(select).not.toBeNull()
+    expect(select!.value).toBe('primary') // fell through to primary, not '' or the dead id
+    // Launch resolves a REAL account.
+    const launchBtn = Array.from(container.querySelectorAll('button')).find((b) => /launch|start/i.test(b.textContent || '')) as HTMLButtonElement
+    act(() => launchBtn.click())
+    expect(gateState.resolveChoice).toHaveBeenCalledWith('primary')
+  })
+
+  it('#446: the secondary button reads "Keep last account" on a RESTORED session, "Cancel" otherwise', () => {
+    profilesState.profiles = [profile({ id: 'primary', isPrimary: true }), profile({ id: 'p2', accountEmail: 'p2@b.co' })]
+    // Fresh session (not restored): Cancel/discard wording.
+    render()
+    expect(q('[data-testid="account-launch-cancel"]')!.textContent).toContain('Cancel')
+    act(() => root.unmount()); root = createRoot(container)
+    // Restored session: keep-and-continue wording.
+    gateState.restored = ['s1']
+    render()
+    expect(q('[data-testid="account-launch-cancel"]')!.textContent).toContain('Keep last account')
   })
 
   it('Use → then Launch resolves the gate with an ACTIVE last-used account', () => {

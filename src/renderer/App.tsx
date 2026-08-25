@@ -83,6 +83,8 @@ import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
+import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
+import { useAccountGateStore } from './stores/accountGateStore'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -688,13 +690,24 @@ export default function App() {
         }
       }
 
-      // Relaunch must CONTINUE each session under the same account it was closed
-      // on (issue #76). The account is already determined (persisted profileId),
-      // so -- like in-session Restart/Recover/Switch -- mark the restored sessions
-      // predetermined BEFORE the store restore mounts their TerminalViews, so each
-      // spawn skips the pre-spawn AccountLaunchGate re-prompt and respawns under
-      // its saved account.
-      markRestoredSessionsPredetermined(restoredSessions.map((s) => s.id))
+      // Relaunch continues each session under the account it was closed on
+      // (issue #76): the account is already determined (persisted profileId),
+      // so — like in-session Restart/Recover/Switch — mark the restored sessions
+      // predetermined BEFORE the store restore mounts their TerminalViews, so
+      // each spawn skips the pre-spawn AccountLaunchGate and respawns under its
+      // saved account. #446: this is the DEFAULT ('auto-last'); under 'ask' the
+      // marking is skipped so the picker opens per restored session
+      // (pre-selecting that saved account). With <2 profiles the gate is inert
+      // regardless, so the branch only bites a genuine multi-account user.
+      // Mark them RESTORED regardless of mode (#446): "was restored" is a
+      // property of the session, and it is what lets a cancelled resume-gate
+      // keep the session rather than discard it. Only the predetermined mark
+      // (which SKIPS the gate) is mode-conditional.
+      const restoredIds = restoredSessions.map((s) => s.id)
+      useAccountGateStore.getState().markRestored(restoredIds)
+      if (shouldPredetermineRestoredAccount(useSettingsStore.getState().settings.resumeAccountMode)) {
+        markRestoredSessionsPredetermined(restoredIds)
+      }
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
       // Per-session "hide this tool" entries key on session ids, which persist

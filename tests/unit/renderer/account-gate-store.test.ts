@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { useAccountGateStore } from '../../../src/renderer/stores/accountGateStore'
 
 function reset() {
-  useAccountGateStore.setState({ queue: [], predetermined: [] })
+  useAccountGateStore.setState({ queue: [], predetermined: [], restored: [] })
 }
 
 describe('accountGateStore', () => {
@@ -71,5 +71,27 @@ describe('accountGateStore', () => {
     store.markPredetermined('s1')
     store.markPredetermined('s1')
     expect(useAccountGateStore.getState().predetermined.filter((id) => id === 's1')).toHaveLength(1)
+  })
+
+  it('restored (#446): markRestored sets a LASTING flag (not consumed by reads)', () => {
+    const store = useAccountGateStore.getState()
+    expect(store.wasRestored('s1')).toBe(false)
+    store.markRestored(['s1', 's2'])
+    // Read twice — unlike predetermined, wasRestored does not clear.
+    expect(useAccountGateStore.getState().wasRestored('s1')).toBe(true)
+    expect(useAccountGateStore.getState().wasRestored('s1')).toBe(true)
+    expect(useAccountGateStore.getState().wasRestored('s2')).toBe(true)
+    expect(useAccountGateStore.getState().wasRestored('s3')).toBe(false)
+  })
+
+  it('markRestored is idempotent and independent of predetermined', () => {
+    const store = useAccountGateStore.getState()
+    store.markRestored(['s1'])
+    store.markRestored(['s1'])
+    expect(useAccountGateStore.getState().restored.filter((id) => id === 's1')).toHaveLength(1)
+    // Consuming predetermined does not touch the restored flag.
+    store.markPredetermined('s1')
+    useAccountGateStore.getState().consumePredetermined('s1')
+    expect(useAccountGateStore.getState().wasRestored('s1')).toBe(true)
   })
 })
