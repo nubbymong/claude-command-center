@@ -14,6 +14,8 @@ import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { getTranscriptBinder, getLogSupervisor } from '../logging/logging-service'
 import { resolveResumeTargetFromTranscript } from '../logging/transcript-discovery'
+import { isExactBindSourceActive } from '../hooks'
+import { logWarn } from '../debug-logger'
 
 const sessionIdSchema = z.string().min(1).max(200)
 
@@ -45,6 +47,17 @@ export function registerResumeHandlers(): void {
           if (row?.path) path = row.path
         } catch {
           /* durable lookup is best-effort; a miss simply yields null (fresh) */
+        }
+      }
+      // #480 hooks-off fallback: when no EXACT source can arrive (hooks disabled
+      // or gateway down), fall back to the heuristic bind and WARN, so a
+      // hooks-off user still gets app-relaunch resume. Best-effort: it can cross
+      // if several cards share one repo folder — the trade the exact-only path
+      // makes for the default (hooks-on) config.
+      if (!path && !isExactBindSourceActive()) {
+        path = getTranscriptBinder()?.getLatestTranscriptPath(sessionId) ?? null
+        if (path) {
+          logWarn(`[resume] #480 hooks-off fallback for ${sessionId}: hooks inactive, using heuristic bind (best-effort; may cross if multiple cards share this repo)`)
         }
       }
       if (!path) return null

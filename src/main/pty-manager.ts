@@ -33,7 +33,7 @@ import { buildTerminalLaunchLine } from './terminal-launch-line'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
-import { getGateway } from './hooks'
+import { getGateway, isExactBindSourceActive } from './hooks'
 import { injectHooks } from './hooks/session-hooks-writer'
 import {
   writeLocalSessionSettings,
@@ -1034,7 +1034,18 @@ export function spawnPty(
       // card's conversation when several cards ran in one repo. An exact-only
       // capture means "resume the conversation the hook confirmed for THIS
       // session, or start fresh"; a fresh start beats reopening a stranger.
-      const latest = getTranscriptBinder()?.getExactResumeTarget(sessionId)
+      const binder = getTranscriptBinder()
+      let latest = binder?.getExactResumeTarget(sessionId) ?? null
+      // Hooks-off fallback: when no EXACT source can ever arrive (hooks disabled
+      // or gateway down), fall back to the heuristic bind and WARN. In that
+      // degraded config there is no authenticated source, so best-effort resume
+      // beats never resuming — but it can cross if cards share a repo folder.
+      if (!latest && !isExactBindSourceActive()) {
+        latest = binder?.getLatestTranscriptPath(sessionId) ?? null
+        if (latest) {
+          logWarn(`[pty] #480 hooks-off resume fallback for ${sessionId}: hooks inactive, using heuristic bind ${latest} (best-effort; may cross if multiple cards share this repo)`)
+        }
+      }
       if (latest) {
         capturedResumeTarget = resolveResumeTargetFromTranscript(latest)
       }

@@ -66,4 +66,31 @@ reverted the eviction, saw the guard test fail, restored), reorder proven to hol
 rotation / dedupe / refusal / heuristic invariants. Regression tests added for
 every fix (fail-on-revert verified).
 
+### Hooks-off fallback + adversarial round 2 (BLOCKER + MAJOR)
+
+Added a fallback (user-requested): when hooks are OFF no exact bind can arrive,
+so the resume paths fall back to the heuristic bind AND warn -- best-effort
+resume for a config with no authenticated source. Gated by a new
+`isExactBindSourceActive()` in `src/main/hooks/index.ts`.
+
+A focused attacker on that gate found two holes, both fixed:
+
+- BLOCKER: a SECOND enrichment path (`session-resume-enrich.ts`, wired in
+  `index.ts`, the `session:save` / exit-flush choke point) still stamped
+  resumeUuid from the heuristic `getLatestTranscriptPath` with NO gate, and
+  OVERWROTE the renderer's gated value -- so the same-repo cross survived on the
+  relaunch path even with hooks on. Fix: route that path through
+  `getExactResumeTarget` + the same gated heuristic fallback.
+- MAJOR: `isExactBindSourceActive()` keyed on the live `gateway.listening` flag,
+  which blips false during gateway startup / crash-backoff / manual restart, so
+  the fallback unlocked in the default (hooks-on) config during those windows.
+  Fix: key ONLY on the `hooksEnabled` SETTING.
+
+Round-2 re-attack after the fixes: PASS. One MINOR (documented, by design): a
+permanently-failed gateway with hooks ON gives fresh resume rather than a
+heuristic guess -- fails safe, and the durable table still recovers any session
+that achieved an exact bind once. Regression tests: `exact-bind-gate.test.ts`,
+`enrich-cross-attack-480.test.ts`, plus hooks-on/off cases in
+`session-resume-enrich.test.ts` and `resume-ipc-handlers.test.ts`.
+
 **Ref:** #480.

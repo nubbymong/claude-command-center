@@ -11,11 +11,22 @@ vi.mock('electron', () => ({
 // supervisor query) and falls back to the live EXACT bind — never a heuristic
 // guess. Mock both accessors.
 const getExactResumeTargetSpy = vi.fn<(id: string) => string | null>()
+const getLatestTranscriptPathSpy = vi.fn<(id: string) => string | null>()
 const querySpy = vi.fn<(kind: string, args: Record<string, unknown>) => Promise<unknown[]>>()
 vi.mock('../../../src/main/logging/logging-service', () => ({
-  getTranscriptBinder: () => ({ getExactResumeTarget: getExactResumeTargetSpy }),
+  getTranscriptBinder: () => ({
+    getExactResumeTarget: getExactResumeTargetSpy,
+    getLatestTranscriptPath: getLatestTranscriptPathSpy,
+  }),
   getLogSupervisor: () => ({ query: querySpy }),
 }))
+
+// #480: the hooks-off fallback gate — exact-only when hooks are active.
+const isExactBindSourceActiveSpy = vi.fn<() => boolean>()
+vi.mock('../../../src/main/hooks', () => ({
+  isExactBindSourceActive: () => isExactBindSourceActiveSpy(),
+}))
+vi.mock('../../../src/main/debug-logger', () => ({ logWarn: () => {} }))
 
 // Stub the pure resolver so the handler test stays a pure IPC test.
 const resolveSpy = vi.fn<(p: string) => { uuid: string; cwd: string } | null>()
@@ -31,8 +42,12 @@ describe('resume IPC handler (getResumeTarget)', () => {
   beforeEach(() => {
     handlers.clear()
     getExactResumeTargetSpy.mockReset()
+    getLatestTranscriptPathSpy.mockReset()
+    getLatestTranscriptPathSpy.mockReturnValue(null)
     querySpy.mockReset()
     querySpy.mockResolvedValue([]) // durable miss by default
+    isExactBindSourceActiveSpy.mockReset()
+    isExactBindSourceActiveSpy.mockReturnValue(true) // hooks active => exact-only, no fallback
     resolveSpy.mockReset()
     registerResumeHandlers()
   })
@@ -70,6 +85,27 @@ describe('resume IPC handler (getResumeTarget)', () => {
     getExactResumeTargetSpy.mockReturnValue(null)
     querySpy.mockRejectedValue(new Error('worker down'))
     const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
+    expect(out).toBeNull()
+  })
+
+  it('hooks-off: falls back to the heuristic bind and still resolves', async () => {
+    isExactBindSourceActiveSpy.mockReturnValue(false)
+    getExactResumeTargetSpy.mockReturnValue(null)
+    querySpy.mockResolvedValue([])
+    getLatestTranscriptPathSpy.mockReturnValue('/home/.claude/projects/p/u.jsonl')
+    resolveSpy.mockReturnValue({ uuid: 'u', cwd: 'F:/wt' })
+    const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
+    expect(getLatestTranscriptPathSpy).toHaveBeenCalledWith('s1')
+    expect(out).toEqual({ uuid: 'u', cwd: 'F:/wt' })
+  })
+
+  it('hooks-on: never falls back to the heuristic (exact-only, no cross)', async () => {
+    isExactBindSourceActiveSpy.mockReturnValue(true)
+    getExactResumeTargetSpy.mockReturnValue(null)
+    querySpy.mockResolvedValue([])
+    getLatestTranscriptPathSpy.mockReturnValue('/home/.claude/projects/p/sibling.jsonl')
+    const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
+    expect(getLatestTranscriptPathSpy).not.toHaveBeenCalled()
     expect(out).toBeNull()
   })
 
