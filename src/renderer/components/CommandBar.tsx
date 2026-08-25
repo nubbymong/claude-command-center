@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useCommandStore, CustomCommand, CommandSection } from '../stores/commandStore'
 import { bandMembers, type CommandBand } from '../lib/command-bands'
 import { useSessionStore } from '../stores/sessionStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useCommandBarStore, type CoreToolId, type CommandBarOverflow, type HiddenCoreTools } from '../stores/commandBarStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { useLogsStore } from '../stores/useLogsStore'
@@ -90,7 +91,7 @@ function PermissionsPresetDropdown({ value, onChange }: { value: CodexPreset; on
   )
 }
 
-const TOOL_LABEL: Record<CoreToolId, string> = { snap: 'Snap', canvas: 'Canvas', logs: 'Logs', browser: 'Browser', partner: 'Partner', notes: 'Notes' }
+const TOOL_LABEL: Record<CoreToolId, string> = { snap: 'Snap', canvas: 'Canvas', logs: 'Logs', browser: 'Browser', artifacts: 'Artifacts', partner: 'Partner', notes: 'Notes' }
 const NO_HIDDEN: HiddenCoreTools = { everywhere: [], bySession: {} }
 
 interface Props {
@@ -209,6 +210,23 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     () => sessionCapabilities(session ?? ({ provider: 'claude', sessionType, shellOnly: mainPaneIsShell, configId } as never)),
     [session, sessionType, mainPaneIsShell, configId],
   )
+
+  // #501: the Artifacts core tool opens this account's artifacts on claude.ai via
+  // the existing accountWeb.openArtifacts IPC (the Sidebar's per-session action).
+  // It applies only to a local, non-shell session that resolves to an account
+  // profile (its own, else the primary) — the same guard the Sidebar uses.
+  const primaryProfileId = useAccountProfilesStore((s) => s.profiles.find((p) => p.isPrimary)?.id)
+  const artifactsProfileId = session?.profileId ?? primaryProfileId
+  const artifactsApplicable =
+    !!session && !session.shellOnly && session.sessionType === 'local' && !!artifactsProfileId
+  const openArtifacts = useCallback(() => {
+    if (!artifactsProfileId) return
+    trackUsage('artifacts.opened')
+    void window.electronAPI.accountWeb
+      ?.openArtifacts?.(artifactsProfileId)
+      .then((r) => { if (r && !r.ok) alert(`Could not open artifacts for this account: ${r.error}`) })
+      .catch(() => alert('Could not open artifacts — the app could not reach the account window.'))
+  }, [artifactsProfileId])
 
   const visibleCommands = useMemo(
     () => commands.filter((c) => c.scope === 'global' || (c.scope === 'config' && c.configId === configId)),
@@ -765,6 +783,22 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           {!hiddenHere.has('canvas') && coreWrap('canvas', <AgentCanvasButton sessionId={sessionId} />)}
           {!hiddenHere.has('logs') && coreWrap('logs', <LogsButton sessionId={sessionId} structuralReason={caps.logsEmptyReason} remoteHost={caps.remoteHost} />)}
           {!hiddenHere.has('browser') && coreWrap('browser', <WebviewButton sessionId={webviewKey} />)}
+          {!hiddenHere.has('artifacts') && artifactsApplicable && coreWrap('artifacts', (
+            <button
+              type="button"
+              onClick={openArtifacts}
+              className="relative flex items-center gap-1.5 px-2 h-7 text-xs rounded border transition-colors whitespace-nowrap shrink-0 focus-ring bg-surface0/60 border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text"
+              title="Open this account's artifacts on claude.ai"
+              aria-label="Open artifacts"
+              data-testid="artifacts-open"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+              </svg>
+              Artifacts
+            </button>
+          ))}
           {partnerEnabled && onTogglePartner && !hiddenHere.has('partner') && coreWrap('partner', (
             <button
               onClick={onTogglePartner}
@@ -886,6 +920,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             : menu.tool === 'canvas' ? 'Agent Canvas · reviews and mock-ups'
             : menu.tool === 'snap' ? `a screenshot, sent to ${caps.agentName || 'the agent'}`
             : menu.tool === 'notes' ? 'encrypted notes · Global and this config'
+            : menu.tool === 'artifacts' ? 'this account\'s artifacts on claude.ai'
             : 'the browser pane'}
           ownActions={
             menu.tool === 'partner' && onTogglePartner ? [{ label: isPartnerActive ? 'Back to the main terminal' : 'Open partner shell', onClick: () => { setMenu(null); onTogglePartner() }, testId: 'menu-partner-toggle' }]
@@ -898,6 +933,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                 { label: `Dismiss everything waiting on me (${canvasQueue})…`, onClick: () => { setMenu(null); setConfirm({ kind: 'canvas-dismiss' }) }, testId: 'menu-canvas-dismiss-all' },
                 { label: `Show what's waiting (${canvasQueue})`, onClick: () => { setMenu(null); window.dispatchEvent(new CustomEvent('ccc:canvasShowQueue', { detail: { sessionId } })) }, testId: 'menu-canvas-show-queue' },
               ]
+            : menu.tool === 'artifacts' ? [{ label: 'Open artifacts', onClick: () => { setMenu(null); openArtifacts() }, testId: 'menu-artifacts-open' }]
             : undefined}
           onHide={(where) => requestHide(menu.tool, where)}
           onClose={() => setMenu(null)}

@@ -220,7 +220,7 @@ describe('Command bar card -- writes the shared commandBarStore', () => {
 describe('Core tools card -- where hidden tools come back', () => {
   it('lists one row per Core tool, each "Shown" by default; Snap and Logs carry their caveats', () => {
     render()
-    expect(CORE_TOOL_IDS).toEqual(['snap', 'canvas', 'logs', 'browser', 'partner', 'notes'])
+    expect(CORE_TOOL_IDS).toEqual(['snap', 'canvas', 'logs', 'browser', 'artifacts', 'partner', 'notes'])
     for (const tool of CORE_TOOL_IDS) {
       expect(byTestId(`settings-core-${tool}`), `row for ${tool}`).not.toBeNull()
       expect(must(`settings-core-${tool}-status`).textContent?.startsWith('Shown'), `${tool} status`).toBe(true)
