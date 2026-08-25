@@ -61,7 +61,7 @@ export interface ElectronAPI {
   }
   accountUsage: {
     fetchAll: () => Promise<import('../shared/usage-types').AccountUsage[]>
-    fetchOne: (id: string) => Promise<import('../shared/usage-types').AccountUsage | null>
+    fetchOne: (id: string, opts?: { noRefresh?: boolean }) => Promise<import('../shared/usage-types').AccountUsage | null>
   }
   window: {
     minimize: () => void
@@ -670,7 +670,7 @@ const electronAPI: ElectronAPI = {
   },
   accountUsage: {
     fetchAll: () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL),
-    fetchOne: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id }),
+    fetchOne: (id: string, opts?: { noRefresh?: boolean }) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id, noRefresh: opts?.noRefresh }),
   },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),

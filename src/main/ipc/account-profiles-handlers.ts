@@ -31,8 +31,8 @@ export function registerAccountProfilesHandlers(): void {
 
   // All-accounts usage overview: fetch each profile's usage directly (no session).
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL, () => fetchAllAccountsUsage())
-  ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string }) =>
-    p && isValidProfileId(p.id) ? fetchAccountUsage(p.id) : null,
+  ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string; noRefresh?: boolean }) =>
+    p && isValidProfileId(p.id) ? fetchAccountUsage(p.id, { noRefresh: p.noRefresh === true }) : null,
   )
 
   // Renderer pull: the reliable per-session account identity captured at spawn.

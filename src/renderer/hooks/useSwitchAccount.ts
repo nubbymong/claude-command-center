@@ -63,14 +63,18 @@ export function useSwitchAccount(
       //    synchronously inside, before restart() reads session.profileId.
       void persistLastUsedAccount(sessionId, newProfileId)
       // 2b. Refresh the picked account's usage snapshot (#447). The pick is the
-      //     one moment we know the user cares about this account's numbers, and
-      //     BEFORE the respawn is the only window its token is not yet in use by
-      //     THIS session — fetchAccountUsage refuses an in-use profile's silent
-      //     refresh and falls back to the stale snapshot. Fire-and-forget and
-      //     null-guarded: the default account (undefined) has no profile row to
-      //     fetch, and a usage fetch must never block or fail the switch.
+      //     one moment we know the user cares about this account's numbers.
+      //     `noRefresh` is REQUIRED here (adversarial review): the respawn on
+      //     the next line spawns onto this same profile, and a plain fetch would
+      //     rotate a lapsed non-primary account's single-use refresh token in
+      //     the window before that child registers as a live consumer — spending
+      //     the token the child is about to use and logging the account out. So
+      //     this never rotates: a valid token still fetches live, a lapsed one
+      //     falls back to the last-known snapshot. Fire-and-forget and
+      //     null-guarded (the default account has no profile row); a usage fetch
+      //     must never block or fail the switch.
       if (newProfileId) {
-        void window.electronAPI.accountUsage.fetchOne(newProfileId).catch(() => {})
+        void window.electronAPI.accountUsage.fetchOne(newProfileId, { noRefresh: true }).catch(() => {})
       }
       // 3. Respawn via the existing Restart path, forcing the new profileId so
       //    the remount reads the new account; resume is inherited from Restart.
