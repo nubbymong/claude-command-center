@@ -27,6 +27,10 @@ export default function AccountLaunchGate() {
   const pending = useAccountGateStore((s) => s.queue[0] ?? null)
   const resolveChoice = useAccountGateStore((s) => s.resolveChoice)
   const cancelChoice = useAccountGateStore((s) => s.cancelChoice)
+  // #446: on a RESTORED session (the 'ask' resume path) Cancel keeps the
+  // session and continues under its saved account — it does NOT discard the
+  // tab the way it does for a brand-new launch — so the button says so.
+  const isRestore = useAccountGateStore((s) => s.restored.includes(pending?.sessionId ?? ''))
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
@@ -188,9 +192,11 @@ export default function AccountLaunchGate() {
             variant="secondary"
             onClick={cancelChoice}
             testId="account-launch-cancel"
-            title="Don't launch; close this session tab"
+            title={isRestore
+              ? 'Keep this session and continue under its last account'
+              : "Don't launch; close this session tab"}
           >
-            Cancel
+            {isRestore ? 'Keep last account' : 'Cancel'}
           </DialogButton>
           <DialogButton
             variant="primary"
