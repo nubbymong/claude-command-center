@@ -421,17 +421,6 @@ describe('x-ray OFF — the page behaves like a normal browser tab', () => {
     expect(overlay().textContent).not.toContain('button "Save"')
   })
 
-  it('#469: Inspect and X-Ray are one fused capsule, and the feature is named on it', async () => {
-    await renderPane('on')
-    const capsule = container.querySelector('[data-testid="canvas-inspect-capsule"]')!
-    expect(capsule, 'the fused capsule').toBeTruthy()
-    // Both halves live INSIDE the one bordered control...
-    expect(capsule.querySelector('[data-testid="canvas-tool-inspect"]')).toBeTruthy()
-    expect(capsule.querySelector('[data-testid="canvas-xray-mode"]')).toBeTruthy()
-    // ...and the segment carries the feature's name.
-    expect(capsule.textContent).toContain('X-RAY')
-  })
-
   it('says in the mode strip that hovering and clicking do nothing', async () => {
     await renderPane('off')
     expect(container.textContent).toContain('X-Ray is off')
@@ -612,6 +601,17 @@ describe('a request the frame never acknowledged', () => {
 })
 
 describe('the redesigned chrome (item C)', () => {
+  it('#469: Inspect and X-Ray are one fused capsule, and the feature is named on it', async () => {
+    await renderPane('on')
+    const capsule = container.querySelector('[data-testid="canvas-inspect-capsule"]')!
+    expect(capsule, 'the fused capsule').toBeTruthy()
+    // Both halves live INSIDE the one bordered control...
+    expect(capsule.querySelector('[data-testid="canvas-tool-inspect"]')).toBeTruthy()
+    expect(capsule.querySelector('[data-testid="canvas-xray-mode"]')).toBeTruthy()
+    // ...and the segment carries the feature's name.
+    expect(capsule.textContent).toContain('X-RAY')
+  })
+
   it('leads with the mode as the title, with a keel line', async () => {
     await renderPane('on')
     // A 'design' version reads as MOCKUP MODE (plan/uat are the other two).

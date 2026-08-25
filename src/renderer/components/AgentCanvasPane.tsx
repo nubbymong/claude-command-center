@@ -1334,7 +1334,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               over a document of steps, and Off would break note anchoring —
               so the segments are shown, not hidden, but inert with a lock. */}
           <div
-            className="flex items-stretch h-[26px] rounded-md overflow-hidden border transition-colors"
+            // No overflow-hidden: .focus-ring is an outward box-shadow and
+            // clipping it left keyboard focus invisible (review HIGH). The end
+            // children carry their own inner radii instead.
+            className="flex items-stretch h-[26px] rounded-md border transition-colors"
             style={{ borderColor: inspectActive ? 'color-mix(in srgb, var(--brand) 52%, transparent)' : 'var(--border-subtle)' }}
             data-testid="canvas-inspect-capsule"
           >
@@ -1344,7 +1347,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 setInteractionMode(sessionId, 'browse')
               }}
               aria-pressed={inspectActive}
-              className={`flex items-center gap-1.5 px-2.5 text-[12px] leading-none transition-colors focus-ring ${
+              className={`flex items-center gap-1.5 px-2.5 rounded-l-[5px] text-[12px] leading-none transition-colors focus-ring ${
                 inspectActive ? 'font-semibold text-[var(--brand)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
               style={{ background: inspectActive ? 'color-mix(in srgb, var(--brand) 15%, transparent)' : 'color-mix(in srgb, var(--surface-panel) 60%, transparent)' }}
@@ -1360,7 +1363,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               style={{ background: inspectActive ? 'color-mix(in srgb, var(--brand) 35%, transparent)' : 'var(--border-subtle)' }}
             />
             <div
-              className={`flex items-center text-[11px] ${inspectPaused ? 'opacity-40' : ''}`}
+              className={`flex items-center rounded-r-[5px] text-[11px] ${inspectPaused ? 'opacity-40' : ''}`}
               style={{ background: inspectActive ? 'color-mix(in srgb, var(--brand) 6%, transparent)' : 'color-mix(in srgb, var(--surface-panel) 60%, transparent)' }}
               role="group"
               aria-label="X-Ray mode"
@@ -1369,7 +1372,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             >
               <span
                 className="pl-2 pr-1 text-[9px] font-bold tracking-[0.08em] leading-none"
-                style={{ color: 'var(--text-muted)' }}
+                style={{ color: 'var(--text-secondary)' }}
                 aria-hidden
               >
                 X-RAY
@@ -1382,7 +1385,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                     onClick={() => { if (!planLocked) setXrayMode(option.value) }}
                     aria-pressed={selected}
                     disabled={planLocked}
-                    className="px-2 self-stretch leading-none transition-colors focus-ring disabled:cursor-default"
+                    className="px-2 self-stretch rounded-none last:rounded-r-[5px] leading-none transition-colors focus-ring disabled:cursor-default"
                     style={selected
                       ? { background: 'color-mix(in srgb, var(--brand) 18%, transparent)', color: 'var(--brand)', fontWeight: 600 }
                       : { color: 'var(--text-secondary)' }}

@@ -63,7 +63,7 @@ export default function CanvasXrayReadout({ hit, label, pointerOwner }: Props) {
       data-testid="canvas-xray-readout"
     >
       <div className="flex items-center gap-2">
-        <span className="font-medium text-subtext1">X-ray</span>
+        <span className="font-medium text-subtext1">X-Ray</span>
         <span className="text-[11px] text-overlay1">stealth — nothing is drawn on the page</span>
       </div>
       {hit ? (
