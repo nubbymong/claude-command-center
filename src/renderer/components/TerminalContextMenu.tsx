@@ -14,10 +14,13 @@ interface Props {
   hasSelection: boolean
   onCopy: () => void
   onPaste: () => void
+  /** Repaint + geometry re-sync (#503) — the rescue for a pane something wrote
+   *  over (an ssh host-key prompt, a console-attached tool). */
+  onRepaint: () => void
   onClose: () => void
 }
 
-export default function TerminalContextMenu({ x, y, hasSelection, onCopy, onPaste, onClose }: Props) {
+export default function TerminalContextMenu({ x, y, hasSelection, onCopy, onPaste, onRepaint, onClose }: Props) {
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Clamp into the viewport after first paint (below-right of the pointer when
@@ -85,6 +88,17 @@ export default function TerminalContextMenu({ x, y, hasSelection, onCopy, onPast
         <button type="button" className={itemClass} onClick={onPaste}>
           <span>Paste</span>
           <span style={{ color: 'var(--text-muted)' }}>Ctrl+V</span>
+        </button>
+        <div className="my-1 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
+        <button
+          type="button"
+          className={itemClass}
+          onClick={onRepaint}
+          title="Redraw the terminal and re-confirm its size — for when something printed over the pane and the text stays garbled"
+          data-testid="terminal-ctx-repaint"
+        >
+          <span>Repaint terminal</span>
+          <span style={{ color: 'var(--text-muted)' }}>Ctrl+Alt+R</span>
         </button>
       </div>
     </div>

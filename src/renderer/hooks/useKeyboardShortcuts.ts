@@ -4,6 +4,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { requestCloseSession } from '../stores/sshCloseStore'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { captureGlyphDiagnostic } from '../utils/glyphDiagnostic'
+import { requestResync } from '../components/terminal/repaintRegistry'
 import { sendImageToSession } from '../utils/imageTransfer'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
@@ -141,6 +142,15 @@ export function useKeyboardShortcuts(
         e.preventDefault()
         e.stopPropagation()
         void captureGlyphDiagnostic(useSessionStore.getState().activeSessionId)
+      }
+      // Repaint + geometry re-sync (#503): pressed while staring at a pane
+      // something printed over — same capture-phase + AltGr reasoning as the
+      // glyph capture above.
+      if (matchesShortcut(e, shortcuts.repaintTerminal) && !e.getModifierState?.('AltGraph')) {
+        e.preventDefault()
+        e.stopPropagation()
+        const sid = useSessionStore.getState().activeSessionId
+        if (sid) requestResync(sid)
       }
     }
 

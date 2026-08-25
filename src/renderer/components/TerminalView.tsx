@@ -31,7 +31,8 @@ import TerminalContextMenu from './TerminalContextMenu'
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { installTerminalKeybindings } from './terminal/terminalKeybindings'
-import { registerRepainter } from './terminal/repaintRegistry'
+import { registerRepainter, requestResync } from './terminal/repaintRegistry'
+import { createGeometryResync, type GeometryResync } from './terminal/geometryResync'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS, gpuRenderingEnabled } from '../stores/settingsStore'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostics'
@@ -414,6 +415,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let unsubData: (() => void) | null = null
     let unsubExit: (() => void) | null = null
     let disposeKeybindings: (() => void) | null = null
+    let geometryResync: GeometryResync | null = null
     let handleContextMenu: ((e: MouseEvent) => void) | null = null
     let handlePaste: ((e: ClipboardEvent) => void) | null = null
     let disposed = false
@@ -609,8 +611,27 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // That text never passes through the pty stream, so xterm cannot know its
       // model is stale — only an unconditional repaint puts the two back in
       // agreement.
+      //
+      // #503 adds resync: the shrink→restore geometry nudge (same shape as the
+      // post-resume one below) followed by the strong repaint, hand-pulled via
+      // Ctrl+Alt+R / the context menu for splice damage a repaint alone cannot
+      // fix — a console-direct writer (ssh's host-key prompt) can leave the
+      // TUI's live region desynced from the real rows, and only the TUI
+      // re-laying-out at reconfirmed geometry repairs that.
+      geometryResync = createGeometryResync({
+        getGeometry: () => ({ cols: term?.cols ?? 0, rows: term?.rows ?? 0 }),
+        resizePty: (c, r) => {
+          ptyResizeCount += 1
+          try { window.electronAPI.pty.resize(sessionId, c, r) } catch { /* main gone */ }
+        },
+        refresh: () => { try { term?.refresh(0, (term?.rows ?? 1) - 1) } catch { /* disposed */ } },
+        settleStrong: () => repainter?.settleStrong(),
+        isBusy: () => resumeNudgeShrunk,
+        onRestore: (c, r) => { lastSentCols = c; lastSentRows = r },
+      })
       unregisterRepainter = registerRepainter(sessionId, {
         settleStrong: (quietMs, intervalMs) => repainter?.settleStrong(quietMs, intervalMs),
+        resync: () => { geometryResync?.fire() },
       })
 
       // #119: cursor options passed to the Terminal constructor do NOT reliably
@@ -1230,6 +1251,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (handlePaste) container.removeEventListener('paste', handlePaste, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
       unregisterRepainter?.()
+      geometryResync?.dispose()
       repainter?.dispose()
       if (repainterRef.current === repainter) repainterRef.current = null
       resizeObserver?.disconnect()
@@ -1331,6 +1353,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           hasSelection={ctxMenu.hasSelection}
           onCopy={ctxMenuCopy}
           onPaste={ctxMenuPaste}
+          onRepaint={() => {
+            requestResync(sessionId)
+            closeCtxMenu()
+          }}
           onClose={closeCtxMenu}
         />
       )}
