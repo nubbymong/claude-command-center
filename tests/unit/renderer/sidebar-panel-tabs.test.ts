@@ -75,7 +75,7 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     expect(container.querySelector('[data-testid="saved-tab"]')).toBeNull()
   })
 
-  it('clicking Saved switches mode: the launcher (search + New config) replaces the session list', () => {
+  it('clicking Saved switches mode: the launcher (search + New) replaces the session list', () => {
     render()
     act(() => { tabs().saved!.click() })
     expect(tabs().saved!.getAttribute('aria-selected')).toBe('true')
@@ -143,6 +143,13 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     act(() => { tabs().saved!.click() })
     expect(menu()).toBeNull()
     expect(newButton().getAttribute('aria-expanded')).toBe('false')
+
+    // Same latch via the other keyboard-only unmount: collapsing to the rail.
+    act(() => { newButton().click() })
+    expect(menu()).toBeTruthy()
+    act(() => root.render(React.createElement(Sidebar, { currentView: 'sessions', onViewChange: () => {}, collapsed: true } as any)))
+    act(() => root.render(React.createElement(Sidebar, { currentView: 'sessions', onViewChange: () => {} } as any)))
+    expect(menu()).toBeNull()
   })
 
   it('clicking Running returns to the session list', () => {

@@ -833,7 +833,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           }`}
           data-testid="panel-tab-saved"
           /* The tour's "Saved configs live here" anchor: on the always-mounted
-             tab, NOT the "+ New config" button inside the Saved body — the
+             tab, NOT the "+ New" button inside the Saved body — the
              panel defaults to Running, and an unresolvable selector makes
              GuidedTour.available() silently skip the step. */
           data-tour="new-config"
