@@ -23,6 +23,10 @@ const captureGlyphDiagnostic = vi.fn(async () => ({ ok: true }))
 vi.mock('../../../src/renderer/utils/glyphDiagnostic', () => ({
   captureGlyphDiagnostic: (...args: unknown[]) => captureGlyphDiagnostic(...args),
 }))
+const requestResync = vi.fn(() => true)
+vi.mock('../../../src/renderer/components/terminal/repaintRegistry', () => ({
+  requestResync: (...args: unknown[]) => requestResync(...args),
+}))
 
 const { useKeyboardShortcuts } = await import('../../../src/renderer/hooks/useKeyboardShortcuts')
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
@@ -39,6 +43,7 @@ let root: Root
 
 beforeEach(() => {
   captureGlyphDiagnostic.mockClear()
+  requestResync.mockClear()
   useSessionStore.setState({ sessions: [], activeSessionId: 's1', renamingSessionId: null } as any)
   useSettingsStore.setState({ settings: { keyboardShortcuts: DEFAULT_SHORTCUTS } as any })
   container = document.createElement('div')
@@ -109,5 +114,71 @@ describe('Ctrl+Alt+G glyph capture survives xterm (#374, beta.17 silence)', () =
     // Load-bearing now the listener runs BEFORE xterm: the event must reach
     // the terminal unprevented so AltGr text entry still types.
     expect(e.defaultPrevented).toBe(false)
+  })
+})
+
+/** A keydown for Ctrl+Alt+R (#503), with the same knobs plus key-repeat. */
+function chordR(opts: { altGraph?: boolean; repeat?: boolean } = {}): KeyboardEvent {
+  const e = new KeyboardEvent('keydown', {
+    key: 'r', ctrlKey: true, altKey: true, repeat: opts.repeat ?? false, bubbles: true, cancelable: true,
+  })
+  Object.defineProperty(e, 'getModifierState', { value: (m: string) => (m === 'AltGraph' ? (opts.altGraph ?? false) : false) })
+  return e
+}
+
+describe('Ctrl+Alt+R repaint + re-sync (#503)', () => {
+  it('fires even when xterm-style handling stops propagation at its textarea', () => {
+    const term = document.createElement('textarea')
+    container.appendChild(term)
+    term.addEventListener('keydown', (e) => { e.stopPropagation(); e.preventDefault() }, true)
+    act(() => { term.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledTimes(1)
+  })
+
+  it('repairs the terminal the chord was pressed IN, resolved by DOM ancestry', () => {
+    // The partner shell registers under `${id}-partner` and stays mounted while
+    // hidden — the active session id alone would nudge the hidden main pty.
+    const pane = document.createElement('div')
+    pane.setAttribute('data-terminal-session', 's1-partner')
+    const term = document.createElement('textarea')
+    pane.appendChild(term)
+    container.appendChild(pane)
+    act(() => { term.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledWith('s1-partner')
+  })
+
+  it('falls back to the active session when focus is outside any terminal', () => {
+    act(() => { window.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledWith('s1')
+  })
+
+  it('ignores key-repeat — a held chord must not storm the pty with resizes', () => {
+    act(() => { window.dispatchEvent(chordR({ repeat: true })) })
+    expect(requestResync).not.toHaveBeenCalled()
+  })
+
+  it('the AltGr guard holds here too', () => {
+    const e = chordR({ altGraph: true })
+    act(() => { window.dispatchEvent(e) })
+    expect(requestResync).not.toHaveBeenCalled()
+    expect(e.defaultPrevented).toBe(false)
+  })
+
+  it('yields to the Settings shortcut recorder / Test box', () => {
+    const box = document.createElement('div')
+    box.setAttribute('data-shortcut-capture', '')
+    container.appendChild(box)
+    act(() => { box.dispatchEvent(chordR()) })
+    expect(requestResync).not.toHaveBeenCalled()
+  })
+
+  it('still fires for a user whose persisted shortcut map predates the chord', () => {
+    // The hydration shape that killed new chords: a saved keyboardShortcuts
+    // object from an older release has no repaintTerminal key, and a plain
+    // `|| DEFAULT_SHORTCUTS` substitution never fires because the object
+    // EXISTS. The handler must merge over the defaults instead.
+    useSettingsStore.setState({ settings: { keyboardShortcuts: { closeSession: 'Ctrl+W' } } as any })
+    act(() => { window.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledTimes(1)
   })
 })

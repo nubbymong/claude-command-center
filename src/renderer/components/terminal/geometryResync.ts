@@ -92,8 +92,19 @@ export function createGeometryResync(deps: GeometryResyncDeps): GeometryResync {
       restoreTimer = null
     }
     if (shrunkFrom) {
+      // Prefer LIVE geometry, same rule as the restore: a user resize can land
+      // inside the shrink window, and the pty outlives this view — restoring
+      // the stale capture would leave it at the pre-resize size. The capture
+      // is only the fallback for a term already disposed under us.
+      let target = shrunkFrom
       try {
-        deps.resizePty(shrunkFrom.cols, shrunkFrom.rows)
+        const g = deps.getGeometry()
+        if (g.cols > 0 && g.rows > 0) target = g
+      } catch {
+        /* term disposed first — the capture will do */
+      }
+      try {
+        deps.resizePty(target.cols, target.rows)
       } catch {
         /* main gone mid-teardown */
       }

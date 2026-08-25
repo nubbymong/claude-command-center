@@ -94,7 +94,7 @@ export default function TerminalContextMenu({ x, y, hasSelection, onCopy, onPast
           type="button"
           className={itemClass}
           onClick={onRepaint}
-          title="Redraw the terminal and re-confirm its size — for when something printed over the pane and the text stays garbled"
+          title="Re-confirms the terminal size and redraws — stops NEW garbling after something printed over the pane. Lines already written stay as they arrived."
           data-testid="terminal-ctx-repaint"
         >
           <span>Repaint terminal</span>

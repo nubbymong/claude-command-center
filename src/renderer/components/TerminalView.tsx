@@ -1303,7 +1303,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   }
 
   return (
-    <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
+    // data-terminal-session: lets the Ctrl+Alt+R capture handler resolve WHICH
+    // terminal the chord was pressed in by DOM ancestry (#503) — the partner
+    // pane and alt panes register under their own keys, and the active session
+    // id alone would nudge a hidden pty.
+    <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }} data-terminal-session={sessionId}>
       {needsLogin && (
         <div className="bg-blue/10 border-b border-blue/30 text-lavender text-xs px-3 py-1.5 shrink-0">
           Setting up a new account. Run claude, type /login, and choose the account. We&apos;ll detect it automatically.

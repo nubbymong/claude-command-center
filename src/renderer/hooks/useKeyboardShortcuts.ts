@@ -47,7 +47,12 @@ export function useKeyboardShortcuts(
       // sessions, paste into a hidden prompt), so suppress them until the
       // flow settles. Same gate expression as App.tsx's bootGate input.
       if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
-      const shortcuts = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
+      // MERGE over the defaults, never substitute: a persisted map predating a
+      // release lacks that release's new actions, and `|| DEFAULT_SHORTCUTS`
+      // only helps when the whole object is absent — every existing user would
+      // have the new chord silently dead (#503 review; StageEmptyState already
+      // merges this way).
+      const shortcuts = { ...DEFAULT_SHORTCUTS, ...(useSettingsStore.getState().settings.keyboardShortcuts || {}) }
 
       // Close current tab: a page tab closes the page; a session tab routes
       // through the End-vs-Leave-running choice.
@@ -137,7 +142,9 @@ export function useKeyboardShortcuts(
       // reveal — instead of reporting a match). Those boxes carry
       // data-shortcut-capture; yield to them.
       if ((e.target as Element | null)?.closest?.('[data-shortcut-capture]')) return
-      const shortcuts = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
+      // Merge over defaults for the same reason as handleKeyDown: a persisted
+      // pre-release map must not leave newer chords dead.
+      const shortcuts = { ...DEFAULT_SHORTCUTS, ...(useSettingsStore.getState().settings.keyboardShortcuts || {}) }
       if (matchesShortcut(e, shortcuts.captureGlyphDiagnostic) && !e.getModifierState?.('AltGraph')) {
         e.preventDefault()
         e.stopPropagation()
@@ -147,9 +154,18 @@ export function useKeyboardShortcuts(
       // something printed over — same capture-phase + AltGr reasoning as the
       // glyph capture above.
       if (matchesShortcut(e, shortcuts.repaintTerminal) && !e.getModifierState?.('AltGraph')) {
+        // Held chord auto-repeats ~16Hz; unlike the read-only capture above,
+        // this one WRITES (a pty resize pair per fire) — one press, one nudge.
+        if (e.repeat) return
         e.preventDefault()
         e.stopPropagation()
-        const sid = useSessionStore.getState().activeSessionId
+        // Repair the terminal the chord was pressed IN, resolved by DOM
+        // ancestry: the focused pane may be the partner shell or an alt pane,
+        // registered under its own key — the active session id alone would
+        // nudge a hidden pty. Fall back to it only when focus is outside any
+        // terminal.
+        const from = (e.target as Element | null)?.closest?.('[data-terminal-session]')
+        const sid = from?.getAttribute('data-terminal-session') || useSessionStore.getState().activeSessionId
         if (sid) requestResync(sid)
       }
     }
