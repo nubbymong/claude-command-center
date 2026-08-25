@@ -248,6 +248,17 @@ describe('#463 — since-2.0 coverage and the first-run cohort', () => {
     expect(text).not.toContain('New name.')
   })
 
+  it('no upgrade-only line carries a See-it link — the fresh page count must not desync', () => {
+    // The sub-line says "N of them have a page of their own"; an upgradeOnly
+    // item with a seeIt would make that true for upgraders and false for the
+    // fresh cohort, silently.
+    for (const s2 of sectionsFor(undefined, '2.1.0')) {
+      for (const it2 of s2.items) {
+        expect(!(it2.upgradeOnly && it2.seeIt), `${it2.title} is upgradeOnly with a seeIt`).toBe(true)
+      }
+    }
+  })
+
   it('the upgrader still sees the upgrade-only lines', () => {
     render()
     expect(container.textContent).toContain('New name.')

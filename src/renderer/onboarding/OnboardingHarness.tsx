@@ -109,7 +109,7 @@ const PAGES: BuiltStep[] = [
         onNext={nav.onNext}
         fresh
         ctaLabel={run.isLast ? 'Continue' : 'Set it up →'}
-        hint={run.isLast ? 'That’s the tour.' : 'The next pages set these up, one at a time.'}
+        hint={run.isLast ? "That's the tour." : 'The next pages set these up, one at a time.'}
       />
     ),
   },
