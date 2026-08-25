@@ -105,7 +105,12 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title }: Pro
   return (
     <>
       {refused && (
-        <span className="shrink-0 text-[10px]" style={{ color: 'var(--status-danger)' }} data-testid="canvas-complete-refused">
+        <span
+          className="shrink-0 text-[10px] max-w-[220px] truncate"
+          style={{ color: 'var(--status-danger)' }}
+          data-testid="canvas-complete-refused"
+          title={refused}
+        >
           {refused}
         </span>
       )}
@@ -123,7 +128,10 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title }: Pro
             disabled={busy}
             className="shrink-0 flex items-center gap-1.5 text-[11.5px] font-semibold rounded px-2 py-0.5 focus-ring disabled:opacity-40"
             style={{
-              color: 'var(--color-crust)',
+              // Text-on-bright-fill uses --surface-chrome, the header's own
+              // convention — --color-crust fails 4.5:1 on the light theme's
+              // success green.
+              color: 'var(--surface-chrome)',
               background: 'var(--status-success)',
               border: '1px solid color-mix(in srgb, var(--status-success) 55%, transparent)',
             }}

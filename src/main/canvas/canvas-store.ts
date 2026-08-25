@@ -640,13 +640,14 @@ export function onCanvasChanged(listener: CanvasChangedListener): () => void {
   return () => changeListeners.delete(listener)
 }
 
-function emitChanged(record: CanvasRecord, opts?: { draft?: boolean; completed?: boolean }): void {
+function emitChanged(record: CanvasRecord, opts?: { draft?: boolean; completed?: boolean; reopened?: boolean }): void {
   const event: CanvasChangedEvent = {
     sessionId: record.sessionId,
     canvasId: record.canvasId,
     activeVersionId: record.activeVersionId,
     ...(opts?.draft ? { draft: true } : {}),
     ...(opts?.completed ? { completed: true } : {}),
+    ...(opts?.reopened ? { reopened: true } : {}),
   }
   for (const listener of changeListeners) {
     try {
@@ -970,6 +971,11 @@ function ensureDiskScanned(): void {
     // sorted first, complete with that subject's old notes, and the next
     // same-title render forked a duplicate: both of the things the subject
     // rule exists to prevent.
+    // A COMPLETED canvas never rebinds (#476): completion detached it so the
+    // pane lands on the front page, and that must survive a relaunch — a
+    // session whose last work was signed off comes back to the welcome page,
+    // with the canvas in the library, not to the signed-off subject.
+    if (record.completed) continue
     const held = sessionIndex.get(record.sessionId)
     const heldRecord = held ? canvases.get(held) : undefined
     if (!heldRecord || moreRecentlyActive(record, heldRecord)) {
@@ -1198,7 +1204,13 @@ export function renderVersion(
 ): { canvasId: string; versionId: string; draft?: boolean; filed?: { canvasId: string; returnedToExisting: boolean } } {
   if (!SESSION_ID_RE.test(sessionId)) throw new Error('invalid session id')
 
-  const held = getRecordForSession(sessionId)
+  // A COMPLETED canvas bound as current (the user opened it from the library
+  // to look, #476) is a viewing surface, not a rendering target: treat it as
+  // no-held, so the render starts a fresh canvas exactly as it would from the
+  // front page — including the untitled case, which could otherwise never
+  // render again. The refusal below stays as the invariant's backstop.
+  const boundRecord = getRecordForSession(sessionId)
+  const held = boundRecord?.completed ? null : boundRecord
   const title = sanitizeCanvasTitle(source.title)
 
   // A canvas holds ONE subject, and this is where that is decided.
@@ -1482,6 +1494,9 @@ export function setCanvasCompleted(
   persist(next)
   canvases.set(canvasId, next)
   if (sessionIndex.get(record.sessionId) === canvasId) sessionIndex.delete(record.sessionId)
+  // A deferred subject-change draft pointed here must not outlive the detach
+  // (same rule as dropCanvas): the drafting surface is gone with the sign-off.
+  if (draftIndex.get(record.sessionId) === canvasId) draftIndex.delete(record.sessionId)
   emitChanged(next, { completed: true })
   return toState(next)
 }
@@ -1506,7 +1521,7 @@ export function reopenCompletedCanvas(canvasId: string, requireOwnerSessionId?: 
   persist(next)
   canvases.set(canvasId, next)
   if (!sessionIndex.has(record.sessionId)) sessionIndex.set(record.sessionId, canvasId)
-  emitChanged(next)
+  emitChanged(next, { reopened: true })
   return toState(next)
 }
 

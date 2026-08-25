@@ -20,11 +20,17 @@ import type { CanvasCompletion, CanvasState } from '../../shared/canvas'
  * over the SAME tallies the queue and the close-out use, so the button, the
  * pill and this refusal can never disagree.
  *
- * Seen-ness is carried transitively rather than re-checked: a round only
- * leaves those tallies through the user's own verdict, the #470 supersede
- * sweep (gated on `isAgentCloseable`, i.e. the seen barrier), or an
- * agent close-out that the store already refuses until the user has seen the
- * round. There is no path into "all settled" that bypasses the user.
+ * Seen-ness is carried transitively rather than re-checked. A round leaves
+ * those tallies through four exits: the user's own verdict (their click), the
+ * #470 supersede sweep (gated on `isAgentCloseable`, i.e. the seen barrier),
+ * an agent close-out the store refuses until the user has SEEN the round —
+ * or a chat pick (`canvas_pick`), which deliberately has no seen barrier and
+ * rests instead on its own contract: it records the user's explicit words in
+ * chat, stamps `pickSource: 'chat'` provenance, and reopens in one click.
+ * That last exit is the same honor-system tier as this tool itself (both are
+ * "the user said so in chat"), so completion inherits it rather than
+ * pretending a mechanical barrier covers it; the mechanical barriers cover
+ * the other three.
  *
  * Fail-closed on an unreadable review store: a reviews.json that exists but
  * will not read refuses completion — "could not tell" must never sign off as

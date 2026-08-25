@@ -63,11 +63,6 @@ function finishedCycle(): { canvasId: string; title: string } {
 
 const err = (r: unknown): string => (r && typeof r === 'object' && 'error' in r ? String((r as { error: unknown }).error) : '')
 
-beforeEach(() => {
-  // Detach whatever the previous test left current, so each test's render
-  // starts a fresh canvas via its unique title.
-})
-
 describe('the completion guard — nothing owed, or no sign-off', () => {
   it('refuses while a ready render awaits the user’s first review', () => {
     const { canvasId } = renderCanvas()
@@ -162,6 +157,9 @@ describe('what completion does', () => {
 
 describe('terminal means terminal', () => {
   it('a render under the SAME title starts a fresh canvas, never resumes the completed one', () => {
+    // Two guards conspire here: completion DETACHED the session (held is
+    // null), and even a detached lookup by title skips completed records —
+    // the second is pinned on its own by the another-canvas case below.
     const { canvasId, title } = finishedCycle()
     completion.completeCanvasGuarded(canvasId, 'user', SID)
     const next = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>again</p>', title })
@@ -178,6 +176,34 @@ describe('terminal means terminal', () => {
     completion.completeCanvasGuarded(done.canvasId, 'user', SID)
     renderCanvas() // the session moves on to an unrelated subject
     const next = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>fresh</p>', title: done.title })
+    expect(next.canvasId).not.toBe(done.canvasId)
+    expect(canvasStore.getCanvasStateById(done.canvasId)?.completed).toBeTruthy()
+  })
+})
+
+describe('survival and viewing', () => {
+  it('the stamp survives a reload, and a completed canvas never rebinds as current', () => {
+    const { canvasId } = finishedCycle()
+    completion.completeCanvasGuarded(canvasId, 'user', SID)
+    // Relaunch: memory dropped, records reloaded from disk.
+    canvasStore._resetCanvasStoreForTest()
+    // Rebind skip: the session comes back to the front page, not the
+    // signed-off subject...
+    expect(canvasStore.getCanvasStateForSession(SID)?.canvasId).not.toBe(canvasId)
+    // ...and the stamp round-tripped through sanitizeRecord intact.
+    expect(canvasStore.getCanvasStateById(canvasId)?.completed?.by).toBe('user')
+  })
+
+  it('a render while VIEWING a completed canvas starts fresh instead of dead-ending', () => {
+    // The library's View re-points the session at the completed canvas. A
+    // render there must not refuse forever (the untitled case could never
+    // escape) and must not resume — fresh canvas, viewing record untouched.
+    const done = finishedCycle()
+    completion.completeCanvasGuarded(done.canvasId, 'user', SID)
+    const adopted = canvasStore.adoptCanvasForSession(SID, done.canvasId, { isSessionCurrent: () => false })
+    expect(adopted?.canvasId).toBe(done.canvasId)
+    expect(canvasStore.getCanvasStateForSession(SID)?.canvasId).toBe(done.canvasId)
+    const next = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>new</p>', title: done.title })
     expect(next.canvasId).not.toBe(done.canvasId)
     expect(canvasStore.getCanvasStateById(done.canvasId)?.completed).toBeTruthy()
   })

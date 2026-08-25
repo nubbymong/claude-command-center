@@ -1417,9 +1417,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               setInteractionMode(sessionId, 'draw')
             }}
             aria-pressed={sketchActive}
+            disabled={viewingCompleted}
             className={chipClass(sketchActive, false)}
             style={chipStyle(sketchActive)}
-            title="Sketch — the glass takes the pointer; draw over the content, then attach the strokes to a note"
+            title={viewingCompleted ? 'This canvas is signed off — Reopen it to annotate again' : 'Sketch — the glass takes the pointer; draw over the content, then attach the strokes to a note'}
             data-testid="canvas-tool-sketch"
           >
             <ToolIcon kind="sketch" />
@@ -1428,10 +1429,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           <button
             onClick={() => setMarqueeArmed(sessionId, !marqueeArmed)}
             aria-pressed={regionActive}
-            disabled={!viewport}
+            disabled={!viewport || viewingCompleted}
             className={chipClass(regionActive, false)}
             style={chipStyle(regionActive)}
-            title="Region — drag a rectangle to select an area for a note (Esc cancels)"
+            title={viewingCompleted ? 'This canvas is signed off — Reopen it to annotate again' : 'Region — drag a rectangle to select an area for a note (Esc cancels)'}
             data-testid="canvas-tool-region"
           >
             <ToolIcon kind="region" />

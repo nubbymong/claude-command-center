@@ -188,6 +188,18 @@ describe('contrast — #458: muted text and the status-pill recipe', () => {
     }
   })
 
+  it('the completion confirm — surface-chrome text on a solid status-success fill — clears 4.5:1, both themes (#476)', () => {
+    // CanvasCompleteButton's armed confirm is the one solid status fill in the
+    // pane chrome; --color-crust there measured 4.03:1 on light and the pair
+    // was unpinned, which is exactly how the #458 regressions happened.
+    for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
+      const fg = token('surface-chrome', mode)
+      const bg = token('status-success', mode)
+      const r = contrast(fg, bg)
+      expect(r, `${name}: --surface-chrome (${fg}) on solid --status-success (${bg}) = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+    }
+  })
+
   it('brand text over its own 15% wash clears 4.5:1, both themes', () => {
     // Quick Start's Start pill and the BottomBar Beta pill: text-[var(--brand)]
     // over color-mix(var(--brand) 15%, transparent).

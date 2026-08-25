@@ -129,6 +129,10 @@ export interface CanvasChangedEvent {
    *  renderer can show the front-page acknowledgment for THIS transition and
    *  not for ordinary refreshes. */
   completed?: boolean
+  /** True when this change is a completed canvas being REOPENED (#476) — a
+   *  user gesture on a canvas that may not be the session's current one, so
+   *  the filing detector and the attention pulse must both stand down. */
+  reopened?: boolean
 }
 
 /** Renderer → main render request (dev/test ingress; the `canvas_render` MCP

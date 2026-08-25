@@ -288,8 +288,9 @@ export function setupCanvasListener(): void {
     // canvas goes AWAY (deleted from the library, possibly from another
     // session's window). Pulsing there promises the owning session something
     // new to look at and then shows it an empty pane.
-    if (event.activeVersionId && !event.completed && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
-      // (A sign-off is not news to review — no pulse for it.)
+    if (event.activeVersionId && !event.completed && !event.reopened && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
+      // (A sign-off is not news to review, and a reopen is the user's own
+      // gesture — no pulse for either.)
       store.markUnseenRender(event.sessionId)
     }
     // SIGN-OFF (#476): the subject completed and the session detached from the
@@ -314,8 +315,11 @@ export function setupCanvasListener(): void {
     // had actually asked for then arrived looking like a filing.
     // Named rather than inlined so the consume can be gated on it too — and
     // typed as the id it is, so the notice below keeps its narrowing.
+    // A REOPEN can name a canvas that is not the session's current one — the
+    // library row's Reopen — and nothing was filed by it; the detector must
+    // stand down or it announces a filing that never happened (#476).
     const filedCanvasId: string | null =
-      prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId ? prev.canvasId : null
+      !event.reopened && prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId ? prev.canvasId : null
     const userAsked = filedCanvasId !== null && consumeExpectedSwitch(event.sessionId)
     if (!userAsked && filedCanvasId !== null) {
       // Counted from the review mirror as it stands NOW, before the refresh
