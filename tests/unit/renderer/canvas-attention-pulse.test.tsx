@@ -164,8 +164,10 @@ describe('the Canvas button (pick B)', () => {
   it('with nothing owed the button is furniture again: no count, no warning label', async () => {
     const container = await render()
     const button = container.querySelector('[data-testid="canvas-button"]') as HTMLButtonElement
-    expect(button.textContent).toContain('Canvas')
-    expect(button.textContent).not.toContain('Review needed')
+    // The visible label carries the state; the width-reserving copies
+    // (#464) are aria-hidden and MAY mention other states.
+    expect(button.querySelector('[data-testid="reserved-label-current"]')!.textContent).toBe('Canvas')
+    expect(button.querySelector('[data-testid="reserved-label-current"]')!.textContent).not.toContain('Review needed')
     expect(container.querySelector('[data-testid="canvas-queue-count"]')).toBeNull()
   })
 
