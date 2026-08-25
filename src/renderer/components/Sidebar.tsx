@@ -31,7 +31,7 @@ import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import UngroupedSessionsHeader from './sidebar/UngroupedSessionsHeader'
-import { runningConfigCounts } from './sidebar/savedConfigsView'
+import { runningConfigCounts, sessionInstanceOrdinals } from './sidebar/savedConfigsView'
 import AskConductorDock from './sidebar/AskConductorDock'
 import QuickStartPanel from './sidebar/QuickStartPanel'
 import { resolveDefaultPanelTab, resolveSidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX, launchableInGroup, launchableInSection, type PanelTab } from './sidebar/sessionsPanelState'
@@ -259,6 +259,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   // delete guard read these; launch-all skips anything counted (bring-up).
   // `sessions` already excludes the Ask session.
   const runningCounts = useMemo(() => runningConfigCounts(sessions), [sessions])
+  // Per-session instance ordinal (#454), same input array as the counts so the
+  // two always agree. Only same-config 2+ instances get a number.
+  const sessionOrdinals = useMemo(() => sessionInstanceOrdinals(sessions), [sessions])
   const [dragConfigId, setDragConfigId] = useState<string | null>(null)
   const [dragOverConfigId, setDragOverConfigId] = useState<string | null>(null)
   // The LOOSE configs: in no group and no section (a stale id pointing at a
@@ -769,6 +772,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
         onContextMenu={(e) => { e.preventDefault(); refreshWebOnly(session.profileId ?? primaryProfileId); void refreshWebSessions(session.profileId ?? primaryProfileId); setSessionContextMenu({ sessionId: session.id, x: e.clientX, y: e.clientY }) }}
         isSelected={selectedSessionIds.has(session.id)}
         isFocused={focusedSessionIndex === flatIndex}
+        ordinal={sessionOrdinals.get(session.id)}
       />
     )
   }

@@ -25,6 +25,10 @@ interface SessionRowProps {
   onContextMenu: (e: React.MouseEvent) => void
   isSelected?: boolean
   isFocused?: boolean
+  /** 1-based instance number among live sessions of the SAME config (#454),
+   *  present only when that config has 2+ instances. Rendered as a muted "#2"
+   *  after the name so otherwise-identical rows are tellable apart. */
+  ordinal?: number
 }
 
 // Map store SessionStatus -> UI SessionState (see ui/StatusDot). error wins over
@@ -47,7 +51,7 @@ function meterClass(pct: number): string {
   return 'meter-neutral'
 }
 
-export default function SessionRow({ session, isActive, needsAttention, isRenaming, renameValue, renameRef, onRenameChange, onRenameFinish, onRenameCancel, onClick, onContextMenu, isSelected, isFocused }: SessionRowProps) {
+export default function SessionRow({ session, isActive, needsAttention, isRenaming, renameValue, renameRef, onRenameChange, onRenameFinish, onRenameCancel, onClick, onContextMenu, isSelected, isFocused, ordinal }: SessionRowProps) {
   const theme = useResolvedTheme()
   const identity = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
   const st = toSessionState(session.status, needsAttention)
@@ -139,6 +143,15 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           deliberately or add min-w-0 + flex-shrink rules at that point. */}
       <span className="nm relative z-10 row-start-1 flex items-center gap-1.5">
         <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600 }} title={session.customName?.trim() ? `${session.customName.trim()} · ${session.label}` : session.label}>{session.customName?.trim() || session.label}</span>
+        {ordinal !== undefined && (
+          <span
+            className="shrink-0 text-[11px] tabular-nums text-[var(--text-muted)]"
+            title={`Instance ${ordinal} of this config`}
+            data-testid="session-row-ordinal"
+          >
+            #{ordinal}
+          </span>
+        )}
       </span>
 
       {/* Line 1, col 3: status pill only. The account colour dot lives on line 3
