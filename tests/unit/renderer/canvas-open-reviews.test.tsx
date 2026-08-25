@@ -127,7 +127,7 @@ describe('AgentCanvasButton -- the queue pill (#364, pick B)', () => {
     seed([review('R1', 'submitted', ['a1'])], [note('a1', 'R1', 'open')])
     render()
     expect(pill()).toBeNull()
-    expect(container.textContent).not.toContain('Review needed')
+    expect(container.querySelector('[data-testid="reserved-label-current"]')!.textContent).not.toContain('Review needed')
   })
 
   it('a round waiting on YOU shows from ONE — every addressed note wants a verdict', () => {
@@ -135,7 +135,7 @@ describe('AgentCanvasButton -- the queue pill (#364, pick B)', () => {
     seed([review('R1', 'submitted', ['a1'])], [note('a1', 'R1', 'addressed')])
     render()
     expect(pill()?.textContent).toBe('1')
-    expect(container.textContent).toContain('Review needed')
+    expect(container.querySelector('[data-testid="reserved-label-current"]')!.textContent).toBe('Review needed')
   })
 
   it('a ready-marked render counts, and adds to the verdict rounds', () => {

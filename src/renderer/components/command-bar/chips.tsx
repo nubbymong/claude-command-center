@@ -9,6 +9,34 @@ import { chipTitle, clusterTitle, effectiveKind, type ClusterKind } from './layo
 export const CHIP_CLASS = 'flex items-center gap-1.5 px-2 h-7 text-xs rounded-md border whitespace-nowrap shrink-0 transition-colors duration-150 focus-ring'
 export const CHIP_STYLE: React.CSSProperties = { background: 'var(--surface-raised)', color: 'var(--text-secondary)', borderColor: 'var(--border-subtle)' }
 
+/** #464: a toggle label that reserves the width of its WIDEST state, so a
+ *  dual-state button never changes size on click (owner: jarring row
+ *  reflows). Every state renders invisibly stacked in one grid cell; the
+ *  current one shows. A state that renders bold reserves its BOLD width. */
+export function ReservedLabel({ current, states }: {
+  current: React.ReactNode
+  states: Array<string | { text: string; bold?: boolean }>
+}) {
+  return (
+    <span className="grid justify-items-start">
+      {states.map((s) => {
+        const text = typeof s === 'string' ? s : s.text
+        const bold = typeof s !== 'string' && !!s.bold
+        return (
+          <span
+            key={`${text}${bold ? '#bold' : ''}`}
+            className={`col-start-1 row-start-1 invisible whitespace-nowrap ${bold ? 'font-semibold' : ''}`}
+            aria-hidden
+          >
+            {text}
+          </span>
+        )
+      })}
+      <span className="col-start-1 row-start-1 whitespace-nowrap" data-testid="reserved-label-current">{current}</span>
+    </span>
+  )
+}
+
 // Stroked marks, the same family as the Core tool glyphs.
 const Paths = {
   claude: 'M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01',

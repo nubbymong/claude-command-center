@@ -40,7 +40,7 @@ describe('always rendered, always clickable', () => {
   it('renders with no webview command at all, reads "Browser", is enabled, shows no status dot', () => {
     render()
     expect(btn()).not.toBeNull()
-    expect(btn().textContent).toContain('Browser')
+    expect(btn().querySelector('[data-testid="reserved-label-current"]')!.textContent).toBe('Browser')
     expect(btn().disabled).toBe(false)
     expect(btn().getAttribute('data-watch-status')).toBe('idle')
     expect(btn().querySelector('span.rounded-full')).toBeNull()
@@ -53,10 +53,10 @@ describe('always rendered, always clickable', () => {
     render()
     act(() => { btn().click() })
     expect(useWebviewStore.getState().bySessionId['s1'].isOpen).toBe(true)
-    expect(btn().textContent).toContain('Terminal')
+    expect(btn().querySelector('[data-testid="reserved-label-current"]')!.textContent).toBe('Terminal')
     act(() => { btn().click() })
     expect(useWebviewStore.getState().bySessionId['s1'].isOpen).toBe(false)
-    expect(btn().textContent).toContain('Browser')
+    expect(btn().querySelector('[data-testid="reserved-label-current"]')!.textContent).toBe('Browser')
   })
   it('records webview.opened on OPEN only (closing is not discovering it)', () => {
     render()

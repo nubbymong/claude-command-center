@@ -1,6 +1,7 @@
 import React from 'react'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { useCanvasStore } from '../stores/canvasStore'
+import { ReservedLabel } from './command-bar/chips'
 import { useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 import { useCanvasQueue } from '../lib/canvasQueue'
@@ -117,7 +118,13 @@ export default function AgentCanvasButton({ sessionId }: Props) {
             <path d="M5 14h6" />
           </svg>
         )}
-        {label}
+        {/* Reserve only the states a CLICK can reach: `waiting` flips on
+            queue changes, not clicks, so idle must not carry the bold
+            Review-needed width (~48px of dead space) permanently. */}
+        <ReservedLabel
+          current={label}
+          states={waiting ? ['Terminal', { text: 'Review needed', bold: true }] : ['Canvas', 'Terminal']}
+        />
         {/* THE queue number (#364): ready-marked rounds + rounds awaiting your
             verdicts, across every canvas this session owns. Never decremented
             by merely opening anything — a round leaves when you submit on it,

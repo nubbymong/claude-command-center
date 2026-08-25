@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useMagicButtonStore } from '../stores/magicButtonStore'
 import WindowPickerModal from './WindowPickerModal'
+import { ReservedLabel } from './command-bar/chips'
 import { sendImageToSession } from '../utils/imageTransfer'
 
 interface Props {
@@ -86,7 +87,7 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
             <rect x="2" y="9" width="5" height="5" rx="0.5" />
             <rect x="9" y="9" width="5" height="5" rx="0.5" />
           </svg>
-          {capturing ? '...' : 'Snap'}
+          <ReservedLabel current={capturing ? '...' : 'Snap'} states={['...', 'Snap']} />
         </button>
 
         {showDropdown && dropdownPos && (
