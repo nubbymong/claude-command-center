@@ -45,3 +45,30 @@ Gate: typecheck clean (3 tsconfigs, via a real rc.2 npm ci -- the junction was s
 loop-tree smoked end-to-end in a throwaway repo. Security-sensitive (grants merge authority, builds
 git/gh argv, branch operations) -> ADR-009 adversarial pass owed before merge. A human still merges
 the resulting PR.
+
+## 2026-08-25 -- ADR-009 adversarial pass: PASS (after fixes)
+
+LEAD (fable) → FIX-AND-LAND: the authority model is sound (session-guard untouched confirmed;
+`assertLoopBranch` + argv-array exec hold; 3 guard mutants KILLED), but two stated guarantees leaked:
+
+- MAJOR: `assertMergeableTicketBranch` looked only at the raw string, so a qualified/remote ref
+  (`refs/heads/beta`, `origin/beta`) was foldable -- `origin/beta` would have merged all of beta into
+  the loop branch. Fixed by pinning the SHAPE: reject `refs/`/`remotes/` prefixes and ref-metachars,
+  and `integrate` now requires a LOCAL `refs/heads/<ticket>` and merges the fully-qualified local ref.
+  (The sentinel-parsing lesson again: charset gate != provenance gate.)
+- MAJOR: `submit --base` was unvalidated and unchecked, so `--base main` on a beta-cut loop would PR
+  beta work against main. Fixed: validateSegment + refuse `base != embeddedBase`.
+- Plus: dedupe re-integration of an already-folded branch; anchor `dirtyPorcelain` to the porcelain
+  path field; and `assertOwnedWorktree` -- loop-tree is invisible to the session-guard hook (not raw
+  git), so `integrate`/`close` now reuse `session-guard verify` to refuse mutating a worktree this
+  session does not own (inert without CLAUDE_CODE_SESSION_ID).
+
+Each fix has a regression test, both new guard mutants KILLED, and all five bypasses were re-smoked
+refused end-to-end while a normal fold still works. A FRESH independent re-attack (opus) over the
+mandatory floor -- injection/evasion, allowlist/bypass, fail-open -- returned PASS: no injection
+(argv arrays; leading-dash values die at check-ref-format/refExists; a `--title` is flag-bound), no
+sibling bypass, every early-return fails CLOSED (`close` refuses when origin ref is missing/stale-not-
+ancestor; recordFolded no-op makes submit refuse, never a body-incomplete PR). Two non-exploitable
+MINORs left as accepted.
+
+Verdict: PASS, 0 blockers / 0 majors open. A human still merges the resulting PR.

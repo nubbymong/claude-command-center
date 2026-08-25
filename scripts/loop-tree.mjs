@@ -89,6 +89,19 @@ export function assertLoopBranch(branch) {
  */
 export function assertMergeableTicketBranch(ticket, currentLoopBranch) {
   if (!ticket || typeof ticket !== 'string') throw new Error('no ticket branch given (--branch <name>).')
+  // Pin the SHAPE, not just the charset (adversarial review, ADR-020): a
+  // fully-qualified or remote-tracking ref (`refs/heads/beta`, `origin/beta`) is
+  // NOT a plain local branch and must never be foldable -- `refs/heads/beta`
+  // slips past the protected-name check, and `origin/beta` would merge all of
+  // beta into the loop branch. The command additionally requires the value to
+  // exist as `refs/heads/<ticket>` (a local branch), which rejects any remote
+  // ref; here we reject the qualified/relative forms outright and up front.
+  if (ticket.startsWith('refs/') || ticket.startsWith('remotes/')) {
+    throw new Error(`refusing a qualified ref "${ticket}" -- name a plain local branch (e.g. feat/<n>-...).`)
+  }
+  if (/[~^:?*[\\\x00-\x20]|\.\.|@\{/.test(ticket)) {
+    throw new Error(`refusing a branch name with ref-metacharacters or whitespace: "${ticket}".`)
+  }
   if (isProtectedRef(ticket)) throw new Error(`refusing to merge a protected branch "${ticket}" into the loop branch.`)
   if (ticket === currentLoopBranch) throw new Error('cannot merge the loop branch into itself.')
   // A ref that is itself another loop branch would nest integration trees.
@@ -130,15 +143,45 @@ function assertValidRefName(branch) {
  */
 function dirtyPorcelain(cwd) {
   const out = gitSafe(['status', '--porcelain'], { cwd }) || ''
+  // Porcelain v1 is `XY <path>` (XY = 2 status chars, then a space). Anchor the
+  // filter to the PATH field so it only ever excludes the repo-root `.loop/`
+  // bookkeeping -- never a working file that merely CONTAINS ".loop/" in its
+  // name/content (adversarial review, fail-open lens). A rename `R  old -> new`
+  // keeps its arrow in the path field; a `.loop/` rename is not a case we produce.
+  const pathIsLoop = (line) => {
+    let p = line.slice(3)                    // drop the "XY " prefix
+    if (p.startsWith('"')) p = p.slice(1)    // unquote a path with odd chars
+    return p.startsWith('.loop/')
+  }
   return out
     .split(/\r?\n/)
     .filter((l) => l.trim().length > 0)
-    .filter((l) => !/(^|\s|"|\/)\.loop\//.test(l))
+    .filter((l) => !pathIsLoop(l))
     .join('\n')
 }
 
 function print(s, stream = 'stdout') { process[stream].write(s + '\n') }
 function fail(msg) { print(`loop-tree: ${msg}`, 'stderr'); process.exit(1) }
+
+/**
+ * loop-tree runs `node scripts/loop-tree.mjs …`, which the session-guard PreToolUse
+ * hook does NOT see (it only pattern-matches raw `git`). So a mutating loop-tree
+ * command in a worktree this session does not own would perform merges/removals the
+ * guard would otherwise deny (adversarial review). Reuse session-guard's OWN
+ * `verify` to close that: it exits 0 only when this session leases `cwd`. Inert
+ * outside a guarded session (no CLAUDE_CODE_SESSION_ID -- tests, a plain checkout),
+ * so it adds a boundary in the loop, never a hard failure elsewhere.
+ */
+function assertOwnedWorktree(cwd) {
+  if (!process.env.CLAUDE_CODE_SESSION_ID) return
+  const guard = path.join(path.dirname(fileURLToPath(import.meta.url)), 'session-guard.mjs')
+  if (!fs.existsSync(guard)) return
+  try {
+    execFileSync('node', [guard, 'verify', '--path', cwd], { stdio: 'ignore' })
+  } catch {
+    fail(`this worktree is not leased to your session -- adopt it first:\n  node scripts/session-guard.mjs adopt --path "${cwd}"\n(refusing so loop-tree cannot mutate another session's worktree).`)
+  }
+}
 function argValue(args, flag) { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : null }
 
 /** Where the loop records which ticket branches it has folded (per worktree). */
@@ -208,25 +251,37 @@ function cmdIntegrate(args) {
   const cwd = process.cwd()
   const cur = currentBranch(cwd)
   assertLoopBranch(cur) // AUTHORITY GUARD: only a loop/* branch may aggregate.
+  assertOwnedWorktree(cwd)
 
   const ticket = argValue(args, '--branch')
   assertMergeableTicketBranch(ticket, cur)
   assertValidRefName(ticket)
-  if (!refExists(`refs/heads/${ticket}`) && !refExists(ticket)) {
-    fail(`ticket branch '${ticket}' does not exist. Fetch or check the name.`)
+  // MUST be a LOCAL branch. Requiring `refs/heads/<ticket>` (not `refExists(ticket)`)
+  // is what rejects a remote-tracking ref like `origin/beta`: there is no local
+  // branch by that name, so it fails here even though the ref resolves.
+  if (!refExists(`refs/heads/${ticket}`)) {
+    fail(`no local branch '${ticket}'. loop-tree folds a LOCAL ticket branch only (never a remote-tracking ref); check the name or fetch+checkout it first.`)
+  }
+  // Append-only fold log with dedupe: re-integrating the same branch would double
+  // its diff into the session PR (adversarial review).
+  if (readFolded(cwd).some((e) => e.branch === ticket)) {
+    fail(`'${ticket}' is already folded into ${cur}. Nothing to do.`)
   }
 
   const dirty = dirtyPorcelain(cwd)
   if (dirty) fail('the integration worktree has uncommitted changes -- commit or stash before integrating.')
 
   const squash = args.includes('--squash')
+  // Merge the fully-qualified LOCAL ref, so the name can never resolve to a
+  // remote-tracking ref or a tag at merge time.
+  const ref = `refs/heads/${ticket}`
   const before = gitSafe(['rev-parse', 'HEAD'], { cwd })
   try {
     if (squash) {
-      git(['merge', '--squash', ticket], { cwd })
+      git(['merge', '--squash', ref], { cwd })
       git(['commit', '--no-edit', '-m', `loop: squash-integrate ${ticket}`], { cwd })
     } else {
-      git(['merge', '--no-ff', '--no-edit', ticket], { cwd })
+      git(['merge', '--no-ff', '--no-edit', ref], { cwd })
     }
   } catch (e) {
     // Leave the tree clean: abort the half-done merge so the loop can proceed to
@@ -243,8 +298,17 @@ function cmdSubmit(args) {
   const cwd = process.cwd()
   const cur = currentBranch(cwd)
   assertLoopBranch(cur)
-  const base = argValue(args, '--base') || (cur.split('/')[1] || 'beta')
-  if (isProtectedRef(cur)) fail('current branch is protected; refusing to submit.') // redundant, defensive
+  // The PR base is the base this loop branch was cut from -- `loop/<base>/<slug>`.
+  // A `--base` override is validated AND must match that embedded base (adversarial
+  // review): otherwise `submit --base main` on a beta-cut loop would open beta work
+  // as a PR against main -- a mislabelled, human-gated merge trap. gh consumes the
+  // value as an argv token (no shell), so this is a correctness gate, not injection.
+  const embeddedBase = cur.split('/')[1] || 'beta'
+  const base = argValue(args, '--base') || embeddedBase
+  validateSegment('base', base)
+  if (base !== embeddedBase) {
+    fail(`--base ${base} does not match this loop branch's base (${embeddedBase}); refusing to open ${embeddedBase}-based work against ${base}.`)
+  }
 
   const folded = readFolded(cwd)
   if (!folded.length) fail('nothing folded into this integration branch yet -- integrate at least one ticket first.')
@@ -292,6 +356,7 @@ function cmdClose(args) {
   const cwd = process.cwd()
   const cur = currentBranch(cwd)
   assertLoopBranch(cur)
+  assertOwnedWorktree(cwd)
   const base = cur.split('/')[1] || 'beta'
   // Only close once the aggregate actually landed: HEAD must be an ancestor of
   // origin/<base> (i.e. the human merged the PR). `merge-base --is-ancestor` exits

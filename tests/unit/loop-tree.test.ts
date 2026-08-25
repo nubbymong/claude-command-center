@@ -98,6 +98,18 @@ describe('assertMergeableTicketBranch', () => {
   it('refuses nesting one loop branch into another', () => {
     expect(() => assertMergeableTicketBranch('loop/beta/other', loop)).toThrow(/one loop branch .* into another/i)
   })
+  it('refuses a qualified or remote-tracking ref (the origin/beta bypass)', () => {
+    // Adversarial review: refs/heads/beta slipped past the protected-name check,
+    // and origin/beta would merge all of beta into the loop branch.
+    for (const q of ['refs/heads/beta', 'refs/heads/loop/beta/other', 'remotes/origin/x']) {
+      expect(() => assertMergeableTicketBranch(q, loop)).toThrow(/qualified ref/i)
+    }
+  })
+  it('refuses a name with ref-metacharacters, whitespace, or ..', () => {
+    for (const bad of ['a b', 'a..b', 'a~1', 'a^', 'a:b', 'x@{u}', 'a*', 'a\tb']) {
+      expect(() => assertMergeableTicketBranch(bad, loop)).toThrow(/ref-metacharacters|whitespace/i)
+    }
+  })
   it('refuses an empty/missing branch', () => {
     // @ts-expect-error deliberate
     expect(() => assertMergeableTicketBranch(undefined, loop)).toThrow(/no ticket branch/i)
