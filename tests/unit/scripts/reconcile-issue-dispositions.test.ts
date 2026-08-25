@@ -67,6 +67,28 @@ describe('decide — committed-state requires a release line', () => {
   })
 })
 
+describe('decide — in-release (ADR-019) behaves like in-beta', () => {
+  it('is a committed state: auto-adds the active line when no release line', () => {
+    expect(d(['in-release', 'bug'])).toEqual({ add: ['release-2.1'], flags: [] })
+  })
+  it('leaves an in-release issue that already has the active line', () => {
+    expect(d(['in-release', 'release-2.1'])).toEqual({ add: [], flags: [] })
+  })
+  it('flags in-release on a deferred (non-active) line — invariant', () => {
+    const r = d(['in-release', 'release-2.2'])
+    expect(r.add).toEqual([])
+    expect(r.flags[0]).toContain('active line')
+  })
+  it('flags in-release with a non-release disposition (contradictory)', () => {
+    const r = d(['in-release', 'backlog'])
+    expect(r.add).toEqual([])
+    expect(r.flags[0]).toContain('needs a release line')
+  })
+  it('does NOT auto-add when active line is unknown — flags instead', () => {
+    expect(d(['in-release'], null)).toEqual({ add: [], flags: [expect.stringContaining('unknown')] })
+  })
+})
+
 describe('decide — conflicts are flagged, never auto-fixed', () => {
   it('flags two release lines and adds nothing', () => {
     const r = d(['release-2.1', 'release-2.2'])

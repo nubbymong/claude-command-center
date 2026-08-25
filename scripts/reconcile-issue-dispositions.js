@@ -40,7 +40,16 @@ const RELEASE_RE = /^release-\d+\.\d+$/
 /** Non-release dispositions. Exactly one disposition total is allowed. */
 const OTHER_DISPOSITIONS = ['backlog', 'triage', 'wontfix', 'duplicate', 'excluded']
 /** States that mean "work has started or shipped" → a release line is required. */
-const COMMITTED_STATES = ['in-beta', 'loop-claimed', 'loop-in-progress', 'loop-done']
+const COMMITTED_STATES = ['in-beta', 'in-release', 'loop-claimed', 'loop-in-progress', 'loop-done']
+/**
+ * Lifecycle states pinned to the ACTIVE line specifically: `in-beta` (merged to
+ * the current beta) and `in-release` (in a cut rc of the current line). Both are
+ * unambiguous — they ship on the active line — so a missing release line is
+ * auto-added and a different (deferred) line is flagged as contradictory
+ * (CONTRIBUTING.md "Release-line labels" invariant). Other committed states
+ * (loop-*) may legitimately target a future line.
+ */
+const ACTIVE_LINE_STATES = ['in-beta', 'in-release']
 
 // ── pure decision (unit-tested; no network) ────────────────────────
 
@@ -77,22 +86,24 @@ function decide({ labels = [], activeLine = null }) {
   }
 
   if (committed) {
-    const isInBeta = set.includes('in-beta')
+    const pinnedToActive = ACTIVE_LINE_STATES.some((s) => set.includes(s))
+    const pinnedVia = ACTIVE_LINE_STATES.filter((s) => set.includes(s))
     if (releases.length === 1) {
-      // `in-beta` means merged to the CURRENT beta, so it must carry the ACTIVE
-      // line — a different (deferred) line is self-contradictory (CONTRIBUTING.md
-      // invariant: in-beta and release-2.2 never coexist). Other committed states
+      // `in-beta`/`in-release` mean the fix is in the CURRENT beta / a cut rc of
+      // the current line, so they must carry the ACTIVE line — a different
+      // (deferred) line is self-contradictory (CONTRIBUTING.md invariant:
+      // in-beta/in-release and release-2.2 never coexist). Other committed states
       // (loop-*) may legitimately target a future line, so they are left alone.
-      if (isInBeta && activeLine && releases[0] !== activeLine) {
-        flags.push(`in-beta but carries ${releases[0]}, not the active line ${activeLine}; in-beta means merged to the current beta — a deferred release line is contradictory`)
+      if (pinnedToActive && activeLine && releases[0] !== activeLine) {
+        flags.push(`${pinnedVia.join('/')} but carries ${releases[0]}, not the active line ${activeLine}; it ships on the current line — a deferred release line is contradictory`)
       }
       return { add, flags }
     }
     if (dispositionCount === 0) {
-      if (isInBeta) {
-        // Unambiguous: an in-beta issue is shipping on the active line.
+      if (pinnedToActive) {
+        // Unambiguous: an in-beta / in-release issue ships on the active line.
         if (activeLine) add.push(activeLine)
-        else flags.push('in-beta but the active release line is unknown (package.json version unparsed)')
+        else flags.push(`${pinnedVia.join('/')} but the active release line is unknown (package.json version unparsed)`)
       } else {
         // Claimed/in-progress/done with no line — choosing it is a human decision.
         flags.push(`committed (${committedVia.join(', ')}) but no release line; a human must assign one`)
