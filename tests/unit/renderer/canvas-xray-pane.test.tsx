@@ -662,6 +662,21 @@ describe('the redesigned chrome (item C)', () => {
     expect(region.disabled).toBe(true)
   })
 
+  it('#449: a PLAN locks X-Ray to Stealth with a DRAWN padlock, never the emoji', async () => {
+    const planState = {
+      ...STATE,
+      versions: [{ id: 'v1', mode: 'plan', createdAt: '2026-08-14T10:00:00Z', source: { mode: 'plan', entry: 'index.html' } }],
+    } as CanvasState
+    ;(window as any).electronAPI.canvas.getState.mockResolvedValueOnce(planState)
+    await renderPane('on')
+    const xray = container.querySelector('[data-testid="canvas-xray-mode"]')!
+    // The lock is an <svg>, and there is no astral-plane emoji in the group.
+    expect(xray.querySelector('svg')).toBeTruthy()
+    expect(/\u{1F512}/u.test(xray.textContent ?? '')).toBe(false)
+    // And the segments are inert on a plan.
+    expect((xray.querySelector('[data-testid="canvas-xray-off"]') as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('carries the X-ray setting inside the Inspect group', async () => {
     await renderPane('stealth')
     const chips = container.querySelector('[data-testid="canvas-tool-chips"]')!
