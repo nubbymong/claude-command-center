@@ -1,5 +1,6 @@
 import React from 'react'
 import { COMMAND_SWATCHES } from '../../lib/command-swatches'
+import { ON_BRAND } from '../ui/Dialog'
 
 /** Floating input for creating/renaming a section. Escape cancels; a stray
  *  backdrop click does NOT discard typed text (Ctrl+C in the terminal fires
@@ -54,7 +55,7 @@ export default function SectionNameInput({ x, y, initialName, initialColor, onCo
             autoFocus
             data-testid="section-name-input"
           />
-          <button onClick={submit} disabled={!name.trim()} className="px-2 py-1 text-xs rounded disabled:opacity-40 font-medium" style={{ background: 'var(--brand)', color: '#0a0e13' }}>
+          <button onClick={submit} disabled={!name.trim()} className="px-2 py-1 text-xs rounded disabled:opacity-40 font-medium" style={{ background: 'var(--brand)', color: ON_BRAND }}>
             {initialName ? 'Save' : 'Add'}
           </button>
           <button onClick={onCancel} className="px-2 py-1 text-xs rounded" style={{ color: 'var(--text-secondary)' }}>Cancel</button>

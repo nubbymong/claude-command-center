@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { generateId } from '../utils/id'
 import { COMMAND_SWATCHES, swatchesFor } from '../lib/command-swatches'
 import { ConfirmCard } from './command-bar/menus'
+import { ON_BRAND } from './ui/Dialog'
 
 export interface NoteEntry {
   id: string
@@ -198,7 +199,7 @@ export default function NoteDialog({ note, configId, configName, onSave, onCance
             <button type="button" onClick={onCancel} className={`h-7 px-3 rounded-[7px] text-xs ${isEdit && onDelete ? '' : 'ml-auto'}`} style={{ background: 'var(--surface-overlay)', color: 'var(--text-secondary)' }}>
               Cancel
             </button>
-            <button type="submit" disabled={!canSave} className="h-7 px-3 rounded-[7px] text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed" style={{ background: 'var(--brand)', color: '#0a0e13' }} data-testid="note-save">
+            <button type="submit" disabled={!canSave} className="h-7 px-3 rounded-[7px] text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed" style={{ background: 'var(--brand)', color: ON_BRAND }} data-testid="note-save">
               {isEdit ? 'Save' : 'Create note'}
             </button>
           </div>

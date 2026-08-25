@@ -73,11 +73,13 @@
 
   --text-primary: #eef2f7;
   --text-secondary: #a8b2c0;
-  /* Was #6a7480: 3.53-4.08:1 on panel/chrome/stage — below AA for the 10-11px
-     strings that use it (placeholders, loading…, sublines). #7f8792 is the
-     first hue-preserving step that clears 4.5:1 on all three (#458; same
-     reasoning as --color-overlay1 above, pinned in token-contrast.test.ts). */
-  --text-muted: #7f8792;
+  /* Was #6a7480: 3.5-4.1:1 on panel/chrome/stage and 3.9-4.3 on
+     raised/overlay (every dialog, menu and popover) — below AA for the
+     10-11px strings that use it (placeholders, loading…, sublines). #8c949d
+     keeps the hue and clears 4.5:1 on all six surfaces, worst 4.59 on
+     --surface-overlay (#458; same reasoning as --color-overlay1 above,
+     pinned in token-contrast.test.ts). */
+  --text-muted: #8c949d;
   --text-on-chrome: #e6ebf2;
 
   --terminal-foreground: #eef2f7;
@@ -217,10 +219,10 @@
 
   --accent: #15808d;
   /* Brand accent, darkened for contrast as text/border on the light substrate.
-     #1668c4 → #104d91 (#458): as text over its own 15% wash (Quick Start's
-     Start pill, the BottomBar update pill) it measured ~3.1-3.8:1; this
+     #1668c4 → #104c8f (#458): as text over its own 15% wash (Quick Start's
+     Start pill, the BottomBar Beta pill) it measured ~3.1-3.8:1; this
      clears 4.5:1 there and raises the --text-on-brand pair. */
-  --brand: #104d91;
+  --brand: #104c8f;
   --text-on-brand: #f6f8fb;
   /* The light theme washes toward its own substrate, not to black -- this is
      the `bg-base/80` behaviour dialogs had before #360. */
@@ -230,13 +232,14 @@
   --accent-tip: #9a4f29;
 
   /* Darkened for the house pill recipe — text-[var(--status-X)] over a
-     10-15% wash of itself: the previous values measured 2.8-3.6:1 there in
-     this theme. These clear 4.5:1 over 10/14/15% washes on chrome, panel and
-     stage alike (#458, pinned in token-contrast.test.ts). */
-  --status-success: #1e5630;
+     10-15% wash of itself: the previous values measured 2.7-4.4:1 there in
+     this theme. These clear 4.5:1 over 10/14/15% washes on chrome, panel,
+     stage and gutter alike, with margin against per-channel rounding either
+     way (#458, pinned in token-contrast.test.ts). */
+  --status-success: #1e5831;
   --status-warning: #65480c;
-  --status-danger: #8c2b21;
-  --status-info: #1b4b97;
+  --status-danger: #8a2a20;
+  --status-info: #1b4a95;
 
   /* Effort ramp — darkened for contrast as text on the light background. */
   --effort-low: #40a02b;

@@ -6,6 +6,7 @@ import { COMMAND_SWATCHES, swatchesFor, DEFAULT_COMMAND_COLOR } from '../../lib/
 import { COMMAND_ICON_KEYS, CommandIcon } from '../command-icons'
 import { chipTitle } from './layout'
 import { isContextMenuGesture } from '../../lib/pointer'
+import { ON_BRAND } from '../ui/Dialog'
 
 /* ------------------------------------------------------------------------ */
 /* Shared menu chrome                                                        */
@@ -456,7 +457,7 @@ export function ConfirmCard({ title, body, actions, onCancel, testId }: {
               style={a.danger
                 ? { background: 'color-mix(in srgb, var(--status-danger) 16%, transparent)', color: 'var(--status-danger)', border: '1px solid color-mix(in srgb, var(--status-danger) 40%, transparent)' }
                 : a.primary
-                  ? { background: 'var(--brand)', color: '#0a0e13' }
+                  ? { background: 'var(--brand)', color: ON_BRAND }
                   : { background: 'var(--surface-overlay)', color: 'var(--text-primary)' }}
             >
               {a.label}

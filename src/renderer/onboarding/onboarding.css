@@ -74,10 +74,10 @@
 .ob-root .mini.d .dot { background: #7bd88f; }
 .ob-root .mini.l { background: #e8ecf3; }
 .ob-root .mini.l .rail { background: #ccd4dd; border-right: 1px solid #c2cad6; }
-.ob-root .mini.l .b1 { background: #1668c4; width: 58%; }
+.ob-root .mini.l .b1 { background: #104c8f; width: 58%; }
 .ob-root .mini.l .b2 { background: #cdd5e0; width: 85%; }
 .ob-root .mini.l .b3 { background: #dde3ec; width: 68%; }
-.ob-root .mini.l .dot { background: #2d8349; }
+.ob-root .mini.l .dot { background: #1e5831; }
 .ob-root .mini.s { background: linear-gradient(90deg,#171e27 50%,#e8ecf3 50%); }
 .ob-root .mini.s .rail { background: linear-gradient(90deg,#0a0e13 50%,#ccd4dd 50%); }
 .ob-root .mini.s .b1 { background: #2f9bff; width: 58%; }

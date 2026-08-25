@@ -118,14 +118,41 @@ function wash(fg: string, pct: number, surface: string): string {
 }
 
 describe('contrast — #458: muted text and the status-pill recipe', () => {
-  // The surfaces the 10-11px muted strings actually sit on (panel chrome,
-  // page chrome, the canvas stage and its gutter).
-  const SURFACES = ['surface-chrome', 'surface-panel', 'surface-stage', 'surface-stage-gutter']
+  // The surfaces the 10-11px muted strings actually sit on: the chrome and
+  // panel, the canvas stage and its gutter, and — where MOST of them live —
+  // the raised dialogs and overlay menus/popovers (review round 1: the first
+  // cut listed only the first four and certified a value that still failed
+  // 3.9-4.3:1 on raised/overlay).
+  const MUTED_SURFACES = [
+    'surface-chrome',
+    'surface-panel',
+    'surface-stage',
+    'surface-stage-gutter',
+    'surface-raised',
+    'surface-overlay',
+  ]
+  // The pill recipe is drawn on the first four only (WebviewPane = chrome,
+  // Quick Start/BottomBar = panel/chrome, CanvasEmptyState and the library =
+  // stage). Raised/overlay are NOT pinned for the washes: the dark theme's
+  // bright pastels measure ~4.3-4.45 over washes there, so a pill moving
+  // onto a dialog or menu needs the dark --status-info/--brand values
+  // brightened first — extend this list when that happens.
+  const WASH_SURFACES = ['surface-chrome', 'surface-panel', 'surface-stage', 'surface-stage-gutter']
+
+  it('reads real values out of styles.css, not a copy', () => {
+    // Guards the guard, same as the overlay1 block: a theme block inserted
+    // between dark and light would silently shift occurrence indexing.
+    for (const t of ['text-muted', 'brand', 'status-success', 'status-warning', 'status-danger', 'status-info', ...MUTED_SURFACES]) {
+      expect(token(t, 0)).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(token(t, 1)).toMatch(/^#[0-9a-f]{6}$/i)
+      expect(token(t, 0), `--${t} dark and light must differ`).not.toBe(token(t, 1))
+    }
+  })
 
   it('--text-muted clears 4.5:1 on every surface it is drawn on, both themes', () => {
     for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
       const fg = token('text-muted', mode)
-      for (const bg of SURFACES) {
+      for (const bg of MUTED_SURFACES) {
         const r = contrast(fg, token(bg, mode))
         expect(r, `${name}: ${fg} on --${bg} (${token(bg, mode)}) = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
       }
@@ -133,15 +160,15 @@ describe('contrast — #458: muted text and the status-pill recipe', () => {
   })
 
   // The house pill recipe: `text-[var(--status-X)]` over a wash of ITSELF
-  // (10% pills, 14% library badges, 15% brand Start/update pills). In the
-  // dark theme the bright status colours clear easily; the light theme is
-  // where the old values measured 2.8-3.6:1. Both themes are pinned so
-  // neither can regress.
+  // (10% pills, 14% library badges, 15% brand Start/Beta pills). In the
+  // dark theme the bright status colours clear on these surfaces; the light
+  // theme is where the old values measured 2.7-4.4:1. Both themes are pinned
+  // so neither can regress.
   it('status text over its own wash clears 4.5:1 at every resting wash strength, both themes', () => {
     for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
       for (const status of ['status-success', 'status-warning', 'status-danger', 'status-info']) {
         const fg = token(status, mode)
-        for (const bg of SURFACES) {
+        for (const bg of WASH_SURFACES) {
           for (const pct of [0.10, 0.14, 0.15]) {
             const r = contrast(fg, wash(fg, pct, token(bg, mode)))
             expect(
@@ -155,11 +182,11 @@ describe('contrast — #458: muted text and the status-pill recipe', () => {
   })
 
   it('brand text over its own 15% wash clears 4.5:1, both themes', () => {
-    // Quick Start's Start pill and the BottomBar update pill: text-[var(--brand)]
+    // Quick Start's Start pill and the BottomBar Beta pill: text-[var(--brand)]
     // over color-mix(var(--brand) 15%, transparent).
     for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
       const fg = token('brand', mode)
-      for (const bg of SURFACES) {
+      for (const bg of WASH_SURFACES) {
         const r = contrast(fg, wash(fg, 0.15, token(bg, mode)))
         expect(r, `${name}: --brand (${fg}) over its 15% wash on --${bg} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
       }
