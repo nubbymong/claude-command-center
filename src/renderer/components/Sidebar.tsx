@@ -191,36 +191,56 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   useEffect(() => {
     if (settingsLoaded && !sidebarWidthTouchedRef.current) setSidebarWidth(resolveSidebarWidth(storedSidebarWidth))
   }, [settingsLoaded, storedSidebarWidth])
-  // Detach mid-drag listeners if the sidebar unmounts or collapses mid-drag
+  // The width transition stays OFF until a frame after the stored width is
+  // adopted — otherwise every launch with a non-default width visibly slides
+  // 256px → stored. (Collapse keeps its animation from the next frame on.)
+  const [widthAnimated, setWidthAnimated] = useState(false)
+  useEffect(() => {
+    if (!settingsLoaded) return
+    const id = requestAnimationFrame(() => setWidthAnimated(true))
+    return () => cancelAnimationFrame(id)
+  }, [settingsLoaded])
+  // Detach mid-drag listeners if the sidebar unmounts mid-drag
   // (the GitHubPanel resize pattern).
   const resizeCleanupRef = useRef<(() => void) | null>(null)
   useEffect(() => () => resizeCleanupRef.current?.(), [])
   const startSidebarResize = (e: React.PointerEvent) => {
     e.preventDefault()
     resizeCleanupRef.current?.()
-    sidebarWidthTouchedRef.current = true
     setResizing(true)
     const startX = e.clientX
     const startW = sidebarWidth
+    // The typography setting can put CSS `zoom` on this aside; clientX is
+    // unzoomed viewport px while the width is zoomed units — divide, or the
+    // edge outruns the cursor.
+    const zoom = Number((sideType as Record<string, unknown>).zoom) || 1
     let latest = startW
     const onMove = (ev: PointerEvent) => {
       // Handle is on the sidebar's RIGHT edge: dragging right widens it.
-      latest = Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, startW + (ev.clientX - startX)))
+      sidebarWidthTouchedRef.current = true
+      latest = Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, Math.round(startW + (ev.clientX - startX) / zoom)))
       setSidebarWidth(latest)
     }
+    const prevCursor = document.body.style.cursor
     const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('blur', onUp)
+      document.body.style.cursor = prevCursor
       resizeCleanupRef.current = null
       setResizing(false)
     }
     const onUp = () => {
       cleanup()
-      // One settings write per drag, not one per frame.
-      void useSettingsStore.getState().updateSettings({ sidebarWidth: latest })
+      // One settings write per drag, on release — and none for a bare click.
+      if (latest !== startW) void useSettingsStore.getState().updateSettings({ sidebarWidth: latest })
     }
+    document.body.style.cursor = 'col-resize'
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('blur', onUp)
     resizeCleanupRef.current = cleanup
   }
   // Roving tabIndex needs focus to FOLLOW arrow-key selection (APG tabs
@@ -744,10 +764,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
 
   return (
     <aside
-      className={`flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag relative ${resizing ? '' : 'transition-[width] duration-200'}`}
+      className={`flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag relative ${resizing || !widthAnimated ? '' : 'transition-[width] duration-200'}`}
       style={{ width: sidebarWidth, background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)', ...sideType }}
     >
-      {/* #461: drag the right edge to resize; width persists on release. */}
+      {/* #461: drag the right edge to resize; width persists on release.
+          Straddles the border (right: -2px) so it does NOT sit over the
+          session list's 6px scrollbar — grabbing the scrollbar must scroll. */}
       <div
         onPointerDown={startSidebarResize}
         onDoubleClick={() => {
@@ -755,7 +777,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
           setSidebarWidth(resolveSidebarWidth(undefined))
           void useSettingsStore.getState().updateSettings({ sidebarWidth: undefined })
         }}
-        className="absolute right-0 top-0 bottom-0 w-1 z-20 cursor-col-resize hover:bg-surface1"
+        className="absolute top-0 bottom-0 w-1 z-20 cursor-col-resize hover:bg-surface1"
+        style={{ right: -2 }}
         title="Drag to resize — double-click to reset"
         data-testid="sidebar-resize-handle"
         aria-hidden="true"
