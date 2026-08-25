@@ -12,6 +12,7 @@ import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import CanvasEmptyState from '../../../src/renderer/components/CanvasEmptyState'
+import { CONFIRM_GUARD_MS } from '../../../src/renderer/hooks/useArmedConfirm'
 import { useCanvasStore } from '../../../src/renderer/stores/canvasStore'
 import { useCanvasReviewStore } from '../../../src/renderer/stores/canvasReviewStore'
 import { useSessionStore } from '../../../src/renderer/stores/sessionStore'
@@ -325,6 +326,35 @@ describe('deleting a canvas from the front page (#452)', () => {
     await renderWith([candidate])
     click(testid('canvas-reclaim-delete'))
     expect(document.activeElement).toBe(testid('canvas-reclaim-confirm-delete'))
+  })
+
+  it('a sustained gesture cannot ride the guard out — a blocked activation re-arms it', async () => {
+    // Focus sits on the confirm, so a HELD Enter auto-repeats activation into
+    // it; anchored to the arm moment alone, the repeats would tick past the
+    // window and the last one would fire. Each blocked activation must push
+    // the window forward: live only after CONFIRM_GUARD_MS of quiet.
+    await renderWith([candidate])
+    const realNow = Date.now.bind(Date)
+    let offset = 0
+    nowSpy?.mockRestore()
+    nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset)
+
+    click(testid('canvas-reclaim-delete'))
+    offset = CONFIRM_GUARD_MS / 2 // inside the arm window — blocked, re-arms
+    click(testid('canvas-reclaim-confirm-delete'))
+    offset = CONFIRM_GUARD_MS // past the ARM stamp, inside the re-armed window
+    click(testid('canvas-reclaim-confirm-delete'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(deleteCanvasMock).not.toHaveBeenCalled()
+
+    offset = CONFIRM_GUARD_MS * 2 + 100 // quiet has passed since the last attempt
+    click(testid('canvas-reclaim-confirm-delete'))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(deleteCanvasMock).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the row and shows the error when the delete is refused', async () => {

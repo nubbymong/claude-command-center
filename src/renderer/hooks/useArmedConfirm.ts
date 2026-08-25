@@ -40,7 +40,15 @@ export function useArmedConfirm(armedKey: string | null): {
 
   const guarded = useCallback(
     (fire: () => void) => () => {
-      if (Date.now() - armedAt.current < CONFIRM_GUARD_MS) return
+      const now = Date.now()
+      if (now - armedAt.current < CONFIRM_GUARD_MS) {
+        // A blocked activation RE-ARMS the window. Focus sits on the confirm,
+        // and a held Enter auto-repeats activation every ~32ms — anchored to
+        // the arm moment alone, the repeat would ride the window out and fire.
+        // The confirm goes live only after CONFIRM_GUARD_MS of quiet.
+        armedAt.current = now
+        return
+      }
       fire()
     },
     [],
