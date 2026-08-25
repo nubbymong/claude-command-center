@@ -17,7 +17,7 @@ describe('resolveModelInfo — behaviour-identity snapshots (pin today)', () => 
   ])('chart colour for %s', (model, color) => {
     expect(resolveModelInfo(reg, model).colors.chart).toBe(color)
   })
-  it('haiku agentPill override preserved (AgentLibrary.tsx:12)', () => {
+  it('haiku agentPill override preserved (registry colorOverrides)', () => {
     expect(resolveModelInfo(reg, 'haiku').colors.agentPill).toBe('var(--status-success)')
     expect(resolveModelInfo(reg, 'opus').colors.agentPill).toBe('var(--chart-opus)')
   })

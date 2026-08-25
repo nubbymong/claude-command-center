@@ -225,17 +225,20 @@ describe('config-manager', () => {
       expect(data).toHaveProperty('cloudAgents')
     })
 
-    it('includes agentTeams and agentTeamRuns keys', () => {
+    it('#443: the retired agent-hub keys are NOT part of the config set', () => {
+      // agent-templates.json / agent-teams.json / agent-team-runs.json may
+      // still exist on disk from a pre-2.1 install -- they are left alone but
+      // must no longer be read into the renderer-visible config set.
       mockedFs.existsSync.mockReturnValue(true)
       mockedFs.readdirSync.mockReturnValue(['agent-teams.json'] as any)
       mockedFs.readFileSync.mockImplementation((p: any) => {
         if (typeof p === 'string' && p.includes('agent-teams')) return JSON.stringify([{ id: 'team-1' }])
-        if (typeof p === 'string' && p.includes('agent-team-runs')) return JSON.stringify([{ id: 'tr-1' }])
         return 'null'
       })
       const { data } = loadAllConfig()
-      expect(data).toHaveProperty('agentTeams')
-      expect(data).toHaveProperty('agentTeamRuns')
+      expect(data).not.toHaveProperty('agentTemplates')
+      expect(data).not.toHaveProperty('agentTeams')
+      expect(data).not.toHaveProperty('agentTeamRuns')
     })
 
     it('includes the excalidraw key so draw-mode drawings persist and restore', () => {

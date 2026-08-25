@@ -12,7 +12,7 @@ const TONE_COLOR: Record<MetricTone, string> = {
 
 /**
  * A small label-over-value chip for dense metrics (Tokenomics summary cards,
- * Insights KPI sidebar, Agent Hub usage cells). Value is JetBrains Mono so
+ * Insights KPI sidebar, Cloud Agents usage cells). Value is JetBrains Mono so
  * tabular numerics align across rows. Tone tints only the value, never the
  * label, so the chip stays readable when scanned.
  */

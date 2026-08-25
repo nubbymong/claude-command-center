@@ -52,7 +52,7 @@ export function AgentHubExplainer({ onDismiss }: { onDismiss: () => void }) {
       >
         <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="2" y1="2" x2="8" y2="8" /><line x1="8" y1="2" x2="2" y2="8" /></svg>
       </button>
-      <div className="text-[11px] font-semibold uppercase tracking-wide mb-2.5" style={{ color: 'var(--text-muted)' }}>How Agent Hub works</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide mb-2.5" style={{ color: 'var(--text-muted)' }}>How cloud agents work</div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pr-5">
         <Step n="1" label="Dispatch a task" />
         <span style={{ color: 'var(--text-muted)' }}>&rarr;</span>
@@ -61,8 +61,7 @@ export function AgentHubExplainer({ onDismiss }: { onDismiss: () => void }) {
         <Step n="3" label="Read the output here" />
       </div>
       <div className="mt-2.5 text-[11.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-        It all runs locally in the background while you keep working.{' '}
-        <span className="font-medium" style={{ color: 'var(--color-lavender)' }}>Pipelines</span> chain agents so one&apos;s output feeds the next.
+        It all runs locally in the background while you keep working.
       </div>
     </div>
   )

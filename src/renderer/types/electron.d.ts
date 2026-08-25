@@ -19,14 +19,6 @@ export type {
   CrossAccountAccountSummary,
   CrossAccountComparisonRow,
   NoteMetadata,
-  AgentTemplate,
-  AgentModelOverride,
-  TeamTemplate,
-  TeamRun,
-  TeamStep,
-  TeamStepMode,
-  TeamRunStep,
-  TeamRunStatus,
   MemoryFile,
   MemoryProject,
   MemoryScanResult,
@@ -42,8 +34,6 @@ import type {
   InsightsData,
   KpiData,
   CloudAgent,
-  TeamTemplate,
-  TeamRun,
 } from '../../shared/types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
@@ -549,18 +539,6 @@ export interface ElectronAPI {
     clearCompleted: () => Promise<{ ok: true; removed: number } | { ok: false; error: string }>
     onStatusChanged: (callback: (agent: CloudAgent) => void) => () => void
     onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
-  }
-  team: {
-    list: () => Promise<TeamTemplate[]>
-    /** #371: `ok:false` means the team is NOT on disk — keep the user's work in
-     *  the editor rather than reporting a save that did not happen. */
-    save: (team: TeamTemplate) => Promise<{ ok: true; team: TeamTemplate } | { ok: false; error: string }>
-    /** #371: `ok:false` means the team is STILL on disk — do not drop the row. */
-    delete: (id: string) => Promise<{ ok: true; deleted: boolean } | { ok: false; error: string }>
-    run: (teamId: string, projectPath?: string) => Promise<TeamRun | null>
-    cancelRun: (runId: string) => Promise<boolean>
-    listRuns: () => Promise<TeamRun[]>
-    onRunStatusChanged: (callback: (run: TeamRun) => void) => () => void
   }
   serviceStatus: {
     get: () => Promise<ServiceStatusPayload | null>

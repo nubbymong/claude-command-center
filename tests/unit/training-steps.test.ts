@@ -8,7 +8,7 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 21 steps', () => {
+    it('has exactly 20 steps', () => {
       // v1.5.12 added dynamic-workflows; permission-tray step removed with the
       // feature; v2-readiness added multi-account + sentinel steps (16 -> 18);
       // v2.0.0 added the ai-usage-meter step (18 -> 19); the Agent Canvas got
@@ -16,7 +16,8 @@ describe('training-steps', () => {
       // "explains every feature", and it was the one shipped feature missing.
       // Ask Conductor was the next one missing (20 -> 21): it shipped in 2.0 as
       // "Ask Command Center" and was renamed, but never got a card (#372).
-      expect(trainingSteps).toHaveLength(21)
+      // #443 deprecated the Agent Hub, so its card left (21 -> 20).
+      expect(trainingSteps).toHaveLength(20)
     })
 
     it('every step has required fields', () => {

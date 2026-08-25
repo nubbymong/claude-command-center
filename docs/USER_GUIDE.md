@@ -63,7 +63,7 @@ easy to find later.
 
 The README covers these in depth: **Tokenomics** (cost/usage analytics),
 **Memory** dashboard, **Sentinel**, **Conductor MCP** (incl. vision capture),
-**Agent Hub**, **Codex** provider, **GitHub** PR context, **Combined Mode /
+**Cloud Agents**, **Codex** provider, **GitHub** PR context, **Combined Mode /
 Draw**, **Snap / Vision**, and **Dynamic workflows**. See README → *Highlights*
 and *The rest of the surface*.
 

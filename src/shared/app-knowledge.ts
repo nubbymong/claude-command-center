@@ -61,7 +61,7 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
   {
     id: 'pages',
     title: 'The pages on the left rail',
-    body: `Agent Hub dispatches headless agent runs and pipelines from templates you author in its Library. Insights builds a qualitative digest of how your Claude sessions have been going. Tokenomics is the spend dashboard: daily charts, per-account costs, and a filterable session table. Memory is a dashboard over Claude's auto-memory, with drilldown and a reading drawer. Logs is a full chat-transcript viewer over your sessions with a timeline rail and full-text search. Conductor MCP shows the built-in tool server and its browser connection. Settings holds everything else.`,
+    body: `Cloud Agents dispatches headless agent runs in the background. Insights builds a qualitative digest of how your Claude sessions have been going. Tokenomics is the spend dashboard: daily charts, per-account costs, and a filterable session table. Memory is a dashboard over Claude's auto-memory, with drilldown and a reading drawer. Logs is a full chat-transcript viewer over your sessions with a timeline rail and full-text search. Conductor MCP shows the built-in tool server and its browser connection. Settings holds everything else.`,
   },
   {
     id: 'ask-conductor',

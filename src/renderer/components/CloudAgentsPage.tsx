@@ -7,8 +7,6 @@ import type { CloudAgent, CloudAgentStatus } from '../types/electron'
 import { StatusDot, type SessionState } from './ui/StatusDot'
 import { MetricChip } from './ui/MetricChip'
 import NewAgentDialog from './NewAgentDialog'
-import AgentLibrary from './AgentLibrary'
-import TeamsPanel from './TeamsPanel'
 import PageFrame from './PageFrame'
 import { AgentHubExplainer, AgentHubExamples } from './agent-hub/AgentHubOnboarding'
 
@@ -522,42 +520,12 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
 }
 
 // --- Main Page ---
-
-type HubTab = 'tasks' | 'teams' | 'library'
-
-const HUB_TABS: { id: HubTab; label: string }[] = [
-  { id: 'tasks', label: 'Tasks' },
-  // Label-only rename to "Pipelines" (the id/config keys/IPC stay `team*`).
-  { id: 'teams', label: 'Pipelines' },
-  { id: 'library', label: 'Library' },
-]
-
-export function CloudRail({ hubTab, onChange }: { hubTab: HubTab; onChange: (id: HubTab) => void }) {
-  return (
-    <nav className="py-1.5">
-      {HUB_TABS.map(t => {
-        const active = hubTab === t.id
-        return (
-          <button
-            key={t.id}
-            onClick={() => onChange(t.id)}
-            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
-            style={{
-              background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
-              color: active ? 'var(--accent)' : 'var(--text-secondary)',
-              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
-            }}
-          >
-            {t.label}
-          </button>
-        )
-      })}
-    </nav>
-  )
-}
+//
+// #443: the Agent Hub's Pipelines and Library tabs (and their left rail) are
+// deprecated in 2.1 — 2.2 replaces them with richer functionality. This page
+// is the cloud agents surface alone now.
 
 export default function CloudAgentsPage() {
-  const [hubTab, setHubTab] = useState<HubTab>('tasks')
   const allAgents = useCloudAgentStore(s => s.agents)
   const selectedAgentId = useCloudAgentStore(s => s.selectedAgentId)
   const selectAgent = useCloudAgentStore(s => s.selectAgent)
@@ -645,16 +613,14 @@ export default function CloudAgentsPage() {
     </svg>
   )
 
-  const cloudRail = <CloudRail hubTab={hubTab} onChange={setHubTab} />
-
-  const cloudContext = hubTab === 'tasks' && counts.running > 0 ? (
+  const cloudContext = counts.running > 0 ? (
     <span className="inline-flex items-center gap-1.5">
       <span className="w-1.5 h-1.5 rounded-full bg-blue animate-pulse" />
       {counts.running} running
     </span>
   ) : undefined
 
-  const cloudActions = hubTab === 'tasks' ? (
+  const cloudActions = (
     <>
       {counts.completed + counts.failed > 0 && (
         <button
@@ -672,24 +638,18 @@ export default function CloudAgentsPage() {
         New agent
       </button>
     </>
-  ) : undefined
+  )
 
   return (
     <>
       <PageFrame
         icon={cloudIcon}
         iconAccent="sapphire"
-        title="Agent Hub"
+        title="Cloud Agents"
         context={cloudContext}
         actions={cloudActions}
-        leftRail={cloudRail}
         scrollable={false}
       >
-      {hubTab === 'teams' ? (
-        <TeamsPanel />
-      ) : hubTab === 'library' ? (
-        <AgentLibrary />
-      ) : (
         <div className="flex flex-col flex-1 min-h-0">
         {!explainerDismissed && (
           <AgentHubExplainer onDismiss={() => { void updateSettings({ agentHubExplainerDismissed: true }) }} />
@@ -834,7 +794,6 @@ export default function CloudAgentsPage() {
           </>
         )}
         </div>
-      )}
       </PageFrame>
 
       {/* Context menu */}
