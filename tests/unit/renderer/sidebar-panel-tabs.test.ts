@@ -28,7 +28,15 @@ vi.mock('../../../src/renderer/stores/configStore', () => {
 vi.mock('../../../src/renderer/stores/insightsStore', () => ({ useInsightsStore: (sel: any) => sel({ status: null, statusMessage: null }) }))
 vi.mock('../../../src/renderer/stores/cloudAgentStore', () => ({ useCloudAgentStore: (sel: any) => sel({ agents: [] }) }))
 vi.mock('../../../src/renderer/stores/conductorMcpStore', () => ({ useConductorMcpStore: (sel: any) => sel({ browserRunning: false, serverRunning: true }) }))
-vi.mock('../../../src/renderer/stores/appMetaStore', () => ({ useAppMetaStore: (sel: any) => sel({ meta: { hasCreatedFirstConfig: true, firstRunCardDismissed: true }, update: () => {} }) }))
+vi.mock('../../../src/renderer/stores/appMetaStore', () => {
+  // getState included: Sidebar's document-level keydown handler (Ctrl+T
+  // suppression during onboarding) reads it, and the menu-dismissal test
+  // dispatches real keydowns at the document.
+  const STATE = { meta: { hasCreatedFirstConfig: true, firstRunCardDismissed: true }, update: () => {} }
+  const useAppMetaStore: any = (sel: any) => sel(STATE)
+  useAppMetaStore.getState = () => STATE
+  return { useAppMetaStore }
+})
 ;(globalThis as any).window.electronAPI = { update: { check: () => Promise.resolve(false), onAvailable: () => () => {}, getVersion: () => Promise.resolve('') } }
 // The New menu's Config action opens the real dialog — heavy and store-hungry;
 // the menu's own behaviour is what's under test.
@@ -83,7 +91,7 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     expect(disclosures).toEqual([newButton])
   })
 
-  it('the New menu offers Config and Section, and each option does its job (#483)', () => {
+  it('the New menu offers Config and Section, and each option does its job (#483)', async () => {
     render()
     act(() => { tabs().saved!.click() })
     const newButton = () => container.querySelector('[data-testid="new-button"]') as HTMLButtonElement
@@ -93,16 +101,48 @@ describe('Sidebar panel tabs (two-mode left panel)', () => {
     expect(container.querySelector('[data-testid="new-menu-config"]')).toBeTruthy()
     expect(container.querySelector('[data-testid="new-menu-section"]')).toBeTruthy()
 
-    // Section: menu closes, the inline section-name input appears.
+    // Section: menu closes, the inline section-name input appears and takes
+    // focus (the focus hop rides a setTimeout(0) — flush it before asserting).
     act(() => { (container.querySelector('[data-testid="new-menu-section"]') as HTMLButtonElement).click() })
     expect(container.querySelector('[data-testid="new-menu"]')).toBeNull()
-    expect(container.querySelector('input[placeholder="Section name"]')).toBeTruthy()
+    const sectionInput = container.querySelector('input[placeholder="Section name"]')
+    expect(sectionInput).toBeTruthy()
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    expect(document.activeElement).toBe(sectionInput)
 
     // Config: menu closes, the New Config dialog opens.
     act(() => { newButton().click() })
     act(() => { (container.querySelector('[data-testid="new-menu-config"]') as HTMLButtonElement).click() })
     expect(container.querySelector('[data-testid="new-menu"]')).toBeNull()
     expect(container.querySelector('[data-testid="session-dialog"]')).toBeTruthy()
+  })
+
+  it('the New menu dismisses on outside mousedown, Escape, and tab switch (#483)', () => {
+    render()
+    act(() => { tabs().saved!.click() })
+    const newButton = () => container.querySelector('[data-testid="new-button"]') as HTMLButtonElement
+    const menu = () => container.querySelector('[data-testid="new-menu"]')
+
+    // Outside mousedown (useClickOutside listens on mousedown, not click).
+    act(() => { newButton().click() })
+    expect(menu()).toBeTruthy()
+    act(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
+    expect(menu()).toBeNull()
+
+    // Escape.
+    act(() => { newButton().click() })
+    expect(menu()).toBeTruthy()
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+    expect(menu()).toBeNull()
+
+    // Leaving the Saved body (keyboard-only path — no mousedown fires): the
+    // state must not latch and resurface the menu unrequested on return.
+    act(() => { newButton().click() })
+    expect(menu()).toBeTruthy()
+    act(() => { tabs().running!.click() })
+    act(() => { tabs().saved!.click() })
+    expect(menu()).toBeNull()
+    expect(newButton().getAttribute('aria-expanded')).toBe('false')
   })
 
   it('clicking Running returns to the session list', () => {

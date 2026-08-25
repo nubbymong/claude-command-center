@@ -114,7 +114,7 @@ test.describe('Sidebar Navigation', () => {
     await expect(runningTab).toHaveAttribute('aria-selected', 'true')
   })
 
-  test('Saved tab reveals the launcher (+ New config); Running returns to sessions', async () => {
+  test('Saved tab reveals the launcher (+ New); Running returns to sessions', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()

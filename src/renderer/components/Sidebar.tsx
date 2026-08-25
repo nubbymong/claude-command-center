@@ -283,6 +283,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
   const newSectionInputRef = useRef<HTMLInputElement>(null)
   const newMenuRef = useRef<HTMLDivElement>(null)
   useClickOutside(newMenuRef, () => setShowNewMenu(false))
+  // The menu's DOM unmounts with the Saved body (tab switch, rail collapse) —
+  // both reachable keyboard-only, where no outside mousedown fires. Without
+  // this the state latches and the menu reappears unrequested (#483 review).
+  useEffect(() => {
+    if (panelTab !== 'saved' || collapsed) setShowNewMenu(false)
+  }, [panelTab, collapsed])
   // Read current collapse state inside the stable ([]) keydown effect below.
   const collapsedRef = useRef(collapsed)
   collapsedRef.current = collapsed
