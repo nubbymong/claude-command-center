@@ -173,7 +173,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted, #6a7480)' }}>
+          <span style={{ fontSize: 11, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--text-muted, #7f8792)' }}>
             {position} of {reachable.length}
           </span>
         </div>
@@ -185,7 +185,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
           <button
             onClick={onClose}
             type="button"
-            style={{ background: 'none', border: 0, color: 'var(--text-muted, #6a7480)', fontSize: 12, cursor: 'pointer', padding: '8px 4px' }}
+            style={{ background: 'none', border: 0, color: 'var(--text-muted, #7f8792)', fontSize: 12, cursor: 'pointer', padding: '8px 4px' }}
           >
             Skip tour
           </button>

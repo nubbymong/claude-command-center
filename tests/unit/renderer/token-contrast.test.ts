@@ -106,3 +106,70 @@ describe('contrast — sidebar secondary text', () => {
     expect(contrast('#777777', '#1a1a1a')).toBeCloseTo(3.89, 1)
   })
 })
+
+/* ---- #458: --text-muted and the status-pill recipe ----------------------- */
+
+/** `color-mix(in srgb, A p%, transparent)` painted over an opaque surface:
+ *  per-channel sRGB blend, which is exactly what the browser composites. */
+function wash(fg: string, pct: number, surface: string): string {
+  const px = (h: string) => (h.replace('#', '').match(/../g) as string[]).map((x) => parseInt(x, 16))
+  const [a, b] = [px(fg), px(surface)]
+  return '#' + a.map((c, i) => Math.round(c * pct + b[i] * (1 - pct)).toString(16).padStart(2, '0')).join('')
+}
+
+describe('contrast — #458: muted text and the status-pill recipe', () => {
+  // The surfaces the 10-11px muted strings actually sit on (panel chrome,
+  // page chrome, the canvas stage and its gutter).
+  const SURFACES = ['surface-chrome', 'surface-panel', 'surface-stage', 'surface-stage-gutter']
+
+  it('--text-muted clears 4.5:1 on every surface it is drawn on, both themes', () => {
+    for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
+      const fg = token('text-muted', mode)
+      for (const bg of SURFACES) {
+        const r = contrast(fg, token(bg, mode))
+        expect(r, `${name}: ${fg} on --${bg} (${token(bg, mode)}) = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+      }
+    }
+  })
+
+  // The house pill recipe: `text-[var(--status-X)]` over a wash of ITSELF
+  // (10% pills, 14% library badges, 15% brand Start/update pills). In the
+  // dark theme the bright status colours clear easily; the light theme is
+  // where the old values measured 2.8-3.6:1. Both themes are pinned so
+  // neither can regress.
+  it('status text over its own wash clears 4.5:1 at every resting wash strength, both themes', () => {
+    for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
+      for (const status of ['status-success', 'status-warning', 'status-danger', 'status-info']) {
+        const fg = token(status, mode)
+        for (const bg of SURFACES) {
+          for (const pct of [0.10, 0.14, 0.15]) {
+            const r = contrast(fg, wash(fg, pct, token(bg, mode)))
+            expect(
+              r,
+              `${name}: --${status} (${fg}) over its ${pct * 100}% wash on --${bg} = ${r.toFixed(2)}:1`,
+            ).toBeGreaterThanOrEqual(MIN)
+          }
+        }
+      }
+    }
+  })
+
+  it('brand text over its own 15% wash clears 4.5:1, both themes', () => {
+    // Quick Start's Start pill and the BottomBar update pill: text-[var(--brand)]
+    // over color-mix(var(--brand) 15%, transparent).
+    for (const [name, mode] of [['dark', 0], ['light', 1]] as const) {
+      const fg = token('brand', mode)
+      for (const bg of SURFACES) {
+        const r = contrast(fg, wash(fg, 0.15, token(bg, mode)))
+        expect(r, `${name}: --brand (${fg}) over its 15% wash on --${bg} = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(MIN)
+      }
+    }
+  })
+
+  it('the wash maths is right — anchors', () => {
+    // 100% wash is the colour itself; 0% is the surface; a mid wash sits between.
+    expect(wash('#ff0000', 1, '#ffffff')).toBe('#ff0000')
+    expect(wash('#ff0000', 0, '#ffffff')).toBe('#ffffff')
+    expect(wash('#000000', 0.5, '#ffffff')).toBe('#808080')
+  })
+})
