@@ -94,6 +94,16 @@ export function resolveBrowserBinary(preferred: AuthBrowser = DEFAULT_AUTH_BROWS
 }
 
 /**
+ * Which of the drivable browsers are actually installed (#439): the Settings
+ * picker only shows when there is a real choice to make. resolveBrowserBinary
+ * falls back to the other browser, so "did MY paths resolve" is read off the
+ * returned browser matching the one asked for.
+ */
+export function detectAuthBrowsers(): AuthBrowser[] {
+  return (['edge', 'chrome'] as AuthBrowser[]).filter((b) => resolveBrowserBinary(b)?.browser === b)
+}
+
+/**
  * Read the port Chrome actually bound, from the file only the process owning
  * this profile dir can write.
  *

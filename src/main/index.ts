@@ -40,6 +40,7 @@ import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
+import { closeAllAccountPanes } from './account-web/account-pane'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
@@ -1255,6 +1256,7 @@ try { getWatchdogManager()?.disposeAll() } catch { /* never init */ }
     killAllAgents()
     killAllPty()
     closeAllWebviews()
+    closeAllAccountPanes()
     // Pull from the singleton barrel — `hooksGateway` declared inside the
      // app.whenReady() callback above is out of scope here, which threw an
      // uncaught ReferenceError on every quit and crashed the app before it

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, lazy, Suspense, useCallback } from 
 import { useWebviewStore } from '../stores/webviewStore'
 import { useBrowserStore } from '../stores/browserStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { normaliseBrowserInput, shortUrlLabel } from '../../shared/browser-url'
 
 const ExcalidrawModal = lazy(() => import('./ExcalidrawModal'))
@@ -61,6 +62,23 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   const clearPage = useWebviewStore((s) => s.clearPage)
 
   const configId = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.configId)
+  // The account behind the pane's claude.ai surface (#475): the session's own
+  // profile, else the primary — the same resolution the Artifacts tool uses.
+  // Only a local, non-shell session has an account to speak of.
+  const paneAccountApplicable = useSessionStore((s) => {
+    const sess = s.sessions.find((x) => x.id === sessionId)
+    return !!sess && !sess.shellOnly && sess.sessionType === 'local'
+  })
+  const sessionProfileId = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.profileId)
+  const primaryProfileId = useAccountProfilesStore((s) => s.profiles.find((p) => p.isPrimary)?.id)
+  const paneAccountId = paneAccountApplicable ? (sessionProfileId ?? primaryProfileId) : undefined
+  const paneAccountLabel = useAccountProfilesStore((s) => {
+    const p = paneAccountId ? s.profiles.find((x) => x.id === paneAccountId) : undefined
+    return p?.name || p?.accountEmail || null
+  })
+  const openAccountPane = useWebviewStore((s) => s.openAccountPane)
+  const closeAccountPaneStore = useWebviewStore((s) => s.closeAccountPane)
+  const setAccountPaneState = useWebviewStore((s) => s.setAccountPaneState)
   const favourites = useBrowserStore((s) => s.favourites)
   const persistedHome = useBrowserStore((s) => s.homeFor(configId))
   const toggleFavourite = useBrowserStore((s) => s.toggleFavourite)
@@ -137,7 +155,11 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
 
     const tryOpen = () => {
       if (cancelled || viewReadyRef.current || openInFlight) return
-      const url = useWebviewStore.getState().bySessionId[sessionId]?.currentUrl
+      const st = useWebviewStore.getState().bySessionId[sessionId]
+      // The account surface owns the rectangle (#439): the ordinary view must
+      // not be (re)created underneath it. Exit restores via this same path.
+      if (st?.accountPane) return
+      const url = st?.currentUrl
       if (!url) return
       if (!isActiveRef.current) return // parked; retried when the session becomes active
       const b = measure()
@@ -212,6 +234,119 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     if (isActive) tryOpenRef.current?.()
   }, [isActive])
 
+  // ── Account surface lifecycle (#439/#475) ─────────────────────────────
+  // While `accountPane` is set the rectangle belongs to the claude.ai view on
+  // the ACCOUNT's partition. Entering closes the ordinary view; leaving closes
+  // the account view and restores the ordinary one through the same tryOpen
+  // path a fresh mount uses.
+  const accountModeProfileId = state?.accountPane?.profileId ?? null
+  const accountReadyRef = useRef(false)
+  const accountTryOpenRef = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    if (!accountModeProfileId) return
+    viewReadyRef.current = false
+    void window.electronAPI.webview.close(sessionId).catch(() => { /* noop */ })
+
+    // Same older-preload tolerance as the Artifacts tool's accountWeb?. calls.
+    const paneApi = window.electronAPI.accountWeb
+    if (typeof paneApi?.paneOpen !== 'function') {
+      closeAccountPaneStore(sessionId)
+      // The ordinary view was just closed above; bring it back once the store
+      // update has cleared accountPane (tryOpen's guard reads the store live).
+      queueMicrotask(() => tryOpenRef.current?.())
+      return
+    }
+
+    let cancelled = false
+    let rafId: number | null = null
+    let inFlight = false
+    const tryOpenAccount = () => {
+      if (cancelled || accountReadyRef.current || inFlight) return
+      if (!isActiveRef.current) return // parked; retried when the session activates
+      const b = measure()
+      if (!b || b.width < 1 || b.height < 1) {
+        rafId = requestAnimationFrame(tryOpenAccount)
+        return
+      }
+      inFlight = true
+      paneApi
+        .paneOpen({ sessionId, profileId: accountModeProfileId, bounds: b })
+        .then((r) => {
+          inFlight = false
+          if (cancelled) return
+          if (r.ok) {
+            accountReadyRef.current = true
+            // Seed the strip with whatever main already knows (a partition that
+            // is signed in shows its dot immediately, not on the next push).
+            void paneApi.paneGetState(sessionId).then((s) => {
+              if (!cancelled && s.ok && s.state) setAccountPaneState(s.state)
+            }).catch(() => { /* strip stays pending */ })
+          } else {
+            closeAccountPaneStore(sessionId)
+          }
+        })
+        .catch(() => { inFlight = false; if (!cancelled) closeAccountPaneStore(sessionId) })
+    }
+    accountTryOpenRef.current = tryOpenAccount
+    tryOpenAccount()
+
+    return () => {
+      cancelled = true
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      accountTryOpenRef.current = null
+      accountReadyRef.current = false
+      void paneApi.paneClose(sessionId).catch(() => { /* noop */ })
+      // Mode exit: bring the ordinary view back (its guard no-ops on unmount,
+      // where the store still carries accountPane).
+      tryOpenRef.current?.()
+    }
+  }, [sessionId, accountModeProfileId, measure, closeAccountPaneStore, setAccountPaneState])
+
+  // Parked account open retries when the session becomes active.
+  useEffect(() => {
+    if (isActive) accountTryOpenRef.current?.()
+  }, [isActive])
+
+  // Live auth pushes for the strip (sign-in completing inside the pane).
+  useEffect(() => {
+    return window.electronAPI.accountWeb?.onPaneState?.((st) => {
+      if (st.sessionId === sessionId) setAccountPaneState(st)
+    })
+  }, [sessionId, setAccountPaneState])
+
+  // Bounds + visibility for the account view — same mechanics as the ordinary
+  // view; native views ignore CSS.
+  useEffect(() => {
+    if (!isActive || !accountModeProfileId) return
+    const el = containerRef.current
+    if (!el) return
+    let last: { x: number; y: number; width: number; height: number } | null = null
+    const report = (force = false) => {
+      if (!accountReadyRef.current) return
+      const next = measure()
+      if (!next || next.width < 1 || next.height < 1) return
+      if (!force && last && last.x === next.x && last.y === next.y && last.width === next.width && last.height === next.height) return
+      last = next
+      void window.electronAPI.accountWeb?.paneBounds?.({ sessionId, bounds: next }).catch(() => { /* noop */ })
+    }
+    const ro = new ResizeObserver(() => report(true))
+    ro.observe(el)
+    const onResize = () => report(true)
+    window.addEventListener('resize', onResize)
+    const tick = window.setInterval(() => report(false), 500)
+    return () => {
+      ro.disconnect()
+      window.removeEventListener('resize', onResize)
+      window.clearInterval(tick)
+    }
+  }, [sessionId, isActive, accountModeProfileId, measure])
+
+  useEffect(() => {
+    if (!state?.isOpen || !accountModeProfileId) return
+    const visible = isActive && !frozenImage
+    void window.electronAPI.accountWeb?.paneVisible?.({ sessionId, visible }).catch(() => { /* noop */ })
+  }, [sessionId, isActive, state?.isOpen, accountModeProfileId, frozenImage])
+
   // ── Bounds tracking ───────────────────────────────────────────────────
   // ResizeObserver + window resize for real size changes, plus a 500 ms
   // safety-net tick for parent-flex shifts (sidebar collapse, GitHub panel)
@@ -254,6 +389,56 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   }, [sessionId, isActive, state?.isOpen, currentUrl, frozenImage])
 
   if (!state || !state.isOpen) return null
+
+  // ── Account surface (#439/#475): claude.ai as this session's account ──
+  if (state.accountPane) {
+    const account = state.accountPane
+    const authed = account.authed
+    const authDot = authed === true ? 'var(--status-success)' : authed === false ? 'var(--status-warning)' : 'var(--text-muted)'
+    const authWord = authed === true
+      ? (account.email ? `signed in as ${account.email}` : 'signed in')
+      : authed === false ? 'not signed in — sign in below, once' : 'checking…'
+    return (
+      <div className="flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)] relative" data-testid="browser-pane">
+        <div className="flex items-center gap-2 px-2 py-1 border-b border-[var(--border-subtle)] bg-[var(--surface-chrome)] shrink-0 z-10" data-testid="account-pane-strip">
+          <span className="text-[var(--brand)] shrink-0">{Icon.globe}</span>
+          <span className="text-xs font-medium text-[var(--text-primary)] shrink-0">claude.ai</span>
+          <span className="flex items-center gap-1.5 min-w-0 flex-1">
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: authDot }} aria-hidden />
+            <span className="text-[11px] truncate" style={{ color: 'var(--text-secondary)' }} data-testid="account-pane-auth">{authWord}</span>
+            {page?.loading && <span className="text-[10px] text-[var(--text-muted)] shrink-0">loading…</span>}
+          </span>
+          <button onClick={() => { void window.electronAPI.accountWeb?.paneReload?.(sessionId) }} className={`${toolBtn} ${toolBtnIdle}`} title="Reload" aria-label="Reload" data-testid="account-pane-reload">{Icon.reload}</button>
+          <button
+            onClick={() => closeAccountPaneStore(sessionId)}
+            className="px-2 py-0.5 text-xs rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] transition-colors"
+            title="Back to the ordinary browser"
+            data-testid="account-pane-back"
+          >
+            Back to browser
+          </button>
+          <button
+            onClick={() => { closeAccountPaneStore(sessionId); setOpen(sessionId, false) }}
+            className="px-2 py-0.5 text-xs rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] transition-colors"
+            title="Back to the terminal"
+            data-testid="account-pane-close"
+          >
+            Close
+          </button>
+        </div>
+        {/* Placeholder rectangle for the account WebContentsView. */}
+        <div ref={containerRef} className="flex-1 min-h-0 bg-[var(--surface-stage)]" data-testid="account-pane-viewport" />
+        {/* Same always-reachable escape hatch as the ordinary view. */}
+        <button
+          onClick={() => { closeAccountPaneStore(sessionId); setOpen(sessionId, false) }}
+          className="absolute right-2 bottom-2 z-20 px-2 py-1 text-[11px] rounded-full bg-[var(--status-danger)] text-[var(--ob-on)] shadow-lg hover:brightness-110 transition-colors"
+          title="Force-close the browser pane"
+        >
+          ✕ back to terminal
+        </button>
+      </div>
+    )
+  }
 
   // ── Actions ───────────────────────────────────────────────────────────
   const go = (raw: string) => {
@@ -443,6 +628,8 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
           onOpenFavourite={(url) => navigate(sessionId, url)}
           onRemoveFavourite={removeFavourite}
           error={addressError}
+          accountLabel={paneAccountId ? paneAccountLabel : null}
+          onOpenAccount={paneAccountId ? () => openAccountPane(sessionId, paneAccountId) : undefined}
         />
       )}
 
@@ -481,6 +668,10 @@ function StartPage(props: {
   onOpenFavourite: (url: string) => void
   onRemoveFavourite: (id: string) => void
   error: string | null
+  /** #475: the session's account name, when the claude.ai entry applies. */
+  accountLabel?: string | null
+  /** #475: open the pane's account surface. Absent hides the entry. */
+  onOpenAccount?: () => void
 }) {
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -515,6 +706,29 @@ function StartPage(props: {
           <button type="submit" className="px-3 h-8 text-sm bg-[var(--brand)] text-[var(--text-on-brand)] rounded hover:brightness-110 focus-ring" data-testid="browser-start-go">Open</button>
         </form>
         {props.error && <p className="mt-1 text-[11px] text-[var(--status-danger)]" role="alert">{props.error}</p>}
+
+        {/* #475: the baked-in claude.ai entry — the account's artifacts, on the
+            account's own signed-in partition, hosted right here in the pane. */}
+        {props.onOpenAccount && (
+          <button
+            onClick={props.onOpenAccount}
+            className="mt-4 w-full flex items-center gap-2 px-3 py-2 rounded border text-left focus-ring transition-colors"
+            style={{
+              borderColor: 'color-mix(in srgb, var(--brand) 42%, transparent)',
+              background: 'color-mix(in srgb, var(--brand) 10%, transparent)',
+            }}
+            data-testid="browser-start-claudeai"
+          >
+            <span className="text-[var(--brand)]">{Icon.globe}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-xs text-[var(--text-primary)] truncate">claude.ai — your artifacts</span>
+              <span className="block text-[10px] text-[var(--text-muted)] truncate">
+                {props.accountLabel ? `As ${props.accountLabel} — signed in once, stays signed in` : 'This session’s account — signed in once, stays signed in'}
+              </span>
+            </span>
+            <span className="ml-auto text-[10px] text-[var(--text-muted)] shrink-0">pinned</span>
+          </button>
+        )}
 
         {props.home && (
           <button

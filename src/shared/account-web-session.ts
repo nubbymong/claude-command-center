@@ -33,7 +33,7 @@
  *     (proven: a browser with that port open is challenged indefinitely; the same
  *     browser without it signs in cleanly). The default for non-SSO accounts.
  */
-export type WebSessionOrigin = 'system-browser' | 'in-app'
+export type WebSessionOrigin = 'system-browser' | 'in-app' | 'in-pane'
 
 /**
  * How an account signs in to the Claude Code CLI.
@@ -108,6 +108,42 @@ export const AUTH_BROWSER_LABELS: Record<AuthBrowser, string> = {
 /** True when the value names a browser this app can drive. */
 export function isAuthBrowser(v: unknown): v is AuthBrowser {
   return typeof v === 'string' && (AUTH_BROWSERS as readonly string[]).includes(v)
+}
+
+/**
+ * Where an account's claude.ai WEB sign-in runs (#439, owner call 2026-08-25).
+ *
+ * 'auto' is the shipped routing, UNCHANGED and the default forever: the
+ * dedicated sign-in window for subscription/Console accounts (no launched
+ * browser, no debug port — claude.ai's bot-detection flags that port), the
+ * system browser for SSO (its identity provider may need a policy-installed
+ * extension an Electron window cannot load).
+ *
+ * 'internal-pane' routes the Settings sign-in button into the baked-in
+ * browser pane instead: the pane hosts a claude.ai-only view bound to this
+ * ACCOUNT's partition (#475's surface), and the user signs in there once.
+ *
+ * Whichever runs, the session cookie lands in the account's own partition
+ * (webPartitionForProfile), so every in-app surface bound to the account —
+ * the artifacts window, the sign-in window, the pane's account view — sees
+ * it with no copying.
+ */
+export type WebSignInMode = 'auto' | 'internal-pane'
+
+export const WEB_SIGN_IN_MODES: readonly WebSignInMode[] = ['auto', 'internal-pane']
+
+/** The default when an account has never been told otherwise: today's routing. */
+export const DEFAULT_WEB_SIGN_IN_MODE: WebSignInMode = 'auto'
+
+/** Human labels for the picker. */
+export const WEB_SIGN_IN_MODE_LABELS: Record<WebSignInMode, string> = {
+  auto: 'Sign-in window (default)',
+  'internal-pane': 'Internal browser pane',
+}
+
+/** True when the value is a known sign-in mode. */
+export function isWebSignInMode(v: unknown): v is WebSignInMode {
+  return typeof v === 'string' && (WEB_SIGN_IN_MODES as readonly string[]).includes(v)
 }
 
 export interface AccountWebSession {
