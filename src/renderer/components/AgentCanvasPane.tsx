@@ -1166,7 +1166,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // chip agree on one glance.
   const inspectHint =
     xrayMode === 'off'
-      ? 'the page is live and plain — x-ray is off, so hovering and clicking do nothing here'
+      ? 'the page is live and plain — X-Ray is off, so hovering and clicking do nothing here'
       : xrayMode === 'stealth'
         ? 'hovering names the element in the panel and draws nothing on the page · click selects · ↑ parent · Esc clears'
         : 'hover to inspect, click to select · ↑ parent · Esc clears'
@@ -1326,36 +1326,54 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             chip, since it only governs what Inspect does; Sketch and Region
             visibly pause both. */}
         <div className="shrink-0 flex items-center gap-1.5" role="group" aria-label="Canvas tools" data-testid="canvas-tool-chips">
-          {/* Inspect (browse) with the X-ray setting attached. */}
-          <div className="flex items-center gap-1">
+          {/* Inspect + X-Ray as ONE capsule (#469, canvas-picked option A):
+              a single bordered control, so the modes read as Inspect's own
+              setting — and the feature is NAMED on the control (owner note:
+              "we should be calling it X-Ray"). Locked to Stealth on a plan
+              (owner call, 2026-08-23) — the boxes-on-page x-ray adds nothing
+              over a document of steps, and Off would break note anchoring —
+              so the segments are shown, not hidden, but inert with a lock. */}
+          <div
+            className="flex items-stretch h-[26px] rounded-md overflow-hidden border transition-colors"
+            style={{ borderColor: inspectActive ? 'color-mix(in srgb, var(--brand) 52%, transparent)' : 'var(--border-subtle)' }}
+            data-testid="canvas-inspect-capsule"
+          >
             <button
               onClick={() => {
                 setMarqueeArmed(sessionId, false)
                 setInteractionMode(sessionId, 'browse')
               }}
               aria-pressed={inspectActive}
-              className={chipClass(inspectActive, false)}
-              style={chipStyle(inspectActive)}
+              className={`flex items-center gap-1.5 px-2.5 text-[12px] leading-none transition-colors focus-ring ${
+                inspectActive ? 'font-semibold text-[var(--brand)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+              }`}
+              style={{ background: inspectActive ? 'color-mix(in srgb, var(--brand) 15%, transparent)' : 'color-mix(in srgb, var(--surface-panel) 60%, transparent)' }}
               title="Inspect — the content is live; hover identifies elements, click selects"
               data-testid="canvas-tool-inspect"
             >
               <ToolIcon kind="inspect" />
               Inspect
             </button>
-            {/* X-ray Off · Stealth · On (#367), attached to Inspect: it is the
-                one setting that only changes what Inspect does. Locked to
-                Stealth on a plan (owner call, 2026-08-23) — the boxes-on-page
-                x-ray adds nothing over a document of steps, and Off would break
-                note anchoring — so the segments are shown, not hidden, but
-                inert with a lock. */}
+            <span
+              aria-hidden
+              className="w-px self-stretch"
+              style={{ background: inspectActive ? 'color-mix(in srgb, var(--brand) 35%, transparent)' : 'var(--border-subtle)' }}
+            />
             <div
-              className={`flex items-center rounded-md overflow-hidden border text-[11px] ${inspectPaused ? 'opacity-40' : ''}`}
-              style={{ borderColor: 'color-mix(in srgb, var(--color-teal) 40%, transparent)' }}
+              className={`flex items-center text-[11px] ${inspectPaused ? 'opacity-40' : ''}`}
+              style={{ background: inspectActive ? 'color-mix(in srgb, var(--brand) 6%, transparent)' : 'color-mix(in srgb, var(--surface-panel) 60%, transparent)' }}
               role="group"
-              aria-label="Canvas x-ray hover"
+              aria-label="X-Ray mode"
               data-testid="canvas-xray-mode"
-              title={planLocked ? 'X-ray is locked to Stealth on a plan — a document of steps needs no boxes on the page, and Off would break note anchoring.' : undefined}
+              title={planLocked ? 'X-Ray is locked to Stealth on a plan — a document of steps needs no boxes on the page, and Off would break note anchoring.' : undefined}
             >
+              <span
+                className="pl-2 pr-1 text-[9px] font-bold tracking-[0.08em] leading-none"
+                style={{ color: 'var(--text-muted)' }}
+                aria-hidden
+              >
+                X-RAY
+              </span>
               {CANVAS_XRAY_MODE_OPTIONS.map((option) => {
                 const selected = xrayMode === option.value
                 return (
@@ -1364,9 +1382,9 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                     onClick={() => { if (!planLocked) setXrayMode(option.value) }}
                     aria-pressed={selected}
                     disabled={planLocked}
-                    className="px-2 py-[3px] leading-none transition-colors focus-ring disabled:cursor-default"
+                    className="px-2 self-stretch leading-none transition-colors focus-ring disabled:cursor-default"
                     style={selected
-                      ? { background: 'color-mix(in srgb, var(--color-teal) 16%, transparent)', color: 'var(--color-teal)', fontWeight: 600 }
+                      ? { background: 'color-mix(in srgb, var(--brand) 18%, transparent)', color: 'var(--brand)', fontWeight: 600 }
                       : { color: 'var(--text-secondary)' }}
                     title={option.title}
                     data-testid={`canvas-xray-${option.value}`}
@@ -1376,7 +1394,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 )
               })}
               {planLocked && (
-                <span className="px-1.5 py-[3px] leading-none text-[10px]" style={{ color: 'var(--text-muted)' }} aria-hidden>
+                <span className="px-1.5 leading-none text-[10px]" style={{ color: 'var(--text-muted)' }} aria-hidden>
                   🔒
                 </span>
               )}
