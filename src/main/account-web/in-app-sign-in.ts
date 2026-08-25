@@ -36,6 +36,7 @@ import { BrowserWindow, session as electronSession } from 'electron'
 import { logError, logInfo } from '../debug-logger'
 import { CLAUDE_SESSION_COOKIE, type AccountWebSession } from '../../shared/account-web-session'
 import { webSessionFromElectronCookies, type ElectronReadCookie } from './cookie-harvest'
+import { readAccountEmail } from './account-email-read'
 
 /** Upper bound on any single Electron call here, mirroring sign-in.ts. */
 const IO_CALL_TIMEOUT_MS = 10_000
@@ -116,31 +117,19 @@ function bounded<T>(p: Promise<T>, what: string): Promise<T> {
 }
 
 /**
- * Read the signed-in account email from the live window, origin-gated.
+ * Read the signed-in account email from the live window.
  *
- * Runs at most one script call, and ONLY the caller invokes it after a real
- * session cookie exists. The origin check is evaluated in the same breath as the
- * fetch (both read the frame's CURRENT document), so "this is claude.ai" and "ask
- * claude.ai who I am" cannot disagree — a mid-flow IdP page answers null.
- *
- * The check is trustworthy even though `executeJavaScript` runs in the page's
- * MAIN world (there is no preload, so nothing to isolate): `location` is
- * [LegacyUnforgeable] in the HTML spec — a page cannot shadow or redefine it, and
- * assigning `window.location` navigates rather than replacing the object — so
- * `location.origin` is the frame's true origin. Completion itself does not rest
- * on this at all: it is decided by the domain-scoped `sessionKey` cookie for
- * claude.ai, which a page the window roamed to cannot write for that domain.
+ * Delegates to the SHARED reader (account-email-read): an ISOLATED world so page
+ * script cannot shadow the wrapper (`Promise.resolve` overriding was the
+ * injection this closes — #439 adversarial A2), plus shape/length validation on
+ * the result. The origin gate inside the expression is the load-bearing check
+ * either way (`location` is [LegacyUnforgeable]); completion rests on the
+ * domain-scoped `sessionKey` cookie, which a roamed page cannot write.
  */
 async function readAccountEmailInWindow(win: BrowserWindow): Promise<string | null> {
   if (win.isDestroyed()) return null
-  const expr =
-    `(location.origin === 'https://claude.ai' || location.origin === 'https://www.claude.ai') ` +
-    `? fetch('/api/bootstrap',{credentials:'include'}).then(r=>r.json())` +
-    `.then(j=>(j&&j.account&&j.account.email_address)||null).catch(()=>null) ` +
-    `: Promise.resolve(null)`
   try {
-    const v = await bounded(Promise.resolve(win.webContents.executeJavaScript(expr, true)), 'bootstrap evaluate')
-    return typeof v === 'string' ? v : null
+    return await bounded(readAccountEmail(win.webContents), 'bootstrap evaluate')
   } catch {
     return null
   }

@@ -24,33 +24,32 @@ interface Occupant {
   view: WebContentsView
 }
 
-const byWindowId = new Map<number, Occupant>()
+// Keyed by the window OBJECT, not its numeric id: identity can't collide the
+// way two windows sharing an id (or a destroyed-then-recreated id) can, and a
+// WeakMap entry for a closed window is collected on its own — no forget call,
+// no leak of a slot pinning a dead WebContentsView.
+const byWindow = new WeakMap<BrowserWindow, Occupant>()
 
 /**
  * Attach `view` to `parent`, detaching whatever pane view the window currently
- * holds first. Idempotent for the same view (re-attaching the current occupant
- * is a no-op beyond the addChildView, which Electron tolerates).
+ * holds first. Re-attaching the current occupant returns early.
  */
 export function attachPaneView(parent: BrowserWindow, view: WebContentsView): void {
-  const cur = byWindowId.get(parent.id)
-  if (cur && cur.view !== view) {
+  const cur = byWindow.get(parent)
+  if (cur && cur.view === view) return
+  if (cur) {
     try { parent.contentView.removeChildView(cur.view) } catch { /* already gone */ }
     // Belt-and-braces: shrink the evicted view so a failed detach cannot leave
     // it covering the newcomer (the same guard setVisible uses).
     try { cur.view.setBounds({ x: 0, y: 0, width: 1, height: 1 }) } catch { /* noop */ }
   }
   parent.contentView.addChildView(view)
-  byWindowId.set(parent.id, { view })
+  byWindow.set(parent, { view })
 }
 
 /** Detach `view` from `parent` and clear the slot if it held this view. */
 export function detachPaneView(parent: BrowserWindow, view: WebContentsView): void {
   try { parent.contentView.removeChildView(view) } catch { /* already gone */ }
-  const cur = byWindowId.get(parent.id)
-  if (cur && cur.view === view) byWindowId.delete(parent.id)
-}
-
-/** Forget a window's slot entirely (the window itself is gone). */
-export function forgetPaneWindow(windowId: number): void {
-  byWindowId.delete(windowId)
+  const cur = byWindow.get(parent)
+  if (cur && cur.view === view) byWindow.delete(parent)
 }

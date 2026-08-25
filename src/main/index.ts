@@ -40,7 +40,9 @@ import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
-import { closeAllAccountPanes } from './account-web/account-pane'
+import { closeAllAccountPanes, closeAccountPanesForProfile } from './account-web/account-pane'
+import { onPartitionRevoked } from './account-web/partition-revocation'
+import { removeWebSession } from './account-web/session-store'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
@@ -905,6 +907,11 @@ if (!gotTheLock) {
     registerUsageHandlers()
     registerDiscoveryHandlers()
     registerAccountWebHandlers()
+    // #439: when a partition is wiped (sign-out / delete / cancelled sign-in),
+    // sign-in.ts emits a revocation through the decoupling seam; wire the owners
+    // here so it never has to import their heavy graphs. Both run synchronously.
+    onPartitionRevoked(removeWebSession)
+    onPartitionRevoked(closeAccountPanesForProfile)
     // #216: a crash or forced quit can leave a sign-in browser profile behind, and
     // each one holds a live claude.ai session. Sweep them at boot.
     try { sweepAbandonedProfiles(getDataDirectory()) } catch { /* best effort */ }

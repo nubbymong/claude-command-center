@@ -148,6 +148,11 @@ export async function openWebview(
   const existing = views.get(sessionId)
   if (existing) {
     try {
+      // Re-attach through the arbiter: the account view (or another pane) may
+      // have evicted this one while it stayed alive-but-detached, so a reopen
+      // must put it back, not just answer true over a detached view (#439).
+      existing.attachedTo = parent
+      attachPaneView(parent, existing.view)
       existing.view.setBounds(bounds)
       if (existing.url !== url) {
         existing.view.webContents.loadURL(url)

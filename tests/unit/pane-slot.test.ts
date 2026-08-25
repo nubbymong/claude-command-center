@@ -4,15 +4,18 @@
 // found). This is the CROSS-MODULE guarantee — two different view owners share
 // the arbiter — so it is pinned on the arbiter directly.
 import { describe, it, expect, beforeEach } from 'vitest'
-import { attachPaneView, detachPaneView, forgetPaneWindow } from '../../src/main/pane-slot'
+import { attachPaneView, detachPaneView } from '../../src/main/pane-slot'
 
+// Real Chromium APPENDS on addChildView (no dedupe); the arbiter's own
+// early-return is what keeps a re-attach from duplicating, so the fake appends
+// too — testing the arbiter, not a forgiving double.
 function fakeWindow(id: number) {
   const children: unknown[] = []
   return {
     id,
     contentView: {
       children,
-      addChildView: (v: unknown) => { if (!children.includes(v)) children.push(v) },
+      addChildView: (v: unknown) => { children.push(v) },
       removeChildView: (v: unknown) => { const i = children.indexOf(v); if (i >= 0) children.splice(i, 1) },
     },
   }
@@ -20,7 +23,7 @@ function fakeWindow(id: number) {
 const fakeView = (label: string) => ({ label, setBounds: () => {} })
 
 let win: ReturnType<typeof fakeWindow>
-beforeEach(() => { win = fakeWindow(1); forgetPaneWindow(1); forgetPaneWindow(2) })
+beforeEach(() => { win = fakeWindow(1) })
 
 describe('pane-slot arbiter', () => {
   it('attaching a second view (a DIFFERENT owner) detaches the first — never two at once', () => {

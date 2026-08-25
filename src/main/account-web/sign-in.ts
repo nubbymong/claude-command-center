@@ -42,8 +42,11 @@ import {
 import { DEVTOOLS_PORT_FILE, authProfileDir, buildAuthBrowserArgs, type AuthBrowser } from './browser-launch'
 import { harvestClaudeCookies, type CdpCookie } from './cookie-harvest'
 import { closeInAppSignInWindow, runInAppSignIn } from './in-app-sign-in'
-import { removeWebSession } from './session-store'
-import { closeAccountPanesForProfile } from './account-pane'
+// A wipe must forget the web-session record and close the account's pane
+// surfaces. Those owners subscribe via this zero-dependency seam so sign-in.ts
+// keeps its narrow module graph (#439 adversarial A9) — importing session-store
+// / account-pane here would drag their heavy transitive graph in.
+import { notifyPartitionRevoked } from './partition-revocation'
 
 /** Lazy require so a missing optional dep never crashes boot (mirrors vision-manager). */
 let CDP: any = null
@@ -612,6 +615,20 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
         pollMs,
         shouldCancel: () => cancelled,
       })
+      // CANCELLED IN-APP (#439 adversarial A3): the in-app window writes the
+      // session cookie straight into this partition as the user signs in, so a
+      // Cancel AFTER that point leaves a live cookie — and the pane surface may
+      // already have recorded it. This is the DEFAULT route for subscription
+      // accounts; the SSO branches below wipe on revoke, so this must too. Empty
+      // the partition and forget the record + close the pane, matching them.
+      if (res.cancelled) {
+        try {
+          await withTimeout(Promise.resolve(electronSession.fromPartition(partition).clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
+        } catch (err) {
+          logError(`[account-web] could not clear a cancelled in-app session for ${profileId}: ${(err as Error)?.message ?? err}`)
+        }
+        notifyPartitionRevoked(profileId)
+      }
       current = res.session
         ? { phase: 'done', profileId, session: res.session }
         : { phase: 'failed', profileId, error: res.error ?? (res.cancelled ? 'Sign-in cancelled.' : 'Sign-in failed.') }
@@ -810,10 +827,10 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
             logError(`[account-web] could not clear a partially written session for ${profileId}: ${(err as Error)?.message}`)
           }
           // The pane surface (#439) may have recorded during the brief signed-in
-          // window before the revoke landed — close it and forget the record so
-          // the wipe is complete on every teardown door, not just sign-out.
-          closeAccountPanesForProfile(profileId)
-          removeWebSession(profileId)
+          // window before the revoke landed — forget the record and close the
+          // pane so the wipe is complete on every teardown door, not just
+          // sign-out.
+          notifyPartitionRevoked(profileId)
           await closeQuietly(client)
           await cleanup(profileDir)
           logInfo(`[account-web] ${profileId}: sign-in abandoned — the session was revoked while it was being collected`)
@@ -842,8 +859,7 @@ export async function runSignIn(opts: RunSignInOpts): Promise<SignInState> {
           }
           // Same as the aborted branch: a pane recording made in the signed-in
           // window is forgotten with the partition it described.
-          closeAccountPanesForProfile(profileId)
-          removeWebSession(profileId)
+          notifyPartitionRevoked(profileId)
           logInfo(`[account-web] ${profileId}: sign-in discarded — the session was revoked during teardown`)
           current = tag({
             phase: 'failed',
@@ -917,20 +933,18 @@ export async function clearWebSession(profileId: string): Promise<void> {
   // second entry point for sign-in (the session right-click), so the two can
   // overlap without the settings panel ever disabling its own button.
   cancelSignIn(profileId)
-  // The account's pane surface (#439) holds this same session and rides the same
-  // partition — close it (sets its `closed` flag so an in-flight recording
-  // aborts) and forget any record it wrote in the brief signed-in window BEFORE
-  // the partition goes. This is the revocation door #439's adversarial pass
-  // found the pane could survive: whatever emptied the partition must also
-  // forget the record, or a stale "signed in" is left behind.
-  closeAccountPanesForProfile(profileId)
-  removeWebSession(profileId)
+  // Close the account's pane surface (#439) FIRST: it holds this same session
+  // on this partition, and closing it sets the pane's `closed` flag so any
+  // in-flight recording aborts before the storage goes. (notifyPartitionRevoked
+  // also forgets the record; we re-forget AFTER the wipe below so a failed wipe
+  // leaves the record intact — see the ordering note there.)
+  notifyPartitionRevoked(profileId)
   const store = electronSession.fromPartition(webPartitionForProfile(profileId))
   // BOUNDED, like every other IO in this module. This was the last raw await
   // left: a `clearStorageData` that never settles left the sign-out and
   // account-delete IPC calls unresolved forever, so the renderer's button stayed
-  // busy with nothing to show for it. It fails closed either way — the caller
-  // does not remove the record unless this succeeds.
+  // busy with nothing to show for it. It fails closed — a throw propagates and
+  // the record is re-forgotten only on success.
   await withTimeout(Promise.resolve(store.clearStorageData()), IO_CALL_TIMEOUT_MS, 'clearStorageData')
   // Storage first, THEN the HTTP cache — the account partition is now a
   // long-lived claude.ai browsing surface (#439), so it accumulates cached
@@ -943,5 +957,9 @@ export async function clearWebSession(profileId: string): Promise<void> {
   } catch (err) {
     logError(`[account-web] could not clear the HTTP cache for ${profileId}: ${(err as Error)?.message ?? err}`)
   }
+  // Forget the record AFTER the wipe succeeded (A4): a pane that reopened during
+  // the wipe's await window could have re-adopted the still-present cookie and
+  // re-recorded, so the record removal must be the last step, not the first.
+  notifyPartitionRevoked(profileId)
   logInfo(`[account-web] cleared the web session for ${profileId}`)
 }

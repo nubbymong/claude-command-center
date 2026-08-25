@@ -44,6 +44,7 @@ import { shell } from 'electron'
 import type { WebviewNavState } from '../../shared/browser-url'
 import { webSessionFromElectronCookies } from './cookie-harvest'
 import { toChromeUserAgent } from './in-app-sign-in'
+import { readAccountEmail } from './account-email-read'
 import { getWebSession, saveWebSession, removeWebSession } from './session-store'
 import { attachPaneView, detachPaneView } from '../pane-slot'
 
@@ -132,6 +133,11 @@ interface PaneEntry {
   /** The null-email backfill has run once for this pane — don't re-poll
    *  `/api/bootstrap` on every navigation for an account that never yields one. */
   backfilled: boolean
+  /** Monotonic token for the async cookie read: a slower earlier read that
+   *  resolves after a newer one must not overwrite the newer result (A8). */
+  authSeq: number
+  /** Trailing-debounce timer coalescing refreshAuthed bursts (A6). */
+  refreshTimer: ReturnType<typeof setTimeout> | null
   /** Set by closeAccountPane: an in-flight recording must not write after the
    *  pane (or the whole web session, on sign-out) is gone. */
   closed: boolean
@@ -179,47 +185,9 @@ function emitNav(entry: PaneEntry, sessionId: string, loading: boolean): void {
   } catch { /* view or window gone */ }
 }
 
-/** A plausible email, capped. The read runs in a page world, so its result is
- *  page-influenced: shape-validate and length-cap before it becomes an account
- *  label (never trust it into anything but display). */
-const EMAIL_RE = /^[^\s@"'<>]{1,128}@[^\s@"'<>]{1,128}\.[^\s@"'<>]{1,64}$/
-function sanitizeEmail(v: unknown): string | null {
-  return typeof v === 'string' && EMAIL_RE.test(v) ? v : null
-}
-
-/**
- * Read the signed-in email from the live view.
- *
- * Runs in an ISOLATED world (not the page main world): the fetch still carries
- * the page's credentials, but the surrounding expression — the `Promise`,
- * `.then`, the origin read — cannot be shadowed by page script. A hostile page
- * that overrode `Promise.resolve` in its own world could otherwise make this
- * expression yield an attacker-chosen string. The CALLER additionally refuses
- * to record unless the view's current URL is claude.ai, so a page reached via
- * any nav gap cannot answer as the account either way.
- */
+/** Read the signed-in email — shared isolated-world + shape-validated reader. */
 async function readEmail(view: WebContentsView): Promise<string | null> {
-  const expr =
-    `(location.origin === 'https://claude.ai' || location.origin === 'https://www.claude.ai') ` +
-    `? fetch('/api/bootstrap',{credentials:'include'}).then(r=>r.json())` +
-    `.then(j=>(j&&j.account&&j.account.email_address)||null).catch(()=>null) ` +
-    `: Promise.resolve(null)`
-  try {
-    const wc = view.webContents as unknown as {
-      executeJavaScriptInIsolatedWorld?: (id: number, scripts: Array<{ code: string }>) => Promise<unknown>
-      executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>
-    }
-    const run = typeof wc.executeJavaScriptInIsolatedWorld === 'function'
-      ? wc.executeJavaScriptInIsolatedWorld(1, [{ code: expr }])
-      : wc.executeJavaScript(expr, true)
-    const v = await Promise.race([
-      Promise.resolve(run),
-      new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
-    ])
-    return sanitizeEmail(v)
-  } catch {
-    return null
-  }
+  return readAccountEmail(view.webContents as never)
 }
 
 /** The view is currently on claude.ai — a precondition for trusting anything
@@ -292,7 +260,11 @@ async function recordSession(entry: PaneEntry, expiresAt: number | null): Promis
       origin: 'in-pane',
     }
     saveWebSession(session)
-    if (email !== null) entry.backfilled = true
+    // Bound the null-email backfill: a full grace attempt has now run for this
+    // pane, so don't re-poll /api/bootstrap on every future navigation for an
+    // account whose bootstrap never yields an email (A5). A real email arriving
+    // later still updates via the ordinary false->true path on the next open.
+    entry.backfilled = true
     logInfo(`[account-pane] recorded claude.ai session for ${entry.profileId} (signed in via the pane)`)
   } catch (err) {
     logError(`[account-pane] could not record session: ${(err as Error)?.message ?? err}`)
@@ -305,10 +277,29 @@ async function recordSession(entry: PaneEntry, expiresAt: number | null): Promis
   }
 }
 
+const REFRESH_DEBOUNCE_MS = 250
+
+/** Coalesce refreshAuthed bursts: a page firing rapid in-page navigations must
+ *  not cost one main-process cookie read + record-file read each (A6). */
+function scheduleRefreshAuthed(sessionId: string): void {
+  const entry = panes.get(sessionId)
+  if (!entry || entry.closed) return
+  if (entry.refreshTimer) return
+  entry.refreshTimer = setTimeout(() => {
+    entry.refreshTimer = null
+    void refreshAuthed(sessionId)
+  }, REFRESH_DEBOUNCE_MS)
+  if (typeof (entry.refreshTimer as { unref?: () => void }).unref === 'function') {
+    (entry.refreshTimer as { unref: () => void }).unref()
+  }
+}
+
 /** Re-read the partition's cookie state; on unauthed->authed, record. */
 async function refreshAuthed(sessionId: string): Promise<void> {
   const entry = panes.get(sessionId)
   if (!entry) return
+  // A8: token this read so a slower earlier one cannot clobber a newer result.
+  const seq = ++entry.authSeq
   let cookies
   try {
     const ses = electronSession.fromPartition(webPartitionForProfile(entry.profileId))
@@ -318,14 +309,24 @@ async function refreshAuthed(sessionId: string): Promise<void> {
     // was": pin it to null so the nav policy fails closed (off-site blocked)
     // rather than trusting a possibly-stale `false` with a live session. The
     // next cookie-change / navigation re-reads.
+    if (entry.authSeq !== seq || entry.closed) return
     const before = entry.authed
     entry.authed = null
     if (before !== null) sendState(entry, sessionId)
     return
   }
+  // A newer read superseded this one (or the pane closed) while awaiting.
+  if (entry.authSeq !== seq || entry.closed) return
   const { hasSessionCookie, expiresAt } = webSessionFromElectronCookies(cookies)
   const before = entry.authed
   entry.authed = hasSessionCookie
+  // A1: the session just went live while the view is parked OFF claude.ai (an
+  // IdP hop / open-redirect / link the pre-auth rule allowed). A session-bearing
+  // view must not sit on an attacker origin under chrome that says "signed in" —
+  // recall it to the account start page.
+  if (before !== true && hasSessionCookie && !viewIsOnClaude(entry.view)) {
+    try { void entry.view.webContents.loadURL(ACCOUNT_PANE_START_URL) } catch { /* view gone */ }
+  }
   const stored = getWebSession(entry.profileId)
   if (
     hasSessionCookie &&
@@ -441,6 +442,8 @@ export function openAccountPane(
       recording: false,
       recordDirty: false,
       backfilled: false,
+      authSeq: 0,
+      refreshTimer: null,
       closed: false,
     }
 
@@ -492,11 +495,12 @@ export function openAccountPane(
     const wc = view.webContents
     wc.on('did-start-loading', () => emitNav(entry, sessionId, true))
     wc.on('did-stop-loading', () => emitNav(entry, sessionId, false))
-    wc.on('did-navigate', () => { emitNav(entry, sessionId, false); void refreshAuthed(sessionId) })
+    wc.on('did-navigate', () => { emitNav(entry, sessionId, false); scheduleRefreshAuthed(sessionId) })
     // In-page nav too (claude.ai is an SPA): a client-side route change is where
     // a sign-in / sign-out becomes visible without a full navigation, so the
-    // authed state must be re-read here as well or it can stick stale.
-    wc.on('did-navigate-in-page', () => { emitNav(entry, sessionId, false); void refreshAuthed(sessionId) })
+    // authed state must be re-read here as well or it can stick stale. Debounced
+    // so a page firing rapid in-page navs cannot spin the cookie + file reads.
+    wc.on('did-navigate-in-page', () => { emitNav(entry, sessionId, false); scheduleRefreshAuthed(sessionId) })
     wc.on('page-title-updated', () => emitNav(entry, sessionId, false))
     // The view's own process died (crash/OOM): evict the entry so a reopen
     // rebuilds rather than returning ok over a dead view, and tell the renderer
@@ -511,6 +515,9 @@ export function openAccountPane(
     // sits on the LONG-LIVED account session — the catch below unhooks it if
     // any later step (setBounds, addChildView) throws.
     const onCookieChanged = (_e: unknown, cookie: { name: string; domain?: string }): void => {
+      // Immediate, not debounced: a real cookie write (sign-in/out) is the
+      // signal that matters, and it is not page-spammable at high rate — the
+      // A6 debounce is for page-driven did-navigate-in-page bursts only.
       if (cookie.name !== CLAUDE_SESSION_COOKIE) return
       void refreshAuthed(sessionId)
     }
@@ -548,6 +555,7 @@ export function closeAccountPane(sessionId: string): boolean {
   // Before anything else: an in-flight recordSession must see the close and
   // refuse to write (sign-out empties the partition right after this).
   entry.closed = true
+  if (entry.refreshTimer) { clearTimeout(entry.refreshTimer); entry.refreshTimer = null }
   entry.unsubscribeCookies()
   const parent = entry.attachedTo
   try {

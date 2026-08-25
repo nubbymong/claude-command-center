@@ -182,6 +182,7 @@ export function registerAccountWebHandlers(): void {
       const { profileId, method } = z
         .object({ profileId: profileIdSchema, method: z.enum(['claudeai', 'sso', 'console']) })
         .parse(args)
+      if (!isKnownProfile(profileId)) return { ok: false, error: 'unknown account' }
       setAuthMethod(profileId, method)
       return { ok: true }
     } catch (err) {
@@ -197,6 +198,7 @@ export function registerAccountWebHandlers(): void {
       const { profileId, browser } = z
         .object({ profileId: profileIdSchema, browser: z.enum(['chrome', 'edge']) })
         .parse(args)
+      if (!isKnownProfile(profileId)) return { ok: false, error: 'unknown account' }
       setAuthBrowser(profileId, browser)
       return { ok: true }
     } catch (err) {

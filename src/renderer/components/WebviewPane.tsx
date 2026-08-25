@@ -387,7 +387,10 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       window.clearInterval(tick)
     }
     // showFavourites changes the placeholder's height; the observer catches it.
-  }, [sessionId, isActive, currentUrl, measure])
+    // frozenImage in the deps: the freeze modal is fixed-inset (no ResizeObserver
+    // fire) and shrinks the native view to 1x1 on hide, so a re-measure must run
+    // when it clears or the pane comes back at 1x1.
+  }, [sessionId, isActive, currentUrl, measure, frozenImage])
 
   // Show/hide on session-active changes. Without this, the WebContentsView
   // from an inactive session keeps drawing over the active session's content

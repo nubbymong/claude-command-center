@@ -179,6 +179,50 @@ describe('the account view', () => {
     closeAccountPane('sess-inj')
   })
 
+  it('recalls the view to the account start page when the session goes live while parked OFF claude.ai (A1)', async () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-recall', 'profile-recall1', BOUNDS)
+    const ses = partitions[webPartitionForProfile('profile-recall1')]
+    const view = createdViews[0].view
+    const flush = () => new Promise((r) => setTimeout(r, 0))
+    await flush() // authed=false confirmed
+    view.webContents.loadURL.mockClear()
+    // Parked on an attacker origin (an IdP hop / open-redirect the pre-auth rule
+    // allowed), the session then goes live on the shared partition.
+    view.webContents.currentUrl = 'https://evil.example/landing'
+    ses.cookies.get.mockResolvedValue([{ name: 'sessionKey', expirationDate: 4102444800 }])
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    await flush(); await flush()
+    // The session-bearing view must not sit on the attacker origin — recalled.
+    expect(view.webContents.loadURL).toHaveBeenCalledWith('https://claude.ai/artifacts')
+    closeAccountPane('sess-recall')
+  })
+
+  it('a slower earlier cookie read cannot clobber a newer one (A8 generation guard)', async () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-seq', 'profile-seq1', BOUNDS)
+    const ses = partitions[webPartitionForProfile('profile-seq1')]
+    const flush = () => new Promise((r) => setTimeout(r, 0))
+    await flush()
+    // read #1 (issued first) resolves LAST with an empty jar; read #2 resolves
+    // first with the live cookie. The stale empty result must not win.
+    let resolve1: (v: unknown) => void = () => {}
+    ses.cookies.get.mockImplementationOnce(() => new Promise((r) => { resolve1 = r }))
+    ses.cookies.get.mockResolvedValueOnce([{ name: 'sessionKey', expirationDate: 4102444800 }])
+    // fire two refreshes: the first hangs, the second (newer seq) resolves.
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    await flush()
+    resolve1([]) // the stale read finally returns "no cookie"
+    await flush(); await flush()
+    // authed stayed true (the newer read won); an off-site nav is now external.
+    const nav = createdViews[0].view.webContents.handlers['will-navigate'] as (e: { preventDefault: () => void }, url: string) => void
+    const off = { preventDefault: vi.fn() }
+    nav(off, 'https://example.com/x')
+    expect(off.preventDefault).toHaveBeenCalled() // external, not allowed in-view
+    closeAccountPane('sess-seq')
+  })
+
   it('a crashed view is evicted and the renderer told to leave account mode', () => {
     const win = new FakeParentWindow()
     openAccountPane(win as never, 'sess-crash', 'profile-p1a', BOUNDS)
