@@ -330,6 +330,26 @@ describe('Clear — back to the start page (#481)', () => {
     await flush()
     expect(api.open).toHaveBeenCalledTimes(2)
   })
+
+  it('Clear THEN navigate, both inside one open round trip, still lands the new page (no stuck blank placeholder)', async () => {
+    let resolveOpen: (ok: boolean) => void = () => {}
+    api.open.mockImplementationOnce(() => new Promise((r) => { resolveOpen = r }))
+    act(() => { useWebviewStore.getState().navigate('s1', 'http://localhost:5173/') })
+    render()
+    await flush()
+    expect(api.open).toHaveBeenCalledTimes(1)
+    // Clear, then ask for a NEW page — the first open is still out, so the
+    // second request queues behind openInFlight.
+    act(() => { byTest<HTMLButtonElement>('browser-clear')!.click() })
+    act(() => { useWebviewStore.getState().navigate('s1', 'http://localhost:9999/') })
+    // The compensating navigate targets the view Clear destroyed: it fails.
+    api.navigate.mockResolvedValueOnce(false)
+    await act(async () => { resolveOpen(true); await new Promise((r) => setTimeout(r, 0)) })
+    await flush()
+    // The failed compensation fell back to a fresh open of the new page.
+    expect(api.open).toHaveBeenCalledTimes(2)
+    expect(api.open).toHaveBeenLastCalledWith('s1', 'http://localhost:9999/', expect.anything())
+  })
 })
 
 describe('the modern palette (#455)', () => {

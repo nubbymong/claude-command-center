@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { join } from 'node:path'
 import { FakeTkWorkerTransport } from '../../../src/main/tokenomics/tk-worker-transport'
 
 const forks: FakeTkWorkerTransport[] = []
@@ -20,7 +21,6 @@ import { initTokenomics, getTokenomicsSupervisor, shutdownTokenomics, refreshTok
 // every configs push, pointing at <resources>/help. Built with join() exactly
 // as the service builds it — a hardcoded 'F:\\resources\\help' would fail the
 // macOS CI leg, where join emits a forward slash.
-import { join } from 'node:path'
 const HELP_DIM = { configId: TK_HELP_CONFIG_ID, label: 'Ask Conductor', workingDirectory: join('F:\\resources', 'help') }
 
 describe('tokenomics-service', () => {

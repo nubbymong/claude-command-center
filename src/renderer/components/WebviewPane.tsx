@@ -161,7 +161,14 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
             return
           }
           viewReadyRef.current = true
-          if (latest !== url) void window.electronAPI.webview.navigate(sessionId, latest)
+          // Clear-then-navigate inside this one round trip: the view this open
+          // created was destroyed by the Clear, so the compensating navigate
+          // fails — fall back to a fresh open instead of discarding the result.
+          if (latest !== url) {
+            void window.electronAPI.webview.navigate(sessionId, latest).then((navOk) => {
+              if (!navOk) { viewReadyRef.current = false; tryOpenRef.current?.() }
+            }).catch(() => { /* noop */ })
+          }
         } else {
           setOpen(sessionId, false)
         }
