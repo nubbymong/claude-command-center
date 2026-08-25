@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, existsSync, statSync } from 'fs'
+import { mkdtempSync, readFileSync, existsSync, statSync, rmSync } from 'fs'
 import { join } from 'path'
 import * as path from 'path'
 import { tmpdir } from 'os'
@@ -214,73 +214,82 @@ export async function runCodexReview(
     }
   }
 
-  // 4. Tmpfile for last-message capture
+  // 4. Tmpfile for last-message capture. Never removed anywhere below this
+  // point in the original code -- including every early-return error path
+  // (timeout, non-zero exit, missing tmpfile) -- so one dir + up to ~50KB
+  // review.md leaked into %TEMP% per invocation, forever (#487 audit).
+  // try/finally below guarantees cleanup on every path, including a throw.
   const tmpDir = mkdtempSync(join(tmpdir(), 'ccc-codex-review-'))
   const tmpfile = join(tmpDir, 'review.md')
-
-  // 5. Build argv
-  const argv = buildArgv(args, resolvedCwd, tmpfile)
-
-  // P7.7.9: log spawn args so the debug log shows exactly what flags were
-  // passed to codex on each invocation. Useful when diagnosing future CLI
-  // drift or argv-construction regressions.
-  logInfo('[codex-review] spawning: codex ' + argv.join(' '))
-
-  // 6. Spawn streaming. P7.7.15: honour caller-supplied timeoutSeconds when
-  // provided; zod already clamped it to [TIMEOUT_SECONDS_MIN, TIMEOUT_SECONDS_MAX].
-  const timeoutMs = args.timeoutSeconds != null ? args.timeoutSeconds * 1000 : REVIEW_TIMEOUT_MS
-  let observed: TokenCountObserved | null = null
-  const result = await runCodexStreaming(argv, {
-    timeoutMs,
-    cwd: resolvedCwd,
-    onStdoutLine: (line: string) => {
-      const parsedLine = parseTokenCountLine(line)
-      if (parsedLine) observed = parsedLine
-    },
-  })
-
-  // 7. Error mapping
-  if (result.timedOut) {
-    return { isError: true, text: `Codex review timed out after ${formatTimeoutForMessage(timeoutMs)}. Try a smaller scope (e.g. mode: "paths") or raise timeoutSeconds (max ${TIMEOUT_SECONDS_MAX}).` }
-  }
-  if (result.code !== 0) {
-    const excerpt = (result.stderr || '').slice(0, 500)
-    return { isError: true, text: `Codex review failed (exit ${result.code}): ${excerpt}${formatFooter(observed)}` }
-  }
-
-  // 8. Read tmpfile
-  if (!existsSync(tmpfile)) {
-    return { isError: true, text: 'Codex review produced no output (tmpfile missing).' }
-  }
-  let review = readFileSync(tmpfile, 'utf-8')
-  if (statSync(tmpfile).size > MAX_DIFF_BYTES) {
-    review = '[review truncated -- output exceeded 50KB]\n\n' + review.slice(-MAX_DIFF_BYTES)
-  }
-
-  // 9. Record usage
-  if (observed) {
-    const obsInner = observed as TokenCountObserved
-    recordReview(cccSessionId, {
-      inputTokens: obsInner.inputTokens,
-      outputTokens: obsInner.outputTokens,
-      rateLimit: obsInner.rateLimit,
-    })
-  }
-
-  // Emit internal event so channel rules (Codex Routing) can forward the
-  // review to the PR author session. Best-effort: never breaks the review result.
   try {
-    // Count numbered list items or "issue:" lines as a rough finding count.
-    const findingCount = (review.match(/^\s*\d+\./gm) ?? []).length || 1
-    emitCodexReviewComplete({
-      prNumber: undefined,
-      authorSessionId: cccSessionId,
-      findingCount,
-      findings: review.slice(0, 500),
-    })
-  } catch { /* channels emit is best-effort */ }
+    // 5. Build argv
+    const argv = buildArgv(args, resolvedCwd, tmpfile)
 
-  return { isError: false, text: review + formatFooter(observed) }
+    // P7.7.9: log spawn args so the debug log shows exactly what flags were
+    // passed to codex on each invocation. Useful when diagnosing future CLI
+    // drift or argv-construction regressions.
+    logInfo('[codex-review] spawning: codex ' + argv.join(' '))
+
+    // 6. Spawn streaming. P7.7.15: honour caller-supplied timeoutSeconds when
+    // provided; zod already clamped it to [TIMEOUT_SECONDS_MIN, TIMEOUT_SECONDS_MAX].
+    const timeoutMs = args.timeoutSeconds != null ? args.timeoutSeconds * 1000 : REVIEW_TIMEOUT_MS
+    let observed: TokenCountObserved | null = null
+    const result = await runCodexStreaming(argv, {
+      timeoutMs,
+      cwd: resolvedCwd,
+      onStdoutLine: (line: string) => {
+        const parsedLine = parseTokenCountLine(line)
+        if (parsedLine) observed = parsedLine
+      },
+    })
+
+    // 7. Error mapping
+    if (result.timedOut) {
+      return { isError: true, text: `Codex review timed out after ${formatTimeoutForMessage(timeoutMs)}. Try a smaller scope (e.g. mode: "paths") or raise timeoutSeconds (max ${TIMEOUT_SECONDS_MAX}).` }
+    }
+    if (result.code !== 0) {
+      const excerpt = (result.stderr || '').slice(0, 500)
+      return { isError: true, text: `Codex review failed (exit ${result.code}): ${excerpt}${formatFooter(observed)}` }
+    }
+
+    // 8. Read tmpfile
+    if (!existsSync(tmpfile)) {
+      return { isError: true, text: 'Codex review produced no output (tmpfile missing).' }
+    }
+    let review = readFileSync(tmpfile, 'utf-8')
+    if (statSync(tmpfile).size > MAX_DIFF_BYTES) {
+      review = '[review truncated -- output exceeded 50KB]\n\n' + review.slice(-MAX_DIFF_BYTES)
+    }
+
+    // 9. Record usage
+    if (observed) {
+      const obsInner = observed as TokenCountObserved
+      recordReview(cccSessionId, {
+        inputTokens: obsInner.inputTokens,
+        outputTokens: obsInner.outputTokens,
+        rateLimit: obsInner.rateLimit,
+      })
+    }
+
+    // Emit internal event so channel rules (Codex Routing) can forward the
+    // review to the PR author session. Best-effort: never breaks the review result.
+    try {
+      // Count numbered list items or "issue:" lines as a rough finding count.
+      const findingCount = (review.match(/^\s*\d+\./gm) ?? []).length || 1
+      emitCodexReviewComplete({
+        prNumber: undefined,
+        authorSessionId: cccSessionId,
+        findingCount,
+        findings: review.slice(0, 500),
+      })
+    } catch { /* channels emit is best-effort */ }
+
+    return { isError: false, text: review + formatFooter(observed) }
+  } finally {
+    try {
+      rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3 })
+    } catch { /* best effort -- a stray dir here is a slow leak, not correctness */ }
+  }
 }
 
 /** Register the codex_review tool on a conductor-mcp-server McpServer instance.

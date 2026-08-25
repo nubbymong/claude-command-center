@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, dirname } from 'path'
 
 // Mock auth: BOTH runCodexStreaming and readCodexAuthStatus from the same mock factory.
 // (The module under test imports both from './providers/codex/auth'.)
@@ -379,6 +379,53 @@ describe('codex_review tool', () => {
     expect(result.isError).toBe(true)
     expect(result.text).toContain('no Conductor session id bound')
     expect(runCodexStreaming).not.toHaveBeenCalled()
+  })
+
+  // Round-1 adversarial coverage gap (#487 audit): the per-review mkdtemp
+  // tmpDir must be removed on EVERY path, including a successful review --
+  // not just the error paths the original fix's tests happened to exercise.
+  // Capture the tmpDir the tool actually created (via the --output-last-message
+  // arg) and assert it is gone once runCodexReview resolves.
+  it('#487 round-1: cleans up the per-call tmpDir on a successful review', async () => {
+    let tmpDirCreated = ''
+    runCodexStreaming.mockImplementation(async (args: string[]) => {
+      const i = args.indexOf('--output-last-message')
+      const tmpfile = args[i + 1]
+      tmpDirCreated = dirname(tmpfile)
+      writeFileSync(tmpfile, 'fine', 'utf-8')
+      return { code: 0, stderr: '', timedOut: false }
+    })
+
+    const result = await runCodexReview(
+      { cccSessionId: 'sess-allowed', mode: 'working' },
+      optedIn, gitCwd,
+    )
+
+    expect(result.isError).toBe(false)
+    expect(tmpDirCreated).not.toBe('')
+    expect(existsSync(tmpDirCreated)).toBe(false)
+  })
+
+  // Companion case: an error-RETURN path (non-zero exit, not a throw) must
+  // clean up the tmpDir too -- the try/finally must not be scoped only to the
+  // happy path.
+  it('#487 round-1: cleans up the per-call tmpDir on an error-return path (non-zero exit)', async () => {
+    let tmpDirCreated = ''
+    runCodexStreaming.mockImplementation(async (args: string[]) => {
+      const i = args.indexOf('--output-last-message')
+      const tmpfile = args[i + 1]
+      tmpDirCreated = dirname(tmpfile)
+      return { code: 2, stderr: 'boom', timedOut: false }
+    })
+
+    const result = await runCodexReview(
+      { cccSessionId: 'sess-allowed', mode: 'working' },
+      optedIn, gitCwd,
+    )
+
+    expect(result.isError).toBe(true)
+    expect(tmpDirCreated).not.toBe('')
+    expect(existsSync(tmpDirCreated)).toBe(false)
   })
 })
 
