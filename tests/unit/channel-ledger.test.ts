@@ -6,6 +6,11 @@ vi.mock('../../src/main/channel-storage', () => ({
   appendLine: (_n: string, line: string) => { lines.push(line) },
   listFiles: () => dirFiles,
   deleteFile: (n: string) => { const i = dirFiles.indexOf(n); if (i >= 0) dirFiles.splice(i, 1) },
+  // rotateLedgers now also reaps attachments/ (#487 audit); channel-attachments.ts
+  // reads channelsDir() to find that dir. Point it at a path that never exists so
+  // reapAttachments's existsSync guard no-ops -- attachment reaping itself is
+  // covered by its own dedicated test.
+  channelsDir: () => '/mock/nonexistent/conductor-channels',
 }))
 vi.mock('../../src/main/hooks/hook-payload-redactor', () => ({
   redactHookPayload: <T>(v: T): T => v,

@@ -17,6 +17,10 @@ import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/elec
 
 let ctx: IsolatedApp
 let page: IsolatedApp['page']
+// Set by the PTY-launching spec below; cleaned up in afterAll, AFTER
+// closeIsolatedApp's tree-kill has torn down the shell that owns it (#487
+// audit: cleaning it up in-test raced the still-live shell and always failed).
+let probeDirToClean: string | undefined
 
 test.beforeAll(async () => {
   ctx = await launchIsolatedApp()
@@ -27,6 +31,13 @@ test.afterAll(async () => {
   // Tearing down with a live PTY session can exceed the 30s hook default.
   test.setTimeout(120000)
   await closeIsolatedApp(ctx)
+  if (probeDirToClean) {
+    try {
+      fs.rmSync(probeDirToClean, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 })
+    } catch (err) {
+      console.warn(`[e2e] failed to remove probe dir ${probeDirToClean}: ${(err as Error).message}`)
+    }
+  }
 })
 
 /**
@@ -163,6 +174,7 @@ test.describe('Terminal-only config actually runs its command', () => {
     // as a real argv element, not just as pixels) and immune to xterm rendering
     // to a canvas, where there is no DOM text to read.
     const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-e2e-probe-'))
+    probeDirToClean = probeDir
     const probeJs = path.join(probeDir, 'probe.js')
     const probeOut = path.join(probeDir, 'argv.txt')
     fs.writeFileSync(
@@ -196,8 +208,8 @@ test.describe('Terminal-only config actually runs its command', () => {
     expect(shown).toContain('--token|E2E-SECRET-9f3a')
     // …and it ran in the configured working directory (the cd landed first).
     expect(shown.toLowerCase()).toContain(probeDir.toLowerCase())
-    // Best-effort: the spawned shell is still live with this as its cwd, so
-    // Windows holds a lock on it. Leaving a temp dir behind must not fail the run.
-    try { fs.rmSync(probeDir, { recursive: true, force: true }) } catch { /* shell still owns it */ }
+    // Cleanup happens in afterAll, AFTER the app (and its still-live shell) is
+    // torn down -- see probeDirToClean above. Doing it here always raced the
+    // shell that still owns probeDir as its cwd.
   })
 })
