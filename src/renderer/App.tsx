@@ -879,6 +879,9 @@ export default function App() {
         {(() => {
           const gi = activeSession.githubIntegration
           const shouldShow =
+            // The Ask help session carries no GitHub surface at all (#465) —
+            // its cwd is the staged help workspace, not a project.
+            activeSession.kind !== 'ask' &&
             !gi?.enabled &&
             !gi?.repoUrl &&
             !gi?.dismissedAutoDetect &&
@@ -1092,7 +1095,11 @@ export default function App() {
               has the same Close button in the same corner (the desktop proof
               for item 26 found the FAB intercepting its clicks), so it is
               suppressed there too. */}
+          {/* #465: never for the Ask help session — this gate removes the FAB,
+              the rail AND the Ctrl+/ toggle (the listener lives inside the
+              panel), which is the whole GitHub surface. */}
           {activeSession
+            && activeSession.kind !== 'ask'
             && !excalidrawBySession[activeSession.id]?.isOpen
             && !webviewBySession[activeSession.id]?.isOpen && (
             <GitHubPanel sessionId={activeSession.id} />
@@ -1114,7 +1121,9 @@ export default function App() {
             sessionId={activeSession.id}
             configId={activeSession.configId}
             sessionType={activeSession.sessionType === 'ssh' ? 'ssh' : 'local'}
-            partnerEnabled={true}
+            // #465: the Ask help session has no partner shell — it is a help
+            // surface, not a workspace. Every other session keeps it.
+            partnerEnabled={activeSession.kind !== 'ask'}
             isPartnerActive={partnerActive.has(activeSession.id)}
             onTogglePartner={() => togglePartner(activeSession.id)}
             partnerSessionId={activeSession.id + '-partner'}

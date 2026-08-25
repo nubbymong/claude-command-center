@@ -58,6 +58,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   const navigate = useWebviewStore((s) => s.navigate)
   const setPage = useWebviewStore((s) => s.setPage)
   const setHomeUrl = useWebviewStore((s) => s.setHomeUrl)
+  const clearPage = useWebviewStore((s) => s.clearPage)
 
   const configId = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.configId)
   const favourites = useBrowserStore((s) => s.favourites)
@@ -105,9 +106,11 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   }, [sessionId, setPage])
 
   // The pane opened on its start page but this session has a home: go there.
+  // NOT after an explicit Clear (#481) — the user asked for the start page,
+  // and auto-homing would make the Clear button a no-op for anyone with a home.
   useEffect(() => {
-    if (state?.isOpen && !currentUrl && home) navigate(sessionId, home)
-  }, [state?.isOpen, currentUrl, home, sessionId, navigate])
+    if (state?.isOpen && !currentUrl && home && !state.atStartPage) navigate(sessionId, home)
+  }, [state?.isOpen, currentUrl, home, sessionId, navigate, state?.atStartPage])
 
   const measure = useCallback((): Bounds | null => {
     const el = containerRef.current
@@ -147,10 +150,25 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
         openInFlight = false
         if (cancelled) return
         if (ok) {
-          viewReadyRef.current = true
           // The URL may have moved on while the IPC was in flight.
           const latest = useWebviewStore.getState().bySessionId[sessionId]?.currentUrl
-          if (latest && latest !== url) void window.electronAPI.webview.navigate(sessionId, latest)
+          if (!latest) {
+            // Cleared while the open was in flight (#481): destroy the view this
+            // round trip just created and stay unready — the blank start page is
+            // what the user asked for, and the native view would paint over it.
+            viewReadyRef.current = false
+            void window.electronAPI.webview.close(sessionId).catch(() => { /* noop */ })
+            return
+          }
+          viewReadyRef.current = true
+          // Clear-then-navigate inside this one round trip: the view this open
+          // created was destroyed by the Clear, so the compensating navigate
+          // fails — fall back to a fresh open instead of discarding the result.
+          if (latest !== url) {
+            void window.electronAPI.webview.navigate(sessionId, latest).then((navOk) => {
+              if (!navOk) { viewReadyRef.current = false; tryOpenRef.current?.() }
+            }).catch(() => { /* noop */ })
+          }
         } else {
           setOpen(sessionId, false)
         }
@@ -257,6 +275,15 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     }
   }
   const handleReload = () => { void window.electronAPI.webview.reload(sessionId) }
+  const handleClear = () => {
+    // Destroy the native view FIRST: it paints above every HTML layer, so with
+    // it alive the start page would render underneath and never be seen. The
+    // ready flag drops with it; the next navigate recreates a fresh view (the
+    // same path the unmount cleanup + reopen uses).
+    viewReadyRef.current = false
+    void window.electronAPI.webview.close(sessionId).catch(() => { /* noop */ })
+    clearPage(sessionId)
+  }
   const handleFreeze = async () => {
     const image = await window.electronAPI.webview.capture(sessionId)
     if (image) setFrozenImage(image)
@@ -366,6 +393,9 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
         </button>
         <button onClick={handleOpenExternal} disabled={!shownUrl} className={`${toolBtn} ${toolBtnIdle}`} title="Open in your real browser" aria-label="Open in your real browser" data-testid="browser-open-external">{Icon.external}</button>
         <div className="w-px h-4 bg-[var(--border-strong)] mx-0.5" />
+        {/* Clear (#481): back to the start page without closing the pane. The
+            only other way off a page was Close — which hides the whole pane. */}
+        <button onClick={handleClear} disabled={!currentUrl} className="px-2 py-0.5 text-xs rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] transition-colors disabled:opacity-35" title="Clear the page — back to the start page" data-testid="browser-clear">Clear</button>
         <button onClick={handleFreeze} disabled={!currentUrl} className="px-2 py-0.5 text-xs rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] transition-colors disabled:opacity-35" title="Freeze + annotate with Excalidraw">Freeze</button>
         <button onClick={handleClose} className="px-2 py-0.5 text-xs rounded border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] transition-colors" title="Back to the terminal" data-testid="browser-close">Close</button>
       </div>

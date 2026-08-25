@@ -57,6 +57,14 @@ export interface WebviewSessionState {
    *  the persisted per-config home lives in browserStore). */
   homeUrl: string | null
   /**
+   * True only after an explicit Clear (#481): the user asked for the START
+   * page, so the pane's "opened blank with a home set -> go home" convenience
+   * must not immediately bounce them back to the home page. Any navigation,
+   * watch activation, or fresh pane open clears it — the Clear applied to
+   * that viewing, not to the session forever.
+   */
+  atStartPage: boolean
+  /**
    * Monotonically-incremented per session on every `startActivation`.
    * Long-running pollers capture this token and pass it back to
    * `markAvailable` / `markFailed` so a stale poll can't overwrite a
@@ -101,6 +109,9 @@ interface Actions {
    *  home and "open a page" commands all come through here. The caller has
    *  already normalised + validated (shared/browser-url). */
   navigate: (sessionId: string, url: string) => void
+  /** Clear the pane back to its start page (#481): drops the requested URL and
+   *  the page report, keeps the pane open. The caller closes the native view. */
+  clearPage: (sessionId: string) => void
   /** Main's report of where the view actually is. */
   setPage: (state: WebviewNavState) => void
   /** Session-scoped home (not persisted). */
@@ -124,6 +135,7 @@ const defaultState = (): WebviewSessionState => ({
   isOpen: false,
   page: null,
   homeUrl: null,
+  atStartPage: false,
   activationId: 0,
 })
 
@@ -150,6 +162,7 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
           currentUrl: url,
           navSeq: cur.navSeq + 1,
           loadedAt: null,
+          atStartPage: false,
           activationId: nextToken,
         },
       },
@@ -168,7 +181,10 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
             ...prev,
             status: 'available',
             watchUrl: url,
-            currentUrl: prev.currentUrl ?? url,
+            // After an explicit Clear (#481) the blank pane is deliberate: a
+            // background re-probe must not point it anywhere. An explicit watch
+            // press comes through startActivation, which resets the flag.
+            currentUrl: prev.atStartPage ? prev.currentUrl : (prev.currentUrl ?? url),
             loadedAt: Date.now(),
           },
         },
@@ -190,13 +206,15 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   },
   // Flip `isOpen` only — status (idle/pending/available/failed) is
   // owned by activation / probe / poll callers and unaffected by
-  // showing or hiding the pane.
+  // showing or hiding the pane. Opening ANEW forgets a previous Clear
+  // (#481): the explicit "show me the start page" applied to that viewing;
+  // a fresh open gets the ordinary go-home convenience back.
   togglePane: (sessionId) => {
     const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: !cur.isOpen },
+        [sessionId]: { ...cur, isOpen: !cur.isOpen, atStartPage: cur.isOpen ? cur.atStartPage : false },
       },
     }))
   },
@@ -205,7 +223,7 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: open },
+        [sessionId]: { ...cur, isOpen: open, atStartPage: open && !cur.isOpen ? false : cur.atStartPage },
       },
     }))
   },
@@ -214,7 +232,19 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, currentUrl: url, navSeq: cur.navSeq + 1, isOpen: true },
+        [sessionId]: { ...cur, currentUrl: url, navSeq: cur.navSeq + 1, isOpen: true, atStartPage: false },
+      },
+    }))
+  },
+  clearPage: (sessionId) => {
+    const cur = get().bySessionId[sessionId]
+    // Nothing to clear for a session whose pane has no state; and `page` must
+    // go too — the address bar and star read page.url ahead of currentUrl.
+    if (!cur) return
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...cur, currentUrl: null, page: null, atStartPage: true },
       },
     }))
   },
@@ -223,6 +253,9 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     // A report for a session whose pane has never existed is a stale event
     // from a view that has since been torn down; there is nothing to update.
     if (!cur) return
+    // Same for a view Clear just closed (#481): a late navigation report must
+    // not repopulate `page` under the start page (the address bar reads it).
+    if (cur.atStartPage) return
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,

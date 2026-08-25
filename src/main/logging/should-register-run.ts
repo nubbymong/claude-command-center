@@ -22,6 +22,12 @@
  *                                         the remote host; nothing local to tail
  *                                         (same `options.ssh` signal the OSC
  *                                         sentinel SSH statusline branch keys on).
+ *  - NOT an Ask Conductor session       — the help session is an ephemeral
+ *                                         utility surface (#465): its chatter
+ *                                         must not fill the Logs index. Claude's
+ *                                         own transcripts still exist, so the
+ *                                         header's "Past discussions" resume
+ *                                         path is unaffected.
  *  - per-config loggingEnabled !== false  — DEFAULT-TRUE (undefined => ON).
  *  - global  loggingEnabled !== false     — DEFAULT-TRUE (undefined => ON).
  *
@@ -32,6 +38,8 @@ export function shouldRegisterRun(
     provider?: 'claude' | 'codex'
     shellOnly?: boolean
     ssh?: unknown
+    /** The Ask Conductor help session (#465). Never logged. */
+    isAsk?: boolean
     /** Per-config logging opt-out. DEFAULT-TRUE: only `false` disables. */
     loggingEnabled?: boolean
   },
@@ -42,6 +50,7 @@ export function shouldRegisterRun(
   if (opts.provider !== 'claude') return false
   if (opts.shellOnly) return false
   if (opts.ssh) return false
+  if (opts.isAsk === true) return false
   if (opts.loggingEnabled === false) return false
   if (settings.loggingEnabled === false) return false
   return true

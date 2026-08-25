@@ -163,3 +163,36 @@ describe('SessionHeader', () => {
     expect(container.textContent).not.toContain('claude.ai')
   })
 })
+
+describe('the slim Ask header (#465)', () => {
+  // AskHeaderLead renders the running app version; vitest has no vite define.
+  beforeEach(() => { (globalThis as any).__APP_VERSION__ = '0.0.0-test' })
+
+  const askSession = (over: Partial<Session> = {}) =>
+    makeSession({ id: 'ask', kind: 'ask', label: 'Ask Conductor', configId: undefined, ...over })
+
+  it('keeps ONLY the account pill: no claude.ai / Claude Code / GitHub pills', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-a', name: 'Work', accountEmail: 'me@work.co' } as any] })
+    render(askSession({ profileId: 'profile-a', provider: 'claude', sessionType: 'local' }))
+    expect(container.querySelector('[data-testid="session-pill-account"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudecode"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-claudeai"]')).toBeNull()
+    expect(container.querySelector('[data-testid="session-pill-github"]')).toBeNull()
+    expect(container.textContent).not.toContain('claude.ai')
+    expect(container.textContent).not.toContain('Claude Code')
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('skips the auth-status fetch entirely (no pills to feed)', () => {
+    useAccountProfilesStore.setState({ profiles: [{ id: 'profile-a', name: 'Work', accountEmail: 'me@work.co' } as any] })
+    render(askSession({ profileId: 'profile-a', provider: 'claude', sessionType: 'local' }))
+    expect(window.electronAPI.accountWeb.status).not.toHaveBeenCalled()
+    useAccountProfilesStore.setState({ profiles: [] })
+  })
+
+  it('still wears the Ask band with its history affordance', () => {
+    render(askSession())
+    expect(container.querySelector('[data-ux-id="ask-band"]')).not.toBeNull()
+    expect(container.querySelector('[data-ux-id="ask-band-history"]')).not.toBeNull()
+  })
+})

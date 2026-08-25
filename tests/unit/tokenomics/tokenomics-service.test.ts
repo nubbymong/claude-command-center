@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { join } from 'node:path'
 import { FakeTkWorkerTransport } from '../../../src/main/tokenomics/tk-worker-transport'
 
 const forks: FakeTkWorkerTransport[] = []
@@ -11,10 +12,16 @@ vi.mock('../../../src/main/tokenomics/fork-tokenomics-worker', () => ({
   },
 }))
 vi.mock('../../../src/main/config-manager', () => ({ readConfig: vi.fn(() => [{ id: 'a', label: 'App', workingDirectory: 'F:\\proj' }]) }))
-vi.mock('../../../src/main/data-paths', () => ({ getDataDirectory: () => 'F:\\data' }))
+vi.mock('../../../src/main/data-paths', () => ({ getDataDirectory: () => 'F:\\data', getResourcesDirectory: () => 'F:\\resources' }))
 vi.mock('../../../src/main/tokenomics/tk-pricing', () => ({ getAllPricing: () => ({}), fetchModelPricing: vi.fn(() => Promise.resolve()) }))
 
-import { initTokenomics, getTokenomicsSupervisor, shutdownTokenomics, refreshTokenomicsConfigs } from '../../../src/main/tokenomics/tokenomics-service'
+import { initTokenomics, getTokenomicsSupervisor, shutdownTokenomics, refreshTokenomicsConfigs, TK_HELP_CONFIG_ID } from '../../../src/main/tokenomics/tokenomics-service'
+
+// The synthetic Ask Conductor dim (#465) rides beside the saved configs on
+// every configs push, pointing at <resources>/help. Built with join() exactly
+// as the service builds it — a hardcoded 'F:\\resources\\help' would fail the
+// macOS CI leg, where join emits a forward slash.
+const HELP_DIM = { configId: TK_HELP_CONFIG_ID, label: 'Ask Conductor', workingDirectory: join('F:\\resources', 'help') }
 
 describe('tokenomics-service', () => {
   beforeEach(() => { shutdownTokenomics(); forks.length = 0 })
@@ -26,7 +33,7 @@ describe('tokenomics-service', () => {
     const open = forks[0].workerMessages.find((m) => m.type === 'open') as any
     expect(open).toBeTruthy()
     expect(String(open.dbPath)).toContain('tokenomics.db')
-    expect(open.configs).toEqual([{ configId: 'a', label: 'App', workingDirectory: 'F:\\proj' }])
+    expect(open.configs).toEqual([{ configId: 'a', label: 'App', workingDirectory: 'F:\\proj' }, HELP_DIM])
     expect(getTokenomicsSupervisor()).not.toBeNull()
   })
 
@@ -36,10 +43,12 @@ describe('tokenomics-service', () => {
     expect(getTokenomicsSupervisor()).toBeNull()
   })
 
-  it('refreshTokenomicsConfigs pushes set-configs to the worker', () => {
+  it('refreshTokenomicsConfigs pushes set-configs to the worker (help dim included)', () => {
     initTokenomics({ emit: () => {} })
     forks[0].workerMessages.length = 0
     refreshTokenomicsConfigs()
-    expect(forks[0].workerMessages.some((m) => m.type === 'set-configs')).toBe(true)
+    const setConfigs = forks[0].workerMessages.find((m) => m.type === 'set-configs') as any
+    expect(setConfigs).toBeTruthy()
+    expect(setConfigs.configs).toContainEqual(HELP_DIM)
   })
 })

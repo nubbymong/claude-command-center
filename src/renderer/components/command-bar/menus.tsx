@@ -363,15 +363,17 @@ export function SectionMenu(p: {
 
 export function BarMenu(p: {
   x: number; y: number; overflow: CommandBarOverflow; hiddenTools: Array<{ tool: CoreToolId; label: string }>
-  onAddCommand: () => void; onAddSection: () => void; onOverflow: (v: CommandBarOverflow) => void
+  /** Absent on the slim Ask bar (#465): it renders no bands, so a command
+   *  added from here would be created and never appear — a dead end. */
+  onAddCommand?: () => void; onAddSection?: () => void; onOverflow: (v: CommandBarOverflow) => void
   onShowTool: (tool: CoreToolId) => void; onManage: () => void; onHideBar: () => void
   onClose: () => void; returnFocusTo?: HTMLElement | null
 }) {
   return (
     <Menu x={p.x} y={p.y} onClose={p.onClose} ariaLabel="Command bar menu" returnFocusTo={p.returnFocusTo} testId="bar-menu">
-      <MenuItem onClick={p.onAddCommand} icon={I.plus} testId="bar-add-command">Add command…</MenuItem>
-      <MenuItem onClick={p.onAddSection} icon={I.lines} testId="bar-add-section">Add section…</MenuItem>
-      <MenuRule />
+      {p.onAddCommand && <MenuItem onClick={p.onAddCommand} icon={I.plus} testId="bar-add-command">Add command…</MenuItem>}
+      {p.onAddSection && <MenuItem onClick={p.onAddSection} icon={I.lines} testId="bar-add-section">Add section…</MenuItem>}
+      {(p.onAddCommand || p.onAddSection) && <MenuRule />}
       <MenuItem onClick={() => p.onOverflow('fold')} testId="bar-overflow-fold">{p.overflow === 'fold' ? '● ' : '○ '}One row — fold the rest</MenuItem>
       <MenuItem onClick={() => p.onOverflow('wrap2')} testId="bar-overflow-wrap2">{p.overflow === 'wrap2' ? '● ' : '○ '}Two rows, then fold</MenuItem>
       <MenuItem icon={I.eyeoff} testId="bar-show-hidden" disabled={p.hiddenTools.length === 0} hint={p.hiddenTools.length ? String(p.hiddenTools.length) : 'none'} submenu={

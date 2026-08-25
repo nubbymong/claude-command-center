@@ -63,6 +63,15 @@ describe('shouldRegisterRun', () => {
     expect(shouldRegisterRun({ provider: 'claude' }, { loggingEnabled: true })).toBe(true)
   })
 
+  it('does NOT register the Ask Conductor help session (#465)', () => {
+    expect(shouldRegisterRun({ provider: 'claude', isAsk: true }, {})).toBe(false)
+  })
+
+  it('still registers when isAsk is explicitly false or absent', () => {
+    expect(shouldRegisterRun({ provider: 'claude', isAsk: false }, {})).toBe(true)
+    expect(shouldRegisterRun({ provider: 'claude' }, {})).toBe(true)
+  })
+
   it('does NOT register an SSH codex shell-only mix (any single exclusion is enough)', () => {
     expect(
       shouldRegisterRun(
