@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CanvasVersion } from '../../shared/canvas'
 import { CanvasArtifact, groupVersionsIntoArtifacts, locateVersion, splitArchived } from '../canvas/canvas-history'
 import { relativeTime } from '../utils/relativeTime'
+import { useArmedConfirm } from '../hooks/useArmedConfirm'
 
 /**
  * Two-level history (item C, phase 4): the version identity in the pane chrome
@@ -39,6 +40,8 @@ function updatedLabel(iso: string, now: number): string {
 export default function CanvasHistoryControl({ versions, activeVersionId, onSelectVersion, onArchive, onDelete }: Props) {
   const [open, setOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  // Double-click-proofing (#456).
+  const delConfirm = useArmedConfirm(confirmDelete)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
   const artifacts = useMemo(() => groupVersionsIntoArtifacts(versions), [versions])
@@ -150,7 +153,8 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
               (confirming ? (
                 <button
                   type="button"
-                  onClick={() => { onDelete(a); setConfirmDelete(null); setOpen(false) }}
+                  ref={delConfirm.confirmRef}
+                  onClick={delConfirm.guarded(() => { onDelete(a); setConfirmDelete(null); setOpen(false) })}
                   className="text-[10.5px] font-semibold focus-ring rounded px-1"
                   style={{ color: 'var(--status-danger)', background: 'color-mix(in srgb, var(--status-danger) 15%, transparent)' }}
                   title="Permanently delete this artifact, its versions and their review notes. This cannot be undone."

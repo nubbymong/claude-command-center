@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import type { CanvasLibraryEntry } from '../../shared/canvas'
 import { useSessionStore } from '../stores/sessionStore'
+import { useArmedConfirm } from '../hooks/useArmedConfirm'
 
 /**
  * The canvas LIBRARY.
@@ -41,6 +42,9 @@ export function CanvasLibrary({
    *  simply stops advertising notes. */
   const [confirmClose, setConfirmClose] = useState<string | null>(null)
   const [closed, setClosed] = useState<{ canvasId: string; count: number } | null>(null)
+  // Double-click-proofing (#456): each confirm kind guards its own arm moment.
+  const deleteConfirm = useArmedConfirm(confirming)
+  const closeConfirm = useArmedConfirm(confirmClose)
   const openSessionIds = useSessionStore((s) => s.sessions.map((x) => x.id).join(','))
 
   const load = useCallback(async () => {
@@ -223,7 +227,8 @@ export function CanvasLibrary({
             {!!e.closeableNoteCount && (
               confirmClose === e.canvasId ? (
                 <button
-                  onClick={() => void closeOut(e.canvasId)}
+                  ref={closeConfirm.confirmRef}
+                  onClick={closeConfirm.guarded(() => void closeOut(e.canvasId))}
                   disabled={busy === e.canvasId}
                   data-testid="canvas-library-close-confirm"
                   className="shrink-0 text-[11px] rounded px-2 py-0.5 bg-[color-mix(in_srgb,var(--status-warning)_15%,transparent)] border border-[color-mix(in_srgb,var(--status-warning)_50%,transparent)] text-[var(--status-warning)] hover:bg-[color-mix(in_srgb,var(--status-warning)_25%,transparent)] disabled:opacity-50 focus-ring"
@@ -251,7 +256,8 @@ export function CanvasLibrary({
             </button>
             {confirming === e.canvasId ? (
               <button
-                onClick={() => void remove(e.canvasId)}
+                ref={deleteConfirm.confirmRef}
+                onClick={deleteConfirm.guarded(() => void remove(e.canvasId))}
                 disabled={busy === e.canvasId}
                 className="shrink-0 text-[11px] rounded px-2 py-0.5 bg-[color-mix(in_srgb,var(--status-danger)_15%,transparent)] border border-[color-mix(in_srgb,var(--status-danger)_50%,transparent)] text-[var(--status-danger)] hover:bg-[color-mix(in_srgb,var(--status-danger)_25%,transparent)] disabled:opacity-50 focus-ring"
                 data-testid="canvas-library-confirm-delete"
