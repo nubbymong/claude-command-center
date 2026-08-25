@@ -127,7 +127,11 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     let fallbackNotice = ''
     if (signInMode === 'internal-pane') {
       const sessions = useSessionStore.getState()
-      const host = sessions.sessions.find((s) => s.id === sessions.activeSessionId) ?? sessions.sessions[0]
+      // Same gate as the pane's own claude.ai entry (#475): only a local,
+      // non-shell session can host the account surface — an SSH or shell-only
+      // tile would show a surface its own start page never offers.
+      const eligible = sessions.sessions.filter((s) => !s.shellOnly && s.sessionType === 'local')
+      const host = eligible.find((s) => s.id === sessions.activeSessionId) ?? eligible[0]
       if (host) {
         window.dispatchEvent(new CustomEvent('app:openAccountPane', { detail: { sessionId: host.id, profileId } }))
         setError('')

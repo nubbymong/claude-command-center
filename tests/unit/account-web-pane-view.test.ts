@@ -81,6 +81,7 @@ const {
   openAccountPane,
   closeAccountPane,
   closeAccountPanesForProfile,
+  closeAllAccountPanes,
   getAccountPaneState,
 } = await import('../../src/main/account-web/account-pane')
 const { webPartitionForProfile } = await import('../../src/shared/account-web-session')
@@ -88,15 +89,13 @@ const { webPartitionForProfile } = await import('../../src/shared/account-web-se
 const BOUNDS = { x: 0, y: 0, width: 800, height: 600 }
 
 beforeEach(() => {
+  // The module registry is per-import; close anything a prior test left open
+  // BEFORE resetting the fakes it will unhook from.
+  closeAllAccountPanes()
   createdViews.length = 0
   openedExternal.length = 0
   for (const k of Object.keys(partitions)) delete partitions[k]
   fake.disk = null
-  // The module registry is per-import; close anything a prior test left open.
-  closeAccountPanesForProfile('profile-p1a')
-  closeAccountPanesForProfile('profile-p1b')
-  closeAccountPanesForProfile('profile-nav1')
-  closeAccountPanesForProfile('profile-teardown')
 })
 
 describe('the account view', () => {
@@ -179,5 +178,65 @@ describe('the account view', () => {
     expect(getAccountPaneState('sess-sw')?.profileId).toBe('profile-p1b')
     expect(createdViews[0].view.webContents.destroyed).toBe(true)
     closeAccountPane('sess-sw')
+  })
+})
+
+describe('sign-in recording from the pane', () => {
+  const SESSION_COOKIE = [{ name: 'sessionKey', expirationDate: 4102444800 }]
+  const flush = () => new Promise((r) => setTimeout(r, 0))
+  const storedSessions = () => ((fake.disk as { sessions?: unknown[] } | null)?.sessions ?? [])
+
+  it('records the session — with the email — once the cookie lands while the pane is open', async () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-rec', 'profile-rec1', BOUNDS)
+    const ses = partitions[webPartitionForProfile('profile-rec1')]
+    const view = createdViews[0].view
+    await flush() // initial refreshAuthed: no cookie -> authed false
+    ses.cookies.get.mockResolvedValue(SESSION_COOKIE)
+    view.webContents.executeJavaScript.mockResolvedValue('me@example.com')
+    // The partition cookie watch is the sign-in detector.
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    await flush(); await flush(); await flush()
+    const rec = storedSessions()[0] as { profileId: string; accountEmail: string; origin: string } | undefined
+    expect(rec).toBeDefined()
+    expect(rec!.profileId).toBe('profile-rec1')
+    expect(rec!.accountEmail).toBe('me@example.com')
+    expect(rec!.origin).toBe('in-pane')
+    closeAccountPane('sess-rec')
+  })
+
+  it('an in-flight recording refuses to write after the pane closed (the sign-out race)', async () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-race', 'profile-race1', BOUNDS)
+    const ses = partitions[webPartitionForProfile('profile-race1')]
+    const view = createdViews[0].view
+    await flush()
+    ses.cookies.get.mockResolvedValue(SESSION_COOKIE)
+    // The email read hangs until AFTER the close — the exact window in which
+    // in-app-sign-in.ts documents the record-over-empty-partition failure.
+    let resolveEmail: (v: string) => void = () => {}
+    view.webContents.executeJavaScript.mockImplementation(() => new Promise((r) => { resolveEmail = r }))
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    await flush()
+    closeAccountPane('sess-race')
+    resolveEmail('too@late.example')
+    await flush(); await flush()
+    expect(storedSessions()).toHaveLength(0)
+  })
+
+  it('refuses to write when the recheck finds the cookie already gone', async () => {
+    const win = new FakeParentWindow()
+    openAccountPane(win as never, 'sess-gone', 'profile-gone1', BOUNDS)
+    const ses = partitions[webPartitionForProfile('profile-gone1')]
+    const view = createdViews[0].view
+    await flush()
+    ses.cookies.get.mockResolvedValueOnce(SESSION_COOKIE) // the transition read
+    view.webContents.executeJavaScript.mockResolvedValue('me@example.com')
+    ses.cookies.listeners[0](null, { name: 'sessionKey' })
+    // Every later read (the recheck) sees an emptied partition.
+    ses.cookies.get.mockResolvedValue([])
+    await flush(); await flush(); await flush()
+    expect(storedSessions()).toHaveLength(0)
+    closeAccountPane('sess-gone')
   })
 })

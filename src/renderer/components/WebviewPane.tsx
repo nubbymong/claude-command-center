@@ -246,6 +246,10 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     if (!accountModeProfileId) return
     viewReadyRef.current = false
     void window.electronAPI.webview.close(sessionId).catch(() => { /* noop */ })
+    // A stale freeze overlay would pin the account view invisible (the
+    // visibility effect hides the native view while a freeze is up) with no
+    // modal on screen to dismiss — the freeze belonged to the ordinary view.
+    setFrozenImage(null)
 
     // Same older-preload tolerance as the Artifacts tool's accountWeb?. calls.
     const paneApi = window.electronAPI.accountWeb

@@ -229,7 +229,13 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: !cur.isOpen, atStartPage: cur.isOpen ? cur.atStartPage : false },
+        // Closing leaves account mode, same as setOpen — the gestures agree.
+        [sessionId]: {
+          ...cur,
+          isOpen: !cur.isOpen,
+          atStartPage: cur.isOpen ? cur.atStartPage : false,
+          accountPane: cur.isOpen ? null : cur.accountPane,
+        },
       },
     }))
   },
@@ -238,7 +244,15 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: open, atStartPage: open && !cur.isOpen ? false : cur.atStartPage },
+        // Closing the pane leaves account mode too (#439): Esc and the strip's
+        // Close must agree — reopening the browser later starts at the ordinary
+        // browser, never straight into claude.ai.
+        [sessionId]: {
+          ...cur,
+          isOpen: open,
+          atStartPage: open && !cur.isOpen ? false : cur.atStartPage,
+          accountPane: open ? cur.accountPane : null,
+        },
       },
     }))
   },
@@ -269,7 +283,9 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
       bySessionId: {
         ...s.bySessionId,
         // `page` is dropped: it described the ordinary view this mode replaces.
-        [sessionId]: { ...cur, isOpen: true, page: null, accountPane: { profileId, authed: null, email: null } },
+        // `atStartPage` too — its setPage guard would silently drop the account
+        // view's nav reports (the strip's loading indicator reads them).
+        [sessionId]: { ...cur, isOpen: true, page: null, atStartPage: false, accountPane: { profileId, authed: null, email: null } },
       },
     }))
   },

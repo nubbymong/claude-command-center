@@ -97,6 +97,9 @@ interface PaneEntry {
   unsubscribeCookies: () => void
   /** Guards the once-per-transition recording. */
   recording: boolean
+  /** Set by closeAccountPane: an in-flight recording must not write after the
+   *  pane (or the whole web session, on sign-out) is gone. */
+  closed: boolean
 }
 
 const panes = new Map<string, PaneEntry>()
@@ -151,17 +154,44 @@ async function readEmail(view: WebContentsView): Promise<string | null> {
   }
 }
 
+/** Same grace the in-app sign-in window gives the email read: the sessionKey
+ *  cookie lands mid-redirect, before the document is back on claude.ai, and
+ *  the origin-gated read answers null until it is. */
+const EMAIL_GRACE_MS = 4_000
+const EMAIL_POLL_MS = 800
+
 /**
  * The partition just transitioned to signed-in while the pane was open (or was
  * already signed in with no record on file): persist the metadata record so the
  * rest of the app — pills, artifacts gating — sees the session. Cookie stays in
  * the partition; this writes metadata only, exactly like the window flows.
+ *
+ * Two guards mirror in-app-sign-in's (adversarial history there): the email is
+ * retried under a short grace rather than read once mid-redirect, and the write
+ * is refused after the pane closed AND unless the cookie is still present — a
+ * sign-out landing during the read must not save a record over a partition that
+ * was just emptied (every request under it would 401).
  */
 async function recordSession(entry: PaneEntry, expiresAt: number | null): Promise<void> {
   if (entry.recording) return
   entry.recording = true
   try {
-    const email = await readEmail(entry.view)
+    const deadline = Date.now() + EMAIL_GRACE_MS
+    let email = await readEmail(entry.view)
+    while (email === null && Date.now() < deadline && !entry.closed) {
+      await new Promise((r) => setTimeout(r, EMAIL_POLL_MS))
+      if (entry.closed) break
+      email = await readEmail(entry.view)
+    }
+    if (entry.closed) return
+    let recheck
+    try {
+      const ses = electronSession.fromPartition(webPartitionForProfile(entry.profileId))
+      recheck = await ses.cookies.get({ url: 'https://claude.ai', name: CLAUDE_SESSION_COOKIE })
+    } catch {
+      return
+    }
+    if (!webSessionFromElectronCookies(recheck).hasSessionCookie || entry.closed) return
     const session: AccountWebSession = {
       profileId: entry.profileId,
       accountEmail: email,
@@ -192,9 +222,17 @@ async function refreshAuthed(sessionId: string): Promise<void> {
   const { hasSessionCookie, expiresAt } = webSessionFromElectronCookies(cookies)
   const before = entry.authed
   entry.authed = hasSessionCookie
-  if (hasSessionCookie && (before === false || (before === null && !getWebSession(entry.profileId)))) {
-    // A fresh sign-in in this pane, or a partition that is signed in with no
-    // record on file (a previous pane sign-in interrupted before recording).
+  const stored = getWebSession(entry.profileId)
+  if (
+    hasSessionCookie &&
+    (before === false ||
+      (before === null && !stored) ||
+      // Email backfill: an earlier pane recording that beat the redirect can
+      // hold a null email; a later navigation (now on claude.ai) is the moment
+      // the origin-gated read can finally answer. Only our own pane records —
+      // the window flows manage their own.
+      (stored?.origin === 'in-pane' && stored.accountEmail === null))
+  ) {
     void recordSession(entry, expiresAt).then(() => sendState(entry, sessionId))
   }
   if (before !== entry.authed) sendState(entry, sessionId)
@@ -230,6 +268,11 @@ export function openAccountPane(
     closeAccountPane(sessionId)
   }
 
+  // Held outside the try so the catch can destroy a view that was created
+  // before a later step threw — an orphaned WebContentsView on the LONG-LIVED
+  // account partition is not a leak this function may produce.
+  let createdView: WebContentsView | null = null
+  let unsubscribe: (() => void) | null = null
   try {
     const ses = electronSession.fromPartition(partition)
     // The same plain-Chrome UA the in-app sign-in sets: claude.ai's
@@ -253,6 +296,7 @@ export function openAccountPane(
       },
     })
 
+    createdView = view
     const entry: PaneEntry = {
       view,
       profileId,
@@ -260,6 +304,7 @@ export function openAccountPane(
       authed: null,
       unsubscribeCookies: () => { /* replaced below */ },
       recording: false,
+      closed: false,
     }
 
     const guard = (label: string) => (event: { preventDefault: () => void }, target: string): void => {
@@ -306,7 +351,9 @@ export function openAccountPane(
     wc.on('page-title-updated', () => emitNav(entry, sessionId, false))
 
     // Watch the partition for the session cookie appearing or going: this is
-    // both the sign-in detector and the strip's live authed dot.
+    // both the sign-in detector and the strip's live authed dot. The listener
+    // sits on the LONG-LIVED account session, so it is registered only after
+    // everything that can throw — and the catch below unhooks it regardless.
     const onCookieChanged = (_e: unknown, cookie: { name: string; domain?: string }): void => {
       if (cookie.name !== CLAUDE_SESSION_COOKIE) return
       void refreshAuthed(sessionId)
@@ -315,6 +362,7 @@ export function openAccountPane(
     entry.unsubscribeCookies = () => {
       try { ses.cookies.removeListener('changed', onCookieChanged) } catch { /* session gone */ }
     }
+    unsubscribe = entry.unsubscribeCookies
 
     view.setBounds(bounds)
     parent.contentView.addChildView(view)
@@ -326,6 +374,10 @@ export function openAccountPane(
     logInfo(`[account-pane] opened for session ${sessionId} as ${profileId}`)
     return { ok: true }
   } catch (err) {
+    // Nothing half-made survives a failed open: the cookie listener and the
+    // view would otherwise be unreachable for the entire app lifetime.
+    try { unsubscribe?.() } catch { /* session gone */ }
+    try { createdView?.webContents.close() } catch { /* never attached */ }
     logError(`[account-pane] open failed: ${(err as Error)?.message ?? err}`)
     return { ok: false, error: (err as Error)?.message ?? 'could not open the account view' }
   }
@@ -334,6 +386,9 @@ export function openAccountPane(
 export function closeAccountPane(sessionId: string): boolean {
   const entry = panes.get(sessionId)
   if (!entry) return false
+  // Before anything else: an in-flight recordSession must see the close and
+  // refuse to write (sign-out empties the partition right after this).
+  entry.closed = true
   entry.unsubscribeCookies()
   try {
     if (!entry.attachedTo.isDestroyed()) entry.attachedTo.contentView.removeChildView(entry.view)

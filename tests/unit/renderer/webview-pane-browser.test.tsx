@@ -485,6 +485,19 @@ describe('the account surface (#439/#475) — claude.ai as this session’s acco
     expect(byTest('account-pane-strip')).toBeNull()
   })
 
+  it('closing the pane (Esc, Close — anything via setOpen) leaves account mode — reopening starts at the ordinary browser', async () => {
+    localSession()
+    open()
+    render()
+    act(() => { useWebviewStore.getState().openAccountPane('s1', 'profile-aaa111') })
+    await flush()
+    expect(useWebviewStore.getState().bySessionId['s1'].accountPane).not.toBeNull()
+    act(() => { useWebviewStore.getState().setOpen('s1', false) })
+    expect(useWebviewStore.getState().bySessionId['s1'].accountPane).toBeNull()
+    // The native account view was closed by the unmount cleanup.
+    expect(acct.paneClose).toHaveBeenCalledWith('s1')
+  })
+
   it('a paneOpen refusal falls back to the ordinary browser instead of a dead rectangle', async () => {
     localSession()
     acct.paneOpen.mockResolvedValue({ ok: false, error: 'invalid account' })

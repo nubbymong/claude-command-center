@@ -140,7 +140,7 @@ describe('sign-in routing', () => {
 
   it("mode 'internal-pane' with a session open dispatches the pane event for the ACTIVE session and never calls signIn", async () => {
     api.status.mockResolvedValue(statusPayload({ webSignInMode: 'internal-pane' }))
-    SESSIONS = [{ id: 's-one' }, { id: 's-two' }]
+    SESSIONS = [{ id: 's-one', sessionType: 'local' }, { id: 's-two', sessionType: 'local' }] as never
     ACTIVE = 's-two'
     const seen = vi.fn()
     window.addEventListener('app:openAccountPane', seen)
@@ -157,6 +157,20 @@ describe('sign-in routing', () => {
     api.status.mockResolvedValue(statusPayload({ webSignInMode: 'internal-pane' }))
     await render()
     await clickSignIn()
+    expect(api.signIn).toHaveBeenCalledWith('profile-aaa111')
+    expect(container.textContent).toContain('sign-in window was used instead')
+  })
+
+  it('an SSH or shell-only session cannot host the pane — same fallback (#475 gate)', async () => {
+    api.status.mockResolvedValue(statusPayload({ webSignInMode: 'internal-pane' }))
+    SESSIONS = [{ id: 's-ssh', sessionType: 'ssh' }, { id: 's-shell', sessionType: 'local', shellOnly: true }] as never
+    ACTIVE = 's-ssh'
+    const seen = vi.fn()
+    window.addEventListener('app:openAccountPane', seen)
+    await render()
+    await clickSignIn()
+    window.removeEventListener('app:openAccountPane', seen)
+    expect(seen).not.toHaveBeenCalled()
     expect(api.signIn).toHaveBeenCalledWith('profile-aaa111')
     expect(container.textContent).toContain('sign-in window was used instead')
   })
