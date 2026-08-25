@@ -341,10 +341,20 @@ export function resolveUsageOutcome(
   return { ...base, status: 'ok', stale: false, buckets: parsed.buckets, credits: parsed.credits }
 }
 
-/** Fetch usage for one profile. Signed-out -> needs-login; signed-in but not
- *  fetchable -> last-known (stale) or a soft refresh hint; success -> fresh.
- *  Auto-refreshes a lapsed token (guarded) so idle accounts still show live usage. */
-export async function fetchAccountUsage(profileId: string): Promise<AccountUsage> {
+/**
+ * Fetch usage for one profile. Signed-out -> needs-login; signed-in but not
+ * fetchable -> last-known (stale) or a soft refresh hint; success -> fresh.
+ * Auto-refreshes a lapsed token (guarded) so idle accounts still show live usage.
+ *
+ * `noRefresh` suppresses the single-use refresh-token rotation entirely (#447):
+ * the account-switch snapshot fires this the instant BEFORE the session
+ * respawns onto the same profile, and the live-session guard cannot see that
+ * imminent consumer yet — so a rotation here would spend the very token the
+ * child is about to use and log the account out. With `noRefresh` a lapsed
+ * token simply falls back to the last-known snapshot; a valid token still
+ * fetches live. Never rotates, so it is always safe next to a spawn.
+ */
+export async function fetchAccountUsage(profileId: string, opts?: { noRefresh?: boolean }): Promise<AccountUsage> {
   hydrateSnapshots()
   const profiles = listProfiles()
   const profile = profiles.find((p) => p.id === profileId)
@@ -392,7 +402,7 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
   //    refresh could clobber, AND — since #258 — the `claude auth status` probe,
   //    which registers as a transient consumer while it runs (profile-consumers.ts)
   //    because it too reads and can rotate the profile's token.
-  if (!tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
+  if (!opts?.noRefresh && !tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
     const refreshed = await refreshProfileToken(profileId, creds.refreshToken, creds.credsPath)
     if (refreshed) {
       token = refreshed.accessToken

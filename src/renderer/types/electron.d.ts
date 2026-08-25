@@ -124,7 +124,7 @@ export interface ElectronAPI {
   }
   accountUsage: {
     fetchAll: () => Promise<import('../../shared/usage-types').AccountUsage[]>
-    fetchOne: (id: string) => Promise<import('../../shared/usage-types').AccountUsage | null>
+    fetchOne: (id: string, opts?: { noRefresh?: boolean }) => Promise<import('../../shared/usage-types').AccountUsage | null>
   }
   window: {
     minimize: () => void
