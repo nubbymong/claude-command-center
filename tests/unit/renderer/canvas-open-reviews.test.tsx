@@ -135,7 +135,7 @@ describe('AgentCanvasButton -- the queue pill (#364, pick B)', () => {
     seed([review('R1', 'submitted', ['a1'])], [note('a1', 'R1', 'addressed')])
     render()
     expect(pill()?.textContent).toBe('1')
-    expect(container.textContent).toContain('Review needed')
+    expect(container.querySelector('[data-testid="reserved-label-current"]')!.textContent).toBe('Review needed')
   })
 
   it('a ready-marked render counts, and adds to the verdict rounds', () => {

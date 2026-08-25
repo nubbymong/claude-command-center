@@ -118,7 +118,13 @@ export default function AgentCanvasButton({ sessionId }: Props) {
             <path d="M5 14h6" />
           </svg>
         )}
-        <ReservedLabel current={label} states={['Canvas', 'Terminal', { text: 'Review needed', bold: true }]} />
+        {/* Reserve only the states a CLICK can reach: `waiting` flips on
+            queue changes, not clicks, so idle must not carry the bold
+            Review-needed width (~48px of dead space) permanently. */}
+        <ReservedLabel
+          current={label}
+          states={waiting ? ['Terminal', { text: 'Review needed', bold: true }] : ['Canvas', 'Terminal']}
+        />
         {/* THE queue number (#364): ready-marked rounds + rounds awaiting your
             verdicts, across every canvas this session owns. Never decremented
             by merely opening anything — a round leaves when you submit on it,

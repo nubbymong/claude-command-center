@@ -18,7 +18,7 @@ export function ReservedLabel({ current, states }: {
   states: Array<string | { text: string; bold?: boolean }>
 }) {
   return (
-    <span className="grid justify-items-start" data-testid="reserved-label">
+    <span className="grid justify-items-start">
       {states.map((s) => {
         const text = typeof s === 'string' ? s : s.text
         const bold = typeof s !== 'string' && !!s.bold

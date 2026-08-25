@@ -126,7 +126,7 @@ describe('the Canvas button (pick B)', () => {
     useCanvasStore.getState().markUnseenRender(SID)
     const container = await render()
     expect(container.querySelector('[data-testid="canvas-attention-dot"]')).toBeNull()
-    expect(container.textContent).toContain('Canvas')
+    expect(container.querySelector('[data-testid="reserved-label-current"]')!.textContent).toBe('Canvas')
   })
 
   /** The live mirror as the hydrated refresh would leave it. Seeded directly so
@@ -156,7 +156,7 @@ describe('the Canvas button (pick B)', () => {
     seedAwaiting()
     const container = await render()
     const button = container.querySelector('[data-testid="canvas-button"]') as HTMLButtonElement
-    expect(button.textContent).toContain('Review needed')
+    expect(button.querySelector('[data-testid="reserved-label-current"]')!.textContent).toBe('Review needed')
     expect(button.dataset.waiting).toBe('true')
     expect(container.querySelector('[data-testid="canvas-queue-count"]')?.textContent).toBe('1')
   })
