@@ -37,21 +37,22 @@ export interface CanvasTotals {
   /** Open reviews on the canvas the session is currently showing (0 when unreadable). */
   onActive: number
   /**
-   * THE queue number (#364): rounds waiting on the user across every canvas
-   * this session owns — ready-marked renders awaiting a first review, plus
-   * rounds whose notes all await verdicts. One derivation feeds the Canvas
-   * button, the queue list, the tab mark and the pane lead, so the numbers can
-   * never disagree.
+   * THE queue number (#364, recut in #470): CANVASES waiting on the user —
+   * a canvas counts once whether it owes a first review, verdict rounds, or
+   * both ("a count above 1 is legitimate across different canvases, never for
+   * the same item"). One row per owing canvas too. One derivation feeds
+   * the Canvas button, the queue list, the tab mark and the pane lead, so the
+   * numbers can never disagree.
    */
   queue: number
   /** The sweep's view of the on-screen canvas's share of `queue` — subtracted
    *  by consumers that read that canvas from the fresher live mirrors. */
   queueOnActive: number
-  /** The owed rounds, one row per kind per canvas, newest first. */
+  /** The owed canvases, one row each, newest first. */
   queueRows: CanvasQueueRow[]
 }
 
-/** One owed round in the queue list. */
+/** One owing canvas in the queue list. */
 export interface CanvasQueueRow {
   canvasId: string
   title?: string
@@ -85,29 +86,24 @@ export function totalsFromEntries(entries: CanvasLibraryEntry[]): CanvasTotals {
   for (const e of entries) {
     if (!e.ownedByThisSession && !e.isActiveForThisSession) continue
     t.canvases++
-    // The review-needed half comes from the canvas RECORD, so it counts even
-    // when the review store is unreadable — a hand-over must never disappear
-    // behind a broken reviews.json.
-    if (e.awaitingReview) {
+    // ONE canvas is at most ONE owed item (#470, owner: "a count above 1 is
+    // legitimate across different canvases, never for the same item") — one
+    // row per owing canvas too, so the pill and the list under it agree. A
+    // canvas owing BOTH kinds shows as the ready render (the newest ask); the
+    // verdict detail rides `rounds` when that is the kind. The review-needed
+    // half comes from the canvas RECORD, so it counts even when the review
+    // store is unreadable — a hand-over must never disappear behind a broken
+    // reviews.json.
+    const owesVerdicts = !!e.verdictRounds && e.verdictRounds > 0
+    if (e.awaitingReview || owesVerdicts) {
       t.queue++
       if (e.isActiveForThisSession) t.queueOnActive++
       t.queueRows.push({
         canvasId: e.canvasId,
         ...(e.title ? { title: e.title } : {}),
-        kind: 'review',
-        at: e.awaitingReviewAt ?? e.lastRenderedAt,
-        onActive: !!e.isActiveForThisSession,
-      })
-    }
-    if (e.verdictRounds && e.verdictRounds > 0) {
-      t.queue += e.verdictRounds
-      if (e.isActiveForThisSession) t.queueOnActive += e.verdictRounds
-      t.queueRows.push({
-        canvasId: e.canvasId,
-        ...(e.title ? { title: e.title } : {}),
-        kind: 'verdict',
-        rounds: e.verdictRounds,
-        at: e.lastRenderedAt,
+        ...(e.awaitingReview
+          ? { kind: 'review' as const, at: e.awaitingReviewAt ?? e.lastRenderedAt }
+          : { kind: 'verdict' as const, rounds: e.verdictRounds, at: e.lastRenderedAt }),
         onActive: !!e.isActiveForThisSession,
       })
     }

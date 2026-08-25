@@ -113,6 +113,10 @@ export function closedLabel(note: Annotation): string {
   if (note.closedBy === 'agent' && note.pickSource === 'chat') return `${verdict} · picked in chat`
   if (note.closedBy === 'agent') return `${verdict} · by the agent on your instruction`
   if (note.closedBy === 'user') return `${verdict} · by you`
+  // The supersede sweep (#470): the store settled it because the user ruled on
+  // a LATER round of this canvas. Nobody clicked this note, and the row must
+  // not read as if somebody did.
+  if (note.closedBy === 'supersede') return `${verdict} · settled by your later review`
   // A record from before close-out existed. Says the verdict and claims
   // nothing about who gave it, which is all that is actually known.
   return verdict

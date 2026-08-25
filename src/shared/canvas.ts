@@ -232,7 +232,10 @@ export type AgentCloseVerdict = (typeof AGENT_CLOSE_VERDICTS)[number]
 /** Who moved a note to a terminal state. `agent` means `canvas_verdict` wrote
  *  it on the user's instruction — which the panel says out loud, and lists
  *  apart from the user's own approvals. */
-export type AnnotationClosedBy = 'user' | 'agent'
+/** 'supersede' is the store itself settling an addressed note because the user
+ *  ruled on a LATER round of the same canvas (#470) — neither party clicked
+ *  this particular note, and the row must not claim one did. */
+export type AnnotationClosedBy = 'user' | 'agent' | 'supersede'
 
 /**
  * Who moved a note into `addressed` — the state the agent's close-out
@@ -407,6 +410,14 @@ export interface Annotation {
    * Absent on a note nobody has addressed, and on records written before this.
    */
   addressedAt?: string
+  /**
+   * When the USER last reopened this note (#470). Its presence is what the
+   * supersede sweep reads: a reopened note is the user deliberately putting a
+   * settled thing back in play, so no automatic settle may ever touch its
+   * round again — only their own verdict ends it. Set on every reopen; never
+   * cleared (a terminal note's stamp is inert history).
+   */
+  reopenedAt?: string
   /**
    * WHO moved this note into `addressed`, and from which session.
    *

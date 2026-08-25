@@ -1104,11 +1104,11 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           testId="confirm-canvas-dismiss"
           title="Dismiss everything waiting on you?"
           body={<>
-            {canvasQueue} round{canvasQueue === 1 ? '' : 's'} across this session's canvases. Notes the agent
+            {canvasQueue} canvas{canvasQueue === 1 ? '' : 'es'} with rounds waiting on you. Notes the agent
             answered are closed — each keeps a <b>Reopen</b> — and a render still waiting for its first review
             stops asking. Nothing is deleted, and rounds still with the agent are left alone.
           </>}
-          actions={[{ label: `Dismiss ${canvasQueue}`, danger: true, testId: 'confirm-canvas-dismiss-ok', onClick: () => { void doCanvasDismissAll() } }]}
+          actions={[{ label: 'Dismiss all', danger: true, testId: 'confirm-canvas-dismiss-ok', onClick: () => { void doCanvasDismissAll() } }]}
           onCancel={() => setConfirm(null)}
         />
       )}

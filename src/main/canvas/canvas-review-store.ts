@@ -25,6 +25,7 @@ import {
   CANVAS_REVIEW_ID_RE,
   CANVAS_VERSION_ID_RE,
   MAX_ANNOTATION_VARIANTS,
+  artifactRuns,
   MAX_ATTACHMENT_PNG_BYTES,
   isCleanVariantLabel,
   type AddressedBy,
@@ -213,7 +214,7 @@ const ANNOTATION_SCOPES = new Set(['element', 'region', 'general'])
  *  'reannotated' — that one already has a live successor note, and reopening it
  *  would leave two notes claiming the same issue. */
 const REOPENABLE_STATES = new Set(['approved', 'dismissed', 'stale'])
-const CLOSED_BY_VALUES = new Set(['user', 'agent'])
+const CLOSED_BY_VALUES = new Set(['user', 'agent', 'supersede'])
 const CLOSED_FROM_VALUES = new Set(['open', 'addressed'])
 const ADDRESSED_ACTORS = new Set(['agent', 'user'])
 /**
@@ -288,6 +289,10 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // barrier as "just now", i.e. it refuses the close — the fail-closed
   // direction, since the barrier exists to withhold permission.
   if (a.addressedAt !== undefined && !isCleanString(a.addressedAt, 64)) return false
+  // The reopen stamp (#470): same discipline as addressedAt. Its PRESENCE is
+  // what shields a round from the supersede sweep, so a malformed value fails
+  // the record rather than silently dropping the shield.
+  if (a.reopenedAt !== undefined && !isCleanString(a.reopenedAt, 64)) return false
   // The close-out barrier's two inputs, validated hardest of anything here: a
   // hand-edited record that could name a non-agent actor, or set the user's
   // seen flag, would hand `canvas_verdict` the permission it is meant to have
@@ -312,6 +317,11 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // than render it. (The pickSource block above already pins the stamp itself
   // to this position, so the two rules together are an iff.)
   if (a.state === 'approved' && a.closedBy === 'agent' && a.pickSource !== 'chat') return false
+  // 'supersede' has exactly one legal position (#470): the sweep writes it
+  // only as stale-from-addressed. Anywhere else — an approved note wearing it,
+  // a dismissal — is a hand-edit laundering provenance the panel would then
+  // present as the store's own settling.
+  if (a.closedBy === 'supersede' && (a.state !== 'stale' || a.closedFrom !== 'addressed')) return false
   return true
 }
 
@@ -485,18 +495,31 @@ interface SessionCanvas {
   draftVersionIds: string[]
   /** Non-draft version ids, in render order — what the pane can show. */
   readyVersionIds: string[]
+  /** versionId -> the ARTIFACT (contiguous same-kind run) it belongs to,
+   *  keyed by the run's first version id — the same grouping the history
+   *  picker uses (#470 supersede scoping). A round supersedes only OTHER
+   *  rounds of its own artifact; a plan-artifact ruling must not settle a
+   *  mockup-artifact round that merely shares the canvas. */
+  artifactKeyByVersion: Map<string, string>
 }
 
 function canvasForSession(sessionId: string): SessionCanvas | null {
   if (!SESSION_ID_RE.test(sessionId)) return null
   const state = getCanvasStateForSession(sessionId)
   if (!state) return null
+  const artifactKeyByVersion = new Map<string, string>()
+  for (const run of artifactRuns(state.versions)) {
+    const key = run[0]?.id
+    if (key === undefined) continue
+    for (const v of run) artifactKeyByVersion.set(v.id, key)
+  }
   return {
     canvasId: state.canvasId,
     activeVersionId: state.activeVersionId,
     versionIds: new Set(state.versions.map((v) => v.id)),
     draftVersionIds: state.versions.filter((v) => v.draft).map((v) => v.id),
     readyVersionIds: state.versions.filter((v) => !v.draft).map((v) => v.id),
+    artifactKeyByVersion,
   }
 }
 
@@ -830,6 +853,141 @@ function settleReviewStatus(record: ReviewFileRecord, reviewId: string): void {
   const live = record.annotations.some((a) => a.reviewId === review.id && isLiveNote(a))
   if (!live && review.status === 'submitted') review.status = 'resolved'
   else if (live && review.status === 'resolved') review.status = 'submitted'
+}
+
+/**
+ * Rounds that are OWED but SUPERSEDED (#470): submitted reviews, fully
+ * addressed (nothing open, something addressed), whose ordinal sits below a
+ * later round the user has already ruled on ('resolved'). The owner's live
+ * session hit the shape this names: three ready versions, a review against
+ * each, and the pill read 3 — then approving the newest round left the two
+ * older fully-addressed rounds counting forever, and re-addressing them
+ * pushed the count back UP. A round the user answered by ruling on a NEWER
+ * round of the same canvas is settled debt, not fresh debt.
+ *
+ * Ordinals ('R3' > 'R1'), not frozen version ids, order the rounds: review
+ * numbers are minted monotonically per canvas, so a later round is a later
+ * ask even when both froze against the same version. The predicate feeds the
+ * MUTATION path only (`settleSupersededRounds` inside the four writes that
+ * can create the shape); read paths are untouched, so a record written before
+ * this existed reads as before until its canvas's next mutation settles it.
+ */
+function supersededOwedReviewIds(record: ReviewFileRecord, artifactKeyByVersion: Map<string, string>): Set<string> {
+  const ord = (id: string): number => Number(id.slice(1))
+  // A round's artifact — derived from its NOTES' versions, not its frozen
+  // version alone. A round can freeze against a version of a DIFFERENT artifact
+  // than its notes point at: the agent's `canvas_render` moves activeVersionId,
+  // and submitReview freezes against active, so a mockup note submitted just
+  // after a plan render freezes on the plan version (re-attack round 2, MAJOR).
+  // Keyed on the frozen version alone, a plan ruling would then stale that
+  // mockup note. So a round belongs to an artifact only when its notes AND its
+  // frozen version all agree; one that spans artifacts is isolated to its own
+  // key (`span:`) — it neither anchors a sweep nor is swept, the fail-closed
+  // side. A version absent from the map keys to `v:<id>` (rounds freeze against
+  // ready versions, so this is the belt, not the norm).
+  const keyOf = (versionId: string): string => artifactKeyByVersion.get(versionId) ?? `v:${versionId}`
+  const artifactOf = (r: Review): string => {
+    const keys = new Set<string>([keyOf(r.versionId)])
+    for (const a of notesOfReview(record, r)) keys.add(keyOf(a.versionId))
+    return keys.size === 1 ? [...keys][0] : `span:${r.id}`
+  }
+  // Per ARTIFACT, the highest-ordinal round the USER verifiably ruled on. Per
+  // artifact, not per canvas (review round 2, security lens): a canvas holds
+  // many artifacts (a plan, a mockup, a legacy build), and "the user answered
+  // this more recently" is only true for later rounds of the SAME artifact —
+  // approving a plan says nothing about a mockup's open feedback.
+  const resolvedMaxByArtifact = new Map<string, number>()
+  for (const r of record.reviews) {
+    if (r.status !== 'resolved') continue
+    // Only a round the USER verifiably ruled on anchors supersession. The
+    // sweep's justification is "the user answered this artifact more recently
+    // than these rounds", and that must be a fact the store can check, not an
+    // agent assertion: a round resolved purely through the agent-callable
+    // writes (canvas_verdict, canvas_pick — closedBy 'agent') must not let a
+    // single canvas_pick transitively settle every older round without the
+    // seen-barrier ever running (review round 1, security lens). The two
+    // provenances no agent path can mint: a note closed by the user's own
+    // panel click (closedBy 'user' — the approved+agent iff rule pins agent
+    // approvals to chat picks), and a re-annotation (state 'reannotated' is
+    // written only by the panel's resolve IPC).
+    const userRuled = notesOfReview(record, r).some((a) => a.closedBy === 'user' || a.state === 'reannotated')
+    if (!userRuled) continue
+    const art = artifactOf(r)
+    resolvedMaxByArtifact.set(art, Math.max(resolvedMaxByArtifact.get(art) ?? 0, ord(r.id)))
+  }
+  const out = new Set<string>()
+  if (resolvedMaxByArtifact.size === 0) return out
+  for (const r of record.reviews) {
+    if (r.status !== 'submitted') continue
+    const anchorMax = resolvedMaxByArtifact.get(artifactOf(r)) ?? 0
+    if (anchorMax === 0 || ord(r.id) >= anchorMax) continue
+    const notes = notesOfReview(record, r)
+    // A round still holding OPEN notes is the agent's debt and survives whole;
+    // one with nothing addressed has nothing owed to settle.
+    if (notes.some((a) => a.state === 'open')) continue
+    if (!notes.some((a) => a.state === 'addressed')) continue
+    // A REOPENED note shields its round for good (#470): reopening is the user
+    // deliberately putting a settled note back in play, and an automatic sweep
+    // that immediately re-settles it would make Reopen a no-op. Only the
+    // user's own verdict ends a reopened note.
+    if (notes.some((a) => a.state === 'addressed' && a.reopenedAt !== undefined)) continue
+    // THE SEEN-BARRIER, applied to the automatic sweep (ADR-009 adversarial
+    // pass). This is the load-bearing gate. Without it, `canvas_resolve`
+    // (markAnnotationsAddressed — agent-callable) becomes an unattended
+    // terminal close: the agent addresses a round the user never saw, and if
+    // ANY later round was user-ruled the sweep closes it in the same commit —
+    // the precise chain `isAgentCloseable`/`closeAnnotationsByAgent` refuse by
+    // name. The sweep is that same close reached without naming it, so it must
+    // clear the same bar: every addressed note must be agent-closeable (the
+    // user has SEEN it addressed, or a non-agent addressed it). An
+    // agent-addressed-but-unseen note keeps its round owed until the user's
+    // next glance marks it seen (or they dismiss it) — one look, not a silent
+    // close. This is what makes the panel's "settled by your later review"
+    // true: the notes were on the user's screen before the sweep touched them.
+    if (notes.some((a) => a.state === 'addressed' && !isAgentCloseable(a))) continue
+    // A round the user is THEMSELVES triaging — they have ruled on one of its
+    // notes with their own click (closedBy 'user') — is not settled debt. The
+    // click that ruled one note is a verdict on that note, never on its
+    // siblings, so a later round resolving must not sweep the rest of a round
+    // the user is actively working through. A 'reannotated' note is NOT a
+    // shield: the user finished with it and its replacement lives in a newer
+    // round, so its addressed round-mates are ordinary settle-able debt
+    // (re-attack round 2).
+    if (notes.some((a) => a.closedBy === 'user')) continue
+    out.add(r.id)
+  }
+  return out
+}
+
+/**
+ * Make the supersession durable: every round `supersededOwedReviewIds` names
+ * has its addressed notes moved to 'stale' with `closedBy: 'supersede'` —
+ * the automated form of the dismiss-all sweep the owner used as the
+ * workaround. Nothing is deleted, the row says the store settled it (never
+ * that a person clicked it), and Reopen puts any note straight back.
+ *
+ * Runs inside every mutation that can create the shape — a later round
+ * resolving or an older round becoming fully addressed after the later round
+ * already resolved (`markAnnotationsAddressed`, the owner's 3→2→3 bounce).
+ * Deliberately NOT a new agent capability: the anchor is STORE-VERIFIED user
+ * provenance on the resolved later round (see supersededOwedReviewIds), the
+ * notes end in a reopenable state, and `canvas_verdict`'s seen-barrier still
+ * guards every close the agent asks for by name.
+ */
+function settleSupersededRounds(record: ReviewFileRecord, artifactKeyByVersion: Map<string, string>): string[] {
+  const doomed = supersededOwedReviewIds(record, artifactKeyByVersion)
+  if (doomed.size === 0) return []
+  for (const review of record.reviews) {
+    if (!doomed.has(review.id)) continue
+    for (const a of notesOfReview(record, review)) {
+      if (a.state !== 'addressed') continue
+      a.state = 'stale'
+      a.closedBy = 'supersede'
+      a.closedFrom = 'addressed'
+    }
+    settleReviewStatus(record, review.id)
+  }
+  return [...doomed]
 }
 
 /** Validate a renderer-supplied draft against this canvas. Throws on anything
@@ -1256,6 +1414,10 @@ export function resolveAnnotation(
   // hold it open: the agent has acted, but the user has not yet said whether
   // the action was right, and that verdict is what closes a review.
   settleReviewStatus(next, owner.id)
+  // The user just ruled: if that resolved a round, older fully-addressed
+  // (and user-seen) rounds of the SAME artifact are settled debt now, not
+  // stacked debt (#470).
+  settleSupersededRounds(next, canvas.artifactKeyByVersion)
 
   commit(next)
   return { state: toState(next), ...(reannotationId ? { reannotationId } : {}) }
@@ -1431,6 +1593,15 @@ export function markAnnotationsAddressed(
     }
   }
   for (const id of wanted) if (!addressed.includes(id) && !skipped.includes(id)) skipped.push(id)
+  // The owner's 3→2→3 bounce (#470): addressing the notes of a round whose
+  // artifact already has a LATER user-ruled round used to push that round
+  // back into "waiting on the user". The sweep collapses it instead — but
+  // ONLY once the user has seen those notes addressed (the seen-barrier in
+  // supersededOwedReviewIds): a note the agent addresses in this very call is
+  // not yet seen, so it stays owed for one glance rather than closing under
+  // the user unattended. That one-glance delay is the deliberate price of not
+  // handing `canvas_resolve` an unattended close past the barrier (ADR-009).
+  if (addressed.length > 0) settleSupersededRounds(next, canvas.artifactKeyByVersion)
   if (addressed.length > 0) commit(next)
   return { state: toState(addressed.length > 0 ? next : base), addressed, skipped }
 }
@@ -1489,6 +1660,12 @@ export function markAddressedNotesSeen(
     seen.push(a.id)
   }
   if (seen.length === 0) return { state: toState(base), seen }
+  // The glance IS the seen-barrier's release, so it is exactly the moment a
+  // round the user had already answered (by ruling a later round) becomes
+  // settle-able (#470 re-attack round 2): run the sweep here so the pill
+  // clears on the look, not one mutation later. Renderer-only path, so this
+  // adds no agent capability — it settles only what the user has now seen.
+  settleSupersededRounds(next, canvas.artifactKeyByVersion)
   commit(next)
   return { state: toState(next), seen }
 }
@@ -1649,6 +1826,11 @@ export function closeAnnotationsByAgent(
   if (closed.length === 0) return { state: toState(base), closed, skipped, reviewClosed: false }
 
   settleReviewStatus(next, review.id)
+  // Re-runs the sweep so a legacy record can HEAL on the next agent write; an
+  // agent close never anchors supersession itself (closedBy 'agent' is not
+  // user provenance), so this only ever settles rounds a prior USER ruling
+  // already licensed (#470).
+  settleSupersededRounds(next, canvas.artifactKeyByVersion)
   const reviewClosed = next.reviews.find((r) => r.id === review.id)?.status === 'resolved'
   commit(next)
   return { state: toState(next), closed, skipped, reviewClosed }
@@ -1729,6 +1911,10 @@ export function recordChatPick(
   nextTarget.pickSource = 'chat'
 
   settleReviewStatus(next, review.id)
+  // A chat pick is closedBy 'agent', so it never anchors supersession itself;
+  // this re-runs the sweep only so a legacy record heals on the next write
+  // (#470). Same as the instructed-close path above.
+  settleSupersededRounds(next, canvas.artifactKeyByVersion)
   const reviewClosed = next.reviews.find((r) => r.id === review.id)?.status === 'resolved'
   commit(next)
   // The label is store-held and was validated clean at mint; the tool echoes it
@@ -1773,6 +1959,12 @@ export function reopenAnnotation(sessionId: string, annotationId: string): Canva
   // the honest default for those: it waits on the agent, which is where a note
   // sits when nobody has claimed to have acted on it.
   nextTarget.state = nextTarget.closedFrom ?? 'open'
+  // The supersede shield (#470): a reopened note is the user's deliberate
+  // re-ask, and the automatic sweep must never re-settle it — with the stamp,
+  // only their own verdict ends this note. Stamped on EVERY reopen (also one
+  // back to 'open': the agent's re-address keeps the shield, or the sweep
+  // would stale the very work the reopen asked for).
+  nextTarget.reopenedAt = new Date().toISOString()
   delete nextTarget.closedBy
   delete nextTarget.closedFrom
   // A note back to 'open' is one nobody has claimed to have acted on, so the

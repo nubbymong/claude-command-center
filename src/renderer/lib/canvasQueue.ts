@@ -20,13 +20,19 @@ export function canvasQueueOf(
   totals: CanvasTotals | undefined,
 ): number {
   const liveLoaded = !!canvasLive?.loaded && !!reviewLive?.loaded
-  const liveQueue = liveLoaded
-    ? (canvasLive?.awaitingReview ? 1 : 0) +
+  // ONE canvas is at most ONE owed item (#470) — here as well as in the sweep.
+  // The live mirrors are where the owner's pill actually read 3: the on-screen
+  // canvas's rounds were counted one per submitted review.
+  let liveOwed = 0
+  if (liveLoaded) {
+    const owedKinds =
+      (canvasLive?.awaitingReview ? 1 : 0) +
       (reviewLive ? reviewGroupsOf(reviewLive).filter((g) => g.waitingOn === 'you').length : 0)
-    : 0
-  if (!totals?.loaded) return liveQueue
+    liveOwed = owedKinds > 0 ? 1 : 0
+  }
+  if (!totals?.loaded) return liveOwed
   const elsewhere = Math.max(0, totals.queue - totals.queueOnActive)
-  return liveLoaded ? elsewhere + liveQueue : totals.queue
+  return liveLoaded ? elsewhere + liveOwed : totals.queue
 }
 
 /** The queue number for one session. Every selector returns a primitive, so
@@ -49,9 +55,10 @@ export function useCanvasQueue(sessionId: string): number {
     return t?.loaded ? t.queueOnActive : undefined
   })
   const liveLoaded = awaiting !== undefined && verdict !== undefined
-  const liveQueue = liveLoaded ? awaiting + verdict : 0
-  if (sweepQueue === undefined || sweepOnActive === undefined) return liveQueue
-  return liveLoaded ? Math.max(0, sweepQueue - sweepOnActive) + liveQueue : sweepQueue
+  // Max 1 for the on-screen canvas (#470), mirroring canvasQueueOf.
+  const liveOwed = liveLoaded ? (awaiting + verdict > 0 ? 1 : 0) : 0
+  if (sweepQueue === undefined || sweepOnActive === undefined) return liveOwed
+  return liveLoaded ? Math.max(0, sweepQueue - sweepOnActive) + liveOwed : sweepQueue
 }
 
 /** The owed rounds for the queue list, newest first, from the sweep. */
