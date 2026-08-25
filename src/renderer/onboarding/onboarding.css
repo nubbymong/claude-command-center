@@ -445,6 +445,7 @@
 
 /* Panel + accounts vignettes (#463). Same drawn-mini language as the rest of
    the sv- set: token colours only, pictures OF the features. */
+.ob-root .sv-pn-h.sv-pn-neutral { color: var(--text-muted); }
 .ob-root .sv-panel-body { padding: 10px 14px 14px; }
 .ob-root .sv-qs { display: flex; align-items: center; gap: 8px; margin: 10px 0 12px; border: 1px solid var(--ob-line); background: var(--ob-soft); border-radius: 8px; padding: 6px 10px; font-size: 11px; color: var(--text-secondary); }
 .ob-root .sv-qs-dot { width: 8px; height: 8px; border-radius: 3px; background: var(--ob); }

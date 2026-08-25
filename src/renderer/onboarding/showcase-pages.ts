@@ -76,10 +76,10 @@ export const SHOWCASES_21: ShowcasePage[] = [
     tagline: 'Saved configs are the launcher; Running sessions are the work. Quick Start keeps your pinned configs one click away.',
     points: [
       { lead: 'Saved ⇄ Running.', rest: 'Two tabs, so launching and tending sessions stop sharing one crowded list.' },
-      { lead: 'A config is a template.', rest: 'A running one shows a count pill and can Start another instance any time.' },
+      { lead: 'A config is a template.', rest: 'A running one shows a count pill, and its Quick Start pin can Start another instance.' },
       { lead: 'Sized by you.', rest: 'Drag the panel edge; the width sticks. Double-click resets it.' },
     ],
-    where: { pre: 'Where: the ', em: 'left panel', post: ' — the two tabs sit at its top.' },
+    where: { pre: 'Where: the ', em: 'left panel', post: ' — the tabs sit at the top of its sessions list.' },
     art: 'panel',
   },
   {
@@ -87,17 +87,17 @@ export const SHOWCASES_21: ShowcasePage[] = [
     heading: 'Every account, one app',
     tagline: 'Sign in to more than one Claude account and switch mid-session — usage, costs and insights follow each account separately.',
     points: [
-      { lead: 'Switch without losing work.', rest: 'Change the account under a session; the conversation stays put.' },
+      { lead: 'Switch mid-session.', rest: 'The session restarts under the new account and resumes the same conversation.' },
       { lead: 'Usage at a glance.', rest: "The footer meters each account's window while you work." },
-      { lead: 'Insights across accounts.', rest: 'Reports read every account at once, not one at a time.' },
+      { lead: 'Insights across accounts.', rest: 'With two or more signed in, reports read them all at once.' },
     ],
-    where: { pre: 'Where: the ', em: 'account strip', post: ' in the footer, and Insights in the sidebar.' },
+    where: { pre: 'Where: add a second account and the ', em: 'account strip', post: ' appears in the footer; Insights sits in the sidebar.' },
     art: 'accounts',
   },
   {
     id: 'watchdog',
     heading: "The Watchdog waits so you don't have to",
-    tagline: 'A rate limit used to end your evening. Now the session reads the banner, waits out the reset, and types the retry itself.',
+    tagline: "A rate limit doesn't have to end your evening: the session reads the banner, waits out the reset, and types the retry itself.",
     points: [
       { lead: 'Off by default.', rest: 'One switch in Settings turns it on.' },
       { lead: 'Careful hands.', rest: 'It never types over your draft or an open prompt.' },

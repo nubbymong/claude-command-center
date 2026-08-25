@@ -213,10 +213,14 @@ describe('#463 — since-2.0 coverage and the first-run cohort', () => {
 
   it('no heading or tagline uses upgrade-only diff framing a first-runner cannot parse', () => {
     // "Three rows became one" reads as gibberish to someone who never saw
-    // three rows. Headings must name what the feature IS.
+    // three rows. A tripwire, not a proof: it catches the phrasings that have
+    // actually slipped in ("became", "grew", "used to", "no longer", "now X"
+    // comparatives) — review still owns the judgment call.
     for (const p of SHOWCASES_21) {
-      expect(p.heading.toLowerCase(), p.id).not.toContain('became')
-      expect(p.heading.toLowerCase(), p.id).not.toContain('grew')
+      const copy = `${p.heading} ${p.tagline}`.toLowerCase()
+      for (const phrase of ['became', 'grew', 'used to', 'no longer', 'renamed']) {
+        expect(copy, `${p.id}: "${phrase}"`).not.toContain(phrase)
+      }
     }
   })
 
@@ -233,13 +237,20 @@ describe('#463 — since-2.0 coverage and the first-run cohort', () => {
   it('the fresh cohort gets an introduction heading and the FULL story, not a diff', () => {
     metaState.meta = {}
     render({ fresh: true })
-    expect(q('whatsnew-heading')!.textContent).toContain('What you’re getting')
+    expect(q('whatsnew-heading')!.textContent).toContain("What you're getting")
     expect(q('whatsnew-heading')!.textContent).not.toContain("What's new")
     const text = container.textContent!
     // One item from the 2.0 set and one from the 2.1 set — both present,
     // because a first-runner missed everything.
     expect(text).toContain('Guided setup.')
     expect(text).toContain('Agent Canvas.')
+    // ...but a line that only makes sense against a BEFORE stays out.
+    expect(text).not.toContain('New name.')
+  })
+
+  it('the upgrader still sees the upgrade-only lines', () => {
+    render()
+    expect(container.textContent).toContain('New name.')
   })
 
   it('an upgrader keeps the diff heading — fresh framing never leaks', () => {

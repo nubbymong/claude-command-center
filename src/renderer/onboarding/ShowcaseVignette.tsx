@@ -105,7 +105,7 @@ function PanelVignette() {
           <span className="sv-qs-count">1</span>
           <span className="sv-chip sv-on sv-qs-start">▸ Start</span>
         </div>
-        <div className="sv-pn-h">Active sessions</div>
+        <div className="sv-pn-h sv-pn-neutral">Active sessions</div>
         <div className="sv-pn-row" />
         <div className="sv-pn-row" />
         <div className="sv-pn-row sv-pn-faint" />
@@ -119,7 +119,7 @@ function AccountsVignette() {
     <div className="sv-mini" aria-hidden data-ux-id="showcase-art-accounts">
       <div className="sv-tb"><span className="sv-tl" /><span className="sv-tl" /><span className="sv-tl" /></div>
       <div className="sv-panel-body">
-        <div className="sv-pn-h">Accounts</div>
+        <div className="sv-pn-h sv-pn-neutral">Accounts</div>
         <div className="sv-acct"><span className="sv-acct-dot" style={{ background: 'var(--ob)' }} />work<span className="sv-meter"><i style={{ width: '62%' }} /></span>62%</div>
         <div className="sv-acct"><span className="sv-acct-dot" style={{ background: 'var(--status-warning)' }} />personal<span className="sv-meter"><i style={{ width: '28%' }} /></span>28%</div>
         <div className="sv-acct"><span className="sv-acct-dot" style={{ background: 'var(--status-success)' }} />team<span className="sv-meter"><i style={{ width: '9%' }} /></span>9%</div>

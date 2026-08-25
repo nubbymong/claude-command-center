@@ -17,6 +17,9 @@ export interface WhatsNewItem {
   /** ONE line. If it needs two sentences, it belongs in the Feature Guide. */
   desc: string
   beta?: boolean
+  /** #463: a line that only makes sense against a BEFORE (“the app was
+   *  renamed”) — hidden from the fresh-install cohort, who have no before. */
+  upgradeOnly?: boolean
   /** Id of a showcase page (showcase-pages.ts). Grows a "See it →" chip that
    *  jumps to that page; an id with no matching page renders no chip. */
   seeIt?: string
@@ -63,7 +66,7 @@ const SECTIONS_20: WhatsNewSection[] = [
   {
     heading: 'Under the hood',
     items: [
-      { title: 'A newer engine.', desc: 'Electron 43, React 19 and xterm.js 6 — faster, on a current security baseline.' },
+      { title: 'A modern engine.', desc: 'Electron 43, React 19 and xterm.js 6 — fast, on a current security baseline.' },
     ],
   },
 ]
@@ -73,7 +76,7 @@ const SECTIONS_21: WhatsNewSection[] = [
     heading: 'Sessions',
     items: [
       { title: 'Detachable SSH.', desc: 'Runs under tmux, so a dropped VPN no longer kills the work.' },
-      { title: 'Partner terminal.', desc: 'A plain shell beside Claude, now labelled so you know which is which.' },
+      { title: 'Partner terminal.', desc: 'A plain shell beside Claude, labelled so you always know which is which.' },
       { title: 'One row.', desc: 'The tools and your command buttons sit in a single row under the terminal.', seeIt: 'oneRow' },
       { title: 'Two-mode panel.', desc: 'Saved configs and Running sessions each get a tab, with Quick Start pins — and the panel resizes.', seeIt: 'panel' },
     ],
@@ -96,7 +99,7 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'The app itself',
     items: [
-      { title: 'New name.', desc: 'Claude Command Center is now AI Code Conductor. Same data, same settings.' },
+      { title: 'New name.', desc: 'Claude Command Center is now AI Code Conductor. Same data, same settings.', upgradeOnly: true },
       { title: 'Signed and notarised.', desc: 'Windows signed, macOS notarised, every update SHA-256 checked.' },
     ],
   },
@@ -169,6 +172,8 @@ export function WhatsNewV2Step({
   fresh?: boolean
 }) {
   const sections = sectionsFor(useAppMetaStore.getState().meta.lastSeenVersion, LINE_SOURCE)
+    .map((s) => (fresh ? { ...s, items: s.items.filter((it) => !it.upgradeOnly) } : s))
+    .filter((s) => s.items.length > 0)
   const count = sections.reduce((n, s) => n + s.items.length, 0)
   // The showcase (owner design 2026-08-24): the summary is page 0; each
   // flagship feature of the line gets a full page behind it. With no pages
@@ -187,7 +192,7 @@ export function WhatsNewV2Step({
       {pageIx === 0 ? (
         <div className="p2">
           <div className="p2-inner" style={{ width: 'min(920px, 95vw)' }}>
-            <h2 className="h2" data-ux-id="whatsnew-heading">{fresh ? 'What you’re getting' : <>What&apos;s new in {LINE}</>}</h2>
+            <h2 className="h2" data-ux-id="whatsnew-heading">{fresh ? <>What you&apos;re getting</> : <>What&apos;s new in {LINE}</>}</h2>
             <p className="p2-sub" data-ux-id="whatsnew-sub">
               {count} things worth knowing, in one line each{showcases.length > 0 ? ` — and ${showcases.length} of them have a page of their own, just behind this one` : ''}.
             </p>
@@ -238,7 +243,7 @@ export function WhatsNewV2Step({
           {isLast ? hint : `Page ${pageIx + 1} of ${total}.`}
         </span>
         {total > 1 && (
-          <div className="wn-foot-dots" data-ux-id="whatsnew-dots" role="group" aria-label="What's New pages">
+          <div className="wn-foot-dots" data-ux-id="whatsnew-dots" role="group" aria-label="Showcase pages">
             <button type="button" className={`wn-fdot${pageIx === 0 ? ' on' : ''}`} onClick={() => setPageIx(0)} aria-label="Summary" aria-current={pageIx === 0 ? 'page' : undefined} data-ux-id="whatsnew-dot-summary"><i /></button>
             {showcases.map((p, ix) => (
               <button type="button" key={p.id} className={`wn-fdot${pageIx === ix + 1 ? ' on' : ''}`} onClick={() => setPageIx(ix + 1)} aria-label={p.heading} aria-current={pageIx === ix + 1 ? 'page' : undefined} data-ux-id={`whatsnew-dot-${p.id}`}><i /></button>
