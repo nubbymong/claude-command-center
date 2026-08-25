@@ -59,8 +59,8 @@ instruction does not override this — the handover IS the block.
 or a review is still open, the reply says so. Take it at its word and hand back.
 
 Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`,
-\`canvas_resolve\`, \`canvas_verdict\` and \`canvas_pick\` (the last two only on the
-user's explicit word — see below).
+\`canvas_resolve\`, \`canvas_verdict\`, \`canvas_pick\` and \`canvas_complete\` (the
+last three only on the user's explicit word — see below).
 
 Every render names its SUBJECT with \`title\` — "Settings page mockup",
 "Checkout flow" — in a few words. A canvas holds one subject: the same title

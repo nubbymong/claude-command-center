@@ -971,10 +971,11 @@ function ensureDiskScanned(): void {
     // sorted first, complete with that subject's old notes, and the next
     // same-title render forked a duplicate: both of the things the subject
     // rule exists to prevent.
-    // A COMPLETED canvas never rebinds (#476): completion detached it so the
-    // pane lands on the front page, and that must survive a relaunch — a
-    // session whose last work was signed off comes back to the welcome page,
-    // with the canvas in the library, not to the signed-off subject.
+    // A COMPLETED canvas never rebinds (#476): completion detached it, and
+    // that must survive a relaunch — the session never comes back bound to a
+    // signed-off subject. It falls to the most-recently-active canvas it still
+    // owns that is NOT completed (a live filed subject), or to the front page
+    // when it owns none. The canvas stays in the library either way.
     if (record.completed) continue
     const held = sessionIndex.get(record.sessionId)
     const heldRecord = held ? canvases.get(held) : undefined
@@ -1210,7 +1211,8 @@ export function renderVersion(
   // front page — including the untitled case, which could otherwise never
   // render again. The refusal below stays as the invariant's backstop.
   const boundRecord = getRecordForSession(sessionId)
-  const held = boundRecord?.completed ? null : boundRecord
+  const detachedByCompletion = Boolean(boundRecord?.completed)
+  const held = detachedByCompletion ? null : boundRecord
   const title = sanitizeCanvasTitle(source.title)
 
   // A canvas holds ONE subject, and this is where that is decided.
@@ -1235,14 +1237,27 @@ export function renderVersion(
   // Coming BACK to a subject re-activates its canvas rather than minting a
   // third: "Login page" → "Checkout" → "Login page" must land on the login
   // canvas, with its versions and its notes, not open a second one beside it.
-  const returnedTo = subjectChanged && title ? findFiledCanvas(sessionId, title) : undefined
-  const existing = subjectChanged ? returnedTo : held
+  //
+  // The filed lookup also runs when there is NO held canvas (#476): the front
+  // page, or the state completion leaves behind — it detaches the session, so
+  // the next render sees held null. A comparable title may name a DIFFERENT
+  // subject the session filed earlier and left LIVE; returning to it is the
+  // subject rule, and skipping the lookup forked a duplicate (and stranded a
+  // deferred subject-change draft, whose ready-mark then minted a third canvas
+  // instead of promoting). The lookup skips completed records, so it never
+  // resumes the signed-off one. A brand-new session finds nothing here and
+  // starts fresh exactly as before.
+  const wantsFiled = Boolean(comparable && title && (subjectChanged || !held))
+  const returnedTo = wantsFiled ? findFiledCanvas(sessionId, title!) : undefined
+  // subjectChanged (held, different subject) → the filed canvas of the NEW
+  // subject, or a fresh one. No held (front page / post-completion) →
+  // likewise. Same subject on a held canvas → append to it.
+  const existing = subjectChanged ? returnedTo : (held ?? returnedTo)
 
-  // #476: a signed-off subject is terminal — a render against it is refused
-  // rather than silently resuming it. Only reachable when the user has
-  // deliberately re-opened a completed canvas into the pane (View) and the
-  // agent then renders at it: filing lookups above already skip completed
-  // records, so an ordinary same-title render starts a fresh canvas instead.
+  // #476: a signed-off subject is terminal. `existing` can no longer BE a
+  // completed record — `held` is nulled for one and `findFiledCanvas` skips
+  // them — so this is an unreachable defence-in-depth backstop, kept so the
+  // invariant has a hard floor if either of those skips ever regresses.
   if (existing?.completed) {
     throw new Error(
       `this canvas was signed off as complete; the user can Reopen it from the library — otherwise render under a title as usual to start fresh`,
@@ -1262,12 +1277,17 @@ export function renderVersion(
   if (!reuseLatest && existing && existing.versions.length >= MAX_VERSIONS_PER_CANVAS) {
     throw new Error(`canvas ${existing.canvasId} is at its version cap (${MAX_VERSIONS_PER_CANVAS})`)
   }
-  // A subject change that starts a NEW canvas is the one thing that can grow
-  // the number of canvases a session owns; before it, a session had one. Cap
-  // it, so an agent cycling titles cannot mint directories without bound —
-  // each is a synchronous read and an HMAC at the next launch. Filing goes on
-  // working: the user clears room from the library.
-  if (subjectChanged && !existing && countCanvasesForSession(sessionId) >= MAX_CANVASES_PER_SESSION) {
+  // Minting a NEW canvas (no `existing` to append to) is the one thing that
+  // grows the number a session owns. Cap it, so an agent cannot mint
+  // directories without bound — each is a synchronous read and an HMAC at the
+  // next launch. Gated on `!existing` alone, NOT on `subjectChanged` (#476):
+  // completion detaches, so every post-completion render has `held === null`
+  // and `subjectChanged === false`, and the old gate let an agent that
+  // completes-then-renders in a loop bypass the cap entirely. The session's
+  // first-ever render is `!existing` too but `countCanvasesForSession` is 0
+  // then, so it is never the one refused. Filing goes on working: the user
+  // clears room from the library.
+  if (!existing && countCanvasesForSession(sessionId) >= MAX_CANVASES_PER_SESSION) {
     throw new Error(
       `this session already has ${MAX_CANVASES_PER_SESSION} canvases; delete some from the library before starting another subject`,
     )
@@ -1493,10 +1513,18 @@ export function setCanvasCompleted(
   // canvas active rather than completed in memory only.
   persist(next)
   canvases.set(canvasId, next)
-  if (sessionIndex.get(record.sessionId) === canvasId) sessionIndex.delete(record.sessionId)
-  // A deferred subject-change draft pointed here must not outlive the detach
-  // (same rule as dropCanvas): the drafting surface is gone with the sign-off.
-  if (draftIndex.get(record.sessionId) === canvasId) draftIndex.delete(record.sessionId)
+  // Detaching the session drops BOTH of its bindings. sessionIndex when this
+  // was its current canvas; AND its deferred subject-change draft pointer
+  // (#476 adversarial) — that draft points at a DIFFERENT canvas than the one
+  // being completed, so keying the delete on `=== canvasId` (the round-1 cut)
+  // never fired and left getAgentCanvasStateForSession resolving a stale draft
+  // after the session had fallen back to the front page. A draft's own
+  // canvas can never itself be completed (draft-only has no ready version, and
+  // the guard refuses it), so clearing on the owner's detach is the only case.
+  if (sessionIndex.get(record.sessionId) === canvasId) {
+    sessionIndex.delete(record.sessionId)
+    draftIndex.delete(record.sessionId)
+  }
   emitChanged(next, { completed: true })
   return toState(next)
 }
@@ -1662,6 +1690,12 @@ export function setActiveVersion(sessionId: string, versionId: string): CanvasSt
 function isReclaimCandidate(record: CanvasRecord, sessionId: string, query: CanvasAdoptionQuery): boolean {
   if (record.sessionId === sessionId) return false
   if (record.versions.length === 0) return false // nothing to inherit
+  // A signed-off canvas is terminal history (#476): it must not be OFFERED as
+  // orphaned work to reclaim, and — the sharper hole — must not be adoptable
+  // by another session, which would hand over its private review notes AND let
+  // the adopter Reopen a sign-off it never made. Completion detached it from
+  // its owner's sessionIndex; without this it looks exactly like an orphan.
+  if (record.completed) return false
   try {
     if (query.isSessionCurrent(record.sessionId)) return false
   } catch {

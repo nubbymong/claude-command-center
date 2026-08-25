@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useArmedConfirm } from '../hooks/useArmedConfirm'
 import { useCanvasStore } from '../stores/canvasStore'
 import {
@@ -34,7 +34,16 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title }: Pro
   const [armed, setArmed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [refused, setRefused] = useState<string | null>(null)
-  const confirm = useArmedConfirm(armed ? 'complete' : null)
+  // Key the guard on the CANVAS, not a bare literal (adversarial review): the
+  // pane switches subject under a mounted button (picker / library / a filing),
+  // and a stale `armed` from canvas A must not sign off canvas B.
+  const confirm = useArmedConfirm(armed ? `complete:${canvasId}` : null)
+
+  // Disarm the moment the subject changes under us — so does the refusal.
+  useEffect(() => {
+    setArmed(false)
+    setRefused(null)
+  }, [canvasId])
 
   const completed = useCanvasStore((s) => s.bySessionId[sessionId]?.completed)
   const awaitingReview = useCanvasStore((s) => !!s.bySessionId[sessionId]?.awaitingReview)
@@ -43,34 +52,75 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title }: Pro
   // "Nothing left owed either way" — the renderer's mirror of the main-side
   // guard, over the same review state the panel renders. `waitingOn: 'closed'`
   // means every note on the round reached a terminal state.
-  const groups = review && review.canvasId === canvasId ? reviewGroupsOf(review) : []
-  const draftCount = review && review.canvasId === canvasId ? draftAnnotationsOf(review).length : 0
+  //
+  // Fail CLOSED when the review mirror is missing or points at a DIFFERENT
+  // canvas (the window right after a subject switch, before the mirror
+  // refreshes): "unknown" is not "nothing owed", so the button blocks rather
+  // than offering a sign-off it cannot vouch for. Main re-checks regardless.
+  const mirrorReady = !!review && review.canvasId === canvasId
+  const groups = mirrorReady ? reviewGroupsOf(review) : []
+  const draftCount = mirrorReady ? draftAnnotationsOf(review).length : 0
   const openRounds = groups.filter((g) => g.waitingOn !== 'closed').length
-  const blocked = openRounds > 0 || draftCount > 0 || awaitingReview
+  const blocked = !mirrorReady || openRounds > 0 || draftCount > 0 || awaitingReview
+
+  // If the state turns owed while armed, stand down — the confirm must not sit
+  // live over a canvas that is no longer completeable (main would refuse it).
+  useEffect(() => {
+    if (blocked && armed) setArmed(false)
+  }, [blocked, armed])
+
+  const [reopening, setReopening] = useState(false)
+  const doReopen = async () => {
+    if (reopening) return
+    setReopening(true)
+    try {
+      const res = await window.electronAPI.canvas.completeReopen({ sessionId, canvasId })
+      // A refusal (ownership) or a rejection (bad payload) must not be a silent
+      // dead click — surface it where the other two Reopen call sites do.
+      if (!res?.ok) setRefused(res?.reason ?? 'could not reopen')
+    } catch {
+      setRefused('could not reopen')
+    } finally {
+      setReopening(false)
+    }
+  }
 
   if (completed) {
     return (
-      <span
-        className="shrink-0 flex items-center gap-1.5 text-[11px] font-semibold rounded-full px-2 py-0.5"
-        style={{
-          color: 'var(--status-success)',
-          background: 'color-mix(in srgb, var(--status-success) 12%, transparent)',
-          border: '1px solid color-mix(in srgb, var(--status-success) 40%, transparent)',
-        }}
-        data-testid="canvas-completed-chip"
-        title={`Signed off ${completed.by === 'agent' ? 'by the agent on your instruction' : 'by you'}. Reopen puts it back in play.`}
-      >
-        ✓ Completed
-        <button
-          onClick={() => void window.electronAPI.canvas.completeReopen({ sessionId, canvasId })}
-          className="underline underline-offset-2 font-normal focus-ring rounded"
-          style={{ color: 'var(--brand)' }}
-          data-testid="canvas-completed-reopen"
-          title="Put this canvas back in play"
+      <>
+        {refused && (
+          <span
+            className="shrink-0 text-[10px] max-w-[220px] truncate"
+            style={{ color: 'var(--status-danger)' }}
+            data-testid="canvas-complete-refused"
+            title={refused}
+          >
+            {refused}
+          </span>
+        )}
+        <span
+          className="shrink-0 flex items-center gap-1.5 text-[11px] font-semibold rounded-full px-2 py-0.5"
+          style={{
+            color: 'var(--status-success)',
+            background: 'color-mix(in srgb, var(--status-success) 12%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--status-success) 40%, transparent)',
+          }}
+          data-testid="canvas-completed-chip"
+          title={`Signed off ${completed.by === 'agent' ? 'by the agent on your instruction' : 'by you'}. Reopen puts it back in play.`}
         >
-          Reopen
-        </button>
-      </span>
+          ✓ Completed
+          <button
+            onClick={() => void doReopen()}
+            disabled={reopening}
+            className="underline underline-offset-2 font-normal focus-ring rounded disabled:opacity-40"
+            style={{ color: 'var(--brand)' }}
+            data-testid="canvas-completed-reopen"
+            title="Put this canvas back in play"
+          >
+            Reopen
+          </button>
+        </span>
+      </>
     )
   }
 
@@ -125,7 +175,7 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title }: Pro
           <button
             ref={confirm.confirmRef}
             onClick={confirm.guarded(() => void doComplete())}
-            disabled={busy}
+            disabled={busy || blocked}
             className="shrink-0 flex items-center gap-1.5 text-[11.5px] font-semibold rounded px-2 py-0.5 focus-ring disabled:opacity-40"
             style={{
               // Text-on-bright-fill uses --surface-chrome, the header's own

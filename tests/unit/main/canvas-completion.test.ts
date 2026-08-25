@@ -70,6 +70,35 @@ describe('the completion guard — nothing owed, or no sign-off', () => {
     expect(err(res)).toContain('awaiting the user’s first review')
   })
 
+  it('ADV: refuses a DRAFT-ONLY canvas — nothing was ever offered to the user', () => {
+    // The draft-render bypass (adversarial): a ready render sets awaitingReview
+    // and writes reviews.json, but a draft (ready:false) does neither — so the
+    // old guard found "nothing owed" and signed off a canvas the user never saw.
+    const title = `Draft only ${++seq}`
+    const r = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>wip</p>', title, ready: false })
+    const res = completion.completeCanvasGuarded(r.canvasId, 'agent', SID)
+    expect(err(res)).toContain('nothing has been offered for review')
+  })
+
+  it('ADV: refuses when the LATEST version is a draft, even over a reviewed ready one', () => {
+    // Finish a real cycle, then the agent renders a fresh DRAFT on top — that
+    // draft is unseen WIP; signing off would stamp complete over it.
+    const done = finishedCycle()
+    canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>wip2</p>', title: done.title, ready: false })
+    const res = completion.completeCanvasGuarded(done.canvasId, 'agent', SID)
+    expect(err(res)).toContain('nothing has been offered for review')
+  })
+
+  it('ADV: checks ownership BEFORE reading review tallies (no cross-session oracle)', () => {
+    // A foreign session naming another session's canvas must be turned away
+    // with the ownership reason, never with that canvas's private note counts.
+    const { canvasId, versionId } = renderCanvas()
+    reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'secret', versionId })
+    reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [])
+    const res = completion.completeCanvasGuarded(canvasId, 'agent', 'ffffffffffffffffffffffff')
+    expect(err(res)).toBe('not this session’s canvas')
+  })
+
   it('refuses unsubmitted draft notes, and names them', () => {
     const { canvasId, versionId } = renderCanvas()
     canvasStore.clearAwaitingReview(canvasId)
@@ -155,6 +184,61 @@ describe('what completion does', () => {
   })
 })
 
+describe('adversarial — reclaim, review-writes, cap, fork', () => {
+  it('a completed canvas is never offered to, or adopted by, another session', () => {
+    // isReclaimCandidate must exclude completed: completion detaches the owner,
+    // so without the check a signed-off canvas looks like an orphan — offered
+    // in the reclaim card and adoptable, handing over its notes AND the right
+    // to Reopen a sign-off the adopter never made.
+    const done = finishedCycle()
+    completion.completeCanvasGuarded(done.canvasId, 'user', SID)
+    const OTHER = 'bbbbbbbbbbbbbbbbbbbbbbbb'
+    const offered = canvasStore.listOrphanCandidateCanvases(OTHER, { isSessionCurrent: () => false })
+    expect(offered.some((c) => c.canvasId === done.canvasId)).toBe(false)
+    const adopted = canvasStore.adoptCanvasForSession(OTHER, done.canvasId, { isSessionCurrent: () => false })
+    expect(adopted).toBeNull()
+  })
+
+  it('a completed canvas refuses new notes and new reviews over the store (terminal, main-side)', () => {
+    const done = finishedCycle()
+    completion.completeCanvasGuarded(done.canvasId, 'user', SID)
+    // The user re-opens it to VIEW (binds it current), then a note write lands.
+    canvasStore.adoptCanvasForSession(SID, done.canvasId, { isSessionCurrent: () => false })
+    const v = canvasStore.getCanvasStateForSession(SID)!.versions[0].id
+    expect(() => reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'sneaky', versionId: v })).toThrow(/signed off/)
+  })
+
+  it('completing then rendering in a loop cannot mint canvases past the cap', () => {
+    // The cap was gated on subjectChanged, which completion makes false — so an
+    // agent that completes-then-renders could mint without bound.
+    let last = ''
+    for (let i = 0; i < 3; i++) {
+      const r = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>x</p>', title: `Loop ${++seq}` })
+      canvasStore.clearAwaitingReview(r.canvasId)
+      completion.completeCanvasGuarded(r.canvasId, 'user', SID)
+      last = r.canvasId
+    }
+    // The count is bounded — every render minted a NEW canvas (held was null
+    // after each completion), and the cap now fires on !existing regardless of
+    // subjectChanged. Prove the cap path is live: it counts completed canvases.
+    expect(canvasStore.listAllCanvases([], undefined, SID).filter((e) => e.completed).length).toBeGreaterThanOrEqual(3)
+    expect(last).not.toBe('')
+  })
+
+  it('completing one subject does not fork a DIFFERENT live filed subject', () => {
+    // A (Login) live+filed, B (Checkout) current & completed → rendering "A"
+    // again must RETURN to A, not mint a duplicate (held is null after the
+    // completion detach, so findFiledCanvas must still be consulted).
+    const a = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>login</p>', title: 'Login page ADV' })
+    const b = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>checkout</p>', title: 'Checkout ADV' })
+    expect(b.canvasId).not.toBe(a.canvasId)
+    canvasStore.clearAwaitingReview(b.canvasId)
+    completion.completeCanvasGuarded(b.canvasId, 'user', SID)
+    const back = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>login2</p>', title: 'Login page ADV' })
+    expect(back.canvasId).toBe(a.canvasId)
+  })
+})
+
 describe('terminal means terminal', () => {
   it('a render under the SAME title starts a fresh canvas, never resumes the completed one', () => {
     // Two guards conspire here: completion DETACHED the session (held is
@@ -182,14 +266,14 @@ describe('terminal means terminal', () => {
 })
 
 describe('survival and viewing', () => {
-  it('signing off the DRAFTING canvas clears the deferred-draft binding with it', () => {
-    // A subject-change DRAFT defers the repoint: the session still shows the
-    // old canvas, and draftIndex lets canvas_snapshot follow the draft. If
-    // that drafting canvas is signed off, the binding must die with the
-    // detach (the dropCanvas rule) — or the agent's self-check would keep
-    // reading a canvas nothing will ever promote.
-    const base = renderCanvas() // the session's current, user-facing canvas
-    canvasStore.clearAwaitingReview(base.canvasId)
+  it('signing off the session’s canvas drops a stranded deferred-draft binding too', () => {
+    // A subject-change DRAFT defers the repoint: sessionIndex stays on the
+    // user-facing base, draftIndex points at the new draft canvas so
+    // canvas_snapshot can follow it. Completing the BASE detaches the session —
+    // and must drop the draft pointer with it, or getAgentCanvasStateForSession
+    // keeps resolving a stale draft the user will never promote (the round-1
+    // fix keyed the delete on the wrong id and missed this).
+    const base = renderCanvas() // ready; the session's current canvas
     const draft = canvasStore.renderVersion(SID, {
       mode: 'design',
       html: '<!doctype html><p>draft</p>',
@@ -197,11 +281,16 @@ describe('survival and viewing', () => {
       ready: false,
     })
     expect(draft.canvasId).not.toBe(base.canvasId)
+    // The deferred draft is agent-visible; the user still sees base.
     expect(canvasStore.getAgentCanvasStateForSession(SID)?.canvasId).toBe(draft.canvasId)
-    const res = completion.completeCanvasGuarded(draft.canvasId, 'user', SID)
+    expect(canvasStore.getCanvasStateForSession(SID)?.canvasId).toBe(base.canvasId)
+    canvasStore.clearAwaitingReview(base.canvasId)
+    const res = completion.completeCanvasGuarded(base.canvasId, 'user', SID)
     expect(err(res)).toBe('')
-    // The agent-facing read falls back to the session's own canvas.
-    expect(canvasStore.getAgentCanvasStateForSession(SID)?.canvasId).toBe(base.canvasId)
+    // Both bindings gone: the session is on the front page, and the agent-side
+    // read no longer resolves the stranded draft.
+    expect(canvasStore.getCanvasStateForSession(SID)).toBeNull()
+    expect(canvasStore.getAgentCanvasStateForSession(SID)).toBeNull()
   })
 
   it('the stamp survives a reload, and a completed canvas never rebinds as current', () => {
@@ -288,6 +377,26 @@ describe('the MCP surface (canvas_complete)', () => {
     expect(r.isError).toBe(false)
     expect(r.text).toContain('on the user’s instruction')
     expect(r.text).toContain('Reopen')
+  })
+
+  it('ADV: a submit that does not cover the awaited version leaves it awaiting, so completion still refuses', () => {
+    // The store-direct race the turn model normally prevents: awaitingReview is
+    // v2 (agent rendered a newer ready render) while the user's note was
+    // authored against v1. submitReview must NOT clear the v2 ask — the user
+    // never saw v2 — and completion must then refuse.
+    const title = `Race ${++seq}`
+    const v1 = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>v1</p>', title, ready: true })
+    // User writes a note against v1 (a draft note, versionId v1).
+    reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'about v1', versionId: v1.versionId })
+    // Agent renders v2 ready (supersedes the ask) BEFORE the user submits.
+    const v2 = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>v2</p>', title, ready: true })
+    expect(v2.versionId).not.toBe(v1.versionId)
+    expect(canvasStore.getCanvasStateForSession(SID)?.awaitingReview?.versionId).toBe(v2.versionId)
+    // User submits their v1 note. The submit does not cover v2.
+    reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews.find((r) => r.status === 'draft')!.id, [])
+    // v2 still awaits review → completion refused.
+    expect(canvasStore.getCanvasStateForSession(SID)?.awaitingReview?.versionId).toBe(v2.versionId)
+    expect(err(completion.completeCanvasGuarded(v1.canvasId, 'agent', SID))).toContain('first review')
   })
 
   it('the end-to-end agent path: refused before the user has seen the round, allowed after their cycle finished', () => {

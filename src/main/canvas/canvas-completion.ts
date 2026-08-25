@@ -42,12 +42,34 @@ export function completeCanvasGuarded(
   by: CanvasCompletion['by'],
   requireOwnerSessionId?: string,
 ): CanvasState | { error: string } {
+  const canvas = getCanvasStateById(canvasId)
+  if (!canvas) return { error: 'no such canvas' }
+  // OWNERSHIP FIRST (adversarial review): the tally reads below expose a
+  // canvas's private review counts, so a foreign session must be turned away
+  // before it can use this as an oracle — and the refusal should say the true
+  // reason. setCanvasCompleted re-checks against the record as the boundary.
+  if (requireOwnerSessionId !== undefined && canvas.sessionId !== requireOwnerSessionId) {
+    return { error: 'not this session’s canvas' }
+  }
+  if (canvas.completed) return { error: 'already completed' }
+  // NOTHING TO SIGN OFF unless the user has actually been shown something.
+  // A canvas whose only versions are DRAFTS (ready:false) has surfaced
+  // nothing — no pulse, no queue, no review store — so "nothing is owed" is
+  // true only because nothing was ever offered. A draft as the LATEST version
+  // is agent work-in-flight the user has not seen. Either way there is no
+  // signed-off state to record. This is the barrier the draft path slips past
+  // (awaitingReview is set only for a NON-draft render), so it is checked
+  // directly on the versions rather than on the review-needed stamp.
+  const hasReadyVersion = canvas.versions.some((v) => !v.draft)
+  const latest = canvas.versions[canvas.versions.length - 1]
+  if (!hasReadyVersion || latest?.draft) {
+    return { error: 'not everything is settled: nothing has been offered for review yet — render a version the user can see first' }
+  }
   // A ready-marked render nobody has reviewed yet IS something owed — the
   // user's first look. Without this, an agent could sign off a canvas whose
   // hand-over the user never saw, which breaks the transitive-seen argument
   // below. (The renderer's blocked-button predicate includes the same term.)
-  const canvas = getCanvasStateById(canvasId)
-  if (canvas?.awaitingReview) {
+  if (canvas.awaitingReview) {
     return { error: 'not everything is settled: a render is still awaiting the user’s first review' }
   }
   const counts = getReviewCountsForCanvas(canvasId)

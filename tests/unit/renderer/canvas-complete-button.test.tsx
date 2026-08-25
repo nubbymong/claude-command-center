@@ -195,4 +195,54 @@ describe('on a completed canvas', () => {
     await click(byId('canvas-completed-reopen'))
     expect(completeReopen).toHaveBeenCalledWith({ sessionId: SID, canvasId: CID })
   })
+
+  it('ADV: a refused Reopen surfaces its reason instead of dying silently', async () => {
+    seed({ completed: { at: 'now', by: 'user' } })
+    completeReopen.mockResolvedValueOnce({ ok: false, reason: 'not this session’s canvas' } as any)
+    await render()
+    await click(byId('canvas-completed-reopen'))
+    expect(container.querySelector('[data-testid="canvas-complete-refused"]')!.textContent).toContain('not this session')
+  })
+
+  it('ADV: a rejected Reopen is caught, not left as an unhandled rejection', async () => {
+    seed({ completed: { at: 'now', by: 'user' } })
+    completeReopen.mockRejectedValueOnce(new Error('boom'))
+    await render()
+    await click(byId('canvas-completed-reopen'))
+    expect(container.querySelector('[data-testid="canvas-complete-refused"]')!.textContent).toContain('could not reopen')
+  })
+})
+
+describe('ADV: the armed confirm does not carry across a subject switch', () => {
+  it('arming on canvas A then re-rendering as canvas B disarms — no sign-off of B', async () => {
+    seed({ reviews: [review('R1', 'resolved')], annotations: [note('a1', 'R1', 'approved')] })
+    await render()
+    await click(byId('canvas-complete-arm'))
+    expect(byId('canvas-complete-confirm')).toBeTruthy()
+    // The pane switches subject under the mounted button.
+    await act(async () => {
+      root.render(<CanvasCompleteButton sessionId={SID} canvasId="canvas-B" title="Subject B" />)
+    })
+    // Disarmed — the confirm is gone, so a click cannot sign off B.
+    expect(byId('canvas-complete-confirm')).toBeNull()
+    expect(byId('canvas-complete-arm')).toBeTruthy()
+  })
+
+  it('ADV: blocks (fails closed) when the review mirror points at a different canvas', async () => {
+    // The window right after a switch: mirror still on the previous canvas.
+    useCanvasStore.setState({
+      bySessionId: {
+        [SID]: {
+          canvasId: CID, versions: [], activeVersionId: 'v1',
+          interactionMode: 'browse', emptyView: 'intro', unseenRender: false,
+          filedNotice: null, completedNotice: null, loaded: true,
+        },
+      },
+    } as any)
+    useCanvasReviewStore.setState({
+      bySessionId: { [SID]: { loaded: true, canvasId: 'canvas-OTHER', reviews: [], annotations: [] } },
+    } as any)
+    await render()
+    expect(byId('canvas-complete-arm')!.disabled).toBe(true)
+  })
 })
