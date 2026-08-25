@@ -32,7 +32,12 @@ export function registerAccountProfilesHandlers(): void {
   // All-accounts usage overview: fetch each profile's usage directly (no session).
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL, () => fetchAllAccountsUsage())
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string; noRefresh?: boolean }) =>
-    p && isValidProfileId(p.id) ? fetchAccountUsage(p.id, { noRefresh: p.noRefresh === true }) : null,
+    // `!!p.noRefresh`, not `=== true` (adversarial review): a hostile/garbled
+    // noRefresh must fail toward NOT rotating the token (a stale number), never
+    // toward a rotation that could strand a respawning session. Junk is truthy
+    // → suppress; only a real falsy/absent value (the panel's normal call)
+    // allows the idle-account refresh.
+    p && isValidProfileId(p.id) ? fetchAccountUsage(p.id, { noRefresh: !!p.noRefresh }) : null,
   )
 
   // Renderer pull: the reliable per-session account identity captured at spawn.

@@ -89,3 +89,20 @@ describe('fetchAccountUsage noRefresh (#447)', () => {
     expect(requestedHosts).toContain(REFRESH_HOST)
   })
 })
+
+// The IPC handler coerces with `!!p.noRefresh` (adversarial review): a hostile
+// or garbled value must fail toward NOT rotating, not toward a rotation that
+// could strand a respawning session.
+describe('ACCOUNT_USAGE_FETCH_ONE noRefresh coercion (#447)', () => {
+  const coerce = (v: unknown): boolean => !!v // mirrors the handler's `!!p.noRefresh`
+  it('junk noRefresh values coerce to true (suppress rotation = fail safe)', () => {
+    for (const v of ['false', 'true', 1, {}, [], [true], new Boolean(true) as unknown]) {
+      expect(coerce(v)).toBe(true)
+    }
+  })
+  it('only a real falsy/absent value allows the idle-account refresh', () => {
+    for (const v of [undefined, false, 0, null, '']) {
+      expect(coerce(v)).toBe(false)
+    }
+  })
+})

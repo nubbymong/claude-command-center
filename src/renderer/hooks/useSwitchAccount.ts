@@ -64,12 +64,13 @@ export function useSwitchAccount(
       void persistLastUsedAccount(sessionId, newProfileId)
       // 2b. Refresh the picked account's usage snapshot (#447). The pick is the
       //     one moment we know the user cares about this account's numbers.
-      //     `noRefresh` is REQUIRED here (adversarial review): the respawn on
-      //     the next line spawns onto this same profile, and a plain fetch would
-      //     rotate a lapsed non-primary account's single-use refresh token in
-      //     the window before that child registers as a live consumer — spending
-      //     the token the child is about to use and logging the account out. So
-      //     this never rotates: a valid token still fetches live, a lapsed one
+      //     `noRefresh` is what makes this SAFE next to the respawn on the next
+      //     line (adversarial review): that child spawns onto this same profile,
+      //     and a rotating fetch of a lapsed non-primary token would spend the
+      //     single-use refresh token the child is about to use and log the
+      //     account out — in the window before the child registers as a live
+      //     consumer, which is exactly where the in-use guard is blind. With
+      //     noRefresh it NEVER rotates: a valid token fetches live, a lapsed one
       //     falls back to the last-known snapshot. Fire-and-forget and
       //     null-guarded (the default account has no profile row); a usage fetch
       //     must never block or fail the switch.

@@ -227,11 +227,12 @@ describe('useSwitchAccount', () => {
     useSessionStore.getState().addSession(session)
     renderHarness(session)
     act(() => { captured!('sess-1', 'profile-b') })
-    // noRefresh is load-bearing: without it the fetch would rotate the token the
-    // respawn is about to consume (adversarial review).
+    // noRefresh is load-bearing: it is what stops the fetch rotating the token
+    // the respawn is about to consume (adversarial review).
     expect(fetchOneMock).toHaveBeenCalledWith('profile-b', { noRefresh: true })
-    // And it must fire BEFORE the respawn's PTY teardown — that ordering is the
-    // whole point (the only window the new profile is not yet in use).
+    // It fires before the respawn's PTY teardown — a minor "best shot at a live
+    // token before the session claims it" ordering, no longer a safety
+    // requirement now noRefresh never rotates. Pinned to hold current behaviour.
     expect(fetchOneMock.mock.invocationCallOrder[0]).toBeLessThan(killSessionPtyMock.mock.invocationCallOrder[0])
   })
 
