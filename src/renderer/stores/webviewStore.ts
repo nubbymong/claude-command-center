@@ -283,9 +283,11 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
       bySessionId: {
         ...s.bySessionId,
         // `page` is dropped: it described the ordinary view this mode replaces.
-        // `atStartPage` too — its setPage guard would silently drop the account
-        // view's nav reports (the strip's loading indicator reads them).
-        [sessionId]: { ...cur, isOpen: true, page: null, atStartPage: false, accountPane: { profileId, authed: null, email: null } },
+        // `atStartPage` is deliberately KEPT — a Cleared start page must still
+        // be there on "Back to browser" (and clearing it here would fire the
+        // auto-home navigate underneath the account view); setPage instead
+        // lets account-mode nav reports through explicitly.
+        [sessionId]: { ...cur, isOpen: true, page: null, accountPane: { profileId, authed: null, email: null } },
       },
     }))
   },
@@ -318,7 +320,9 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     if (!cur) return
     // Same for a view Clear just closed (#481): a late navigation report must
     // not repopulate `page` under the start page (the address bar reads it).
-    if (cur.atStartPage) return
+    // The account surface (#439) is exempt: its reports are live — the strip's
+    // loading indicator reads them — and `page` is dropped again on mode exit.
+    if (cur.atStartPage && !cur.accountPane) return
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
@@ -357,7 +361,8 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => {
       const next: Record<string, WebviewSessionState> = {}
       for (const [id, st] of Object.entries(s.bySessionId)) {
-        next[id] = { ...st, isOpen: false }
+        // Account mode goes with the pane, same as every other close gesture.
+        next[id] = { ...st, isOpen: false, accountPane: null }
       }
       return { bySessionId: next }
     })

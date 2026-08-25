@@ -14,6 +14,7 @@ import { logError } from '../debug-logger'
 import { clearWebSession } from '../account-web/sign-in'
 import { removeWebSession } from '../account-web/session-store'
 import { closeArtifacts } from '../account-web/artifacts'
+import { closeAccountPanesForProfile } from '../account-web/account-pane'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
@@ -101,6 +102,11 @@ export function registerAccountProfilesHandlers(): void {
     // gone. Clearing before any destructive step is what makes that message
     // true, and it fails closed — the account survives to be deleted again.
     closeArtifacts(p.id)
+    // The pane's account surfaces hold the same session (#439) — and the
+    // in-use guard above cannot cover them: the Settings route deliberately
+    // hosts account X's pane inside a session bound to another profile, so a
+    // delete of X passes that guard with X's view still live.
+    closeAccountPanesForProfile(p.id)
     try {
       await clearWebSession(p.id)
     } catch (err) {

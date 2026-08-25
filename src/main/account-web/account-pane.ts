@@ -352,8 +352,8 @@ export function openAccountPane(
 
     // Watch the partition for the session cookie appearing or going: this is
     // both the sign-in detector and the strip's live authed dot. The listener
-    // sits on the LONG-LIVED account session, so it is registered only after
-    // everything that can throw — and the catch below unhooks it regardless.
+    // sits on the LONG-LIVED account session — the catch below unhooks it if
+    // any later step (setBounds, addChildView) throws.
     const onCookieChanged = (_e: unknown, cookie: { name: string; domain?: string }): void => {
       if (cookie.name !== CLAUDE_SESSION_COOKIE) return
       void refreshAuthed(sessionId)
