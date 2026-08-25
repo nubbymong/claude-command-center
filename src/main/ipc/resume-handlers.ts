@@ -29,17 +29,24 @@ export function registerResumeHandlers(): void {
     try {
       sessionIdSchema.parse(sessionId)
       let path: string | null = null
-      // Prefer the durable record.
-      try {
-        const rows = await getLogSupervisor()?.query('session-conversation', { sessionId })
-        const row = rows?.[0] as { path?: string } | undefined
-        if (row?.path) path = row.path
-      } catch {
-        /* durable lookup is best-effort; fall through to the live exact bind */
+      // Prefer the LIVE exact bind. During a live session — including the
+      // graceful close-all save that enriches session-state — it is the freshest
+      // authoritative source, so a /clear rotation that has not yet flushed to
+      // the durable table cannot make us persist a staler uuid (adversarial
+      // round 1). Never getLatestTranscriptPath, which also returns heuristic
+      // binds.
+      path = getTranscriptBinder()?.getExactResumeTarget(sessionId) ?? null
+      // Fall back to the durable record — the source after an app restart, when
+      // the in-memory bind is gone.
+      if (!path) {
+        try {
+          const rows = await getLogSupervisor()?.query('session-conversation', { sessionId })
+          const row = rows?.[0] as { path?: string } | undefined
+          if (row?.path) path = row.path
+        } catch {
+          /* durable lookup is best-effort; a miss simply yields null (fresh) */
+        }
       }
-      // Fall back to the live EXACT bind (never getLatestTranscriptPath, which
-      // also returns heuristic binds).
-      if (!path) path = getTranscriptBinder()?.getExactResumeTarget(sessionId) ?? null
       if (!path) return null
       return resolveResumeTargetFromTranscript(path)
     } catch {

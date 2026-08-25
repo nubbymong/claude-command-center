@@ -37,41 +37,40 @@ describe('resume IPC handler (getResumeTarget)', () => {
     registerResumeHandlers()
   })
 
-  it('prefers the durable session_conversation record', async () => {
+  it('prefers the LIVE exact bind (freshest during a live session)', async () => {
+    getExactResumeTargetSpy.mockReturnValue('/home/.claude/projects/p/u.jsonl')
+    resolveSpy.mockReturnValue({ uuid: 'u', cwd: 'F:/wt' })
+    const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
+    expect(getExactResumeTargetSpy).toHaveBeenCalledWith('s1')
+    // The live hit means we never consult the durable table.
+    expect(querySpy).not.toHaveBeenCalled()
+    expect(resolveSpy).toHaveBeenCalledWith('/home/.claude/projects/p/u.jsonl')
+    expect(out).toEqual({ uuid: 'u', cwd: 'F:/wt' })
+  })
+
+  it('falls back to the durable record after a restart (no live bind)', async () => {
+    getExactResumeTargetSpy.mockReturnValue(null)
     querySpy.mockResolvedValue([{ uuid: 'u', path: '/home/.claude/projects/p/u.jsonl' }])
     resolveSpy.mockReturnValue({ uuid: 'u', cwd: 'F:/wt' })
     const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
     expect(querySpy).toHaveBeenCalledWith('session-conversation', { sessionId: 's1' })
     expect(resolveSpy).toHaveBeenCalledWith('/home/.claude/projects/p/u.jsonl')
-    // The durable hit means we never consult the live bind.
-    expect(getExactResumeTargetSpy).not.toHaveBeenCalled()
     expect(out).toEqual({ uuid: 'u', cwd: 'F:/wt' })
   })
 
-  it('falls back to the live EXACT bind when the durable record is absent', async () => {
-    querySpy.mockResolvedValue([])
-    getExactResumeTargetSpy.mockReturnValue('/home/.claude/projects/p/u.jsonl')
-    resolveSpy.mockReturnValue({ uuid: 'u', cwd: 'F:/wt' })
-    const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
-    expect(getExactResumeTargetSpy).toHaveBeenCalledWith('s1')
-    expect(resolveSpy).toHaveBeenCalledWith('/home/.claude/projects/p/u.jsonl')
-    expect(out).toEqual({ uuid: 'u', cwd: 'F:/wt' })
-  })
-
-  it('returns null when neither the durable record nor an exact bind exists', async () => {
-    querySpy.mockResolvedValue([])
+  it('returns null when neither the live bind nor the durable record exists', async () => {
     getExactResumeTargetSpy.mockReturnValue(null)
+    querySpy.mockResolvedValue([])
     const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
     expect(out).toBeNull()
     expect(resolveSpy).not.toHaveBeenCalled()
   })
 
-  it('survives a durable-query rejection and still tries the exact bind', async () => {
+  it('survives a durable-query rejection (returns fresh, never throws)', async () => {
+    getExactResumeTargetSpy.mockReturnValue(null)
     querySpy.mockRejectedValue(new Error('worker down'))
-    getExactResumeTargetSpy.mockReturnValue('/home/.claude/projects/p/u.jsonl')
-    resolveSpy.mockReturnValue({ uuid: 'u', cwd: 'F:/wt' })
     const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
-    expect(out).toEqual({ uuid: 'u', cwd: 'F:/wt' })
+    expect(out).toBeNull()
   })
 
   it('is fail-safe (returns null) on an invalid sessionId', async () => {

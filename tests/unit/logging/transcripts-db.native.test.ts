@@ -919,5 +919,36 @@ describe('transcripts-db', () => {
       db.upsertSessionConversation({ sessionId: 's-orphan', uuid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', path: p, updatedAt: 5 })
       expect(db.getSessionConversation('s-orphan')?.path).toBe(p)
     })
+
+    it('maps a uuid to at most one session — a new owner evicts the prior row', () => {
+      // Adversarial round 1: without eviction, two durable rows would point at
+      // the same conversation and both cards would `--resume` it after a restart.
+      const uuid = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+      const p = `/home/.claude/projects/proj/${uuid}.jsonl`
+      db.upsertSessionConversation({ sessionId: 'sA', uuid, path: p, updatedAt: 1 })
+      db.upsertSessionConversation({ sessionId: 'sB', uuid, path: p, updatedAt: 2 }) // handoff
+      expect(db.getSessionConversation('sA')).toBeNull() // stale row evicted
+      expect(db.getSessionConversation('sB')?.uuid).toBe(uuid)
+      // A different uuid for the same session is unaffected by the eviction rule.
+      db.upsertSessionConversation({ sessionId: 'sA', uuid: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', path: '/p/e.jsonl', updatedAt: 3 })
+      expect(db.getSessionConversation('sA')?.uuid).toBe('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
+      expect(db.getSessionConversation('sB')?.uuid).toBe(uuid)
+    })
+
+    it('recreates the table on open for a pre-existing DB (IF NOT EXISTS migration)', () => {
+      // Simulate a DB written before #480: drop the table, reopen via the real
+      // opener, and confirm the DDL restores it and round-trips.
+      db.close()
+      const raw = new Database(dbPath)
+      raw.exec('DROP TABLE session_conversation')
+      raw.close()
+      const db2 = openTranscriptsDb(dbPath)
+      try {
+        db2.upsertSessionConversation({ sessionId: 's', uuid: 'ffffffff-ffff-4fff-8fff-ffffffffffff', path: '/p/f.jsonl', updatedAt: 1 })
+        expect(db2.getSessionConversation('s')?.uuid).toBe('ffffffff-ffff-4fff-8fff-ffffffffffff')
+      } finally {
+        db2.close()
+      }
+    })
   })
 })

@@ -820,6 +820,20 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       uuid = excluded.uuid, path = excluded.path,
       confidence = excluded.confidence, updatedAt = excluded.updatedAt
   `)
+  // #480 (adversarial round 1): a conversation uuid must map to at most ONE
+  // durable session, or two cards could both `--resume <uuid>` after an app
+  // restart (the in-memory ownership guard is empty at boot). A new owner for a
+  // uuid evicts every other session's durable row for it — last-writer-wins on
+  // uuid — so a legitimate handoff transfers ownership instead of accumulating.
+  const stmtEvictOtherOwnersOfUuid: Statement = sqlite.prepare(
+    `DELETE FROM session_conversation WHERE uuid = @uuid AND sessionId <> @sessionId`,
+  )
+  const runUpsertSessionConversation = sqlite.transaction(
+    (row: { sessionId: string; uuid: string; path: string; updatedAt: number }) => {
+      stmtEvictOtherOwnersOfUuid.run(row)
+      stmtUpsertSessionConversation.run(row)
+    },
+  )
   const stmtGetSessionConversation: Statement = sqlite.prepare(
     `SELECT uuid, path, updatedAt FROM session_conversation WHERE sessionId = ?`,
   )
@@ -1025,7 +1039,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     },
 
     upsertSessionConversation(row) {
-      stmtUpsertSessionConversation.run(row)
+      runUpsertSessionConversation(row)
     },
 
     getSessionConversation(sessionId: string) {

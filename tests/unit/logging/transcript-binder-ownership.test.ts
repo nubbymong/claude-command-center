@@ -120,6 +120,28 @@ describe('#480 ownership guard — one conversation, one live session', () => {
     expect(binder.getExactResumeTarget('s1')).toBe(pathFor(UUID_X))
   })
 
+  it('a refused bind does NOT disarm the loser\'s heuristic fallback', () => {
+    // Adversarial round 1: cancelHeuristic must run AFTER the ownership refusal,
+    // else a transient uuid collision leaves the loser with neither an exact nor
+    // a heuristic bind and its transcript is never tailed.
+    const heuristic = makeScriptedHeuristic(() => null)
+    const { binder, timers } = makeHarness({ heuristicBinder: heuristic.hb })
+    // s1 (live) exact-owns X.
+    binder.registerRun('s1', '/repo', 0)
+    binder.notifyTranscriptPath('s1', pathFor(UUID_X))
+    timers.advance(100)
+    // s2 starts a run (arms its heuristic) then tries to bind X -> refused.
+    binder.registerRun('s2', '/repo', 0)
+    binder.notifyTranscriptPath('s2', pathFor(UUID_X))
+    timers.advance(100) // debounce -> commitExact refuses (X owned by live s1)
+    expect(binder.getExactResumeTarget('s2')).toBeNull()
+    const before = heuristic.calls.filter((c) => c.sessionId === 's2').length
+    // The refusal must have LEFT s2's heuristic timer armed: it still fires.
+    timers.advance(20_000)
+    const after = heuristic.calls.filter((c) => c.sessionId === 's2').length
+    expect(after).toBeGreaterThan(before)
+  })
+
   it('lets the next session re-claim a conversation after the owner ends (handoff)', () => {
     const { binder, timers } = makeHarness()
     binder.registerRun('s1', '/repo', 0)
@@ -130,6 +152,110 @@ describe('#480 ownership guard — one conversation, one live session', () => {
     binder.notifyTranscriptPath('s2', pathFor(UUID_X))
     timers.advance(100)
     expect(binder.getExactResumeTarget('s2')).toBe(pathFor(UUID_X))
+  })
+})
+
+describe('#480 REORDER attacker — guard-first invariants', () => {
+  // H1: /clear rotation with guard now BEFORE dedupe + cancelHeuristic.
+  it('H1 rotation X->Y releases X, claims Y, and X is re-claimable by a live session', () => {
+    const heuristic = makeScriptedHeuristic(() => null)
+    const { binder, binds, persists, timers } = makeHarness({ heuristicBinder: heuristic.hb })
+    binder.registerRun('s1', '/repo', 0)
+    binder.notifyTranscriptPath('s1', pathFor(UUID_X))
+    timers.advance(100)
+    expect(binder.getExactResumeTarget('s1')).toBe(pathFor(UUID_X))
+    // rotate to Y
+    binder.notifyTranscriptPath('s1', pathFor(UUID_Y))
+    timers.advance(100)
+    expect(binder.getExactResumeTarget('s1')).toBe(pathFor(UUID_Y))
+    // heuristic timer for s1 was cancelled by the exact binds (never fires)
+    timers.advance(20_000)
+    expect(heuristic.calls.filter((c) => c.sessionId === 's1')).toHaveLength(0)
+    // X is now free: a different LIVE session claims it (proves release happened)
+    binder.registerRun('s2', '/repo', 0)
+    binder.notifyTranscriptPath('s2', pathFor(UUID_X))
+    timers.advance(100)
+    expect(binder.getExactResumeTarget('s2')).toBe(pathFor(UUID_X))
+    // persist fired for X(s1), Y(s1), X(s2) — three exact commits, no churn dupes
+    expect(persists).toEqual([
+      { sessionId: 's1', path: pathFor(UUID_X), uuid: UUID_X },
+      { sessionId: 's1', path: pathFor(UUID_Y), uuid: UUID_Y },
+      { sessionId: 's2', path: pathFor(UUID_X), uuid: UUID_X },
+    ])
+    expect(binds.map((b) => `${b.sessionId}:${b.confidence}`)).toEqual(['s1:exact', 's1:exact', 's2:exact'])
+  })
+
+  // H2: identical exact re-notify of SAME path/session short-circuits — no churn,
+  // guard must NOT refuse the session's own re-bind (owner === sessionId).
+  it('H2 identical re-notify short-circuits: no duplicate bind, no duplicate persist', () => {
+    const { binder, binds, persists, timers } = makeHarness()
+    binder.notifyTranscriptPath('s1', pathFor(UUID_X))
+    timers.advance(100)
+    expect(binds).toHaveLength(1)
+    expect(persists).toHaveLength(1)
+    // same path, same session, again
+    binder.notifyTranscriptPath('s1', pathFor(UUID_X))
+    timers.advance(100)
+    // still exactly one bind + one persist — dedupe held despite guard-first
+    expect(binds).toHaveLength(1)
+    expect(persists).toHaveLength(1)
+    expect(binder.getExactResumeTarget('s1')).toBe(pathFor(UUID_X))
+  })
+
+  // H4: a REFUSED session keeps its heuristic timer AND heuristic can later bind a
+  // DIFFERENT file — but that heuristic bind must NEVER claim ownership or persist.
+  it('H4 refused session heuristic-binds a different file without ownership/persist', () => {
+    const OTHER = '33333333-3333-4333-8333-333333333333'
+    const heuristic = makeScriptedHeuristic(() => ({ path: pathFor(OTHER), confidence: 'heuristic' }))
+    const { binder, binds, persists, timers } = makeHarness({ heuristicBinder: heuristic.hb })
+    // s1 exact-owns X
+    binder.registerRun('s1', '/repo', 0)
+    binder.notifyTranscriptPath('s1', pathFor(UUID_X))
+    timers.advance(100)
+    // s2 arms heuristic, then is refused X
+    binder.registerRun('s2', '/repo', 0)
+    binder.notifyTranscriptPath('s2', pathFor(UUID_X))
+    timers.advance(100)
+    expect(binder.getExactResumeTarget('s2')).toBeNull()
+    // s2 heuristic fires -> binds OTHER (heuristic confidence)
+    timers.advance(20_000)
+    expect(binds.filter((b) => b.sessionId === 's2')).toEqual([
+      { sessionId: 's2', path: pathFor(OTHER), confidence: 'heuristic' },
+    ])
+    // heuristic path never persists and never becomes a resume target
+    expect(persists.filter((p) => p.sessionId === 's2')).toHaveLength(0)
+    expect(binder.getExactResumeTarget('s2')).toBeNull()
+    expect(binder.getLatestTranscriptPath('s2')).toBe(pathFor(OTHER))
+    // ownership of OTHER was NOT claimed by s2's heuristic: a live s3 can exact-bind OTHER
+    binder.registerRun('s3', '/repo', 0)
+    binder.notifyTranscriptPath('s3', pathFor(OTHER))
+    timers.advance(100)
+    expect(binder.getExactResumeTarget('s3')).toBe(pathFor(OTHER))
+  })
+
+  // H5: registerRun after a refusal leaves state consistent — s2 owned nothing, a
+  // fresh run re-arms cleanly and can later exact-bind a free uuid.
+  it('H5 registerRun after refusal keeps state consistent', () => {
+    const OTHER = '44444444-4444-4444-8444-444444444444'
+    const heuristic = makeScriptedHeuristic(() => null)
+    const { binder, binds, persists, timers } = makeHarness({ heuristicBinder: heuristic.hb })
+    binder.registerRun('s1', '/repo', 0)
+    binder.notifyTranscriptPath('s1', pathFor(UUID_X))
+    timers.advance(100)
+    binder.registerRun('s2', '/repo', 0)
+    binder.notifyTranscriptPath('s2', pathFor(UUID_X))
+    timers.advance(100)
+    expect(binder.getExactResumeTarget('s2')).toBeNull()
+    // s2 restarts (registerRun again) then binds a FREE uuid — must succeed
+    binder.registerRun('s2', '/repo', 0)
+    binder.notifyTranscriptPath('s2', pathFor(OTHER))
+    timers.advance(100)
+    expect(binder.getExactResumeTarget('s2')).toBe(pathFor(OTHER))
+    // s1 still owns X untouched
+    expect(binder.getExactResumeTarget('s1')).toBe(pathFor(UUID_X))
+    expect(persists.filter((p) => p.sessionId === 's2')).toEqual([
+      { sessionId: 's2', path: pathFor(OTHER), uuid: OTHER },
+    ])
   })
 })
 

@@ -257,6 +257,25 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
       return   // non-transcript path — ignore
     }
 
+    // #480 ownership guard: a conversation belongs to at most one LIVE session.
+    // If another still-live session already owns this uuid, refuse the bind
+    // rather than steal it — this is exactly the same-cwd cross that resumed a
+    // sibling card's conversation. `sessions.has(owner)` gates on "still live"
+    // so a released uuid (previous owner ended) is freely re-claimable.
+    //
+    // Checked BEFORE cancelHeuristic (adversarial round 1): a refused bind must
+    // NOT disarm this session's heuristic fallback — otherwise a transient uuid
+    // collision would leave the loser with neither an exact nor a heuristic bind
+    // and its transcript would never be tailed.
+    const uuid = uuidFromPath(canonical)
+    if (uuid) {
+      const owner = uuidOwners.get(uuid)
+      if (owner && owner !== sessionId && sessions.has(owner)) {
+        log(`[binder] exact bind REFUSED sid=${sessionId} uuid=${uuid} ownedBy=${owner}`)
+        return
+      }
+    }
+
     // An exact source always wins. Cancel any still-pending heuristic fallback (and
     // its retries) so it can't later re-bind on top of the exact path.
     cancelHeuristic(s)
@@ -266,19 +285,6 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
     // exact below, so we only short-circuit when confidence also matches.)
     if (s.boundPath === canonical && s.boundConfidence === 'exact') return
 
-    // #480 ownership guard: a conversation belongs to at most one LIVE session.
-    // If another still-live session already owns this uuid, refuse the bind
-    // rather than steal it — this is exactly the same-cwd cross that resumed a
-    // sibling card's conversation. `sessions.has(owner)` gates on "still live"
-    // so a released uuid (previous owner ended) is freely re-claimable.
-    const uuid = uuidFromPath(canonical)
-    if (uuid) {
-      const owner = uuidOwners.get(uuid)
-      if (owner && owner !== sessionId && sessions.has(owner)) {
-        log(`[binder] exact bind REFUSED sid=${sessionId} uuid=${uuid} ownedBy=${owner}`)
-        return
-      }
-    }
     // Release a different uuid this session previously owned (e.g. /clear rotated
     // the conversation) before claiming the new one.
     if (s.ownedUuid && s.ownedUuid !== uuid) releaseOwnership(sessionId, s)

@@ -39,4 +39,31 @@ tests updated for the new `bindOnce` arg and the durable-first handler.
 **Gates.** Touches PTY resume + IPC -> /adversarial-review required before merge
 (ADR-009). Human approval + desktop test before merge.
 
+### Adversarial review (round 1) -- verdict PASS after fixes
+
+Four independent attacker lenses (injection, cross/ownership, blast-radius,
+design/coverage/platform). Injection: NONE (uuid triple-validated by anchored
+UUID_RE before argv; cwd quote-escaped + existence-gated; SQL parameterized).
+
+One MAJOR found and fixed: the durable table accumulated one row per session and
+was read on resume keyed only by sessionId, so after an app restart two cards
+could both resume the same uuid. Fix: `upsertSessionConversation` runs in a
+transaction that evicts every OTHER session's row for the same uuid first --
+one uuid maps to at most one durable session (handoff transfers ownership).
+
+Two LOW fixes: (1) the ownership-refusal check now runs BEFORE `cancelHeuristic`,
+so a refused bind keeps its heuristic fallback armed; (2) `getResumeTarget`
+prefers the LIVE exact bind and falls back to the durable record only after a
+restart, closing a /clear-then-quit staleness window.
+
+Intended trade-off (documented, not fixed): a session that NEVER received an
+exact hook bind (hooks disabled / gateway bind failure) loses app-relaunch resume
+-- the heuristic net is deliberately removed from the resume path because it is
+the exact source of the cross. Default config (hooks on) is unaffected.
+
+Re-attack (round 2, two fresh lenses): PASS -- MAJOR proven closed (attacker
+reverted the eviction, saw the guard test fail, restored), reorder proven to hold
+rotation / dedupe / refusal / heuristic invariants. Regression tests added for
+every fix (fail-on-revert verified).
+
 **Ref:** #480.

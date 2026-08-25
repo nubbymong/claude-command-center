@@ -285,7 +285,7 @@ export class LogSupervisor {
   /** #480: durably record the EXACT conversation a session is on (keyed by AICC
    *  sessionId). Fire-and-forget; buffered while the worker is down like every
    *  other lifecycle message. This is the authoritative source restart resume
-   *  reads back via the `resume-target-by-session` query. */
+   *  reads back via the `session-conversation` query. */
   persistSessionConversation(sessionId: string, path: string, uuid: string): void {
     this.enqueueOrSend({ type: 'session-conversation-upsert', sessionId, path, uuid, updatedAt: Date.now() })
   }
