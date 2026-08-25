@@ -410,6 +410,38 @@ describe('cloud-agent-manager', () => {
     })
   })
 
+  describe('process close/error drive the agent status (re-pinned after #443)', () => {
+    // The retired onAgentCompletion suite (its callbacks left with
+    // team-manager, #443) was the only place these handlers were actually
+    // INVOKED. The transitions are load-bearing for the surviving Cloud
+    // Agents page, so they are pinned here directly.
+    it('close(0) marks the agent completed', async () => {
+      const mockProc = createMockProcess()
+      mockSpawn.mockReturnValue(mockProc)
+      const agent = await dispatchAgent({ name: 'Close OK', description: 'desc', projectPath: '/p' })
+      const closeHandler = mockProc.on.mock.calls.find((c: any[]) => c[0] === 'close')![1]
+      closeHandler(0)
+      expect(listAgents().find((a: any) => a.id === agent.id)?.status).toBe('completed')
+    })
+
+    it('a non-zero exit marks it failed', async () => {
+      const mockProc = createMockProcess()
+      mockSpawn.mockReturnValue(mockProc)
+      const agent = await dispatchAgent({ name: 'Close Bad', description: 'desc', projectPath: '/p' })
+      const closeHandler = mockProc.on.mock.calls.find((c: any[]) => c[0] === 'close')![1]
+      closeHandler(1)
+      expect(listAgents().find((a: any) => a.id === agent.id)?.status).toBe('failed')
+    })
+
+    it('a spawn error marks it failed', async () => {
+      const mockProc = createMockProcess()
+      mockSpawn.mockReturnValue(mockProc)
+      const agent = await dispatchAgent({ name: 'Err', description: 'desc', projectPath: '/p' })
+      const errorHandler = mockProc.on.mock.calls.find((c: any[]) => c[0] === 'error')![1]
+      errorHandler(new Error('spawn failed'))
+      expect(listAgents().find((a: any) => a.id === agent.id)?.status).toBe('failed')
+    })
+  })
 
   /**
    * #371 — a failed read of cloud-agents.json is not an empty agent list.
