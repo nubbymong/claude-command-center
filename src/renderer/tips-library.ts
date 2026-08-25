@@ -369,6 +369,20 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.artifacts-button',
+    category: 'productivity',
+    complexity: 'simple',
+    priority: 45,
+    variants: {
+      primary: {
+        shortText: 'Open your account artifacts from the command bar',
+        title: 'The Artifacts Button',
+        body: 'Next to **Browser** in the command bar, the **Artifacts** button opens this account\'s artifacts on claude.ai in one click -- no digging through the sidebar menu.\n\n• Shows for a local session signed into an account; a terminal-only session hides it.\n• Uses the session\'s account (or your primary), so each account opens its own artifacts.\n• Right-click it to open artifacts or hide the button, like the other core tools.',
+      },
+    },
+  },
+
+  {
     id: 'tip.webview-freeze',
     category: 'productivity',
     complexity: 'intermediate',
