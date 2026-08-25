@@ -149,4 +149,27 @@ describe('the Ask session bar is slim (#465)', () => {
     expect(byTestId('core-tool-partner')).not.toBeNull()
     expect(byTestId('core-tool-notes')).not.toBeNull()
   })
+
+  it('the bar right-click menu offers no Add entries on the Ask bar (they would create unreachable commands)', async () => {
+    await render()
+    act(() => {
+      byTestId('command-bar')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 20 }))
+    })
+    expect(byTestId('bar-menu')).not.toBeNull()
+    expect(byTestId('bar-add-command')).toBeNull()
+    expect(byTestId('bar-add-section')).toBeNull()
+    // The rest of the menu (overflow, show hidden tools, manage, hide) survives.
+    expect(byTestId('bar-overflow-fold')).not.toBeNull()
+    expect(byTestId('bar-manage')).not.toBeNull()
+  })
+
+  it('…and keeps them on an ordinary bar', async () => {
+    SESSIONS = [NORMAL_SESSION]
+    await render({ configId: 'cfg' })
+    act(() => {
+      byTestId('command-bar')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 20 }))
+    })
+    expect(byTestId('bar-add-command')).not.toBeNull()
+    expect(byTestId('bar-add-section')).not.toBeNull()
+  })
 })

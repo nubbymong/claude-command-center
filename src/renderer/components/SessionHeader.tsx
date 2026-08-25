@@ -208,11 +208,14 @@ function SessionAuthPills({ session }: { session: Session }) {
     if (applies && !isAsk && profileId) void refresh(profileId)
   }, [applies, isAsk, profileId, refresh, session.id])
 
-  const gitHub = <SessionGitHubPill session={session} />
+  // Never a GitHub pill on the Ask session (#465) — structural, so even a
+  // stray githubIntegration on the record (there is no path that sets one,
+  // the auto-detect banner is gated) could not paint it.
+  const gitHub = isAsk ? null : <SessionGitHubPill session={session} />
   if (!applies || !profileId) {
     // Non-Claude sessions still show the GitHub pill (with its own leading
     // separator) so the right cluster stays consistent.
-    return session.githubIntegration?.repoSlug
+    return !isAsk && session.githubIntegration?.repoSlug
       ? (<><div className="w-px h-4 bg-surface1 shrink-0" />{gitHub}</>)
       : null
   }

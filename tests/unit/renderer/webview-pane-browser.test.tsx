@@ -296,6 +296,40 @@ describe('Clear — back to the start page (#481)', () => {
     await flush()
     expect(byTest<HTMLButtonElement>('browser-clear')!.disabled).toBe(true)
   })
+
+  it('Clear applies to THIS viewing: close and reopen the pane, and the home convenience is back', async () => {
+    useBrowserStore.getState().setHome('cfg1', 'http://localhost:4000/')
+    await loaded()
+    act(() => { byTest<HTMLButtonElement>('browser-clear')!.click() })
+    await flush()
+    expect(useWebviewStore.getState().bySessionId['s1'].currentUrl).toBeNull()
+    // Close the pane, reopen it: the fresh open forgets the Clear and homes.
+    act(() => { useWebviewStore.getState().setOpen('s1', false) })
+    act(() => { useWebviewStore.getState().setOpen('s1', true) })
+    await flush()
+    expect(useWebviewStore.getState().bySessionId['s1'].currentUrl).toBe('http://localhost:4000/')
+  })
+
+  it('Clear while an open is still in flight destroys the late view instead of resurrecting it', async () => {
+    let resolveOpen: (ok: boolean) => void = () => {}
+    api.open.mockImplementationOnce(() => new Promise((r) => { resolveOpen = r }))
+    act(() => { useWebviewStore.getState().navigate('s1', 'http://localhost:5173/') })
+    render()
+    await flush()
+    expect(api.open).toHaveBeenCalledTimes(1)
+    // Clear lands while the open IPC is still out.
+    act(() => { byTest<HTMLButtonElement>('browser-clear')!.click() })
+    api.close.mockClear()
+    await act(async () => { resolveOpen(true); await new Promise((r) => setTimeout(r, 0)) })
+    // The resolved open notices the cleared pane and closes the view it made.
+    expect(api.close).toHaveBeenCalledWith('s1')
+    expect(byTest('browser-start')).not.toBeNull()
+    // A later navigate creates a genuinely fresh view.
+    act(() => { type(byTest<HTMLInputElement>('browser-start-address')!, 'localhost:9999') })
+    act(() => { byTest<HTMLButtonElement>('browser-start-go')!.click() })
+    await flush()
+    expect(api.open).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('the modern palette (#455)', () => {

@@ -150,10 +150,18 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
         openInFlight = false
         if (cancelled) return
         if (ok) {
-          viewReadyRef.current = true
           // The URL may have moved on while the IPC was in flight.
           const latest = useWebviewStore.getState().bySessionId[sessionId]?.currentUrl
-          if (latest && latest !== url) void window.electronAPI.webview.navigate(sessionId, latest)
+          if (!latest) {
+            // Cleared while the open was in flight (#481): destroy the view this
+            // round trip just created and stay unready — the blank start page is
+            // what the user asked for, and the native view would paint over it.
+            viewReadyRef.current = false
+            void window.electronAPI.webview.close(sessionId).catch(() => { /* noop */ })
+            return
+          }
+          viewReadyRef.current = true
+          if (latest !== url) void window.electronAPI.webview.navigate(sessionId, latest)
         } else {
           setOpen(sessionId, false)
         }

@@ -35,7 +35,10 @@ function loadConfigDims(): TkConfigDim[] {
   // Ask Conductor 'help' bucket (#465). The matcher is longest-prefix, so this
   // synthetic dim only ever claims spend from inside `<resources>/help` itself;
   // it cannot shadow a real config (and getResourcesDirectory never throws —
-  // it falls back under the data directory before the user picks one).
+  // it falls back under the data directory before the user picks one). Known
+  // edge, shared with every saved config: the worker's isJunkCwd runs first,
+  // so a resources dir under a junk-flagged segment (temp/, windows/) sends
+  // this spend to "External / no config" instead. Fails safe, never wrong.
   dims.push({ configId: TK_HELP_CONFIG_ID, label: 'Ask Conductor', workingDirectory: join(getResourcesDirectory(), 'help') })
   return dims
 }

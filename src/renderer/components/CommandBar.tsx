@@ -970,8 +970,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <BarMenu
           x={menu.x} y={menu.y} overflow={overflowMode}
           hiddenTools={Array.from(hiddenHere).map((t) => ({ tool: t, label: TOOL_LABEL[t] }))}
-          onAddCommand={() => { setMenu(null); setShowDialog({ scope: configId ? 'config' : 'global' }) }}
-          onAddSection={() => { setSectionInput({ x: menu.x, y: menu.y, band: configId ? 'config' : 'global' }); setMenu(null) }}
+          onAddCommand={caps.isAsk ? undefined : () => { setMenu(null); setShowDialog({ scope: configId ? 'config' : 'global' }) }}
+          onAddSection={caps.isAsk ? undefined : () => { setSectionInput({ x: menu.x, y: menu.y, band: configId ? 'config' : 'global' }); setMenu(null) }}
           onOverflow={(v) => { setMenu(null); setOverflow?.(v) }}
           onShowTool={(tool) => { setMenu(null); showCoreTool?.(tool, hidden.everywhere?.includes(tool) ? 'everywhere' : 'session', webviewKey) }}
           onManage={() => { setMenu(null); openSettingsTab('commands') }}

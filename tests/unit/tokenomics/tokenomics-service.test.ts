@@ -17,8 +17,11 @@ vi.mock('../../../src/main/tokenomics/tk-pricing', () => ({ getAllPricing: () =>
 import { initTokenomics, getTokenomicsSupervisor, shutdownTokenomics, refreshTokenomicsConfigs, TK_HELP_CONFIG_ID } from '../../../src/main/tokenomics/tokenomics-service'
 
 // The synthetic Ask Conductor dim (#465) rides beside the saved configs on
-// every configs push, pointing at <resources>/help.
-const HELP_DIM = { configId: TK_HELP_CONFIG_ID, label: 'Ask Conductor', workingDirectory: 'F:\\resources\\help' }
+// every configs push, pointing at <resources>/help. Built with join() exactly
+// as the service builds it — a hardcoded 'F:\\resources\\help' would fail the
+// macOS CI leg, where join emits a forward slash.
+import { join } from 'node:path'
+const HELP_DIM = { configId: TK_HELP_CONFIG_ID, label: 'Ask Conductor', workingDirectory: join('F:\\resources', 'help') }
 
 describe('tokenomics-service', () => {
   beforeEach(() => { shutdownTokenomics(); forks.length = 0 })

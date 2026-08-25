@@ -59,8 +59,9 @@ export interface WebviewSessionState {
   /**
    * True only after an explicit Clear (#481): the user asked for the START
    * page, so the pane's "opened blank with a home set -> go home" convenience
-   * must not immediately bounce them back to the home page. Any navigation
-   * or watch activation clears it.
+   * must not immediately bounce them back to the home page. Any navigation,
+   * watch activation, or fresh pane open clears it — the Clear applied to
+   * that viewing, not to the session forever.
    */
   atStartPage: boolean
   /**
@@ -205,13 +206,15 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
   },
   // Flip `isOpen` only — status (idle/pending/available/failed) is
   // owned by activation / probe / poll callers and unaffected by
-  // showing or hiding the pane.
+  // showing or hiding the pane. Opening ANEW forgets a previous Clear
+  // (#481): the explicit "show me the start page" applied to that viewing;
+  // a fresh open gets the ordinary go-home convenience back.
   togglePane: (sessionId) => {
     const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: !cur.isOpen },
+        [sessionId]: { ...cur, isOpen: !cur.isOpen, atStartPage: cur.isOpen ? cur.atStartPage : false },
       },
     }))
   },
@@ -220,7 +223,7 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
-        [sessionId]: { ...cur, isOpen: open },
+        [sessionId]: { ...cur, isOpen: open, atStartPage: open && !cur.isOpen ? false : cur.atStartPage },
       },
     }))
   },
