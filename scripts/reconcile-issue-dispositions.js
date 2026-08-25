@@ -60,6 +60,20 @@ function activeLineFromVersion(version) {
 }
 
 /**
+ * Guard a CLI-supplied `--active-line`. Null/undefined is fine (the value is then
+ * computed from package.json). A non-empty value that is not a
+ * `release-<major>.<minor>` label THROWS — a malformed operator value must never
+ * reach `decide()` and get auto-added as a bogus label.
+ */
+function validateActiveLine(line) {
+  if (line == null) return line
+  if (!RELEASE_RE.test(String(line).toLowerCase())) {
+    throw new Error(`--active-line must be release-<major>.<minor> (got: "${line}")`)
+  }
+  return line
+}
+
+/**
  * Decide what a single issue needs, from its labels alone.
  * @param {{labels?: string[], activeLine?: string|null}} input
  * @returns {{add: string[], flags: string[]}}  labels to add, and human-only flags.
@@ -68,7 +82,11 @@ function activeLineFromVersion(version) {
  * conflict is handed to a human untouched. `add` is safe to apply blindly.
  */
 function decide({ labels = [], activeLine = null }) {
-  const set = (labels || []).filter(Boolean)
+  // Normalize to lowercase before matching — GitHub label names are
+  // case-sensitive, so `In-Beta` / `Release-2.1` would otherwise be silently
+  // unrecognized. The labels we ADD are canonical lowercase (triage, release-x.y).
+  const set = (labels || []).filter(Boolean).map((l) => String(l).toLowerCase())
+  const active = activeLine ? String(activeLine).toLowerCase() : null
   const releases = set.filter((l) => RELEASE_RE.test(l))
   const others = OTHER_DISPOSITIONS.filter((d) => set.includes(d))
   const dispositionCount = releases.length + others.length
@@ -94,15 +112,15 @@ function decide({ labels = [], activeLine = null }) {
       // (deferred) line is self-contradictory (CONTRIBUTING.md invariant:
       // in-beta/in-release and release-2.2 never coexist). Other committed states
       // (loop-*) may legitimately target a future line, so they are left alone.
-      if (pinnedToActive && activeLine && releases[0] !== activeLine) {
-        flags.push(`${pinnedVia.join('/')} but carries ${releases[0]}, not the active line ${activeLine}; it ships on the current line — a deferred release line is contradictory`)
+      if (pinnedToActive && active && releases[0] !== active) {
+        flags.push(`${pinnedVia.join('/')} but carries ${releases[0]}, not the active line ${active}; it ships on the current line — a deferred release line is contradictory`)
       }
       return { add, flags }
     }
     if (dispositionCount === 0) {
       if (pinnedToActive) {
         // Unambiguous: an in-beta / in-release issue ships on the active line.
-        if (activeLine) add.push(activeLine)
+        if (active) add.push(active)
         else flags.push(`${pinnedVia.join('/')} but the active release line is unknown (package.json version unparsed)`)
       } else {
         // Claimed/in-progress/done with no line — choosing it is a human decision.
@@ -135,20 +153,29 @@ function readPackageVersion() {
   }
 }
 
-/** Open issues (NOT pull requests), each `{ number, title, labels: string[] }`. */
+/** Map `gh issue list --json number,title,labels` output to our shape. Pure so a
+ *  title containing any characters (e.g. `] [`) is parsed by JSON, never by string
+ *  surgery. */
+function parseIssuesJson(jsonText) {
+  const arr = JSON.parse(jsonText)
+  return arr.map((it) => ({
+    number: it.number,
+    title: it.title || '',
+    labels: (it.labels || []).map((l) => (typeof l === 'string' ? l : l.name)),
+  }))
+}
+
+/**
+ * Open issues (NOT pull requests), each `{ number, title, labels: string[] }`.
+ *
+ * Uses `gh issue list`, which returns ONE well-formed JSON array (and excludes
+ * PRs for us) — no cross-page `][` concatenation to stitch back together, so an
+ * issue title containing `] [` can never corrupt the parse (the previous
+ * `raw.replace(/\]\s*\[/g, ',')` reassembly could).
+ */
 function listOpenIssues(repo) {
-  const raw = gh(['api', '--paginate', `repos/${repo}/issues?state=open&per_page=100`])
-  // --paginate concatenates JSON arrays as separate documents on some gh versions;
-  // normalize by parsing each and flattening.
-  const docs = raw.replace(/\]\s*\[/g, ',').replace(/^\[|\]$/g, '')
-  const arr = JSON.parse(`[${docs}]`)
-  return arr
-    .filter((it) => it && !it.pull_request)
-    .map((it) => ({
-      number: it.number,
-      title: it.title || '',
-      labels: (it.labels || []).map((l) => (typeof l === 'string' ? l : l.name)),
-    }))
+  const raw = gh(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '2000', '--json', 'number,title,labels'])
+  return parseIssuesJson(raw)
 }
 
 function fetchIssue(repo, number) {
@@ -185,6 +212,7 @@ function main() {
   const args = parseArgv(process.argv.slice(2))
   const dryRun = args.dryRun || process.env.DRY_RUN === '1'
   const repo = args.repo || process.env.GITHUB_REPOSITORY || gh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])
+  validateActiveLine(args.activeLine) // throws on a malformed manual override
   const activeLine = args.activeLine || activeLineFromVersion(readPackageVersion())
 
   const issues = args.issue ? [fetchIssue(repo, args.issue)].filter(Boolean) : listOpenIssues(repo)
@@ -217,8 +245,11 @@ module.exports = {
   RELEASE_RE,
   OTHER_DISPOSITIONS,
   COMMITTED_STATES,
+  ACTIVE_LINE_STATES,
   activeLineFromVersion,
+  validateActiveLine,
   decide,
+  parseIssuesJson,
   parseArgv,
 }
 

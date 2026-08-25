@@ -5,11 +5,13 @@ import { describe, it, expect } from 'vitest'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const rec = require('../../../scripts/reconcile-issue-dispositions.js') as {
   activeLineFromVersion: (v: string) => string | null
+  validateActiveLine: (line: string | null | undefined) => string | null | undefined
   decide: (input: { labels?: string[]; activeLine?: string | null }) => { add: string[]; flags: string[] }
+  parseIssuesJson: (jsonText: string) => Array<{ number: number; title: string; labels: string[] }>
   parseArgv: (argv: string[]) => { dryRun: boolean; issue?: number; repo?: string; activeLine?: string }
 }
 
-const { activeLineFromVersion, decide, parseArgv } = rec
+const { activeLineFromVersion, validateActiveLine, decide, parseIssuesJson, parseArgv } = rec
 const ACTIVE = 'release-2.1'
 const d = (labels: string[], activeLine: string | null = ACTIVE) => decide({ labels, activeLine })
 
@@ -117,6 +119,48 @@ describe('decide — deferred release lines', () => {
   })
   it('allows a loop-* committed issue to target a future line (only in-beta is pinned to active)', () => {
     expect(d(['loop-in-progress', 'release-2.2'])).toEqual({ add: [], flags: [] })
+  })
+})
+
+describe('decide — label matching is case-insensitive', () => {
+  it('recognizes mixed-case lifecycle + release labels (no silent miss)', () => {
+    // `In-Beta` + `Release-2.1` must be read as committed + on the active line — OK.
+    expect(d(['In-Beta', 'Release-2.1'])).toEqual({ add: [], flags: [] })
+  })
+  it('auto-adds the active line for a mixed-case In-Beta with no release line', () => {
+    expect(d(['In-Beta', 'Bug'])).toEqual({ add: ['release-2.1'], flags: [] })
+  })
+  it('normalizes a mixed-case active-line argument when comparing', () => {
+    expect(d(['in-beta', 'release-2.1'], 'Release-2.1')).toEqual({ add: [], flags: [] })
+  })
+})
+
+describe('validateActiveLine', () => {
+  it('accepts a well-formed release line (any case) and null', () => {
+    expect(validateActiveLine('release-2.1')).toBe('release-2.1')
+    expect(validateActiveLine('Release-2.10')).toBe('Release-2.10')
+    expect(validateActiveLine(null)).toBeNull()
+    expect(validateActiveLine(undefined)).toBeUndefined()
+  })
+  it('throws on a malformed / garbage value so it can never be auto-added', () => {
+    expect(() => validateActiveLine('2.1')).toThrow()
+    expect(() => validateActiveLine('release-2')).toThrow()
+    expect(() => validateActiveLine('rm -rf')).toThrow()
+    expect(() => validateActiveLine('release-2.1; drop')).toThrow()
+  })
+})
+
+describe('parseIssuesJson', () => {
+  it('parses a title containing "] [" without corrupting the JSON', () => {
+    const json = JSON.stringify([
+      { number: 5, title: 'weird ] [ title', labels: [{ name: 'triage' }] },
+      { number: 6, title: 'normal', labels: [] },
+    ])
+    const out = parseIssuesJson(json)
+    expect(out).toEqual([
+      { number: 5, title: 'weird ] [ title', labels: ['triage'] },
+      { number: 6, title: 'normal', labels: [] },
+    ])
   })
 })
 
