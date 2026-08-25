@@ -885,4 +885,70 @@ describe('transcripts-db', () => {
       expect(db.sessionConfig('nope')).toBeNull()
     })
   })
+
+  describe('#480 durable session_conversation map', () => {
+    it('upserts and reads back the exact conversation for a session', () => {
+      const p = '/home/.claude/projects/proj/11111111-1111-4111-8111-111111111111.jsonl'
+      db.upsertSessionConversation({ sessionId: 's1', uuid: '11111111-1111-4111-8111-111111111111', path: p, updatedAt: 100 })
+      expect(db.getSessionConversation('s1')).toEqual({
+        uuid: '11111111-1111-4111-8111-111111111111', path: p, updatedAt: 100,
+      })
+    })
+
+    it('is last-write-wins per session (a /clear rotation replaces the row)', () => {
+      const p1 = '/home/.claude/projects/proj/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.jsonl'
+      const p2 = '/home/.claude/projects/proj/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.jsonl'
+      db.upsertSessionConversation({ sessionId: 's1', uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', path: p1, updatedAt: 100 })
+      db.upsertSessionConversation({ sessionId: 's1', uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', path: p2, updatedAt: 200 })
+      expect(db.getSessionConversation('s1')).toEqual({
+        uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', path: p2, updatedAt: 200,
+      })
+    })
+
+    it('keeps distinct sessions independent and returns null for unknown ones', () => {
+      db.upsertSessionConversation({ sessionId: 's1', uuid: '11111111-1111-4111-8111-111111111111', path: '/p/1.jsonl', updatedAt: 1 })
+      db.upsertSessionConversation({ sessionId: 's2', uuid: '22222222-2222-4222-8222-222222222222', path: '/p/2.jsonl', updatedAt: 2 })
+      expect(db.getSessionConversation('s1')?.uuid).toBe('11111111-1111-4111-8111-111111111111')
+      expect(db.getSessionConversation('s2')?.uuid).toBe('22222222-2222-4222-8222-222222222222')
+      expect(db.getSessionConversation('nope')).toBeNull()
+    })
+
+    it('does NOT require an open run (survives a missing run row)', () => {
+      // No insertRun for 's-orphan' — the durable map is keyed by sessionId, not runId.
+      const p = '/home/.claude/projects/proj/cccccccc-cccc-4ccc-8ccc-cccccccccccc.jsonl'
+      db.upsertSessionConversation({ sessionId: 's-orphan', uuid: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', path: p, updatedAt: 5 })
+      expect(db.getSessionConversation('s-orphan')?.path).toBe(p)
+    })
+
+    it('maps a uuid to at most one session — a new owner evicts the prior row', () => {
+      // Adversarial round 1: without eviction, two durable rows would point at
+      // the same conversation and both cards would `--resume` it after a restart.
+      const uuid = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+      const p = `/home/.claude/projects/proj/${uuid}.jsonl`
+      db.upsertSessionConversation({ sessionId: 'sA', uuid, path: p, updatedAt: 1 })
+      db.upsertSessionConversation({ sessionId: 'sB', uuid, path: p, updatedAt: 2 }) // handoff
+      expect(db.getSessionConversation('sA')).toBeNull() // stale row evicted
+      expect(db.getSessionConversation('sB')?.uuid).toBe(uuid)
+      // A different uuid for the same session is unaffected by the eviction rule.
+      db.upsertSessionConversation({ sessionId: 'sA', uuid: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', path: '/p/e.jsonl', updatedAt: 3 })
+      expect(db.getSessionConversation('sA')?.uuid).toBe('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee')
+      expect(db.getSessionConversation('sB')?.uuid).toBe(uuid)
+    })
+
+    it('recreates the table on open for a pre-existing DB (IF NOT EXISTS migration)', () => {
+      // Simulate a DB written before #480: drop the table, reopen via the real
+      // opener, and confirm the DDL restores it and round-trips.
+      db.close()
+      const raw = new Database(dbPath)
+      raw.exec('DROP TABLE session_conversation')
+      raw.close()
+      const db2 = openTranscriptsDb(dbPath)
+      try {
+        db2.upsertSessionConversation({ sessionId: 's', uuid: 'ffffffff-ffff-4fff-8fff-ffffffffffff', path: '/p/f.jsonl', updatedAt: 1 })
+        expect(db2.getSessionConversation('s')?.uuid).toBe('ffffffff-ffff-4fff-8fff-ffffffffffff')
+      } finally {
+        db2.close()
+      }
+    })
+  })
 })

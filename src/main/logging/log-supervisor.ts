@@ -64,6 +64,7 @@ type BufferedMessage =
   | Extract<ToTranscriptsWorker, { type: 'run-account' }>
   | Extract<ToTranscriptsWorker, { type: 'run-rename' }>
   | Extract<ToTranscriptsWorker, { type: 'transcript-bind' }>
+  | Extract<ToTranscriptsWorker, { type: 'session-conversation-upsert' }>
 
 interface QueuedItem {
   msg: BufferedMessage
@@ -279,6 +280,14 @@ export class LogSupervisor {
    *  starts tailing it immediately. */
   bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string): void {
     this.enqueueOrSend({ type: 'transcript-bind', sessionId, path, confidence, sourceVersion })
+  }
+
+  /** #480: durably record the EXACT conversation a session is on (keyed by AICC
+   *  sessionId). Fire-and-forget; buffered while the worker is down like every
+   *  other lifecycle message. This is the authoritative source restart resume
+   *  reads back via the `session-conversation` query. */
+  persistSessionConversation(sessionId: string, path: string, uuid: string): void {
+    this.enqueueOrSend({ type: 'session-conversation-upsert', sessionId, path, uuid, updatedAt: Date.now() })
   }
 
   /** Subscribe to the worker's new-messages fan-out. Returns an unsubscribe. */

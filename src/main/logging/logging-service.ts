@@ -61,7 +61,13 @@ export function initLogging(opts: {
   // real ~/.claude/projects heuristic binder (defaults inside makeTranscriptBinder).
   // Diagnostics flow to the main app.log via the injected logInfo (paths only) so
   // first-/resumed-session bind failures are visible after the fact.
-  _binder = makeTranscriptBinder({ supervisor: sup, log: logInfo })
+  // #480: `persist` writes the durable session->conversation record on every
+  // exact bind, so restart resume has a crash-durable authoritative source.
+  _binder = makeTranscriptBinder({
+    supervisor: sup,
+    log: logInfo,
+    persist: (sessionId, path, uuid) => sup.persistSessionConversation(sessionId, path, uuid),
+  })
 }
 
 /** The supervisor, for run lifecycle + diagnostics + the read path. Null when disabled. */

@@ -32,7 +32,7 @@
  * No Electron imports — pure node + injected deps, so it unit-tests without any
  * Electron ABI. No default export (project convention).
  */
-import { canonicalizeTranscriptPath, makeHeuristicBinder } from './transcript-discovery'
+import { canonicalizeTranscriptPath, makeHeuristicBinder, UUID_RE } from './transcript-discovery'
 import type { DiscoveryBinding } from './transcript-discovery'
 
 /** The minimal supervisor surface the binder needs (LogSupervisor satisfies it). */
@@ -42,7 +42,7 @@ export interface TranscriptBinderSupervisor {
 
 /** The heuristic-binder surface (makeHeuristicBinder() satisfies it). */
 export interface TranscriptHeuristicBinder {
-  bindOnce(sessionId: string, cwd: string, startedAtMs: number): DiscoveryBinding | null
+  bindOnce(sessionId: string, cwd: string, startedAtMs: number, excludeUuids?: ReadonlySet<string>): DiscoveryBinding | null
   /**
    * Drop the heuristic binder's permanent per-sessionId success cache so the
    * next bindOnce rescans. endRun calls this so a reused sessionId (in-session
@@ -80,6 +80,14 @@ export interface TranscriptBinderDeps {
    * constructing the binder; tests pass a spy. Defaults to a no-op.
    */
   log?: (msg: string) => void
+  /**
+   * #480: durable session→conversation sink. Called on every committed EXACT
+   * bind with the canonical transcript path + its conversation uuid, so the
+   * mapping survives an app restart / crash independently of the in-memory
+   * state. Fire-and-forget; the binder stays pure (the supervisor forwards it to
+   * the transcripts.db worker). Defaults to a no-op.
+   */
+  persist?: (sessionId: string, canonicalPath: string, uuid: string) => void
 }
 
 const DEFAULT_DEBOUNCE_MS = 250
@@ -102,6 +110,9 @@ interface SessionState {
   /** The cwd + startedAt captured at registerRun, reused by heuristic retries. */
   heuristicCwd: string | null
   heuristicStartedAtMs: number
+  /** #480: the conversation uuid this session currently owns (exact bind only),
+   *  used to release the ownership reservation on rebind / endRun. */
+  ownedUuid: string | null
 }
 
 export interface TranscriptBinder {
@@ -113,6 +124,14 @@ export interface TranscriptBinder {
   endRun(sessionId: string): void
   /** Latest canonical transcript path bound for the session, or null. (T8b) */
   getLatestTranscriptPath(sessionId: string): string | null
+  /**
+   * #480: the canonical transcript path bound for the session ONLY when the bind
+   * is EXACT (authenticated hook / statusline). Returns null for a heuristic
+   * bind or no bind. Restart resume uses THIS — never a heuristic guess — so a
+   * shared-folder scan can no longer resume a sibling card's conversation. A
+   * null here means "start fresh", which is safer than resuming a stranger.
+   */
+  getExactResumeTarget(sessionId: string): string | null
 }
 
 export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBinder {
@@ -125,8 +144,44 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
   const heuristicDelayMs = deps.heuristicDelayMs ?? DEFAULT_HEURISTIC_DELAY_MS
   const heuristicRetryCap = deps.heuristicRetryCap ?? DEFAULT_HEURISTIC_RETRY_CAP
   const log = deps.log ?? (() => { /* no-op */ })
+  const persist = deps.persist ?? (() => { /* no-op */ })
 
   const sessions = new Map<string, SessionState>()
+
+  // #480: reverse index conversation-uuid -> owning sessionId, for EXACT binds
+  // only. Enforces "one conversation belongs to at most one live session": an
+  // exact bind that would steal a uuid already held by a DIFFERENT live session
+  // is refused, and the heuristic scan is told to skip every uuid in here that
+  // belongs to another session.
+  const uuidOwners = new Map<string, string>()
+
+  /** Extract the conversation uuid (transcript basename stem) from a canonical
+   *  path, or null when the stem is not a uuid. */
+  function uuidFromPath(canonicalPath: string): string | null {
+    const slash = Math.max(canonicalPath.lastIndexOf('/'), canonicalPath.lastIndexOf('\\'))
+    const base = slash >= 0 ? canonicalPath.slice(slash + 1) : canonicalPath
+    const stem = base.endsWith('.jsonl') ? base.slice(0, -'.jsonl'.length) : base
+    return UUID_RE.test(stem) ? stem : null
+  }
+
+  /** Release the uuid this session currently owns (if any) from the reverse
+   *  index, but only when the index still points at THIS session. */
+  function releaseOwnership(sessionId: string, s: SessionState): void {
+    if (s.ownedUuid && uuidOwners.get(s.ownedUuid) === sessionId) {
+      uuidOwners.delete(s.ownedUuid)
+    }
+    s.ownedUuid = null
+  }
+
+  /** The set of uuids EXACT-owned by sessions OTHER than `sessionId` — passed to
+   *  the heuristic scan so it never binds a sibling's conversation. */
+  function uuidsOwnedByOthers(sessionId: string): ReadonlySet<string> {
+    const out = new Set<string>()
+    for (const [uuid, owner] of uuidOwners) {
+      if (owner !== sessionId) out.add(uuid)
+    }
+    return out
+  }
 
   function getOrCreate(sessionId: string): SessionState {
     let s = sessions.get(sessionId)
@@ -134,6 +189,7 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
       s = {
         boundPath: null, boundConfidence: null, debounceHandle: null, pendingRaw: null,
         heuristicHandle: null, heuristicRetriesLeft: 0, heuristicCwd: null, heuristicStartedAtMs: 0,
+        ownedUuid: null,
       }
       sessions.set(sessionId, s)
     }
@@ -162,7 +218,9 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
     if (cur.boundConfidence === 'exact') return
     const cwd = cur.heuristicCwd
     if (cwd === null) return
-    const binding = heuristicBinder.bindOnce(sessionId, cwd, cur.heuristicStartedAtMs)
+    // #480: exclude conversations already exact-owned by other live sessions so
+    // the newest-file scan cannot claim a sibling card's transcript.
+    const binding = heuristicBinder.bindOnce(sessionId, cwd, cur.heuristicStartedAtMs, uuidsOwnedByOthers(sessionId))
     if (!binding) {
       // Nothing found yet. Re-arm another attempt if retries remain; a later exact
       // notification can still bind in the meantime.
@@ -199,6 +257,25 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
       return   // non-transcript path — ignore
     }
 
+    // #480 ownership guard: a conversation belongs to at most one LIVE session.
+    // If another still-live session already owns this uuid, refuse the bind
+    // rather than steal it — this is exactly the same-cwd cross that resumed a
+    // sibling card's conversation. `sessions.has(owner)` gates on "still live"
+    // so a released uuid (previous owner ended) is freely re-claimable.
+    //
+    // Checked BEFORE cancelHeuristic (adversarial round 1): a refused bind must
+    // NOT disarm this session's heuristic fallback — otherwise a transient uuid
+    // collision would leave the loser with neither an exact nor a heuristic bind
+    // and its transcript would never be tailed.
+    const uuid = uuidFromPath(canonical)
+    if (uuid) {
+      const owner = uuidOwners.get(uuid)
+      if (owner && owner !== sessionId && sessions.has(owner)) {
+        log(`[binder] exact bind REFUSED sid=${sessionId} uuid=${uuid} ownedBy=${owner}`)
+        return
+      }
+    }
+
     // An exact source always wins. Cancel any still-pending heuristic fallback (and
     // its retries) so it can't later re-bind on top of the exact path.
     cancelHeuristic(s)
@@ -208,9 +285,20 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
     // exact below, so we only short-circuit when confidence also matches.)
     if (s.boundPath === canonical && s.boundConfidence === 'exact') return
 
+    // Release a different uuid this session previously owned (e.g. /clear rotated
+    // the conversation) before claiming the new one.
+    if (s.ownedUuid && s.ownedUuid !== uuid) releaseOwnership(sessionId, s)
+
     s.boundPath = canonical
     s.boundConfidence = 'exact'
+    if (uuid) {
+      uuidOwners.set(uuid, sessionId)
+      s.ownedUuid = uuid
+    }
     supervisor.bindTranscript(sessionId, canonical, 'exact')
+    // #480: durable record, keyed by sessionId, of the exact conversation — the
+    // authenticated source of truth for restart resume.
+    if (uuid) persist(sessionId, canonical, uuid)
     log(`[binder] exact bind committed sid=${sessionId} path=${canonical}`)
   }
 
@@ -259,6 +347,9 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
       if (!s) return
       if (s.debounceHandle !== null) clearTimer(s.debounceHandle)
       cancelHeuristic(s)
+      // #480: release the conversation-uuid reservation so the same conversation
+      // can be re-owned by whichever session resumes it next (handoff / restart).
+      releaseOwnership(sessionId, s)
       // Drop ALL per-session state so a reused sessionId (restart) binds fresh
       // rather than being deduped against a stale prior bind. Combined with the
       // heuristicBinder.forget above, "bind fresh on restart" now holds for both
@@ -268,6 +359,11 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
 
     getLatestTranscriptPath(sessionId: string): string | null {
       return sessions.get(sessionId)?.boundPath ?? null
+    },
+
+    getExactResumeTarget(sessionId: string): string | null {
+      const s = sessions.get(sessionId)
+      return s && s.boundConfidence === 'exact' ? s.boundPath : null
     },
   }
 }

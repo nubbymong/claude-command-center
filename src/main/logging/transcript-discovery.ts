@@ -304,8 +304,18 @@ interface HeuristicBinder {
    * BIND-ONCE: a given sessionId gets AT MOST one successful heuristic binding
    * ever (in-memory Map). Repeat calls for the same sessionId return the SAME
    * stored binding (or null if first call failed — failures may retry).
+   *
+   * `excludeUuids` (#480): conversation uuids already EXACT-bound to a DIFFERENT
+   * live session. The scan skips those `.jsonl` files so a fresh card in a shared
+   * repo folder cannot heuristically claim a sibling card's conversation — the
+   * root cause of cross-session resume. Omitted / empty = scan everything (legacy).
    */
-  bindOnce(sessionId: string, cwd: string, startedAtMs: number): DiscoveryBinding | null
+  bindOnce(
+    sessionId: string,
+    cwd: string,
+    startedAtMs: number,
+    excludeUuids?: ReadonlySet<string>,
+  ): DiscoveryBinding | null
 
   /**
    * Drops the permanent success-cache entry for a sessionId so the NEXT
@@ -345,10 +355,23 @@ export function makeHeuristicBinder(deps?: HeuristicBinderDeps): HeuristicBinder
   const successCache = new Map<string, DiscoveryBinding>()
 
   return {
-    bindOnce(sessionId: string, cwd: string, startedAtMs: number): DiscoveryBinding | null {
+    bindOnce(
+      sessionId: string,
+      cwd: string,
+      startedAtMs: number,
+      excludeUuids?: ReadonlySet<string>,
+    ): DiscoveryBinding | null {
       // Return existing successful binding immediately.
       const cached = successCache.get(sessionId)
       if (cached !== undefined) return cached
+
+      // #480: skip transcripts already owned (exact) by another live session so a
+      // fresh card in a shared repo folder never claims a sibling's conversation.
+      const isExcluded = (name: string): boolean => {
+        if (!excludeUuids || excludeUuids.size === 0) return false
+        const stem = name.endsWith('.jsonl') ? name.slice(0, -'.jsonl'.length) : name
+        return excludeUuids.has(stem)
+      }
 
       // Determine the project directory for this cwd.
       const mangled = mangleCwdToProjectDir(cwd)
@@ -372,6 +395,7 @@ export function makeHeuristicBinder(deps?: HeuristicBinderDeps): HeuristicBinder
       let bestMtime = -Infinity
 
       for (const name of jsonlFiles) {
+        if (isExcluded(name)) continue
         const full = path.join(projDir, name)
         let mtime: number
         try {

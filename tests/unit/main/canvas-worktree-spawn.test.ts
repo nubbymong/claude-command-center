@@ -86,7 +86,12 @@ vi.mock('../../../src/main/logging/transcript-discovery', async (importOriginal)
 vi.mock('../../../src/main/logging/logging-service', () => ({
   getLogSupervisor: () => null,
   getTranscriptBinder: () =>
-    h.bindTranscript ? { getLatestTranscriptPath: () => '/transcripts/11111111-2222-3333-4444-555555555555.jsonl' } : null,
+    h.bindTranscript ? {
+      getLatestTranscriptPath: () => '/transcripts/11111111-2222-3333-4444-555555555555.jsonl',
+      // #480: restart resume now reads the EXACT bind; mirror the path so this
+      // exercises the same resume the test intends.
+      getExactResumeTarget: () => '/transcripts/11111111-2222-3333-4444-555555555555.jsonl',
+    } : null,
 }))
 
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
@@ -119,7 +124,7 @@ vi.mock('../../../src/main/vision-manager', () => ({
 }))
 
 vi.mock('../../../src/main/canvas/canvas-plugin', () => ({ ensureCanvasPlugin: () => null }))
-vi.mock('../../../src/main/hooks', () => ({ getGateway: () => null }))
+vi.mock('../../../src/main/hooks', () => ({ getGateway: () => null, isExactBindSourceActive: () => true }))
 vi.mock('../../../src/main/hooks/session-hooks-writer', () => ({ injectHooks: () => {} }))
 vi.mock('../../../src/main/hooks/per-session-settings', () => ({
   writeLocalSessionSettings: () => null,

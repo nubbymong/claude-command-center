@@ -22,8 +22,22 @@
 import type { SessionState } from './session-state'
 
 export interface ResumeEnrichDeps {
-  /** The binder's latest canonical transcript path for a session, or null. */
+  /**
+   * #480: the binder's EXACT (authenticated) transcript path for a session, or
+   * null. This is the source of truth — never the heuristic newest-file scan,
+   * which cross-attributes conversations among cards that share one repo folder.
+   */
+  getExactResumeTarget: (sessionId: string) => string | null
+  /**
+   * #480: the heuristic-inclusive latest path, used ONLY as the hooks-off
+   * fallback (when no exact source can ever arrive).
+   */
   getLatestTranscriptPath: (sessionId: string) => string | null
+  /**
+   * #480: is an exact bind possible (hooks enabled)? When false, fall back to the
+   * heuristic path so a hooks-off user still gets a resumable record.
+   */
+  isExactBindSourceActive: () => boolean
   /** Derive {uuid, cwd} from a transcript path, or null on any failure. */
   resolveResumeTargetFromTranscript: (transcriptPath: string) => { uuid: string; cwd: string } | null
 }
@@ -52,7 +66,13 @@ export function enrichSessionStateWithResumeTargets(
     try {
       if (!s || s.shellOnly) continue
       if ((s.provider ?? 'claude') !== 'claude') continue
-      const latest = deps.getLatestTranscriptPath(s.id)
+      // #480: EXACT bind only — this must not persist a heuristic (cross-prone)
+      // guess. The hooks-off fallback re-enables the heuristic only when no
+      // authenticated source can arrive.
+      let latest = deps.getExactResumeTarget(s.id)
+      if (!latest && !deps.isExactBindSourceActive()) {
+        latest = deps.getLatestTranscriptPath(s.id)
+      }
       if (!latest) continue
       const target = deps.resolveResumeTargetFromTranscript(latest)
       if (target && target.uuid && target.cwd) {

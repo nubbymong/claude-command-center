@@ -475,6 +475,13 @@ export function createTranscriptsWorker(
         rows = res ? [res] : []
         break
       }
+      case 'session-conversation': {
+        // #480: durable session -> conversation lookup for restart resume.
+        const sessionId = typeof args.sessionId === 'string' ? args.sessionId : ''
+        const res = sessionId ? db!.getSessionConversation(sessionId) : null
+        rows = res ? [res] : []
+        break
+      }
       default:
         // Poison guard: an unknown kind answers with a correlated error, never a crash.
         post({ type: 'error', id, message: `unknown query kind: ${kind}` })
@@ -599,6 +606,18 @@ export function createTranscriptsWorker(
         }
         return
       }
+
+      case 'session-conversation-upsert':
+        // #480: durable, run-independent session -> conversation record. Does NOT
+        // require an open run (unlike transcript-bind), so it survives even when
+        // the run row is missing — it is keyed by sessionId, not runId.
+        db.upsertSessionConversation({
+          sessionId: msg.sessionId,
+          uuid: msg.uuid,
+          path: msg.path,
+          updatedAt: msg.updatedAt,
+        })
+        return
 
       case 'query':
         handleQuery(msg.id, msg.kind, msg.args)

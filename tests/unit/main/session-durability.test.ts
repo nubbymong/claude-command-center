@@ -11,7 +11,10 @@ const target = { uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', cwd: 'C:/p' }
 function make(saveImpl?: (s: SessionState) => boolean, log?: (m: string) => void) {
   const save = vi.fn(saveImpl ?? (() => true))
   const enrichDeps = {
+    // #480: exact bind is the source; heuristic is the hooks-off fallback only.
+    getExactResumeTarget: () => '/x/f.jsonl',
     getLatestTranscriptPath: () => '/x/f.jsonl',
+    isExactBindSourceActive: () => true,
     resolveResumeTargetFromTranscript: () => target,
   }
   const d = createSessionDurability({ enrichDeps, save, log })

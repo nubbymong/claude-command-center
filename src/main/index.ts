@@ -74,7 +74,7 @@ import { readClipboardImageWithRetry } from './clipboard-image'
 import { readClipboardTextWithRetry } from './clipboard-text'
 import { readClipboardImageFilePath, type PasteableImage } from './clipboard-file'
 import { HooksGateway } from './hooks/hooks-gateway'
-import { setGateway, getGateway } from './hooks'
+import { setGateway, getGateway, isExactBindSourceActive } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
 import { forkHooksChild } from './services/fork-hooks-child'
 import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './services/loop-stall-monitor'
@@ -119,7 +119,13 @@ installGlobalErrorHandlers()
 // binder is read lazily per call — it may init after this module loads.
 const sessionDurability = createSessionDurability({
   enrichDeps: {
+    // #480: exact bind is the source of truth; the heuristic path is used only as
+    // the hooks-off fallback (gated by isExactBindSourceActive) so this main-side
+    // enrichment can never persist a cross-prone heuristic guess in the default
+    // (hooks-on) config — matching the resume-handlers IPC.
+    getExactResumeTarget: (id) => getTranscriptBinder()?.getExactResumeTarget(id) ?? null,
     getLatestTranscriptPath: (id) => getTranscriptBinder()?.getLatestTranscriptPath(id) ?? null,
+    isExactBindSourceActive,
     resolveResumeTargetFromTranscript,
   },
   save: saveSessionState,
