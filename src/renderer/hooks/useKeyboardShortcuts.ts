@@ -146,26 +146,33 @@ export function useKeyboardShortcuts(
       // pre-release map must not leave newer chords dead.
       const shortcuts = { ...DEFAULT_SHORTCUTS, ...(useSettingsStore.getState().settings.keyboardShortcuts || {}) }
       if (matchesShortcut(e, shortcuts.captureGlyphDiagnostic) && !e.getModifierState?.('AltGraph')) {
+        // Consume repeats but never act on them: each fire is a disk write +
+        // Explorer reveal, and an unconsumed repeat would stream the chord's
+        // xterm encoding (ESC + ctrl-char) into the pty instead.
         e.preventDefault()
         e.stopPropagation()
+        if (e.repeat) return
         void captureGlyphDiagnostic(useSessionStore.getState().activeSessionId)
       }
       // Repaint + geometry re-sync (#503): pressed while staring at a pane
       // something printed over — same capture-phase + AltGr reasoning as the
       // glyph capture above.
       if (matchesShortcut(e, shortcuts.repaintTerminal) && !e.getModifierState?.('AltGraph')) {
-        // Held chord auto-repeats ~16Hz; unlike the read-only capture above,
-        // this one WRITES (a pty resize pair per fire) — one press, one nudge.
-        if (e.repeat) return
+        // Same repeat rule: consumed, not acted on — a held chord auto-repeats
+        // ~16Hz and each fire is a pty resize pair.
         e.preventDefault()
         e.stopPropagation()
+        if (e.repeat) return
         // Repair the terminal the chord was pressed IN, resolved by DOM
         // ancestry: the focused pane may be the partner shell or an alt pane,
         // registered under its own key — the active session id alone would
-        // nudge a hidden pty. Fall back to it only when focus is outside any
-        // terminal.
+        // nudge a hidden pty. With focus outside any terminal, the pane
+        // actually on screen (data-terminal-active — at most one) is the
+        // target; the bare active id is the last resort.
         const from = (e.target as Element | null)?.closest?.('[data-terminal-session]')
-        const sid = from?.getAttribute('data-terminal-session') || useSessionStore.getState().activeSessionId
+        const sid = from?.getAttribute('data-terminal-session')
+          || document.querySelector('[data-terminal-session][data-terminal-active]')?.getAttribute('data-terminal-session')
+          || useSessionStore.getState().activeSessionId
         if (sid) requestResync(sid)
       }
     }

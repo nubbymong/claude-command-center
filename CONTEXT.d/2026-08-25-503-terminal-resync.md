@@ -31,16 +31,24 @@ registrations).
 
 ## What the review round surfaced (PR #506)
 
-- **Persisted `keyboardShortcuts` maps never gain new defaults** — the hook's
-  `|| DEFAULT_SHORTCUTS` fired only when the whole object was missing, so
-  every pre-existing user would have had the new chord dead (and this likely
-  explains residual "Ctrl+Alt+G does nothing" reports post-#399). Both
-  handlers now merge over the defaults, the way StageEmptyState always did.
-- The chord now repairs **the terminal it was pressed in** (DOM-ancestry
-  lookup via `data-terminal-session`) — the partner shell registers under
-  `${id}-partner`, and the active-session fallback alone would have nudged a
-  hidden pty.
-- `e.repeat` is ignored — a held chord auto-repeats ~16Hz and each fire is a
-  pty resize pair.
+- **Persisted `keyboardShortcuts` maps never gained new defaults** — root
+  cause in `settingsStore.hydrate`, whose deep-merge covered statusLine/
+  terminal/conductorTools/watchdog but not keyboardShortcuts, so every
+  substituting consumer had new chords dead for existing users (Sidebar's #124
+  per-key `renameSession` patch was this same bug; residual "Ctrl+Alt+G does
+  nothing" reports post-#399 likely were too). Fixed IN hydrate for every
+  consumer; the two hook handlers also merge locally as defense in depth. A
+  hand-cleared `""` binding survives the merge (falsy → `matchesShortcut`
+  declines) — only a hand-deleted key resurrects its default.
+- The chord repairs **the terminal it was pressed in** (DOM ancestry via
+  `data-terminal-session`); with focus outside any terminal it targets the
+  pane actually on screen (`data-terminal-active` — `isActive` is true for at
+  most one TerminalView); the bare active id is the last resort. The partner
+  shell registers under `${id}-partner`, and the active-session id alone
+  would have nudged a hidden pty.
+- Key-repeats are **consumed without acting** — for both chords. Round 2
+  caught that a bare `if (e.repeat) return` before preventDefault let xterm
+  encode the held chord as ESC+ctrl-char straight into the pty; and each
+  glyph-capture fire is a disk write + Explorer reveal.
 - `dispose()` restores LIVE geometry, not the fire-time capture, so a user
   resize inside the 60ms shrink window survives an unmount race.

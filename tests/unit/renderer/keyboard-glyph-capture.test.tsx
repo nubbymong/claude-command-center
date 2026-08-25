@@ -147,14 +147,49 @@ describe('Ctrl+Alt+R repaint + re-sync (#503)', () => {
     expect(requestResync).toHaveBeenCalledWith('s1-partner')
   })
 
-  it('falls back to the active session when focus is outside any terminal', () => {
+  it('with focus outside any terminal, targets the pane actually on screen', () => {
+    // The partner pane is showing (it carries data-terminal-active); the user
+    // clicks the command bar, then presses the chord. Ancestry misses, but the
+    // marked pane — not the hidden main pty — must win.
+    const pane = document.createElement('div')
+    pane.setAttribute('data-terminal-session', 's1-partner')
+    pane.setAttribute('data-terminal-active', '')
+    container.appendChild(pane)
+    act(() => { window.dispatchEvent(chordR()) })
+    expect(requestResync).toHaveBeenCalledWith('s1-partner')
+  })
+
+  it('falls back to the active session id with no terminal marked at all', () => {
     act(() => { window.dispatchEvent(chordR()) })
     expect(requestResync).toHaveBeenCalledWith('s1')
   })
 
-  it('ignores key-repeat — a held chord must not storm the pty with resizes', () => {
-    act(() => { window.dispatchEvent(chordR({ repeat: true })) })
+  it('TerminalView actually emits both attributes the resolution keys on', () => {
+    // Same contract shape as the data-shortcut-capture test above: the handler
+    // honours the attributes, and TerminalView must CARRY them — deleting them
+    // silently degrades the chord to the last-resort fallback, suite green.
+    const fs = require('node:fs') as typeof import('node:fs')
+    const path = require('node:path') as typeof import('node:path')
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/TerminalView.tsx'), 'utf8')
+    expect(src).toMatch(/data-terminal-session=\{sessionId\}/)
+    expect(src).toMatch(/data-terminal-active=\{isActive/)
+  })
+
+  it('consumes key-repeat without acting — no resync storm, nothing leaks to xterm', () => {
+    // An UNCONSUMED repeat reaches xterm, which encodes Ctrl+Alt+R as
+    // ESC+\x12 straight into the pty — worse than the storm it avoids.
+    const e = chordR({ repeat: true })
+    act(() => { window.dispatchEvent(e) })
     expect(requestResync).not.toHaveBeenCalled()
+    expect(e.defaultPrevented).toBe(true)
+  })
+
+  it('the glyph chord consumes its repeats too — each fire is a disk write', () => {
+    const e = chord()
+    Object.defineProperty(e, 'repeat', { value: true })
+    act(() => { window.dispatchEvent(e) })
+    expect(captureGlyphDiagnostic).not.toHaveBeenCalled()
+    expect(e.defaultPrevented).toBe(true)
   })
 
   it('the AltGr guard holds here too', () => {

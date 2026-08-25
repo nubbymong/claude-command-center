@@ -106,6 +106,30 @@ describe('createGeometryResync', () => {
     expect(h.resync.fire()).toBe(false)
   })
 
+  it('dispose restores LIVE geometry — a user resize inside the window survives the unmount race', () => {
+    const h = harness()
+    h.resync.fire()
+    // The pty outlives the view; restoring the stale capture would leave it
+    // at the pre-resize size.
+    h.setGeometry({ cols: 200, rows: 60 })
+    h.resync.dispose()
+    expect(h.calls).toEqual(['resize 120x39', 'resize 200x60'])
+  })
+
+  it('dispose falls back to the fire-time capture when the term is already gone', () => {
+    let fired = false
+    const h = harness({
+      getGeometry: () => {
+        if (fired) throw new Error('disposed')
+        fired = true
+        return { cols: 120, rows: 40 }
+      },
+    })
+    h.resync.fire()
+    h.resync.dispose()
+    expect(h.calls).toEqual(['resize 120x39', 'resize 120x40'])
+  })
+
   it('dispose with nothing in flight touches nothing', () => {
     const h = harness()
     h.resync.dispose()

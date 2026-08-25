@@ -1306,8 +1306,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     // data-terminal-session: lets the Ctrl+Alt+R capture handler resolve WHICH
     // terminal the chord was pressed in by DOM ancestry (#503) — the partner
     // pane and alt panes register under their own keys, and the active session
-    // id alone would nudge a hidden pty.
-    <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }} data-terminal-session={sessionId}>
+    // id alone would nudge a hidden pty. data-terminal-active marks the one
+    // pane that is actually on screen (isActive is true for at most one
+    // TerminalView — main and partner exclude each other), the handler's
+    // fallback when focus sits outside any terminal.
+    <div
+      className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative"
+      style={{ minHeight: 0 }}
+      data-terminal-session={sessionId}
+      data-terminal-active={isActive ? '' : undefined}
+    >
       {needsLogin && (
         <div className="bg-blue/10 border-b border-blue/30 text-lavender text-xs px-3 py-1.5 shrink-0">
           Setting up a new account. Run claude, type /login, and choose the account. We&apos;ll detect it automatically.
