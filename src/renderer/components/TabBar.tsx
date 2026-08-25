@@ -57,8 +57,8 @@ function TabCanvasQueueMark({ sessionId }: { sessionId: string }) {
     <span
       className="shrink-0 w-[7px] h-[7px] rounded-full relative z-10"
       style={{ background: 'var(--status-warning)' }}
-      title={`${queue} canvas round${queue === 1 ? '' : 's'} waiting on you`}
-      aria-label={`${queue} canvas round${queue === 1 ? '' : 's'} waiting on you`}
+      title={`${queue} canvas${queue === 1 ? '' : 'es'} waiting on you`}
+      aria-label={`${queue} canvas${queue === 1 ? '' : 'es'} waiting on you`}
       data-testid="tab-canvas-queue-mark"
     />
   )

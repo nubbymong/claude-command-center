@@ -111,12 +111,17 @@ describe('the queue pill spans canvases (#364)', () => {
     render()
     expect(pill()?.textContent).toBe('1')
   })
-  it('the live mirror wins for this canvas when it is fresher than the sweep -- UP', async () => {
-    // Sweep says 1 in total; the mirror already knows a second round landed here.
+  it('rounds stacking on THIS canvas never push it past 1 (#470 — the owner saw 3 for one canvas)', async () => {
+    // The live mirror knows two owed rounds here. One canvas = one owed item;
+    // the second round is detail, not a second debt.
     seedCanvasLive()
     seedMirror([owedRound('R1', 'a1'), owedRound('R2', 'a2')])
     seedTotals({ queue: 1, queueOnActive: 1 })
     render()
+    expect(pill()?.textContent).toBe('1')
+    // A round owed on a DIFFERENT canvas still adds — across canvases the
+    // count may exceed 1.
+    act(() => { seedTotals({ queue: 2, queueOnActive: 1 }) })
     expect(pill()?.textContent).toBe('2')
   })
   it('the live mirror wins for this canvas when it is fresher than the sweep -- DOWN (a verdict here drops the pill before the sweep catches up)', async () => {

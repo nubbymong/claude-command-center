@@ -316,6 +316,11 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // than render it. (The pickSource block above already pins the stamp itself
   // to this position, so the two rules together are an iff.)
   if (a.state === 'approved' && a.closedBy === 'agent' && a.pickSource !== 'chat') return false
+  // 'supersede' has exactly one legal position (#470): the sweep writes it
+  // only as stale-from-addressed. Anywhere else — an approved note wearing it,
+  // a dismissal — is a hand-edit laundering provenance the panel would then
+  // present as the store's own settling.
+  if (a.closedBy === 'supersede' && (a.state !== 'stale' || a.closedFrom !== 'addressed')) return false
   return true
 }
 
@@ -848,17 +853,30 @@ function settleReviewStatus(record: ReviewFileRecord, reviewId: string): void {
  *
  * Ordinals ('R3' > 'R1'), not frozen version ids, order the rounds: review
  * numbers are minted monotonically per canvas, so a later round is a later
- * ask even when both froze against the same version. One predicate feeds both
- * readers: the COUNT path excludes these rounds from `verdictRounds` (so the
- * pill is right immediately, even for records written before this existed),
- * and the mutation path (`settleSupersededRounds`) makes the same answer
- * durable on the next write.
+ * ask even when both froze against the same version. The predicate feeds the
+ * MUTATION path only (`settleSupersededRounds` inside the four writes that
+ * can create the shape); read paths are untouched, so a record written before
+ * this existed reads as before until its canvas's next mutation settles it.
  */
 function supersededOwedReviewIds(record: ReviewFileRecord): Set<string> {
   const ord = (id: string): number => Number(id.slice(1))
   let resolvedMax = 0
   for (const r of record.reviews) {
-    if (r.status === 'resolved') resolvedMax = Math.max(resolvedMax, ord(r.id))
+    if (r.status !== 'resolved') continue
+    // Only a round the USER verifiably ruled on anchors supersession. The
+    // sweep's justification is "the user answered this canvas more recently
+    // than these rounds", and that must be a fact the store can check, not an
+    // agent assertion: a round resolved purely through the agent-callable
+    // writes (canvas_verdict, canvas_pick — closedBy 'agent') must not let a
+    // single canvas_pick transitively settle every older round without the
+    // seen-barrier ever running (review round 1, security lens). The two
+    // provenances no agent path can mint: a note closed by the user's own
+    // panel click (closedBy 'user' — the approved+agent iff rule pins agent
+    // approvals to chat picks), and a re-annotation (state 'reannotated' is
+    // written only by the panel's resolve IPC).
+    const userRuled = notesOfReview(record, r).some((a) => a.closedBy === 'user' || a.state === 'reannotated')
+    if (!userRuled) continue
+    resolvedMax = Math.max(resolvedMax, ord(r.id))
   }
   const out = new Set<string>()
   if (resolvedMax === 0) return out
@@ -887,13 +905,12 @@ function supersededOwedReviewIds(record: ReviewFileRecord): Set<string> {
  * that a person clicked it), and Reopen puts any note straight back.
  *
  * Runs inside every mutation that can create the shape — a later round
- * resolving (user verdicts, an instructed agent close, a chat pick) or an
- * older round becoming fully addressed after the later round already resolved
- * (`markAnnotationsAddressed`, the owner's 3→2→3 bounce). Deliberately NOT a
- * new agent capability: the trigger is always anchored in a user ruling on a
- * newer round, the notes end in a reopenable state, and the provenance is its
- * own value — `canvas_verdict`'s seen-barrier still guards every close the
- * agent asks for by name.
+ * resolving or an older round becoming fully addressed after the later round
+ * already resolved (`markAnnotationsAddressed`, the owner's 3→2→3 bounce).
+ * Deliberately NOT a new agent capability: the anchor is STORE-VERIFIED user
+ * provenance on the resolved later round (see supersededOwedReviewIds), the
+ * notes end in a reopenable state, and `canvas_verdict`'s seen-barrier still
+ * guards every close the agent asks for by name.
  */
 function settleSupersededRounds(record: ReviewFileRecord): string[] {
   const doomed = supersededOwedReviewIds(record)

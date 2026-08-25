@@ -74,8 +74,10 @@ describe('the queue (#364): review-needed + verdict-owed, one derivation', () =>
     ])
     expect(t.queue).toBe(1)
     expect(t.queueOnActive).toBe(1)
-    // The rows keep the detail: both kinds are listed for the one canvas.
-    expect(t.queueRows).toHaveLength(2)
+    // One row per owing canvas, so the pill and the list agree; the ready
+    // render (the newest ask) is the row shown.
+    expect(t.queueRows).toHaveLength(1)
+    expect(t.queueRows[0]).toMatchObject({ kind: 'review', at: '2026-08-23T10:00:00Z' })
   })
 
   it("someone else's canvas never enters the queue", () => {

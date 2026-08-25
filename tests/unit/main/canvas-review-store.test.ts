@@ -671,3 +671,76 @@ describe('superseded rounds settle instead of stacking (#470)', () => {
     expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
   })
 })
+
+describe('the supersede sweep is anchored in verifiable USER rulings (#470, security round)', () => {
+  function roundAgainstNewVersion(reviewId: string, note = 'note'): { versionId: string; annotationId: string } {
+    const { versionId } = canvasStore.renderVersion(SID, { mode: 'design', html: `<!doctype html><p>${reviewId}</p>`, ready: true })
+    const { annotationId } = store.upsertAnnotation(SID, { scope: 'general', note, versionId })
+    store.submitReview(SID, reviewId, [])
+    return { versionId, annotationId }
+  }
+
+  it('a round resolved purely by a chat pick (agent-recorded) anchors NOTHING', () => {
+    const r1 = roundAgainstNewVersion('R1')
+    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    const r2 = roundAgainstNewVersion('R2')
+    // The whole chain is agent-side: address with variants, then canvas_pick.
+    store.markAnnotationsAddressed(SID, 'R2', [r2.annotationId], { [r2.annotationId]: ['one', 'two'] })
+    const picked = store.recordChatPick(SID, 'R2', r2.annotationId, 'A')
+    expect(picked.reviewClosed).toBe(true)
+
+    // R1 must NOT be swept: no store-verifiable user ruling exists anywhere.
+    const state = store.getReviewStateForSession(SID)!
+    expect(state.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({ state: 'addressed' })
+    expect(state.reviews.find((r) => r.id === 'R1')?.status).toBe('submitted')
+    const canvasId = state.canvasId
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(2 - 1) // R1 still owed
+  })
+
+  it('ordinals compare numerically: a user ruling on R10 settles R9', () => {
+    const rounds: Array<{ annotationId: string }> = []
+    for (let i = 1; i <= 10; i++) rounds.push(roundAgainstNewVersion(`R${i}`))
+    for (let i = 0; i < 9; i++) store.markAnnotationsAddressed(SID, `R${i + 1}`, [rounds[i].annotationId])
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    // The USER rules on R10. Lexicographically 'R10' < 'R9'; numerically 10 > 9.
+    store.resolveAnnotation(SID, rounds[9].annotationId, 'approve', canvasId)
+    const state = store.getReviewStateForSession(SID)!
+    expect(state.annotations.find((a) => a.id === rounds[8].annotationId)).toMatchObject({
+      state: 'stale',
+      closedBy: 'supersede',
+    })
+    expect(state.reviews.find((r) => r.id === 'R9')?.status).toBe('resolved')
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
+  })
+
+  it('a hand-edited record cannot launder supersede onto an approval, and a malformed reopenedAt fails the record', () => {
+    const r1 = roundAgainstNewVersion('R1')
+    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    store.resolveAnnotation(SID, r1.annotationId, 'approve', canvasId)
+
+    const file = path.join(getResourcesDirectory(), 'canvas', canvasId, 'reviews.json')
+    const pristine = fs.readFileSync(file, 'utf8')
+
+    // supersede beside 'approved' — provenance laundering. The record refuses.
+    const forged = JSON.parse(pristine)
+    forged.annotations[0].closedBy = 'supersede'
+    fs.writeFileSync(file, JSON.stringify(forged))
+    store._resetCanvasReviewStoreForTest()
+    expect(store.getReviewStateForSession(SID)?.reviews).toEqual([])
+
+    // A reopenedAt that is not a clean bounded string fails the record too —
+    // the shield must not be silently droppable.
+    const badStamp = JSON.parse(pristine)
+    badStamp.annotations[0].reopenedAt = 'x'.repeat(65)
+    fs.writeFileSync(file, JSON.stringify(badStamp))
+    store._resetCanvasReviewStoreForTest()
+    expect(store.getReviewStateForSession(SID)?.reviews).toEqual([])
+
+    // Control: the pristine record still loads (the two reds above are the
+    // edits, not the harness).
+    fs.writeFileSync(file, pristine)
+    store._resetCanvasReviewStoreForTest()
+    expect(store.getReviewStateForSession(SID)!.reviews).toHaveLength(1)
+  })
+})

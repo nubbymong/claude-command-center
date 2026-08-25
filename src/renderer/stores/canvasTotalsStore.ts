@@ -86,35 +86,26 @@ export function totalsFromEntries(entries: CanvasLibraryEntry[]): CanvasTotals {
   for (const e of entries) {
     if (!e.ownedByThisSession && !e.isActiveForThisSession) continue
     t.canvases++
-    // The review-needed half comes from the canvas RECORD, so it counts even
-    // when the review store is unreadable — a hand-over must never disappear
-    // behind a broken reviews.json.
-    if (e.awaitingReview) {
-      t.queueRows.push({
-        canvasId: e.canvasId,
-        ...(e.title ? { title: e.title } : {}),
-        kind: 'review',
-        at: e.awaitingReviewAt ?? e.lastRenderedAt,
-        onActive: !!e.isActiveForThisSession,
-      })
-    }
-    if (e.verdictRounds && e.verdictRounds > 0) {
-      t.queueRows.push({
-        canvasId: e.canvasId,
-        ...(e.title ? { title: e.title } : {}),
-        kind: 'verdict',
-        rounds: e.verdictRounds,
-        at: e.lastRenderedAt,
-        onActive: !!e.isActiveForThisSession,
-      })
-    }
     // ONE canvas is at most ONE owed item (#470, owner: "a count above 1 is
-    // legitimate across different canvases, never for the same item"). The
-    // rows above keep the detail — what kind, how many rounds — but the
-    // number counts canvases owing, not their internal stacking.
-    if (e.awaitingReview || (e.verdictRounds && e.verdictRounds > 0)) {
+    // legitimate across different canvases, never for the same item") — one
+    // row per owing canvas too, so the pill and the list under it agree. A
+    // canvas owing BOTH kinds shows as the ready render (the newest ask); the
+    // verdict detail rides `rounds` when that is the kind. The review-needed
+    // half comes from the canvas RECORD, so it counts even when the review
+    // store is unreadable — a hand-over must never disappear behind a broken
+    // reviews.json.
+    const owesVerdicts = !!e.verdictRounds && e.verdictRounds > 0
+    if (e.awaitingReview || owesVerdicts) {
       t.queue++
       if (e.isActiveForThisSession) t.queueOnActive++
+      t.queueRows.push({
+        canvasId: e.canvasId,
+        ...(e.title ? { title: e.title } : {}),
+        ...(e.awaitingReview
+          ? { kind: 'review' as const, at: e.awaitingReviewAt ?? e.lastRenderedAt }
+          : { kind: 'verdict' as const, rounds: e.verdictRounds, at: e.lastRenderedAt }),
+        onActive: !!e.isActiveForThisSession,
+      })
     }
     if (e.openReviewCount === undefined) { t.unknown++; continue }
     t.openReviews += e.openReviewCount
