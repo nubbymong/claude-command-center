@@ -790,10 +790,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               .requestChoice(sessionId, session?.label || '', session?.profileId)
               .then((chosen) => {
                 if (chosen === GATE_CANCELLED) {
-                  // User aborted the launch: no PTY exists yet (the gate blocks
-                  // before doSpawn), so closing is just removing the tab. The
-                  // tab is gone for good, so its browser profile goes with it —
-                  // a no-op for a session that never opened a pane (#371).
+                  // Cancel means different things for a NEW tab vs a RESUME
+                  // (#446). A session that already ran under an account
+                  // (session.profileId set) only reaches this gate on the
+                  // 'ask' resume path — cancelling there must NOT throw away a
+                  // session the user just chose to restore, so fall back to its
+                  // saved account and spawn (the same fail-open as .catch
+                  // below). A brand-new tab has no saved account and nothing to
+                  // keep, so cancel still discards it (its browser profile goes
+                  // with it — a no-op for a pane that never opened, #371).
+                  if (session?.profileId) {
+                    doSpawn(session.profileId)
+                    return
+                  }
                   forgetSessionBrowserProfile(sessionId)
                   useSessionStore.getState().removeSession(sessionId)
                   return

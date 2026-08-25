@@ -44,9 +44,14 @@ export default function AccountLaunchGate() {
   const activeSelectable = profiles.filter(isSelectable)
   const selectableProfiles = activeSelectable.length > 0 ? activeSelectable : profiles
   // Pre-select: the session's pinned profile, else primary, else the first
-  // selectable (never an inactive account).
+  // selectable (never an inactive account). The pinned id is honoured only if
+  // it still EXISTS (#446): the 'ask' resume path routes an already-pinned
+  // profileId through this gate, and a session pinned to a since-DELETED account
+  // would otherwise pre-select an id with no matching <option> — a blank
+  // dropdown. A missing pin falls through to primary/first, same as no pin.
+  const pinnedStillExists = !!pending?.currentProfileId && profiles.some((p) => p.id === pending.currentProfileId)
   const defaultSelectedId = () =>
-    pending?.currentProfileId ?? profiles.find((p) => p.isPrimary)?.id ?? selectableProfiles[0]?.id ?? ''
+    (pinnedStillExists ? pending!.currentProfileId : undefined) ?? profiles.find((p) => p.isPrimary)?.id ?? selectableProfiles[0]?.id ?? ''
   const [selected, setSelected] = useState<string>(defaultSelectedId())
 
   // Re-seed the selection each time a new session reaches the head of the queue.

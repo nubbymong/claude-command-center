@@ -83,7 +83,7 @@ import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
-import { resolveResumeAccountMode } from './utils/sessionLaunch'
+import { shouldPredetermineRestoredAccount } from './utils/sessionLaunch'
 import { useSessionAutosave, cancelSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -698,7 +698,7 @@ export default function App() {
       // marking is skipped so the picker opens per restored session
       // (pre-selecting that saved account). With <2 profiles the gate is inert
       // regardless, so the branch only bites a genuine multi-account user.
-      if (resolveResumeAccountMode(useSettingsStore.getState().settings.resumeAccountMode) === 'auto-last') {
+      if (shouldPredetermineRestoredAccount(useSettingsStore.getState().settings.resumeAccountMode)) {
         markRestoredSessionsPredetermined(restoredSessions.map((s) => s.id))
       }
 

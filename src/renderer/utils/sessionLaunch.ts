@@ -69,6 +69,17 @@ export function resolveResumeAccountMode(value: unknown): 'ask' | 'auto-last' {
 }
 
 /**
+ * Whether an app-relaunch restore should mark its sessions predetermined —
+ * i.e. continue silently under the saved account (#446). True in 'auto-last'
+ * (the default), false in 'ask' (let the gate open per restored session).
+ * Extracted so the App restore branch is pinned by a unit test rather than
+ * living only in App.tsx (which is not unit-testable).
+ */
+export function shouldPredetermineRestoredAccount(resumeAccountMode: unknown): boolean {
+  return resolveResumeAccountMode(resumeAccountMode) === 'auto-last'
+}
+
+/**
  * Render a PTY-spawn failure into a readable, single-line terminal message.
  *
  * The renderer used to fire `pty.spawn` without catching, so a main-process

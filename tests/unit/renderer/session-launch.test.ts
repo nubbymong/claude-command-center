@@ -1,6 +1,6 @@
 // tests/unit/renderer/session-launch.test.ts
 import { describe, it, expect } from 'vitest'
-import { shouldGateAccountChoice, canSwitchAccountForSession, formatSpawnError, resolveResumeAccountMode } from '../../../src/renderer/utils/sessionLaunch'
+import { shouldGateAccountChoice, canSwitchAccountForSession, formatSpawnError, resolveResumeAccountMode, shouldPredetermineRestoredAccount } from '../../../src/renderer/utils/sessionLaunch'
 
 describe('shouldGateAccountChoice', () => {
   it('gates a Claude session with >= 2 account profiles', () => {
@@ -34,6 +34,17 @@ describe('resolveResumeAccountMode (#446)', () => {
     for (const v of [undefined, null, '', 'auto-last', 'AUTO', 'Ask', 1, {}, true]) {
       expect(resolveResumeAccountMode(v)).toBe('auto-last')
     }
+  })
+})
+
+describe('shouldPredetermineRestoredAccount (#446)', () => {
+  it('predetermines (auto-last) by default and for any non-ask value', () => {
+    for (const v of [undefined, null, 'auto-last', 'anything', 1]) {
+      expect(shouldPredetermineRestoredAccount(v)).toBe(true)
+    }
+  })
+  it("does NOT predetermine under 'ask' (the gate opens per restored session)", () => {
+    expect(shouldPredetermineRestoredAccount('ask')).toBe(false)
   })
 })
 

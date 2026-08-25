@@ -139,6 +139,12 @@ export async function buildSessionStateWithResumeTargets(): Promise<SessionState
  * flag is set before each spawn effect reads consumePredetermined(). The flag is
  * consumed only on the gate-eligible path, so it is a harmless no-op for
  * single-account / shell-only / Codex / SSH restores.
+ *
+ * #446: the caller (App restore) now runs this CONDITIONALLY —
+ * `shouldPredetermineRestoredAccount(settings.resumeAccountMode)`. It is the
+ * default ('auto-last'); under 'ask' the caller skips it so the gate opens per
+ * restored session. This function itself is unchanged: it always marks what it
+ * is given.
  */
 export function markRestoredSessionsPredetermined(sessionIds: string[]): void {
   const gate = useAccountGateStore.getState()
