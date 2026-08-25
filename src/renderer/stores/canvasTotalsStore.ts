@@ -40,7 +40,7 @@ export interface CanvasTotals {
    * THE queue number (#364, recut in #470): CANVASES waiting on the user —
    * a canvas counts once whether it owes a first review, verdict rounds, or
    * both ("a count above 1 is legitimate across different canvases, never for
-   * the same item"). The rows keep the per-kind detail. One derivation feeds
+   * the same item"). One row per owing canvas too. One derivation feeds
    * the Canvas button, the queue list, the tab mark and the pane lead, so the
    * numbers can never disagree.
    */
@@ -48,11 +48,11 @@ export interface CanvasTotals {
   /** The sweep's view of the on-screen canvas's share of `queue` — subtracted
    *  by consumers that read that canvas from the fresher live mirrors. */
   queueOnActive: number
-  /** The owed rounds, one row per kind per canvas, newest first. */
+  /** The owed canvases, one row each, newest first. */
   queueRows: CanvasQueueRow[]
 }
 
-/** One owed round in the queue list. */
+/** One owing canvas in the queue list. */
 export interface CanvasQueueRow {
   canvasId: string
   title?: string
