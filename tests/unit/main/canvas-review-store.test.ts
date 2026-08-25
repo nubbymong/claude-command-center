@@ -564,3 +564,110 @@ describe('drafts and the notes the user can write (#366, review round 2)', () =>
     expect(state.reviews.find((r) => r.status === 'draft')!.versionId).toBe(ready.versionId)
   })
 })
+
+describe('superseded rounds settle instead of stacking (#470)', () => {
+  /** Render a ready version, note it, submit — one full round. */
+  function roundAgainstNewVersion(reviewId: string, note = 'note'): { versionId: string; annotationId: string } {
+    const { versionId } = canvasStore.renderVersion(SID, { mode: 'design', html: `<!doctype html><p>${reviewId}</p>`, ready: true })
+    const { annotationId } = store.upsertAnnotation(SID, { scope: 'general', note, versionId })
+    store.submitReview(SID, reviewId, [])
+    return { versionId, annotationId }
+  }
+
+  it("the user's ruling on a later round settles older fully-addressed rounds", () => {
+    const r1 = roundAgainstNewVersion('R1')
+    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    const r2 = roundAgainstNewVersion('R2')
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(1)
+
+    const { state } = store.resolveAnnotation(SID, r2.annotationId, 'approve', canvasId)
+    // R2 resolved by the verdict; R1 settled by the supersede sweep.
+    expect(state.reviews.find((r) => r.id === 'R2')?.status).toBe('resolved')
+    expect(state.reviews.find((r) => r.id === 'R1')?.status).toBe('resolved')
+    const settled = state.annotations.find((a) => a.id === r1.annotationId)!
+    expect(settled).toMatchObject({ state: 'stale', closedBy: 'supersede', closedFrom: 'addressed' })
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
+  })
+
+  it("notes still OPEN survive a later ruling whole — and settle only when addressed (the 3→2→3 bounce)", () => {
+    const r1 = roundAgainstNewVersion('R1')
+    const r2 = roundAgainstNewVersion('R2')
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+
+    const afterRuling = store.resolveAnnotation(SID, r2.annotationId, 'approve', canvasId).state
+    // R1's note was never addressed: the agent's debt survives untouched.
+    expect(afterRuling.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({ state: 'open' })
+    expect(afterRuling.reviews.find((r) => r.id === 'R1')?.status).toBe('submitted')
+
+    // The agent now addresses it. Before #470 this re-entered "waiting on the
+    // user" and the pill bounced back up; it settles in the same commit instead.
+    const { state } = store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    expect(state.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({
+      state: 'stale',
+      closedBy: 'supersede',
+    })
+    expect(state.reviews.find((r) => r.id === 'R1')?.status).toBe('resolved')
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
+  })
+
+  it('nothing settles while no later round has been ruled on', () => {
+    const r1 = roundAgainstNewVersion('R1')
+    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    const r2 = roundAgainstNewVersion('R2')
+    store.markAnnotationsAddressed(SID, 'R2', [r2.annotationId])
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    // Both rounds await verdicts; neither is superseded by a RULING yet.
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(2)
+    const state = store.getReviewStateForSession(SID)!
+    expect(state.annotations.every((a) => a.state === 'addressed')).toBe(true)
+  })
+
+  it('an EARLIER ruling never settles a LATER addressed round', () => {
+    const r1 = roundAgainstNewVersion('R1')
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    store.resolveAnnotation(SID, r1.annotationId, 'approve', canvasId)
+    const r2 = roundAgainstNewVersion('R2')
+    const { state } = store.markAnnotationsAddressed(SID, 'R2', [r2.annotationId])
+    expect(state.annotations.find((a) => a.id === r2.annotationId)).toMatchObject({ state: 'addressed' })
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(1)
+  })
+
+  it('a REOPENED note shields its round — the sweep never undoes an explicit reopen', () => {
+    const r1 = roundAgainstNewVersion('R1')
+    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    const r2 = roundAgainstNewVersion('R2')
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    store.resolveAnnotation(SID, r2.annotationId, 'approve', canvasId)
+
+    // R1 settled by the sweep; the user deliberately puts it back in play.
+    const reopened = store.reopenAnnotation(SID, r1.annotationId)
+    const back = reopened.annotations.find((a) => a.id === r1.annotationId)!
+    expect(back.state).toBe('addressed')
+    expect(back.reopenedAt).toBeTruthy()
+    expect(reopened.reviews.find((r) => r.id === 'R1')?.status).toBe('submitted')
+
+    // A THIRD round is ruled on. The reopened note must survive the sweep.
+    const r3 = roundAgainstNewVersion('R3')
+    const { state } = store.resolveAnnotation(SID, r3.annotationId, 'approve', canvasId)
+    expect(state.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({ state: 'addressed' })
+    expect(state.reviews.find((r) => r.id === 'R1')?.status).toBe('submitted')
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(1)
+  })
+
+  it('the settled state round-trips: reload from disk accepts closedBy supersede', () => {
+    const r1 = roundAgainstNewVersion('R1')
+    store.markAnnotationsAddressed(SID, 'R1', [r1.annotationId])
+    const r2 = roundAgainstNewVersion('R2')
+    const canvasId = store.getReviewStateForSession(SID)!.canvasId
+    store.resolveAnnotation(SID, r2.annotationId, 'approve', canvasId)
+
+    store._resetCanvasReviewStoreForTest()
+    const reloaded = store.getReviewStateForSession(SID)!
+    expect(reloaded.annotations.find((a) => a.id === r1.annotationId)).toMatchObject({
+      state: 'stale',
+      closedBy: 'supersede',
+    })
+    expect(store.getReviewCountsForCanvas(canvasId)?.verdictRounds).toBe(0)
+  })
+})

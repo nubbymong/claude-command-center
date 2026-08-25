@@ -37,11 +37,12 @@ export interface CanvasTotals {
   /** Open reviews on the canvas the session is currently showing (0 when unreadable). */
   onActive: number
   /**
-   * THE queue number (#364): rounds waiting on the user across every canvas
-   * this session owns — ready-marked renders awaiting a first review, plus
-   * rounds whose notes all await verdicts. One derivation feeds the Canvas
-   * button, the queue list, the tab mark and the pane lead, so the numbers can
-   * never disagree.
+   * THE queue number (#364, recut in #470): CANVASES waiting on the user —
+   * a canvas counts once whether it owes a first review, verdict rounds, or
+   * both ("a count above 1 is legitimate across different canvases, never for
+   * the same item"). The rows keep the per-kind detail. One derivation feeds
+   * the Canvas button, the queue list, the tab mark and the pane lead, so the
+   * numbers can never disagree.
    */
   queue: number
   /** The sweep's view of the on-screen canvas's share of `queue` — subtracted
@@ -89,8 +90,6 @@ export function totalsFromEntries(entries: CanvasLibraryEntry[]): CanvasTotals {
     // when the review store is unreadable — a hand-over must never disappear
     // behind a broken reviews.json.
     if (e.awaitingReview) {
-      t.queue++
-      if (e.isActiveForThisSession) t.queueOnActive++
       t.queueRows.push({
         canvasId: e.canvasId,
         ...(e.title ? { title: e.title } : {}),
@@ -100,8 +99,6 @@ export function totalsFromEntries(entries: CanvasLibraryEntry[]): CanvasTotals {
       })
     }
     if (e.verdictRounds && e.verdictRounds > 0) {
-      t.queue += e.verdictRounds
-      if (e.isActiveForThisSession) t.queueOnActive += e.verdictRounds
       t.queueRows.push({
         canvasId: e.canvasId,
         ...(e.title ? { title: e.title } : {}),
@@ -110,6 +107,14 @@ export function totalsFromEntries(entries: CanvasLibraryEntry[]): CanvasTotals {
         at: e.lastRenderedAt,
         onActive: !!e.isActiveForThisSession,
       })
+    }
+    // ONE canvas is at most ONE owed item (#470, owner: "a count above 1 is
+    // legitimate across different canvases, never for the same item"). The
+    // rows above keep the detail — what kind, how many rounds — but the
+    // number counts canvases owing, not their internal stacking.
+    if (e.awaitingReview || (e.verdictRounds && e.verdictRounds > 0)) {
+      t.queue++
+      if (e.isActiveForThisSession) t.queueOnActive++
     }
     if (e.openReviewCount === undefined) { t.unknown++; continue }
     t.openReviews += e.openReviewCount
