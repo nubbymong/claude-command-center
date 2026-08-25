@@ -172,11 +172,14 @@ test('paging to the last showcase page ends the run and hands over to resume', a
   // Bound the walk by the actual page count (summary + showcases), not a magic
   // number, and settle each click with a web-first assertion so the read is
   // never racing React's flush.
-  const pages = await page.locator('[data-ux-id="whatsnew-dots"] .wn-fdot').count()
+  const dots = page.locator('[data-ux-id="whatsnew-dots"] .wn-fdot')
+  const pages = await dots.count()
   for (let i = 0; i < pages; i++) {
     if ((await cta.textContent())?.trim() !== 'Next →') break
     await cta.click()
-    await expect(cta).toBeEnabled()
+    // A real settle (not a decorative enabled-check — the CTA has no disabled
+    // state): wait for the page to actually advance, i.e. dot i+1 is now active.
+    await expect(dots.nth(i + 1)).toHaveClass(/(^|\s)on(\s|$)/)
   }
   await expect(cta).toHaveText('Continue')
   await cta.click()
