@@ -48,7 +48,7 @@ import {
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { logInfo } from '../debug-logger'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
-import { clearAwaitingReview, getCanvasStateForSession } from './canvas-store'
+import { clearAwaitingReview, getCanvasStateById, getCanvasStateForSession } from './canvas-store'
 
 // ── Bounds (shared intent with the IPC schemas; the store re-checks because it
 //    is the last line, and the MCP tool reads through it) ────────────────────
@@ -526,6 +526,19 @@ function canvasForSession(sessionId: string): SessionCanvas | null {
 function requireHealthy(canvasId: string): void {
   if (broken.has(canvasId)) {
     throw new Error('review store unreadable: reviews.json exists but does not validate; not overwriting it')
+  }
+}
+
+/**
+ * A signed-off canvas (#476) is terminal: no new notes, no new rounds. The
+ * renderer keeps the note-taking chips disabled while viewing a completed
+ * canvas, but that is a label — this is the boundary (ADR-009), so a note
+ * write over IPC to a canvas the user re-opened to VIEW is refused here.
+ * Reopen (which clears the stamp) is the way back to annotating.
+ */
+function requireNotCompleted(canvasId: string): void {
+  if (getCanvasStateById(canvasId)?.completed) {
+    throw new Error('this canvas is signed off as complete; reopen it before adding notes')
   }
 }
 
@@ -1062,6 +1075,7 @@ export function upsertAnnotation(
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   validateDraft(draft, canvas)
 
   const base = recordFor(sessionId, canvas)
@@ -1149,6 +1163,7 @@ export function deleteAnnotation(sessionId: string, annotationId: string): Canva
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
 
   const base = recordFor(sessionId, canvas)
@@ -1197,6 +1212,7 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   if (typeof reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(reviewId)) throw new Error('invalid review id')
   if (!Array.isArray(sketches)) throw new Error('invalid sketches')
 
@@ -1267,10 +1283,26 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
   // (#366). After the commit, so a failed submit never clears what is owed;
   // and never the other way to fail — a clear that throws must not undo a
   // submit that persisted.
-  try {
-    clearAwaitingReview(canvas.canvasId)
-  } catch (err) {
-    logInfo(`[canvas-review] clearAwaitingReview failed for ${canvas.canvasId}: ${err}`)
+  //
+  // But clear ONLY when this round actually covers the AWAITED version (#476
+  // adversarial): if a newer ready render superseded the one the user was
+  // looking at, their notes are anchored to the OLDER version while the stamp
+  // points at the newer one — clearing it would mark the newer render
+  // "reviewed" though the user never saw it, and #476's completion guard
+  // leans on that stamp. The notes' own versionId is the only signal that
+  // distinguishes the two (frozenVersionId is always the latest ready). In
+  // the ordinary flow the user annotates the awaited render, so the ids match
+  // and this clears exactly as before.
+  const awaited = getCanvasStateForSession(sessionId)?.awaitingReview?.versionId
+  const submittedVersionIds = new Set(
+    next.annotations.filter((a) => members.has(a.id)).map((a) => a.versionId),
+  )
+  if (awaited === undefined || submittedVersionIds.has(awaited)) {
+    try {
+      clearAwaitingReview(canvas.canvasId)
+    } catch (err) {
+      logInfo(`[canvas-review] clearAwaitingReview failed for ${canvas.canvasId}: ${err}`)
+    }
   }
   return toState(next)
 }
@@ -1303,6 +1335,7 @@ export function resolveAnnotation(
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   // The canvas the CALLER meant. Annotation ids restart at a1 on every canvas
   // and the session's canvas is mutable — an agent's `canvas_render` naming a
   // different subject files the current one — so an id alone names a note only
@@ -1508,6 +1541,7 @@ export function markAnnotationsAddressed(
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   if (typeof reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(reviewId)) throw new Error('invalid review id')
   const wanted = new Set<string>()
   for (const id of annotationIds) {
@@ -1940,6 +1974,7 @@ export function reopenAnnotation(sessionId: string, annotationId: string): Canva
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
 
   const base = recordFor(sessionId, canvas)

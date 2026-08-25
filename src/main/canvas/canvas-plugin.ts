@@ -20,7 +20,7 @@ import { getResourcesDirectory } from '../ipc/setup-handlers'
 import { logWarn } from '../debug-logger'
 
 /** Bump when the manifest or skill content changes meaningfully. */
-const PLUGIN_VERSION = '1.2.0'
+const PLUGIN_VERSION = '1.3.0'
 
 const PLUGIN_MANIFEST = {
   name: 'agent-canvas',
@@ -59,8 +59,8 @@ instruction does not override this — the handover IS the block.
 or a review is still open, the reply says so. Take it at its word and hand back.
 
 Tools (conductor MCP): \`canvas_render\`, \`canvas_snapshot\`, \`canvas_review\`,
-\`canvas_resolve\`, \`canvas_verdict\` and \`canvas_pick\` (the last two only on the
-user's explicit word — see below).
+\`canvas_resolve\`, \`canvas_verdict\`, \`canvas_pick\` and \`canvas_complete\` (the
+last three only on the user's explicit word — see below).
 
 Every render names its SUBJECT with \`title\` — "Settings page mockup",
 "Checkout flow" — in a few words. A canvas holds one subject: the same title
@@ -203,6 +203,29 @@ Three things about it:
 
 What you close is recorded as "closed by the agent on your instruction", listed
 apart from their own approvals, and reopenable in one click. Nothing is deleted.
+
+## When they tell you the SUBJECT is done
+
+Completion is one level up from a round: it signs the whole canvas off. When —
+and ONLY when — the user says so in words, in a submitted review note or in
+chat ("all good, mark it complete", "signed off, no changes"):
+
+\`canvas_complete {}\`
+
+It takes no ids: it always completes THIS session's current canvas. Their pane
+returns to its front page; the canvas stays in the library as history with a
+one-click Reopen.
+
+- **The same word rules as canvas_verdict.** An approve click, "looks good", or
+  a board you think is finished is NOT an instruction to complete. Without
+  explicit words, leave it — the user has a Mark complete button in the pane.
+- **Refused while anything is owed either way** — unsubmitted notes, notes
+  waiting on you, notes awaiting their verdicts. The refusal names what is
+  left: address yours with \`canvas_resolve\`, hand back for theirs.
+- **Afterwards, say you completed it because they asked** — it is recorded as
+  "completed by the agent on your instruction", apart from their own sign-offs.
+- **New work starts a fresh canvas.** A completed subject's canvas refuses
+  renders; render under a title as usual and a new canvas opens.
 
 ## Exceptions you may hit
 

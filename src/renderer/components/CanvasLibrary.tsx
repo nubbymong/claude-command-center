@@ -118,6 +118,22 @@ export function CanvasLibrary({
   const libraryOwed = (e: CanvasLibraryEntry): number =>
     (e.awaitingReview ? 1 : 0) + (e.verdictRounds ?? 0)
 
+  /** Reopen a completed canvas (#476): clears the sign-off; obligations (there
+   *  are none, by the completion guard) and history come back as they were. */
+  const reopenCompletedRow = useCallback(async (canvasId: string) => {
+    setBusy(canvasId)
+    setError(null)
+    try {
+      const res = await window.electronAPI.canvas.completeReopen({ sessionId, canvasId })
+      if (res?.ok) await load()
+      else setError('That canvas could not be reopened.')
+    } catch {
+      setError('That canvas could not be reopened.')
+    } finally {
+      setBusy(null)
+    }
+  }, [sessionId, load])
+
   const openHere = useCallback(async (canvasId: string) => {
     setBusy(canvasId)
     setError(null)
@@ -180,7 +196,16 @@ export function CanvasLibrary({
                   without it. The project drops to the second line in that case
                   rather than disappearing. */}
               <div className="flex items-center gap-1.5 text-[12px] text-[var(--text-primary)] truncate" title={e.title || e.cwd}>
-                {e.awaitingReview ? (
+                {e.completed ? (
+                  <span
+                    className="shrink-0 text-[8.5px] font-bold uppercase tracking-[0.05em] rounded px-1 py-px"
+                    style={{ color: 'var(--status-success)', background: 'color-mix(in srgb, var(--status-success) 13%, transparent)' }}
+                    title={`Signed off ${e.completed.by === 'agent' ? 'by the agent on your instruction' : 'by you'}`}
+                    data-testid="canvas-library-completed-badge"
+                  >
+                    Completed
+                  </span>
+                ) : e.awaitingReview ? (
                   <span
                     className="shrink-0 text-[8.5px] font-bold uppercase tracking-[0.05em] rounded px-1 py-px"
                     style={{ color: 'var(--status-warning)', background: 'color-mix(in srgb, var(--status-warning) 14%, transparent)' }}
@@ -251,9 +276,23 @@ export function CanvasLibrary({
               onClick={() => void openHere(e.canvasId)}
               disabled={busy === e.canvasId}
               className="shrink-0 text-[11px] rounded px-2 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 focus-ring"
+              title={e.completed ? 'Look at the completed canvas — read-only until you Reopen it' : undefined}
             >
-              Open here
+              {e.completed ? 'View' : 'Open here'}
             </button>
+            {/* Reopen (#476): only on rows this session owns — a foreign
+                canvas's sign-off is its owner's to undo. */}
+            {e.completed && e.ownedByThisSession && (
+              <button
+                onClick={() => void reopenCompletedRow(e.canvasId)}
+                disabled={busy === e.canvasId}
+                className="shrink-0 text-[11px] rounded px-2 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 focus-ring"
+                data-testid="canvas-library-reopen"
+                title="Put this canvas back in play — clears the Completed sign-off"
+              >
+                Reopen
+              </button>
+            )}
             {confirming === e.canvasId ? (
               <button
                 ref={deleteConfirm.confirmRef}

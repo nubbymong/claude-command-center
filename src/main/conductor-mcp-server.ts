@@ -43,6 +43,7 @@ import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
 import { canvasRootsForSession, canvasRootRefusalFor, getAgentCanvasStateForSession, getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
+import { completeCanvasGuarded } from './canvas/canvas-completion'
 import {
   closeAnnotationsByAgent,
   getReviewCountsForCanvas,
@@ -879,6 +880,11 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         // lets a tool reply say "the user is mid-review" instead of the agent
         // rendering over notes nobody has submitted yet.
         getReviewCounts: (canvasId) => getReviewCountsForCanvas(canvasId),
+        // canvas_complete (#476). The guarded composition owns the
+        // "nothing left owed either way" rule and fails closed on an
+        // unreadable review store; the sessionId doubles as the ownership
+        // check inside the canvas store. Pass-through, same reason as above.
+        completeCanvas: (sessionId, canvasId) => completeCanvasGuarded(canvasId, 'agent', sessionId),
         // So a refused render can NAME the folders it would have accepted.
         canvasRootsForSession: (sessionId) => canvasRootsForSession(sessionId),
         canvasRootRefusalFor: (sessionId) => canvasRootRefusalFor(sessionId),

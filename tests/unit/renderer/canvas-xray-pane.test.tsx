@@ -635,6 +635,33 @@ describe('the redesigned chrome (item C)', () => {
     expect(container.querySelector('[data-testid="canvas-tool-sketch"]')?.getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('#476: viewing a completed canvas forces browse, disarms the marquee, and greys the note-taking chips', async () => {
+    // interactionMode/marqueeArmed are per-session state that survives the
+    // detach and the adopt — a pane opened onto a signed-off canvas could
+    // otherwise arrive with the glass live in Sketch and no panel to receive
+    // the strokes.
+    await renderPane('on')
+    await act(async () => {
+      useCanvasStore.getState().setInteractionMode(SID, 'draw')
+      useCanvasReviewStore.getState().setMarqueeArmed(SID, true)
+      useCanvasStore.setState({
+        bySessionId: {
+          ...useCanvasStore.getState().bySessionId,
+          [SID]: {
+            ...useCanvasStore.getState().bySessionId[SID],
+            completed: { at: 'now', by: 'user' as const },
+          },
+        },
+      })
+    })
+    expect(useCanvasStore.getState().bySessionId[SID].interactionMode).toBe('browse')
+    expect(useCanvasReviewStore.getState().bySessionId[SID]?.marqueeArmed ?? false).toBe(false)
+    const sketch = container.querySelector('[data-testid="canvas-tool-sketch"]') as HTMLButtonElement
+    const region = container.querySelector('[data-testid="canvas-tool-region"]') as HTMLButtonElement
+    expect(sketch.disabled).toBe(true)
+    expect(region.disabled).toBe(true)
+  })
+
   it('carries the X-ray setting inside the Inspect group', async () => {
     await renderPane('stealth')
     const chips = container.querySelector('[data-testid="canvas-tool-chips"]')!

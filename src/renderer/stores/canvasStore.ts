@@ -5,7 +5,7 @@
 // old Draw button (spec D2), and its empty state is the classic sketchpad.
 
 import { create } from 'zustand'
-import type { CanvasAwaitingReview, CanvasState, CanvasVersion } from '../../shared/canvas'
+import type { CanvasAwaitingReview, CanvasCompletion, CanvasState, CanvasVersion } from '../../shared/canvas'
 import { useExcalidrawStore } from './excalidrawStore'
 import { useCanvasReviewStore } from './canvasReviewStore'
 import { useCanvasTotalsStore } from './canvasTotalsStore'
@@ -46,6 +46,14 @@ export interface CanvasSessionState {
    *  underneath it changed); it just had nowhere to say so. Cleared when the
    *  user dismisses it or goes back. */
   filedNotice?: FiledNotice | null
+  /** Signed off (#476) — present only when the pane is showing a completed
+   *  canvas the user deliberately reopened to view; the working chrome swaps
+   *  for a Completed chip and note-taking is off. */
+  completed?: CanvasCompletion
+  /** The subject just signed off under this session (#476): the front page
+   *  shows one quiet acknowledgment row with a Reopen. Cleared by dismissal,
+   *  by Reopen, or by the next canvas appearing. */
+  completedNotice?: { canvasId: string; title?: string } | null
   loaded: boolean
 }
 
@@ -79,6 +87,8 @@ interface CanvasStoreState {
   cancelExpectedSwitch: (sessionId: string) => void
   noteFiled: (sessionId: string, notice: FiledNotice) => void
   dismissFiled: (sessionId: string) => void
+  noteCompleted: (sessionId: string, notice: { canvasId: string; title?: string }) => void
+  dismissCompleted: (sessionId: string) => void
   reset: () => void
 }
 
@@ -90,12 +100,13 @@ const EMPTY: CanvasSessionState = {
   emptyView: 'intro',
   unseenRender: false,
   filedNotice: null,
+  completedNotice: null,
   loaded: false,
 }
 
 function fromMain(prev: CanvasSessionState | undefined, state: CanvasState | null): CanvasSessionState {
   const base = prev ?? EMPTY
-  if (!state) return { ...base, canvasId: null, title: undefined, versions: [], activeVersionId: null, awaitingReview: undefined, loaded: true }
+  if (!state) return { ...base, canvasId: null, title: undefined, versions: [], activeVersionId: null, awaitingReview: undefined, completed: undefined, loaded: true }
   return {
     ...base,
     canvasId: state.canvasId,
@@ -103,6 +114,9 @@ function fromMain(prev: CanvasSessionState | undefined, state: CanvasState | nul
     versions: state.versions,
     activeVersionId: state.activeVersionId,
     awaitingReview: state.awaitingReview,
+    completed: state.completed,
+    // A live canvas on screen replaces the sign-off acknowledgment.
+    completedNotice: null,
     loaded: true,
   }
 }
@@ -208,6 +222,24 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     })
   },
 
+  noteCompleted: (sessionId: string, notice: { canvasId: string; title?: string }) => {
+    set((s) => ({
+      bySessionId: {
+        ...s.bySessionId,
+        [sessionId]: { ...(s.bySessionId[sessionId] ?? EMPTY), completedNotice: notice },
+      },
+    }))
+  },
+
+  dismissCompleted: (sessionId: string) => {
+    set((s) => {
+      if (!s.bySessionId[sessionId]?.completedNotice) return {}
+      return {
+        bySessionId: { ...s.bySessionId, [sessionId]: { ...s.bySessionId[sessionId], completedNotice: null } },
+      }
+    })
+  },
+
   setActiveVersion: async (sessionId: string, versionId: string) => {
     try {
       const state = await window.electronAPI.canvas.setActiveVersion({ sessionId, versionId })
@@ -256,8 +288,20 @@ export function setupCanvasListener(): void {
     // canvas goes AWAY (deleted from the library, possibly from another
     // session's window). Pulsing there promises the owning session something
     // new to look at and then shows it an empty pane.
-    if (event.activeVersionId && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
+    if (event.activeVersionId && !event.completed && !event.reopened && !useExcalidrawStore.getState().bySessionId[event.sessionId]?.isOpen) {
+      // (A sign-off is not news to review, and a reopen is the user's own
+      // gesture — no pulse for either.)
       store.markUnseenRender(event.sessionId)
+    }
+    // SIGN-OFF (#476): the subject completed and the session detached from the
+    // canvas. Capture the title from the mirror as it stands NOW — the refresh
+    // below comes back empty — so the front page can name what completed.
+    if (event.completed) {
+      const cur = store.bySessionId[event.sessionId]
+      store.noteCompleted(event.sessionId, {
+        canvasId: event.canvasId,
+        title: cur?.canvasId === event.canvasId ? cur.title : undefined,
+      })
     }
     // FILING: the canvas under this session changed identity. That happens when
     // the agent names a different subject — the canvas the user was reviewing is
@@ -271,9 +315,24 @@ export function setupCanvasListener(): void {
     // had actually asked for then arrived looking like a filing.
     // Named rather than inlined so the consume can be gated on it too — and
     // typed as the id it is, so the notice below keeps its narrowing.
-    const filedCanvasId: string | null =
-      prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId ? prev.canvasId : null
-    const userAsked = filedCanvasId !== null && consumeExpectedSwitch(event.sessionId)
+    // A REOPEN can name a canvas that is not the session's current one — the
+    // library row's Reopen — and nothing was filed by it; the detector must
+    // stand down or it announces a filing that never happened (#476). Same
+    // for a render while VIEWING a completed canvas: the fresh canvas that
+    // starts is not a filing of the signed-off one — it was already in the
+    // library, and "I filed it when the agent started a different subject"
+    // would be false twice over.
+    // SWITCHED (identity changed) and FILED (that change is worth announcing)
+    // are separate questions: an announced switch AWAY FROM a completed canvas
+    // is a real identity change whose expectation must still be CONSUMED, or
+    // the leftover expectation would swallow the next genuine filing — even
+    // though nothing was filed by it (the completed canvas was already
+    // library history, so the strip stands down).
+    const switched = Boolean(
+      !event.reopened && prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId,
+    )
+    const userAsked = switched && consumeExpectedSwitch(event.sessionId)
+    const filedCanvasId: string | null = switched && !prev!.completed ? prev!.canvasId : null
     if (!userAsked && filedCanvasId !== null) {
       // Counted from the review mirror as it stands NOW, before the refresh
       // below follows the session to its new canvas. This is the only moment

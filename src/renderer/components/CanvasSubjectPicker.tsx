@@ -270,6 +270,18 @@ function owedRounds(e: CanvasLibraryEntry): number {
 /** The row's waiting-on-you badge — REVIEW (warning) outranks VERDICT (peach)
  *  when a canvas owes both; quiet rows carry no chip at all. */
 function QueueBadge({ entry }: { entry: CanvasLibraryEntry }) {
+  if (entry.completed) {
+    return (
+      <span
+        className="shrink-0 text-[8.5px] font-bold uppercase tracking-[0.05em] rounded px-1 py-px"
+        style={{ color: 'var(--status-success)', background: 'color-mix(in srgb, var(--status-success) 13%, transparent)' }}
+        title={`Signed off ${entry.completed.by === 'agent' ? 'by the agent on your instruction' : 'by you'}`}
+        data-testid="canvas-row-badge-completed"
+      >
+        Completed
+      </span>
+    )
+  }
   if (entry.awaitingReview) {
     return (
       <span

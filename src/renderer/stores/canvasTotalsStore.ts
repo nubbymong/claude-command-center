@@ -85,6 +85,11 @@ export function totalsFromEntries(entries: CanvasLibraryEntry[]): CanvasTotals {
   const t: CanvasTotals = { ...defaultTotals(), loaded: true }
   for (const e of entries) {
     if (!e.ownedByThisSession && !e.isActiveForThisSession) continue
+    // A signed-off canvas (#476) is terminal history: it owes nothing and is
+    // not part of the working count or the queue. By invariant it carries no
+    // awaitingReview/verdictRounds, but skip it outright so a stale count can
+    // never surface a completed canvas in the pill.
+    if (e.completed) continue
     t.canvases++
     // ONE canvas is at most ONE owed item (#470, owner: "a count above 1 is
     // legitimate across different canvases, never for the same item") — one
