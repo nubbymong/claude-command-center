@@ -199,13 +199,22 @@ describe('adversarial — reclaim, review-writes, cap, fork', () => {
     expect(adopted).toBeNull()
   })
 
-  it('a completed canvas refuses new notes and new reviews over the store (terminal, main-side)', () => {
+  it('a completed canvas refuses EVERY note-writing mutation over the store (terminal, main-side)', () => {
+    // Round-2 adversarial: the gate must cover the siblings too — reannotate
+    // (resolveAnnotation) MINTS a note, reopenAnnotation REVIVES one. All the
+    // write mutators refuse; the pane's read path (getReviewStateForSession)
+    // stays open so history is still viewable.
     const done = finishedCycle()
     completion.completeCanvasGuarded(done.canvasId, 'user', SID)
-    // The user re-opens it to VIEW (binds it current), then a note write lands.
     canvasStore.adoptCanvasForSession(SID, done.canvasId, { isSessionCurrent: () => false })
     const v = canvasStore.getCanvasStateForSession(SID)!.versions[0].id
-    expect(() => reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'sneaky', versionId: v })).toThrow(/signed off/)
+    expect(() => reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'x', versionId: v })).toThrow(/signed off/)
+    expect(() => reviewStore.resolveAnnotation(SID, 'a1', 'reannotate', done.canvasId)).toThrow(/signed off/)
+    expect(() => reviewStore.reopenAnnotation(SID, 'a1')).toThrow(/signed off/)
+    expect(() => reviewStore.deleteAnnotation(SID, 'a1')).toThrow(/signed off/)
+    expect(() => reviewStore.markAnnotationsAddressed(SID, 'R1', ['a1'])).toThrow(/signed off/)
+    // The history read still works — the pane can show the closed round.
+    expect(reviewStore.getReviewStateForSession(SID)?.canvasId).toBe(done.canvasId)
   })
 
   it('completing then rendering in a loop cannot mint canvases past the cap', () => {

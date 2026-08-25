@@ -211,6 +211,14 @@ describe('on a completed canvas', () => {
     await click(byId('canvas-completed-reopen'))
     expect(container.querySelector('[data-testid="canvas-complete-refused"]')!.textContent).toContain('could not reopen')
   })
+
+  it('ADV r2: a "not completed" reopen result is NOT shown as an error (double-fire / already reopened)', async () => {
+    seed({ completed: { at: 'now', by: 'user' } })
+    completeReopen.mockResolvedValueOnce({ ok: false, reason: 'not completed' } as any)
+    await render()
+    await click(byId('canvas-completed-reopen'))
+    expect(container.querySelector('[data-testid="canvas-complete-refused"]')).toBeNull()
+  })
 })
 
 describe('ADV: the armed confirm does not carry across a subject switch', () => {
@@ -226,6 +234,26 @@ describe('ADV: the armed confirm does not carry across a subject switch', () => 
     // Disarmed — the confirm is gone, so a click cannot sign off B.
     expect(byId('canvas-complete-confirm')).toBeNull()
     expect(byId('canvas-complete-arm')).toBeTruthy()
+  })
+
+  it('ADV r2: disarms when the canvas flips to completed under a mounted button', async () => {
+    // The reopen→complete round trip: arm, then the same canvasId gains a
+    // completed stamp. The chip must render already disarmed, so returning to
+    // the working control (a later reopen) is not one stale click from firing.
+    seed({ reviews: [review('R1', 'resolved')], annotations: [note('a1', 'R1', 'approved')] })
+    await render()
+    await click(byId('canvas-complete-arm'))
+    expect(byId('canvas-complete-confirm')).toBeTruthy()
+    await act(async () => {
+      useCanvasStore.setState({
+        bySessionId: {
+          [SID]: { ...useCanvasStore.getState().bySessionId[SID], completed: { at: 'now', by: 'user' as const } },
+        },
+      } as any)
+    })
+    // Now completed → chip shown, and the armed confirm is gone (disarmed).
+    expect(container.querySelector('[data-testid="canvas-completed-chip"]')).toBeTruthy()
+    expect(byId('canvas-complete-confirm')).toBeNull()
   })
 
   it('ADV: blocks (fails closed) when the review mirror points at a different canvas', async () => {

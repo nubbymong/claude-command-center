@@ -1163,6 +1163,7 @@ export function deleteAnnotation(sessionId: string, annotationId: string): Canva
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
 
   const base = recordFor(sessionId, canvas)
@@ -1334,6 +1335,7 @@ export function resolveAnnotation(
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   // The canvas the CALLER meant. Annotation ids restart at a1 on every canvas
   // and the session's canvas is mutable — an agent's `canvas_render` naming a
   // different subject files the current one — so an id alone names a note only
@@ -1539,6 +1541,7 @@ export function markAnnotationsAddressed(
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   if (typeof reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(reviewId)) throw new Error('invalid review id')
   const wanted = new Set<string>()
   for (const id of annotationIds) {
@@ -1971,6 +1974,7 @@ export function reopenAnnotation(sessionId: string, annotationId: string): Canva
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
   if (typeof annotationId !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(annotationId)) throw new Error('invalid annotation id')
 
   const base = recordFor(sessionId, canvas)

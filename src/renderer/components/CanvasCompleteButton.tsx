@@ -39,15 +39,18 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title }: Pro
   // and a stale `armed` from canvas A must not sign off canvas B.
   const confirm = useArmedConfirm(armed ? `complete:${canvasId}` : null)
 
-  // Disarm the moment the subject changes under us — so does the refusal.
-  useEffect(() => {
-    setArmed(false)
-    setRefused(null)
-  }, [canvasId])
-
   const completed = useCanvasStore((s) => s.bySessionId[sessionId]?.completed)
   const awaitingReview = useCanvasStore((s) => !!s.bySessionId[sessionId]?.awaitingReview)
   const review = useCanvasReviewStore((s) => s.bySessionId[sessionId])
+
+  // Disarm the moment the subject changes under us — so does the refusal.
+  // Also when the canvas flips to completed under a mounted button (a sign-off
+  // landing, or a reopen→complete round trip): a stale `armed` must not carry
+  // into the chip and back out ready to fire (adversarial review round 2).
+  useEffect(() => {
+    setArmed(false)
+    setRefused(null)
+  }, [canvasId, completed])
 
   // "Nothing left owed either way" — the renderer's mirror of the main-side
   // guard, over the same review state the panel renders. `waitingOn: 'closed'`
@@ -76,8 +79,11 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title }: Pro
     try {
       const res = await window.electronAPI.canvas.completeReopen({ sessionId, canvasId })
       // A refusal (ownership) or a rejection (bad payload) must not be a silent
-      // dead click — surface it where the other two Reopen call sites do.
-      if (!res?.ok) setRefused(res?.reason ?? 'could not reopen')
+      // dead click — surface it where the other two Reopen call sites do. But
+      // "not completed" means the canvas is ALREADY reopened (a double-fire, or
+      // the push already cleared the stamp), which is success, not an error
+      // (adversarial review round 2) — so don't show it.
+      if (!res?.ok && res?.reason !== 'not completed') setRefused(res?.reason ?? 'could not reopen')
     } catch {
       setRefused('could not reopen')
     } finally {
