@@ -349,7 +349,7 @@ describe('deleting a canvas from the front page (#452)', () => {
     })
     expect(deleteCanvasMock).not.toHaveBeenCalled()
 
-    offset = CONFIRM_GUARD_MS * 2 + 100 // quiet has passed since the last attempt
+    offset = CONFIRM_GUARD_MS * 3 // quiet has passed since the last attempt
     click(testid('canvas-reclaim-confirm-delete'))
     await act(async () => {
       await Promise.resolve()
