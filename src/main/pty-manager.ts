@@ -1028,7 +1028,13 @@ export function spawnPty(
   let capturedResumeTarget: { uuid: string; cwd: string } | null = null
   if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
     try {
-      const latest = getTranscriptBinder()?.getLatestTranscriptPath(sessionId)
+      // #480: resume ONLY from an EXACT (authenticated) bind. The previous
+      // getLatestTranscriptPath() also returned heuristic binds — a newest-file
+      // scan of the shared per-repo transcript folder — which resumed a SIBLING
+      // card's conversation when several cards ran in one repo. An exact-only
+      // capture means "resume the conversation the hook confirmed for THIS
+      // session, or start fresh"; a fresh start beats reopening a stranger.
+      const latest = getTranscriptBinder()?.getExactResumeTarget(sessionId)
       if (latest) {
         capturedResumeTarget = resolveResumeTargetFromTranscript(latest)
       }
