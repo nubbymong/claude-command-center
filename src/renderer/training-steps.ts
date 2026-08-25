@@ -184,33 +184,6 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-codex.jpg',
   },
   {
-    id: 'agent-hub',
-    title: 'Agent Hub',
-    sinceVersion: '1.0.0',
-    section: 'integrations',
-    summary:
-      'Tasks dispatch headless Claude as background jobs, Pipelines chain them, and the Library is where you author agent templates (name, prompt, model, tool whitelist) that surface as tickable subagents in every Edit Config dialog.',
-    highlights: [
-      'Tasks tab -- fire-and-forget headless agent runs with live status + output streaming',
-      'Pipelines tab -- chain agents (a → b → c) with shared context and per-step prompts',
-      'Library tab -- author your own templates; built-ins (code-reviewer, test-runner...) are starting points to copy and edit',
-      'Right-click a task for actions: cancel, retry, remove, copy output',
-    ],
-    howToTrigger: [
-      { label: 'Open', value: 'Click  ☁  in the sidebar nav' },
-      { label: 'Author', value: 'Library tab → + New Agent' },
-    ],
-    proTip:
-      'Library templates aren\'t just for headless Tasks -- anything you author there is also a subagent inside any Claude session that has it ticked in the config. Same definition, two delivery surfaces.',
-    bullets: [
-      '**Tasks** dispatch headless Claude jobs with live output streaming',
-      '**Library** is where you author agent templates that surface in Edit Config',
-      '**Pipelines** chain agents with shared context and per-step prompts',
-      'Built-ins (code-reviewer, test-runner...) are **starting points** -- copy and edit',
-    ],
-    screenshotFilename: 'step-agent-hub.jpg',
-  },
-  {
     id: 'vision',
     title: 'Conductor MCP',
     sinceVersion: '1.2.144',

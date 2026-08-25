@@ -105,7 +105,6 @@ const DIRECT_FEATURE_IDS: readonly string[] = [
   'github.session-enabled',
   'github.session-context-seen',
   'github.ai-usage-enabled',
-  'agents.agent-teams',
   'canvas.opened',
   'sessions.codex-config',
   'accounts.switch-session-account',

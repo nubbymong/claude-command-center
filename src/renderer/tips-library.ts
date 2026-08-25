@@ -411,26 +411,10 @@ export const TIPS_LIBRARY: Tip[] = [
     variants: {
       primary: {
         shortText: 'Dispatch Claude to work in the background',
-        title: 'Agent Hub',
-        body: '**Agent Hub** runs headless Claude sessions in the background. You give them a task, they run, you come back later for the result.\n\nPerfect for:\n• Running tests across a large codebase\n• Generating documentation for every file\n• Security audits\n• Long refactors\n\nClick the **Agent Hub icon** in the sidebar and press "New Agent". Monitor progress from the dashboard: status, elapsed time, token usage, and output for each.',
-        actionLabel: 'Open Agent Hub',
+        title: 'Cloud agents',
+        body: '**Cloud Agents** runs headless Claude sessions in the background. You give them a task, they run, you come back later for the result.\n\nPerfect for:\n• Running tests across a large codebase\n• Generating documentation for every file\n• Security audits\n• Long refactors\n\nClick the **Cloud Agents icon** in the sidebar and press "New Agent". Monitor progress from the dashboard: status, elapsed time, token usage, and output for each.',
+        actionLabel: 'Open Cloud Agents',
         actionTarget: 'cloud-agents',
-      },
-    },
-  },
-
-  {
-    id: 'tip.agent-teams',
-    category: 'agents',
-    complexity: 'advanced',
-    priority: 30,
-    requires: ['agents.cloud-agent-dispatch'],
-    excludes: ['agents.agent-teams'],
-    variants: {
-      primary: {
-        shortText: 'Chain agents into multi-step pipelines',
-        title: 'Agent pipelines',
-        body: 'You\'ve used cloud agents -- ready for the next level? **Pipelines** orchestrate multiple agents in sequence or parallel, like a mini CI/CD pipeline for Claude.\n\nExample team: [analyze codebase] → [write tests] → [run tests] → [fix failures]. Each step uses a different agent template with different tools.\n\nOpen **Agent Hub** and pick **Pipelines** in the left rail to create your first one.',
       },
     },
   },

@@ -80,7 +80,7 @@ Scheduled and on-demand reports over your own usage, runnable across **all of yo
 ## And the rest of the surface
 
 - **Conductor MCP** — a local MCP server giving Claude eighteen browser-vision tools (screenshot, navigate, click, type, eval), a host-screenshot fetch, the Agent Canvas tools and `codex_review`, so Claude can ask Codex to spot-check its own work. One global Chrome instance is shared across every session so logins persist; SSH sessions reach it through the tunnel.
-- **Agent Hub** — dispatch headless Claude as background **Tasks** with live status and streaming output; author agent templates in the **Library** that surface as tickable subagents in every config; chain them as **Teams** with shared context.
+- **Cloud Agents** — dispatch headless Claude as background tasks with live status and streaming output. (2.1 deprecates the old Agent Hub's Pipelines and agent Library; a richer replacement is planned for 2.2.)
 - **Codex** — OpenAI's Codex CLI sits beside Claude in the New Session dialog. Pick the provider per spawn, the gpt-5 series in the model dropdown, read-only / standard / auto / unrestricted permission presets. Still marked Beta, behind a master switch.
 - **GitHub panel** — PR status, CI runs, reviews, unresolved threads and inferred issue context in a collapsible right rail; OAuth, PAT, or adopt your `gh` login. `Ctrl+/` (`Cmd+/`).
 - **Sentinel** — an opt-in watcher that notices when Claude Code updates and checks whether the new version might affect the Conductor, proposing model and effort registry fixes you apply yourself. Fail-open; a hot-reloadable registry means brand-new models still get a colour, label and pricing.

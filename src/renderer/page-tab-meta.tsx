@@ -15,7 +15,7 @@ const svg = (children: React.ReactNode) => (
 )
 
 export const PAGE_TAB_META: Partial<Record<ViewType, PageTabMeta>> = {
-  'cloud-agents': { label: 'Agent Hub', icon: svg(<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z" />) },
+  'cloud-agents': { label: 'Cloud Agents', icon: svg(<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z" />) },
   insights: { label: 'Insights', icon: svg(<path d="M21 12h-4l-3 9L9 3l-3 9H2" />) },
   tokenomics: { label: 'Tokenomics', icon: svg(<><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></>) },
   vision: { label: 'Conductor MCP', icon: svg(<><rect x="2" y="2" width="20" height="8" rx="2" /><rect x="2" y="14" width="20" height="8" rx="2" /><line x1="6" y1="6" x2="6.01" y2="6" /><line x1="6" y1="18" x2="6.01" y2="18" /></>) },

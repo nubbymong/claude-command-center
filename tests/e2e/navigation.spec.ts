@@ -39,8 +39,8 @@ test.describe('Sidebar Navigation', () => {
       return
     }
 
-    // Nav row: Agent Hub, Insights, Tokenomics, Conductor MCP, Memory, Logs,
-    // Settings + Feature Guide = 8 buttons.
+    // Nav row: Cloud Agents, Insights, Tokenomics, Conductor MCP, Memory,
+    // Logs, Settings + Feature Guide = 8 buttons.
     const navArea = sidebar.locator('.px-2.pt-2')
     const buttons = navArea.locator('button')
     const count = await buttons.count()
@@ -67,21 +67,22 @@ test.describe('Sidebar Navigation', () => {
     }
   })
 
-  test('Agent Hub nav button is first', async () => {
+  test('Cloud Agents nav button is first', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
       return
     }
 
-    // First nav button is Agent Hub (formerly "Cloud Agents"). The button's
-    // title attribute mirrors the nav label.
+    // First nav button is Cloud Agents (the Agent Hub name left with #443).
+    // The custom tooltip replaced the native title attribute, so the durable
+    // handle is the accessible name.
     const firstButton = sidebar.locator('.px-2.pt-2 button').first()
-    const title = await firstButton.getAttribute('title')
-    expect(title).toContain('Agent Hub')
+    const label = await firstButton.getAttribute('aria-label')
+    expect(label).toContain('Cloud Agents')
   })
 
-  test('clicking Agent Hub shows the dashboard', async () => {
+  test('clicking Cloud Agents shows the dashboard', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
@@ -93,7 +94,7 @@ test.describe('Sidebar Navigation', () => {
     await page.waitForTimeout(500)
 
     // PageFrame renders its title as a <span>, not an <h1>, so assert the nav
-    // entry's active state — a robust "the Agent Hub view is showing" signal.
+    // entry's active state — a robust "the Cloud Agents view is showing" signal.
     await expect(firstButton).toHaveClass(/rail-active/)
   })
 

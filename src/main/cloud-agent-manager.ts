@@ -76,14 +76,6 @@ function resolveAgentEnv(profileId: string | undefined): {
 
 const MAX_OUTPUT_BYTES = 512 * 1024 // 500KB cap per agent
 
-// Completion callbacks — used by team-manager to detect when agents finish
-type AgentCompletionCallback = (agent: CloudAgentData) => void
-const completionCallbacks: AgentCompletionCallback[] = []
-
-export function onAgentCompletion(cb: AgentCompletionCallback): void {
-  completionCallbacks.push(cb)
-}
-
 const activeProcesses = new Map<string, ChildProcess>()
 let agents: CloudAgentData[] = []
 let getWindow: () => BrowserWindow | null = () => null
@@ -308,7 +300,6 @@ export async function dispatchAgent(params: {
       parseCostFromOutput(agentRef)
       persist()
       broadcastStatus(agentRef)
-      for (const cb of completionCallbacks) cb(agentRef)
       logInfo(`[cloud-agent] Agent ${agentRef.id} finished: status=${agentRef.status} code=${code} output=${agentRef.output.length}b`)
     }
   })
@@ -324,7 +315,6 @@ export async function dispatchAgent(params: {
       agentRef.duration = agentRef.updatedAt - agentRef.createdAt
       persist()
       broadcastStatus(agentRef)
-      for (const cb of completionCallbacks) cb(agentRef)
       logError(`[cloud-agent] Agent ${agentRef.id} error: ${err.message}`)
     }
   })

@@ -115,25 +115,6 @@ const mockElectronAPI = {
     isRunning: vi.fn(() => Promise.resolve(false)),
     onStatusChanged: vi.fn(() => () => {}),
   },
-  team: {
-    list: vi.fn(() => Promise.resolve([])),
-    // #371: save/delete report the real disk outcome now.
-    save: vi.fn((team: any) => Promise.resolve({ ok: true, team: { ...team, id: team.id || 'team-mock123', updatedAt: Date.now() } })),
-    delete: vi.fn(() => Promise.resolve({ ok: true, deleted: true })),
-    run: vi.fn((teamId: string) => Promise.resolve({
-      id: 'tr-mock123',
-      teamId,
-      teamName: 'Mock Team',
-      status: 'running',
-      steps: [],
-      projectPath: '/mock',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    })),
-    cancelRun: vi.fn(() => Promise.resolve(true)),
-    listRuns: vi.fn(() => Promise.resolve([])),
-    onRunStatusChanged: vi.fn(() => () => {}),
-  },
   codex: {
     status: vi.fn(() => Promise.resolve({
       installed: false,

@@ -847,7 +847,6 @@ const DOCS_COPY_MAP: Record<string, string> = {
   'step-session-options.jpg': 'session-config.jpg',
   'step-tokenomics.jpg': 'tokenomics.jpg',
   'step-memory.jpg': 'memory.jpg',
-  'step-agent-hub.jpg': 'agent-hub.jpg',
   'step-vision.jpg': 'vision.jpg',
   'step-security.jpg': 'settings.jpg',
   'step-tips.jpg': 'shortcuts.jpg',
@@ -1011,19 +1010,8 @@ async function main() {
     })
     await window.waitForTimeout(500)
 
-    // Step 2: Agent Hub
-    await clickNav(window, 'Agent Hub')
-    // Click first agent to show detail panel
-    await window.evaluate(() => {
-      const cards = document.querySelectorAll('[class*="cursor-pointer"], [class*="agent"]')
-      for (const card of cards) {
-        if (card instanceof HTMLElement && card.textContent?.includes('API Documentation')) {
-          card.click(); return
-        }
-      }
-    })
-    await window.waitForTimeout(500)
-    await capture(window, 'step-agent-hub.jpg', 'Agent Hub with detail')
+    // (The Agent Hub capture left with #443 -- the training card is gone and
+    // the surviving Cloud Agents page has no card of its own yet.)
 
     // Step 3: Conductor MCP (nav label is "Conductor MCP"; the asset/step id
     // stays 'vision' for back-compat with saved view state)

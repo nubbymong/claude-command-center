@@ -277,17 +277,17 @@ describe('the latch refuses writes only after a READ failure', () => {
 
   it('one persister\'s read failure says nothing about another\'s', () => {
     writeGoodAgents()
-    writeConfig('agentTeams', [{ id: 't-1' }])
+    writeConfig('magicButtons', [{ id: 'mb-1' }])
     const agentsLatch = createReadFailureLatch('agents')
-    const teamsLatch = createReadFailureLatch('teams')
+    const buttonsLatch = createReadFailureLatch('buttons')
 
     h.failFor = 'cloud-agents.json'
     loadConfigLatched('cloudAgents', agentsLatch)
-    loadConfigLatched('agentTeams', teamsLatch)
+    loadConfigLatched('magicButtons', buttonsLatch)
 
     expect(agentsLatch.failed()).toBe(true)
-    expect(teamsLatch.failed()).toBe(false)
-    expect(saveConfigLatched('agentTeams', [{ id: 't-2' }], teamsLatch)).toBe(true)
+    expect(buttonsLatch.failed()).toBe(false)
+    expect(saveConfigLatched('magicButtons', [{ id: 'mb-2' }], buttonsLatch)).toBe(true)
   })
 })
 

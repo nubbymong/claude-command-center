@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 /**
  * 2.1.0-beta.5: the SessionDialog agent picker is REMOVED (0 real configs used
- * it; the --agents plumbing still honours agentIds stored on old configs).
- * These tests encode the two halves of that contract:
+ * it). Since #443 (2.1 Agent Hub deprecation) stored agentIds are TOLERATED
+ * AND IGNORED: the library that resolved them is gone and nothing builds an
+ * --agents flag from them any more. These tests encode what remains:
  *   1. The picker never renders, for any provider.
  *   2. Stored claudeOptions.agentIds SURVIVE an edit+save — the dialog's
- *      spread-then-set save path must not wipe fields it no longer edits
- *      (the bug that silently ate effortLevel for years).
+ *      spread-then-set save path must not wipe fields it does not edit
+ *      (the bug that silently ate effortLevel for years). A field we ignore
+ *      is still the user's data.
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'

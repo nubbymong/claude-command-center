@@ -26,11 +26,6 @@ vi.mock('../../../src/renderer/stores/configStore', () => ({
     }),
 }))
 
-vi.mock('../../../src/renderer/stores/agentLibraryStore', () => ({
-  useAgentLibraryStore: (sel: any) => sel({ templates: [] }),
-  BUILTIN_TEMPLATES: [],
-}))
-
 if (typeof window !== 'undefined') {
   ;(window as any).electronAPI = {
     debug: { isEnabled: vi.fn().mockResolvedValue(false) },

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { getAgentStatusColor } from '../../../src/renderer/components/CloudAgentsPage'
 
-describe('Agent Hub status colours via tokens (U6.1)', () => {
+describe('Cloud Agents status colours via tokens (U6.1)', () => {
   it('completed -> --status-success', () => { expect(getAgentStatusColor('completed')).toBe('var(--status-success)') })
   it('failed -> --status-danger', () => { expect(getAgentStatusColor('failed')).toBe('var(--status-danger)') })
   it('running -> --status-info', () => { expect(getAgentStatusColor('running')).toBe('var(--status-info)') })

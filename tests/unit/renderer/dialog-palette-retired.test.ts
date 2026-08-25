@@ -130,7 +130,6 @@ const PARTIAL_MAX: Record<string, { max: number; what: string }> = {
   'components/BottomBar.tsx': { max: 1, what: 'the CLI-not-found confirm modal' },
   'components/github/GitHubPanel.tsx': { max: 1, what: 'the setup modal' },
   'components/TabBar.tsx': { max: 9, what: 'the tab context menu' },
-  'components/AgentLibrary.tsx': { max: 30, what: 'the template context menu' },
   'components/CloudAgentsPage.tsx': { max: 86, what: 'the agent context menu' },
   'components/ScreenshotButton.tsx': { max: 5, what: 'the dropdown menu' },
   'components/MultiAccountStatusline.tsx': {

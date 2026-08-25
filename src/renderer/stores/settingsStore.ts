@@ -262,7 +262,8 @@ export interface AppSettings {
    *  behaviour on upgrade. Every reader goes through resolveCanvasXrayMode
    *  (src/renderer/canvas/xray-mode.ts) rather than comparing the field. */
   canvasXrayMode?: 'off' | 'stealth' | 'on'
-  // Agent Hub first-run "How it works" banner: true once the user dismisses it.
+  // Cloud Agents first-run "How it works" banner: true once the user dismisses
+  // it. (Key name keeps the pre-#443 'agentHub' spelling -- it is persisted.)
   // Optional/absent = not yet dismissed (banner shows).
   agentHubExplainerDismissed?: boolean
   hooksEnabled: boolean

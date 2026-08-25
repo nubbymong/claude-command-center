@@ -42,7 +42,6 @@ import { useWatchdogSubscription } from '../hooks/useWatchdogSubscription'
 import { useAccountIdentitySubscription } from '../hooks/useAccountIdentitySubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
-import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
 import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
 
 // Re-export for consumers
@@ -87,6 +86,8 @@ interface Props {
     enabled: boolean
     version: string
   }
+  /** Legacy (#443): configs may still carry agent-template ids from the retired
+   *  Agent Library. Accepted and ignored — nothing resolves them any more. */
   agentIds?: string[]
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   /** Per-session permission mode -> claude `--permission-mode`. '' / 'default' = no flag. */
@@ -114,7 +115,7 @@ interface Props {
   terminalOptions?: TerminalOptions
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, terminalOptions }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, terminalOptions }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -696,22 +697,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // carries the name from its first run (#119 rename → logs durability).
           const configLabel = session?.customName?.trim() || session?.label || 'default'
           const useResumePicker = shouldUseResumePicker(sessionId)
-          // Resolve agent template IDs to config objects for --agents flag
-          let agentsConfig: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }> | undefined
-          if (agentIds && agentIds.length > 0) {
-            const allTemplates = [...useAgentLibraryStore.getState().templates, ...BUILTIN_TEMPLATES]
-            agentsConfig = agentIds
-              .map(id => allTemplates.find(t => t.id === id))
-              .filter((t): t is NonNullable<typeof t> => !!t)
-              .map(t => ({
-                name: t.name,
-                description: t.description,
-                prompt: t.prompt,
-                model: t.model !== 'inherit' ? t.model : undefined,
-                tools: t.tools.length > 0 ? t.tools : undefined,
-              }))
-            if (agentsConfig.length === 0) agentsConfig = undefined
-          }
           // markSpawned only fires at the real spawn, so an unanswered/aborted
           // account gate leaves the session unspawned and re-gates on remount.
           const doSpawn = (resolvedProfileId: string | undefined) => {
@@ -750,7 +735,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             // pure reflection of the session's SAVED config.
             const sshWithReconnect = ssh ? { ...ssh, reconnect: !!session?.sshReachedClaudeRunning } : ssh
             window.electronAPI.pty
-              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt, isAsk: session?.kind === 'ask' })
+              .spawn(sessionId, { cwd, cols, rows, ssh: sshWithReconnect, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume, askPrompt, isAsk: session?.kind === 'ask' })
               .catch((err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled

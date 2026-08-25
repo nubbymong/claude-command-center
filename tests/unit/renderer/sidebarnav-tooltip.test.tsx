@@ -61,13 +61,13 @@ describe('SidebarNav tooltips', () => {
 
   it('keeps an instant, pointer-transparent custom tooltip on each nav button', () => {
     render()
-    const agentHub = Array.from(container.querySelectorAll('button')).find(
-      (b) => b.getAttribute('aria-label') === 'Agent Hub'
+    const cloudAgents = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.getAttribute('aria-label') === 'Cloud Agents'
     )
-    expect(agentHub).toBeTruthy()
-    const tip = agentHub!.querySelector('span[aria-hidden="true"]') as HTMLElement
+    expect(cloudAgents).toBeTruthy()
+    const tip = cloudAgents!.querySelector('span[aria-hidden="true"]') as HTMLElement
     expect(tip).toBeTruthy()
-    expect(tip.textContent).toBe('Agent Hub')
+    expect(tip.textContent).toBe('Cloud Agents')
     expect(tip.className).toContain('pointer-events-none')
     expect(tip.className).toContain('group-hover:opacity-100')
   })

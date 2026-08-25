@@ -1,4 +1,4 @@
-// Click-to-prefill example tasks shown on the Agent Hub first-run state. Each
+// Click-to-prefill example tasks shown on the Cloud Agents first-run state. Each
 // opens the New Agent dialog with the name + prompt filled in (the project is
 // still required). Kept here so the copy lives in one editable place.
 

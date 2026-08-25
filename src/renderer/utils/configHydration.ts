@@ -5,8 +5,6 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useTipsStore, UsageTracking } from '../stores/tipsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
-import { useAgentLibraryStore } from '../stores/agentLibraryStore'
-import { useTeamStore } from '../stores/teamStore'
 import { useCommandBarStore, coerceCommandBarUi } from '../stores/commandBarStore'
 import { assignCommandOrder, dissolveGlobalSections, reviewCommandsForUpgrade, COMMAND_UPGRADE_VERSION } from '../lib/command-upgrade'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
@@ -505,12 +503,9 @@ export function hydrateStores(configData: Record<string, unknown>): void {
   const cloudAgents = coerceArray(configData.cloudAgents, 'cloudAgents', warnings)
   useCloudAgentStore.getState().hydrate(cloudAgents as any)
 
-  const agentTemplates = coerceArray(configData.agentTemplates, 'agentTemplates', warnings)
-  useAgentLibraryStore.getState().hydrate(agentTemplates as any)
-
-  const agentTeams = coerceArray(configData.agentTeams, 'agentTeams', warnings)
-  const agentTeamRuns = coerceArray(configData.agentTeamRuns, 'agentTeamRuns', warnings)
-  useTeamStore.getState().hydrate(agentTeams as any, agentTeamRuns as any)
+  // #443: agentTemplates / agentTeams / agentTeamRuns are no longer hydrated —
+  // the Agent Library and Pipelines were deprecated in 2.1. Files on disk are
+  // left alone; the keys simply are not part of the config set any more.
 
   // usageTracking stays undefined when absent (its hydrate treats undefined as
   // "no tracking data yet"); a present-but-corrupt value resets to {}.

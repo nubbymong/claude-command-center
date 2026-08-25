@@ -6,7 +6,7 @@
  * pre-existing): a read that RESOLVES with `readFailed` / `failedKeys` (an
  * unreachable dir, a corrupt file) never latched; the two boot migrations
  * wrote through their own `config.save` calls regardless of the latch; and the
- * Agent Library saved straight to the IPC. Plus one new crash: a corrupt
+ * (since-retired, #443) Agent Library saved straight to the IPC. Plus one new crash: a corrupt
  * usage-tracking.json hydrated to {} and the dock's render threw on it.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -26,7 +26,7 @@ function setupWindow() {
 const { readFailureLockReason, applyConfigColourMigration, retireAskConfig, hydrateStores } =
   await import('../../../src/renderer/utils/configHydration')
 const { useConfigWriteLockStore } = await import('../../../src/renderer/stores/configWriteLockStore')
-const { useAgentLibraryStore } = await import('../../../src/renderer/stores/agentLibraryStore')
+const { useBrowserStore } = await import('../../../src/renderer/stores/browserStore')
 const { useTipsStore, countUnseenTips, normaliseTracking } = await import('../../../src/renderer/stores/tipsStore')
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)) }
@@ -74,19 +74,23 @@ describe('the two boot migrations honour the latch', () => {
   })
 })
 
-describe('the Agent Library goes through config-saver', () => {
-  it('an add under the latch writes nothing; the same add unlocked writes agentTemplates', async () => {
+describe('store writes go through config-saver (the latch holds)', () => {
+  // The original worked example here was the Agent Library (the ADR-009
+  // beta.16 finding). #443 retired that store; the invariant it proved --
+  // saveConfigNow honours the write latch -- is pinned on the browser
+  // favourites store instead, which persists through the same path.
+  it('a favourite added under the latch writes nothing; the same add unlocked writes browser', async () => {
     const { calls } = setupWindow()
-    useAgentLibraryStore.getState().hydrate([])
+    useBrowserStore.getState().hydrate({})
     useConfigWriteLockStore.getState().lock('read failed')
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    useAgentLibraryStore.getState().addTemplate({ id: 't1', name: 'T', description: '', prompt: 'p' } as never)
+    useBrowserStore.getState().toggleFavourite('http://a.example/', 'A')
     await tick()
     expect(calls).toEqual([])
     useConfigWriteLockStore.getState().unlock()
-    useAgentLibraryStore.getState().addTemplate({ id: 't2', name: 'T2', description: '', prompt: 'p' } as never)
+    useBrowserStore.getState().toggleFavourite('http://b.example/', 'B')
     await tick()
-    expect(calls.map((c) => c.key)).toEqual(['agentTemplates'])
+    expect(calls.map((c) => c.key)).toEqual(['browser'])
     warn.mockRestore()
   })
 })

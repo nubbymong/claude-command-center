@@ -28,8 +28,8 @@ async function navigateToCloudAgents(): Promise<boolean> {
   await firstButton.click()
   await page.waitForTimeout(500)
 
-  // Page title is a PageFrame <span> ("Agent Hub"), not an h1; success = the
-  // first nav entry (Agent Hub) is now the active view.
+  // Page title is a PageFrame <span> ("Cloud Agents"), not an h1; success =
+  // the first nav entry (Cloud Agents) is now the active view.
   return await firstButton.evaluate((el) => el.className.includes('rail-active')).catch(() => false)
 }
 

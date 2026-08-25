@@ -514,18 +514,6 @@ export interface ElectronAPI {
     onStatusChanged: (callback: (agent: import('../shared/types').CloudAgent) => void) => () => void
     onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
   }
-  team: {
-    list: () => Promise<import('../shared/types').TeamTemplate[]>
-    /** #371: `ok:false` means the team is NOT on disk — keep the user's work in
-     *  the editor rather than reporting a save that did not happen. */
-    save: (team: import('../shared/types').TeamTemplate) => Promise<{ ok: true; team: import('../shared/types').TeamTemplate } | { ok: false; error: string }>
-    /** #371: `ok:false` means the team is STILL on disk — do not drop the row. */
-    delete: (id: string) => Promise<{ ok: true; deleted: boolean } | { ok: false; error: string }>
-    run: (teamId: string, projectPath?: string) => Promise<import('../shared/types').TeamRun | null>
-    cancelRun: (runId: string) => Promise<boolean>
-    listRuns: () => Promise<import('../shared/types').TeamRun[]>
-    onRunStatusChanged: (callback: (run: import('../shared/types').TeamRun) => void) => () => void
-  }
   serviceStatus: {
     get: () => Promise<unknown>
     onUpdate: (callback: (data: unknown) => void) => () => void
@@ -1079,19 +1067,6 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, data: any) => callback(data)
       ipcRenderer.on(IPC.CLOUD_AGENT_OUTPUT_CHUNK, handler)
       return () => ipcRenderer.removeListener(IPC.CLOUD_AGENT_OUTPUT_CHUNK, handler)
-    },
-  },
-  team: {
-    list: () => ipcRenderer.invoke(IPC.TEAM_LIST),
-    save: (team: any) => ipcRenderer.invoke(IPC.TEAM_SAVE, team),
-    delete: (id: string) => ipcRenderer.invoke(IPC.TEAM_DELETE, id),
-    run: (teamId: string, projectPath?: string) => ipcRenderer.invoke(IPC.TEAM_RUN, teamId, projectPath),
-    cancelRun: (runId: string) => ipcRenderer.invoke(IPC.TEAM_CANCEL_RUN, runId),
-    listRuns: () => ipcRenderer.invoke(IPC.TEAM_LIST_RUNS),
-    onRunStatusChanged: (callback: (run: any) => void) => {
-      const handler = (_: unknown, run: any) => callback(run)
-      ipcRenderer.on(IPC.TEAM_RUN_STATUS_CHANGED, handler)
-      return () => ipcRenderer.removeListener(IPC.TEAM_RUN_STATUS_CHANGED, handler)
     },
   },
   serviceStatus: {

@@ -72,7 +72,6 @@ import {
   clearCompletedAgents,
   killAllAgents,
   cleanupStuckAgents,
-  onAgentCompletion,
   _resetCloudAgentLatchForTest,
 } from '../../src/main/cloud-agent-manager'
 
@@ -411,70 +410,36 @@ describe('cloud-agent-manager', () => {
     })
   })
 
-  describe('onAgentCompletion', () => {
-    it('registers a callback', () => {
-      const cb = vi.fn()
-      onAgentCompletion(cb)
-      // Callback is registered — it fires when an agent finishes (tested via close handler)
-      expect(cb).not.toHaveBeenCalled()
-    })
-
-    it('fires callback on agent close', async () => {
-      const cb = vi.fn()
-      onAgentCompletion(cb)
-
+  describe('process close/error drive the agent status (re-pinned after #443)', () => {
+    // The retired onAgentCompletion suite (its callbacks left with
+    // team-manager, #443) was the only place these handlers were actually
+    // INVOKED. The transitions are load-bearing for the surviving Cloud
+    // Agents page, so they are pinned here directly.
+    it('close(0) marks the agent completed', async () => {
       const mockProc = createMockProcess()
       mockSpawn.mockReturnValue(mockProc)
-      const agent = await dispatchAgent({ name: 'CB Test', description: 'desc', projectPath: '/p' })
-
-      // Find the 'close' handler registered on the process
-      const closeCall = mockProc.on.mock.calls.find((c: any[]) => c[0] === 'close')
-      expect(closeCall).toBeDefined()
-      const closeHandler = closeCall![1]
-
-      // Simulate the process exiting with code 0
-      closeHandler(0)
-
-      expect(cb).toHaveBeenCalledWith(
-        expect.objectContaining({ id: agent.id, status: 'completed' })
-      )
-    })
-
-    it('fires callback on agent error', async () => {
-      const cb = vi.fn()
-      onAgentCompletion(cb)
-
-      const mockProc = createMockProcess()
-      mockSpawn.mockReturnValue(mockProc)
-      const agent = await dispatchAgent({ name: 'Err Test', description: 'desc', projectPath: '/p' })
-
-      // Find the 'error' handler
-      const errorCall = mockProc.on.mock.calls.find((c: any[]) => c[0] === 'error')
-      expect(errorCall).toBeDefined()
-      const errorHandler = errorCall![1]
-
-      errorHandler(new Error('spawn failed'))
-
-      expect(cb).toHaveBeenCalledWith(
-        expect.objectContaining({ id: agent.id, status: 'failed' })
-      )
-    })
-
-    it('fires multiple callbacks', async () => {
-      const cb1 = vi.fn()
-      const cb2 = vi.fn()
-      onAgentCompletion(cb1)
-      onAgentCompletion(cb2)
-
-      const mockProc = createMockProcess()
-      mockSpawn.mockReturnValue(mockProc)
-      await dispatchAgent({ name: 'Multi CB', description: 'desc', projectPath: '/p' })
-
+      const agent = await dispatchAgent({ name: 'Close OK', description: 'desc', projectPath: '/p' })
       const closeHandler = mockProc.on.mock.calls.find((c: any[]) => c[0] === 'close')![1]
       closeHandler(0)
+      expect(listAgents().find((a: any) => a.id === agent.id)?.status).toBe('completed')
+    })
 
-      expect(cb1).toHaveBeenCalled()
-      expect(cb2).toHaveBeenCalled()
+    it('a non-zero exit marks it failed', async () => {
+      const mockProc = createMockProcess()
+      mockSpawn.mockReturnValue(mockProc)
+      const agent = await dispatchAgent({ name: 'Close Bad', description: 'desc', projectPath: '/p' })
+      const closeHandler = mockProc.on.mock.calls.find((c: any[]) => c[0] === 'close')![1]
+      closeHandler(1)
+      expect(listAgents().find((a: any) => a.id === agent.id)?.status).toBe('failed')
+    })
+
+    it('a spawn error marks it failed', async () => {
+      const mockProc = createMockProcess()
+      mockSpawn.mockReturnValue(mockProc)
+      const agent = await dispatchAgent({ name: 'Err', description: 'desc', projectPath: '/p' })
+      const errorHandler = mockProc.on.mock.calls.find((c: any[]) => c[0] === 'error')![1]
+      errorHandler(new Error('spawn failed'))
+      expect(listAgents().find((a: any) => a.id === agent.id)?.status).toBe('failed')
     })
   })
 

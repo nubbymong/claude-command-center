@@ -49,7 +49,6 @@ import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredential
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
-import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { initTokenomics, shutdownTokenomics } from './tokenomics/tokenomics-service'
@@ -995,7 +994,6 @@ if (!gotTheLock) {
     registerChannelHandlers()
     startRulesEngine()
     registerCloudAgentHandlers(getWindow)
-    registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
     registerMemoryHandlers()
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
