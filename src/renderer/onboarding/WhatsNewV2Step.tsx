@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { releaseLine } from '../utils/versionLabel'
 import { compareVersions } from '../../shared/version-order'
 import { useAppMetaStore } from '../stores/appMetaStore'
-import { showcasesFor, ShowcasePage, ShowcasePoint } from './showcase-pages'
-import { ShowcaseVignette, RenameVignette } from './ShowcaseVignette'
+import { showcasesFor, ShowcasePage } from './showcase-pages'
+import { ShowcaseVignette } from './ShowcaseVignette'
+import { RenamePageView } from './RenamePage'
 
 declare const __APP_VERSION__: string
 
@@ -100,7 +101,7 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'The app itself',
     items: [
-      { title: 'New name.', desc: 'Claude Command Center is now AI Code Conductor. Same data, same settings.', upgradeOnly: true },
+      { title: 'New name.', desc: 'Claude Command Center is now AI Code Conductor — nothing else changes.', upgradeOnly: true },
       { title: 'Signed and notarised.', desc: 'Windows signed, macOS notarised, every update SHA-256 checked.' },
     ],
   },
@@ -126,68 +127,22 @@ export function sectionsFor(lastSeenVersion: string | undefined, currentVersion:
 }
 
 /**
- * The rename prelude (#525): one page, ahead of the summary, ONLY for people
- * arriving from a build that predates the rename — they knew the app as
- * Claude Command Center and are owed the why. `RENAME_SHIPPED_IN` is the
- * release whose changelog entry announced it; anyone whose last-seen version
- * is that or later has lived under the new name for their whole tenure, and
- * re-showing the page on every update would wear it out.
- *
- * The why the page leads with is the real one: 2.2 is widening the app from
- * conducting one CLI to conducting many, and the old name had no room for
- * that. Fresh installs never see it — they never knew the old name.
+ * The rename/roadmap prelude (#525): one page ahead of the summary. Upgraders
+ * arriving from a build that predates the rename open on it — they knew the
+ * app as Claude Command Center and are owed the why. `RENAME_SHIPPED_IN` is
+ * the release whose changelog entry announced the rename; an upgrader whose
+ * last-seen version is that or later has lived under the new name for their
+ * whole tenure, and re-showing the page on every update would wear it out.
+ * Fresh installs see the same page under a "Welcome to" lead-in (owner call,
+ * canvas R1: the roadmap is the app's own introduction) — their gate is the
+ * `fresh` flag, not this function.
  */
 export const RENAME_SHIPPED_IN = '2.1.0-beta.6'
 
 export function showRenamePageFor(lastSeenVersion: string | undefined, currentVersion: string): boolean {
-  if (!lastSeenVersion) return false // a fresh install has no before
+  if (!lastSeenVersion) return false // fresh installs are gated by `fresh`, not by version
   if (releaseLine(currentVersion) === '2.0') return false // the 2.0 line predates the rename
   return compareVersions(lastSeenVersion, RENAME_SHIPPED_IN) < 0
-}
-
-const RENAME_POINTS: ShowcasePoint[] = [
-  {
-    lead: 'Nothing to redo.',
-    rest: 'Your sessions, saved configs, accounts, history and settings are exactly where you left them — the update installs over the top.',
-  },
-  {
-    lead: 'The name grew because the app is growing.',
-    rest: 'Version 2.2 is already in the works, and its whole point is conducting more than one coding agent.',
-  },
-  {
-    lead: 'On the 2.2 roadmap:',
-    rest: 'GitHub Copilot CLI, Google Antigravity, Qwen Code and OpenCode join Claude Code and Codex — with local models through Ollama.',
-  },
-]
-
-function RenamePageView() {
-  return (
-    <div className="p2">
-      <div className="p2-inner sc-page" style={{ width: 'min(1000px, 95vw)' }} data-ux-id="rename-page">
-        <div className="sc-copy">
-          <div className="sc-eyebrow" data-ux-id="rename-eyebrow">Before the new features</div>
-          <h2 className="sc-h" data-ux-id="rename-heading">Claude Command Center is now AI Code Conductor</h2>
-          <p className="sc-tagline" data-ux-id="rename-tagline">
-            Same app, same home. The new name makes room for where it&apos;s going: one conductor&apos;s stand for every coding agent you run.
-          </p>
-          <div className="sc-points" data-ux-id="rename-points">
-            {RENAME_POINTS.map((pt) => (
-              <div className="sc-pt" key={pt.lead}>
-                <span className="wn-dot sc-dot" />
-                <div><b>{pt.lead}</b> {pt.rest}</div>
-              </div>
-            ))}
-          </div>
-          <p className="sc-where" data-ux-id="rename-where">
-            Plans can shift, but the direction won&apos;t — each agent lands in <b>What&apos;s New</b> as it arrives.
-          </p>
-        </div>
-        <div className="sc-art" data-ux-id="rename-art">
-          <RenameVignette />
-        </div>
-      </div>
-    </div>
-  )
 }
 
 function ShowcasePageView({ page, index, ofShowcases }: { page: ShowcasePage; index: number; ofShowcases: number }) {
@@ -247,9 +202,12 @@ export function WhatsNewV2Step({
   // authored for a line this collapses to exactly the old single-page step —
   // no dots, no skip, the harness CTA — so nothing regresses.
   const showcases = showcasesFor(LINE_SOURCE)
-  // #525: pre-rename upgraders get the rename page FIRST; everyone else's
-  // paging is untouched (prelude 0 keeps every index exactly what it was).
-  const prelude = !fresh && showRenamePageFor(lastSeen, LINE_SOURCE) ? 1 : 0
+  // #525: pre-rename upgraders AND fresh installs (owner call, canvas R1)
+  // open on the rename/roadmap page; post-rename upgraders' paging is
+  // untouched (prelude 0 keeps every index exactly what it was). The 2.0
+  // line predates both the rename and the roadmap, so it never shows it.
+  const prelude =
+    releaseLine(LINE_SOURCE) !== '2.0' && (fresh || showRenamePageFor(lastSeen, LINE_SOURCE)) ? 1 : 0
   const summaryIx = prelude
   const [pageIx, setPageIx] = useState(0)
   const total = prelude + 1 + showcases.length
@@ -261,7 +219,7 @@ export function WhatsNewV2Step({
   return (
     <>
       {prelude === 1 && pageIx === 0 ? (
-        <RenamePageView />
+        <RenamePageView fresh={fresh} />
       ) : pageIx === summaryIx ? (
         <div className="p2">
           <div className="p2-inner" style={{ width: 'min(920px, 95vw)' }}>

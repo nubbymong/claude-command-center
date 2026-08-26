@@ -129,42 +129,6 @@ function AccountsVignette() {
   )
 }
 
-/**
- * The rename page's picture (#525): the old name giving way to the new one,
- * over the podium of agents the new name makes room for. Two chips are lit —
- * what the app conducts today — and the second row is the 2.2 rehearsal.
- * Exported on its own rather than through ShowcaseArtKind because the rename
- * page is a cohort prelude (WhatsNewV2Step), not a curated showcase page.
- */
-export function RenameVignette() {
-  return (
-    <div className="sv-mini" aria-hidden data-ux-id="showcase-art-rename">
-      <div className="sv-tb"><span className="sv-tl" /><span className="sv-tl" /><span className="sv-tl" /></div>
-      <div className="sv-rn-body">
-        <div className="sv-rn-old">Claude Command Center</div>
-        <div className="sv-rn-arrow" />
-        <div className="sv-rn-new">AI Code Conductor</div>
-        <div className="sv-rn-stage">
-          <span className="sv-rn-stage-tag">ON THE PODIUM</span>
-          <div className="sv-rn-row">
-            <span className="sv-chip sv-on">Claude Code</span>
-            <span className="sv-chip sv-on">Codex</span>
-          </div>
-          <div className="sv-rn-row">
-            <span className="sv-chip">Copilot CLI<i className="sv-rn-22">2.2</i></span>
-            <span className="sv-chip">Antigravity<i className="sv-rn-22">2.2</i></span>
-            <span className="sv-chip">Qwen Code<i className="sv-rn-22">2.2</i></span>
-          </div>
-          <div className="sv-rn-row">
-            <span className="sv-chip">OpenCode<i className="sv-rn-22">2.2</i></span>
-            <span className="sv-chip">Ollama · local models<i className="sv-rn-22">2.2</i></span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 export function ShowcaseVignette({ kind }: { kind: ShowcaseArtKind }) {
   if (kind === 'canvas') return <CanvasVignette />
   if (kind === 'watchdog') return <WatchdogVignette />
