@@ -77,24 +77,54 @@ afterEach(() => {
   container.remove()
 })
 
-describe('the sign-in mode setting', () => {
-  it('renders both modes with the stored value selected, and writes a change', async () => {
+describe('the sign-in mode setting — global (owner call 2026-08-26)', () => {
+  it('renders the global picker at the window default, and a change writes the GLOBAL setting, never the per-account API', async () => {
+    const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+    useSettingsStore.setState((st) => ({ settings: { ...st.settings, signInOpenTarget: undefined } }))
     await render()
     const select = byTestId('web-sign-in-mode') as HTMLSelectElement
     expect(select).not.toBeNull()
-    expect(select.value).toBe('auto')
-    expect(Array.from(select.options).map((o) => o.value)).toEqual(['auto', 'internal-pane'])
+    expect(select.value).toBe('window')
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['window', 'pane'])
     await act(async () => {
-      select.value = 'internal-pane'
+      select.value = 'pane'
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })
-    expect(api.setSignInMode).toHaveBeenCalledWith({ profileId: 'profile-aaa111', mode: 'internal-pane' })
+    expect(useSettingsStore.getState().settings.signInOpenTarget).toBe('pane')
+    expect(api.setSignInMode).not.toHaveBeenCalled()
+    useSettingsStore.setState((st) => ({ settings: { ...st.settings, signInOpenTarget: undefined } }))
   })
 
-  it('shows the stored internal-pane choice on load', async () => {
+  it('a beta-era per-account internal-pane choice is preserved while the global is unset', async () => {
+    const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+    useSettingsStore.setState((st) => ({ settings: { ...st.settings, signInOpenTarget: undefined } }))
     api.status.mockResolvedValue(statusPayload({ webSignInMode: 'internal-pane' }))
     await render()
-    expect((byTestId('web-sign-in-mode') as HTMLSelectElement).value).toBe('internal-pane')
+    expect((byTestId('web-sign-in-mode') as HTMLSelectElement).value).toBe('pane')
+  })
+
+  it('the global, once set, beats the per-account leftover', async () => {
+    const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+    useSettingsStore.setState((st) => ({ settings: { ...st.settings, signInOpenTarget: 'window' } }))
+    api.status.mockResolvedValue(statusPayload({ webSignInMode: 'internal-pane' }))
+    await render()
+    expect((byTestId('web-sign-in-mode') as HTMLSelectElement).value).toBe('window')
+    useSettingsStore.setState((st) => ({ settings: { ...st.settings, signInOpenTarget: undefined } }))
+  })
+
+  it('the artifacts twin renders beside it and writes its own global key', async () => {
+    const { useSettingsStore } = await import('../../../src/renderer/stores/settingsStore')
+    useSettingsStore.setState((st) => ({ settings: { ...st.settings, artifactsOpenTarget: undefined } }))
+    await render()
+    const select = byTestId('artifacts-open-target') as HTMLSelectElement
+    expect(select).not.toBeNull()
+    expect(select.value).toBe('window')
+    await act(async () => {
+      select.value = 'pane'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(useSettingsStore.getState().settings.artifactsOpenTarget).toBe('pane')
+    useSettingsStore.setState((st) => ({ settings: { ...st.settings, artifactsOpenTarget: undefined } }))
   })
 })
 
