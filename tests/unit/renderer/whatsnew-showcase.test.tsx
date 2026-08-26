@@ -28,7 +28,7 @@ vi.mock('../../../src/renderer/stores/appMetaStore', () => {
   return { useAppMetaStore }
 })
 
-const { WhatsNewV2Step, sectionsFor } = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
+const { WhatsNewV2Step, sectionsFor, showRenamePageFor } = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
 const { SHOWCASES_21, showcasesFor } = await import('../../../src/renderer/onboarding/showcase-pages')
 const { ShowcaseVignette } = await import('../../../src/renderer/onboarding/ShowcaseVignette')
 
@@ -267,5 +267,79 @@ describe('#463 — since-2.0 coverage and the first-run cohort', () => {
   it('an upgrader keeps the diff heading — fresh framing never leaks', () => {
     render()
     expect(q('whatsnew-heading')!.textContent).toContain("What's new in 2.1")
+  })
+})
+
+// ── #525: the rename prelude for pre-rename upgraders ─────────────────
+describe('#525 — the rename prelude', () => {
+  // A 2.0 stable user: knew the app as Claude Command Center.
+  const fromCCC = () => { metaState.meta = { lastSeenVersion: '2.0.5' } }
+
+  it('a 2.0 upgrader opens on the rename page; Next reaches the summary without leaving the run', () => {
+    fromCCC()
+    render()
+    expect(q('rename-page')).not.toBeNull()
+    expect(q('rename-heading')!.textContent).toContain('AI Code Conductor')
+    expect(q('whatsnew-heading')).toBeNull()
+    // Derived denominator: rename + summary + one page per flagship.
+    expect(q('whatsnew-hint')!.textContent).toContain(`Page 1 of ${2 + SHOWCASES_21.length}`)
+    click(q('whatsnew-cta'))
+    expect(nexts).toBe(0)
+    expect(q('rename-page')).toBeNull()
+    expect(q('whatsnew-heading')).not.toBeNull()
+  })
+
+  it('the page names the 2.2 roadmap agents and draws its vignette', () => {
+    fromCCC()
+    render()
+    for (const name of ['Copilot', 'Antigravity', 'Qwen', 'OpenCode', 'Ollama']) {
+      expect(container.textContent, name).toContain(name)
+    }
+    expect(q('showcase-art-rename')).not.toBeNull()
+  })
+
+  it('post-rename upgraders and the fresh cohort never see it', () => {
+    render() // default meta: 2.1.0-beta.17 — lived through the rename
+    expect(q('rename-page')).toBeNull()
+    expect(q('whatsnew-dot-rename')).toBeNull()
+    metaState.meta = {}
+    render({ fresh: true })
+    expect(q('rename-page')).toBeNull()
+  })
+
+  it('a See-it chip still lands on its page with the prelude in front', () => {
+    fromCCC()
+    render()
+    click(q('whatsnew-cta')) // -> summary
+    click(q('see-watchdog'))
+    expect(q('showcase-page-watchdog')).not.toBeNull()
+    const ix = SHOWCASES_21.findIndex((pg: { id: string }) => pg.id === 'watchdog')
+    expect(q('showcase-eyebrow')!.textContent).toContain(`${ix + 1} of ${SHOWCASES_21.length}`)
+  })
+
+  it('the dots gain a rename dot that jumps home, and the walk ends on the harness CTA', () => {
+    fromCCC()
+    render()
+    click(q('whatsnew-dot-oneRow'))
+    expect(q('showcase-page-oneRow')).not.toBeNull()
+    click(q('whatsnew-dot-rename'))
+    expect(q('rename-page')).not.toBeNull()
+    const cta = () => q('whatsnew-cta')!
+    for (let i = 0; i < 1 + SHOWCASES_21.length; i++) click(cta()) // rename -> summary -> ... -> last flagship
+    expect(cta().textContent).toBe('Continue')
+    expect(nexts).toBe(0)
+    click(cta())
+    expect(nexts).toBe(1)
+  })
+
+  it('showRenamePageFor — the gate in one place', () => {
+    expect(showRenamePageFor(undefined, '2.1.0')).toBe(false) // fresh install
+    expect(showRenamePageFor('2.0.5', '2.1.0')).toBe(true)
+    expect(showRenamePageFor('1.9.0', '2.1.0')).toBe(true)
+    expect(showRenamePageFor('2.1.0-beta.5', '2.1.0')).toBe(true) // pre-rename beta tester
+    expect(showRenamePageFor('2.1.0-beta.6', '2.1.0')).toBe(false) // the rename build itself
+    expect(showRenamePageFor('2.1.0-beta.17', '2.1.0')).toBe(false)
+    expect(showRenamePageFor('2.0.1', '2.0.5')).toBe(false) // a 2.0-line build predates the rename
+    expect(showRenamePageFor('2.0.5', '2.2.0')).toBe(true) // straight 2.0 -> 2.2 is still owed the why
   })
 })

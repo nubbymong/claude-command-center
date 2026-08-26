@@ -456,3 +456,16 @@
 .ob-root .sv-acct-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; }
 .ob-root .sv-meter { flex: 1; height: 5px; border-radius: 999px; background: var(--surface-overlay); overflow: hidden; }
 .ob-root .sv-meter > i { display: block; height: 100%; border-radius: 999px; background: var(--ob); }
+
+/* The rename prelude's vignette (#525): the handover picture — old name
+   struck through, new name lit in the app blue, and the podium of agents 2.2
+   makes room for. Same drawn-mini language as the rest of the sv- set. */
+.ob-root .sv-rn-body { padding: 26px 24px 22px; }
+.ob-root .sv-rn-old { font-size: 13px; color: var(--text-muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-muted) 60%, transparent); letter-spacing: .02em; }
+.ob-root .sv-rn-arrow { width: 2px; height: 16px; margin: 8px 0 8px 7px; background: linear-gradient(var(--border-strong), var(--ob)); border-radius: 2px; }
+.ob-root .sv-rn-new { font-size: 21px; font-weight: 800; letter-spacing: -.2px; color: var(--ob); }
+.ob-root .sv-rn-stage { margin-top: 18px; border: 2px solid var(--border-strong); border-radius: 10px; position: relative; background: var(--surface-stage); padding: 16px 14px 12px; }
+.ob-root .sv-rn-stage-tag { position: absolute; top: -8px; left: 12px; font-size: 8.5px; letter-spacing: .1em; background: var(--surface-raised); color: var(--text-muted); padding: 1px 7px; border-radius: 4px; border: 1px solid var(--border-strong); }
+.ob-root .sv-rn-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.ob-root .sv-rn-row:last-child { margin-bottom: 0; }
+.ob-root .sv-rn-22 { font-style: normal; font-size: 8px; font-weight: 800; color: var(--status-warning); border: 1px solid color-mix(in srgb, var(--status-warning) 45%, transparent); border-radius: 4px; padding: 0 4px; margin-left: 6px; }
