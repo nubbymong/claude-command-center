@@ -114,7 +114,7 @@ interface CanvasReviewStoreState {
   dismissHelp: (sessionId: string) => void
   upsertNote: (sessionId: string, draft: CanvasAnnotationDraft) => Promise<string | null>
   deleteNote: (sessionId: string, annotationId: string) => Promise<void>
-  submitReview: (sessionId: string, reviewId: string, sketches: CanvasSketchExport[]) => Promise<Review | null>
+  submitReview: (sessionId: string, reviewId: string, sketches: CanvasSketchExport[], decision?: 'approve' | 'reject') => Promise<Review | null>
   /**
    * The user's verdict on one note. `canvasId` is the canvas the caller composed
    * the verdict against — for a bulk pass, the one it STARTED on — and main
@@ -287,9 +287,9 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
     }
   },
 
-  submitReview: async (sessionId, reviewId, sketches) => {
+  submitReview: async (sessionId, reviewId, sketches, decision) => {
     try {
-      const state = await window.electronAPI.canvas.reviewSubmit({ sessionId, reviewId, sketches })
+      const state = await window.electronAPI.canvas.reviewSubmit({ sessionId, reviewId, sketches, ...(decision ? { decision } : {}) })
       set((s) => ({
         bySessionId: {
           ...s.bySessionId,

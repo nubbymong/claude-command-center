@@ -352,6 +352,16 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
    *  focus, so a terminal's shortcuts in another pane are never contested. */
   const paneRootRef = useRef<HTMLDivElement | null>(null)
   const glassApiRef = useRef<ExcalidrawImperativeAPI | null>(null)
+  /**
+   * C1 (owner bug report 2026-08-26): sketches belong to the version they
+   * were drawn on. Every glass element is stamped with the version on screen
+   * when it first appears; on a version switch, foreign-version elements are
+   * lifted out of the live scene into the stash (and restored when their
+   * version comes back). The submit path reads the UNION, so a note's sketch
+   * still exports whichever version is currently displayed.
+   */
+  const sketchVersionRef = useRef(new Map<string, string>())
+  const foreignSketchStashRef = useRef(new Map<string, ReturnType<ExcalidrawImperativeAPI['getSceneElements']>[number]>())
   const repinPendingRef = useRef(false)
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
   const modeRef = useRef(mode)
@@ -472,6 +482,36 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   xrayModeRef.current = xrayMode
   versionIdRef.current = version.id
   zoomRef.current = zoom
+
+  // C1: swap the glass to the displayed version's sketches. Foreign-version
+  // elements are stashed (not deleted — the submit path reads the union and a
+  // return to their version restores them); elements never stamped (drawn
+  // before this shipped) are adopted by the version on screen.
+  useEffect(() => {
+    const api = glassApiRef.current
+    if (!api) return
+    const live = api.getSceneElements()
+    const keep: (typeof live)[number][] = []
+    let changed = false
+    for (const el of live) {
+      const stamp = sketchVersionRef.current.get(el.id) ?? version.id
+      if (stamp === version.id) {
+        sketchVersionRef.current.set(el.id, stamp)
+        keep.push(el)
+      } else {
+        foreignSketchStashRef.current.set(el.id, el)
+        changed = true
+      }
+    }
+    for (const [id, el] of foreignSketchStashRef.current) {
+      if (sketchVersionRef.current.get(id) === version.id) {
+        keep.push(el)
+        foreignSketchStashRef.current.delete(id)
+        changed = true
+      }
+    }
+    if (changed) api.updateScene({ elements: keep })
+  }, [version.id])
 
   // Keep the glass pinned to the content: scene scroll ≡ −content scroll, scene
   // zoom ≡ the content zoom (canvas-coords.glassScrollForContent). Applied on
@@ -1145,8 +1185,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
 
   const focusStageRect = useMemo(() => {
     if (!focus || !stageViewport) return null
+    // C1 (owner bug report 2026-08-26): the lock is stamped with the version
+    // it was made on, but this paint was version-blind — a region drawn on v5
+    // repainted verbatim over v6's different layout. Draw it ONLY on its own
+    // version; stepping back brings it back, and a new ready version leaves
+    // it where it was made.
+    if (focus.versionId !== version.id) return null
     return contentPageRectToStage(focus.bboxPage, stageViewport)
-  }, [focus, stageViewport])
+  }, [focus, stageViewport, version.id])
 
   /** An element lock's label came out of an inspect reply — the page's own
    *  account of what the user clicked. A region's came from the marquee. */
@@ -1552,6 +1598,15 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               }}
               theme="light"
               initialData={glassInitialData}
+              // Version-stamp every element the first time it appears (C1):
+              // whatever version is on screen owns it from then on.
+              onChange={(els) => {
+                for (const el of els) {
+                  if (!el.isDeleted && !sketchVersionRef.current.has(el.id)) {
+                    sketchVersionRef.current.set(el.id, versionIdRef.current)
+                  }
+                }
+              }}
               onScrollChange={handleGlassScrolled}
               // Outside draw mode the glass is inert: view mode drops the tool
               // island so nothing floats over the page being reviewed. Zen
@@ -1775,6 +1830,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 sessionId={sessionId}
                 version={version}
                 getGlassApi={() => glassApiRef.current}
+                getAllSketchElements={() => [
+                  ...(glassApiRef.current?.getSceneElements() ?? []),
+                  ...foreignSketchStashRef.current.values(),
+                ]}
                 onReturnToTerminal={() => togglePane(sessionId)}
                 isActive={isActive}
                 onHide={() => setPanelHidden(true)}

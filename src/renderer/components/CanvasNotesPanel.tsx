@@ -21,6 +21,10 @@ interface Props {
   version: CanvasVersion
   /** Read at call time — the glass remounts with the pane. */
   getGlassApi: () => ExcalidrawImperativeAPI | null
+  /** C1: the live scene PLUS the pane's foreign-version sketch stash, so a
+   *  note's sketch exports whichever version is on screen at submit. Optional
+   *  — absent falls back to the live scene alone (pre-C1 behaviour). */
+  getAllSketchElements?: () => ReturnType<ExcalidrawImperativeAPI['getSceneElements']>
   /** One-click return to the terminal after submit (spec D3). */
   onReturnToTerminal: () => void
   /**
@@ -165,7 +169,7 @@ function FocusLabel({ focus, className }: { focus: FocusObject; className?: stri
  * from earlier reviews, the composer for the note being written, the draft
  * list, and Submit. GitHub-review vocabulary throughout.
  */
-export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onReturnToTerminal, isActive, onHide }: Props) {
+export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getAllSketchElements, onReturnToTerminal, isActive, onHide }: Props) {
   const state = useCanvasReviewStore((s) => s.bySessionId[sessionId])
   const refresh = useCanvasReviewStore((s) => s.refresh)
   const markAddressedSeen = useCanvasReviewStore((s) => s.markAddressedSeen)
@@ -190,6 +194,13 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
   const [attachedImage, setAttachedImage] = useState<'keep' | { pngBase64: string } | null>(null)
   const [pasteError, setPasteError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  /** C1 (owner state machine, 2026-08-26): the decision this review will
+   *  carry. Submit stays dead until one is made; reject mandates a note. */
+  const [decision, setDecision] = useState<'approve' | 'reject' | null>(null)
+  // The displayed version's openness: only an OPEN version (ready, no verdict)
+  // takes a review. Reset the decision whenever the version changes.
+  const versionOpen = !version.draft && !version.verdict
+  useEffect(() => { setDecision(null) }, [version.id])
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [justSubmitted, setJustSubmitted] = useState<{ id: string; count: number } | null>(null)
   // The auto-return timer moved into excalidrawStore with #478
@@ -575,12 +586,37 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
    * its export) never sees a half-attached note.
    */
   const doSubmit = useCallback(async () => {
-    if (!draftReview || draftNotes.length === 0 || submitting) return
+    if (submitting || !versionOpen || decision === null) return
+    if (decision === 'reject' && draftNotes.length === 0) return // note mandated
+    // The plain Approve with nothing written: no review record — just the
+    // version's verdict (C1). The store refresh brings the new state in.
+    if (decision === 'approve' && (!draftReview || draftNotes.length === 0)) {
+      setSubmitting(true)
+      setSubmitError(null)
+      try {
+        const r = await window.electronAPI.canvas.versionVerdict({ sessionId, versionId: version.id, state: 'approved' })
+        if (r && 'error' in r) {
+          setSubmitError(r.error)
+          return
+        }
+        window.electronAPI.pty.write(sessionId, `Approved ${version.id} on the canvas · canvas_version_verdict recorded
+`)
+        setJustSubmitted({ id: version.id, count: 0 })
+        setDecision(null)
+        useExcalidrawStore.getState().beginSubmitReturn(sessionId)
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
+    if (!draftReview || draftNotes.length === 0) return
     setSubmitting(true)
     setSubmitError(null)
     try {
       const api = getGlassApi()
-      const scene = api?.getSceneElements() ?? []
+      // C1: include the pane's foreign-version stash, so a sketch drawn on an
+      // earlier version still exports when submitting from a later one.
+      const scene = getAllSketchElements?.() ?? api?.getSceneElements() ?? []
       const files = api?.getFiles() ?? {}
       const sketches: CanvasSketchExport[] = []
       for (const note of draftNotes) {
@@ -606,7 +642,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
         })
         sketches.push({ annotationId: note.id, pngBase64: await blobToBase64(blob) })
       }
-      const review = await submitReview(sessionId, draftReview.id, sketches)
+      const review = await submitReview(sessionId, draftReview.id, sketches, decision)
       if (!review) {
         setSubmitError('The review could not be submitted. Check the note list and try again.')
         return
@@ -616,6 +652,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
       // fetches the payload itself via canvas_review.
       window.electronAPI.pty.write(sessionId, `Review #${review.id.slice(1)} — ${count} notes · canvas_review ${review.id}\r`)
       setJustSubmitted({ id: review.id, count })
+      setDecision(null)
       // Hand back to the session automatically. Submitting is the moment the
       // work moves from the user to the agent, and the agent has ALREADY been
       // handed the review by the line written just above -- so leaving the user
@@ -633,7 +670,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
     } finally {
       setSubmitting(false)
     }
-  }, [draftReview, draftNotes, submitting, getGlassApi, sessionId, submitReview, upsertNote])
+  }, [draftReview, draftNotes, submitting, decision, versionOpen, version.id, getGlassApi, getAllSketchElements, sessionId, submitReview, upsertNote])
 
   /**
    * What the checklist may say about one open note — and, as load-bearing as
@@ -1268,17 +1305,63 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, onRe
         ) : (
           <>
             {submitError && <div className="text-red text-[10px] mb-1">{submitError}</div>}
+            {/* C1: the decision row. The review IS a verdict on the version —
+                Approve or Reject first; a reject demands a note (one already
+                written counts); Submit arms only once decided. */}
+            {versionOpen ? (
+              <div className="flex gap-1.5 mb-1.5" data-testid="decision-row">
+                <button
+                  onClick={() => setDecision(decision === 'approve' ? null : 'approve')}
+                  className={`flex-1 px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
+                    decision === 'approve'
+                      ? 'bg-green text-crust border-green'
+                      : 'border-surface1/80 text-subtext0 hover:border-green/60 hover:text-green'
+                  }`}
+                  data-testid="decision-approve"
+                >
+                  Approve {version.id}
+                </button>
+                <button
+                  onClick={() => setDecision(decision === 'reject' ? null : 'reject')}
+                  className={`flex-1 px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
+                    decision === 'reject'
+                      ? 'bg-red text-crust border-red'
+                      : 'border-surface1/80 text-subtext0 hover:border-red/60 hover:text-red'
+                  }`}
+                  data-testid="decision-reject"
+                >
+                  Reject {version.id}
+                </button>
+              </div>
+            ) : (
+              <div className="text-[10px] text-overlay0 mb-1" data-testid="version-decided-hint">
+                {version.draft ? 'This version is still a draft.' : `${version.id} is already decided${version.verdict ? ` (${version.verdict.state})` : ''}.`}
+              </div>
+            )}
+            {decision === 'reject' && draftNotes.length === 0 && (
+              <div className="text-[10px] text-red font-semibold mb-1" data-testid="reject-needs-note">
+                A reject needs a note — tell the agent what&apos;s wrong.
+              </div>
+            )}
             <button
               onClick={() => void doSubmit()}
-              disabled={!draftReview || draftNotes.length === 0 || submitting}
-              className="w-full px-2 py-1.5 text-[12px] rounded border border-green/50 text-green hover:bg-green/10 disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Freeze this review and hand it to the agent"
+              disabled={!versionOpen || decision === null || (decision === 'reject' && draftNotes.length === 0) || submitting}
+              className={`w-full px-2 py-1.5 text-[12px] rounded border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                versionOpen && decision !== null && !(decision === 'reject' && draftNotes.length === 0) && !submitting
+                  ? 'border-green bg-green/20 text-green font-semibold shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-green)_25%,transparent)]'
+                  : 'border-green/50 text-green'
+              }`}
+              title={decision === null && versionOpen ? 'Decide first — approve or reject' : 'Freeze this review and hand it to the agent'}
             >
               {submitting
                 ? 'Submitting…'
-                : draftNotes.length > 0
-                  ? `Submit review — ${draftNotes.length} note${draftNotes.length === 1 ? '' : 's'}`
-                  : 'Submit review'}
+                : decision === 'approve'
+                  ? draftNotes.length > 0
+                    ? `Submit review — Approved, ${draftNotes.length} note${draftNotes.length === 1 ? '' : 's'}`
+                    : `Submit review — Approve ${version.id}`
+                  : decision === 'reject'
+                    ? `Submit review — Rejected, ${draftNotes.length} note${draftNotes.length === 1 ? '' : 's'}`
+                    : 'Submit review'}
             </button>
           </>
         )}
