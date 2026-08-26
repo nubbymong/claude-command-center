@@ -1,5 +1,5 @@
 import { useCanvasStore } from '../stores/canvasStore'
-import { reviewGroupsOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
+import { useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { useCanvasTotalsStore, type CanvasQueueRow } from '../stores/canvasTotalsStore'
 import type { CanvasSessionState } from '../stores/canvasStore'
 import type { CanvasReviewSessionState } from '../stores/canvasReviewStore'
@@ -25,10 +25,12 @@ export function canvasQueueOf(
   // canvas's rounds were counted one per submitted review.
   let liveOwed = 0
   if (liveLoaded) {
-    const owedKinds =
-      (canvasLive?.awaitingReview ? 1 : 0) +
-      (reviewLive ? reviewGroupsOf(reviewLive).filter((g) => g.waitingOn === 'you').length : 0)
-    liveOwed = owedKinds > 0 ? 1 : 0
+    // C1: the ONLY thing the queue counts is an open version awaiting the
+    // user's review (the awaitingReview slot). Rounds "awaiting verdicts" no
+    // longer exist as user debt — a submit carries the verdict, and legacy
+    // piles settle on load — so the phantom Review-needed pill is impossible
+    // by construction rather than capped.
+    liveOwed = canvasLive?.awaitingReview ? 1 : 0
   }
   if (!totals?.loaded) return liveOwed
   const elsewhere = Math.max(0, totals.queue - totals.queueOnActive)
@@ -42,10 +44,7 @@ export function useCanvasQueue(sessionId: string): number {
     const st = s.bySessionId[sessionId]
     return st?.loaded ? (st.awaitingReview ? 1 : 0) : undefined
   })
-  const verdict = useCanvasReviewStore((s) => {
-    const st = s.bySessionId[sessionId]
-    return st?.loaded ? reviewGroupsOf(st).filter((g) => g.waitingOn === 'you').length : undefined
-  })
+  const reviewsLoaded = useCanvasReviewStore((s) => (s.bySessionId[sessionId]?.loaded ? 1 : undefined))
   const sweepQueue = useCanvasTotalsStore((s) => {
     const t = s.bySessionId[sessionId]
     return t?.loaded ? t.queue : undefined
@@ -54,9 +53,9 @@ export function useCanvasQueue(sessionId: string): number {
     const t = s.bySessionId[sessionId]
     return t?.loaded ? t.queueOnActive : undefined
   })
-  const liveLoaded = awaiting !== undefined && verdict !== undefined
-  // Max 1 for the on-screen canvas (#470), mirroring canvasQueueOf.
-  const liveOwed = liveLoaded ? (awaiting + verdict > 0 ? 1 : 0) : 0
+  const liveLoaded = awaiting !== undefined && reviewsLoaded !== undefined
+  // C1: one open version per artifact is the whole count (see canvasQueueOf).
+  const liveOwed = liveLoaded ? (awaiting > 0 ? 1 : 0) : 0
   if (sweepQueue === undefined || sweepOnActive === undefined) return liveOwed
   return liveLoaded ? Math.max(0, sweepQueue - sweepOnActive) + liveOwed : sweepQueue
 }
