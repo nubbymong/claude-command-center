@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.4] - 2026-08-26
+
+> A first What's New page for upgraders explains the rename to AI Code Conductor and previews the 2.2 roadmap — support for more coding agents beside Claude Code and Codex. The Agent Canvas review flow is rebuilt: a version is approved or rejected as one decision, only one version is ever open for review at a time, and the counts, header and history are all clearer for it. Plus a global setting for where claude.ai artifacts and sign-in open — a separate window, or in the app.
+
+### Added
+- What's New opens with the rename story. Upgraders see "Claude Command Center is now AI Code Conductor", with a roadmap band previewing 2.2 — Copilot CLI, Google Antigravity, Qwen Code and OpenCode joining Claude Code and Codex, plus local models through Ollama. Nothing about your install changes; the roadmap is tentative. Fresh installs meet the same page as an introduction.
+- Choose where claude.ai opens. A global setting routes the Artifacts button and the claude.ai sign-in to either a separate window (the default) or the in-app browser pane; the Artifacts button also offers the choice on right-click. Your existing sign-in preference is kept.
+
+### Changed
+- Reviewing on the Agent Canvas is a decision now. You approve or reject a version — a reject asks for a note — and Submit stays inactive until you have decided, so a review can never be left half-finished. Rendering a new version supersedes the old one, so only one version of a thing is ever open for review at a time, and the old "5 reviews open" pile-ups are gone.
+- The canvas header is two clean rows: what you are looking at (a Library way-back, the mode, the subject, and one version control), then the tools (X-Ray Off/Stealth/On, Sketch, Region, Sign off). History now lists each version with its outcome — approved, rejected, superseded — so the trail is readable at a glance.
+
+### Fixed
+- Canvas annotations stay on the version you drew them on. A region or sketch made on one version no longer paints over a later one.
+
 ## [2.1.0-rc.3] - 2026-08-25
 
 > claude.ai comes into the app. The browser pane gains a pinned "claude.ai — your artifacts" entry that opens signed in as the session's own account, and Settings → Accounts can route the whole claude.ai sign-in into that in-app pane instead of a separate window — signed in once, it stays signed in for every surface that account owns. Ask Conductor becomes a slim help session that drops the project chrome it never needed, the browser pane gets a Clear back to its start page, and the Agent Canvas gains a real sign-off state. Plus a crop of fixes from the rc pass: multiple sessions of one config are told apart in the Running list, a resume-account setting, and a batch of contrast and canvas-confirm hardening.
@@ -1326,6 +1341,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.4]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.4
 [2.1.0-rc.3]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.3
 [2.1.0-rc.2]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.2
 [2.1.0-rc.1]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.1
