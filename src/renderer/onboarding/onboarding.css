@@ -491,12 +491,7 @@
 .ob-root .rn-badge.rn-now { color: var(--surface-sunken); background: var(--ob); }
 .ob-root .rn-badge.rn-beta { color: var(--surface-sunken); background: var(--status-warning); }
 .ob-root .rn-badge.rn-b22 { color: var(--status-warning); background: var(--surface-raised); border: 1px solid color-mix(in srgb, var(--status-warning) 50%, transparent); }
-.ob-root .rn-deep { margin-top: 16px; border-top: 1px solid var(--border-subtle); padding-top: 13px; font-size: 12.5px; color: var(--text-secondary); text-align: left; line-height: 1.55; }
-.ob-root .rn-deep b { color: var(--text-primary); font-weight: 650; }
-.ob-root .rn-codex-line { color: var(--ob); font-weight: 600; }
 .ob-root .rn-points { display: flex; justify-content: center; gap: 34px; margin-top: 26px; flex-wrap: wrap; }
 .ob-root .rn-pt { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--text-secondary); }
 .ob-root .rn-pt b { color: var(--text-primary); font-weight: 650; }
-.ob-root .rn-smallprint { margin-top: 18px; font-size: 11.5px; color: var(--text-muted); }
-.ob-root .rn-smallprint b { color: var(--text-secondary); }
 @media (max-width: 1000px) { .ob-root .rn-rm-flex { flex-direction: column; } .ob-root .rn-rm-arrow { display: none; } .ob-root .rn-rm-tiles { flex-wrap: wrap; } }

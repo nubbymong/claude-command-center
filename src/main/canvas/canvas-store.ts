@@ -1424,21 +1424,30 @@ export function renderVersion(
   // the round now awaits the user's first review; a draft leaves whatever was
   // already owed exactly as it stood.
   const awaitingReview = isDraft ? base.awaitingReview : { versionId, at: createdAt }
-  // C1: a READY render supersedes the artifact's previously OPEN version — the
-  // one-open-per-artifact invariant is enforced here, at the only place a new
-  // open version can be born, so "23 versions pending review" is impossible by
-  // construction rather than by patched counters. Verdicted, archived and
-  // draft versions are untouched; the ids are reported to the caller so the
-  // ingress can settle the superseded versions' review notes.
+  // C1: a READY render supersedes the ARTIFACT's previously open version —
+  // the one-open-per-artifact invariant, enforced at the only place a new
+  // open version can be born, so "23 versions pending review" is impossible
+  // by construction rather than by patched counters. Scoped to the run the
+  // new version JOINS (same mode, not archived — artifactRuns' own break
+  // rule): a mockup render must not stamp the plan beside it, whose review
+  // may be mid-flight (quality review HIGH-1, proven repro). Verdicted,
+  // archived and draft versions are untouched; the ids are reported so the
+  // ingress can settle the superseded versions' notes.
   const priorVersions = reuseLatest ? base.versions.slice(0, -1) : base.versions
   const supersededIds: string[] = []
-  const stampedPrior = isDraft
-    ? priorVersions
-    : priorVersions.map((v) => {
-        if (v.draft || v.archived || v.verdict) return v
+  let stampedPrior = priorVersions
+  if (!isDraft) {
+    const runs = artifactRuns(priorVersions)
+    const lastRun = runs[runs.length - 1]
+    const joins = lastRun && lastRun[0].mode === version.mode && !lastRun[0].archived ? new Set(lastRun.map((v) => v.id)) : null
+    if (joins) {
+      stampedPrior = priorVersions.map((v) => {
+        if (!joins.has(v.id) || v.draft || v.archived || v.verdict) return v
         supersededIds.push(v.id)
         return { ...v, verdict: { state: 'superseded', by: 'system', at: createdAt } satisfies CanvasVersionVerdict }
       })
+    }
+  }
   const nextRecord: CanvasRecord = {
     ...base,
     ...(cwdStamp && !base.cwd ? { cwd: cwdStamp } : {}),
@@ -1609,7 +1618,9 @@ export function reopenVersionForReview(
   if (target.draft) return { error: 'that version is still a draft' }
   const run = artifactRunContaining(record.versions, versionId)
   if (!run) return { error: 'that version is not part of a reviewable artifact' }
-  const laterIds = new Set(run.filter((v) => !v.draft && v.createdAt > target.createdAt).map((v) => v.id))
+  // Later = run position, not timestamps (quality LOW-3): stamps reset
+  // across restarts, run order never lies.
+  const laterIds = new Set(run.slice(run.findIndex((v) => v.id === target.id) + 1).filter((v) => !v.draft).map((v) => v.id))
   const at = new Date().toISOString()
   const versions = record.versions.map((v) => {
     if (v.id === target.id) {

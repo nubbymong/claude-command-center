@@ -192,7 +192,9 @@ export function WhatsNewV2Step({
    *  the full 2.0+2.1 story when there is no lastSeenVersion. */
   fresh?: boolean
 }) {
-  const lastSeen = useAppMetaStore.getState().meta.lastSeenVersion
+  // Subscribed, not getState() (quality note): a stamp landing while the
+  // step is mounted must re-derive the prelude instead of stranding pageIx.
+  const lastSeen = useAppMetaStore((s) => s.meta.lastSeenVersion)
   const sections = sectionsFor(lastSeen, LINE_SOURCE)
     .map((s) => (fresh ? { ...s, items: s.items.filter((it) => !it.upgradeOnly) } : s))
     .filter((s) => s.items.length > 0)

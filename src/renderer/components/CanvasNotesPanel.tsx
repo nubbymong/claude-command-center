@@ -202,7 +202,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
   const versionOpen = !version.draft && !version.verdict
   useEffect(() => { setDecision(null) }, [version.id])
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [justSubmitted, setJustSubmitted] = useState<{ id: string; count: number } | null>(null)
+  const [justSubmitted, setJustSubmitted] = useState<{ kind?: 'verdict' | 'review'; id: string; count: number } | null>(null)
   // The auto-return timer moved into excalidrawStore with #478
   // (beginSubmitReturn) — the landing must outlive this panel, since the
   // landing itself is what unmounts it, and it CLOSES rather than toggles so
@@ -599,9 +599,8 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
           setSubmitError(r.error)
           return
         }
-        window.electronAPI.pty.write(sessionId, `Approved ${version.id} on the canvas · canvas_version_verdict recorded
-`)
-        setJustSubmitted({ id: version.id, count: 0 })
+        window.electronAPI.pty.write(sessionId, `Approved ${version.id} on the canvas · canvas_version_verdict recorded\r`)
+        setJustSubmitted({ kind: 'verdict', id: version.id, count: 0 })
         setDecision(null)
         useExcalidrawStore.getState().beginSubmitReturn(sessionId)
       } finally {
@@ -651,7 +650,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
       // The pull side of D10: one line in chat carries the id; the agent
       // fetches the payload itself via canvas_review.
       window.electronAPI.pty.write(sessionId, `Review #${review.id.slice(1)} — ${count} notes · canvas_review ${review.id}\r`)
-      setJustSubmitted({ id: review.id, count })
+      setJustSubmitted({ kind: 'review', id: review.id, count })
       setDecision(null)
       // Hand back to the session automatically. Submitting is the moment the
       // work moves from the user to the agent, and the agent has ALREADY been
@@ -1286,7 +1285,9 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
         {justSubmitted ? (
           <div className="flex items-center gap-2">
             <span className="text-green text-[11px]">
-              Review #{justSubmitted.id.slice(1)} submitted — {justSubmitted.count} note{justSubmitted.count === 1 ? '' : 's'}
+              {justSubmitted.kind === 'verdict'
+                ? `${justSubmitted.id} approved — handed to the agent`
+                : `Review #${justSubmitted.id.slice(1)} submitted — ${justSubmitted.count} note${justSubmitted.count === 1 ? '' : 's'}`}
             </span>
             <div className="flex-1" />
             <button

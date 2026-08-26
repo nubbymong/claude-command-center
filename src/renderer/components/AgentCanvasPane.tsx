@@ -38,7 +38,6 @@ import {
   type CanvasXrayMode,
 } from '../canvas/xray-mode'
 import { openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
-import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 
 /** How long a frame may sit silent before the pane stops claiming it is
  *  loading. A 404, a CSP-blocked bridge script and a crashed page otherwise
@@ -262,6 +261,12 @@ export default function AgentCanvasPane({ sessionId, isActive = false }: Props) 
           the first thing read. */}
       <CanvasFiledStrip sessionId={sessionId} />
       <CanvasSurface
+        // Keyed by CANVAS (quality MED-2): a Library "open here" swaps the
+        // canvas under a mounted surface, and every per-version mechanism
+        // (the armed decision, the sketch stash, version-stamp maps) keys on
+        // version ids that repeat across canvases — v1 exists on all of them.
+        // Remounting is the one reset that cannot miss a ref.
+        key={canvasState.canvasId}
         sessionId={sessionId}
         canvasId={canvasState.canvasId}
         title={canvasState.title}
@@ -1331,10 +1336,8 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             {formatCanvasZoom(zoom)}
           </button>
         )}
-        {/* Two-level history (item C, phase 4): a per-artifact version stepper
-            + a History ▾ picker, replacing the flat version select. A single
-            version of a single artifact renders neither (the control returns
-            null), so the empty-state chrome stays quiet. */}
+        {/* ONE version control (C3): History with the stepper folded in and
+            the pending pill riding it; its dropdown IS the version list. */}
         <CanvasHistoryControl
           versions={versions}
           activeVersionId={version.id}
@@ -1587,6 +1590,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             {focusStageRect && (
               <>
                 <div
+                  data-testid="canvas-focus-box"
                   className="absolute border-2 border-peach rounded-sm"
                   style={{
                     left: focusStageRect.x,

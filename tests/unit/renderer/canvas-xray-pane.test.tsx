@@ -730,3 +730,21 @@ describe('the header switch', () => {
     expect(hoverReportingCalls()).toEqual([false, true, false])
   })
 })
+
+describe('C1: version-stamped focus paint (owner bug report 2026-08-26)', () => {
+  it('a region lock paints ONLY on the version it was made on', async () => {
+    await renderPane('on')
+    await act(async () => { handlers().onViewport(VIEWPORT) })
+    // Lock a region against the DISPLAYED version — it paints.
+    await act(async () => {
+      useCanvasReviewStore.getState().setRegionFocus(SID, { x: 10, y: 10, width: 40, height: 20 }, 'v1')
+    })
+    expect(container.querySelector('[data-testid="canvas-focus-box"]')).not.toBeNull()
+    // The same lock against a DIFFERENT version must not paint here — the v5
+    // region repainted verbatim over v6 was the reported bug.
+    await act(async () => {
+      useCanvasReviewStore.getState().setRegionFocus(SID, { x: 10, y: 10, width: 40, height: 20 }, 'v9')
+    })
+    expect(container.querySelector('[data-testid="canvas-focus-box"]')).toBeNull()
+  })
+})

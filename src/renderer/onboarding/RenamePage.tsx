@@ -146,7 +146,7 @@ export function RenamePageView({ fresh }: { fresh: boolean }) {
         <p className="rn-tagline" data-ux-id="rename-tagline">
           {/* Owner-approved copy (canvas v8, R7/R8): one plain line; the fresh
               cohort has no "same" to compare against, so it drops that word. */}
-          {fresh ? <>An exciting roadmap ahead (tentative preview below).</> : <>Same application, exciting new roadmap (tentative preview below).</>}
+          {fresh ? <>Exciting new roadmap (tentative preview below).</> : <>Same application, exciting new roadmap (tentative preview below).</>}
         </p>
 
         <div className="rn-roadmap" data-ux-id="roadmap-band">

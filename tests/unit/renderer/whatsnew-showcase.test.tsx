@@ -331,6 +331,7 @@ describe('#525 — the rename/roadmap page', () => {
     expect(q('rename-lead-line')!.textContent).not.toContain('is now')
     // Spec-review F1/F2: no "Same application" without a before, and no
     // carry-over bullet for someone with nothing to carry over.
+    expect(q('rename-tagline')!.textContent).toBe('Exciting new roadmap (tentative preview below).')
     expect(q('rename-tagline')!.textContent).not.toContain('Same application')
     expect(q('rename-points')).toBeNull()
   })

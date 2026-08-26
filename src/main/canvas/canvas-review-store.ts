@@ -1399,10 +1399,13 @@ export function submitReview(
   // auto-superseded mid-review, say) downgrades to a log — the notes landed,
   // and the version's outcome is already truthfully recorded as superseded.
   if (decision === 'approve' || decision === 'reject') {
+    // The rejection gist (C3): History shows WHY a version fell, so the
+    // verdict carries the round's first note line.
+    const firstNote = next.annotations.find((a) => members.has(a.id) && a.note.trim().length > 0)?.note
     const ruled = setVersionVerdict(
       sessionId,
       frozenVersionId,
-      { state: decision === 'approve' ? 'approved' : 'rejected' },
+      { state: decision === 'approve' ? 'approved' : 'rejected', ...(decision === 'reject' && firstNote ? { note: firstNote } : {}) },
       'user',
     )
     if ('error' in ruled) logInfo(`[canvas-review] version verdict skipped for ${frozenVersionId}: ${ruled.error}`)
