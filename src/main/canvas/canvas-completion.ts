@@ -25,12 +25,18 @@ import type { CanvasCompletion, CanvasState } from '../../shared/canvas'
  * close-out, the dismiss-all sweep (which also clears the awaiting-review
  * term checked above) — or an agent write behind a mechanical barrier: the
  * #470 supersede sweep (gated on `isAgentCloseable`, i.e. the seen barrier)
- * and the close-out the store refuses until the user has SEEN the round. The
- * one agent write with NO seen barrier is the chat pick (`canvas_pick`),
- * deliberately: it rests on its own contract — the user's explicit words in
- * chat, `pickSource: 'chat'` provenance, one-click reopen — which is the
- * same honor-system tier as this tool itself. Completion inherits that tier
- * for the pick path rather than pretending a mechanical barrier covers it.
+ * and the close-out the store refuses until the user has SEEN the round.
+ *
+ * TWO agent writes have NO mechanical seen barrier and rest on the honor-
+ * system contract (explicit user words in chat, chat provenance, one-click
+ * reopen): the chat pick (`canvas_pick`) and — added with C1 — the chat-
+ * recorded VERSION verdict (`canvas_version_verdict`), which clears
+ * `awaitingReview`. For the pick that tier is fine because a pick cannot make
+ * a canvas *look reviewed when it was not*. A version approval can: it clears
+ * the awaiting-review barrier below. So an AGENT-driven completion may not
+ * rest on the agent's OWN chat-recorded sign-off — see the `agent-chat` guard
+ * below. The user's pane button (`by: 'user'`) is unaffected: a person
+ * clicking Mark complete is themselves the review.
  *
  * Fail-closed on an unreadable review store: a reviews.json that exists but
  * will not read refuses completion — "could not tell" must never sign off as
@@ -71,6 +77,20 @@ export function completeCanvasGuarded(
   // below. (The renderer's blocked-button predicate includes the same term.)
   if (canvas.awaitingReview) {
     return { error: 'not everything is settled: a render is still awaiting the user’s first review' }
+  }
+  // The C1 completion guard (adversarial round 2, MEDIUM): a chat-recorded
+  // version verdict (`canvas_version_verdict`, stamped by:'agent-chat') clears
+  // awaitingReview above — so without this an agent could render, self-record
+  // "approved", and sign off, all with zero user gestures. An AGENT completion
+  // may not rest on the agent's own chat-relayed approval: if the latest ready
+  // version's sign-off is agent-chat, the canvas is treated as still awaiting
+  // the user for the purpose of AGENT completion. A user pane completion
+  // (by:'user') is the user reviewing it themselves and is never blocked here.
+  if (by === 'agent') {
+    const latestReady = [...canvas.versions].reverse().find((v) => !v.draft)
+    if (latestReady?.verdict?.by === 'agent-chat') {
+      return { error: 'not everything is settled: this version’s sign-off was recorded from chat — the user completes it from the Canvas pane' }
+    }
   }
   const counts = getReviewCountsForCanvas(canvasId)
   if (!counts) {

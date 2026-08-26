@@ -70,6 +70,30 @@ describe('the completion guard — nothing owed, or no sign-off', () => {
     expect(err(res)).toContain('awaiting the user’s first review')
   })
 
+  it('ADV round 2: an AGENT cannot render, self-approve from chat, and self-complete (MEDIUM)', () => {
+    // The bypass: canvas_version_verdict (agent-chat) clears awaitingReview,
+    // which the guard leaned on — so without the agent-chat guard the whole
+    // render → self-approve → sign-off runs with zero user gestures.
+    const title = `Self approve ${++seq}`
+    const r = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>x</p>', title })
+    const ruled = canvasStore.setVersionVerdict(SID, r.versionId, { state: 'approved' }, 'agent-chat')
+    expect('error' in ruled).toBe(false) // the verdict itself is recorded (honest, from chat)
+    // ...but an AGENT completion may not rest on it.
+    const agent = completion.completeCanvasGuarded(r.canvasId, 'agent', SID)
+    expect(err(agent)).toContain('recorded from chat')
+    // The USER completing it themselves (pane button) is never blocked here.
+    const user = completion.completeCanvasGuarded(r.canvasId, 'user', SID)
+    expect('error' in user).toBe(false)
+  })
+
+  it('ADV round 2: a USER-submitted approval DOES let the agent complete', () => {
+    const title = `User approve ${++seq}`
+    const r = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>y</p>', title })
+    canvasStore.setVersionVerdict(SID, r.versionId, { state: 'approved' }, 'user') // the pane submit path
+    const agent = completion.completeCanvasGuarded(r.canvasId, 'agent', SID)
+    expect('error' in agent).toBe(false)
+  })
+
   it('ADV: refuses a DRAFT-ONLY canvas — nothing was ever offered to the user', () => {
     // The draft-render bypass (adversarial): a ready render sets awaitingReview
     // and writes reviews.json, but a draft (ready:false) does neither — so the

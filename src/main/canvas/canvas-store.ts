@@ -29,6 +29,7 @@ import {
   CanvasState,
   CanvasVersion,
   MAX_CANVAS_TITLE_CHARS,
+  MAX_PRIOR_VERDICTS,
   MAX_VERDICT_NOTE_CHARS,
   ReclaimableCanvas,
   artifactRunContaining,
@@ -1643,8 +1644,14 @@ export function reopenVersionForReview(
   const at = new Date().toISOString()
   // Push a verdict being cleared or overwritten into the audit trail rather
   // than dropping it (adv FINDING 2) — a user rejection survives a reopen.
-  const archived = (v: CanvasVersion): CanvasVersionVerdict[] | undefined =>
-    v.verdict ? [...(v.priorVerdicts ?? []), v.verdict] : v.priorVerdicts
+  // Clamped to the newest MAX_PRIOR_VERDICTS so a repeated reopen can never
+  // grow a version past the load-time cap and make sanitizeRecord DROP it
+  // (adv round 2 — reopen must be idempotent and non-destructive).
+  const archived = (v: CanvasVersion): CanvasVersionVerdict[] | undefined => {
+    if (!v.verdict) return v.priorVerdicts
+    const all = [...(v.priorVerdicts ?? []), v.verdict]
+    return all.slice(-MAX_PRIOR_VERDICTS)
+  }
   const versions = record.versions.map((v) => {
     if (v.id === target.id) {
       const { verdict: _v, ...restV } = v
@@ -1652,6 +1659,10 @@ export function reopenVersionForReview(
       return prior ? { ...restV, priorVerdicts: prior } : restV
     }
     if (laterIds.has(v.id)) {
+      // Idempotent: an already-withdrawn later version is left exactly as it
+      // is — re-withdrawing it would append a duplicate to priorVerdicts on
+      // every reopen and eventually breach the cap.
+      if (v.verdict?.state === 'withdrawn') return v
       const prior = archived(v)
       return { ...v, ...(prior ? { priorVerdicts: prior } : {}), verdict: { state: 'withdrawn', by, at } satisfies CanvasVersionVerdict }
     }

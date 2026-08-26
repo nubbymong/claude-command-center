@@ -242,4 +242,19 @@ describe('review-note settlement rides supersession', () => {
     // No agent-reachable path can produce by:'user' — that stamp is the
     // renderer IPC's alone (submitReview / versionVerdict handler).
   })
+
+  it('reopen is idempotent — repeated reopens never grow or drop the withdrawn audit trail (adv round 2)', () => {
+    render(1)
+    render(2)
+    render(3) // v1,v2 superseded, v3 open
+    for (let i = 0; i < 70; i++) store.reopenVersionForReview(SID, 'v1', 'agent-chat')
+    const v3 = versions().find((v) => v.id === 'v3')!
+    expect(v3.verdict).toMatchObject({ state: 'withdrawn' })
+    // The already-withdrawn later version is not re-withdrawn on every reopen,
+    // so priorVerdicts stays bounded and the version survives a reload.
+    expect((v3.priorVerdicts?.length ?? 0)).toBeLessThanOrEqual(32)
+    store._resetCanvasStoreForTest()
+    // 70 reopens did NOT breach the load cap and drop v2/v3.
+    expect(store.getCanvasStateForSession(SID)!.versions.map((v) => v.id)).toEqual(['v1', 'v2', 'v3'])
+  })
 })

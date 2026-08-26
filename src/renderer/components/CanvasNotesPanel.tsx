@@ -1336,7 +1336,9 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
               </div>
             ) : (
               <div className="text-[10px] text-overlay0 mb-1" data-testid="version-decided-hint">
-                {version.draft ? 'This version is still a draft.' : `${version.id} is already decided${version.verdict ? ` (${version.verdict.state})` : ''}.`}
+                {version.draft
+                  ? 'This version is still a draft.'
+                  : `${version.id} is already decided${version.verdict ? ` (${version.verdict.state}${version.verdict.by === 'agent-chat' ? ' · recorded from chat' : ''})` : ''}.`}
               </div>
             )}
             {decision === 'reject' && draftNotes.length === 0 && (

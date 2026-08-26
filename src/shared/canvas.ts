@@ -56,6 +56,9 @@ export interface CanvasVersionVerdict {
   note?: string
 }
 
+/** Cap on a version's archived verdict trail (adv round 2): bounds the row
+ *  and keeps a repeated reopen from ever breaching the load-time drop cap. */
+export const MAX_PRIOR_VERDICTS = 32
 export const VERSION_VERDICT_STATES = ['approved', 'rejected', 'superseded', 'withdrawn', 'dismissed'] as const
 export const VERSION_VERDICT_ACTORS = ['user', 'agent-chat', 'system'] as const
 
