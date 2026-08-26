@@ -29,8 +29,12 @@ import {
   CanvasState,
   CanvasVersion,
   MAX_CANVAS_TITLE_CHARS,
+  MAX_VERDICT_NOTE_CHARS,
   ReclaimableCanvas,
   artifactRunContaining,
+  artifactRuns,
+  isKeepableVerdict,
+  type CanvasVersionVerdict,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { deriveInstallKey } from '../install-secret'
@@ -796,6 +800,10 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   // `draft`: a hand-edited truthy string must not survive into a field the
   // history projection reads.
   if (ver.archived !== undefined && typeof ver.archived !== 'boolean') return false
+  // The C1 verdict is OUR shape or absent — the queue derivation and the
+  // History badges read it, so a hand-edited blob is dropped with its version
+  // (never repaired), the same all-or-nothing rule every field here follows.
+  if (ver.verdict !== undefined && !isKeepableVerdict(ver.verdict)) return false
   // A hand-edited record must not smuggle a traversing/colon/device `entry`
   // past the live-render normalizer (the empty-path + SPA branches serve the
   // entry WITHOUT re-running the URL segment filter). distRoot containment is
@@ -851,6 +859,17 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     if (!isKeepableVersion(v)) continue
     if (versions.some((kept) => kept.id === v.id)) continue // ids are the serve key
     versions.push(v)
+  }
+  // C1 healing: history written before version verdicts existed piles up as
+  // "open" rounds — the exact phantom-count bug the state machine kills. Every
+  // non-latest ready version of each artifact run is stamped SUPERSEDED by the
+  // render that followed it (its successor's timestamp, actor 'system').
+  // Idempotent — already-stamped versions are left alone — and in-memory like
+  // the rest of this function: the next persist writes the healed shape.
+  for (const run of artifactRuns(versions)) {
+    for (let i = 0; i < run.length - 1; i++) {
+      if (!run[i].verdict) run[i].verdict = { state: 'superseded', by: 'system', at: run[i + 1].createdAt }
+    }
   }
   // The active version must still exist. Only re-pointed when the one it named
   // was dropped — falling back to the newest SURVIVING version keeps the pane
@@ -1202,7 +1221,15 @@ function findFiledCanvas(sessionId: string, title: string): CanvasRecord | undef
 export function renderVersion(
   sessionId: string,
   source: CanvasRenderSource,
-): { canvasId: string; versionId: string; draft?: boolean; filed?: { canvasId: string; returnedToExisting: boolean } } {
+): {
+  canvasId: string
+  versionId: string
+  draft?: boolean
+  filed?: { canvasId: string; returnedToExisting: boolean }
+  /** C1: ready versions this render auto-superseded — the ingress settles
+   *  their review notes (the store cannot import the review store). */
+  superseded?: string[]
+} {
   if (!SESSION_ID_RE.test(sessionId)) throw new Error('invalid session id')
 
   // A COMPLETED canvas bound as current (the user opened it from the library
@@ -1397,6 +1424,21 @@ export function renderVersion(
   // the round now awaits the user's first review; a draft leaves whatever was
   // already owed exactly as it stood.
   const awaitingReview = isDraft ? base.awaitingReview : { versionId, at: createdAt }
+  // C1: a READY render supersedes the artifact's previously OPEN version — the
+  // one-open-per-artifact invariant is enforced here, at the only place a new
+  // open version can be born, so "23 versions pending review" is impossible by
+  // construction rather than by patched counters. Verdicted, archived and
+  // draft versions are untouched; the ids are reported to the caller so the
+  // ingress can settle the superseded versions' review notes.
+  const priorVersions = reuseLatest ? base.versions.slice(0, -1) : base.versions
+  const supersededIds: string[] = []
+  const stampedPrior = isDraft
+    ? priorVersions
+    : priorVersions.map((v) => {
+        if (v.draft || v.archived || v.verdict) return v
+        supersededIds.push(v.id)
+        return { ...v, verdict: { state: 'superseded', by: 'system', at: createdAt } satisfies CanvasVersionVerdict }
+      })
   const nextRecord: CanvasRecord = {
     ...base,
     ...(cwdStamp && !base.cwd ? { cwd: cwdStamp } : {}),
@@ -1408,7 +1450,7 @@ export function renderVersion(
     // overwrite a readable one — that would relabel "Checkout flow" as "🔥🔥🔥"
     // in the library while the notes underneath stayed about checkout.
     ...(title && (comparable || !base.title) ? { title } : {}),
-    versions: reuseLatest ? [...base.versions.slice(0, -1), version] : [...base.versions, version],
+    versions: reuseLatest ? [...stampedPrior, version] : [...stampedPrior, version],
     activeVersionId: versionId,
     // Advance the high-water mark only when a NEW id was minted — a superseding
     // draft reuses its id and must not burn a number. Never goes backwards.
@@ -1450,6 +1492,7 @@ export function renderVersion(
     versionId,
     ...(isDraft ? { draft: true as const } : {}),
     ...(filedId ? { filed: { canvasId: filedId, returnedToExisting } } : {}),
+    ...(supersededIds.length ? { superseded: supersededIds } : {}),
   }
 }
 
@@ -1474,6 +1517,120 @@ export function clearAwaitingReview(canvasId: string): void {
   persist(next)
   canvases.set(canvasId, next)
   emitChanged(next)
+}
+
+/** Verdict-note hygiene: user (or user-relayed) prose — cap and strip the
+ *  control characters that could smuggle markup into the audit trail, keeping
+ *  ordinary newlines and tabs. */
+function cleanVerdictNote(note: unknown): string | undefined {
+  if (typeof note !== 'string') return undefined
+  const cleaned = note.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, '').trim()
+  if (!cleaned) return undefined
+  return cleaned.slice(0, MAX_VERDICT_NOTE_CHARS)
+}
+
+/** The OPEN version (C1) of the artifact run containing `versionId` — or of
+ *  the active artifact when no id is given. */
+function openVersionInRecord(record: CanvasRecord, versionId?: string): CanvasVersion | null {
+  const anchor = versionId ?? record.activeVersionId
+  if (!anchor) return null
+  const run = artifactRunContaining(record.versions, anchor)
+  if (!run) return null
+  const lastReady = [...run].reverse().find((v) => !v.draft)
+  return lastReady && !lastReady.verdict ? lastReady : null
+}
+
+/**
+ * Stamp a version's review outcome (C1) — the write behind BOTH mouths:
+ * the user's own submit in the pane (`by: 'user'`) and the agent recording
+ * the user's chat words (`by: 'agent-chat'`, always rendered as such).
+ *
+ * The target is the named version, or the active artifact's OPEN version when
+ * none is named. Refused for drafts, for a version already decided (reopen it
+ * first — a verdict is never silently overwritten), and on a completed
+ * canvas. Clearing `awaitingReview` rides the same persist so the queue and
+ * the verdict can never disagree.
+ */
+export function setVersionVerdict(
+  sessionId: string,
+  versionId: string | undefined,
+  decision: { state: 'approved' | 'rejected' | 'dismissed'; note?: string },
+  by: 'user' | 'agent-chat',
+): CanvasState | { error: string } {
+  if (!SESSION_ID_RE.test(sessionId)) return { error: 'invalid session id' }
+  if (versionId !== undefined && !CANVAS_VERSION_ID_RE.test(versionId)) return { error: 'invalid version id' }
+  if (decision.state !== 'approved' && decision.state !== 'rejected' && decision.state !== 'dismissed') {
+    return { error: 'invalid verdict state' }
+  }
+  const record = getRecordForSession(sessionId)
+  if (!record) return { error: 'no canvas for this session' }
+  if (record.completed) return { error: 'this canvas is signed off; reopen it from the library first' }
+  const target = versionId
+    ? record.versions.find((v) => v.id === versionId)
+    : (openVersionInRecord(record) ?? undefined)
+  if (!target) return { error: versionId ? `no version ${versionId} on this canvas` : 'no open version awaiting a verdict' }
+  if (target.draft) return { error: 'that version is still a draft' }
+  if (target.verdict) return { error: `${target.id} is already decided (${target.verdict.state}) — reopen it first` }
+  const verdict: CanvasVersionVerdict = {
+    state: decision.state,
+    by,
+    at: new Date().toISOString(),
+    ...(cleanVerdictNote(decision.note) ? { note: cleanVerdictNote(decision.note) } : {}),
+  }
+  const versions = record.versions.map((v) => (v.id === target.id ? { ...v, verdict } : v))
+  const clearsAwaiting = record.awaitingReview?.versionId === target.id
+  const { awaitingReview: _aw, ...rest } = record
+  const next: CanvasRecord = { ...rest, versions, ...(clearsAwaiting || !record.awaitingReview ? {} : { awaitingReview: record.awaitingReview }) }
+  persist(next)
+  canvases.set(record.canvasId, next)
+  emitChanged(next)
+  return toState(next)
+}
+
+/**
+ * Reopen a version for review (C1 flexibility: "go back to v5, get rid of
+ * v6"). The target's verdict is cleared — it becomes the artifact's one OPEN
+ * version — and every LATER ready version in the same artifact is stamped
+ * WITHDRAWN (hidden from the default history, kept in the audit trail). The
+ * pane is pointed back at it. `by` records whose instruction did it.
+ */
+export function reopenVersionForReview(
+  sessionId: string,
+  versionId: string,
+  by: 'user' | 'agent-chat',
+): { state: CanvasState; withdrawn: string[] } | { error: string } {
+  if (!SESSION_ID_RE.test(sessionId)) return { error: 'invalid session id' }
+  if (!CANVAS_VERSION_ID_RE.test(versionId)) return { error: 'invalid version id' }
+  const record = getRecordForSession(sessionId)
+  if (!record) return { error: 'no canvas for this session' }
+  if (record.completed) return { error: 'this canvas is signed off; reopen it from the library first' }
+  const target = record.versions.find((v) => v.id === versionId)
+  if (!target) return { error: `no version ${versionId} on this canvas` }
+  if (target.draft) return { error: 'that version is still a draft' }
+  const run = artifactRunContaining(record.versions, versionId)
+  if (!run) return { error: 'that version is not part of a reviewable artifact' }
+  const laterIds = new Set(run.filter((v) => !v.draft && v.createdAt > target.createdAt).map((v) => v.id))
+  const at = new Date().toISOString()
+  const versions = record.versions.map((v) => {
+    if (v.id === target.id) {
+      const { verdict: _v, ...restV } = v
+      return restV
+    }
+    if (laterIds.has(v.id)) {
+      return { ...v, verdict: { state: 'withdrawn', by, at } satisfies CanvasVersionVerdict }
+    }
+    return v
+  })
+  const next: CanvasRecord = {
+    ...record,
+    versions,
+    activeVersionId: target.id,
+    awaitingReview: { versionId: target.id, at },
+  }
+  persist(next)
+  canvases.set(record.canvasId, next)
+  emitChanged(next)
+  return { state: toState(next), withdrawn: [...laterIds] }
 }
 
 /**

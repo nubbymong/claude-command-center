@@ -324,9 +324,9 @@ describe('registration', () => {
   it('advertises canvas_snapshot with a schema the SDK can accept', () => {
     const registered = vi.fn()
     registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
-    // snapshot, render, review, resolve, verdict (#365), pick (chat picks),
-    // complete (#476).
-    expect(registered).toHaveBeenCalledTimes(7)
+    // snapshot, render, review, resolve, verdict (#365), version_verdict
+    // (C1 chat verdicts + reopen), pick (chat picks), complete (#476).
+    expect(registered).toHaveBeenCalledTimes(8)
     const [name, description, shape, handler] = registered.mock.calls[0]
     expect(name).toBe('canvas_snapshot')
     expect(String(description)).toMatch(/scoped/i)
@@ -380,7 +380,8 @@ describe('registration', () => {
   it('advertises canvas_pick, explicit-instruction-only, with the reopen escape hatch', () => {
     const registered = vi.fn()
     registerCanvasTools({ tool: registered }, z, () => 'sess-mine', deps())
-    const [name, description, shape, handler] = registered.mock.calls[5]
+    const call = registered.mock.calls.find((c: unknown[]) => c[0] === 'canvas_pick')!
+    const [name, description, shape, handler] = call
     expect(name).toBe('canvas_pick')
     // The description is the only place the "did the user actually say it"
     // rule can live, so it must carry all three legs: explicit words only,
@@ -872,6 +873,7 @@ describe('canvas_render', () => {
       'canvas_review',
       'canvas_snapshot',
       'canvas_verdict',
+      'canvas_version_verdict',
     ])
 
     const reply = await tools.canvas_render({ mode: 'design', html: '<p>hi</p>' })

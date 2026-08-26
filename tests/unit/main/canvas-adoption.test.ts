@@ -155,7 +155,7 @@ describe('reclaim candidates + adoptCanvasForSession (user-chosen)', () => {
     // THE bug being locked out: the next render is v2 on the SAME canvas, not
     // v1 on a parallel one.
     const next = renderAs(SID_B, CWD, CONV_1, 'two')
-    expect(next).toEqual({ canvasId, versionId: 'v2' })
+    expect(next).toEqual({ canvasId, versionId: 'v2', superseded: ['v1'] })
   })
 
   it('strips every format control out of the cwd the card displays', () => {

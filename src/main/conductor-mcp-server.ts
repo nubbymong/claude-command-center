@@ -42,7 +42,7 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { registerCanvasTools } from './canvas-mcp-tool'
-import { canvasRootsForSession, canvasRootRefusalFor, getAgentCanvasStateForSession, getCanvasStateForSession, renderVersion, resolveInsideCanvasRoot } from './canvas/canvas-store'
+import { canvasRootsForSession, canvasRootRefusalFor, getAgentCanvasStateForSession, getCanvasStateForSession, renderVersion, reopenVersionForReview, resolveInsideCanvasRoot, setVersionVerdict } from './canvas/canvas-store'
 import { completeCanvasGuarded } from './canvas/canvas-completion'
 import {
   closeAnnotationsByAgent,
@@ -50,6 +50,7 @@ import {
   getReviewPayload,
   markAnnotationsAddressed,
   recordChatPick,
+  settleReviewsForSupersededVersions,
 } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
 import { readCheckedFile } from './utils/safe-file-read'
@@ -864,6 +865,12 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         getAgentCanvasState: (sessionId: string) => getAgentCanvasStateForSession(sessionId),
         requestSnapshot: (args) => requestCanvasSnapshot(args),
         renderVersion: (sessionId, canvasSource) => renderVersion(sessionId, canvasSource),
+        // C1 (owner state machine 2026-08-26): chat-stated version verdicts,
+        // reopen, and the settle seam. Pass-throughs for the same one-mutation-
+        // point reason closeByAgent is: the stores hold every rule.
+        setVersionVerdict: (sessionId, versionId, decision) => setVersionVerdict(sessionId, versionId, decision, 'agent-chat'),
+        reopenVersion: (sessionId, versionId) => reopenVersionForReview(sessionId, versionId, 'agent-chat'),
+        settleSuperseded: (canvasId, versionIds) => settleReviewsForSupersededVersions(canvasId, versionIds),
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
         readAttachment: (absPath) => fs.readFileSync(absPath),
         markAddressed: (sessionId, reviewId, ids, variantsByNote) => markAnnotationsAddressed(sessionId, reviewId, ids, variantsByNote),
