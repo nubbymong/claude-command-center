@@ -40,7 +40,13 @@ so nothing looks in-progress forever.
 
 These hold regardless of what any ticket says:
 
-1. **Never merge.** It runs to a PR. A human merges, after a desktop test.
+1. **Never merge to a protected branch.** It runs to a PR; a human merges to
+   `beta`/`main`/`release/*` after a desktop test. **Narrow carve-out (ADR-020):**
+   a session-integration run MAY merge a finished ticket branch INTO a `loop/*`
+   integration branch it owns — that is the aggregation step, enforced by
+   `loop-tree` (which refuses any non-`loop/*` target), and it still ends at ONE
+   human-merged PR against the protected base. Merging to the base itself is never
+   the loop's to do.
 2. **Never edit branch-protection rulesets** — repo-admin only.
 3. **Never mint or install a signing/credential key** — owner custody.
 4. **Never force-push, never `--no-verify`, never bypass hooks.**
