@@ -53,19 +53,19 @@ describe('totalsFromEntries', () => {
 })
 
 describe('the queue (#364): review-needed + verdict-owed, one derivation', () => {
-  it('counts each OWING CANVAS once (#470) — verdict rounds stay row detail, never stacking', () => {
+  it('C1: the queue is open versions ONLY — legacy verdictRounds never count', () => {
     const t = totalsFromEntries([
       entry({ canvasId: 'a', title: 'Tips', ownedByThisSession: true, isActiveForThisSession: true, openReviewCount: 1, awaitingReview: true, awaitingReviewAt: '2026-08-23T10:00:00Z' }),
+      // Legacy sweep data still reporting verdictRounds: not user debt any
+      // more (a submit carries the verdict; piles settle on load) — b must
+      // NOT queue.
       entry({ canvasId: 'b', title: 'Sidebar', ownedByThisSession: true, openReviewCount: 1, verdictRounds: 2, lastRenderedAt: '2026-08-23T11:00:00Z' }),
       entry({ canvasId: 'c', ownedByThisSession: true, openReviewCount: 0, verdictRounds: 0 }),
     ])
-    // The owner's rule: a count above 1 is legitimate across DIFFERENT
-    // canvases, never for the same one — b's 2 rounds are 1 owing canvas.
-    expect(t.queue).toBe(2)
+    expect(t.queue).toBe(1)
     expect(t.queueOnActive).toBe(1)
-    expect(t.queueRows.map((r) => `${r.canvasId}:${r.kind}`)).toEqual(['b:verdict', 'a:review'])
-    expect(t.queueRows[0]).toMatchObject({ rounds: 2, title: 'Sidebar', onActive: false })
-    expect(t.queueRows[1]).toMatchObject({ kind: 'review', at: '2026-08-23T10:00:00Z', onActive: true })
+    expect(t.queueRows.map((r) => `${r.canvasId}:${r.kind}`)).toEqual(['a:review'])
+    expect(t.queueRows[0]).toMatchObject({ kind: 'review', at: '2026-08-23T10:00:00Z', onActive: true })
   })
 
   it('a canvas owing BOTH — a fresh ready round and an older verdict round — still counts ONCE (#470)', () => {

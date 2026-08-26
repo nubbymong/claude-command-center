@@ -601,15 +601,16 @@ describe('a request the frame never acknowledged', () => {
 })
 
 describe('the redesigned chrome (item C)', () => {
-  it('#469: Inspect and X-Ray are one fused capsule, and the feature is named on it', async () => {
+  it('C3 (owner header 2026-08-26): the capsule is X-Ray alone — the Inspect chip died', async () => {
     await renderPane('on')
     const capsule = container.querySelector('[data-testid="canvas-inspect-capsule"]')!
-    expect(capsule, 'the fused capsule').toBeTruthy()
-    // Both halves live INSIDE the one bordered control...
-    expect(capsule.querySelector('[data-testid="canvas-tool-inspect"]')).toBeTruthy()
+    expect(capsule, 'the capsule').toBeTruthy()
+    expect(capsule.querySelector('[data-testid="canvas-tool-inspect"]')).toBeNull()
     expect(capsule.querySelector('[data-testid="canvas-xray-mode"]')).toBeTruthy()
-    // ...and the segment carries the feature's name.
     expect(capsule.textContent).toContain('X-RAY')
+    // The tools live on their own row, with the annotate label beside them.
+    const row = container.querySelector('[data-testid="canvas-tool-chips"]')!
+    expect(row.textContent).toContain('ANNOTATE')
   })
 
   it('leads with the mode as the title, with a keel line', async () => {
@@ -621,9 +622,8 @@ describe('the redesigned chrome (item C)', () => {
     expect(container.querySelector('[data-testid="canvas-mode-keel"]')).not.toBeNull()
   })
 
-  it('presents Inspect / Sketch / Region as tool chips, Inspect active in browse', async () => {
+  it('presents Sketch / Region as annotate chips, neither active in browse', async () => {
     await renderPane('on')
-    expect(container.querySelector('[data-testid="canvas-tool-inspect"]')?.getAttribute('aria-pressed')).toBe('true')
     expect(container.querySelector('[data-testid="canvas-tool-sketch"]')?.getAttribute('aria-pressed')).toBe('false')
     expect(container.querySelector('[data-testid="canvas-tool-region"]')?.getAttribute('aria-pressed')).toBe('false')
   })
@@ -631,8 +631,10 @@ describe('the redesigned chrome (item C)', () => {
   it('moves the active chip to Sketch when the pointer goes to the glass', async () => {
     await renderPane('on')
     await act(async () => useCanvasStore.getState().setInteractionMode(SID, 'draw'))
-    expect(container.querySelector('[data-testid="canvas-tool-inspect"]')?.getAttribute('aria-pressed')).toBe('false')
     expect(container.querySelector('[data-testid="canvas-tool-sketch"]')?.getAttribute('aria-pressed')).toBe('true')
+    // A click on any X-Ray segment is the way back to browse.
+    await act(async () => (container.querySelector('[data-testid="canvas-xray-on"]') as HTMLButtonElement).click())
+    expect(container.querySelector('[data-testid="canvas-tool-sketch"]')?.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('#476: viewing a completed canvas forces browse, disarms the marquee, and greys the note-taking chips', async () => {
