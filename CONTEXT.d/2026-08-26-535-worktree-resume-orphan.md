@@ -27,5 +27,17 @@ Gate: 44/44 in tests/unit/main/spawn-resume-command.test.ts (12 new), typecheck 
 full unit suite 8330 pass (9 unrelated vitest worker-pool startup timeouts under local resource
 contention -- flakes; the named file passes 32/32 in isolation; CI is the real gate).
 
+Adversarial review (ADR-009, PTY resume argv + fs moves): 4 attackers (injection/traversal,
+bypass, fail-open, platform-parity). Injection, path traversal, home-escape, projectsRoot
+containment and isHomeOrAncestor all held. Two MAJORs found and fixed, then re-attacked (both hold):
+(1) keep-larger let a planted duplicate (source selected via the untrusted target.cwd) OVERWRITE a
+live destination transcript on a size compare -> fix: never overwrite; relocate ONLY into an empty
+dest slot, resume in place otherwise (removed sizeOf/keep-larger). (2) the copy fallback could leave
+a truncated file at the real <uuid>.jsonl name -> the heuristic binder's *.jsonl scan could
+cross-bind it -> fix: copy to a same-dir temp `<dst>.partial-<pid>` then atomic rename into place,
+remove temp on failure (fail closed to null), warn on an un-removable source. Residual INFO: a
+self-targeted TOCTOU on the dest with no attacker-controlled input and no privilege gain (optional
+COPYFILE_EXCL hardening noted, not required). Verdict PASS, 0 open. 15 unit tests (45/45 file green).
+
 Related still-open follow-ups: #536 (sync CCC session name into the JSONL/session), and #397
 Phases 4-5. Refs #480 #397 #131 #522.

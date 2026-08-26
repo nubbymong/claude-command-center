@@ -252,16 +252,18 @@ export function resolveResumeLaunch(
 export interface RecoverOrphanDeps {
   existsSync: (p: string) => boolean
   statSync: (p: string) => { isDirectory: () => boolean }
-  /** Byte size of a file (used for the keep-larger collision rule). */
-  sizeOf: (p: string) => number
   /** Recursively create a directory (mkdir -p). */
   mkdirp: (dir: string) => void
   /** Move a file (rename); may throw on cross-device, caller falls back to copy. */
   renameFile: (src: string, dst: string) => void
   /** Copy a file (cross-device fallback for renameFile). */
   copyFile: (src: string, dst: string) => void
-  /** Best-effort unlink after a copy fallback; must not throw fatally. */
+  /** Best-effort unlink; must not throw fatally. */
   removeFile: (p: string) => void
+  /** Current process id — makes the copy-fallback temp name unique. */
+  pid: () => number
+  /** Non-fatal diagnostic (e.g. a source that could not be removed post-copy). */
+  warn: (msg: string) => void
   homedir: () => string
   mangleCwdToProjectDir: (cwd: string) => string
   /** Canonical `~/.claude/projects` root. */
@@ -297,9 +299,12 @@ export interface RecoverOrphanDeps {
  *     and resolves INSIDE projectsRoot (containment — defense in depth);
  *   - the destination path also resolves INSIDE projectsRoot.
  *
- * Collision rule (matches #131/#132): if a transcript already exists at the
- * destination, keep the LARGER file (transcripts only grow → never lose history)
- * — if the existing dest is at least as large, resume it in place without moving.
+ * Collision rule (adversarial review #535): if a transcript ALREADY exists at
+ * the destination, that IS the conversation for this uuid in this project —
+ * resume it IN PLACE and NEVER overwrite it. The orphan source path is derived
+ * from `target.cwd` (transcript content, not a trusted value), so a size-compare
+ * "keep-larger" overwrite would let a planted duplicate clobber a live, possibly
+ * different conversation. Relocation only ever writes into an EMPTY dest slot.
  *
  * Returns `{ resumeUuid, claudeCwd }` (claudeCwd = the surviving cwd) or null.
  */
@@ -344,22 +349,13 @@ export function recoverOrphanResumeLaunch(
     const destTranscript = nodePath.join(destDir, `${target.uuid}.jsonl`)
     if (!contained(destDir)) return null
 
-    // Nothing to do if the source already sits in the destination folder (the
-    // surviving cwd happens to mangle to the same place). Resume as-is.
-    if (destTranscript !== orphanTranscript) {
-      if (deps.existsSync(destTranscript)) {
-        // Keep-larger: a bigger file at the destination already holds >= history.
-        const destSize = deps.sizeOf(destTranscript)
-        const orphanSize = deps.sizeOf(orphanTranscript)
-        if (orphanSize > destSize) {
-          deps.mkdirp(destDir)
-          relocate(orphanTranscript, destTranscript, deps)
-        }
-        // else: destination is at least as large — resume it in place.
-      } else {
-        deps.mkdirp(destDir)
-        relocate(orphanTranscript, destTranscript, deps)
-      }
+    // Relocate ONLY into an empty destination slot. If the source already sits
+    // in the destination folder (the surviving cwd mangles to the same place), or
+    // a transcript for this uuid already exists there, resume in place and move
+    // nothing — never overwrite a live transcript (see the collision rule above).
+    if (destTranscript !== orphanTranscript && !deps.existsSync(destTranscript)) {
+      deps.mkdirp(destDir)
+      relocate(orphanTranscript, destTranscript, deps)
     }
 
     try { deps.ensureCompanionDir(destDir, target.uuid) } catch { /* best-effort */ }
@@ -370,14 +366,37 @@ export function recoverOrphanResumeLaunch(
   }
 }
 
-/** Move src→dst, preferring an atomic rename, falling back to copy+unlink. */
+/**
+ * Move src→dst. Caller guarantees dst does not yet exist.
+ *
+ * Prefer an atomic same-name rename. On cross-device (EXDEV) or a locked source,
+ * copy to a SAME-DIRECTORY temp sibling and rename THAT into place — so a partial
+ * copy never lands at the `<uuid>.jsonl` name the heuristic binder scans (adv
+ * review #535). The temp is a sibling of dst, so the final rename is same-device.
+ * On any copy failure the partial temp is removed before the error propagates
+ * (the outer catch in recoverOrphanResumeLaunch then fails the recovery closed).
+ * A source that cannot be unlinked after a successful copy is a non-fatal leak —
+ * warn, do not throw (resume already has a correct destination).
+ */
 function relocate(src: string, dst: string, deps: RecoverOrphanDeps): void {
   try {
     deps.renameFile(src, dst)
+    return
   } catch {
-    // Cross-device or locked: copy then best-effort remove the original.
-    deps.copyFile(src, dst)
-    try { deps.removeFile(src) } catch { /* best-effort */ }
+    // fall through to the copy fallback
+  }
+  const tmp = `${dst}.partial-${deps.pid()}`
+  try {
+    deps.copyFile(src, tmp)
+    deps.renameFile(tmp, dst)
+  } catch (e) {
+    try { deps.removeFile(tmp) } catch { /* best-effort cleanup */ }
+    throw e
+  }
+  try {
+    deps.removeFile(src)
+  } catch {
+    deps.warn(`[resume] orphan recovery: copied transcript to ${dst} but could not remove the source ${src} (left in place)`)
   }
 }
 

@@ -2984,11 +2984,12 @@ export function spawnPty(
           const recovered = recoverOrphanResumeLaunch(effectiveTarget, resolvedCwd, {
             existsSync: fs.existsSync,
             statSync: (p) => fs.statSync(p),
-            sizeOf: (p) => fs.statSync(p).size,
             mkdirp: (dir) => { fs.mkdirSync(dir, { recursive: true }) },
             renameFile: (src, dst) => { fs.renameSync(src, dst) },
             copyFile: (src, dst) => { fs.copyFileSync(src, dst) },
             removeFile: (p) => { fs.rmSync(p, { force: true }) },
+            pid: () => process.pid,
+            warn: (msg) => { logWarn(msg) },
             homedir: os.homedir,
             mangleCwdToProjectDir,
             projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
