@@ -309,7 +309,13 @@ describe('#525 — the rename/roadmap page', () => {
     // Owner call R5: this is a 2.1 install — the tagline speaks to today,
     // and "2.2" appears only inside the labelled roadmap band.
     expect(q('rename-tagline')!.textContent).not.toContain('2.2')
-    expect(q('rm-deep')!.textContent).toContain('2.2')
+    // Owner calls R7/R8 (canvas v8): the approved one-liner, the deep strip
+    // cut, and exactly one reassurance bullet for upgraders.
+    expect(q('rename-tagline')!.textContent).toContain('Same application, exciting new roadmap (tentative preview below).')
+    expect(q('rm-deep')).toBeNull()
+    expect(q('rename-pt-nothing')!.textContent).toContain('Nothing changes.')
+    expect(q('rename-pt-why')).toBeNull()
+    expect(q('rename-where')).toBeNull()
   })
 
   it('post-rename upgraders never see it; fresh installs DO, under a Welcome lead-in', () => {
@@ -323,6 +329,10 @@ describe('#525 — the rename/roadmap page', () => {
     expect(q('rename-page')).not.toBeNull()
     expect(q('rename-lead-line')!.textContent).toContain('Welcome to')
     expect(q('rename-lead-line')!.textContent).not.toContain('is now')
+    // Spec-review F1/F2: no "Same application" without a before, and no
+    // carry-over bullet for someone with nothing to carry over.
+    expect(q('rename-tagline')!.textContent).not.toContain('Same application')
+    expect(q('rename-points')).toBeNull()
   })
 
   it('a See-it chip still lands on its page with the prelude in front', () => {

@@ -144,7 +144,9 @@ export function RenamePageView({ fresh }: { fresh: boolean }) {
           <span className="rn-name" data-ux-id="rename-heading">AI Code Conductor</span>
         </div>
         <p className="rn-tagline" data-ux-id="rename-tagline">
-          This app already runs Codex beside Claude Code, and more agents are on the way &mdash; a name tied to one of them no longer fit.
+          {/* Owner-approved copy (canvas v8, R7/R8): one plain line; the fresh
+              cohort has no "same" to compare against, so it drops that word. */}
+          {fresh ? <>An exciting roadmap ahead (tentative preview below).</> : <>Same application, exciting new roadmap (tentative preview below).</>}
         </p>
 
         <div className="rn-roadmap" data-ux-id="roadmap-band">
@@ -163,22 +165,18 @@ export function RenamePageView({ fresh }: { fresh: boolean }) {
               <div className="rn-rm-tiles">{IN_22.map((t) => <Tile key={t.key} t={t} />)}</div>
             </div>
           </div>
-          <div className="rn-deep" data-ux-id="rm-deep">
-            <b>And 2.2 goes deep, not just wide.</b> Each agent gets the full toolkit &mdash; accounts and switching, usage and spend, memory, insights, the watchdog. <span className="rn-codex-line">Codex runs in beta today and gets the full upgrade in 2.2.</span>
-          </div>
         </div>
 
-        <div className="rn-points" data-ux-id="rename-points">
-          <div className="rn-pt" data-ux-id="rename-pt-nothing">
-            <span className="wn-dot" /><div><b>Nothing to redo.</b> Sessions, configs and accounts carry over.</div>
+        {/* One bullet (owner R7/R8: the deep-integration strip, the
+            "first-class" line and the smallprint all cut). Upgraders only —
+            a fresh install has nothing to carry over (spec review F2). */}
+        {!fresh && (
+          <div className="rn-points" data-ux-id="rename-points">
+            <div className="rn-pt" data-ux-id="rename-pt-nothing">
+              <span className="wn-dot" /><div><b>Nothing changes.</b> Same install, same path &mdash; sessions, configs and accounts all carry over.</div>
+            </div>
           </div>
-          <div className="rn-pt" data-ux-id="rename-pt-why">
-            <span className="wn-dot" /><div><b>Claude stays first-class.</b> New agents arrive beside your workflow, not instead of it.</div>
-          </div>
-        </div>
-        <div className="rn-smallprint" data-ux-id="rename-where">
-          Roadmap order can shift &mdash; each agent lands in <b>What&rsquo;s New</b> as it ships.
-        </div>
+        )}
       </div>
     </div>
   )
