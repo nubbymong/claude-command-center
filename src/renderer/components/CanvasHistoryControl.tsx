@@ -202,7 +202,7 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
   // (latest ready, no verdict), withdrawn rows hidden by default (the audit
   // trail keeps them; a footer line reveals), newest first for reading.
   const run = located.artifact.versions
-  const lastReady = [...run].reverse().find((v) => !v.draft)
+  const lastReady = [...run].reverse().find((v) => !v.draft && v.verdict?.state !== 'withdrawn')
   const openVersionId = lastReady && !lastReady.verdict ? lastReady.id : null
   const withdrawnCount = run.filter((v) => v.verdict?.state === 'withdrawn').length
   const listed = [...run].reverse().filter((v) => showWithdrawn || v.verdict?.state !== 'withdrawn')
@@ -212,6 +212,12 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
     const isCurrent = v.id === activeVersionId
     const vb = versionBadge(v, v.id === openVersionId)
     const gist = v.verdict?.note ? v.verdict.note.split('\n')[0].slice(0, 42) : null
+    // Provenance (adv FINDING 3): a verdict RECORDED FROM CHAT by the agent
+    // must never read as the user's own click. The store stamps it
+    // `by: 'agent-chat'`; the row says so out loud, exactly as the note-level
+    // panel does with "by the agent on your instruction". 'system' (an
+    // automatic supersession) and 'user' need no marker.
+    const fromChat = v.verdict?.by === 'agent-chat'
     return (
       <button
         key={v.id}
@@ -231,6 +237,16 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
         >
           {vb.label}
         </span>
+        {fromChat && (
+          <span
+            className="shrink-0 text-[8.5px] italic"
+            style={{ color: 'var(--text-muted)' }}
+            title="Recorded by the agent from what you said in chat — not your own click in the pane."
+            data-testid={`canvas-history-fromchat-${v.id}`}
+          >
+            from chat
+          </span>
+        )}
         {gist && (
           <span className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-secondary)' }}>{gist}</span>
         )}

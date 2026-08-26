@@ -147,15 +147,31 @@ describe('reopenVersionForReview — "go back to v5, get rid of v6"', () => {
 })
 
 describe('review-note settlement rides supersession', () => {
-  it('settleReviewsForSupersededVersions closes open AND addressed notes as stale/supersede', () => {
+  it('an OPEN note is NEVER auto-settled by supersession — it is agent debt (adv FINDING 1)', () => {
     render(1)
-    const { reviewId } = addNote('v1')
+    const { reviewId } = addNote('v1', 'the login button is broken')
     reviews.submitReview(SID, reviewId, [])
-    const result = render(2)
+    const result = render(2) // agent renders a new version WITHOUT addressing the note
     const settled = reviews.settleReviewsForSupersededVersions(result.canvasId, result.superseded!)
-    expect(settled).toBe(1)
-    const st = reviews.getReviewStateForSession(SID)!
-    expect(st.annotations[0]).toMatchObject({ state: 'stale', closedBy: 'supersede', closedFrom: 'open' })
+    expect(settled).toBe(0)
+    // The user's open feedback survives the render, not silently staled.
+    expect(reviews.getReviewStateForSession(SID)!.annotations[0].state).toBe('open')
+  })
+
+  it('an ADDRESSED note settles only once the user has SEEN it addressed — the seen-barrier (adv FINDING 1b)', () => {
+    render(1)
+    const { reviewId, annotationId } = addNote('v1')
+    reviews.submitReview(SID, reviewId, [])
+    const canvasId = reviews.getReviewStateForSession(SID)!.canvasId
+    reviews.markAnnotationsAddressed(SID, reviewId, [annotationId], {})
+    // Not yet seen: supersession must NOT close it (the unattended-close bypass).
+    const result = render(2)
+    expect(reviews.settleReviewsForSupersededVersions(result.canvasId, result.superseded!)).toBe(0)
+    expect(reviews.getReviewStateForSession(SID)!.annotations[0].state).toBe('addressed')
+    // The user sees it addressed → the load heal (v1 is dead) may now settle it.
+    reviews.markAddressedNotesSeen(SID, canvasId, [annotationId])
+    reviews._resetCanvasReviewStoreForTest()
+    expect(reviews.getReviewStateForSession(SID)!.annotations[0]).toMatchObject({ state: 'stale', closedBy: 'supersede', closedFrom: 'addressed' })
   })
 
   it('a REOPENED note is shielded from the settle', () => {
@@ -178,16 +194,52 @@ describe('review-note settlement rides supersession', () => {
     expect(versions()[0].verdict).toMatchObject({ state: 'rejected', by: 'user' })
   })
 
-  it('the legacy backlog heals on load: dead versions settle their notes', () => {
+  it('the legacy backlog heals on load: a SEEN addressed note on a dead version settles', () => {
     render(1)
-    const { reviewId } = addNote('v1')
+    const { reviewId, annotationId } = addNote('v1')
     reviews.submitReview(SID, reviewId, [])
+    const canvasId = reviews.getReviewStateForSession(SID)!.canvasId
+    reviews.markAnnotationsAddressed(SID, reviewId, [annotationId], {})
+    reviews.markAddressedNotesSeen(SID, canvasId, [annotationId])
     const result = render(2)
-    // Simulate the pre-C1 pile: the review store never heard about the
-    // supersession (no settle call). A fresh load must heal it.
+    // Pre-C1 pile: the review store never heard about the supersession. A
+    // fresh load heals it — but only within the seen-barrier the settle keeps.
     reviews._resetCanvasReviewStoreForTest()
     const st = reviews.getReviewStateForSession(SID)!
     expect(result.superseded).toEqual(['v1'])
     expect(st.annotations[0]).toMatchObject({ state: 'stale', closedBy: 'supersede' })
+  })
+
+  it('reopen archives the prior verdict — a user rejection is never erased (adv FINDING 2)', () => {
+    render(1)
+    // User rejects the OPEN version v1 (their own verdict).
+    store.setVersionVerdict(SID, 'v1', { state: 'rejected', note: 'wrong copy' }, 'user')
+    // Agent reopens v1 on the user's word — the rejection must not vanish.
+    const reopened = store.reopenVersionForReview(SID, 'v1', 'agent-chat')
+    expect('error' in reopened).toBe(false)
+    const v1 = versions().find((v) => v.id === 'v1')!
+    expect(v1.verdict).toBeUndefined() // open again
+    expect(v1.priorVerdicts).toEqual([{ state: 'rejected', by: 'user', at: expect.any(String), note: 'wrong copy' }])
+  })
+
+  it('reopen keeps the prior verdict of a WITHDRAWN later version too (adv FINDING 2)', () => {
+    render(1)
+    render(2) // v1 superseded, v2 open
+    store.setVersionVerdict(SID, 'v2', { state: 'rejected', note: 'still off' }, 'user')
+    render(3) // v2's rejection stands; v3 open... but reopen v1:
+    store.setVersionVerdict(SID, 'v3', { state: 'approved' }, 'user')
+    store.reopenVersionForReview(SID, 'v1', 'agent-chat')
+    const v3 = versions().find((v) => v.id === 'v3')!
+    expect(v3.verdict).toMatchObject({ state: 'withdrawn' })
+    expect(v3.priorVerdicts?.some((pv) => pv.state === 'approved' && pv.by === 'user')).toBe(true)
+  })
+
+  it('a version-verdict recorded from chat is stamped agent-chat and never impersonates a user click (adv FINDING 3)', () => {
+    render(1)
+    const chat = store.setVersionVerdict(SID, 'v1', { state: 'approved' }, 'agent-chat')
+    expect('error' in chat).toBe(false)
+    expect(versions()[0].verdict).toMatchObject({ state: 'approved', by: 'agent-chat' })
+    // No agent-reachable path can produce by:'user' — that stamp is the
+    // renderer IPC's alone (submitReview / versionVerdict handler).
   })
 })

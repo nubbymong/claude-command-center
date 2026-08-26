@@ -34,6 +34,7 @@ import {
   artifactRunContaining,
   artifactRuns,
   isKeepableVerdict,
+  openVersionOf,
   type CanvasVersionVerdict,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
@@ -804,6 +805,13 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   // History badges read it, so a hand-edited blob is dropped with its version
   // (never repaired), the same all-or-nothing rule every field here follows.
   if (ver.verdict !== undefined && !isKeepableVerdict(ver.verdict)) return false
+  // The reopen audit trail (adv FINDING 2): an array of past verdicts, each
+  // OUR shape or the whole version drops. Bounded so a hand-edited record
+  // cannot make the History row unboundedly large.
+  if (ver.priorVerdicts !== undefined) {
+    if (!Array.isArray(ver.priorVerdicts) || ver.priorVerdicts.length > 64) return false
+    if (!ver.priorVerdicts.every((pv) => isKeepableVerdict(pv))) return false
+  }
   // A hand-edited record must not smuggle a traversing/colon/device `entry`
   // past the live-render normalizer (the empty-path + SPA branches serve the
   // entry WITHOUT re-running the URL segment filter). distRoot containment is
@@ -1437,12 +1445,23 @@ export function renderVersion(
   const supersededIds: string[] = []
   let stampedPrior = priorVersions
   if (!isDraft) {
-    const runs = artifactRuns(priorVersions)
-    const lastRun = runs[runs.length - 1]
-    const joins = lastRun && lastRun[0].mode === version.mode && !lastRun[0].archived ? new Set(lastRun.map((v) => v.id)) : null
-    if (joins) {
+    // Supersede the OPEN version of every earlier run of the SAME KIND (adv
+    // FINDING C-1). Not just the run the new version joins: a mockup rendered
+    // between two plans breaks the plan into two runs, and the earlier plan's
+    // open version would otherwise stay open forever with a never-settling
+    // review (the exact phantom this machine kills). A newer take of a kind
+    // supersedes older takes of that kind; a DIFFERENT kind (the HIGH-1 case)
+    // is left untouched — its run's mode does not match. Archived runs and
+    // already-verdicted/withdrawn/draft versions are excluded by openVersionOf.
+    const toSupersede = new Set<string>()
+    for (const run of artifactRuns(priorVersions)) {
+      if (run[0].mode !== version.mode || run[0].archived) continue
+      const open = openVersionOf(run)
+      if (open) toSupersede.add(open.id)
+    }
+    if (toSupersede.size > 0) {
       stampedPrior = priorVersions.map((v) => {
-        if (!joins.has(v.id) || v.draft || v.archived || v.verdict) return v
+        if (!toSupersede.has(v.id)) return v
         supersededIds.push(v.id)
         return { ...v, verdict: { state: 'superseded', by: 'system', at: createdAt } satisfies CanvasVersionVerdict }
       })
@@ -1533,7 +1552,7 @@ export function clearAwaitingReview(canvasId: string): void {
  *  ordinary newlines and tabs. */
 function cleanVerdictNote(note: unknown): string | undefined {
   if (typeof note !== 'string') return undefined
-  const cleaned = note.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g, '').trim()
+  const cleaned = note.replace(/[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u2028\u2029]|\p{Cf}/gu, '').trim()
   if (!cleaned) return undefined
   return cleaned.slice(0, MAX_VERDICT_NOTE_CHARS)
 }
@@ -1545,7 +1564,7 @@ function openVersionInRecord(record: CanvasRecord, versionId?: string): CanvasVe
   if (!anchor) return null
   const run = artifactRunContaining(record.versions, anchor)
   if (!run) return null
-  const lastReady = [...run].reverse().find((v) => !v.draft)
+  const lastReady = [...run].reverse().find((v) => !v.draft && v.verdict?.state !== 'withdrawn')
   return lastReady && !lastReady.verdict ? lastReady : null
 }
 
@@ -1622,13 +1641,19 @@ export function reopenVersionForReview(
   // across restarts, run order never lies.
   const laterIds = new Set(run.slice(run.findIndex((v) => v.id === target.id) + 1).filter((v) => !v.draft).map((v) => v.id))
   const at = new Date().toISOString()
+  // Push a verdict being cleared or overwritten into the audit trail rather
+  // than dropping it (adv FINDING 2) — a user rejection survives a reopen.
+  const archived = (v: CanvasVersion): CanvasVersionVerdict[] | undefined =>
+    v.verdict ? [...(v.priorVerdicts ?? []), v.verdict] : v.priorVerdicts
   const versions = record.versions.map((v) => {
     if (v.id === target.id) {
       const { verdict: _v, ...restV } = v
-      return restV
+      const prior = archived(v)
+      return prior ? { ...restV, priorVerdicts: prior } : restV
     }
     if (laterIds.has(v.id)) {
-      return { ...v, verdict: { state: 'withdrawn', by, at } satisfies CanvasVersionVerdict }
+      const prior = archived(v)
+      return { ...v, ...(prior ? { priorVerdicts: prior } : {}), verdict: { state: 'withdrawn', by, at } satisfies CanvasVersionVerdict }
     }
     return v
   })

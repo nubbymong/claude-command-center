@@ -1039,8 +1039,20 @@ function settleNotesForVersions(record: ReviewFileRecord, versionIds: ReadonlySe
   const touchedReviews = new Set<string>()
   for (const a of record.annotations) {
     if (!versionIds.has(a.versionId)) continue
-    if (a.state !== 'open' && a.state !== 'addressed') continue
+    // The #470 guards, ported to the C1 supersede (adversarial FINDING 1): an
+    // automatic settle triggered by a bare `canvas_render` must never be a way
+    // for a (prompt-injectable) agent to close the user's outstanding feedback.
+    //  - an OPEN note is undischarged AGENT debt — the agent has not acted on
+    //    it — so supersession never closes it (the version dies; the note the
+    //    agent still owes lives on, exactly as the #470 sweep refuses).
+    //  - an ADDRESSED note closes only once the USER has SEEN it addressed
+    //    (isAgentCloseable) — the same seen-barrier `closeAnnotationsByAgent`
+    //    enforces, so "settled by your later review" is never claimed for a
+    //    round the user never laid eyes on.
+    //  - a REOPENED note is the user's own re-raise and is shielded outright.
+    if (a.state !== 'addressed') continue
     if (a.reopenedAt !== undefined) continue
+    if (!isAgentCloseable(a)) continue
     a.closedFrom = a.state
     a.state = 'stale'
     a.closedBy = 'supersede'

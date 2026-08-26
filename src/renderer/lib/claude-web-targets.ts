@@ -31,11 +31,19 @@ export function resolveSignInOpenTarget(
 
 /** The session that can host the in-app account surface, if any — the same
  *  gate as the pane's own claude.ai entry (#475): local and not shell-only.
- *  Prefers the active session, then the given one, then any eligible. */
-export function paneHostSession(preferredSessionId?: string): string | null {
+ *  Prefers the active session, then the given one, then any eligible.
+ *
+ *  `requirePreferred` binds the host to the caller's own vetted session (adv
+ *  LOW-1): the artifacts callers pass the session whose account IS the one
+ *  being opened, so hosting must NOT fall through to some other session (which
+ *  could be running a different account) when that session is not eligible —
+ *  it returns null and the caller takes the window path. The sign-in flow,
+ *  which legitimately has no specific session, leaves it off. */
+export function paneHostSession(preferredSessionId?: string, requirePreferred = false): string | null {
   const st = useSessionStore.getState()
   const eligible = st.sessions.filter((s) => !s.shellOnly && s.sessionType === 'local')
   const preferred = eligible.find((s) => s.id === preferredSessionId)
+  if (requirePreferred) return preferred?.id ?? null
   const active = eligible.find((s) => s.id === st.activeSessionId)
   return (preferred ?? active ?? eligible[0])?.id ?? null
 }
@@ -49,7 +57,10 @@ export function paneHostSession(preferredSessionId?: string): string | null {
 export function openArtifactsPerSetting(profileId: string, preferredSessionId?: string): void {
   trackUsage('artifacts.opened')
   if (resolveArtifactsOpenTarget(useSettingsStore.getState().settings) === 'pane') {
-    const host = paneHostSession(preferredSessionId)
+    // requirePreferred (adv LOW-1): only host in the caller's own vetted
+    // session — the one whose account is `profileId`. Never fall through to
+    // another session that may run a different account.
+    const host = paneHostSession(preferredSessionId, true)
     if (host) {
       useWebviewStore.getState().openAccountPane(host, profileId)
       return

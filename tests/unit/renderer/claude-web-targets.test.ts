@@ -78,10 +78,30 @@ describe('openArtifactsPerSetting', () => {
     expect(openArtifactsIpc).toHaveBeenCalledWith('profile-1')
   })
 
+  it('adv LOW-1: pane never hosts in a session other than the caller’s own — an ineligible preferred id → window, not another session', () => {
+    useSettingsStore.setState((st) => ({ settings: { ...st.settings, artifactsOpenTarget: 'pane' } }))
+    // The caller’s own session is SSH (ineligible); another local session
+    // (a DIFFERENT account) is active. The pane must NOT open account-1’s
+    // surface in that other session — it takes the window path instead.
+    useSessionStore.setState({
+      sessions: [
+        { id: 's-mine-ssh', shellOnly: false, sessionType: 'ssh' },
+        { id: 's-other-local', shellOnly: false, sessionType: 'local' },
+      ],
+      activeSessionId: 's-other-local',
+    } as never)
+    openArtifactsPerSetting('profile-1', 's-mine-ssh')
+    expect(openAccountPane).not.toHaveBeenCalled()
+    expect(openArtifactsIpc).toHaveBeenCalledWith('profile-1')
+  })
+
   it('paneHostSession: preferred > active > any eligible; ssh and shell-only never host', () => {
     expect(paneHostSession('s-local')).toBe('s-local')
     expect(paneHostSession('s-ssh')).toBe('s-local') // preferred ineligible -> active
     expect(paneHostSession()).toBe('s-local')
+    // requirePreferred binds to the caller's own session: ineligible → null.
+    expect(paneHostSession('s-ssh', true)).toBeNull()
+    expect(paneHostSession('s-local', true)).toBe('s-local')
     useSessionStore.setState({ sessions: [], activeSessionId: null } as never)
     expect(paneHostSession()).toBeNull()
   })

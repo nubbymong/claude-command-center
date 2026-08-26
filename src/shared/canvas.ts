@@ -95,12 +95,21 @@ export interface CanvasVersion {
   /** The C1 review outcome. Absent = OPEN on the artifact's latest ready
    *  version; healed to superseded for older history on load. */
   verdict?: CanvasVersionVerdict
+  /** Verdicts this version HELD before its current one — the audit trail a
+   *  reopen must not erase (adv FINDING 2): reopening v5 clears v5's verdict
+   *  and withdraws v6, and both prior verdicts (a user rejection included) are
+   *  pushed here rather than lost, so a rejection can never be silently
+   *  overwritten and resurrected as approved. Newest last. */
+  priorVerdicts?: CanvasVersionVerdict[]
 }
 
-/** The artifact's one OPEN version (C1): its latest ready, unverdicted
- *  version. Every count and badge derives from this — never stored. */
+/** The artifact's one OPEN version (C1): its latest ready version that is not
+ *  withdrawn, iff it carries no verdict. Withdrawn versions are skipped so a
+ *  reopen (which withdraws everything after the reopened version) still finds
+ *  the earlier reopened version as the open one. Every count and badge derives
+ *  from this — never stored. */
 export function openVersionOf(run: readonly CanvasVersion[]): CanvasVersion | null {
-  const last = [...run].reverse().find((v) => !v.draft)
+  const last = [...run].reverse().find((v) => !v.draft && v.verdict?.state !== 'withdrawn')
   return last && !last.verdict ? last : null
 }
 
