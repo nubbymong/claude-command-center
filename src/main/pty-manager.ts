@@ -15,7 +15,7 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
-import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag } from './spawn-claude-command'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
@@ -2977,7 +2977,33 @@ export function spawnPty(
           resumeUuidForBind = launch.resumeUuid
           logInfo(`[pty] T8b exact resume for ${sessionId}: uuid=${resumeUuid} cwd=${claudeCwd} (was ${resolvedCwd})`)
         } else {
-          logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check) — uuid=${effectiveTarget.uuid}`)
+          // #535: the exact gate failed. When the ONLY reason is a deleted
+          // worktree cwd, the conversation transcript still exists under the
+          // worktree's mangled project folder — relocate it into the surviving
+          // configured cwd's folder and resume there rather than opening fresh.
+          const recovered = recoverOrphanResumeLaunch(effectiveTarget, resolvedCwd, {
+            existsSync: fs.existsSync,
+            statSync: (p) => fs.statSync(p),
+            sizeOf: (p) => fs.statSync(p).size,
+            mkdirp: (dir) => { fs.mkdirSync(dir, { recursive: true }) },
+            renameFile: (src, dst) => { fs.renameSync(src, dst) },
+            copyFile: (src, dst) => { fs.copyFileSync(src, dst) },
+            removeFile: (p) => { fs.rmSync(p, { force: true }) },
+            homedir: os.homedir,
+            mangleCwdToProjectDir,
+            projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
+            isHomeOrAncestor,
+            ensureCompanionDir: (projectDir, uuid) => { ensureCompanionDir(projectDir, uuid, nodeFsCompanionDeps) },
+          })
+          if (recovered) {
+            resumeUuid = recovered.resumeUuid
+            claudeCwd = recovered.claudeCwd
+            effectiveLaunchCwd = claudeCwd
+            resumeUuidForBind = recovered.resumeUuid
+            logInfo(`[pty] T8b ORPHAN-RECOVERED resume for ${sessionId}: uuid=${resumeUuid} relocated to cwd=${claudeCwd} (dead worktree was ${effectiveTarget.cwd})`)
+          } else {
+            logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check; no orphan recovery) — uuid=${effectiveTarget.uuid} cwd=${effectiveTarget.cwd}`)
+          }
         }
       }
 
