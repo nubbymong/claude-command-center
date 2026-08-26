@@ -309,7 +309,11 @@ export interface ElectronAPI {
     reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
     annotationDelete: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
-    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) => Promise<CanvasReviewState>
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision?: 'approve' | 'reject' }) => Promise<CanvasReviewState>
+    /** C1: zero-note verdict on a version (plain Approve / Dismiss). */
+    versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
+    /** C1: reopen a version for review; later ready versions become withdrawn. */
+    versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
     annotationResolve: (args: {
       sessionId: string
       /** The canvas the panel was showing. Refused if the session has moved on. */
@@ -931,8 +935,12 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_UPSERT, args),
     annotationDelete: (args: { sessionId: string; annotationId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_DELETE, args),
-    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) =>
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision?: 'approve' | 'reject' }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
+    versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_VERSION_VERDICT, args),
+    versionReopen: (args: { sessionId: string; versionId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_VERSION_REOPEN, args),
     annotationResolve: (args: { sessionId: string; canvasId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' | 'stale'; variantKey?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_RESOLVE, args),
     annotationReopen: (args: { sessionId: string; annotationId: string }) =>

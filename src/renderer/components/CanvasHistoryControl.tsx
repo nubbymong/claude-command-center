@@ -32,6 +32,21 @@ function kindBadge(kind: CanvasVersion['mode']): { label: string; color: string 
   return { label: 'MOCKUP', color: 'var(--color-blue)' }
 }
 
+/** C1/C3: a version's state badge for the History list — the audit trail,
+ *  one glance per row. OPEN = no verdict on the artifact's latest ready
+ *  version; everything else reads its verdict. */
+function versionBadge(v: CanvasVersion, isOpen: boolean): { label: string; color: string } {
+  if (isOpen) return { label: 'OPEN', color: 'var(--color-peach)' }
+  switch (v.verdict?.state) {
+    case 'approved': return { label: 'APPROVED', color: 'var(--color-green)' }
+    case 'rejected': return { label: 'REJECTED', color: 'var(--color-red)' }
+    case 'withdrawn': return { label: 'WITHDRAWN', color: 'var(--color-red)' }
+    case 'dismissed': return { label: 'DISMISSED', color: 'var(--text-muted)' }
+    case 'superseded': return { label: 'SUPERSEDED', color: 'var(--text-muted)' }
+    default: return { label: 'SUPERSEDED', color: 'var(--text-muted)' }
+  }
+}
+
 function updatedLabel(iso: string, now: number): string {
   const ms = Date.parse(iso)
   return Number.isFinite(ms) ? `updated ${relativeTime(ms, now)}` : 'updated recently'
@@ -39,6 +54,9 @@ function updatedLabel(iso: string, now: number): string {
 
 export default function CanvasHistoryControl({ versions, activeVersionId, onSelectVersion, onArchive, onDelete }: Props) {
   const [open, setOpen] = useState(false)
+  /** Withdrawn versions stay out of the default list (C1) — the audit trail
+   *  keeps them; this reveals them for the session. */
+  const [showWithdrawn, setShowWithdrawn] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   // Double-click-proofing (#456).
   const delConfirm = useArmedConfirm(confirmDelete)
@@ -74,10 +92,10 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
     [located, onSelectVersion],
   )
 
-  // A canvas with a single version and a single artifact needs neither control.
-  if (!located || (artifacts.length === 1 && located.artifact.versions.length === 1)) {
-    return null
-  }
+  // C3: the control renders whenever there is anything to show — a canvas
+  // with one version still gets "v1 of 1 ▾" and its one-row history, so the
+  // dropdown is never a control that exists only sometimes.
+  if (!located) return null
 
   const badge = kindBadge(located.artifact.kind)
   const count = located.artifact.versions.length
@@ -180,9 +198,69 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
     )
   }
 
+  // C1/C3 projections over the current artifact's run: the one OPEN version
+  // (latest ready, no verdict), withdrawn rows hidden by default (the audit
+  // trail keeps them; a footer line reveals), newest first for reading.
+  const run = located.artifact.versions
+  const lastReady = [...run].reverse().find((v) => !v.draft && v.verdict?.state !== 'withdrawn')
+  const openVersionId = lastReady && !lastReady.verdict ? lastReady.id : null
+  const withdrawnCount = run.filter((v) => v.verdict?.state === 'withdrawn').length
+  const listed = [...run].reverse().filter((v) => showWithdrawn || v.verdict?.state !== 'withdrawn')
+  const otherLive = live.filter((a) => a.key !== located.artifact.key)
+
+  const versionRow = (v: CanvasVersion) => {
+    const isCurrent = v.id === activeVersionId
+    const vb = versionBadge(v, v.id === openVersionId)
+    const gist = v.verdict?.note ? v.verdict.note.split('\n')[0].slice(0, 42) : null
+    // Provenance (adv FINDING 3): a verdict RECORDED FROM CHAT by the agent
+    // must never read as the user's own click. The store stamps it
+    // `by: 'agent-chat'`; the row says so out loud, exactly as the note-level
+    // panel does with "by the agent on your instruction". 'system' (an
+    // automatic supersession) and 'user' need no marker.
+    const fromChat = v.verdict?.by === 'agent-chat'
+    return (
+      <button
+        key={v.id}
+        type="button"
+        role="menuitem"
+        onClick={() => { onSelectVersion(v.id); setOpen(false) }}
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left focus-ring"
+        style={{ background: isCurrent ? 'var(--surface-overlay)' : undefined }}
+        data-testid="canvas-history-version-row"
+        data-version={v.id}
+      >
+        <span className="shrink-0 w-[26px] text-[12px] font-bold tabular-nums" style={{ color: 'var(--text-primary)' }}>{v.id}</span>
+        <span
+          className="shrink-0 text-[8.5px] font-bold tracking-[0.05em] rounded px-1.5 py-px"
+          style={{ background: `color-mix(in srgb, ${vb.color} 16%, transparent)`, color: vb.color }}
+          data-testid={`canvas-history-badge-${v.id}`}
+        >
+          {vb.label}
+        </span>
+        {fromChat && (
+          <span
+            className="shrink-0 text-[8.5px] italic"
+            style={{ color: 'var(--text-muted)' }}
+            title="Recorded by the agent from what you said in chat — not your own click in the pane."
+            data-testid={`canvas-history-fromchat-${v.id}`}
+          >
+            from chat
+          </span>
+        )}
+        {gist && (
+          <span className="min-w-0 truncate text-[11px]" style={{ color: 'var(--text-secondary)' }}>{gist}</span>
+        )}
+        <span className="ml-auto shrink-0 text-[10.5px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          {relativeTime(Date.parse(v.createdAt), now)}
+        </span>
+      </button>
+    )
+  }
+
   return (
-    <div className="relative shrink-0 flex items-center gap-1.5" ref={rootRef}>
-      {/* Per-artifact version stepper. */}
+    <div className="relative shrink-0 flex items-center" ref={rootRef}>
+      {/* ONE version control (C3): the ‹ › stepper folded into the History
+          trigger, with the pending pill riding it — "v8 of 8 (1 pending) ▾". */}
       <div
         className="flex items-center gap-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[12px] px-1"
         data-testid="canvas-version-stepper"
@@ -197,11 +275,30 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
         >
           ‹
         </button>
-        <span className="px-1 tabular-nums" style={{ color: 'var(--text-secondary)' }} title={`${activeVersionId} — ${pos} of ${count}`}>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-haspopup="menu"
+          data-testid="canvas-history-button"
+          className="flex items-center gap-1.5 px-1 tabular-nums leading-none py-0.5 focus-ring rounded hover:bg-[var(--surface-overlay)] transition-colors"
+          style={{ color: 'var(--text-secondary)' }}
+          title={`History — every version of ${located.artifact.label}, with its outcome; click a row to jump`}
+        >
           <span style={{ color: badge.color, fontWeight: 600 }}>{badge.label.toLowerCase()}</span>{' '}
           <span style={{ color: 'var(--text-primary)' }}>{activeVersionId}</span>{' '}
           <span style={{ color: 'var(--text-muted)' }}>of {count}</span>
-        </span>
+          {openVersionId && (
+            <span
+              className="text-[9px] font-bold rounded-full px-1.5 py-px"
+              style={{ background: 'var(--color-peach)', color: 'var(--surface-chrome)' }}
+              data-testid="canvas-history-pending"
+            >
+              1 pending
+            </span>
+          )}
+          <span aria-hidden style={{ color: 'var(--text-muted)', fontSize: 9 }}>▾</span>
+        </button>
         <button
           type="button"
           onClick={() => stepTo(1)}
@@ -214,30 +311,38 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
         </button>
       </div>
 
-      {/* History ▾ — pick the artifact. */}
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        data-testid="canvas-history-button"
-        className="text-[12px] rounded-md border border-[var(--border-subtle)] px-2 py-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-ring"
-        title="History — the artifacts on this canvas (a plan, a mockup); step versions with the ‹ › control"
-      >
-        History ▾
-      </button>
-
       {open && (
         <div
           role="menu"
           data-testid="canvas-history-popover"
-          className="absolute left-0 top-full mt-1 z-30 w-[300px] rounded-lg p-1.5"
+          className="absolute right-0 top-full mt-1 z-30 w-[320px] rounded-lg p-1.5 max-h-[420px] overflow-y-auto"
           style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', boxShadow: '0 16px 40px rgba(0,0,0,0.55)' }}
         >
+          {/* THE HISTORY (C3): the current artifact's versions, newest first,
+              each wearing its outcome — the thing the old dropdown never had. */}
           <div className="px-2 py-1 text-[9.5px] font-semibold uppercase tracking-[0.09em]" style={{ color: 'var(--text-muted)' }}>
-            Artifacts on this canvas
+            Versions — {located.artifact.label}
           </div>
-          {live.map((a) => artifactRow(a, false))}
+          {listed.map(versionRow)}
+          {withdrawnCount > 0 && !showWithdrawn && (
+            <button
+              type="button"
+              onClick={() => setShowWithdrawn(true)}
+              className="w-full text-left px-2.5 py-1 text-[10.5px] focus-ring rounded"
+              style={{ color: 'var(--text-muted)' }}
+              data-testid="canvas-history-show-withdrawn"
+            >
+              {withdrawnCount} withdrawn — kept in the audit trail, click to show
+            </button>
+          )}
+          {otherLive.length > 0 && (
+            <>
+              <div className="px-2 pt-2 pb-1 text-[9.5px] font-semibold uppercase tracking-[0.09em]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)', marginTop: 4 }}>
+                Other artifacts on this canvas
+              </div>
+              {otherLive.map((a) => artifactRow(a, false))}
+            </>
+          )}
           {archived.length > 0 && (
             <>
               <div className="px-2 pt-2 pb-1 text-[9.5px] font-semibold uppercase tracking-[0.09em]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)', marginTop: 4 }}>
@@ -246,9 +351,6 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
               {archived.map((a) => artifactRow(a, true))}
             </>
           )}
-          <div className="px-2 pt-2 pb-1 text-[10.5px]" style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)', marginTop: 4 }}>
-            Pick an artifact here; step its versions with ‹ ›. Archived holds what you tucked away (recoverable) and legacy test builds from older betas; tests are live now and never versioned.
-          </div>
         </div>
       )}
     </div>

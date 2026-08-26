@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { releaseLine } from '../utils/versionLabel'
+import { compareVersions } from '../../shared/version-order'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { showcasesFor, ShowcasePage } from './showcase-pages'
 import { ShowcaseVignette } from './ShowcaseVignette'
+import { RenamePageView } from './RenamePage'
 
 declare const __APP_VERSION__: string
 
@@ -99,7 +101,7 @@ const SECTIONS_21: WhatsNewSection[] = [
   {
     heading: 'The app itself',
     items: [
-      { title: 'New name.', desc: 'Claude Command Center is now AI Code Conductor. Same data, same settings.', upgradeOnly: true },
+      { title: 'New name.', desc: 'Claude Command Center is now AI Code Conductor — nothing else changes.', upgradeOnly: true },
       { title: 'Signed and notarised.', desc: 'Windows signed, macOS notarised, every update SHA-256 checked.' },
     ],
   },
@@ -122,6 +124,25 @@ export function sectionsFor(lastSeenVersion: string | undefined, currentVersion:
   if (line === '2.0') return SECTIONS_20
   const from = releaseLine(lastSeenVersion ?? '')
   return from === '2.0' || from === '2.1' ? SECTIONS_21 : [...SECTIONS_20, ...SECTIONS_21]
+}
+
+/**
+ * The rename/roadmap prelude (#525): one page ahead of the summary. Upgraders
+ * arriving from a build that predates the rename open on it — they knew the
+ * app as Claude Command Center and are owed the why. `RENAME_SHIPPED_IN` is
+ * the release whose changelog entry announced the rename; an upgrader whose
+ * last-seen version is that or later has lived under the new name for their
+ * whole tenure, and re-showing the page on every update would wear it out.
+ * Fresh installs see the same page under a "Welcome to" lead-in (owner call,
+ * canvas R1: the roadmap is the app's own introduction) — their gate is the
+ * `fresh` flag, not this function.
+ */
+export const RENAME_SHIPPED_IN = '2.1.0-beta.6'
+
+export function showRenamePageFor(lastSeenVersion: string | undefined, currentVersion: string): boolean {
+  if (!lastSeenVersion) return false // fresh installs are gated by `fresh`, not by version
+  if (releaseLine(currentVersion) === '2.0') return false // the 2.0 line predates the rename
+  return compareVersions(lastSeenVersion, RENAME_SHIPPED_IN) < 0
 }
 
 function ShowcasePageView({ page, index, ofShowcases }: { page: ShowcasePage; index: number; ofShowcases: number }) {
@@ -171,7 +192,10 @@ export function WhatsNewV2Step({
    *  the full 2.0+2.1 story when there is no lastSeenVersion. */
   fresh?: boolean
 }) {
-  const sections = sectionsFor(useAppMetaStore.getState().meta.lastSeenVersion, LINE_SOURCE)
+  // Subscribed, not getState() (quality note): a stamp landing while the
+  // step is mounted must re-derive the prelude instead of stranding pageIx.
+  const lastSeen = useAppMetaStore((s) => s.meta.lastSeenVersion)
+  const sections = sectionsFor(lastSeen, LINE_SOURCE)
     .map((s) => (fresh ? { ...s, items: s.items.filter((it) => !it.upgradeOnly) } : s))
     .filter((s) => s.items.length > 0)
   const count = sections.reduce((n, s) => n + s.items.length, 0)
@@ -180,16 +204,25 @@ export function WhatsNewV2Step({
   // authored for a line this collapses to exactly the old single-page step —
   // no dots, no skip, the harness CTA — so nothing regresses.
   const showcases = showcasesFor(LINE_SOURCE)
+  // #525: pre-rename upgraders AND fresh installs (owner call, canvas R1)
+  // open on the rename/roadmap page; post-rename upgraders' paging is
+  // untouched (prelude 0 keeps every index exactly what it was). The 2.0
+  // line predates both the rename and the roadmap, so it never shows it.
+  const prelude =
+    releaseLine(LINE_SOURCE) !== '2.0' && (fresh || showRenamePageFor(lastSeen, LINE_SOURCE)) ? 1 : 0
+  const summaryIx = prelude
   const [pageIx, setPageIx] = useState(0)
-  const total = 1 + showcases.length
+  const total = prelude + 1 + showcases.length
   const isLast = pageIx === total - 1
   const jumpTo = (id: string) => {
     const ix = showcases.findIndex((p) => p.id === id)
-    if (ix >= 0) setPageIx(1 + ix)
+    if (ix >= 0) setPageIx(summaryIx + 1 + ix)
   }
   return (
     <>
-      {pageIx === 0 ? (
+      {prelude === 1 && pageIx === 0 ? (
+        <RenamePageView fresh={fresh} />
+      ) : pageIx === summaryIx ? (
         <div className="p2">
           <div className="p2-inner" style={{ width: 'min(920px, 95vw)' }}>
             <h2 className="h2" data-ux-id="whatsnew-heading">{fresh ? <>What you&apos;re getting</> : <>What&apos;s new in {LINE}</>}</h2>
@@ -231,7 +264,7 @@ export function WhatsNewV2Step({
           </div>
         </div>
       ) : (
-        <ShowcasePageView page={showcases[pageIx - 1]} index={pageIx} ofShowcases={showcases.length} />
+        <ShowcasePageView page={showcases[pageIx - summaryIx - 1]} index={pageIx - summaryIx} ofShowcases={showcases.length} />
       )}
       <div className="foot">
         <span className="hint" data-ux-id="whatsnew-hint">
@@ -244,9 +277,12 @@ export function WhatsNewV2Step({
         </span>
         {total > 1 && (
           <div className="wn-foot-dots" data-ux-id="whatsnew-dots" role="group" aria-label="Showcase pages">
-            <button type="button" className={`wn-fdot${pageIx === 0 ? ' on' : ''}`} onClick={() => setPageIx(0)} aria-label="Summary" aria-current={pageIx === 0 ? 'page' : undefined} data-ux-id="whatsnew-dot-summary"><i /></button>
+            {prelude === 1 && (
+              <button type="button" className={`wn-fdot${pageIx === 0 ? ' on' : ''}`} onClick={() => setPageIx(0)} aria-label="The new name" aria-current={pageIx === 0 ? 'page' : undefined} data-ux-id="whatsnew-dot-rename"><i /></button>
+            )}
+            <button type="button" className={`wn-fdot${pageIx === summaryIx ? ' on' : ''}`} onClick={() => setPageIx(summaryIx)} aria-label="Summary" aria-current={pageIx === summaryIx ? 'page' : undefined} data-ux-id="whatsnew-dot-summary"><i /></button>
             {showcases.map((p, ix) => (
-              <button type="button" key={p.id} className={`wn-fdot${pageIx === ix + 1 ? ' on' : ''}`} onClick={() => setPageIx(ix + 1)} aria-label={p.heading} aria-current={pageIx === ix + 1 ? 'page' : undefined} data-ux-id={`whatsnew-dot-${p.id}`}><i /></button>
+              <button type="button" key={p.id} className={`wn-fdot${pageIx === summaryIx + 1 + ix ? ' on' : ''}`} onClick={() => setPageIx(summaryIx + 1 + ix)} aria-label={p.heading} aria-current={pageIx === summaryIx + 1 + ix ? 'page' : undefined} data-ux-id={`whatsnew-dot-${p.id}`}><i /></button>
             ))}
           </div>
         )}

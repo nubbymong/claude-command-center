@@ -456,3 +456,42 @@
 .ob-root .sv-acct-dot { width: 7px; height: 7px; border-radius: 999px; flex: none; }
 .ob-root .sv-meter { flex: 1; height: 5px; border-radius: 999px; background: var(--surface-overlay); overflow: hidden; }
 .ob-root .sv-meter > i { display: block; height: 100%; border-radius: 999px; background: var(--ob); }
+
+/* The rename/roadmap page (#525, canvas-designed v6 2026-08-26): brand
+   lockup over the labelled roadmap band. Tokens only; .rn- namespace. */
+.ob-root .rn-page { width: min(1060px, 95vw); text-align: center; }
+.ob-root .rn-lead { font-size: 17px; color: var(--text-secondary); font-weight: 500; letter-spacing: .01em; }
+.ob-root .rn-lead b { color: var(--text-primary); font-weight: 650; }
+.ob-root .rn-lockup { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 14px 0 6px; }
+.ob-root .rn-logo { width: 56px; height: 56px; border-radius: 13px; filter: drop-shadow(0 6px 22px var(--ob-soft)); }
+.ob-root .rn-name { font-size: 46px; font-weight: 800; letter-spacing: -1px; line-height: 1.05;
+  background: linear-gradient(100deg, var(--text-primary) 30%, color-mix(in srgb, var(--ob) 55%, var(--text-primary)) 75%, var(--ob));
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ob-root .rn-tagline { font-size: 15.5px; color: var(--text-secondary); line-height: 1.5; margin: 12px auto 0; max-width: 640px; }
+.ob-root .rn-roadmap { margin: 30px auto 0; max-width: 980px; background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
+  border: 1px solid var(--border-strong); border-radius: 16px; padding: 18px 22px 20px; box-shadow: 0 22px 60px rgba(0,0,0,.4); }
+.ob-root .rn-rm-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.ob-root .rn-rm-title { font-size: 13px; font-weight: 700; color: var(--text-primary); letter-spacing: .02em; }
+.ob-root .rn-rm-pill { font-size: 9.5px; font-weight: 800; letter-spacing: .1em; color: var(--status-warning);
+  border: 1px solid color-mix(in srgb, var(--status-warning) 45%, transparent); background: color-mix(in srgb, var(--status-warning) 8%, transparent); border-radius: 999px; padding: 3px 9px; }
+.ob-root .rn-rm-flex { display: flex; align-items: stretch; gap: 18px; }
+.ob-root .rn-rm-group { flex: none; }
+.ob-root .rn-rm-group.rn-grow { flex: 1; min-width: 0; }
+.ob-root .rn-rm-glabel { font-size: 10px; text-transform: uppercase; letter-spacing: .12em; font-weight: 700; color: var(--text-muted); margin-bottom: 10px; text-align: left; }
+.ob-root .rn-rm-glabel.rn-today { color: var(--ob); }
+.ob-root .rn-rm-tiles { display: flex; gap: 10px; }
+.ob-root .rn-rm-arrow { display: flex; align-items: center; color: var(--text-muted); font-size: 22px; padding: 0 2px; margin-top: 14px; }
+.ob-root .rn-tile { width: 118px; background: var(--surface-stage); border: 1px solid var(--border-subtle); border-radius: 12px;
+  padding: 13px 8px 11px; display: flex; flex-direction: column; align-items: center; gap: 8px; position: relative; color: var(--text-primary); }
+.ob-root .rn-tile.rn-live { border-color: var(--ob-line); background: linear-gradient(180deg, color-mix(in srgb, var(--ob-soft) 60%, var(--surface-stage)), var(--surface-stage)); }
+.ob-root .rn-glyph { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
+.ob-root .rn-tname { font-size: 11.5px; font-weight: 650; color: var(--text-primary); line-height: 1.15; }
+.ob-root .rn-tsub { font-size: 9px; color: var(--text-muted); letter-spacing: .04em; }
+.ob-root .rn-badge { position: absolute; top: -7px; right: 8px; font-size: 8.5px; font-weight: 800; letter-spacing: .06em; border-radius: 5px; padding: 1px 6px; }
+.ob-root .rn-badge.rn-now { color: var(--surface-sunken); background: var(--ob); }
+.ob-root .rn-badge.rn-beta { color: var(--surface-sunken); background: var(--status-warning); }
+.ob-root .rn-badge.rn-b22 { color: var(--status-warning); background: var(--surface-raised); border: 1px solid color-mix(in srgb, var(--status-warning) 50%, transparent); }
+.ob-root .rn-points { display: flex; justify-content: center; gap: 34px; margin-top: 26px; flex-wrap: wrap; }
+.ob-root .rn-pt { display: flex; align-items: baseline; gap: 8px; font-size: 13px; color: var(--text-secondary); }
+.ob-root .rn-pt b { color: var(--text-primary); font-weight: 650; }
+@media (max-width: 1000px) { .ob-root .rn-rm-flex { flex-direction: column; } .ob-root .rn-rm-arrow { display: none; } .ob-root .rn-rm-tiles { flex-wrap: wrap; } }

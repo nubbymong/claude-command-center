@@ -52,10 +52,12 @@ function passGuard(): void {
 }
 
 describe('the version stepper', () => {
-  it('renders nothing for a single version of a single artifact', async () => {
+  it('C3: even a single version renders the control — the dropdown is never sometimes', async () => {
     await render({ versions: [v('v1', 'design')], activeVersionId: 'v1' })
-    expect(container.querySelector('[data-testid="canvas-version-stepper"]')).toBeNull()
-    expect(container.querySelector('[data-testid="canvas-history-button"]')).toBeNull()
+    const stepper = container.querySelector('[data-testid="canvas-version-stepper"]')
+    expect(stepper).not.toBeNull()
+    expect(stepper!.textContent).toContain('of 1')
+    expect(container.querySelector('[data-testid="canvas-history-button"]')).not.toBeNull()
   })
 
   it('steps within the current artifact only, and disables the ends', async () => {
@@ -63,7 +65,8 @@ describe('the version stepper', () => {
     // Plan run v1..v3, then a mockup v4 — the stepper walks the PLAN.
     await render({ versions: [v('v1', 'plan'), v('v2', 'plan'), v('v3', 'plan'), v('v4', 'design')], activeVersionId: 'v2', onSelectVersion })
     const stepper = container.querySelector('[data-testid="canvas-version-stepper"]')!
-    const [prev, next] = Array.from(stepper.querySelectorAll('button'))
+    const prev = stepper.querySelector('[aria-label="Previous version of this artifact"]') as HTMLButtonElement
+    const next = stepper.querySelector('[aria-label="Next version of this artifact"]') as HTMLButtonElement
     expect(prev.disabled).toBe(false)
     expect(next.disabled).toBe(false)
     expect(stepper.textContent).toContain('of 3')
@@ -74,7 +77,7 @@ describe('the version stepper', () => {
     // At v1 the previous is disabled (does not cross into another artifact).
     await render({ versions: [v('v1', 'plan'), v('v2', 'plan'), v('v3', 'plan'), v('v4', 'design')], activeVersionId: 'v1', onSelectVersion })
     const s2 = container.querySelector('[data-testid="canvas-version-stepper"]')!
-    expect((s2.querySelectorAll('button')[0] as HTMLButtonElement).disabled).toBe(true)
+    expect((s2.querySelector('[aria-label="Previous version of this artifact"]') as HTMLButtonElement).disabled).toBe(true)
   })
 })
 
@@ -83,8 +86,11 @@ describe('the History picker', () => {
     const onSelectVersion = vi.fn()
     await render({ versions: [v('v1', 'plan'), v('v2', 'plan'), v('v3', 'design')], activeVersionId: 'v1', onSelectVersion })
     await act(async () => (container.querySelector('[data-testid="canvas-history-button"]') as HTMLButtonElement).click())
+    // C3: the CURRENT artifact lists its versions directly (the history);
+    // other artifacts keep their picker rows below.
+    expect(container.querySelectorAll('[data-testid="canvas-history-version-row"]').length).toBeGreaterThan(0)
     const rows = container.querySelectorAll('[data-testid="canvas-history-row"]')
-    expect(rows).toHaveLength(2)
+    expect(rows).toHaveLength(1)
     // Pick the mockup artifact — opens its latest (only) version v3.
     const mockupRow = Array.from(rows).find((r) => r.getAttribute('data-artifact-kind') === 'design')!
     await act(async () => (mockupRow.querySelector('button') as HTMLButtonElement).click())

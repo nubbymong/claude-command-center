@@ -56,8 +56,7 @@ describe('QuickStartPanel', () => {
   it('a running pin can still START another instance', () => {
     const onLaunch = vi.fn()
     render({ configs: [cfg('b')], running: new Map([['b', 1]]), onLaunch })
-    const start = Array.from(container.querySelectorAll('[data-testid="quick-start-item"] button'))
-      .find((el) => el.textContent!.includes('Start')) as HTMLButtonElement
+    const start = container.querySelector('[data-testid="quick-start-item"] button') as HTMLButtonElement
     expect(start.disabled).toBe(false)
     act(() => { start.click() })
     expect(onLaunch).toHaveBeenCalledTimes(1)
@@ -97,8 +96,7 @@ describe('QuickStartPanel', () => {
 
 describe('the #462 restyle — session-card language, no loud fill', () => {
   const start = () =>
-    Array.from(container.querySelectorAll('[data-testid="quick-start-item"] button'))
-      .find((el) => el.textContent!.includes('Start')) as HTMLButtonElement
+    container.querySelector('[data-testid="quick-start-item"] button') as HTMLButtonElement
   let container: HTMLDivElement; let root: Root
   beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container); SETTINGS.settings.quickStartCollapsed = false; SETTINGS.settings.codexEnabled = true })
   afterEach(() => { act(() => root.unmount()); container.remove() })

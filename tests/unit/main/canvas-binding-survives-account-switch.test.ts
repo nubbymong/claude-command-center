@@ -114,7 +114,7 @@ describe('a tile that switches account keeps the canvas it drew', () => {
     // The "repush to canvas" failure, in its account-switch shape: a second v1
     // on a second canvas instead of v2 on this one.
     expect(store.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>two</p>' }))
-      .toEqual({ canvasId, versionId: 'v2' })
+      .toEqual({ canvasId, versionId: 'v2', superseded: ['v1'] })
   })
 
   it('is not offered its own canvas back as a reclaim candidate', () => {

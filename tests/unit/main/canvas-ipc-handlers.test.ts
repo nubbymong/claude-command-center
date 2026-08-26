@@ -116,6 +116,17 @@ describe('validation — bad args REJECT before the store is ever called', () =>
     [IPC.CANVAS_RENDER, { sessionId: SID, source: { mode: 'uat' } }],
     [IPC.CANVAS_SET_ACTIVE_VERSION, { sessionId: SID, versionId: 'nope' }],
     [IPC.CANVAS_SET_ACTIVE_VERSION, { sessionId: SID, versionId: 'v1x' }],
+    // C1 (adv FINDING F-2): the new verdict/reopen channels + the submit
+    // decision field are refused before the store is touched.
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approve' }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approved', versionId: 'v1\n' }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approved', note: 'x'.repeat(4001) }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approved', by: 'user' }],
+    [IPC.CANVAS_VERSION_VERDICT, { sessionId: SID, state: 'approved', evil: 1 }],
+    [IPC.CANVAS_VERSION_REOPEN, { sessionId: SID }],
+    [IPC.CANVAS_VERSION_REOPEN, { sessionId: SID, versionId: 'nope' }],
+    [IPC.CANVAS_REVIEW_SUBMIT, { sessionId: SID, reviewId: 'R1', sketches: [], decision: 'approved' }],
   ])('%s rejects %j', async (channel, args) => {
     await expect(invoke(channel as string, args)).rejects.toThrow()
     expect(storeMock.getCanvasStateForSession).not.toHaveBeenCalled()

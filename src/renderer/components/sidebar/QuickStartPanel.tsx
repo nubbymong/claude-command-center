@@ -99,9 +99,11 @@ export default function QuickStartPanel({ configs, running, onLaunch, onContextM
                   : 'h-5 px-2 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0 border border-[color-mix(in_srgb,var(--brand)_50%,transparent)] bg-[color-mix(in_srgb,var(--brand)_15%,transparent)] text-[var(--brand)] hover:bg-[color-mix(in_srgb,var(--brand)_25%,transparent)] transition-colors focus-ring'
               }
               title={blocked ? CODEX_OFF_LAUNCH_REASON : `Start ${config.label}`}
+              aria-label={blocked ? CODEX_OFF_LAUNCH_REASON : `Start ${config.label}`}
             >
-              <svg width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden><polygon points="3,1 10,6 3,11" /></svg>
-              Start
+              {/* Owner call 2026-08-26: glyph only — the word "Start" on every
+                  pinned row read as clutter. The title/aria keep the verb. */}
+              <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor" aria-hidden><polygon points="3,1 10,6 3,11" /></svg>
             </button>
           </div>
         )

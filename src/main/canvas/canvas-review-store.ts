@@ -48,7 +48,7 @@ import {
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
 import { logInfo } from '../debug-logger'
 import { getResourcesDirectory } from '../ipc/setup-handlers'
-import { clearAwaitingReview, getCanvasStateById, getCanvasStateForSession } from './canvas-store'
+import { clearAwaitingReview, getCanvasStateById, getCanvasStateForSession, setVersionVerdict } from './canvas-store'
 
 // ── Bounds (shared intent with the IPC schemas; the store re-checks because it
 //    is the last line, and the MCP tool reads through it) ────────────────────
@@ -317,11 +317,13 @@ function isValidAnnotation(value: unknown): value is Annotation {
   // than render it. (The pickSource block above already pins the stamp itself
   // to this position, so the two rules together are an iff.)
   if (a.state === 'approved' && a.closedBy === 'agent' && a.pickSource !== 'chat') return false
-  // 'supersede' has exactly one legal position (#470): the sweep writes it
-  // only as stale-from-addressed. Anywhere else — an approved note wearing it,
-  // a dismissal — is a hand-edit laundering provenance the panel would then
-  // present as the store's own settling.
-  if (a.closedBy === 'supersede' && (a.state !== 'stale' || a.closedFrom !== 'addressed')) return false
+  // 'supersede' has exactly two legal positions: the #470 sweep writes it as
+  // stale-from-addressed, and the C1 version-supersession settle (a new ready
+  // render killing the previous open version's notes, owner state machine
+  // 2026-08-26) writes stale-from-open as well. Anywhere else — an approved
+  // note wearing it, a dismissal — is a hand-edit laundering provenance the
+  // panel would then present as the store's own settling.
+  if (a.closedBy === 'supersede' && (a.state !== 'stale' || (a.closedFrom !== 'addressed' && a.closedFrom !== 'open'))) return false
   return true
 }
 
@@ -455,6 +457,18 @@ function loadRecord(canvasId: string, sessionId: string): ReviewFileRecord | nul
       }
     }
     healCounters(record)
+    // C1 heal (one-way, idempotent): notes on versions whose verdict marks
+    // them dead — the pre-C1 backlog this migration exists to clear — settle
+    // on first load, so the phantom "N reviews open" piles vanish without a
+    // user click. Same quiet-persist posture as the rebind heal above.
+    const settled = settleNotesForVersions(record, deadVersionIds(canvasId))
+    if (settled > 0) {
+      try {
+        persist(record)
+      } catch {
+        /* disk heal failed — in-memory view is settled; the next mutation persists */
+      }
+    }
     records.set(canvasId, record)
     return record
   } catch {
@@ -1003,6 +1017,85 @@ function settleSupersededRounds(record: ReviewFileRecord, artifactKeyByVersion: 
   return [...doomed]
 }
 
+/**
+ * C1 (owner state machine, 2026-08-26): settle the notes of versions whose
+ * verdict says they are DEAD — superseded by a newer ready render, withdrawn,
+ * or dismissed. Open and addressed notes alike move to 'stale' with
+ * `closedBy: 'supersede'` (their original state kept in `closedFrom`), so the
+ * panel says the store settled them and Reopen puts any one straight back.
+ *
+ * NOT gated on the #470 seen-barrier, deliberately: that barrier guards the
+ * agent CLAIMING a close it asked for by name. Here the anchor is a VERSION
+ * verdict the canvas store stamped — a systemic supersession (a new ready
+ * render) or a user/user-relayed ruling — not an agent's claim about a note.
+ * The one shield kept is the user's own: a REOPENED note (they deliberately
+ * put it back in play) is never auto-settled.
+ *
+ * Pure record mutation; returns how many notes moved. Callers persist.
+ */
+function settleNotesForVersions(record: ReviewFileRecord, versionIds: ReadonlySet<string>): number {
+  if (versionIds.size === 0) return 0
+  let settled = 0
+  const touchedReviews = new Set<string>()
+  for (const a of record.annotations) {
+    if (!versionIds.has(a.versionId)) continue
+    // The #470 guards, ported to the C1 supersede (adversarial FINDING 1): an
+    // automatic settle triggered by a bare `canvas_render` must never be a way
+    // for a (prompt-injectable) agent to close the user's outstanding feedback.
+    //  - an OPEN note is undischarged AGENT debt — the agent has not acted on
+    //    it — so supersession never closes it (the version dies; the note the
+    //    agent still owes lives on, exactly as the #470 sweep refuses).
+    //  - an ADDRESSED note closes only once the USER has SEEN it addressed
+    //    (isAgentCloseable) — the same seen-barrier `closeAnnotationsByAgent`
+    //    enforces, so "settled by your later review" is never claimed for a
+    //    round the user never laid eyes on.
+    //  - a REOPENED note is the user's own re-raise and is shielded outright.
+    if (a.state !== 'addressed') continue
+    if (a.reopenedAt !== undefined) continue
+    if (!isAgentCloseable(a)) continue
+    a.closedFrom = a.state
+    a.state = 'stale'
+    a.closedBy = 'supersede'
+    settled++
+    touchedReviews.add(a.reviewId)
+  }
+  for (const id of touchedReviews) settleReviewStatus(record, id)
+  return settled
+}
+
+/** The version ids on this canvas whose verdict marks them dead (C1). */
+function deadVersionIds(canvasId: string): Set<string> {
+  const state = getCanvasStateById(canvasId)
+  const out = new Set<string>()
+  for (const v of state?.versions ?? []) {
+    const s = v.verdict?.state
+    if (s === 'superseded' || s === 'withdrawn' || s === 'dismissed') out.add(v.id)
+  }
+  return out
+}
+
+/**
+ * Public C1 settle: called by the render ingress after `renderVersion` reports
+ * auto-superseded versions (the canvas store cannot import this one), and by
+ * the verdict paths after a withdraw. Loads through the canvas record's owner
+ * so an unowned/broken store is left alone. Returns notes settled.
+ */
+export function settleReviewsForSupersededVersions(canvasId: string, versionIds: readonly string[]): number {
+  const canvas = getCanvasStateById(canvasId)
+  if (!canvas) return 0
+  const record = loadRecord(canvasId, canvas.sessionId)
+  if (!record) return 0
+  const next: ReviewFileRecord = {
+    ...record,
+    reviews: record.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: record.annotations.map(cloneAnnotation),
+  }
+  const settled = settleNotesForVersions(next, new Set(versionIds))
+  if (settled === 0) return 0
+  commit(next)
+  return settled
+}
+
 /** Validate a renderer-supplied draft against this canvas. Throws on anything
  *  out of shape — the IPC schema should have caught it, so a throw here is a
  *  bug surfacing, not a user error. */
@@ -1208,7 +1301,16 @@ function decodeAttachmentPng(pngBase64: string): Buffer {
  * the whole submit — silently dropping a sketch the user attached would hand
  * the agent a review that is quietly less than what was written.
  */
-export function submitReview(sessionId: string, reviewId: string, sketches: CanvasSketchExport[]): CanvasReviewState {
+export function submitReview(
+  sessionId: string,
+  reviewId: string,
+  sketches: CanvasSketchExport[],
+  /** C1 (owner state machine, 2026-08-26): the decision this submit carries.
+   *  'reject' mandates that the review holds at least one note (the renderer
+   *  enforces the composer UX; this is the boundary re-check). Absent =
+   *  legacy submit, which stamps no version verdict. */
+  decision?: 'approve' | 'reject',
+): CanvasReviewState {
   const canvas = canvasForSession(sessionId)
   if (!canvas) throw new Error('no canvas for session')
   requireHealthy(canvas.canvasId)
@@ -1303,6 +1405,22 @@ export function submitReview(sessionId: string, reviewId: string, sketches: Canv
     } catch (err) {
       logInfo(`[canvas-review] clearAwaitingReview failed for ${canvas.canvasId}: ${err}`)
     }
+  }
+  // C1: the submit carries the version's verdict. Stamped AFTER the commit so
+  // a failed submit never rules on anything; a stamp refusal (the version was
+  // auto-superseded mid-review, say) downgrades to a log — the notes landed,
+  // and the version's outcome is already truthfully recorded as superseded.
+  if (decision === 'approve' || decision === 'reject') {
+    // The rejection gist (C3): History shows WHY a version fell, so the
+    // verdict carries the round's first note line.
+    const firstNote = next.annotations.find((a) => members.has(a.id) && a.note.trim().length > 0)?.note
+    const ruled = setVersionVerdict(
+      sessionId,
+      frozenVersionId,
+      { state: decision === 'approve' ? 'approved' : 'rejected', ...(decision === 'reject' && firstNote ? { note: firstNote } : {}) },
+      'user',
+    )
+    if ('error' in ruled) logInfo(`[canvas-review] version verdict skipped for ${frozenVersionId}: ${ruled.error}`)
   }
   return toState(next)
 }

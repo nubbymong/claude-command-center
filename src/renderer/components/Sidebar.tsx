@@ -25,6 +25,7 @@ import ConfigRow from './sidebar/ConfigRow'
 import SessionRow from './sidebar/SessionRow'
 import ConfigContextMenu from './sidebar/ConfigContextMenu'
 import SessionContextMenu from './sidebar/SessionContextMenu'
+import { openArtifactsPerSetting } from '../lib/claude-web-targets'
 import GroupContextMenu from './sidebar/GroupContextMenu'
 import SectionHeader from './sidebar/SectionHeader'
 import GroupHeader from './sidebar/GroupHeader'
@@ -1340,24 +1341,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowAc
             onOpenArtifacts={
               !s.shellOnly && (s.profileId ?? primaryProfileId) && s.sessionType === 'local'
                 ? () => {
-                    // Surface the outcome. This used to discard the result, so a
-                    // main-process refusal (an unresolvable partition, a profile
-                    // that no longer exists) produced no window and no message —
-                    // indistinguishable from the menu item simply not working.
-                    const pid = (s.profileId ?? primaryProfileId)!
-                    void window.electronAPI.accountWeb.openArtifacts(pid)
-                      .then((r) => {
-                        if (!r.ok) alert(`Could not open artifacts for this account: ${r.error}`)
-                      })
-                      // A rejected invoke -- IPC transport gone, or the handler dying
-                      // before it can build its envelope -- lands here, not in the
-                      // ok:false branch. Without this it is silent again, which is the
-                      // whole bug: no window and no message are indistinguishable from
-                      // a menu item that does not work.
-                      .catch((err: unknown) => {
-                        const why = (err as Error)?.message ?? String(err)
-                        alert(`Could not open artifacts for this account: ${why}`)
-                      })
+                    // Owner call 2026-08-26: this menu item has no chooser of
+                    // its own — it silently follows the global open-target
+                    // setting (window by default; the pane when chosen). The
+                    // helper keeps the window path's error surfacing (#216's
+                    // fix: a refusal must never be silent).
+                    openArtifactsPerSetting((s.profileId ?? primaryProfileId)!, s.id)
                   }
                 : undefined
             }

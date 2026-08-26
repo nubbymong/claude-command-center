@@ -56,10 +56,9 @@ export interface CanvasTotals {
 export interface CanvasQueueRow {
   canvasId: string
   title?: string
-  kind: 'review' | 'verdict'
-  /** verdict rows: how many rounds on this canvas await verdicts. */
-  rounds?: number
-  /** When it became owed (review) or the canvas last rendered (verdict). */
+  /** C1: only open versions awaiting review queue — the verdict kind is gone. */
+  kind: 'review'
+  /** When it became owed. */
   at: string
   onActive: boolean
 }
@@ -99,16 +98,18 @@ export function totalsFromEntries(entries: CanvasLibraryEntry[]): CanvasTotals {
     // half comes from the canvas RECORD, so it counts even when the review
     // store is unreadable — a hand-over must never disappear behind a broken
     // reviews.json.
-    const owesVerdicts = !!e.verdictRounds && e.verdictRounds > 0
-    if (e.awaitingReview || owesVerdicts) {
+    // C1: the queue counts ONLY open versions awaiting the user's review.
+    // "Rounds awaiting verdicts" ceased to exist as user debt (a submit
+    // carries the verdict; legacy piles settle on load), so the verdict arm
+    // is gone rather than zeroed.
+    if (e.awaitingReview) {
       t.queue++
       if (e.isActiveForThisSession) t.queueOnActive++
       t.queueRows.push({
         canvasId: e.canvasId,
         ...(e.title ? { title: e.title } : {}),
-        ...(e.awaitingReview
-          ? { kind: 'review' as const, at: e.awaitingReviewAt ?? e.lastRenderedAt }
-          : { kind: 'verdict' as const, rounds: e.verdictRounds, at: e.lastRenderedAt }),
+        kind: 'review' as const,
+        at: e.awaitingReviewAt ?? e.lastRenderedAt,
         onActive: !!e.isActiveForThisSession,
       })
     }

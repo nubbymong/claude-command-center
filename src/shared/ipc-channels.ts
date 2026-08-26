@@ -409,7 +409,9 @@ export const IPC = {
   CANVAS_REVIEW_GET_STATE: 'canvas:reviewGetState',    // renderer -> main: { sessionId } -> CanvasReviewState | null
   CANVAS_ANNOTATION_UPSERT: 'canvas:annotationUpsert', // renderer -> main: create/update a draft note
   CANVAS_ANNOTATION_DELETE: 'canvas:annotationDelete', // renderer -> main: remove a draft note
-  CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports)
+  CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports); C1: carries the decision (approve/reject)
+  CANVAS_VERSION_VERDICT: 'canvas:versionVerdict',     // renderer -> main: C1 zero-note verdict on a version { sessionId, versionId?, state, note? }
+  CANVAS_VERSION_REOPEN: 'canvas:versionReopen',       // renderer -> main: C1 reopen a version for review (later ready versions -> withdrawn)
   CANVAS_ANNOTATION_RESOLVE: 'canvas:annotationResolve', // renderer -> main: approve / dismiss / stale / reannotate a live note
   CANVAS_ANNOTATION_REOPEN: 'canvas:annotationReopen', // renderer -> main: the USER puts a closed note back in play
   CANVAS_REVIEW_MARK_SEEN: 'canvas:reviewMarkSeen',    // renderer -> main: the USER has these addressed notes on screen (releases the agent close-out barrier; no MCP path here, ever)

@@ -25,13 +25,13 @@ import {
   DEFAULT_AUTH_BROWSER,
   DEFAULT_CLI_AUTH_METHOD,
   DEFAULT_WEB_SIGN_IN_MODE,
-  WEB_SIGN_IN_MODES,
-  WEB_SIGN_IN_MODE_LABELS,
   type AuthBrowser,
   type CliAuthMethod,
   type WebSignInMode,
 } from '../../../shared/account-web-session'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { resolveArtifactsOpenTarget, resolveSignInOpenTarget, type ClaudeWebTarget } from '../../lib/claude-web-targets'
 
 interface Props {
   profileId: string
@@ -112,11 +112,18 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     await refresh()     // re-read so the picker shows what was actually stored
   }
 
-  const changeSignInMode = async (m: WebSignInMode): Promise<void> => {
-    setSignInMode(m)    // optimistic: the picker should not lag the click
-    const r = await api.setSignInMode({ profileId, mode: m })
-    if (!r.ok) setError(r.error)
-    await refresh()
+  // Owner call 2026-08-26: sign-in routing is a GLOBAL setting now. The
+  // per-account mode #439 shipped is still READ as the fallback seed (so a
+  // beta-era choice keeps working untouched) but no longer written — the
+  // picker writes the global, which wins the moment it is set.
+  const settings = useSettingsStore((s) => s.settings)
+  const resolvedSignInTarget = resolveSignInOpenTarget(settings, signInMode === 'internal-pane')
+  const changeSignInTarget = (t: ClaudeWebTarget): void => {
+    useSettingsStore.getState().updateSettings({ signInOpenTarget: t })
+  }
+  const artifactsTarget = resolveArtifactsOpenTarget(settings)
+  const changeArtifactsTarget = (t: ClaudeWebTarget): void => {
+    useSettingsStore.getState().updateSettings({ artifactsOpenTarget: t })
   }
 
   const signIn = async (): Promise<void> => {
@@ -125,7 +132,7 @@ export function AccountWebSession({ profileId, accountName }: Props) {
     // the dedicated window. It needs a session to host the pane; with none open,
     // the default window flow runs so the button never dead-ends.
     let fallbackNotice = ''
-    if (signInMode === 'internal-pane') {
+    if (resolvedSignInTarget === 'pane') {
       const sessions = useSessionStore.getState()
       // Same gate as the pane's own claude.ai entry (#475): only a local,
       // non-shell session can host the account surface — an SSH or shell-only
@@ -229,26 +236,42 @@ export function AccountWebSession({ profileId, accountName }: Props) {
               : 'Needed to import an organisation-scoped share and to open this account’s artifacts. Opens a window to sign in.'}
           </div>
 
-          {/* #439: where the web sign-in runs. Default keeps today's flow
-              untouched (the dedicated window; the system browser for SSO); the
-              alternative hosts it in a session's baked-in browser pane on this
-              account's partition. */}
+          {/* #439 → global (owner call 2026-08-26): where the web sign-in runs,
+              ONE choice for every account. Default keeps today's flow untouched
+              (the dedicated window; the system browser for SSO); the alternative
+              hosts it in a session's baked-in browser pane on the account's
+              partition. A per-account choice made before this became global is
+              honoured until the global is set (resolveSignInOpenTarget). */}
           <div className="flex items-center gap-2 mt-1.5">
             <span className="text-[10px] text-overlay0 shrink-0">Open claude.ai sign-in in</span>
             <select
-              value={signInMode}
+              value={resolvedSignInTarget}
               disabled={busy}
-              onChange={(e) => { void changeSignInMode(e.target.value as WebSignInMode) }}
+              onChange={(e) => { changeSignInTarget(e.target.value as ClaudeWebTarget) }}
               className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors disabled:opacity-40"
               data-testid="web-sign-in-mode"
             >
-              {WEB_SIGN_IN_MODES.map((m) => (
-                <option key={m} value={m}>{WEB_SIGN_IN_MODE_LABELS[m]}</option>
-              ))}
+              <option value="window">Sign-in window (default)</option>
+              <option value="pane">Internal browser pane</option>
             </select>
-            {signInMode === 'internal-pane' && (
-              <span className="text-[10px] text-overlay0">Signs in inside a session’s browser pane</span>
-            )}
+            <span className="text-[10px] text-overlay0">All accounts{resolvedSignInTarget === 'pane' ? ' — signs in inside a session’s browser pane' : ''}</span>
+          </div>
+
+          {/* The artifacts twin: where "Open artifacts" goes — the Artifacts
+              button and the session menu both follow this one global choice.
+              Also settable from the button's right-click. Default unchanged. */}
+          <div className="flex items-center gap-2 mt-1.5">
+            <span className="text-[10px] text-overlay0 shrink-0">Open artifacts in</span>
+            <select
+              value={artifactsTarget}
+              onChange={(e) => { changeArtifactsTarget(e.target.value as ClaudeWebTarget) }}
+              className="bg-crust/60 border border-surface0/80 rounded px-2 py-1 text-[11px] text-text focus:outline-none focus:border-blue/50 transition-colors"
+              data-testid="artifacts-open-target"
+            >
+              <option value="window">Separate window (default)</option>
+              <option value="pane">In-app browser pane</option>
+            </select>
+            <span className="text-[10px] text-overlay0">All accounts</span>
           </div>
 
           {/* SSO ONLY, and only when there is a genuine CHOICE (#439: more than

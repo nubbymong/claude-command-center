@@ -4,7 +4,6 @@ import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import CanvasEmptyState from './CanvasEmptyState'
 import { CanvasLibrary } from './CanvasLibrary'
-import CanvasSubjectPicker from './CanvasSubjectPicker'
 import CanvasFiledStrip from './CanvasFiledStrip'
 import CanvasNotesPanel from './CanvasNotesPanel'
 import CanvasCompleteButton from './CanvasCompleteButton'
@@ -39,7 +38,6 @@ import {
   type CanvasXrayMode,
 } from '../canvas/xray-mode'
 import { openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
-import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 
 /** How long a frame may sit silent before the pane stops claiming it is
  *  loading. A 404, a CSP-blocked bridge script and a crashed page otherwise
@@ -263,6 +261,12 @@ export default function AgentCanvasPane({ sessionId, isActive = false }: Props) 
           the first thing read. */}
       <CanvasFiledStrip sessionId={sessionId} />
       <CanvasSurface
+        // Keyed by CANVAS (quality MED-2): a Library "open here" swaps the
+        // canvas under a mounted surface, and every per-version mechanism
+        // (the armed decision, the sketch stash, version-stamp maps) keys on
+        // version ids that repeat across canvases — v1 exists on all of them.
+        // Remounting is the one reset that cannot miss a ref.
+        key={canvasState.canvasId}
         sessionId={sessionId}
         canvasId={canvasState.canvasId}
         title={canvasState.title}
@@ -352,6 +356,16 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
    *  focus, so a terminal's shortcuts in another pane are never contested. */
   const paneRootRef = useRef<HTMLDivElement | null>(null)
   const glassApiRef = useRef<ExcalidrawImperativeAPI | null>(null)
+  /**
+   * C1 (owner bug report 2026-08-26): sketches belong to the version they
+   * were drawn on. Every glass element is stamped with the version on screen
+   * when it first appears; on a version switch, foreign-version elements are
+   * lifted out of the live scene into the stash (and restored when their
+   * version comes back). The submit path reads the UNION, so a note's sketch
+   * still exports whichever version is currently displayed.
+   */
+  const sketchVersionRef = useRef(new Map<string, string>())
+  const foreignSketchStashRef = useRef(new Map<string, ReturnType<ExcalidrawImperativeAPI['getSceneElements']>[number]>())
   const repinPendingRef = useRef(false)
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
   const modeRef = useRef(mode)
@@ -472,6 +486,36 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   xrayModeRef.current = xrayMode
   versionIdRef.current = version.id
   zoomRef.current = zoom
+
+  // C1: swap the glass to the displayed version's sketches. Foreign-version
+  // elements are stashed (not deleted — the submit path reads the union and a
+  // return to their version restores them); elements never stamped (drawn
+  // before this shipped) are adopted by the version on screen.
+  useEffect(() => {
+    const api = glassApiRef.current
+    if (!api) return
+    const live = api.getSceneElements()
+    const keep: (typeof live)[number][] = []
+    let changed = false
+    for (const el of live) {
+      const stamp = sketchVersionRef.current.get(el.id) ?? version.id
+      if (stamp === version.id) {
+        sketchVersionRef.current.set(el.id, stamp)
+        keep.push(el)
+      } else {
+        foreignSketchStashRef.current.set(el.id, el)
+        changed = true
+      }
+    }
+    for (const [id, el] of foreignSketchStashRef.current) {
+      if (sketchVersionRef.current.get(id) === version.id) {
+        keep.push(el)
+        foreignSketchStashRef.current.delete(id)
+        changed = true
+      }
+    }
+    if (changed) api.updateScene({ elements: keep })
+  }, [version.id])
 
   // Keep the glass pinned to the content: scene scroll ≡ −content scroll, scene
   // zoom ≡ the content zoom (canvas-coords.glassScrollForContent). Applied on
@@ -927,10 +971,6 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // Open reviews on the session's OTHER canvases (item 29): the count above is
   // honest about this canvas and blind to the rest; this names the rest, and
   // points at the subject picker where each is listed with its own count.
-  const elsewhereOpen = useCanvasTotalsStore((s) => {
-    const t = s.bySessionId[sessionId]
-    return t?.loaded ? Math.max(0, t.openReviews - t.onActive) : 0
-  })
   const openNotesKey = useMemo(() => openNotes.map((n) => n.id).join(','), [openNotes])
 
   useEffect(() => {
@@ -1145,8 +1185,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
 
   const focusStageRect = useMemo(() => {
     if (!focus || !stageViewport) return null
+    // C1 (owner bug report 2026-08-26): the lock is stamped with the version
+    // it was made on, but this paint was version-blind — a region drawn on v5
+    // repainted verbatim over v6's different layout. Draw it ONLY on its own
+    // version; stepping back brings it back, and a new ready version leaves
+    // it where it was made.
+    if (focus.versionId !== version.id) return null
     return contentPageRectToStage(focus.bboxPage, stageViewport)
-  }, [focus, stageViewport])
+  }, [focus, stageViewport, version.id])
 
   /** An element lock's label came out of an inspect reply — the page's own
    *  account of what the user clicked. A region's came from the marquee. */
@@ -1245,6 +1291,16 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           style={{ background: `linear-gradient(90deg, ${modeLockup.color}, transparent 72%)` }}
           data-testid="canvas-mode-keel"
         />
+        {/* C3 (canvas-approved header, 2026-08-26): Library is the way OUT —
+            a back affordance at the far left, not a button floating mid-row. */}
+        <button
+          onClick={onOpenLibrary}
+          className="shrink-0 flex items-center gap-1 text-[11.5px] rounded px-1.5 py-0.5 text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring"
+          title="Every canvas in this project — open one here, or delete it"
+          data-testid="canvas-library-open"
+        >
+          <span aria-hidden className="text-[13px] leading-none">&lsaquo;</span> Library
+        </button>
         {/* Mode-as-title: the word the user thinks in, in its own colour. */}
         <span
           className="shrink-0 text-[13px] font-extrabold tracking-[0.09em] leading-none"
@@ -1255,15 +1311,18 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         >
           {modeLockup.word}
         </span>
-        {/* WHAT this canvas is of, and the way to the others. A session authors
-            many canvases, so the pane has to say which one you are looking at
-            and let you reach the rest. */}
-        <CanvasSubjectPicker
-          sessionId={sessionId}
-          canvasId={canvasId}
-          title={canvasTitle}
-          onOpenLibrary={onOpenLibrary}
-        />
+        {/* WHAT this canvas is of — plain text (C3). Switching artifacts is
+            the Library's job; the old subject dropdown and its "+N elsewhere"
+            counter are gone. */}
+        {canvasTitle && (
+          <span
+            className="min-w-0 truncate text-[12.5px] font-semibold text-[var(--text-primary)]"
+            title={canvasTitle}
+            data-testid="canvas-artifact-name"
+          >
+            {canvasTitle}
+          </span>
+        )}
         {/* Content zoom (#368) — shown only when it is not 1:1, click resets.
             The chip is the visibility the forged-zoom analysis leans on: a zoom
             the user did not ask for is never silent. */}
@@ -1277,10 +1336,8 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             {formatCanvasZoom(zoom)}
           </button>
         )}
-        {/* Two-level history (item C, phase 4): a per-artifact version stepper
-            + a History ▾ picker, replacing the flat version select. A single
-            version of a single artifact renders neither (the control returns
-            null), so the empty-state chrome stays quiet. */}
+        {/* ONE version control (C3): History with the stepper folded in and
+            the pending pill riding it; its dropdown IS the version list. */}
         <CanvasHistoryControl
           versions={versions}
           activeVersionId={version.id}
@@ -1298,90 +1355,39 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               .then(() => useCanvasStore.getState().refresh(sessionId))
           }}
         />
-        {/* What is still owed on THIS canvas. From one, unlike the Canvas
-            button's pill: in here you are already looking at the thing, so one
-            outstanding round is worth naming rather than hiding. */}
-        {openReviewCount > 0 && (
-          <span
-            className="shrink-0 flex items-center gap-1.5 text-[11px] font-semibold rounded-full px-2 py-0.5"
-            style={{
-              color: 'var(--color-peach)',
-              background: 'color-mix(in srgb, var(--color-peach) 13%, transparent)',
-              border: '1px solid color-mix(in srgb, var(--color-peach) 40%, transparent)',
-            }}
-            title="Sent for review and not closed out. A review closes when every note in it has your verdict."
-            data-testid="canvas-pane-open-reviews"
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
-            {openReviewCount} review{openReviewCount === 1 ? '' : 's'} open
-          </span>
-        )}
-        {/* ...and on the canvases you are NOT looking at. Muted, not peach: it
-            is a pointer to the picker, not a second alarm. */}
-        {elsewhereOpen > 0 && (
-          <span
-            className="shrink-0 text-[11px] rounded-full px-2 py-0.5 border"
-            style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-            title={`${elsewhereOpen} more review${elsewhereOpen === 1 ? '' : 's'} open on other canvases of this session — the subject picker lists each canvas with its count`}
-            data-testid="canvas-pane-open-reviews-elsewhere"
-          >
-            +{elsewhereOpen} elsewhere
-          </span>
-        )}
-        <button
-          onClick={onOpenLibrary}
-          className="shrink-0 text-[11.5px] rounded px-1.5 py-0.5 bg-[var(--surface-panel)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:text-[var(--text-primary)] transition-colors focus-ring"
-          title="Every canvas in this project — open one here, or delete it"
-          data-testid="canvas-library-open"
-        >
-          Library
-        </button>
+        {/* C3: the "N reviews open" chip and its "+N elsewhere" sibling are
+            gone — the count lives in exactly one place (the toolbar Canvas
+            button), and History carries the pending pill. */}
         <div className="flex-1" />
-        {/* Tools — Inspect / Sketch / Region (item C): app-family chips that
-            decide who owns the pointer. The X-ray setting rides the Inspect
-            chip, since it only governs what Inspect does; Sketch and Region
-            visibly pause both. */}
-        <div className="shrink-0 flex items-center gap-1.5" role="group" aria-label="Canvas tools" data-testid="canvas-tool-chips">
-          {/* Inspect + X-Ray as ONE capsule (#469, canvas-picked option A):
-              a single bordered control, so the modes read as Inspect's own
-              setting — and the feature is NAMED on the control (owner note:
-              "we should be calling it X-Ray"). Locked to Stealth on a plan
-              (owner call, 2026-08-23) — the boxes-on-page x-ray adds nothing
-              over a document of steps, and Off would break note anchoring —
-              so the segments are shown, not hidden, but inert with a lock. */}
-          <div
-            // No overflow-hidden: .focus-ring is an outward box-shadow and
-            // clipping it left keyboard focus invisible (review HIGH). The end
-            // children carry their own inner radii instead.
-            className="flex items-stretch h-[26px] rounded-md border transition-colors"
-            style={{ borderColor: inspectActive ? 'color-mix(in srgb, var(--brand) 52%, transparent)' : 'var(--border-subtle)' }}
-            data-testid="canvas-inspect-capsule"
-          >
-            <button
-              onClick={() => {
-                setMarqueeArmed(sessionId, false)
-                setInteractionMode(sessionId, 'browse')
-              }}
-              aria-pressed={inspectActive}
-              className={`flex items-center gap-1.5 px-2.5 rounded-l-[5px] text-[12px] leading-none transition-colors focus-ring ${
-                inspectActive ? 'font-semibold text-[var(--brand)]' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-              }`}
-              style={{ background: inspectActive ? 'color-mix(in srgb, var(--brand) 15%, transparent)' : 'color-mix(in srgb, var(--surface-panel) 60%, transparent)' }}
-              title="Inspect — the content is live; hover identifies elements, click selects"
-              data-testid="canvas-tool-inspect"
-            >
-              <ToolIcon kind="inspect" />
-              Inspect
-            </button>
-            <span
-              aria-hidden
-              className="w-px self-stretch"
-              style={{ background: inspectActive ? 'color-mix(in srgb, var(--brand) 35%, transparent)' : 'var(--border-subtle)' }}
-            />
+        <button
+          onClick={() => togglePane(sessionId)}
+          disabled={returning}
+          aria-label="Close Agent Canvas"
+          title={returning ? 'Returning to the terminal…' : 'Close Agent Canvas'}
+          className="shrink-0 p-[5px] rounded leading-none text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+            <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" />
+          </svg>
+        </button>
+      </div>
+
+      {/* C3 row 2 — the TOOLS row, on its own line (canvas-approved header):
+          X-Ray's three modes under their real name (the "Inspect" chip died —
+          browse is where any X-Ray click puts you), the annotate tools under
+          their own label, the contextual hint inline where the old full-width
+          mode strip was, and the artifact sign-off at the far right. */}
+      <div className="flex items-center gap-2 px-3 py-1 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[11px] shrink-0" role="group" aria-label="Canvas tools" data-testid="canvas-tool-chips">
+        <div
+          // No overflow-hidden: .focus-ring is an outward box-shadow and
+          // clipping it left keyboard focus invisible (review HIGH). The end
+          // children carry their own inner radii instead.
+          className="flex items-stretch h-[24px] rounded-md border transition-colors shrink-0"
+          style={{ borderColor: inspectActive ? 'color-mix(in srgb, var(--brand) 52%, transparent)' : 'var(--border-subtle)' }}
+          data-testid="canvas-inspect-capsule"
+        >
             <div
-              className={`flex items-center rounded-r-[5px] text-[11px] ${inspectPaused ? 'opacity-40' : ''}`}
+              className={`flex items-center rounded-[5px] text-[11px] ${inspectPaused ? 'opacity-40' : ''}`}
               style={{ background: inspectActive ? 'color-mix(in srgb, var(--brand) 6%, transparent)' : 'color-mix(in srgb, var(--surface-panel) 60%, transparent)' }}
               role="group"
               aria-label="X-Ray mode"
@@ -1390,7 +1396,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             >
               <span
                 className="pl-2 pr-1 text-[9px] font-bold tracking-[0.08em] leading-none"
-                style={{ color: 'var(--text-secondary)' }}
+                style={{ color: inspectActive ? 'var(--brand)' : 'var(--text-secondary)' }}
                 aria-hidden
               >
                 X-RAY
@@ -1400,7 +1406,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 return (
                   <button
                     key={option.value}
-                    onClick={() => { if (!planLocked) setXrayMode(option.value) }}
+                    onClick={() => {
+                      // A click on any X-Ray segment is also the way back to
+                      // browse (the old Inspect chip's job): the annotate
+                      // tools release the pointer and the mode applies.
+                      setMarqueeArmed(sessionId, false)
+                      setInteractionMode(sessionId, 'browse')
+                      if (!planLocked) setXrayMode(option.value)
+                    }}
                     aria-pressed={selected}
                     disabled={planLocked}
                     className="px-2 self-stretch rounded-none last:rounded-r-[5px] leading-none transition-colors focus-ring disabled:cursor-default"
@@ -1427,6 +1440,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               )}
             </div>
           </div>
+          <span aria-hidden className="w-px h-[16px] shrink-0" style={{ background: 'var(--border-subtle)' }} />
+          <span className="text-[9px] font-bold tracking-[0.08em] shrink-0" style={{ color: 'var(--text-secondary)' }} aria-hidden>
+            ANNOTATE
+          </span>
           <button
             onClick={() => {
               setMarqueeArmed(sessionId, false)
@@ -1454,30 +1471,13 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             <ToolIcon kind="region" />
             Region
           </button>
-        </div>
-        {/* Subject-level sign-off (#476): with the leave actions, away from the
-            per-round controls in the panel. Shows the Completed chip + Reopen
-            when the user is viewing a canvas already signed off. */}
-        <CanvasCompleteButton sessionId={sessionId} canvasId={canvasId} title={canvasTitle} />
-        <button
-          onClick={() => togglePane(sessionId)}
-          disabled={returning}
-          aria-label="Close Agent Canvas"
-          title={returning ? 'Returning to the terminal…' : 'Close Agent Canvas'}
-          className="shrink-0 p-[5px] rounded leading-none text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-            <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" />
-          </svg>
-        </button>
-      </div>
-
-      {/* Mode strip — always says whose surface the pointer is on and what to
-          do with it (owner feedback 2026-08-13: nothing said what mode the
-          canvas was in). */}
-      <div className="flex items-center gap-2 px-3 py-1 border-b border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[11px] shrink-0">
+        {/* The contextual hint, inline where the old full-width mode strip
+            was — the strip row itself is gone (C3). */}
         <span className={`font-semibold uppercase tracking-wide shrink-0 ${modeStrip.color}`}>{modeStrip.label}</span>
-        <span className="text-[var(--text-secondary)] truncate">{modeStrip.hint}</span>
+        <span className="text-[var(--text-secondary)] truncate" data-testid="canvas-tool-hint">{modeStrip.hint}</span>
+        <div className="flex-1" />
+        {/* Subject-level sign-off (#476) — far right of the tools row (C3). */}
+        <CanvasCompleteButton sessionId={sessionId} canvasId={canvasId} title={canvasTitle} />
       </div>
 
       <div className="relative flex-1 flex min-h-0">
@@ -1552,6 +1552,15 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               }}
               theme="light"
               initialData={glassInitialData}
+              // Version-stamp every element the first time it appears (C1):
+              // whatever version is on screen owns it from then on.
+              onChange={(els) => {
+                for (const el of els) {
+                  if (!el.isDeleted && !sketchVersionRef.current.has(el.id)) {
+                    sketchVersionRef.current.set(el.id, versionIdRef.current)
+                  }
+                }
+              }}
               onScrollChange={handleGlassScrolled}
               // Outside draw mode the glass is inert: view mode drops the tool
               // island so nothing floats over the page being reviewed. Zen
@@ -1581,6 +1590,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             {focusStageRect && (
               <>
                 <div
+                  data-testid="canvas-focus-box"
                   className="absolute border-2 border-peach rounded-sm"
                   style={{
                     left: focusStageRect.x,
@@ -1775,6 +1785,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                 sessionId={sessionId}
                 version={version}
                 getGlassApi={() => glassApiRef.current}
+                getAllSketchElements={() => [
+                  ...(glassApiRef.current?.getSceneElements() ?? []),
+                  ...foreignSketchStashRef.current.values(),
+                ]}
                 onReturnToTerminal={() => togglePane(sessionId)}
                 isActive={isActive}
                 onHide={() => setPanelHidden(true)}

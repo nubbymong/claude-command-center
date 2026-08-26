@@ -19,8 +19,10 @@ import {
   listAllCanvases,
   onCanvasChanged,
   renderVersion,
+  reopenVersionForReview,
   setActiveVersion,
   setArtifactArchived,
+  setVersionVerdict,
 } from '../canvas/canvas-store'
 import {
   MAX_SKETCH_PNG_BYTES,
@@ -35,6 +37,7 @@ import {
   reopenAnnotation,
   resolveAnnotation,
   reviewStoreFileExists,
+  settleReviewsForSupersededVersions,
   submitReview,
   upsertAnnotation,
 } from '../canvas/canvas-review-store'
@@ -270,6 +273,27 @@ const reviewSubmitSchema = z
     sketches: z
       .array(z.object({ annotationId: annotationIdSchema, pngBase64: sketchPngBase64Schema }).strict())
       .max(100),
+    /** C1: the decision this submit carries (owner state machine 2026-08-26).
+     *  Optional for compatibility; the composer always sends one. */
+    decision: z.enum(['approve', 'reject']).optional(),
+  })
+  .strict()
+
+/** C1: a zero-note verdict (the plain Approve, or a Dismiss) — no review
+ *  record involved, just the version's outcome. */
+const versionVerdictSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    versionId: z.string().regex(/^v[0-9]{1,9}$/).optional(),
+    state: z.enum(['approved', 'rejected', 'dismissed']),
+    note: z.string().max(4000).optional(),
+  })
+  .strict()
+
+const versionReopenSchema = z
+  .object({
+    sessionId: sessionIdSchema,
+    versionId: z.string().regex(/^v[0-9]{1,9}$/),
   })
   .strict()
 
@@ -419,7 +443,28 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
 
   ipcMain.handle(IPC.CANVAS_RENDER, async (_e, args: unknown) => {
     const { sessionId, source } = renderSchema.parse(args)
-    return renderVersion(sessionId, source)
+    const result = renderVersion(sessionId, source)
+    // C1: a ready render auto-superseded the previously open version — settle
+    // its notes here, the one place that already holds both stores (the same
+    // reason dropReviewsForCanvas lives in this file).
+    if (result.superseded?.length) settleReviewsForSupersededVersions(result.canvasId, result.superseded)
+    return result
+  })
+
+  // C1 (owner state machine, 2026-08-26): the zero-note verdict — the plain
+  // Approve, or a Dismiss — and the reopen. Renderer-only ingresses: the
+  // agent's mouth is the MCP canvas_verdict tool, which stamps 'agent-chat'.
+  ipcMain.handle(IPC.CANVAS_VERSION_VERDICT, async (_e, args: unknown) => {
+    const { sessionId, versionId, state, note } = versionVerdictSchema.parse(args)
+    return setVersionVerdict(sessionId, versionId, { state, ...(note ? { note } : {}) }, 'user')
+  })
+
+  ipcMain.handle(IPC.CANVAS_VERSION_REOPEN, async (_e, args: unknown) => {
+    const { sessionId, versionId } = versionReopenSchema.parse(args)
+    const result = reopenVersionForReview(sessionId, versionId, 'user')
+    if ('error' in result) return result
+    if (result.withdrawn.length) settleReviewsForSupersededVersions(result.state.canvasId, result.withdrawn)
+    return result.state
   })
 
   // Archive/unarchive one artifact (item C, phase 5). Reversible: it only moves
@@ -466,8 +511,8 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   })
 
   ipcMain.handle(IPC.CANVAS_REVIEW_SUBMIT, async (_e, args: unknown) => {
-    const { sessionId, reviewId, sketches } = reviewSubmitSchema.parse(args)
-    return submitReview(sessionId, reviewId, sketches)
+    const { sessionId, reviewId, sketches, decision } = reviewSubmitSchema.parse(args)
+    return submitReview(sessionId, reviewId, sketches, decision)
   })
 
   ipcMain.handle(IPC.CANVAS_ANNOTATION_RESOLVE, async (_e, args: unknown) => {

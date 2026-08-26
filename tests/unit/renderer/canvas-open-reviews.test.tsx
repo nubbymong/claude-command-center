@@ -130,12 +130,15 @@ describe('AgentCanvasButton -- the queue pill (#364, pick B)', () => {
     expect(container.querySelector('[data-testid="reserved-label-current"]')!.textContent).not.toContain('Review needed')
   })
 
-  it('a round waiting on YOU shows from ONE — every addressed note wants a verdict', () => {
+  it('C1: an addressed round is NOT debt — only an open version awaiting review counts', () => {
+    // The pre-C1 behavior ("every addressed note wants a verdict") is the
+    // phantom "Review needed - 1" the owner reported. A submit now carries
+    // the verdict, so an addressed round owes the user nothing.
     seedCanvas(false)
     seed([review('R1', 'submitted', ['a1'])], [note('a1', 'R1', 'addressed')])
     render()
-    expect(pill()?.textContent).toBe('1')
-    expect(container.querySelector('[data-testid="reserved-label-current"]')!.textContent).toBe('Review needed')
+    expect(pill()).toBeNull()
+    expect(container.querySelector('[data-testid="reserved-label-current"]')!.textContent).not.toContain('Review needed')
   })
 
   it('a ready-marked render and a verdict round on ONE canvas still count 1 (#470)', () => {

@@ -263,6 +263,17 @@ export interface AppSettings {
    *  right edge. Absent = the built-in default. Read via resolveSidebarWidth,
    *  which clamps — never trust the raw number. */
   sidebarWidth?: number
+  /** Where "Open artifacts" (the command-bar Artifacts tool AND the session
+   *  menu's action) goes: the dedicated hardened window (today's behaviour) or
+   *  the session's in-app browser pane on the account's own partition (#475's
+   *  surface). GLOBAL, one knob for every entry point. Absent = 'window' — the
+   *  default is deliberately unchanged. Read via resolveArtifactsOpenTarget. */
+  artifactsOpenTarget?: 'window' | 'pane'
+  /** Where the claude.ai sign-in flow runs — GLOBAL successor to the
+   *  per-account mode #439 shipped. Absent = fall back to the account's stored
+   *  per-account choice (so nobody's beta-era selection is lost), else the
+   *  default window. Read via resolveSignInOpenTarget, never directly. */
+  signInOpenTarget?: 'window' | 'pane'
   /** #367: the Agent Canvas x-ray hover mode. 'on' is the outline + label chip
    *  drawn over the content (what shipped); 'stealth' still resolves the
    *  hovered element but draws nothing, reading it out in the canvas side panel

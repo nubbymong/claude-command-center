@@ -33,6 +33,51 @@ export type CanvasVersionSource =
   | { mode: 'uat'; distRoot: string; entry: string; buildLabel?: string }
   | { mode: 'design'; entry: string }
 
+/**
+ * A version's review outcome — the C1 state machine (owner-approved on the
+ * canvas, 2026-08-26). The invariant it exists to enforce: per artifact, at
+ * most ONE ready version is ever OPEN (= no verdict). Rendering a new ready
+ * version auto-stamps the previously open one 'superseded'; submitting a
+ * review stamps 'approved' or 'rejected'; the user's chat verdicts are
+ * recorded by the agent with `by: 'agent-chat'` so the audit trail says which
+ * mouth spoke; 'withdrawn' is the "go back to v5, get rid of v6" move.
+ * Absent on the artifact's LATEST ready version = open; absent on history
+ * written before this field = healed to 'superseded' on load.
+ */
+export interface CanvasVersionVerdict {
+  state: 'approved' | 'rejected' | 'superseded' | 'withdrawn' | 'dismissed'
+  at: string
+  /** 'user' = their own submit in the pane; 'agent-chat' = the agent recorded
+   *  the user's words from conversation (always rendered as such, listed apart
+   *  from the user's own clicks); 'system' = automatic supersession. */
+  by: 'user' | 'agent-chat' | 'system'
+  /** The rejection reason / chat feedback, when one was given. User or
+   *  user-relayed prose — render as data, never as markup. */
+  note?: string
+}
+
+/** Cap on a version's archived verdict trail (adv round 2): bounds the row
+ *  and keeps a repeated reopen from ever breaching the load-time drop cap. */
+export const MAX_PRIOR_VERDICTS = 32
+export const VERSION_VERDICT_STATES = ['approved', 'rejected', 'superseded', 'withdrawn', 'dismissed'] as const
+export const VERSION_VERDICT_ACTORS = ['user', 'agent-chat', 'system'] as const
+
+/** Longest verdict note kept — same bound the review store puts on a note. */
+export const MAX_VERDICT_NOTE_CHARS = 4000
+
+/** Shape check for a verdict read back from disk. Same posture as `draft`:
+ *  a hand-edited value that is not OUR shape must not survive into fields the
+ *  queue derivation and the History badges read. */
+export function isKeepableVerdict(v: unknown): v is CanvasVersionVerdict {
+  if (typeof v !== 'object' || v === null) return false
+  const d = v as Partial<CanvasVersionVerdict>
+  if (!VERSION_VERDICT_STATES.includes(d.state as never)) return false
+  if (!VERSION_VERDICT_ACTORS.includes(d.by as never)) return false
+  if (typeof d.at !== 'string' || d.at.length === 0 || d.at.length > 64) return false
+  if (d.note !== undefined && (typeof d.note !== 'string' || d.note.length === 0 || d.note.length > MAX_VERDICT_NOTE_CHARS)) return false
+  return true
+}
+
 /** One rendered version. Ids are 'v1', 'v2', … — monotonic, linear (D11). */
 export interface CanvasVersion {
   id: string
@@ -50,6 +95,25 @@ export interface CanvasVersion {
    *  every version of the artifact together; a hand-edited value must be the
    *  literal `true` (validated on load, like `draft`). Absent = live. */
   archived?: true
+  /** The C1 review outcome. Absent = OPEN on the artifact's latest ready
+   *  version; healed to superseded for older history on load. */
+  verdict?: CanvasVersionVerdict
+  /** Verdicts this version HELD before its current one — the audit trail a
+   *  reopen must not erase (adv FINDING 2): reopening v5 clears v5's verdict
+   *  and withdraws v6, and both prior verdicts (a user rejection included) are
+   *  pushed here rather than lost, so a rejection can never be silently
+   *  overwritten and resurrected as approved. Newest last. */
+  priorVerdicts?: CanvasVersionVerdict[]
+}
+
+/** The artifact's one OPEN version (C1): its latest ready version that is not
+ *  withdrawn, iff it carries no verdict. Withdrawn versions are skipped so a
+ *  reopen (which withdraws everything after the reopened version) still finds
+ *  the earlier reopened version as the open one. Every count and badge derives
+ *  from this — never stored. */
+export function openVersionOf(run: readonly CanvasVersion[]): CanvasVersion | null {
+  const last = [...run].reverse().find((v) => !v.draft && v.verdict?.state !== 'withdrawn')
+  return last && !last.verdict ? last : null
 }
 
 /**

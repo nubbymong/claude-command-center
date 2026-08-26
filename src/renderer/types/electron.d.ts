@@ -407,7 +407,9 @@ export interface ElectronAPI {
     reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
     annotationDelete: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
-    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[] }) => Promise<CanvasReviewState>
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision?: 'approve' | 'reject' }) => Promise<CanvasReviewState>
+    versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
+    versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
     annotationResolve: (args: {
       sessionId: string
       /** The canvas the panel was showing. Refused if the session has moved on. */

@@ -64,7 +64,22 @@ export interface CanvasToolDeps {
   renderVersion: (
     sessionId: string,
     source: CanvasRenderSource,
-  ) => { canvasId: string; versionId: string; draft?: boolean; filed?: { canvasId: string; returnedToExisting?: boolean } }
+  ) => { canvasId: string; versionId: string; draft?: boolean; filed?: { canvasId: string; returnedToExisting?: boolean }; superseded?: string[] }
+  /**
+   * C1 (owner state machine, 2026-08-26): record the USER's verdict on a
+   * VERSION as stated in chat — always stamped `by: 'agent-chat'` store-side,
+   * so a recorded verdict can never impersonate the user's own click. And the
+   * reopen ("go back to v5"): later ready versions of the artifact become
+   * withdrawn; the settle callback closes their notes (the two stores meet
+   * only at the composition points).
+   */
+  setVersionVerdict?: (
+    sessionId: string,
+    versionId: string | undefined,
+    decision: { state: 'approved' | 'rejected' | 'dismissed'; note?: string },
+  ) => CanvasState | { error: string }
+  reopenVersion?: (sessionId: string, versionId: string) => { state: CanvasState; withdrawn: string[] } | { error: string }
+  settleSuperseded?: (canvasId: string, versionIds: readonly string[]) => number
   /**
    * What is outstanding on ONE canvas: counts, and ids the STORE minted.
    *
@@ -606,6 +621,16 @@ export async function runCanvasRender(
     // document onto another session's canvas, where the user would read it as
     // their own agent's work.
     rendered = deps.renderVersion(sessionId, source)
+    // C1: a ready render auto-supersedes the previously open version — settle
+    // its review notes through the composition seam. Failure is non-fatal:
+    // the load-time heal settles the same notes on next access.
+    if (rendered.superseded?.length) {
+      try {
+        deps.settleSuperseded?.(rendered.canvasId, rendered.superseded)
+      } catch {
+        /* settled lazily by the review store's load heal */
+      }
+    }
   } catch (err) {
     return {
       text: `Could not render the canvas: ${renderFailureReason(
@@ -1631,6 +1656,68 @@ export function registerCanvasTools(
       }
       const result = runCanvasVerdict(rawArgs, sessionId, deps)
       return textResult(result.text, result.isError)
+    },
+  )
+
+  server.tool(
+    'canvas_version_verdict',
+    'Record the USER\'s verdict on a canvas VERSION when they state it IN CHAT instead of the pane — "approved", "no, that\'s wrong because xyz" (rejected, their words become the note), "drop that version" (dismissed) — or reopen an earlier version on their word ("go back to v5, get rid of v6"). Only ever call this on the user\'s explicit statement in this conversation; never on your own judgment of a finished-looking board, and if their words are ambiguous, ask. Omit versionId to rule on the version currently open for review. Every verdict recorded here is stamped as RECORDED FROM CHAT and rendered apart from the user\'s own clicks — it can never impersonate one — and a version already decided is refused rather than overwritten (reopen it first). Reopen withdraws every later version of the same artifact (hidden from default history, kept in the audit trail, recoverable) and puts the named one back under review.',
+    {
+      action: zMod
+        .enum(['approved', 'rejected', 'dismissed', 'reopen'])
+        .describe('"approved"/"rejected"/"dismissed" — the user\'s stated verdict on the version. "rejected" should carry their reason in `note`. "reopen" — put `versionId` back under review and withdraw the versions after it.'),
+      versionId: zMod
+        .string()
+        .optional()
+        .describe('The version, e.g. "v5". Omit for a verdict on the version currently open for review. REQUIRED for reopen.'),
+      note: zMod
+        .string()
+        .optional()
+        .describe('The user\'s reason, in their words — mandatory in spirit for a rejection (it becomes the audit-trail note). Max 4000 chars.'),
+      cccSessionId: zMod
+        .string()
+        .optional()
+        .describe('Ignored — the session is resolved from the MCP connection and cannot be set here. Leave unset.'),
+    },
+    async (rawArgs: { action?: unknown; versionId?: unknown; note?: unknown }) => {
+      const sessionId = getBoundSessionId()
+      if (!sessionId) {
+        return textResult(
+          'Canvas unavailable: this MCP connection has no bound Conductor session. Restart the session from inside AI Code Conductor.',
+          true,
+        )
+      }
+      const action = rawArgs.action
+      if (action !== 'approved' && action !== 'rejected' && action !== 'dismissed' && action !== 'reopen') {
+        return textResult('action must be "approved", "rejected", "dismissed" or "reopen".', true)
+      }
+      const versionId = rawArgs.versionId === undefined ? undefined : String(rawArgs.versionId)
+      if (versionId !== undefined && !/^v[0-9]{1,9}$/.test(versionId)) return textResult('versionId must look like "v5".', true)
+      const note = rawArgs.note === undefined ? undefined : String(rawArgs.note).slice(0, 4000)
+      if (action === 'reopen') {
+        if (!versionId) return textResult('reopen needs the versionId to go back to, e.g. "v5".', true)
+        if (!deps.reopenVersion) return textResult('This build cannot reopen versions.', true)
+        const result = deps.reopenVersion(sessionId, versionId)
+        if ('error' in result) return textResult(`Could not reopen ${versionId}: ${result.error}`, true)
+        if (result.withdrawn.length) {
+          try {
+            deps.settleSuperseded?.(result.state.canvasId, result.withdrawn)
+          } catch {
+            /* settled lazily on next load */
+          }
+        }
+        return textResult(
+          `${versionId} is open for review again${result.withdrawn.length ? `; ${result.withdrawn.join(', ')} withdrawn (kept in the audit trail, recoverable)` : ''}. Recorded as done on the user's instruction.`,
+          false,
+        )
+      }
+      if (!deps.setVersionVerdict) return textResult('This build cannot record version verdicts.', true)
+      const result = deps.setVersionVerdict(sessionId, versionId, { state: action, ...(note ? { note } : {}) })
+      if ('error' in result) return textResult(`Could not record the verdict: ${result.error}`, true)
+      return textResult(
+        `Recorded: ${versionId ?? 'the open version'} ${action}${note ? ' with the user\'s note' : ''} — provenance "recorded from chat", listed apart from the user's own clicks. The audit trail keeps it.`,
+        false,
+      )
     },
   )
 

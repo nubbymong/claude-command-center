@@ -28,7 +28,7 @@ vi.mock('../../../src/renderer/stores/appMetaStore', () => {
   return { useAppMetaStore }
 })
 
-const { WhatsNewV2Step, sectionsFor } = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
+const { WhatsNewV2Step, sectionsFor, showRenamePageFor } = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
 const { SHOWCASES_21, showcasesFor } = await import('../../../src/renderer/onboarding/showcase-pages')
 const { ShowcaseVignette } = await import('../../../src/renderer/onboarding/ShowcaseVignette')
 
@@ -237,6 +237,12 @@ describe('#463 — since-2.0 coverage and the first-run cohort', () => {
   it('the fresh cohort gets an introduction heading and the FULL story, not a diff', () => {
     metaState.meta = {}
     render({ fresh: true })
+    // #525: fresh installs open on the rename/roadmap page too, under a
+    // "Welcome to" lead-in; the summary sits one Next behind it.
+    expect(q('rename-page')).not.toBeNull()
+    expect(q('rename-lead-line')!.textContent).toContain('Welcome to')
+    expect(q('rename-lead-line')!.textContent).not.toContain('is now')
+    click(q('whatsnew-cta'))
     expect(q('whatsnew-heading')!.textContent).toContain("What you're getting")
     expect(q('whatsnew-heading')!.textContent).not.toContain("What's new")
     const text = container.textContent!
@@ -267,5 +273,115 @@ describe('#463 — since-2.0 coverage and the first-run cohort', () => {
   it('an upgrader keeps the diff heading — fresh framing never leaks', () => {
     render()
     expect(q('whatsnew-heading')!.textContent).toContain("What's new in 2.1")
+  })
+})
+
+// ── #525: the rename/roadmap prelude ──────────────────────────────────
+describe('#525 — the rename/roadmap page', () => {
+  // A 2.0 stable user: knew the app as Claude Command Center.
+  const fromCCC = () => { metaState.meta = { lastSeenVersion: '2.0.5' } }
+
+  it('a 2.0 upgrader opens on the rename page; Next reaches the summary without leaving the run', () => {
+    fromCCC()
+    render()
+    expect(q('rename-page')).not.toBeNull()
+    expect(q('rename-lead-line')!.textContent).toContain('is now')
+    expect(q('rename-heading')!.textContent).toContain('AI Code Conductor')
+    expect(q('whatsnew-heading')).toBeNull()
+    // Derived denominator: rename + summary + one page per flagship.
+    expect(q('whatsnew-hint')!.textContent).toContain(`Page 1 of ${2 + SHOWCASES_21.length}`)
+    click(q('whatsnew-cta'))
+    expect(nexts).toBe(0)
+    expect(q('rename-page')).toBeNull()
+    expect(q('whatsnew-heading')).not.toBeNull()
+  })
+
+  it('the roadmap band names every 2.2 agent, badges the cohorts, and confines 2.2 to itself', () => {
+    fromCCC()
+    render()
+    for (const id of ['tile-claude', 'tile-codex', 'tile-copilot', 'tile-antigravity', 'tile-qwen', 'tile-opencode', 'tile-ollama']) {
+      expect(q(id), id).not.toBeNull()
+    }
+    expect(q('tile-claude')!.textContent).toContain('NOW')
+    expect(q('tile-codex')!.textContent).toContain('BETA') // owner call R2: Codex is beta today
+    expect(q('tile-copilot')!.textContent).toContain('2.2')
+    expect(q('roadmap-pill')!.textContent).toContain('2.2 IN DEVELOPMENT')
+    // Owner call R5: this is a 2.1 install — the tagline speaks to today,
+    // and "2.2" appears only inside the labelled roadmap band.
+    expect(q('rename-tagline')!.textContent).not.toContain('2.2')
+    // Owner calls R7/R8 (canvas v8): the approved one-liner, the deep strip
+    // cut, and exactly one reassurance bullet for upgraders.
+    expect(q('rename-tagline')!.textContent).toContain('Same application, exciting new roadmap (tentative preview below).')
+    expect(q('rm-deep')).toBeNull()
+    expect(q('rename-pt-nothing')!.textContent).toContain('Nothing changes.')
+    expect(q('rename-pt-why')).toBeNull()
+    expect(q('rename-where')).toBeNull()
+  })
+
+  it('post-rename upgraders never see it; fresh installs DO, under a Welcome lead-in', () => {
+    render() // default meta: 2.1.0-beta.17 — lived through the rename
+    expect(q('rename-page')).toBeNull()
+    expect(q('whatsnew-dot-rename')).toBeNull()
+    // Owner call R1: the roadmap is the introduction — fresh installs get
+    // the page too, without the "is now" diff framing.
+    metaState.meta = {}
+    render({ fresh: true })
+    expect(q('rename-page')).not.toBeNull()
+    expect(q('rename-lead-line')!.textContent).toContain('Welcome to')
+    expect(q('rename-lead-line')!.textContent).not.toContain('is now')
+    // Spec-review F1/F2: no "Same application" without a before, and no
+    // carry-over bullet for someone with nothing to carry over.
+    expect(q('rename-tagline')!.textContent).toBe('Exciting new roadmap (tentative preview below).')
+    expect(q('rename-tagline')!.textContent).not.toContain('Same application')
+    expect(q('rename-points')).toBeNull()
+  })
+
+  it('a See-it chip still lands on its page with the prelude in front', () => {
+    fromCCC()
+    render()
+    click(q('whatsnew-cta')) // -> summary
+    click(q('see-watchdog'))
+    expect(q('showcase-page-watchdog')).not.toBeNull()
+    const ix = SHOWCASES_21.findIndex((pg: { id: string }) => pg.id === 'watchdog')
+    expect(q('showcase-eyebrow')!.textContent).toContain(`${ix + 1} of ${SHOWCASES_21.length}`)
+  })
+
+  it('the dots gain a rename dot that jumps home, and the walk ends on the harness CTA', () => {
+    fromCCC()
+    render()
+    click(q('whatsnew-dot-oneRow'))
+    expect(q('showcase-page-oneRow')).not.toBeNull()
+    click(q('whatsnew-dot-rename'))
+    expect(q('rename-page')).not.toBeNull()
+    const cta = () => q('whatsnew-cta')!
+    for (let i = 0; i < 1 + SHOWCASES_21.length; i++) click(cta()) // rename -> summary -> ... -> last flagship
+    expect(cta().textContent).toBe('Continue')
+    expect(nexts).toBe(0)
+    click(cta())
+    expect(nexts).toBe(1)
+  })
+
+  it('the 2.0 line never shows the page for either cohort', async () => {
+    vi.resetModules()
+    ;(globalThis as any).__APP_VERSION__ = '2.0.5'
+    const fresh = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
+    metaState.meta = {}
+    act(() => {
+      root.render(<fresh.WhatsNewV2Step onNext={() => { nexts++ }} ctaLabel="Continue" hint="h" fresh />)
+    })
+    expect(container.querySelector('[data-ux-id="rename-page"]')).toBeNull()
+    ;(globalThis as any).__APP_VERSION__ = '2.1.0-rc.1'
+    vi.resetModules()
+  })
+
+  it('showRenamePageFor — the upgrader gate in one place', () => {
+    expect(showRenamePageFor(undefined, '2.1.0')).toBe(false) // fresh installs are gated by `fresh`
+    expect(showRenamePageFor('2.0.5', '2.1.0')).toBe(true)
+    expect(showRenamePageFor('1.9.0', '2.1.0')).toBe(true)
+    expect(showRenamePageFor('2.1.0-beta.5', '2.1.0')).toBe(true) // pre-rename beta tester
+    expect(showRenamePageFor('2.1.0-beta.6', '2.1.0')).toBe(false) // the rename build itself
+    expect(showRenamePageFor('2.1.0-beta.17', '2.1.0')).toBe(false)
+    expect(showRenamePageFor('2.0.1', '2.0.5')).toBe(false) // a 2.0-line build predates the rename
+    expect(showRenamePageFor('2.0.5', '2.2.0')).toBe(true) // straight 2.0 -> 2.2 is still owed the why
   })
 })

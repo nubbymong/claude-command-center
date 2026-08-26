@@ -48,12 +48,13 @@ function seedMirror(rounds: Array<ReturnType<typeof owedRound>>, extraReviews: R
     },
   })
 }
-function seedCanvasLive() {
+function seedCanvasLive(awaiting = false) {
   useCanvasStore.setState({
     bySessionId: {
       s1: {
         canvasId: 'c1', versions: [], activeVersionId: null,
         interactionMode: 'browse', emptyView: 'intro', unseenRender: false, loaded: true,
+        ...(awaiting ? { awaitingReview: { versionId: 'v1', at: '2026-08-26T10:00:00Z' } } : {}),
       },
     },
   })
@@ -91,8 +92,10 @@ const flush = async () => { await act(async () => { await new Promise((r) => set
 
 describe('the queue pill spans canvases (#364)', () => {
   it('shows the TOTAL across the session, not this canvas alone', async () => {
-    seedCanvasLive()
-    seedMirror([owedRound('R1', 'a1')])              // 1 waiting on you here
+    // C1: the live debt is an OPEN VERSION awaiting review (awaitingReview),
+    // never "rounds awaiting verdicts" — that class is extinct.
+    seedCanvasLive(true)
+    seedMirror([])
     seedTotals({ queue: 4, queueOnActive: 1 })       // 3 elsewhere
     render()
     expect(pill()?.textContent).toBe('4')
@@ -105,16 +108,16 @@ describe('the queue pill spans canvases (#364)', () => {
     expect(pill()?.textContent).toBe('1')
   })
   it('shows from ONE on this canvas too — the from-two rule retired with the pulse', async () => {
-    seedCanvasLive()
-    seedMirror([owedRound('R1', 'a1')])
+    seedCanvasLive(true)
+    seedMirror([])
     seedTotals({ queue: 1, queueOnActive: 1 })
     render()
     expect(pill()?.textContent).toBe('1')
   })
-  it('rounds stacking on THIS canvas never push it past 1 (#470 — the owner saw 3 for one canvas)', async () => {
-    // The live mirror knows two owed rounds here. One canvas = one owed item;
-    // the second round is detail, not a second debt.
-    seedCanvasLive()
+  it('rounds stacking on THIS canvas never push it past 1 (#470 -> C1: stacking is impossible by construction)', async () => {
+    // C1: however many submitted rounds the mirror holds, the live debt is
+    // the single awaitingReview slot — one open version per artifact.
+    seedCanvasLive(true)
     seedMirror([owedRound('R1', 'a1'), owedRound('R2', 'a2')])
     seedTotals({ queue: 1, queueOnActive: 1 })
     render()
@@ -138,7 +141,7 @@ describe('the queue pill spans canvases (#364)', () => {
   it('hydrates the sweep on first mount, once', async () => {
     listAll.mockResolvedValue([
       entry({ canvasId: 'a', ownedByThisSession: true, awaitingReview: true, awaitingReviewAt: '2026-08-23T10:00:00Z' }),
-      entry({ canvasId: 'b', ownedByThisSession: true, verdictRounds: 1, openReviewCount: 1 }),
+      entry({ canvasId: 'b', ownedByThisSession: true, awaitingReview: true, awaitingReviewAt: '2026-08-23T11:00:00Z', openReviewCount: 1 }),
     ])
     render()
     await flush()

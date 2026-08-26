@@ -6,6 +6,8 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useCommandBarStore, type CoreToolId, type CommandBarOverflow, type HiddenCoreTools } from '../stores/commandBarStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { useLogsStore } from '../stores/useLogsStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { openArtifactsPerSetting, resolveArtifactsOpenTarget } from '../lib/claude-web-targets'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useCanvasReviewStore } from '../stores/canvasReviewStore'
 import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
@@ -221,12 +223,15 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     !!session && !session.shellOnly && session.sessionType === 'local' && !!artifactsProfileId
   const openArtifacts = useCallback(() => {
     if (!artifactsProfileId) return
-    trackUsage('artifacts.opened')
-    void window.electronAPI.accountWeb
-      ?.openArtifacts?.(artifactsProfileId)
-      .then((r) => { if (r && !r.ok) alert(`Could not open artifacts for this account: ${r.error}`) })
-      .catch(() => alert('Could not open artifacts — the app could not reach the account window.'))
-  }, [artifactsProfileId])
+    // Owner call 2026-08-26: routed through the global open-target setting
+    // (default unchanged: the dedicated window). This session hosts the pane
+    // when the setting says pane.
+    openArtifactsPerSetting(artifactsProfileId, sessionId)
+  }, [artifactsProfileId, sessionId])
+  const artifactsTarget = useSettingsStore((s) => resolveArtifactsOpenTarget(s.settings))
+  const setArtifactsTarget = useCallback((t: 'window' | 'pane') => {
+    useSettingsStore.getState().updateSettings({ artifactsOpenTarget: t })
+  }, [])
 
   const visibleCommands = useMemo(
     () => commands.filter((c) => c.scope === 'global' || (c.scope === 'config' && c.configId === configId)),
@@ -943,7 +948,14 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                 { label: `Dismiss everything waiting on me (${canvasQueue})…`, onClick: () => { setMenu(null); setConfirm({ kind: 'canvas-dismiss' }) }, testId: 'menu-canvas-dismiss-all' },
                 { label: `Show what's waiting (${canvasQueue})`, onClick: () => { setMenu(null); window.dispatchEvent(new CustomEvent('ccc:canvasShowQueue', { detail: { sessionId } })) }, testId: 'menu-canvas-show-queue' },
               ]
-            : menu.tool === 'artifacts' ? [{ label: 'Open artifacts', onClick: () => { setMenu(null); openArtifacts() }, testId: 'menu-artifacts-open' }]
+            : menu.tool === 'artifacts' ? [
+                { label: 'Open artifacts', onClick: () => { setMenu(null); openArtifacts() }, testId: 'menu-artifacts-open' },
+                // The GLOBAL open-target chooser (owner call 2026-08-26): the
+                // check marks the current choice; picking writes the setting
+                // for every entry point (this button and the session menu).
+                { label: `${artifactsTarget === 'window' ? '✓ ' : ''}Open in a separate window`, onClick: () => { setMenu(null); setArtifactsTarget('window') }, testId: 'menu-artifacts-target-window' },
+                { label: `${artifactsTarget === 'pane' ? '✓ ' : ''}Open in the session's browser pane`, onClick: () => { setMenu(null); setArtifactsTarget('pane') }, testId: 'menu-artifacts-target-pane' },
+              ]
             : undefined}
           onHide={(where) => requestHide(menu.tool, where)}
           onClose={() => setMenu(null)}

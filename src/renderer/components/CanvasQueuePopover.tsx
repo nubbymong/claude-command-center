@@ -140,9 +140,7 @@ export default function CanvasQueuePopover({ sessionId, onClose }: Props) {
                   {row.title || 'Untitled canvas'}
                 </span>
                 <span className="block text-[9.5px] truncate" style={{ color: 'var(--text-muted)' }}>
-                  {row.kind === 'review'
-                    ? `ready for review${row.onActive ? ' · this canvas' : ''}`
-                    : `${row.rounds ?? 1} round${(row.rounds ?? 1) === 1 ? '' : 's'} awaiting your verdicts${row.onActive ? ' · this canvas' : ''}`}
+                  {`ready for review${row.onActive ? ' · this canvas' : ''}`}
                 </span>
               </span>
               <span className="shrink-0 text-[9.5px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
