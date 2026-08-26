@@ -1,20 +1,54 @@
 # The autonomous-loop contract
 
-`/LoopReady` and `/StartLoop` let an unattended "don't ask permission" session take
-the open backlog and drive the runnable part of it to PRs. This is the contract
-that keeps such a run safe, and the honest catalogue of what it can and cannot do.
+`/LoopReady`, `/StartLoop` and `/SessionLoop` let an unattended "don't ask
+permission" session take the open backlog and drive the runnable part of it to
+PRs. This is the contract that keeps such a run safe, and the honest catalogue of
+what it can and cannot do.
 
-## The two skills, in one line each
+## The three skills, in one line each
 
 - **LoopReady** — read-only planner. A cheap Fable agent per open ticket does a
   premise review and emits a readiness record; the ticket is labelled `loop-ready`
   or `loop-needs-human`. No code, no PR, no merge.
-- **StartLoop** — autonomous executor. For each `loop-ready` ticket it re-checks the
-  premise, claims it, implements with opus in its own worktree, runs the gates and
-  (if security-sensitive) an adversarial pass, and opens a PR. **It stops there.**
+- **StartLoop** — autonomous executor for UNRELATED tickets. For each `loop-ready`
+  ticket it re-checks the premise, claims it, implements with opus in its own
+  worktree, runs the gates and (if security-sensitive) an adversarial pass, and
+  opens ONE PR per ticket. **It stops there.**
+- **SessionLoop** — the AGGREGATION layer for a BATCH that should land together
+  (ADR-020). It runs StartLoop steps 1‑6 per ticket, then merges each finished
+  ticket branch INTO a shared `loop/<base>/<slug>` integration branch and opens
+  ONE PR for the whole batch. **It also stops at the PR.** Use StartLoop when
+  tickets are unrelated (N PRs), SessionLoop when one review/merge is better than N.
 
 Model tiering is deliberate: Fable does the cheap, fan-out premise work; opus is
 spent only on execution, only on tickets already vetted as runnable.
+
+## Aggregation: many tickets, one PR (SessionLoop / ADR-020)
+
+The pieces are `.claude/skills/SessionLoop/SKILL.md` (the orchestrator) and
+`scripts/loop-tree.mjs` (the branch/merge primitive). The flow:
+
+```
+loop-tree open --base beta --slug <batch>     # mint loop/<base>/<slug> + a worktree
+session-guard adopt --path <it prints>        # the orchestrator OWNS that worktree
+  # per ticket: StartLoop steps 1-6 in its OWN worktree, then:
+loop-tree integrate --branch <ticket-branch>  # AI merges the ticket branch IN
+loop-tree submit --base beta                  # ONE squash PR, ci-run label, folded list
+  # a HUMAN merges the PR, then:
+loop-tree close --remove-worktree             # prune (refuses until HEAD is in origin/base)
+```
+
+Two invariants make this safe without touching the session-guard isolation model
+(ADR-012 is unchanged):
+
+- **`loop/<base>/<slug>` is a NEW namespace**, distinct from session-guard's
+  per-conversation `session/<base>/<short>`. Per-ticket work stays `feat/<n>-…` /
+  `fix/<n>-…`.
+- **The AI's merge authority is narrow and guarded.** Every mutating `loop-tree`
+  verb refuses unless the current branch is `loop/*` (`assertLoopBranch`), and it
+  only ever merges LOCAL ticket branches in (qualified/remote refs are rejected).
+  The AI merges ticket → `loop/*`; a HUMAN merges the session PR to base. See the
+  carve-out in "The hard boundary" below.
 
 ## The label state machine
 

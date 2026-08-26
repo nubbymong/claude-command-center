@@ -191,6 +191,7 @@ Two traps worth knowing before you hit them:
 
 - `.claude/skills/adversarial-review/SKILL.md` — the adversarial review pass required for security-sensitive changes (ADR-009), plus the path table that decides when it applies.
 - `.claude/skills/LoopReady/SKILL.md`, `.claude/skills/StartLoop/SKILL.md` — the model-tiered autonomous-backlog pair (premise-review fan-out → labelled plan → autonomous run to PRs), and `docs/loop-autonomy.md` for the contract a "don't ask" run must respect and the blockers it cannot cross.
+- `.claude/skills/SessionLoop/SKILL.md` + `scripts/loop-tree.mjs` — the AGGREGATION layer (ADR-020, `architecture/decisions/…adr-020…`): when a BATCH of tickets should land as ONE PR, SessionLoop runs StartLoop steps 1‑6 per ticket in its own worktree, the AI merges each finished ticket branch INTO a `loop/<base>/<slug>` integration branch via `loop-tree` (which refuses any non-`loop/*` target — the narrow merge carve-out), then opens ONE squash PR. StartLoop is for unrelated tickets (one PR each); SessionLoop is for a batch (one PR total). The AI never merges the session PR to base — a human does.
 - `docs/security-embargo-runbook.md` — the executable procedure for an unfixed vulnerability: who can do what, the `gh` recipes, the private-fork workflow, and the traps (ADR-011).
 - `docs/agent-conventions.md` — the detailed agent/contributor conventions (hard constraints, IPC channel rules, branching & review).
 - `CONTRIBUTING.md` — contributor mechanics, commit-message format, changelog workflow.
