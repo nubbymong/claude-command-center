@@ -2,6 +2,7 @@ import React from 'react'
 import { Session } from '../../stores/sessionStore'
 import { MoonBadge, SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge } from './Badges'
 import { isAsleep, useSleepStore } from '../../stores/sleepStore'
+import { useActiveStore } from '../../stores/activeStore'
 import { type SessionState } from '../ui/StatusDot'
 import { EffortPill } from '../ui/EffortPill'
 import { FastBolt } from '../ui/FastBolt'
@@ -72,6 +73,17 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const asleep =
     isClaudeSession &&
     isAsleep({ silentSince, dismissedAt, needsAttention: needsAttention || session.needsAttention === true, now: Date.now() })
+  // Active (owner call, 2026-08-27): a subtle green sweep on the context bar
+  // while this Claude session's PTY output is moving — the inverse of the moon.
+  // Precedence ATTENTION > ACTIVE > SLEEP > idle: attention and sleep both
+  // suppress it (sleep can't co-occur anyway — moving vs. 120s silent). Claude
+  // only, like the moon.
+  const outputMoving = useActiveStore((s) => s.activeIds.has(session.id))
+  const showActive =
+    isClaudeSession &&
+    outputMoving &&
+    !asleep &&
+    !(needsAttention || session.needsAttention === true)
   const providerLabel = session.shellOnly ? 'shell' : (session.provider ?? 'claude')
   const metaLine = `${session.modelName ?? session.model ?? ''}${providerLabel ? ` · ${providerLabel}` : ''}`.trim()
 
@@ -247,7 +259,12 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           style={{ gridColumn: '1 / 3', background: 'var(--surface-sunken)' }}
           data-testid="context-meter-row"
         >
-          <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
+          <div
+            className={`meter-fill ${meterClass(pct)}${showActive ? ' meter-active' : ''}`}
+            style={{ width: `${pct}%` }}
+            data-active={showActive || undefined}
+            data-testid="context-meter-fill"
+          />
         </div>
       )}
     </button>

@@ -11,10 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.1.0-rc.6] - 2026-08-27
 
-> Sleeping sessions get a moon: when the Session Watchdog sees a Claude session go quiet, its card shows a small moon with how long it has been asleep — and clears it the moment output flows again. Plus: beta testers now see the full What's New story on every prerelease build.
+> Session cards now show life at a glance: a Claude session that is actively producing output gets a subtle green sweep across its context bar, and one that has gone quiet gets a moon with how long it has been asleep — two live opposites that update as work flows and stops. Plus: beta testers now see the full What's New story on every prerelease build.
 
 ### Added
 - Session cards show a moon while a Claude session is asleep — the Session Watchdog (which must be enabled) has seen no output for its silence window (2 minutes by default, configurable). The card dims slightly, the moon shows how long, and it clears only when the Watchdog sees the session produce output again; opening the session does not wake it. A session waiting on your input shows the attention state instead, never the moon, and after you dismiss attention the moon waits a minute before appearing.
+- Session cards show a subtle green sweep across the context bar while a Claude session is actively producing output — the live counterpart to the sleep moon. It reads the session's own output directly, so it works for every Claude session with no setup, and the context-usage colour stays visible underneath. It never shows while a session needs your attention or is asleep, is Claude-only, and honours reduced-motion (a steady tint instead of a sweep).
 
 ### Changed
 - On the beta update channel, every prerelease build (beta and RC) opens What's New with the complete content for upgraders, including the rename/roadmap page that is normally shown once. Stable builds and the stable channel are unchanged: the page still appears once for anyone arriving from before the rename, and for fresh installs.

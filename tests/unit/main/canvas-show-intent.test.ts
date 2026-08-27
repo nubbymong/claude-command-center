@@ -179,3 +179,25 @@ describe('load-time shape rules', () => {
     expect(reloaded?.awaitingReview).toBeUndefined()
   })
 })
+
+describe('reopen + reload heal (show-lane re-attack, 2026-08-27)', () => {
+  it('a reopened review version is NOT retro-superseded on reload (withdrawn siblings filtered)', () => {
+    render(1, { ready: true })
+    render(2, { ready: true })
+    render(3, { ready: true })
+    const canvasId = state().canvasId
+    const reopened = store.reopenVersionForReview(SID, 'v1', 'user')
+    expect('error' in reopened).toBe(false)
+    // Before reload: v1 is the open review version, v2/v3 withdrawn.
+    expect(openVersionOf(state().versions)?.id).toBe('v1')
+    // Reload runs the sanitizeRecord heal. Without the `withdrawn` filter, the
+    // later withdrawn siblings make v1 no longer "last" and it is wrongly
+    // stamped superseded — stranding the review the user just reopened.
+    store._resetCanvasStoreForTest()
+    const reloaded = store.getCanvasStateById(canvasId)!
+    const v1 = reloaded.versions.find((v) => v.id === 'v1')!
+    expect(v1.verdict).toBeUndefined()
+    expect(openVersionOf(reloaded.versions)?.id).toBe('v1')
+    expect(reloaded.awaitingReview?.versionId).toBe('v1')
+  })
+})

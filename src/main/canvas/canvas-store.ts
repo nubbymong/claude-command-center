@@ -885,7 +885,12 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     // that supersedes — otherwise a reload would durably retro-supersede an
     // open review version under a later show render, vanishing its debt with
     // no user gesture (independent review of the show lane, 2026-08-27).
-    const reviewRun = run.filter((v) => !v.show)
+    // WITHDRAWN versions are filtered for the same reason and to match
+    // openVersionOf exactly: a reopened version has later withdrawn siblings, so
+    // leaving them in reviewRun would make the reopened (open) version no longer
+    // "last" and retro-supersede it on reload — stranding the review the user
+    // just reopened (adversarial re-attack of the show lane, 2026-08-27).
+    const reviewRun = run.filter((v) => !v.show && v.verdict?.state !== 'withdrawn')
     for (let i = 0; i < reviewRun.length - 1; i++) {
       if (!reviewRun[i].verdict) reviewRun[i].verdict = { state: 'superseded', by: 'system', at: reviewRun[i + 1].createdAt }
     }
