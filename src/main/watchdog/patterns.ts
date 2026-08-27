@@ -138,9 +138,10 @@ export function contentTail(lines: string[], n: number, maxRaw = Infinity): stri
 //   - the ⏵⏵ mode footer carrying a monitor count, or
 //   - the interpunct-delimited segment itself ("· N monitors") for renders
 //     where the count rides other footer furniture.
-// Known limit (accepted): if the footer scrolls out of the captured pane the
+// Known limits (accepted): if the footer scrolls out of the captured pane the
 // detection lapses until it reprints — but it is bottom furniture, so in
-// practice it is always in the tail.
+// practice it is always in the tail; and a very narrow pane (<~46 cols) can
+// wrap the segment across rows, splitting the match.
 const MONITOR_FOOTER_TAIL_LINES = 15
 const MODE_FOOTER_MONITORS = /^\s*⏵⏵.*\b\d+\s+monitors?\b/
 const MONITOR_SEGMENT = /·\s*\d+\s+monitors?\b/

@@ -124,10 +124,9 @@ describe('activeStore — derivation from pty:data', () => {
     setupActiveListeners()
     noteActivityGrace('a')               // focus-report/resize seen at t=0
     emit('a')                            // the TUI's redraw response, t=0: graced
-    vi.advanceTimersByTime(ACTIVITY_GRACE_MS - 100) // ticks inside the window
+    vi.advanceTimersByTime(2000)         // ticks at 1000/2000 observe no stamp
     expect(useActiveStore.getState().activeIds.has('a')).toBe(false)
-    vi.advanceTimersByTime(200)          // past the grace
-    emit('a')                            // genuine output now stamps
+    emit('a')                            // t=2000, past the grace: stamps
     vi.advanceTimersByTime(1000)
     expect(useActiveStore.getState().activeIds.has('a')).toBe(true)
   })

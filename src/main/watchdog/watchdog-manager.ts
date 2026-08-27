@@ -724,9 +724,9 @@ export class WatchdogManager {
         idleMs: Math.max(0, now - e.lastDataAt),
         // Monitor-aware sleep (RC8): a session with active monitors is quiet
         // between triggers by design, so the moon skips it. Read only for
-        // SILENT sessions — the only ones the moon consults — and the pane
-        // cannot change while silent (changing requires output), so the read
-        // is stable and cheap here rather than on the per-burst feed path.
+        // SILENT sessions — the only ones the moon consults. While silent the
+        // pane changes only on graced click-redraw output, so reading it per
+        // snapshot (not per feed burst) is both cheap and current.
         hasMonitors: e.silent ? this.paneHasMonitors(e) : false,
       }
     })

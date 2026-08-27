@@ -1163,6 +1163,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               // ConPTY repaints the pane on resize — redraw output, not
               // activity. Grace the pill so it doesn't flash (RC8); the main
               // process arms the moon's grace in its own resize handler.
+              // (The resume-nudge and geometryResync resizes deliberately skip
+              // this: they fire in already-streaming flows where the pill is
+              // lit anyway, while the main-side grace still covers the moon.)
               noteActivityGrace(sessionId)
               window.electronAPI.pty.resize(sessionId, cols, rows)
               reportIntegrity()
