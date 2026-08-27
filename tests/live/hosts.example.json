@@ -1,0 +1,7 @@
+{
+  "//": "Copy to hosts.local.json (gitignored) and fill in your own hosts. Every entry is optional — combos whose entry is absent are skipped. password entries are read from this local file only; never commit hosts.local.json.",
+  "linuxKey": { "host": "192.0.2.10", "username": "you" },
+  "linuxPassword": { "host": "192.0.2.11", "username": "you", "password": "secret" },
+  "mac": { "host": "192.0.2.12", "username": "you" },
+  "windows": { "host": "192.0.2.13", "username": "you", "remoteOs": "windows" }
+}

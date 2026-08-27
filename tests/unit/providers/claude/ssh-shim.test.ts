@@ -433,11 +433,18 @@ describe('SSH remote setup script — tier-2 -V execution probe + nested-tmux ov
   // Order matters: the override must come AFTER both the tier-1 and tier-2
   // assignments, or an assignment would simply overwrite it and the nested
   // remote would still get the doomed wrap.
-  it('contains the $TMUX -> tmuxClass=none override, AFTER both tier-1 and tier-2 assignments (it must win)', () => {
+  //
+  // Statusline fix (SSBN root cause, 2026-08-27): the override clears ONLY
+  // tmuxClass. The old form also wiped tmuxPath, which baked an empty
+  // CCC_TMUX_BIN for every user-owned-tmux session — the shim then had no
+  // way to reach the tmux client tty and the statusline froze on "pending".
+  it('contains the $TMUX -> tmuxClass=none override (tmuxPath PRESERVED), AFTER both tier assignments', () => {
     const script = generateRemoteSetupScript('sid-x', null, undefined, NONCE)
-    const override = `if(process.env.TMUX){tmuxPath='';tmuxClass='none'}`
+    const override = `if(process.env.TMUX){tmuxClass='none'}`
     const overrideIdx = script.indexOf(override)
     expect(overrideIdx).toBeGreaterThan(-1)
+    // The regression pin: the tmuxPath-wiping form must never come back.
+    expect(script).not.toContain(`if(process.env.TMUX){tmuxPath='';tmuxClass='none'}`)
     const tier1Idx = script.indexOf(`tmuxClass='path'`)
     const tier2Idx = script.indexOf(`tmuxClass='home'`)
     expect(tier1Idx).toBeGreaterThan(-1)
@@ -456,6 +463,8 @@ describe('SSH remote setup script — tier-2 -V execution probe + nested-tmux ov
 interface SetupRunResult {
   stdout: string
   execFileCalls: Array<{ file: string; args: string[] }>
+  /** Every fs.writeFileSync the script performed (settings, shim, mcp). */
+  writes: Array<{ path: string; content: string }>
 }
 
 function runSetupScript(opts: {
@@ -467,13 +476,13 @@ function runSetupScript(opts: {
   /** tier 2 execution probe (`-V`): throw = candidate cannot actually run. */
   execFileSync?: (file: string, args: string[]) => string
 }): SetupRunResult {
-  const result: SetupRunResult = { stdout: '', execFileCalls: [] }
+  const result: SetupRunResult = { stdout: '', execFileCalls: [], writes: [] }
   const enoent = (): Error => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
   const fakeFs = {
     mkdirSync: () => {},
     chmodSync: () => {},
     rmSync: () => {},
-    writeFileSync: () => {},
+    writeFileSync: (p: string, content: unknown) => { result.writes.push({ path: String(p), content: String(content) }) },
     readFileSync: () => { throw enoent() },
     existsSync: () => false,
     accessSync: (p: string) => { (opts.accessSync ?? (() => { throw enoent() }))(p) },
@@ -558,6 +567,35 @@ describe('SSH remote setup script — runtime behaviour of the tmux probes (fail
       execSync: () => '/usr/bin/tmux\n',
     })
     expect(sentinelTmuxClass(r.stdout)).toBe('path')
+  })
+
+  // Statusline fix (SSBN root cause, 2026-08-27) — mutation to prove this can
+  // fail: restore the old tmuxPath-wiping override
+  // (`if(process.env.TMUX){tmuxPath='';tmuxClass='none'}`) and the settings
+  // bake goes back to `CCC_TMUX_BIN= ` (empty), which is exactly the state
+  // that froze the statusline for user-owned-tmux sessions: claude still runs
+  // INSIDE the user's tmux, the shim finds no tmux bin, falls back to the
+  // pane pty, and tmux swallows the sentinel.
+  it('nested-tmux ($TMUX set): class is none but the settings bake KEEPS the tier-1 tmux path for the shim', () => {
+    const r = runSetupScript({
+      env: { TMUX: '/tmp/tmux-1000/default,1234,0' },
+      execSync: () => '/usr/bin/tmux\n', // tier 1 hits — the shim must get this
+    })
+    expect(sentinelTmuxClass(r.stdout)).toBe('none') // launch stays bare (no nesting)
+    const settingsWrite = r.writes.find((w) => w.path.includes('settings-sid-rt'))
+    expect(settingsWrite).toBeDefined()
+    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN=/usr/bin/tmux node')
+  })
+
+  it('control: no tmux anywhere still bakes an empty CCC_TMUX_BIN (nothing to preserve)', () => {
+    const r = runSetupScript({
+      env: { TMUX: '/tmp/tmux-1000/default,1234,0' },
+      execSync: () => { throw new Error('command -v: not found') },
+    })
+    expect(sentinelTmuxClass(r.stdout)).toBe('none')
+    const settingsWrite = r.writes.find((w) => w.path.includes('settings-sid-rt'))
+    expect(settingsWrite).toBeDefined()
+    expect(settingsWrite!.content).toContain('CCC_TMUX_BIN= node')
   })
 })
 

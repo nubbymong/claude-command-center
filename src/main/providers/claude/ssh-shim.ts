@@ -113,7 +113,35 @@ if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percenta
 if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}
 const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
 let ok=false;if(process.platform==='win32'){try{fs.writeFileSync(String.fromCharCode(92,92,46,92)+'CONOUT$',sentinel);ok=true;trace('conout-ok sid='+sid);}catch(e0){trace('conout-fail sid='+sid+' err='+(e0&&e0.code||e0.message||'unknown'));}}
-if(process.env.TMUX){const tb=process.env.CCC_TMUX_BIN||'';if(tb){try{const out=require('child_process').execFileSync(tb,['display-message','-p','#{client_tty}'],{encoding:'utf8',timeout:2000});const tty=out.split('\\n')[0].trim();if(tty){try{if(tty.indexOf('/dev/')!==0)throw new Error('not-under-dev');if(!fs.statSync(tty).isCharacterDevice())throw new Error('not-a-chardev');fs.writeFileSync(tty,sentinel);ok=true;trace('tmux-clienttty-ok sid='+sid+' dev='+tty);}catch(e4){trace('tmux-fail sid='+sid+' dev='+tty+' err='+(e4&&e4.code||e4.message||'unknown'));}}else{ok=true;trace('tmux-detached sid='+sid);}}catch(e5){trace('tmux-fail sid='+sid+' err='+(e5&&e5.code||e5.message||'unknown'));}}else{trace('tmux-fail sid='+sid+' err=no-ccc-tmux-bin');}}
+if(process.env.TMUX){
+// Self-heal (2026-08-27): $CCC_TMUX_BIN can be empty or stale — the bake ran
+// before a tier-3/4 stage, the post-stage patch missed, or the session runs
+// inside the USER'S OWN tmux (bake correctly classed 'none'). Claude is still
+// under tmux either way, so try candidates in order: the baked bin, the staged
+// ~/.claude/bin/tmux, then PATH tmux (execFileSync argv lookup — no shell).
+// First candidate whose display-message answers wins; every attempt traces.
+const cands=[];
+const tb=process.env.CCC_TMUX_BIN||'';
+if(tb)cands.push(tb);
+const hb=path.join(os.homedir(),'.claude','bin','tmux');
+if(cands.indexOf(hb)<0)cands.push(hb);
+cands.push('tmux');
+for(const c of cands){
+if(ok)break;
+if(c!=='tmux'&&!/^[A-Za-z0-9_./-]+$/.test(c)){trace('tmux-skip sid='+sid+' cand-unsafe');continue;}
+try{
+const out=require('child_process').execFileSync(c,['display-message','-p','#{client_tty}'],{encoding:'utf8',timeout:2000});
+const tty=out.split('\\n')[0].trim();
+if(tty){
+try{
+if(tty.indexOf('/dev/')!==0)throw new Error('not-under-dev');
+if(!fs.statSync(tty).isCharacterDevice())throw new Error('not-a-chardev');
+fs.writeFileSync(tty,sentinel);ok=true;trace('tmux-clienttty-ok sid='+sid+' dev='+tty+' via='+c);
+}catch(e4){trace('tmux-fail sid='+sid+' dev='+tty+' cand='+c+' err='+(e4&&e4.code||e4.message||'unknown'));}
+}else{ok=true;trace('tmux-detached sid='+sid+' via='+c);}
+}catch(e5){trace('tmux-fail sid='+sid+' cand='+c+' err='+(e5&&e5.code||e5.message||'unknown'));}
+}
+}
 if(!ok){try{fs.writeFileSync('/dev/tty',sentinel);ok=true;}catch(e){trace('tty-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));}}
 if(!ok){const pts=findPty();if(pts){try{fs.writeFileSync(pts,sentinel);ok=true;trace('pts-ok sid='+sid+' dev='+pts);}catch(e2){trace('pts-fail sid='+sid+' dev='+pts+' err='+(e2&&e2.code||e2.message||'unknown'));}}else{trace('pts-none sid='+sid);}}
 if(!ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e3){trace('stderr-fail sid='+sid+' err='+(e3&&e3.message||'unknown'));}}
@@ -310,7 +338,18 @@ export function generateRemoteSetupScript(
     // tmux is already providing the persistence this tier would have added,
     // and a session that starts is strictly better than a pill that says
     // "persistent" over a session that never launched.
-    `if(process.env.TMUX){tmuxPath='';tmuxClass='none'}`,
+    //
+    // Statusline fix (SSBN root cause, 2026-08-27): clear ONLY tmuxClass —
+    // NOT tmuxPath. Claude still runs INSIDE the user's tmux, and the
+    // statusline shim needs CCC_TMUX_BIN to reach the tmux client tty (an
+    // unrecognised OSC written to the pane pty is swallowed by tmux). The
+    // old line also wiped tmuxPath, baking an empty CCC_TMUX_BIN, so the
+    // shim fell back to /dev/tty inside the pane and the CMSTATUS sentinel
+    // never left the host — the "statusline row stuck on pending" bug for
+    // every user-owned-tmux session. tmuxPath feeds ONLY the CCC_TMUX_BIN
+    // bake (see the round-3 note above); the launch decision reads
+    // tmuxClass, so the no-nesting guarantee is unchanged.
+    `if(process.env.TMUX){tmuxClass='none'}`,
     // #242 MAJOR (round 2, adversarial review): allowlist guard on tmuxPath,
     // BEFORE its one remaining consumer below (CCC_TMUX_BIN). `command -v
     // tmux` and the ~/.claude/bin access check both hand back a value this
