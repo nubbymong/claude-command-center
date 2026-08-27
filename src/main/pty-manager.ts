@@ -1375,7 +1375,7 @@ export function spawnPty(
           // produces output that re-enters the ladder normally. BOUNDED: if
           // the sticky line is stale (a host whose real post-login prompt
           // strips to '' never overwrites it), the cap lets the fallback
-          // advance after ~MAX_AUTH_HOLD_FIRES × IDLE_FALLBACK_MS instead of
+          // advance on the fire after the cap (~13.5s) instead of
           // wedging the session here forever. Logged once per engagement.
           if (PASSWORD_PROMPT_RE.test(lastPromptLineSeen) && authHoldFires < MAX_AUTH_HOLD_FIRES) {
             authHoldFires++
@@ -1577,7 +1577,8 @@ export function spawnPty(
     // the flow in connecting forever.
     let lastPromptLineSeen = ''
     // Consecutive idle-fallback fires spent holding for an auth prompt; reset
-    // by every data chunk. At the cap the fallback advances anyway (~12s),
+    // by every data chunk. At the cap the fallback advances anyway (release is
+    // the fire after the cap, (MAX+1) x 1.5s = ~13.5s),
     // so a stale sticky delays a quiet host but can never wedge it.
     let authHoldFires = 0
     const MAX_AUTH_HOLD_FIRES = 8
