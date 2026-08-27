@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Clicking or switching to a sleeping session no longer clears its moon. Opening a session repaints its terminal, and that repaint used to count as the session waking — sometimes, depending on window geometry, which is why the behaviour felt inconsistent. Repaint output around a click, focus change or resize is now recognised for what it is: the moon clears only when the session genuinely produces output again, and a click can no longer quietly push an impending moon back either. The working pill gets the same treatment, so it no longer flashes green on a session switch.
+- SSH sessions with a saved password sign in again. On Windows, the terminal glues a window-title code onto the same line as the password prompt, which broke the prompt detection — the saved password was never typed and the connect flow asked about launching Claude while the prompt sat waiting. Detection now strips those codes (verified against a real host), and the connect flow holds while a password prompt is visibly waiting instead of advancing over it.
+- Text selection works in SSH Claude sessions. The remote launch now disables Claude’s mouse tracking the same way local sessions do (following the classic copy/paste setting), so dragging selects and highlights text again.
 - Sessions running monitors are no longer marked asleep between triggers. A Claude session with active monitors is quiet by design while it waits; the Watchdog now reads the "N monitors" mode footer and skips the moon for those sessions.
 
 ## [2.1.0-rc.7] - 2026-08-27
