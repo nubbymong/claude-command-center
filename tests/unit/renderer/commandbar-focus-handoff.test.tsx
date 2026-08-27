@@ -102,6 +102,7 @@ describe('focus hand-off after a chip runs', () => {
     render()
     const chip = buttonNamed('Docs')!
     chip.focus()
+    expect(document.activeElement).toBe(chip)
     act(() => { chip.click() })
     expect(ptyWrite).not.toHaveBeenCalled()
     expect(document.activeElement).not.toBe(chip)

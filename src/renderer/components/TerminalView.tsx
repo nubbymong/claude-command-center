@@ -270,8 +270,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     const onFocusRequest = (ev: Event) => {
       const want = (ev as CustomEvent<{ sessionId?: string }>).detail?.sessionId
       if (want !== sessionId) return
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
       requestAnimationFrame(() => {
+        // Modal check at FOCUS time, not dispatch time (review 2026-08-27):
+        // a dialog that closes as the command runs (GuiExeDialog) has
+        // unmounted by this frame so the handoff proceeds, and one that
+        // MOUNTS on the run (CapturedRunModal) is present and keeps focus.
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
         try { terminalRef.current?.focus() } catch { /* ignore */ }
       })
     }
