@@ -193,10 +193,12 @@ export interface TmuxLaunchInput {
  * conditional rather than `new-session -A`, so a reconnect can tell "the
  * session is still alive, attach to it" apart from "the session is gone
  * (remote reboot), create a fresh one and resume the conversation". Produces,
- * for a tier-1 (`staged: false`) binary:
+ * for a tier-1 (`staged: false`) binary (#546 mouse-off elided as `<mo>` =
+ * `command tmux set-option -t ccc-<sid> mouse off 2>/dev/null`):
  *   `if command tmux has-session -t ccc-<sid> 2>/dev/null; then`
- *   ` command tmux attach -t ccc-<sid>;`
- *   ` else command tmux new-session -s ccc-<sid> '<innerCmd[ --continue]>'; fi`
+ *   ` <mo>; command tmux attach -t ccc-<sid> || <fresh>;`
+ *   ` else <fresh>; fi`   where <fresh> =
+ *   ` command tmux new-session -s ccc-<sid> '<mo>; <innerCmd[ --continue]>'`
  * and for a tier-2/3/4 (`staged: true`) binary the identical shape with
  * `"$HOME"/.claude/bin/tmux` as the token. The leading token is literally
  * `ON_PATH_TMUX_BIN_EXPR` / `STAGED_TMUX_BIN_EXPR`, NEVER a value this
@@ -247,10 +249,24 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   const sid = safeSid(input.sessionId)
   const tmuxBinToken = input.staged ? STAGED_TMUX_BIN_EXPR : ON_PATH_TMUX_BIN_EXPR
   const target = `ccc-${sid}`
+  // #546: force mouse mode OFF for CCC's own tmux session so classic
+  // drag-selection works even when the remote user's ~/.tmux.conf has
+  // `set -g mouse on` -- with mouse on, tmux captures the drag and xterm never
+  // sees it, defeating CLAUDE_CODE_DISABLE_MOUSE. This is SESSION-scoped (no
+  // `-g`) and `-t ${target}`, so it overrides the user's global for OUR session
+  // only and never touches their other tmux sessions. Every operand is a
+  // compile-time literal or the safeSid-sanitized target -- no wire-reported
+  // value reaches this command (the #242 sink posture is unchanged). Errors are
+  // swallowed (old tmux with no `mouse` option, or the server briefly gone) so
+  // the launch always falls through to claude -- fail-open toward running.
+  const mouseOff = `${tmuxBinToken} set-option -t ${target} mouse off 2>/dev/null`
   // Fresh-create branch only: resume the prior conversation on a reconnect
   // where the remote session was gone. Appended to innerCmd BEFORE quoting so
   // it rides inside tmux's single `<shell-cmd>` argument, next to `claude`.
-  const freshInner = input.reconnect ? `${input.innerCmd} --continue` : input.innerCmd
+  const claudeInner = input.reconnect ? `${input.innerCmd} --continue` : input.innerCmd
+  // The mouse-off runs INSIDE the freshly-created pane (where the session is
+  // live and addressable), then claude; both ride tmux's single quoted arg.
+  const freshInner = `${mouseOff}; ${claudeInner}`
   const fresh = `${tmuxBinToken} new-session -s ${target} ${singleQuote(freshInner)}`
   // has-session/attach is NOT atomic: the session can die (claude exits, remote
   // reboots) in the gap between `has-session` returning 0 and `attach` running
@@ -260,9 +276,13 @@ export function buildTmuxLaunchCommand(input: TmuxLaunchInput): string {
   // live session (adversarial review, 2026-08-18). Fall the attach THROUGH to a
   // fresh create (with --continue on a reconnect, exactly like the else branch)
   // so a lost race self-heals instead of stranding the user.
+  // Attach branch: the session already exists, so set the option from the outer
+  // shell (server reachable — has-session just returned 0) BEFORE attaching, so
+  // a reattach to a session created by an older CCC (or before this fix) is also
+  // forced mouse-off.
   return (
     `if ${tmuxBinToken} has-session -t ${target} 2>/dev/null; ` +
-    `then ${tmuxBinToken} attach -t ${target} || ${fresh}; ` +
+    `then ${mouseOff}; ${tmuxBinToken} attach -t ${target} || ${fresh}; ` +
     `else ${fresh}; fi`
   )
 }

@@ -18,10 +18,21 @@ Fix: read `classicTerminalCopyPaste` in the SSH spawn config and, when not
 existing `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1` sibling) -- no new remote-input or
 injection surface; they ride inside the tmux single-quote wrap unchanged.
 
-The tmux wrapper (`ssh-tmux.ts`) does not set `mouse on`, so tmux is not the
-cause. If a remote user's own `~/.tmux.conf` has `set -g mouse on`, tmux grabs
-the drag regardless -- remedy there is Shift+drag or turning tmux mouse off, not
-a CCC change.
+The tmux wrapper (`ssh-tmux.ts`) does not set `mouse on` itself, but a remote
+user's own `~/.tmux.conf` with `set -g mouse on` makes tmux grab the drag before
+xterm sees it -- defeating CLAUDE_CODE_DISABLE_MOUSE. So `buildTmuxLaunchCommand`
+now also forces `set-option -t ccc-<sid> mouse off 2>/dev/null` for CCC's own
+session (session-scoped -- overrides the user's global for OUR session only,
+never touches their other sessions), on both the fresh-create pane and the
+reattach branch, using only the fixed launch token + safeSid target (the #242
+sink posture is unchanged). Errors are swallowed so the launch always falls
+through to claude (fail-open toward running). Old tmux (<2.1, no `mouse` option)
+no-ops harmlessly.
+
+Follow-up (own ticket -- touches #242 attach/has-session semantics): tighten
+every `-t ccc-<sid>` in the wrapper to the exact-match sigil `-t =ccc-<sid>` so a
+lost-race set-option/attach can't prefix-match a user's own `ccc-<sid>-*`
+session.
 
 Tests: `tests/unit/pty-manager-ssh-tmux.test.ts` adds the default-on assertion;
 `tests/unit/ssh-mouse-parity.test.ts` (new) covers both toggle states by
