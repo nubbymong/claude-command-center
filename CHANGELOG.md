@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.8] - 2026-08-27
+
+> The session sleep and working indicators settle down. Clicking a sleeping session no longer wakes its moon (only real output does, consistently), sessions running monitors are no longer tagged asleep between triggers, and the moon and working pill now fade in and out instead of popping.
+
+### Changed
+- The sleep moon and the working pill now ease in and out with a soft fade instead of popping, and neighbouring badges slide rather than jump. Reduced-motion setups keep the instant behaviour.
+
+### Fixed
+- Clicking or switching to a sleeping session no longer clears its moon. Opening a session repaints its terminal, and that repaint used to count as the session waking — sometimes, depending on window geometry, which is why the behaviour felt inconsistent. Repaint output around a click, focus change or resize is now recognised for what it is: the moon clears only when the session genuinely produces output again, and a click can no longer quietly push an impending moon back either. The working pill gets the same treatment, so it no longer flashes green on a session switch.
+- Sessions running monitors are no longer marked asleep between triggers. A Claude session with active monitors is quiet by design while it waits; the Watchdog now reads the "N monitors" mode footer and skips the moon for those sessions.
+
 ## [2.1.0-rc.7] - 2026-08-27
 
 > The active-session indicator is easier to catch: a Claude session that is producing output now shows a green "working" pill beside its type badge — a gently pulsing play glyph — as well as the context-bar sweep, so a live session reads at a glance.
@@ -1373,6 +1384,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.8]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.8
 [2.1.0-rc.7]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.7
 [2.1.0-rc.6]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.6
 [2.1.0-rc.5]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.5

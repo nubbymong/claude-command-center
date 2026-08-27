@@ -44,6 +44,11 @@ export interface WatchdogSessionMonitor {
   silent: boolean
   /** ms since the last PTY chunk for this session. */
   idleMs: number
+  /** True when the session's pane advertises active monitors in its mode
+   *  footer ("… · 2 monitors · …"). A monitor session is quiet between
+   *  triggers BY DESIGN, so the sleep indicator skips it (RC8). Computed only
+   *  for silent sessions — the only ones the moon consults. */
+  hasMonitors?: boolean
 }
 
 /** Snapshot of the whole watchdog subsystem for the services view (#235). */

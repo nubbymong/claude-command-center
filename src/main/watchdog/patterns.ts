@@ -127,6 +127,30 @@ export function contentTail(lines: string[], n: number, maxRaw = Infinity): stri
   return lines.slice(start, end)
 }
 
+// --- Active-monitor detection (sleep indicator, RC8) ---
+// A session running periodic monitors is QUIET between triggers BY DESIGN, so
+// the silence-based sleep indicator must not tag it asleep. Claude Code
+// advertises active monitors in the mode footer — persistent bottom furniture
+// anchored under the input box: "⏵⏵ auto mode on · 2 monitors · ← for agents",
+// "⏵⏵ accept edits on · 1 monitor". Two anchors, both required to be in the
+// last few rendered lines (the footer region), so the same text quoted in a
+// tool render higher up the pane cannot suppress a real moon:
+//   - the ⏵⏵ mode footer carrying a monitor count, or
+//   - the interpunct-delimited segment itself ("· N monitors") for renders
+//     where the count rides other footer furniture.
+// Known limit (accepted): if the footer scrolls out of the captured pane the
+// detection lapses until it reprints — but it is bottom furniture, so in
+// practice it is always in the tail.
+const MONITOR_FOOTER_TAIL_LINES = 15
+const MODE_FOOTER_MONITORS = /^\s*⏵⏵.*\b\d+\s+monitors?\b/
+const MONITOR_SEGMENT = /·\s*\d+\s+monitors?\b/
+
+export function hasActiveMonitors(text: string, tailLines = MONITOR_FOOTER_TAIL_LINES): boolean {
+  const lines = stripAnsi(text).split('\n')
+  const tail = lines.slice(Math.max(0, lines.length - tailLines))
+  return tail.some((l) => MODE_FOOTER_MONITORS.test(l) || MONITOR_SEGMENT.test(l))
+}
+
 // Claude Code renders rate limits across multiple lines in its TUI, e.g.:
 //   "⚠ You've hit your limit"
 //   "· resets 3pm (UTC)"

@@ -142,6 +142,99 @@ describe('watchdog silence detection', () => {
   })
 })
 
+describe('watchdog activation grace (RC8 — a click must not wake a sleeping session)', () => {
+  it('output within the grace neither clears silence nor resets the idle clock', () => {
+    watchdogSettings = { enabled: true, silenceWindowMs: 1000 }
+    const m = new WatchdogManager(makeHost())
+    m.startWatchdog('s1')
+    m.feedData('s1', 'x')                        // lastDataAt = 0
+    vi.advanceTimersByTime(5000)                 // tick: silent at t=5000
+    expect(m.getMonitorSnapshot().sessions[0].silent).toBe(true)
+    m.noteRedrawTrigger('s1')                    // click: focus-report seen at t=5000
+    m.feedData('s1', 'focus redraw bytes')       // the TUI's click response
+    const s = m.getMonitorSnapshot().sessions[0]
+    expect(s.silent).toBe(true)                  // moon stays
+    expect(s.idleMs).toBe(5000)                  // idle clock untouched
+  })
+
+  it('output after the grace expires wakes the session normally', () => {
+    watchdogSettings = { enabled: true, silenceWindowMs: 1000 }
+    const m = new WatchdogManager(makeHost())
+    m.startWatchdog('s1')
+    m.feedData('s1', 'x')
+    vi.advanceTimersByTime(5000)                 // silent
+    m.noteRedrawTrigger('s1')                    // grace until t=6000
+    vi.advanceTimersByTime(1500)                 // t=6500, past the grace
+    m.feedData('s1', 'real work resuming')
+    expect(m.getMonitorSnapshot().sessions[0].silent).toBe(false)
+  })
+
+  it('a resize arms the grace too (ConPTY repaints on resize)', () => {
+    watchdogSettings = { enabled: true, silenceWindowMs: 1000 }
+    const m = new WatchdogManager(makeHost())
+    m.startWatchdog('s1')
+    m.feedData('s1', 'x')
+    vi.advanceTimersByTime(5000)                 // silent
+    m.noteResize('s1', 100, 30)                  // activation resize
+    m.feedData('s1', 'conpty repaint burst')
+    expect(m.getMonitorSnapshot().sessions[0].silent).toBe(true)
+  })
+
+  it('a click on a not-yet-silent session does not push its moon back', () => {
+    watchdogSettings = { enabled: true, silenceWindowMs: 6000 }
+    const m = new WatchdogManager(makeHost())
+    m.startWatchdog('s1')
+    m.feedData('s1', 'x')                        // lastDataAt = 0
+    vi.advanceTimersByTime(5000)                 // not yet silent (5000 < 6000)
+    m.noteRedrawTrigger('s1')
+    m.feedData('s1', 'click redraw')             // graced: must NOT re-stamp
+    vi.advanceTimersByTime(5000)                 // t=10000: idle 10000 > 6000
+    expect(m.getMonitorSnapshot().sessions[0].silent).toBe(true)
+  })
+
+  it('noteRedrawTrigger on an untracked session is a no-op', () => {
+    const m = new WatchdogManager(makeHost())
+    expect(() => m.noteRedrawTrigger('ghost')).not.toThrow()
+  })
+})
+
+describe('watchdog monitor-mode detection (RC8 — monitor sessions never show the moon)', () => {
+  it('a silent session whose footer advertises monitors reports hasMonitors', async () => {
+    watchdogSettings = { enabled: true, silenceWindowMs: 1000 }
+    const m = new WatchdogManager(makeHost())
+    m.startWatchdog('s1')
+    m.feedData('s1', 'some output\r\n⏵⏵ auto mode on · 2 monitors · ← for agents')
+    // Async advance: the headless pane's write queue drains on the event loop,
+    // so the sync advance would read an empty pane.
+    await vi.advanceTimersByTimeAsync(5000)      // flush the pane write + flip silent
+    const s = m.getMonitorSnapshot().sessions[0]
+    expect(s.silent).toBe(true)
+    expect(s.hasMonitors).toBe(true)
+  })
+
+  it('a silent session without the monitors footer reports hasMonitors false', async () => {
+    watchdogSettings = { enabled: true, silenceWindowMs: 1000 }
+    const m = new WatchdogManager(makeHost())
+    m.startWatchdog('s1')
+    m.feedData('s1', 'some output\r\n⏵⏵ auto mode on (shift+tab to cycle)')
+    await vi.advanceTimersByTimeAsync(5000)
+    const s = m.getMonitorSnapshot().sessions[0]
+    expect(s.silent).toBe(true)
+    expect(s.hasMonitors).toBe(false)
+  })
+
+  it('a non-silent session skips the pane read (hasMonitors false)', () => {
+    watchdogSettings = { enabled: true, silenceWindowMs: 60_000 }
+    const m = new WatchdogManager(makeHost())
+    m.startWatchdog('s1')
+    m.feedData('s1', '⏵⏵ auto mode on · 2 monitors · ← for agents')
+    vi.advanceTimersByTime(5000)                 // idle 5000 < 60000: not silent
+    const s = m.getMonitorSnapshot().sessions[0]
+    expect(s.silent).toBe(false)
+    expect(s.hasMonitors).toBe(false)
+  })
+})
+
 describe('watchdog services-view snapshots', () => {
   it('reports a watchdog ServiceHealth that is listening when active, stopped when not', () => {
     const m = new WatchdogManager(makeHost())

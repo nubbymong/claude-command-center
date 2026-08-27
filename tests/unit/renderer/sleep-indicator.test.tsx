@@ -99,6 +99,22 @@ describe('sleep store — snapshot application', () => {
     useSleepStore.getState().applyWatchdogSessions([{ sessionId: 'a', silent: true, idleMs: 135_000 }], now + 5_000)
     expect(useSleepStore.getState().silentSince).toBe(before)
   })
+
+  it('a monitor session never records a silentSince, even when silent (RC8)', () => {
+    const now = 500_000
+    useSleepStore.getState().applyWatchdogSessions(
+      [{ sessionId: 'a', silent: true, idleMs: 130_000, hasMonitors: true }], now)
+    expect(useSleepStore.getState().silentSince.a).toBeUndefined()
+  })
+
+  it('monitors appearing on a tracked silent session clear its moon (RC8)', () => {
+    const now = 500_000
+    useSleepStore.getState().applyWatchdogSessions([{ sessionId: 'a', silent: true, idleMs: 130_000 }], now)
+    expect(useSleepStore.getState().silentSince.a).toBeDefined()
+    useSleepStore.getState().applyWatchdogSessions(
+      [{ sessionId: 'a', silent: true, idleMs: 190_000, hasMonitors: true }], now + 60_000)
+    expect(useSleepStore.getState().silentSince.a).toBeUndefined()
+  })
 })
 
 describe('sleep store — dismiss grace timer', () => {

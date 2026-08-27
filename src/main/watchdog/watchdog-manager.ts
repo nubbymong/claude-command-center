@@ -15,6 +15,7 @@ import type { BrowserWindow } from 'electron'
 import { Terminal } from '@xterm/headless'
 import { SessionWatchdog } from './session-watchdog'
 import type { WatchdogAdapter, WatchdogPublicState } from './session-watchdog'
+import { hasActiveMonitors } from './patterns'
 import { getGateway } from '../hooks/index'
 import { readConfig } from '../config-manager'
 import { logInfo, logWarn, logError } from '../debug-logger'
@@ -170,6 +171,20 @@ const MAX_TICK_INTERVAL_MS = 30_000
 // via settings.watchdog.silenceWindowMs; 0 disables silence detection.
 const DEFAULT_SILENCE_WINDOW_MS = 120_000
 
+// Activation grace (RC8): clicking/switching to a session makes its hidden
+// terminal visible, which produces PTY OUTPUT that is a REDRAW, not work — the
+// TUI answers the focus-report events xterm sends (Claude Code enables DECSET
+// 1004; measured: a focus flip draws ~31 bytes) and ConPTY repaints the pane
+// on a changed-geometry resize (~2.6 KB). Both used to count as the session
+// "waking", so a click sometimes cleared the moon and sometimes didn't
+// (geometry-dependent). For this window after such a trigger, output is
+// EXCLUDED from silence bookkeeping: it neither clears a latched silence nor
+// resets the idle clock (which would silently push an impending moon back).
+// Genuine work resuming keeps streaming past the window and wakes normally,
+// at most this much later. The pane still ingests every byte, so detection
+// stays accurate.
+export const ACTIVATION_GRACE_MS = 1_000
+
 export interface WatchdogSessionInfo {
   provider?: string
   ssh?: boolean
@@ -260,6 +275,8 @@ interface Entry {
   lastDataAt: number
   /** Latched silence state (no output for the silence window). */
   silent: boolean
+  /** Until this now(), output is a click-redraw, not a wake (RC8). 0 = none. */
+  graceUntil: number
 }
 
 /** Serialize the pane's last `maxLines` rendered lines (screen + genuinely
@@ -524,7 +541,7 @@ export class WatchdogManager {
       scrollback: HEADLESS_SCROLLBACK,
       allowProposedApi: true,
     })
-    this.entries.set(sessionId, { wd, term, ansiClamp: { residual: '' }, feedTimer: null, lastDataAt: this.now(), silent: false })
+    this.entries.set(sessionId, { wd, term, ansiClamp: { residual: '' }, feedTimer: null, lastDataAt: this.now(), silent: false, graceUntil: 0 })
     if (this.startedAt === null) this.startedAt = this.now()
     this.ensureTickTimer()
     this.ensureHookSubscription()
@@ -549,6 +566,24 @@ export class WatchdogManager {
     try {
       entry.term.resize(cols, rows)
     } catch { /* a mid-write resize throw must not kill the PTY data path */ }
+    // A resize makes ConPTY repaint the pane — redraw output, not the session
+    // waking (RC8). Arm the grace so the repaint is excluded from silence
+    // bookkeeping. This covers both the click-activation resize (hidden
+    // terminal shown at a changed geometry) and a window/sidebar resize over a
+    // sleeping session.
+    entry.graceUntil = this.now() + ACTIVATION_GRACE_MS
+  }
+
+  /** Arm the activation grace for a session (RC8): the next
+   *  ACTIVATION_GRACE_MS of output is a click/focus redraw, not a wake. The
+   *  host calls this when it sees a redraw trigger that is not a resize —
+   *  chiefly the DECSET-1004 focus-report chunks (\x1b[I / \x1b[O) xterm
+   *  writes into the PTY when a session pane gains or loses focus. No-op for
+   *  untracked sessions. */
+  noteRedrawTrigger(sessionId: string): void {
+    const entry = this.entries.get(sessionId)
+    if (!entry) return
+    entry.graceUntil = this.now() + ACTIVATION_GRACE_MS
   }
 
   /** Publish one watchdog state to the renderer (and refresh the services
@@ -617,10 +652,20 @@ export class WatchdogManager {
     // and PUSH the flip: the sleep indicator rides diagnostics pushes, and
     // without this the wake only reached the renderer on the next unrelated
     // heartbeat (with hooks and logging both off, potentially much later).
-    entry.lastDataAt = this.now()
-    if (entry.silent) {
-      entry.silent = false
-      try { this.host.onHealthChange?.() } catch { /* host gone */ }
+    //
+    // EXCEPT inside the activation grace (RC8): output arriving within
+    // ACTIVATION_GRACE_MS of a redraw trigger (focus-report write, resize) is
+    // the TUI repainting for a click, not work resuming. It must neither clear
+    // a latched silence (the click-wake bug) nor reset the idle clock (a click
+    // on a not-yet-silent session would silently push its moon back a full
+    // window). Genuine work keeps streaming past the grace and wakes then.
+    const now = this.now()
+    if (now >= entry.graceUntil) {
+      entry.lastDataAt = now
+      if (entry.silent) {
+        entry.silent = false
+        try { this.host.onHealthChange?.() } catch { /* host gone */ }
+      }
     }
     // RAW bytes into the rendered pane — the terminal's parser is the tail
     // discipline now (#266 BLOCKER-1); no stripping, no manual line caps. Only
@@ -651,6 +696,20 @@ export class WatchdogManager {
     return this.entries.has(sessionId)
   }
 
+  /** Does this entry's rendered pane advertise active monitors in its mode
+   *  footer? Reads the same TAIL_MAX_LINES window getTail uses — readPanePair
+   *  counts raw buffer rows (blank rows below sparse content consume a small
+   *  window) and trims trailing blanks, and hasActiveMonitors then scopes its
+   *  scan to the last 15 rendered lines, so the anchor stays tight. Guarded:
+   *  a pane-read throw must not kill a health push. */
+  private paneHasMonitors(e: Entry): boolean {
+    try {
+      return hasActiveMonitors(readPanePair(e.term, TAIL_MAX_LINES, false).text)
+    } catch {
+      return false
+    }
+  }
+
   /** Per-session monitor state + current throttle, for the services view. */
   getMonitorSnapshot(): WatchdogMonitorSnapshot {
     const now = this.now()
@@ -663,6 +722,12 @@ export class WatchdogManager {
         waitUntil: st.waitUntil,
         silent: e.silent,
         idleMs: Math.max(0, now - e.lastDataAt),
+        // Monitor-aware sleep (RC8): a session with active monitors is quiet
+        // between triggers by design, so the moon skips it. Read only for
+        // SILENT sessions — the only ones the moon consults — and the pane
+        // cannot change while silent (changing requires output), so the read
+        // is stable and cheap here rather than on the per-burst feed path.
+        hasMonitors: e.silent ? this.paneHasMonitors(e) : false,
       }
     })
     return {

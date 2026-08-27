@@ -39,7 +39,7 @@ const onDataMock = vi.fn((sessionId: string, cb: (d: string) => void) => {
   return () => { set!.delete(cb) }
 })
 
-const { useActiveStore, setupActiveListeners, teardownActiveListeners, ACTIVE_WINDOW_MS } =
+const { useActiveStore, setupActiveListeners, teardownActiveListeners, noteActivityGrace, ACTIVE_WINDOW_MS, ACTIVITY_GRACE_MS } =
   await import('../../../src/renderer/stores/activeStore')
 const { useSessionStore } = await import('../../../src/renderer/stores/sessionStore')
 const { default: SessionRow } = await import('../../../src/renderer/components/sidebar/SessionRow')
@@ -117,6 +117,41 @@ describe('activeStore — derivation from pty:data', () => {
     const first = onDataMock.mock.calls.length
     setupActiveListeners()
     expect(onDataMock.mock.calls.length).toBe(first)
+  })
+
+  it('chunks within the activation grace are ignored — a click-redraw never lights the pill (RC8)', () => {
+    setSessions(['a'])
+    setupActiveListeners()
+    noteActivityGrace('a')               // focus-report/resize seen at t=0
+    emit('a')                            // the TUI's redraw response, t=0: graced
+    vi.advanceTimersByTime(ACTIVITY_GRACE_MS - 100) // ticks inside the window
+    expect(useActiveStore.getState().activeIds.has('a')).toBe(false)
+    vi.advanceTimersByTime(200)          // past the grace
+    emit('a')                            // genuine output now stamps
+    vi.advanceTimersByTime(1000)
+    expect(useActiveStore.getState().activeIds.has('a')).toBe(true)
+  })
+
+  it('the grace is per-session — another session\'s output still counts', () => {
+    setSessions(['a', 'b'])
+    setupActiveListeners()
+    noteActivityGrace('a')
+    emit('a')                            // graced
+    emit('b')                            // not graced
+    vi.advanceTimersByTime(1000)
+    expect(useActiveStore.getState().activeIds.has('a')).toBe(false)
+    expect(useActiveStore.getState().activeIds.has('b')).toBe(true)
+  })
+
+  it('a removed session drops its grace stamp with its subscription', () => {
+    setSessions(['a'])
+    setupActiveListeners()
+    noteActivityGrace('a')
+    setSessions([])                      // reconcile: sub + stamps dropped
+    setSessions(['a'])                   // re-added: fresh subscription
+    emit('a')                            // no stale grace: stamps immediately
+    vi.advanceTimersByTime(1000)
+    expect(useActiveStore.getState().activeIds.has('a')).toBe(true)
   })
 })
 

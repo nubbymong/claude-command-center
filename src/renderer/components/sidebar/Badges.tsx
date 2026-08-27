@@ -1,4 +1,46 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+
+/** How long an exiting chip stays mounted for its fade-out. Slightly over the
+ *  220ms CSS animation so the last frame always paints before unmount. */
+export const FADE_OUT_MS = 240
+
+/**
+ * Soft enter/exit for the presence chips (moon + working pill, RC8): the flags
+ * they key on flip abruptly (a silence latch, a 2.5s output window), and a
+ * chip popping in/out of the badge row reads as flicker. The slot fades AND
+ * collapses its width so neighbours slide rather than jump. On exit it keeps
+ * the LAST-rendered child on screen for the fade — the store value backing the
+ * chip (e.g. the moon's silentSince) is usually gone the frame the flag
+ * clears. Reduced motion: the CSS disables the animations and snaps the exit
+ * state, so chips appear/disappear instantly as before.
+ */
+export function FadeSlot({ show, children }: { show: boolean; children: React.ReactNode }) {
+  const [phase, setPhase] = useState<'in' | 'out' | 'gone'>(show ? 'in' : 'gone')
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
+  const lastChildren = useRef<React.ReactNode>(null)
+  if (show) lastChildren.current = children
+  useEffect(() => {
+    if (show) {
+      setPhase('in')
+      return
+    }
+    if (phaseRef.current === 'gone') return
+    setPhase('out')
+    const t = setTimeout(() => setPhase('gone'), FADE_OUT_MS)
+    return () => clearTimeout(t)
+  }, [show])
+  if (phase === 'gone') return null
+  return (
+    <span
+      className={`fade-slot ${phase === 'out' ? 'fade-slot-out' : 'fade-slot-in'}`}
+      data-testid="fade-slot"
+      data-phase={phase}
+    >
+      {lastChildren.current}
+    </span>
+  )
+}
 
 export function ClaudeBadge({ needsAttention }: { needsAttention: boolean }) {
   const isWorking = !needsAttention

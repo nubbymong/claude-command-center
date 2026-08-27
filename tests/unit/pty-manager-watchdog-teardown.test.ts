@@ -19,11 +19,12 @@ vi.mock('electron', () => ({
 }))
 
 const stopWatchdog = vi.fn()
+const noteRedrawTrigger = vi.fn()
 vi.mock('../../src/main/watchdog/watchdog-manager', () => ({
-  getWatchdogManager: () => ({ stopWatchdog }),
+  getWatchdogManager: () => ({ stopWatchdog, noteRedrawTrigger }),
 }))
 
-const { killPty } = await import('../../src/main/pty-manager')
+const { killPty, writePty } = await import('../../src/main/pty-manager')
 
 describe('pty-manager — watchdog teardown on cleanup (FINDING 1)', () => {
   beforeEach(() => { stopWatchdog.mockClear() })
@@ -33,5 +34,25 @@ describe('pty-manager — watchdog teardown on cleanup (FINDING 1)', () => {
     // exactly the restart/close path that must clear the watcher before respawn.
     killPty('sess-restart-abc')
     expect(stopWatchdog).toHaveBeenCalledWith('sess-restart-abc')
+  })
+})
+
+describe('pty-manager — focus-report writes arm the activation grace (RC8)', () => {
+  beforeEach(() => { noteRedrawTrigger.mockClear() })
+
+  it('the exact \\x1b[I / \\x1b[O chunks arm the grace', () => {
+    writePty('sess-grace', '\x1b[I')
+    expect(noteRedrawTrigger).toHaveBeenCalledWith('sess-grace')
+    noteRedrawTrigger.mockClear()
+    writePty('sess-grace', '\x1b[O')
+    expect(noteRedrawTrigger).toHaveBeenCalledWith('sess-grace')
+  })
+
+  it('ordinary writes never arm it (exact match only)', () => {
+    writePty('sess-grace', 'hello world\r')   // a submitted line
+    writePty('sess-grace', 'a')               // a keystroke
+    writePty('sess-grace', '\x1b[Ix')         // focus report + trailing byte: not the standalone chunk
+    writePty('sess-grace', 'x\x1b[I')         // embedded, not standalone
+    expect(noteRedrawTrigger).not.toHaveBeenCalled()
   })
 })

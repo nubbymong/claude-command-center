@@ -12,7 +12,12 @@ import type { DiagnosticsSnapshot } from '../../shared/service-health'
  *    sleep visibly, and the renderer runs no clock of its own.
  *  - WAKE is Watchdog-observed activity only. Clicking or selecting a session
  *    changes nothing here — the moon clears when the next health push says the
- *    session is no longer silent.
+ *    session is no longer silent. (The Watchdog itself excludes click-redraw
+ *    output via its activation grace, RC8, so a click cannot wake a session
+ *    through the back door either.)
+ *  - MONITOR sessions never sleep (RC8): a session advertising active
+ *    monitors in its mode footer is quiet between triggers by design; the
+ *    Watchdog flags it (`hasMonitors`) and the moon skips it.
  *  - ATTENTION always outranks the moon (enforced where the moon renders:
  *    `isAsleep` takes needsAttention). A session that stalled WITH a question
  *    shows attention, never sleep.
@@ -33,7 +38,7 @@ interface SleepState {
   /** Bumped when a dismiss grace window elapses, so subscribers re-derive. */
   graceTick: number
   applyWatchdogSessions: (
-    sessions: ReadonlyArray<{ sessionId: string; silent: boolean; idleMs: number }>,
+    sessions: ReadonlyArray<{ sessionId: string; silent: boolean; idleMs: number; hasMonitors?: boolean }>,
     now?: number,
   ) => void
   noteAttentionDismissed: (sessionId: string, now?: number) => void
@@ -65,7 +70,10 @@ export const useSleepStore = create<SleepState>((set, get) => ({
     const prev = get().silentSince
     const next: Record<string, number> = {}
     for (const s of sessions) {
-      if (!s.silent) continue
+      // Monitor sessions are quiet between triggers BY DESIGN (RC8): the
+      // Watchdog flags them from the "· N monitors ·" mode footer, and the
+      // moon skips them even though they are silent by the output clock.
+      if (!s.silent || s.hasMonitors === true) continue
       // Keep the original start across pushes; derive it from idleMs on the
       // flip so "asleep 6m" is honest even when the flip push arrived late.
       next[s.sessionId] = prev[s.sessionId] ?? now - Math.max(0, s.idleMs)
