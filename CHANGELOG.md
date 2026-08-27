@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.5] - 2026-08-26
+
+> Session resume gets more reliable. A conversation that was running in a git worktree now comes back correctly even after that worktree is cleaned up, instead of opening a fresh empty session — the conversation was always safe on disk, and it is now recovered and resumed in place. And the name you give a session now travels with the conversation itself, so the resume list labels each one with your own name for it rather than a guess.
+
+### Changed
+- Renaming a session carries the name onto the conversation on disk. The name now survives outside the app and identifies the conversation when you resume — the resume list shows the name you gave a session rather than inferring one, and clearing a name clears it there too.
+
+### Fixed
+- A session that ran in a git worktree resumes correctly after the worktree is removed. Previously, when the folder a conversation ran in had been cleaned up, resuming opened a fresh, empty session — the real conversation was still on disk but unreachable, sometimes showing a generated name like "session-…". The conversation is now found and resumed in place.
+
 ## [2.1.0-rc.4] - 2026-08-26
 
 > A first What's New page for upgraders explains the rename to AI Code Conductor and previews the 2.2 roadmap — support for more coding agents beside Claude Code and Codex. The Agent Canvas review flow is rebuilt: a version is approved or rejected as one decision, only one version is ever open for review at a time, and the counts, header and history are all clearer for it. Plus a global setting for where claude.ai artifacts and sign-in open — a separate window, or in the app.
@@ -1341,6 +1351,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.5]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.5
 [2.1.0-rc.4]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.4
 [2.1.0-rc.3]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.3
 [2.1.0-rc.2]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.2
