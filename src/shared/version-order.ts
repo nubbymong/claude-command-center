@@ -84,6 +84,16 @@ export function releaseLine(version: string): string | null {
 }
 
 /**
+ * True for a build with a prerelease suffix — `2.1.0-beta.17`, `2.1.0-rc.5` —
+ * and false for a final release or anything unparseable. Unparseable errs
+ * toward false: a garbled version must not claim tester-only behaviour.
+ */
+export function isPrerelease(version: string): boolean {
+  const p = parse(version)
+  return p != null && p.pre.length > 0
+}
+
+/**
  * Did the user cross into a different release line?
  *
  * This is the question the first-run tour turns on: 2.0.x → 2.1.0 is a new line

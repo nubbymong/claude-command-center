@@ -21,6 +21,14 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.6',
+    date: '2026-08-27',
+    highlights: 'Beta testers now see the full What\'s New story on every prerelease build — including the rename and roadmap page — so nothing ships sight-unseen before stable.',
+    changes: [
+      { type: 'improvement', description: 'On the beta update channel, every prerelease build (beta and RC) opens What\'s New with the complete content for upgraders, including the rename/roadmap page that is normally shown once. Stable builds and the stable channel are unchanged: the page still appears once for anyone arriving from before the rename, and for fresh installs.' },
+    ],
+  },
+  {
     version: '2.1.0-rc.5',
     date: '2026-08-26',
     highlights: 'Session resume gets more reliable. A conversation that was running in a git worktree now comes back correctly even after that worktree is cleaned up, instead of opening a fresh empty session — the conversation was always safe on disk, and it is now recovered and resumed in place. And the name you give a session now travels with the conversation itself, so the resume list labels each one with your own name for it rather than a guess.',

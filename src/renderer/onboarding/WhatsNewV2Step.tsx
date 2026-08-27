@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { releaseLine } from '../utils/versionLabel'
-import { compareVersions } from '../../shared/version-order'
+import { compareVersions, isPrerelease } from '../../shared/version-order'
 import { useAppMetaStore } from '../stores/appMetaStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { showcasesFor, ShowcasePage } from './showcase-pages'
 import { ShowcaseVignette } from './ShowcaseVignette'
 import { RenamePageView } from './RenamePage'
@@ -139,9 +140,22 @@ export function sectionsFor(lastSeenVersion: string | undefined, currentVersion:
  */
 export const RENAME_SHIPPED_IN = '2.1.0-beta.6'
 
-export function showRenamePageFor(lastSeenVersion: string | undefined, currentVersion: string): boolean {
+export function showRenamePageFor(
+  lastSeenVersion: string | undefined,
+  currentVersion: string,
+  opts?: {
+    /** The update channel in force ('beta' | 'stable'). See the tester arm below. */
+    channel?: string
+  },
+): boolean {
   if (!lastSeenVersion) return false // fresh installs are gated by `fresh`, not by version
   if (releaseLine(currentVersion) === '2.0') return false // the 2.0 line predates the rename
+  // Tester arm (owner call, canvas R2 2026-08-27): on the beta channel every
+  // PRERELEASE build shows the full What's New content, cohort pages included —
+  // "until we hit stable I should be seeing everything". Scoped to prerelease
+  // builds on purpose: the moment a final release is running, testers rejoin
+  // the ordinary cohort gate below and the page stops re-showing.
+  if (opts?.channel === 'beta' && isPrerelease(currentVersion)) return true
   return compareVersions(lastSeenVersion, RENAME_SHIPPED_IN) < 0
 }
 
@@ -195,6 +209,7 @@ export function WhatsNewV2Step({
   // Subscribed, not getState() (quality note): a stamp landing while the
   // step is mounted must re-derive the prelude instead of stranding pageIx.
   const lastSeen = useAppMetaStore((s) => s.meta.lastSeenVersion)
+  const channel = useSettingsStore((s) => s.settings.updateChannel)
   const sections = sectionsFor(lastSeen, LINE_SOURCE)
     .map((s) => (fresh ? { ...s, items: s.items.filter((it) => !it.upgradeOnly) } : s))
     .filter((s) => s.items.length > 0)
@@ -205,11 +220,12 @@ export function WhatsNewV2Step({
   // no dots, no skip, the harness CTA — so nothing regresses.
   const showcases = showcasesFor(LINE_SOURCE)
   // #525: pre-rename upgraders AND fresh installs (owner call, canvas R1)
-  // open on the rename/roadmap page; post-rename upgraders' paging is
-  // untouched (prelude 0 keeps every index exactly what it was). The 2.0
-  // line predates both the rename and the roadmap, so it never shows it.
+  // open on the rename/roadmap page — and beta-channel testers on any
+  // prerelease build (owner call, canvas R2). Post-rename STABLE upgraders'
+  // paging is untouched (prelude 0 keeps every index exactly what it was).
+  // The 2.0 line predates both the rename and the roadmap, so it never shows it.
   const prelude =
-    releaseLine(LINE_SOURCE) !== '2.0' && (fresh || showRenamePageFor(lastSeen, LINE_SOURCE)) ? 1 : 0
+    releaseLine(LINE_SOURCE) !== '2.0' && (fresh || showRenamePageFor(lastSeen, LINE_SOURCE, { channel })) ? 1 : 0
   const summaryIx = prelude
   const [pageIx, setPageIx] = useState(0)
   const total = prelude + 1 + showcases.length
