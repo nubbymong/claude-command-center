@@ -21,6 +21,16 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.8',
+    date: '2026-08-27',
+    highlights: 'The session sleep and working indicators settle down. Clicking a sleeping session no longer wakes its moon (only real output does, consistently), sessions running monitors are no longer tagged asleep between triggers, and the moon and working pill now fade in and out instead of popping.',
+    changes: [
+      { type: 'fix', description: 'Clicking or switching to a sleeping session no longer clears its moon. Opening a session repaints its terminal, and that repaint used to count as the session waking — sometimes, depending on window geometry, which is why the behaviour felt inconsistent. Repaint output around a click, focus change or resize is now recognised for what it is: the moon clears only when the session genuinely produces output again, and a click can no longer quietly push an impending moon back either. The working pill gets the same treatment, so it no longer flashes green on a session switch.' },
+      { type: 'fix', description: 'Sessions running monitors are no longer marked asleep between triggers. A Claude session with active monitors is quiet by design while it waits; the Watchdog now reads the "N monitors" mode footer and skips the moon for those sessions.' },
+      { type: 'improvement', description: 'The sleep moon and the working pill now ease in and out with a soft fade instead of popping, and neighbouring badges slide rather than jump. Reduced-motion setups keep the instant behaviour.' },
+    ],
+  },
+  {
     version: '2.1.0-rc.7',
     date: '2026-08-27',
     highlights: 'The active-session indicator is easier to catch: a Claude session that is producing output now shows a green "working" pill beside its type badge — a gently pulsing play glyph — as well as the context-bar sweep, so a live session reads at a glance.',

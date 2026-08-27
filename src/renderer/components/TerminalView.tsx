@@ -43,6 +43,7 @@ import { useWatchdogSubscription } from '../hooks/useWatchdogSubscription'
 import { useAccountIdentitySubscription } from '../hooks/useAccountIdentitySubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
+import { noteActivityGrace } from '../stores/activeStore'
 import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
 
 // Re-export for consumers
@@ -881,6 +882,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             `[${sessionId}] pty:write ${shellOnly ? 'shell' : 'claude'} ${describeBytes(data)}`,
           )
         }
+        // Focus-report chunks (RC8): the TUI answers \x1b[I / \x1b[O with a
+        // small redraw. Grace the working pill so a session click/switch does
+        // not flash it — the exact-match twin of the main process's sleep-moon
+        // grace in writePty.
+        if (data === '\x1b[I' || data === '\x1b[O') noteActivityGrace(sessionId)
         window.electronAPI.pty.write(sessionId, data)
       })
 
@@ -1154,6 +1160,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               lastSentCols = cols
               lastSentRows = rows
               ptyResizeCount += 1
+              // ConPTY repaints the pane on resize — redraw output, not
+              // activity. Grace the pill so it doesn't flash (RC8); the main
+              // process arms the moon's grace in its own resize handler.
+              // (The resume-nudge and geometryResync resizes deliberately skip
+              // this: they fire in already-streaming flows where the pill is
+              // lit anyway, while the main-side grace still covers the moon.)
+              noteActivityGrace(sessionId)
               window.electronAPI.pty.resize(sessionId, cols, rows)
               reportIntegrity()
             }

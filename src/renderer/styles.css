@@ -450,6 +450,29 @@ input[type="range"] {
   .working-pill { animation: none; }
 }
 
+/* Presence-chip fade (RC8): the moon and working pill enter/exit softly
+   instead of popping. The FadeSlot wrapper fades opacity AND collapses width
+   (overflow hidden) so neighbouring badges slide rather than jump; the 48px
+   max-width comfortably covers the widest chip (moon + hours label). Kept
+   inside the 150-300ms project window. Reduced motion: no animation, and the
+   exit state snaps so a leaving chip vanishes instantly instead of lingering
+   for its unmount timeout. */
+.fade-slot { display: inline-flex; flex-shrink: 0; overflow: hidden; max-width: 48px; }
+.fade-slot-in { animation: fade-slot-in 200ms ease-out; }
+.fade-slot-out { animation: fade-slot-out 220ms ease-in forwards; }
+@keyframes fade-slot-in {
+  from { opacity: 0; max-width: 0; }
+  to   { opacity: 1; max-width: 48px; }
+}
+@keyframes fade-slot-out {
+  from { opacity: 1; max-width: 48px; }
+  to   { opacity: 0; max-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fade-slot-in, .fade-slot-out { animation: none; }
+  .fade-slot-out { opacity: 0; max-width: 0; }
+}
+
 /* CommandBar quick-actions strip: expand-in for the command rows when the
    bar is un-collapsed. Kept inside the 150-300ms project window. The rows are
    removed from the DOM when collapsed, so only the open direction animates. */

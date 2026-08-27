@@ -13,6 +13,7 @@ import {
   isWorking,
   isInternalRetry,
   resumedAfterLimit,
+  hasActiveMonitors,
 } from '../../../../src/main/watchdog/patterns'
 
 // Mirrors upstream claude-auto-retry's DEFAULT_OVERLOAD.patterns / DEFAULT_SAFEGUARD.patterns
@@ -683,5 +684,35 @@ describe('canSendNow (#266 BLOCKER-2 / MAJOR-3) — the send gate, against REAL 
       const draft = box('fix the failing test').join('\n')
       expect(canSendNow(draft, draft)).toEqual({ ok: false, reason: 'draft' })
     })
+  })
+})
+
+describe('hasActiveMonitors (RC8 — monitor sessions never sleep)', () => {
+  it('detects the mode footer carrying a monitor count', () => {
+    expect(hasActiveMonitors('some output\n⏵⏵ auto mode on · 2 monitors · ← for agents')).toBe(true)
+    expect(hasActiveMonitors('x\n  ⏵⏵ accept edits on · 1 monitor')).toBe(true)
+  })
+
+  it('detects the interpunct-delimited segment on other footer furniture', () => {
+    expect(hasActiveMonitors('x\nclaude-fable · 3 monitors · 47%')).toBe(true)
+  })
+
+  it('a plain mode footer without monitors does not match', () => {
+    expect(hasActiveMonitors('x\n⏵⏵ auto mode on (shift+tab to cycle)')).toBe(false)
+  })
+
+  it('prose about monitors does not match (needs the footer/segment anchors)', () => {
+    expect(hasActiveMonitors('I set up 2 monitors for the deploy.\n❯ ')).toBe(false)
+    expect(hasActiveMonitors('the monitors are running\n❯ ')).toBe(false)
+  })
+
+  it('a footer quoted deep in scrollback is outside the tail window', () => {
+    const quoted = '⏵⏵ auto mode on · 2 monitors · ← for agents'
+    const pane = [quoted, ...Array.from({ length: 20 }, (_, i) => `line ${i}`)].join('\n')
+    expect(hasActiveMonitors(pane)).toBe(false)
+  })
+
+  it('reads through ANSI styling', () => {
+    expect(hasActiveMonitors('x\n\x1b[2m⏵⏵ auto mode on · 2 monitors · ← for agents\x1b[0m')).toBe(true)
   })
 })

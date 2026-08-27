@@ -3589,6 +3589,18 @@ function isSubmittedPayload(data: string): boolean {
 }
 
 export function writePty(sessionId: string, data: string): void {
+  // Focus-report chunks (RC8): xterm emits the DECSET-1004 focus events
+  // (\x1b[I focus-in, \x1b[O focus-out) as standalone writes when a session
+  // pane gains or loses focus — i.e. on every session click/switch, for BOTH
+  // sides of the switch. Claude Code's TUI enables 1004 and answers with a
+  // small redraw, which must not count as the session "waking" from silence.
+  // Arm the watchdog's activation grace so that redraw is excluded from sleep
+  // bookkeeping. EXACT match only (user keystrokes and pastes never arrive as
+  // exactly one of these two chunks), and the write itself is never altered,
+  // blocked, or delayed by this.
+  if (data === '\x1b[I' || data === '\x1b[O') {
+    getWatchdogManager()?.noteRedrawTrigger(sessionId)
+  }
   // Dedupe guard: suppress identical repeats of submitted payloads within a short window.
   // This protects against double-sends from double-clicks, React effect races, event
   // listeners firing twice, etc. Only applies to "submitted" writes (ending in \r or \n)

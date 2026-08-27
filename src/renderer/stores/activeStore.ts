@@ -24,6 +24,14 @@ import { useSessionStore } from './sessionStore'
 export const ACTIVE_WINDOW_MS = 2500
 /** How often the active set is re-derived (the CSS animation is smooth regardless). */
 const TICK_MS = 1000
+/** Activation grace (RC8): after a session click/switch or a terminal resize,
+ *  the TUI repaints (focus-report response, ConPTY redraw) — output that is a
+ *  REDRAW, not work. Chunks within this window of such a trigger are ignored,
+ *  so the pill does not flash on a click. Mirrors the main-process grace the
+ *  Watchdog applies to the sleep moon. A genuinely working session keeps
+ *  streaming past the window, and its ≤1s stamp gap never outlasts the 2.5s
+ *  active window — so a live pill cannot flicker off from the grace itself. */
+export const ACTIVITY_GRACE_MS = 1000
 
 interface ActiveState {
   /** Session ids whose PTY output moved within the last ACTIVE_WINDOW_MS. */
@@ -37,6 +45,19 @@ export const useActiveStore = create<ActiveState>(() => ({ activeIds: new Set<st
 const lastOutputAt = new Map<string, number>()
 // Per-session unsubscribe handles for the pty:data subscriptions we own.
 const dataSubs = new Map<string, () => void>()
+// Per-session grace deadline (epoch ms): chunks before it are click/resize
+// redraws and are not stamped. See ACTIVITY_GRACE_MS.
+const graceUntil = new Map<string, number>()
+
+/** Arm the activation grace for a session: the next ACTIVITY_GRACE_MS of its
+ *  output is treated as a redraw, not activity. TerminalView calls this on the
+ *  SAME triggers the main process graces the sleep moon on — a focus-report
+ *  write (\x1b[I / \x1b[O, sent by xterm when a pane gains or loses focus, so
+ *  both sides of a session switch are covered) and a PTY resize (ConPTY
+ *  repaints on resize). */
+export function noteActivityGrace(sessionId: string): void {
+  graceUntil.set(sessionId, Date.now() + ACTIVITY_GRACE_MS)
+}
 
 function setsEqual(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false
@@ -53,7 +74,11 @@ function reconcile(ids: readonly string[]): void {
   for (const id of live) {
     if (!dataSubs.has(id)) {
       const off = api.onData(id, () => {
-        lastOutputAt.set(id, Date.now())
+        const now = Date.now()
+        // Inside the activation grace this chunk is a click/resize redraw —
+        // never stamp it as activity (RC8).
+        if (now < (graceUntil.get(id) ?? 0)) return
+        lastOutputAt.set(id, now)
       })
       dataSubs.set(id, off)
     }
@@ -63,6 +88,7 @@ function reconcile(ids: readonly string[]): void {
       try { off() } catch { /* listener already gone */ }
       dataSubs.delete(id)
       lastOutputAt.delete(id)
+      graceUntil.delete(id)
     }
   }
 }
@@ -113,6 +139,7 @@ export function teardownActiveListeners(): void {
   for (const [, off] of dataSubs) { try { off() } catch { /* ignore */ } }
   dataSubs.clear()
   lastOutputAt.clear()
+  graceUntil.clear()
   lastIdsKey = ''
   started = false
   useActiveStore.setState({ activeIds: new Set<string>() })
