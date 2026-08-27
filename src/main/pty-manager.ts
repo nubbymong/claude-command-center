@@ -1488,16 +1488,6 @@ export function spawnPty(
     // inner command and escapes embedded quotes, so it survives that too.
     const sshHostColorScheme = resolveHostColorScheme(spawnCfg?.theme, nativeTheme.shouldUseDarkColors)
     const claudeEnvVars = [
-      // #546: mouse-selection parity with the LOCAL spawn (spawn.ts). Classic
-      // copy/paste (default on) disables CC's mouse tracking + alternate
-      // screen so xterm owns the mouse — without these, a remote Claude kept
-      // SGR mouse tracking on and drag-selection was dead in every SSH
-      // session. Compile-time constants, same shape as the siblings below;
-      // the tmux wrap single-quotes the whole inner command, so they survive
-      // the wrap. Opting out (classicTerminalCopyPaste === false) omits both,
-      // restoring CC's own mouse mode — matching local.
-      spawnCfg?.classicTerminalCopyPaste !== false ? 'CLAUDE_CODE_DISABLE_MOUSE=1' : '',
-      spawnCfg?.classicTerminalCopyPaste !== false ? 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1' : '',
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
       // #546: mirror buildClaudeLocalSpawn — classic mode → xterm owns the mouse.
       classicTerminalCopyPaste ? 'CLAUDE_CODE_DISABLE_MOUSE=1' : '',
