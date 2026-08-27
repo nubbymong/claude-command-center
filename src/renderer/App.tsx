@@ -72,6 +72,7 @@ import { setupInsightsListener } from './stores/insightsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
+import { setupSleepListeners } from './stores/sleepStore'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
 import { pickBootGate } from './utils/bootGates'
@@ -522,6 +523,7 @@ export default function App() {
       setupConductorMcpListener()
       setupGitHubListener()
       setupChannelListeners()
+      setupSleepListeners()
       setupCanvasListener()
       setupCanvasReviewListener()
       setupCanvasSnapshotHost()
