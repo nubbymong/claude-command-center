@@ -79,11 +79,27 @@ export function readNameSidecar(transcriptPath: string, deps: Pick<NameSidecarDe
 
 const pendingNames = new Map<string, string>()
 
+/**
+ * Hard cap on remembered names. The rename IPC is reachable by the (less-trusted)
+ * renderer with an arbitrary sessionId, so without a bound a compromised renderer
+ * could grow this map without limit. Entries are retired on exact-bind and on
+ * endRun; the cap is a belt-and-suspenders backstop that evicts the oldest entry
+ * (Map preserves insertion order) so the map can never grow unbounded regardless.
+ */
+const MAX_PENDING_NAMES = 512
+
 /** Record the latest display name for a CCC session (empty string = cleared). */
 export function rememberSessionName(sessionId: string, name: string): void {
   const trimmed = typeof name === 'string' ? name.trim() : ''
-  if (trimmed) pendingNames.set(sessionId, trimmed)
-  else pendingNames.delete(sessionId)
+  if (!trimmed) { pendingNames.delete(sessionId); return }
+  // Re-insert last (refresh recency) and evict the oldest over the cap.
+  pendingNames.delete(sessionId)
+  pendingNames.set(sessionId, trimmed)
+  while (pendingNames.size > MAX_PENDING_NAMES) {
+    const oldest = pendingNames.keys().next().value
+    if (oldest === undefined) break
+    pendingNames.delete(oldest)
+  }
 }
 
 /** The remembered name for a session, or null. */

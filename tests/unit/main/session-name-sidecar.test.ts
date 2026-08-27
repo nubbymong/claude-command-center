@@ -126,4 +126,15 @@ describe('pending-name registry', () => {
   it('unknown session → null', () => {
     expect(getRememberedName('nope')).toBeNull()
   })
+
+  it('is bounded: past the cap the OLDEST entries are evicted (renderer cannot grow it without limit)', () => {
+    // The rename IPC is renderer-reachable with an arbitrary sessionId; the map
+    // must never grow unbounded even if entries are never retired.
+    const N = 700 // > MAX_PENDING_NAMES (512)
+    for (let i = 0; i < N; i++) rememberSessionName(`leak-${i}`, `name-${i}`)
+    // The earliest inserted entries were evicted; the most recent survive.
+    expect(getRememberedName('leak-0')).toBeNull()
+    expect(getRememberedName(`leak-${N - 1}`)).toBe(`name-${N - 1}`)
+    for (let i = 0; i < N; i++) forgetSessionName(`leak-${i}`)
+  })
 })

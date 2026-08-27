@@ -29,5 +29,16 @@ label -- existing behaviour).
 Known follow-up: #535's transcript relocation does not yet move the sidecar (a relocated transcript
 falls back to the session-state name). Minor; note for a later pass.
 
-Gate: 62 targeted tests (20 new sidecar unit tests + picker readSidecarName cases); binder+logging
-suites 236 pass; typecheck clean (3 tsconfigs). Refs #480 #130 #535.
+Adversarial review (ADR-009: renderer->main IPC + fs write under ~/.claude/projects + picker parse):
+3 attackers. Injection (JSON.stringify + name-only reads), path containment (binder-canonicalized
+paths), transcript-corruption and fail-open all held. Findings fixed:
+- MEDIUM pendingNames unbounded leak (forgetSessionName had no prod caller; renderer can pass any
+  sessionId) -> retire on endRun AND after onExactBind writes, plus a hard 512-entry LRU cap.
+- MEDIUM stale-name bleed onto the next conversation after /clear -> same retire-on-onExactBind fix.
+- MEDIUM blank rename could not clear + a generic config label got promoted to the picker's bold
+  primary -> the renderer now sends the user's OWN customName (empty = cleared) beside configLabel;
+  the handler writes the sidecar from customName (blank removes it).
+- MINOR rename-time write used a heuristic-inclusive path (sibling mislabel in the ~20s pre-exact
+  window) -> use getExactResumeTarget (exact-only); the pre-bind case is covered by onExactBind.
+Verdict after fixes: PASS. Gate: 328 targeted tests (sidecar + picker + store + binder + logging),
+typecheck clean (3 tsconfigs). Refs #480 #130 #535.

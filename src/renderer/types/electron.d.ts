@@ -330,7 +330,7 @@ export interface ElectronAPI {
     }>>
     deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
       Promise<{ deletedRuns: number; deletedMessages: number }>
-    renameSession: (args: { sessionId: string; configLabel: string }) => Promise<{ ok: boolean }>
+    renameSession: (args: { sessionId: string; configLabel: string; customName?: string }) => Promise<{ ok: boolean }>
     clearAll: () => Promise<{ deletedRuns: number; deletedMessages: number }>
     ingestStatus: (args: { sessionId: string }) => Promise<{
       transcripts: { path: string; status: string; ord: number }[]

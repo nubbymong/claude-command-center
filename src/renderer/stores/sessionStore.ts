@@ -278,7 +278,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const s = get().sessions.find((x) => x.id === id)
     const effective = trimmed || s?.label || ''
     try {
-      window.electronAPI?.logs2?.renameSession?.({ sessionId: id, configLabel: effective })
+      // configLabel = the effective display name for the logs DB (falls back to
+      // the config label). customName = the user's OWN work name only (empty when
+      // cleared) — #536 writes it to the transcript sidecar, so a blank rename
+      // clears the sidecar and a generic config label never becomes a "work name".
+      window.electronAPI?.logs2?.renameSession?.({ sessionId: id, configLabel: effective, customName: trimmed })
     } catch { /* logging off / preload absent */ }
   }
 }))
