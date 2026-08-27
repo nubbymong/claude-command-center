@@ -410,11 +410,18 @@ describe('resolveResumeLaunch — gate', () => {
 // that orphaned transcript into the surviving configured cwd's folder and resumes
 // there. It must fire ONLY for the genuine orphan case and fail CLOSED to null.
 describe('recoverOrphanResumeLaunch — pruned-worktree recovery', () => {
-  const HOME = 'C:\\Users\\jane'
+  // Build paths from an ABSOLUTE, cross-platform base (os.tmpdir()) so the
+  // projectsRoot-containment check (which compares a path.resolve()d absolute
+  // path against projectsRoot) behaves identically on win32 and POSIX. Windows
+  // path literals like 'F:\\repo' are NOT absolute on POSIX — path.resolve()
+  // prepends the cwd there, breaking the startsWith() containment and failing
+  // these tests only on the macOS CI leg (the #535 review's cross-platform trap).
+  const HOME = path.join(os.tmpdir(), 'ccc535-home')
   const PROJECTS_ROOT = path.join(HOME, '.claude', 'projects')
   const T_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
-  const DEAD_WT = 'F:\\repo\\.claude\\worktrees\\session-x'   // pruned worktree
-  const SURVIVING = 'F:\\repo'                                 // configured repo root, still present
+  const REPO = path.join(os.tmpdir(), 'ccc535-repo')
+  const DEAD_WT = path.join(REPO, '.claude', 'worktrees', 'session-x')  // pruned worktree
+  const SURVIVING = REPO                                                // configured repo root, still present
   const mangle = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
   const transcriptOf = (cwd: string) => path.join(PROJECTS_ROOT, mangle(cwd), `${T_UUID}.jsonl`)
 
