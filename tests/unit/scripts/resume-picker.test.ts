@@ -23,6 +23,7 @@ const picker = require('../../../scripts/resume-picker.js') as {
   ensureCompanionDir: (projectDir: string, uuid: string) => boolean
   computeLayoutWidth: (columns: number | undefined) => number
   loadWorkNames: (configDir: string | undefined) => Map<string, string>
+  readSidecarName: (transcriptFilePath: string) => string | null
   sanitizeMessageText: (raw: unknown) => string | null
 }
 
@@ -477,5 +478,29 @@ describe('resume-picker loadWorkNames', () => {
     expect(picker.loadWorkNames(dir).size).toBe(0) // no file written yet
     writeFileSync(join(dir, 'session-state.json'), '{ not json', 'utf-8')
     expect(picker.loadWorkNames(dir).size).toBe(0)
+  })
+})
+
+// ── readSidecarName (#536: name carried onto the transcript) ─────────
+describe('resume-picker readSidecarName', () => {
+  let dir: string
+  const UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ccc-sidecar-')) })
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+  const transcript = () => join(dir, `${UUID}.jsonl`)
+  const sidecar = () => join(dir, `${UUID}.ccc-name.json`)
+
+  it('reads the trimmed name from <uuid>.ccc-name.json beside the transcript', () => {
+    writeFileSync(sidecar(), JSON.stringify({ name: '  aai-core | INSIGHTS FU  ', updatedAt: 1 }), 'utf-8')
+    expect(picker.readSidecarName(transcript())).toBe('aai-core | INSIGHTS FU')
+  })
+
+  it('fail-safe: missing sidecar, bad JSON, blank name, or non-.jsonl path → null', () => {
+    expect(picker.readSidecarName(transcript())).toBeNull()          // no sidecar
+    writeFileSync(sidecar(), '{ not json', 'utf-8')
+    expect(picker.readSidecarName(transcript())).toBeNull()          // bad JSON
+    writeFileSync(sidecar(), JSON.stringify({ name: '   ' }), 'utf-8')
+    expect(picker.readSidecarName(transcript())).toBeNull()          // blank
+    expect(picker.readSidecarName(join(dir, 'notes.txt'))).toBeNull() // not a transcript
   })
 })

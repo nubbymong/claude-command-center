@@ -21,7 +21,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
-import { getLogSupervisor } from '../logging/logging-service'
+import { getLogSupervisor, getTranscriptBinder } from '../logging/logging-service'
+import { rememberSessionName, writeNameSidecar, nodeNameSidecarDeps } from '../logging/session-name-sidecar'
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -135,6 +136,13 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
   ipcMain.handle(IPC.LOGS2_RENAME_SESSION, async (_e, args: unknown) => {
     const { sessionId, configLabel } = renameSessionSchema.parse(args)
     getLogSupervisor()?.renameRun(sessionId, configLabel)
+    // #536: carry the name onto the transcript so it survives outside CCC and
+    // identifies the conversation on resume. Remember it (the exact-bind callback
+    // writes it once the transcript path is known), and write the sidecar now if
+    // the session is already bound. Best-effort — never fail the rename.
+    rememberSessionName(sessionId, configLabel)
+    const boundPath = getTranscriptBinder()?.getLatestTranscriptPath(sessionId)
+    if (boundPath) writeNameSidecar(boundPath, configLabel, nodeNameSidecarDeps)
     return { ok: true }
   })
 
