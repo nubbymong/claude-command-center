@@ -672,7 +672,7 @@ export async function runCanvasRender(
   }
   const readiness =
     intent === 'show'
-      ? 'This is a SHOW-AND-TELL: it surfaces to the user but owes no review and joins no queue. Hand back and tell them what they are looking at; when they say to dismiss or close it, canvas_complete will go through (unless they chose to annotate it, which puts the canvas under the normal review rules). '
+      ? 'This is a SHOW-AND-TELL: it surfaces to the user but owes no review and joins no queue. Hand back and tell them what they are looking at; when they say to dismiss or close it, canvas_complete goes through on a canvas with no other review debt — pre-existing rounds or notes on this canvas still block it, and annotating this version puts it under the normal review rules. '
       : ready === true
         ? 'The round is marked READY: it now counts in the user’s review queue, and this render ends your turn — hand back now and tell them in plain words what to look at. '
         : 'The user sees it when they open the Canvas pane — hand back and tell them in plain words what to look at. '

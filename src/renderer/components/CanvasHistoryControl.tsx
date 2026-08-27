@@ -37,6 +37,9 @@ function kindBadge(kind: CanvasVersion['mode']): { label: string; color: string 
  *  version; everything else reads its verdict. */
 function versionBadge(v: CanvasVersion, isOpen: boolean): { label: string; color: string } {
   if (isOpen) return { label: 'OPEN', color: 'var(--color-peach)' }
+  // A show-and-tell version is outside the review flow: never OPEN, and the
+  // no-verdict fallback below must not mislabel it SUPERSEDED.
+  if (v.show && !v.verdict) return { label: 'SHOWN', color: 'var(--text-muted)' }
   switch (v.verdict?.state) {
     case 'approved': return { label: 'APPROVED', color: 'var(--color-green)' }
     case 'rejected': return { label: 'REJECTED', color: 'var(--color-red)' }
@@ -202,7 +205,10 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
   // (latest ready, no verdict), withdrawn rows hidden by default (the audit
   // trail keeps them; a footer line reveals), newest first for reading.
   const run = located.artifact.versions
-  const lastReady = [...run].reverse().find((v) => !v.draft && v.verdict?.state !== 'withdrawn')
+  // `!v.show` matches shared openVersionOf: a show-and-tell after the open
+  // review version must not steal its OPEN badge (nor demote it to the
+  // no-verdict SUPERSEDED fallback).
+  const lastReady = [...run].reverse().find((v) => !v.draft && !v.show && v.verdict?.state !== 'withdrawn')
   const openVersionId = lastReady && !lastReady.verdict ? lastReady.id : null
   const withdrawnCount = run.filter((v) => v.verdict?.state === 'withdrawn').length
   const listed = [...run].reverse().filter((v) => showWithdrawn || v.verdict?.state !== 'withdrawn')

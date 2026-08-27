@@ -880,8 +880,14 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
   // Idempotent — already-stamped versions are left alone — and in-memory like
   // the rest of this function: the next persist writes the healed shape.
   for (const run of artifactRuns(versions)) {
-    for (let i = 0; i < run.length - 1; i++) {
-      if (!run[i].verdict) run[i].verdict = { state: 'superseded', by: 'system', at: run[i + 1].createdAt }
+    // Show-and-tell versions sit OUTSIDE the review flow: they are neither
+    // stamped superseded (they were never open) nor treated as a successor
+    // that supersedes — otherwise a reload would durably retro-supersede an
+    // open review version under a later show render, vanishing its debt with
+    // no user gesture (independent review of the show lane, 2026-08-27).
+    const reviewRun = run.filter((v) => !v.show)
+    for (let i = 0; i < reviewRun.length - 1; i++) {
+      if (!reviewRun[i].verdict) reviewRun[i].verdict = { state: 'superseded', by: 'system', at: reviewRun[i + 1].createdAt }
     }
   }
   // The active version must still exist. Only re-pointed when the one it named
@@ -1580,7 +1586,10 @@ function openVersionInRecord(record: CanvasRecord, versionId?: string): CanvasVe
   if (!anchor) return null
   const run = artifactRunContaining(record.versions, anchor)
   if (!run) return null
-  const lastReady = [...run].reverse().find((v) => !v.draft && v.verdict?.state !== 'withdrawn')
+  // `!v.show` matches shared openVersionOf: a chat verdict with no named
+  // version must land on the artifact's open REVIEW version, never on a
+  // show-and-tell rendered after it (mis-recording the user's "approve it").
+  const lastReady = [...run].reverse().find((v) => !v.draft && !v.show && v.verdict?.state !== 'withdrawn')
   return lastReady && !lastReady.verdict ? lastReady : null
 }
 

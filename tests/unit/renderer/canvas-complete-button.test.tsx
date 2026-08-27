@@ -56,12 +56,15 @@ function seed(opts: {
   annotations?: Annotation[]
   awaitingReview?: boolean
   completed?: { at: string; by: 'user' | 'agent' }
+  versions?: Array<{ id: string; draft?: true; show?: true }>
 }): void {
   useCanvasStore.setState({
     bySessionId: {
       [SID]: {
         canvasId: CID,
-        versions: [],
+        versions: (opts.versions ?? []).map((v) => ({
+          mode: 'design', createdAt: '2026-08-27T10:00:00Z', source: { mode: 'design', entry: 'index.html' }, ...v,
+        })),
         activeVersionId: 'v1',
         interactionMode: 'browse',
         emptyView: 'intro',
@@ -272,5 +275,43 @@ describe('ADV: the armed confirm does not carry across a subject switch', () => 
     } as any)
     await render()
     expect(byId('canvas-complete-arm')!.disabled).toBe(true)
+  })
+})
+
+describe('show-and-tell dismiss (owner call, 2026-08-27)', () => {
+  it('a show-only canvas with no review activity gets the one-click Dismiss, no arming', async () => {
+    seed({ versions: [{ id: 'v1', show: true }] })
+    await render()
+    expect(byId('canvas-dismiss-button')).toBeTruthy()
+    expect(byId('canvas-complete-arm')).toBeNull()
+    await click(byId('canvas-dismiss-button'))
+    expect(complete).toHaveBeenCalledWith({ sessionId: SID, canvasId: CID })
+  })
+
+  it('any review-intent ready version falls back to the armed Mark-complete flow', async () => {
+    seed({ versions: [{ id: 'v1', show: true }, { id: 'v2' }], awaitingReview: true })
+    await render()
+    expect(byId('canvas-dismiss-button')).toBeNull()
+    expect(byId('canvas-complete-arm')).toBeTruthy()
+  })
+
+  it('review activity on a show version disables the one-click path', async () => {
+    seed({
+      versions: [{ id: 'v1', show: true }],
+      reviews: [review('R1', 'submitted', ['a1'])],
+      annotations: [note('a1', 'R1', 'open')],
+    })
+    await render()
+    expect(byId('canvas-dismiss-button')).toBeNull()
+    expect(byId('canvas-complete-arm')).toBeTruthy()
+    expect(byId('canvas-complete-arm')!.disabled).toBe(true)
+  })
+
+  it('a refused dismiss surfaces its reason like the armed flow does', async () => {
+    complete.mockResolvedValueOnce({ ok: false, reason: 'not this session’s canvas' } as any)
+    seed({ versions: [{ id: 'v1', show: true }] })
+    await render()
+    await click(byId('canvas-dismiss-button'))
+    expect(byId('canvas-complete-refused')?.textContent).toContain('not this session')
   })
 })

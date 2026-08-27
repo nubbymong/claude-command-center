@@ -118,6 +118,45 @@ describe('completion for show-and-tell canvases', () => {
   })
 })
 
+describe('guard-laundering regressions (independent review, 2026-08-27)', () => {
+  it('BLOCKER 1: a show render cannot launder the agent-chat sign-off guard', () => {
+    render(1, { ready: true })
+    // The agent records the user's chat approval — clears awaitingReview.
+    const verdicted = store.setVersionVerdict(SID, 'v1', { state: 'approved' }, 'agent-chat')
+    expect('error' in verdicted).toBe(false)
+    // The guard refuses an agent completion resting on that sign-off…
+    expect(completeCanvasGuarded(state().canvasId, 'agent', SID)).toMatchObject({
+      error: expect.stringContaining('chat'),
+    })
+    // …and a show render on top must NOT become the "latest ready" it inspects.
+    render(2, { ready: true, intent: 'show' })
+    expect(completeCanvasGuarded(state().canvasId, 'agent', SID)).toMatchObject({
+      error: expect.stringContaining('chat'),
+    })
+  })
+
+  it('BLOCKER 2: the load heal never retro-supersedes an open review version under a show render', () => {
+    render(1, { ready: true })
+    render(2, { ready: true, intent: 'show' })
+    const canvasId = state().canvasId
+    store._resetCanvasStoreForTest()
+    const reloaded = store.getCanvasStateById(canvasId)!
+    const v1 = reloaded.versions.find((v) => v.id === 'v1')!
+    expect(v1.verdict).toBeUndefined() // still the open review version
+    expect(openVersionOf(reloaded.versions)?.id).toBe('v1')
+  })
+
+  it('BLOCKER 3: a chat verdict with no named version lands on the open review version, not the show render', () => {
+    render(1, { ready: true })
+    render(2, { ready: true, intent: 'show' })
+    const verdicted = store.setVersionVerdict(SID, undefined, { state: 'approved' }, 'agent-chat')
+    expect('error' in verdicted).toBe(false)
+    const [v1, v2] = state().versions
+    expect(v1.verdict).toMatchObject({ state: 'approved', by: 'agent-chat' })
+    expect(v2.verdict).toBeUndefined()
+  })
+})
+
 describe('load-time shape rules', () => {
   it('a hand-edited non-boolean `show` drops the version, same posture as draft', () => {
     render(1, { ready: true, intent: 'show' })

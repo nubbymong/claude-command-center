@@ -635,6 +635,46 @@ describe('canvas_render', () => {
     expect((reached[0] as { title?: string }).title).toBe('Codex ingest')
   })
 
+  it('fails closed on an unrecognized intent, and passes a valid one through to the store', async () => {
+    // Shape rule like `ready`: an unknown intent must not silently downgrade a
+    // hand-over into a no-review-owed render, or the reverse.
+    for (const intent of ['SHOW', 'Show', true, 1, ['show'], 'showtell']) {
+      const reached: unknown[] = []
+      const out = await runCanvasRender(
+        { mode: 'design', html: '<!doctype html><p>x</p>', intent },
+        'sess-mine',
+        deps({ renderVersion: () => { reached.push(1); return { canvasId: 'canvas-abc', versionId: 'v1' } } }),
+      )
+      expect(out.isError).toBe(true)
+      expect(reached).toHaveLength(0)
+    }
+    const reached: unknown[] = []
+    const out = await runCanvasRender(
+      { mode: 'design', html: '<!doctype html><p>x</p>', intent: 'show', ready: true },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          reached.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v1' }
+        },
+      }),
+    )
+    expect(out.isError).toBe(false)
+    expect((reached[0] as { intent?: string }).intent).toBe('show')
+    expect(out.text).toContain('SHOW-AND-TELL')
+  })
+
+  it("refuses intent 'show' on a draft — a draft already surfaces nothing", async () => {
+    const reached: unknown[] = []
+    const out = await runCanvasRender(
+      { mode: 'design', html: '<!doctype html><p>x</p>', intent: 'show', ready: false },
+      'sess-mine',
+      deps({ renderVersion: () => { reached.push(1); return { canvasId: 'canvas-abc', versionId: 'v1' } } }),
+    )
+    expect(out.isError).toBe(true)
+    expect(reached).toHaveLength(0)
+  })
+
   it('refuses a mode it does not have, without falling into another one', async () => {
     // The refusal is not enough on its own: with the gate gone an unknown mode
     // falls into the UAT branch and would quietly serve a directory instead. So

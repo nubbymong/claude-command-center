@@ -87,7 +87,13 @@ export function completeCanvasGuarded(
   // the user for the purpose of AGENT completion. A user pane completion
   // (by:'user') is the user reviewing it themselves and is never blocked here.
   if (by === 'agent') {
-    const latestReady = [...canvas.versions].reverse().find((v) => !v.draft)
+    // Show versions are skipped: a show-and-tell render after an agent-chat
+    // sign-off must not become the "latest ready" this guard inspects — that
+    // would launder the self-approve→self-complete bypass this guard exists
+    // to close (independent review of the show lane, 2026-08-27). A canvas
+    // whose ready versions are ALL show yields undefined here, which is the
+    // show-only case: nothing was ever review-owed, and completion proceeds.
+    const latestReady = [...canvas.versions].reverse().find((v) => !v.draft && !v.show)
     if (latestReady?.verdict?.by === 'agent-chat') {
       return { error: 'not everything is settled: this version’s sign-off was recorded from chat — the user completes it from the Canvas pane' }
     }
