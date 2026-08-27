@@ -21,6 +21,18 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.6',
+    date: '2026-08-27',
+    highlights: 'Session cards now show life at a glance: a Claude session that is actively producing output gets a subtle green sweep across its context bar, and one that has gone quiet gets a moon with how long it has been asleep — two live opposites that update as work flows and stops. Plus: beta testers now see the full What\'s New story on every prerelease build.',
+    changes: [
+      { type: 'feature', description: 'Session cards show a moon while a Claude session is asleep — the Session Watchdog (which must be enabled) has seen no output for its silence window (2 minutes by default, configurable). The card dims slightly, the moon shows how long, and it clears only when the Watchdog sees the session produce output again; opening the session does not wake it. A session waiting on your input shows the attention state instead, never the moon, and after you dismiss attention the moon waits a minute before appearing.' },
+      { type: 'feature', description: 'Session cards show a subtle green sweep across the context bar while a Claude session is actively producing output — the live counterpart to the sleep moon. It reads the session\'s own output directly, so it works for every Claude session with no setup, and the context-usage colour stays visible underneath. It never shows while a session needs your attention or is asleep, is Claude-only, and honours reduced-motion (a steady tint instead of a sweep).' },
+      { type: 'improvement', description: 'On the beta update channel, every prerelease build (beta and RC) opens What\'s New with the complete content for upgraders, including the rename/roadmap page that is normally shown once. Stable builds and the stable channel are unchanged: the page still appears once for anyone arriving from before the rename, and for fresh installs.' },
+      { type: 'fix', description: 'Clicking a custom command button no longer leaves the keyboard on the button. Focus now moves into the terminal that received the command, so pressing Enter submits it — previously Enter re-pressed the still-focused button and injected the command a second time.' },
+      { type: 'improvement', description: 'The Agent Canvas gets a show-and-tell lane. When you ask the agent to simply show you something, it can render the page as a look rather than a review: nothing enters your review queue, and the canvas can be closed in one step — a Dismiss button in the pane for you, or telling the agent to dismiss it in chat. Real hand-overs are untouched: they still enter the queue, and every review guard behaves exactly as before. Annotating a show-and-tell page puts it under the normal review rules.' },
+    ],
+  },
+  {
     version: '2.1.0-rc.5',
     date: '2026-08-26',
     highlights: 'Session resume gets more reliable. A conversation that was running in a git worktree now comes back correctly even after that worktree is cleaned up, instead of opening a fresh empty session — the conversation was always safe on disk, and it is now recovered and resumed in place. And the name you give a session now travels with the conversation itself, so the resume list labels each one with your own name for it rather than a guess.',

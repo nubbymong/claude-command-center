@@ -381,6 +381,7 @@ interface RawRenderArgs {
   buildLabel?: unknown
   title?: unknown
   ready?: unknown
+  intent?: unknown
   cccSessionId?: unknown
 }
 
@@ -530,6 +531,17 @@ export async function runCanvasRender(
   }
   const ready = rawArgs.ready
 
+  // The intent flag (show-and-tell, owner call 2026-08-27). Fail closed on
+  // shape like `ready`: an unrecognized value must not silently downgrade a
+  // hand-over into a no-review-owed render (or vice versa).
+  if (rawArgs.intent !== undefined && rawArgs.intent !== 'review' && rawArgs.intent !== 'show') {
+    return { text: "`intent` must be 'review' (the default hand-over that enters the review queue) or 'show' (a show-and-tell that owes no review).", isError: true }
+  }
+  const intent = rawArgs.intent as 'review' | 'show' | undefined
+  if (intent === 'show' && ready === false) {
+    return { text: "`intent: 'show'` is for a version the user will see — a draft (`ready: false`) already surfaces nothing. Drop one of the two.", isError: true }
+  }
+
   let source: CanvasRenderSource
   if (mode === 'design' || mode === 'plan') {
     const hasInline = rawArgs.html != null
@@ -585,7 +597,7 @@ export async function runCanvasRender(
     // The two share every byte of the ingress above -- same path check, same
     // reader, same size cap. `mode` is carried through only so the store can
     // stamp the version; it changes nothing about how the document is admitted.
-    source = { mode, html, ...titleOf(rawArgs), ...(ready !== undefined ? { ready } : {}) }
+    source = { mode, html, ...titleOf(rawArgs), ...(ready !== undefined ? { ready } : {}), ...(intent ? { intent } : {}) }
   } else {
     if (typeof rawArgs.distRoot !== 'string' || rawArgs.distRoot.length === 0) {
       return { text: 'A uat render needs the built directory in `distRoot`.', isError: true }
@@ -606,6 +618,7 @@ export async function runCanvasRender(
       ...(typeof rawArgs.buildLabel === 'string' ? { buildLabel: rawArgs.buildLabel } : {}),
       ...titleOf(rawArgs),
       ...(ready !== undefined ? { ready } : {}),
+      ...(intent ? { intent } : {}),
     }
   }
 
@@ -658,9 +671,11 @@ export async function runCanvasRender(
     }
   }
   const readiness =
-    ready === true
-      ? 'The round is marked READY: it now counts in the user’s review queue, and this render ends your turn — hand back now and tell them in plain words what to look at. '
-      : 'The user sees it when they open the Canvas pane — hand back and tell them in plain words what to look at. '
+    intent === 'show'
+      ? 'This is a SHOW-AND-TELL: it surfaces to the user but owes no review and joins no queue. Hand back and tell them what they are looking at; when they say to dismiss or close it, canvas_complete goes through on a canvas with no other review debt — pre-existing rounds or notes on this canvas still block it, and annotating this version puts it under the normal review rules. '
+      : ready === true
+        ? 'The round is marked READY: it now counts in the user’s review queue, and this render ends your turn — hand back now and tell them in plain words what to look at. '
+        : 'The user sees it when they open the Canvas pane — hand back and tell them in plain words what to look at. '
   return {
     text:
       `Rendered ${rendered.versionId} on canvas ${rendered.canvasId}. ` +
@@ -1539,6 +1554,12 @@ export function registerCanvasTools(
         .optional()
         .describe(
           'false = a DRAFT: nothing surfaces to the user (no pulse, no count; the pane keeps showing the last ready version) and each draft supersedes the previous one — use this while you snapshot and fix your own work. true = mark the round READY for review: it enters the user’s queue and ends your turn. Omitted = the render surfaces immediately AND counts as ready (the pre-draft behaviour).',
+        ),
+      intent: zMod
+        .enum(['review', 'show'])
+        .optional()
+        .describe(
+          "'review' (the default) = the normal hand-over: the version enters the review queue and awaits the user's verdict. 'show' = a SHOW-AND-TELL: the version surfaces like any ready render but owes NO review — no queue entry, no open-version slot, and it never supersedes a version under review. Use it when the user asked to simply SEE something (\"show me\", \"what does X look like\") rather than to review work; the subject can then be dismissed by either of you in one step — the user via the pane's Dismiss button, you via canvas_complete on their word. If the user annotates a show version anyway, the canvas is under the normal review rules from then on. Not combinable with ready: false — a draft already surfaces nothing.",
         ),
       cccSessionId: zMod
         .string()

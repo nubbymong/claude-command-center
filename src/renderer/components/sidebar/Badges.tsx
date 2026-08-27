@@ -128,6 +128,36 @@ export function ClaudeTypeBadge() {
   )
 }
 
+/**
+ * Sleeping session (canvas "Session sleep indicator", 2026-08-27): the
+ * Watchdog reports the session silent and no attention outranks it. Sits
+ * BESIDE the type badge (owner pick: variant B) — the type mark stays, the
+ * moon is additional state. Lavender: not an alarm, not the transport/type
+ * families' colours. The minute label self-ticks like the watchdog countdown:
+ * the store only changes on silent flips, not per minute.
+ */
+export function MoonBadge({ sinceMs }: { sinceMs: number }) {
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => forceTick((n) => n + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
+  const mins = Math.max(1, Math.floor((Date.now() - sinceMs) / 60_000))
+  const label = mins >= 60 ? `${Math.floor(mins / 60)}h` : `${mins}m`
+  return (
+    <div
+      className="flex items-center gap-0.5 h-4 px-1 rounded shrink-0 bg-lavender/20 text-lavender"
+      title={`Asleep ${label} — no output. Wakes when the Watchdog sees activity; opening the session does not wake it.`}
+      data-testid="moon-badge"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        <path d="M20.6 14.2A8.8 8.8 0 0 1 9.8 3.4a8.8 8.8 0 1 0 10.8 10.8Z" />
+      </svg>
+      <span style={{ fontSize: '8px', fontWeight: 700 }}>{label}</span>
+    </div>
+  )
+}
+
 function formatWatchdogCountdown(totalSeconds: number): string {
   if (totalSeconds >= 3600) return `${Math.round(totalSeconds / 3600)}h`
   if (totalSeconds >= 60) return `${Math.round(totalSeconds / 60)}m`

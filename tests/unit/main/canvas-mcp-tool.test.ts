@@ -345,7 +345,7 @@ describe('registration', () => {
     // seeing it, or the agent renders and then reports a screen nobody opened.
     expect(String(description)).toMatch(/hand back/i)
     expect(Object.keys(shape as object).sort()).toEqual([
-      'buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'mode', 'ready', 'title',
+      'buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'intent', 'mode', 'ready', 'title',
     ])
     // `title` names the subject, and the description has to ask for it on every
     // render: without one, unrelated work piles into a single canvas and the
@@ -633,6 +633,46 @@ describe('canvas_render', () => {
     expect(reached).toHaveLength(1)
     expect((reached[0] as { mode: string }).mode).toBe('plan')
     expect((reached[0] as { title?: string }).title).toBe('Codex ingest')
+  })
+
+  it('fails closed on an unrecognized intent, and passes a valid one through to the store', async () => {
+    // Shape rule like `ready`: an unknown intent must not silently downgrade a
+    // hand-over into a no-review-owed render, or the reverse.
+    for (const intent of ['SHOW', 'Show', true, 1, ['show'], 'showtell']) {
+      const reached: unknown[] = []
+      const out = await runCanvasRender(
+        { mode: 'design', html: '<!doctype html><p>x</p>', intent },
+        'sess-mine',
+        deps({ renderVersion: () => { reached.push(1); return { canvasId: 'canvas-abc', versionId: 'v1' } } }),
+      )
+      expect(out.isError).toBe(true)
+      expect(reached).toHaveLength(0)
+    }
+    const reached: unknown[] = []
+    const out = await runCanvasRender(
+      { mode: 'design', html: '<!doctype html><p>x</p>', intent: 'show', ready: true },
+      'sess-mine',
+      deps({
+        renderVersion: (_s, src) => {
+          reached.push(src)
+          return { canvasId: 'canvas-abc', versionId: 'v1' }
+        },
+      }),
+    )
+    expect(out.isError).toBe(false)
+    expect((reached[0] as { intent?: string }).intent).toBe('show')
+    expect(out.text).toContain('SHOW-AND-TELL')
+  })
+
+  it("refuses intent 'show' on a draft — a draft already surfaces nothing", async () => {
+    const reached: unknown[] = []
+    const out = await runCanvasRender(
+      { mode: 'design', html: '<!doctype html><p>x</p>', intent: 'show', ready: false },
+      'sess-mine',
+      deps({ renderVersion: () => { reached.push(1); return { canvasId: 'canvas-abc', versionId: 'v1' } } }),
+    )
+    expect(out.isError).toBe(true)
+    expect(reached).toHaveLength(0)
   })
 
   it('refuses a mode it does not have, without falling into another one', async () => {

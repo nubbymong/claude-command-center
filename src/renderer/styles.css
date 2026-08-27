@@ -407,6 +407,36 @@ input[type="range"] {
 .meter-warn    { background: var(--status-warning); }
 .meter-danger  { background: var(--status-danger); }
 
+/* Active session (owner call, 2026-08-27): the inverse of the sleep moon — a
+   subtle green highlight sweeps across the context fill while a Claude session's
+   PTY output is moving. Rides OVER the fill so the neutral/warn/danger context
+   colour stays readable underneath. Same translateX sweep idiom (compositor-only)
+   as .statusline-pending-track above; gated in SessionRow (Claude-only, and
+   suppressed under sleep/attention). Respects prefers-reduced-motion — the fill
+   stays, the sweep stops. */
+.meter-fill.meter-active { position: relative; overflow: hidden; }
+.meter-fill.meter-active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 50%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-green) 78%, transparent),
+    transparent
+  );
+  animation: meter-active-sweep 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes meter-active-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .meter-fill.meter-active::after { animation: none; opacity: 0.4; width: 100%; }
+}
+
 /* CommandBar quick-actions strip: expand-in for the command rows when the
    bar is un-collapsed. Kept inside the 150-300ms project window. The rows are
    removed from the DOM when collapsed, so only the open direction animates. */

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
+import { useSleepStore } from '../stores/sleepStore'
 import { Terminal } from '@xterm/xterm'
 
 /**
@@ -25,6 +26,13 @@ export function useActiveTabEffect(
 
   useEffect(() => {
     if (isActive) {
+      // Sleep grace (canvas rules, 2026-08-27): activating the tab is the
+      // attention DISMISS. Stamp it only when attention was actually up, so
+      // the moon's clock restarts at the dismiss instead of appearing the
+      // instant a long-attention session is cleared. Plain activations of a
+      // no-attention session stamp nothing — clicking never delays a moon.
+      const wasAttention = useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.needsAttention === true
+      if (wasAttention) useSleepStore.getState().noteAttentionDismissed(sessionId)
       updateSession(sessionId, { needsAttention: false })
       attentionAckedRef.current = true
       if (attentionTimerRef.current) {

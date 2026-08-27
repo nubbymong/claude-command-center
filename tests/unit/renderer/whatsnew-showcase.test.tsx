@@ -28,6 +28,13 @@ vi.mock('../../../src/renderer/stores/appMetaStore', () => {
   return { useAppMetaStore }
 })
 
+const settingsState: any = { settings: { updateChannel: 'stable' } }
+vi.mock('../../../src/renderer/stores/settingsStore', () => {
+  const useSettingsStore: any = (sel: any) => sel(settingsState)
+  useSettingsStore.getState = () => settingsState
+  return { useSettingsStore }
+})
+
 const { WhatsNewV2Step, sectionsFor, showRenamePageFor } = await import('../../../src/renderer/onboarding/WhatsNewV2Step')
 const { SHOWCASES_21, showcasesFor } = await import('../../../src/renderer/onboarding/showcase-pages')
 const { ShowcaseVignette } = await import('../../../src/renderer/onboarding/ShowcaseVignette')
@@ -42,6 +49,7 @@ beforeEach(() => {
   root = createRoot(container)
   nexts = 0
   metaState.meta = { lastSeenVersion: '2.1.0-beta.17' }
+  settingsState.settings = { updateChannel: 'stable' }
 })
 
 afterEach(() => {
@@ -318,7 +326,7 @@ describe('#525 — the rename/roadmap page', () => {
     expect(q('rename-where')).toBeNull()
   })
 
-  it('post-rename upgraders never see it; fresh installs DO, under a Welcome lead-in', () => {
+  it('stable-channel post-rename upgraders never see it; fresh installs DO, under a Welcome lead-in', () => {
     render() // default meta: 2.1.0-beta.17 — lived through the rename
     expect(q('rename-page')).toBeNull()
     expect(q('whatsnew-dot-rename')).toBeNull()
@@ -383,5 +391,29 @@ describe('#525 — the rename/roadmap page', () => {
     expect(showRenamePageFor('2.1.0-beta.17', '2.1.0')).toBe(false)
     expect(showRenamePageFor('2.0.1', '2.0.5')).toBe(false) // a 2.0-line build predates the rename
     expect(showRenamePageFor('2.0.5', '2.2.0')).toBe(true) // straight 2.0 -> 2.2 is still owed the why
+  })
+
+  it('showRenamePageFor — beta-channel testers see it on every prerelease (owner call, canvas R2)', () => {
+    const beta = { channel: 'beta' }
+    // Post-rename tester on an rc: the cohort gate would hide it; the tester arm shows it.
+    expect(showRenamePageFor('2.1.0-rc.4', '2.1.0-rc.5', beta)).toBe(true)
+    expect(showRenamePageFor('2.1.0-beta.17', '2.1.0-beta.18', beta)).toBe(true)
+    // Stable build: testers rejoin the ordinary cohort gate the moment the suffix drops.
+    expect(showRenamePageFor('2.1.0-rc.5', '2.1.0', beta)).toBe(false)
+    // Stable channel is untouched by the arm.
+    expect(showRenamePageFor('2.1.0-rc.4', '2.1.0-rc.5', { channel: 'stable' })).toBe(false)
+    expect(showRenamePageFor('2.1.0-rc.4', '2.1.0-rc.5')).toBe(false)
+    // The 2.0-line guard still wins over the tester arm.
+    expect(showRenamePageFor('2.0.1', '2.0.5-beta.1', beta)).toBe(false)
+    // Fresh installs stay gated by `fresh`, tester arm or not.
+    expect(showRenamePageFor(undefined, '2.1.0-rc.5', beta)).toBe(false)
+  })
+
+  it('beta-channel prerelease build opens on the rename page for a post-rename upgrader', async () => {
+    settingsState.settings = { updateChannel: 'beta' } // build is 2.1.0-rc.1, lastSeen beta.17
+    await act(async () => {
+      root.render(<WhatsNewV2Step onNext={() => { nexts += 1 }} />)
+    })
+    expect(container.querySelector('[data-ux-id="rename-page"]')).not.toBeNull()
   })
 })

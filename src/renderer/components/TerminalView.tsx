@@ -261,8 +261,30 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       })
     }
     window.addEventListener('focus', onWindowFocus)
-    return () => window.removeEventListener('focus', onWindowFocus)
-  }, [isActive])
+    // Explicit focus hand-off (owner bug report 2026-08-27): a command chip
+    // that just wrote into this session's pty asks the terminal to take the
+    // keyboard, so the user's follow-up Enter reaches the composer instead of
+    // re-pressing the still-focused button. Unlike onWindowFocus this skips
+    // the editable guard — the dispatch IS the explicit intent — but never
+    // fires over a modal's focus trap, and only for THIS session's terminal.
+    const onFocusRequest = (ev: Event) => {
+      const want = (ev as CustomEvent<{ sessionId?: string }>).detail?.sessionId
+      if (want !== sessionId) return
+      requestAnimationFrame(() => {
+        // Modal check at FOCUS time, not dispatch time (review 2026-08-27):
+        // a dialog that closes as the command runs (GuiExeDialog) has
+        // unmounted by this frame so the handoff proceeds, and one that
+        // MOUNTS on the run (CapturedRunModal) is present and keeps focus.
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+        try { terminalRef.current?.focus() } catch { /* ignore */ }
+      })
+    }
+    window.addEventListener('ccc:focus-terminal', onFocusRequest)
+    return () => {
+      window.removeEventListener('focus', onWindowFocus)
+      window.removeEventListener('ccc:focus-terminal', onFocusRequest)
+    }
+  }, [isActive, sessionId])
 
   // Repaint the terminal whenever the resolved theme changes.
   // Watching data-theme on <html> via MutationObserver covers BOTH:

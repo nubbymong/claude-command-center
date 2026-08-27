@@ -1,6 +1,8 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge } from './Badges'
+import { MoonBadge, SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge } from './Badges'
+import { isAsleep, useSleepStore } from '../../stores/sleepStore'
+import { useActiveStore } from '../../stores/activeStore'
 import { type SessionState } from '../ui/StatusDot'
 import { EffortPill } from '../ui/EffortPill'
 import { FastBolt } from '../ui/FastBolt'
@@ -56,6 +58,32 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const identity = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
   const st = toSessionState(session.status, needsAttention)
   const pct = session.contextPercent ?? 0
+
+  // Sleeping (canvas "Session sleep indicator"): Watchdog-only source, Claude
+  // sessions only for now (owner calls, 2026-08-27). Attention outranks the
+  // moon inside isAsleep; the graceTick subscription re-derives when a dismiss
+  // grace window expires without any other store change.
+  const isClaudeSession = !session.shellOnly && (session.provider ?? 'claude') === 'claude'
+  const silentSince = useSleepStore((s) => s.silentSince[session.id])
+  const dismissedAt = useSleepStore((s) => s.attentionDismissedAt[session.id])
+  useSleepStore((s) => s.graceTick)
+  // The raw store flag joins the prop: at the dismissal click the prop goes
+  // false before the passive effect stamps the grace, so the prop alone would
+  // flash the moon for one frame between those two moments.
+  const asleep =
+    isClaudeSession &&
+    isAsleep({ silentSince, dismissedAt, needsAttention: needsAttention || session.needsAttention === true, now: Date.now() })
+  // Active (owner call, 2026-08-27): a subtle green sweep on the context bar
+  // while this Claude session's PTY output is moving — the inverse of the moon.
+  // Precedence ATTENTION > ACTIVE > SLEEP > idle: attention and sleep both
+  // suppress it (sleep can't co-occur anyway — moving vs. 120s silent). Claude
+  // only, like the moon.
+  const outputMoving = useActiveStore((s) => s.activeIds.has(session.id))
+  const showActive =
+    isClaudeSession &&
+    outputMoving &&
+    !asleep &&
+    !(needsAttention || session.needsAttention === true)
   const providerLabel = session.shellOnly ? 'shell' : (session.provider ?? 'claude')
   const metaLine = `${session.modelName ?? session.model ?? ''}${providerLabel ? ` · ${providerLabel}` : ''}`.trim()
 
@@ -142,7 +170,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           alias, that new element will be the one to clip -- reorder
           deliberately or add min-w-0 + flex-shrink rules at that point. */}
       <span className="nm relative z-10 row-start-1 flex items-center gap-1.5">
-        <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600 }} title={session.customName?.trim() ? `${session.customName.trim()} · ${session.label}` : session.label}>{session.customName?.trim() || session.label}</span>
+        <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600, opacity: asleep ? 0.7 : undefined }} title={session.customName?.trim() ? `${session.customName.trim()} · ${session.label}` : session.label}>{session.customName?.trim() || session.label}</span>
         {ordinal !== undefined && (
           <span
             className="shrink-0 text-[11px] tabular-nums text-[var(--text-muted)]"
@@ -167,6 +195,9 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
             with the common case as the odd one out. The name column gets its
             full width back. */}
         {session.sessionType === 'ssh' && (session.sshTmuxPersistent === true ? <SshPersistentBadge /> : <SshBadge />)}
+        {/* Moon BESIDE the type badge (variant B): the type mark stays — the
+            moon is additional Watchdog state, not a replacement identity. */}
+        {asleep && silentSince != null && <MoonBadge sinceMs={silentSince} />}
         <SessionTypeBadge kind={session.shellOnly ? 'shell' : (session.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'} />
         <WatchdogBadge watchdog={session.watchdog} />
         {/* Graceful-fail: show effort ONLY once a live tick (statusline / hooks)
@@ -187,7 +218,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           the row's natural width, left no positive free space to grow into, and
           the bar rendered 0px wide — it only ever showed for short model names.
           It now lives on its own full-width bottom row (below). */}
-      <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '1 / 3' }} data-testid="card-line2">
+      <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '1 / 3', opacity: asleep ? 0.7 : undefined }} data-testid="card-line2">
         <span className="meta truncate flex-1 min-w-0" title={metaLine}>{metaLine}</span>
         {/* Context % is Claude-session telemetry. Terminal-only (shell)
             sessions don't have a reliable context signal — the statusline bridge
@@ -205,7 +236,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           under the name/meta and never clips the way the cramped line-2 chip did).
           Rendered only when accountEmail is set so accountless sessions stay 2 lines. */}
       {accountName && (
-        <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '1 / 3' }} data-testid="card-line3">
+        <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '1 / 3', opacity: asleep ? 0.7 : undefined }} data-testid="card-line3">
           {accountDot && (
             <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={session.accountEmail} />
           )}
@@ -228,7 +259,12 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           style={{ gridColumn: '1 / 3', background: 'var(--surface-sunken)' }}
           data-testid="context-meter-row"
         >
-          <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
+          <div
+            className={`meter-fill ${meterClass(pct)}${showActive ? ' meter-active' : ''}`}
+            style={{ width: `${pct}%` }}
+            data-active={showActive || undefined}
+            data-testid="context-meter-fill"
+          />
         </div>
       )}
     </button>

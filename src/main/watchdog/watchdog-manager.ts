@@ -613,9 +613,15 @@ export class WatchdogManager {
     const entry = this.entries.get(sessionId)
     if (!entry) return // no watchdog running for this session (off, or not a local Claude session)
     // Silence detection (#235): each chunk resets the idle clock. Clear a
-    // latched silent state immediately on the first byte after a silence.
+    // latched silent state immediately on the first byte after a silence —
+    // and PUSH the flip: the sleep indicator rides diagnostics pushes, and
+    // without this the wake only reached the renderer on the next unrelated
+    // heartbeat (with hooks and logging both off, potentially much later).
     entry.lastDataAt = this.now()
-    entry.silent = false
+    if (entry.silent) {
+      entry.silent = false
+      try { this.host.onHealthChange?.() } catch { /* host gone */ }
+    }
     // RAW bytes into the rendered pane — the terminal's parser is the tail
     // discipline now (#266 BLOCKER-1); no stripping, no manual line caps. Only
     // pathological CSI parameters are clamped first (F5), across chunk
