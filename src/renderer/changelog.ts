@@ -21,6 +21,14 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.7',
+    date: '2026-08-27',
+    highlights: 'The active-session indicator is easier to catch: a Claude session that is producing output now shows a green "working" pill beside its type badge — a gently pulsing play glyph — as well as the context-bar sweep, so a live session reads at a glance.',
+    changes: [
+      { type: 'improvement', description: 'A working Claude session now shows a small green play pill next to its type badge, in the same slot as the sleep moon and gently pulsing, alongside the context-bar sweep from the previous build. It marks a Claude session that is actively producing output, honours reduced motion, and never appears while a session needs your attention or is asleep.' },
+    ],
+  },
+  {
     version: '2.1.0-rc.6',
     date: '2026-08-27',
     highlights: 'Session cards now show life at a glance: a Claude session that is actively producing output gets a subtle green sweep across its context bar, and one that has gone quiet gets a moon with how long it has been asleep — two live opposites that update as work flows and stops. Plus: beta testers now see the full What\'s New story on every prerelease build.',
