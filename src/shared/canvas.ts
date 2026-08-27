@@ -95,6 +95,14 @@ export interface CanvasVersion {
    *  every version of the artifact together; a hand-edited value must be the
    *  literal `true` (validated on load, like `draft`). Absent = live. */
   archived?: true
+  /** A SHOW-AND-TELL (owner call, 2026-08-27): ready and surfaced like any
+   *  hand-over, but it owes NO review — it never sets awaitingReview, never
+   *  becomes the artifact's open version, and never supersedes one. The lane
+   *  for "just showing you something": the subject can be dismissed by either
+   *  side without the review ceremony, unless the user chooses to annotate it
+   *  (notes put the canvas under the normal review rules). Literal `true` or
+   *  absent, validated on load like `draft`. */
+  show?: true
   /** The C1 review outcome. Absent = OPEN on the artifact's latest ready
    *  version; healed to superseded for older history on load. */
   verdict?: CanvasVersionVerdict
@@ -112,7 +120,10 @@ export interface CanvasVersion {
  *  the earlier reopened version as the open one. Every count and badge derives
  *  from this — never stored. */
 export function openVersionOf(run: readonly CanvasVersion[]): CanvasVersion | null {
-  const last = [...run].reverse().find((v) => !v.draft && v.verdict?.state !== 'withdrawn')
+  // Show-and-tell versions are outside the review flow entirely: they can
+  // never be the open (review-owed) version, and they must not mask an earlier
+  // review version's openness — so they are skipped, not merely returned null.
+  const last = [...run].reverse().find((v) => !v.draft && !v.show && v.verdict?.state !== 'withdrawn')
   return last && !last.verdict ? last : null
 }
 
@@ -207,9 +218,9 @@ export interface CanvasChangedEvent {
  *  new one, so a fresh topic never inherits the previous topic's versions or
  *  its unresolved review notes. See renderVersion. */
 export type CanvasRenderSource =
-  | { mode: 'design'; html: string; title?: string; ready?: boolean }
-  | { mode: 'plan'; html: string; title?: string; ready?: boolean }
-  | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string; title?: string; ready?: boolean }
+  | { mode: 'design'; html: string; title?: string; ready?: boolean; intent?: 'review' | 'show' }
+  | { mode: 'plan'; html: string; title?: string; ready?: boolean; intent?: 'review' | 'show' }
+  | { mode: 'uat'; distRoot: string; entry?: string; buildLabel?: string; title?: string; ready?: boolean; intent?: 'review' | 'show' }
 
 /**
  * The `ready` flag (#366), three-valued on purpose:

@@ -345,7 +345,7 @@ describe('registration', () => {
     // seeing it, or the agent renders and then reports a screen nobody opened.
     expect(String(description)).toMatch(/hand back/i)
     expect(Object.keys(shape as object).sort()).toEqual([
-      'buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'mode', 'ready', 'title',
+      'buildLabel', 'cccSessionId', 'distRoot', 'entry', 'html', 'htmlPath', 'intent', 'mode', 'ready', 'title',
     ])
     // `title` names the subject, and the description has to ask for it on every
     // render: without one, unrelated work piles into a single canvas and the

@@ -27,6 +27,7 @@ export const changelog: ChangelogEntry[] = [
     changes: [
       { type: 'feature', description: 'Session cards show a moon while a Claude session is asleep — the Session Watchdog (which must be enabled) has seen no output for its silence window (2 minutes by default, configurable). The card dims slightly, the moon shows how long, and it clears only when the Watchdog sees the session produce output again; opening the session does not wake it. A session waiting on your input shows the attention state instead, never the moon, and after you dismiss attention the moon waits a minute before appearing.' },
       { type: 'improvement', description: 'On the beta update channel, every prerelease build (beta and RC) opens What\'s New with the complete content for upgraders, including the rename/roadmap page that is normally shown once. Stable builds and the stable channel are unchanged: the page still appears once for anyone arriving from before the rename, and for fresh installs.' },
+      { type: 'improvement', description: 'The Agent Canvas gets a show-and-tell lane. When you ask the agent to simply show you something, it can render the page as a look rather than a review: nothing enters your review queue, and the canvas can be closed in one step — a Dismiss button in the pane for you, or telling the agent to dismiss it in chat. Real hand-overs are untouched: they still enter the queue, and every review guard behaves exactly as before. Annotating a show-and-tell page puts it under the normal review rules.' },
     ],
   },
   {

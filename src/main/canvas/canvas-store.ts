@@ -802,6 +802,10 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   // `draft`: a hand-edited truthy string must not survive into a field the
   // history projection reads.
   if (ver.archived !== undefined && typeof ver.archived !== 'boolean') return false
+  // `show` (show-and-tell) is a BOOLEAN or absent, same posture again: the
+  // open-version derivation and the completion guard read it, so a hand-edited
+  // truthy string must not survive to exempt a version from review debt.
+  if (ver.show !== undefined && typeof ver.show !== 'boolean') return false
   // The C1 verdict is OUR shape or absent — the queue derivation and the
   // History badges read it, so a hand-edited blob is dropped with its version
   // (never repaired), the same all-or-nothing rule every field here follows.
@@ -1304,6 +1308,9 @@ export function renderVersion(
   // draft in place; `true` = the deliberate ready-mark that promotes it;
   // absent = the pre-draft behaviour (append, surface, count as ready).
   const isDraft = source.ready === false
+  // Show-and-tell (owner call, 2026-08-27): a READY render that owes no
+  // review. Meaningless on a draft — the draft path already surfaces nothing.
+  const isShow = !isDraft && source.intent === 'show'
   const latest = existing?.versions[existing.versions.length - 1]
   // A draft replaces the previous DRAFT; the ready-mark promotes it. Both
   // reuse the version id, so an agent's self-review loop cannot burn the
@@ -1365,6 +1372,7 @@ export function renderVersion(
       createdAt,
       source: { mode: 'design', entry: 'index.html' },
       ...(isDraft ? { draft: true as const } : {}),
+      ...(isShow ? { show: true as const } : {}),
     }
   } else if (source.mode === 'uat') {
     const distRoot = path.resolve(source.distRoot)
@@ -1386,6 +1394,7 @@ export function renderVersion(
       createdAt,
       source: { mode: 'uat', distRoot, entry, ...(source.buildLabel ? { buildLabel: source.buildLabel } : {}) },
       ...(isDraft ? { draft: true as const } : {}),
+      ...(isShow ? { show: true as const } : {}),
     }
   } else {
     throw new Error('unknown render mode')
@@ -1431,8 +1440,10 @@ export function renderVersion(
   // Not-a-draft means READY — a deliberate ready-mark, or a render from a flow
   // that has not learned the flag (which must never be invisible). Either way
   // the round now awaits the user's first review; a draft leaves whatever was
-  // already owed exactly as it stood.
-  const awaitingReview = isDraft ? base.awaitingReview : { versionId, at: createdAt }
+  // already owed exactly as it stood. A SHOW-AND-TELL render is ready but owes
+  // no review: like a draft it leaves the existing debt untouched — it neither
+  // creates a first-look obligation nor clears one already standing.
+  const awaitingReview = isDraft || isShow ? base.awaitingReview : { versionId, at: createdAt }
   // C1: a READY render supersedes the ARTIFACT's previously open version —
   // the one-open-per-artifact invariant, enforced at the only place a new
   // open version can be born, so "23 versions pending review" is impossible
@@ -1445,7 +1456,11 @@ export function renderVersion(
   const priorVersions = reuseLatest ? base.versions.slice(0, -1) : base.versions
   const supersededIds: string[] = []
   let stampedPrior = priorVersions
-  if (!isDraft) {
+  // Show-and-tell renders supersede NOTHING: stamping a prior open REVIEW
+  // version superseded would settle its notes through an agent action with no
+  // seen barrier — exactly the debt-vanishing the C1 machine forbids. A show
+  // version sits beside the review flow, it never advances it.
+  if (!isDraft && !isShow) {
     // Supersede the OPEN version of every earlier run of the SAME KIND (adv
     // FINDING C-1). Not just the run the new version joins: a mockup rendered
     // between two plans breaks the plan into two runs, and the earlier plan's

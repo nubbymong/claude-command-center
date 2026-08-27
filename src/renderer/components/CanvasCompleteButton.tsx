@@ -66,6 +66,20 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title }: Pro
   const openRounds = groups.filter((g) => g.waitingOn !== 'closed').length
   const blocked = !mirrorReady || openRounds > 0 || draftCount > 0 || awaitingReview
 
+  // SHOW-AND-TELL (owner call, 2026-08-27): a canvas whose ready versions are
+  // all show versions and which has never grown a review is a look, not a
+  // review cycle — closing it deserves one click, not the armed sign-off
+  // ceremony. Main runs the same completion guard either way; this only picks
+  // the lighter presentation. Any review activity (or a review-intent render)
+  // falls back to the full Mark-complete flow.
+  const versions = useCanvasStore((s) => s.bySessionId[sessionId]?.versions)
+  const readyVersions = (versions ?? []).filter((v) => !v.draft)
+  const showOnly =
+    !blocked &&
+    groups.length === 0 &&
+    readyVersions.length > 0 &&
+    readyVersions.every((v) => v.show === true)
+
   // If the state turns owed while armed, stand down — the confirm must not sit
   // live over a canvas that is no longer completeable (main would refuse it).
   useEffect(() => {
@@ -170,7 +184,28 @@ export default function CanvasCompleteButton({ sessionId, canvasId, title }: Pro
           {refused}
         </span>
       )}
-      {armed ? (
+      {showOnly ? (
+        <button
+          onClick={() => {
+            setRefused(null)
+            void doComplete()
+          }}
+          disabled={busy}
+          className="shrink-0 flex items-center gap-1.5 text-[11.5px] rounded px-2 py-0.5 focus-ring disabled:opacity-40"
+          style={{
+            color: 'var(--text-muted)',
+            background: 'color-mix(in srgb, var(--text-muted) 8%, transparent)',
+            border: '1px solid var(--border-subtle)',
+          }}
+          data-testid="canvas-dismiss-button"
+          title="This was a show-and-tell — nothing is owed. Dismiss files it; find it again in the Library."
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden>
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+          Dismiss
+        </button>
+      ) : armed ? (
         <>
           <button
             onClick={() => setArmed(false)}
