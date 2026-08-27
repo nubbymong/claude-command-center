@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On the beta update channel, every prerelease build (beta and RC) opens What's New with the complete content for upgraders, including the rename/roadmap page that is normally shown once. Stable builds and the stable channel are unchanged: the page still appears once for anyone arriving from before the rename, and for fresh installs.
 - The Agent Canvas gets a show-and-tell lane. When you ask the agent to simply show you something, it can render the page as a look rather than a review: nothing enters your review queue, and the canvas can be closed in one step — a Dismiss button in the pane for you, or telling the agent to dismiss it in chat. Real hand-overs are untouched: they still enter the queue, and every review guard behaves exactly as before. Annotating a show-and-tell page puts it under the normal review rules.
 
+### Fixed
+- Clicking a custom command button no longer leaves the keyboard on the button. Focus now moves into the terminal that received the command, so pressing Enter submits it — previously Enter re-pressed the still-focused button and injected the command a second time.
+
 ## [2.1.0-rc.5] - 2026-08-26
 
 > Session resume gets more reliable. A conversation that was running in a git worktree now comes back correctly even after that worktree is cleaned up, instead of opening a fresh empty session — the conversation was always safe on disk, and it is now recovered and resumed in place. And the name you give a session now travels with the conversation itself, so the resume list labels each one with your own name for it rather than a guess.

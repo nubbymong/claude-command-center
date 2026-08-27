@@ -288,6 +288,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
       if (expectBleed) scheduleBleedRepaints(ptyId)
       if (webViewUrl) startWebviewPolling(webViewUrl)
       else if (webviewUrls.length > 0) void probeWebviewUrls(webviewKey, webviewUrls)
+      // Hand the keyboard to the terminal that just received the command
+      // (owner bug report 2026-08-27): the click leaves focus on the chip, so
+      // the user's follow-up Enter re-activates the BUTTON and injects the
+      // command a second time. TerminalView owns the xterm instance; it
+      // listens for this and focuses the helper textarea.
+      window.dispatchEvent(new CustomEvent('ccc:focus-terminal', { detail: { sessionId: ptyId } }))
     }
     if (target === 'partner' && !isPartnerActive && onTogglePartner && partnerSessionId) {
       onTogglePartner()
@@ -414,6 +420,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
   const handleClick = (cmd: CustomCommand, e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement)?.getBoundingClientRect?.()
+    // Drop the chip's focus BEFORE running: whatever the command does (write
+    // to a pty, open a page, pop the args form), a follow-up Enter must never
+    // re-press this button (owner bug report 2026-08-27). The pty path then
+    // moves focus into the terminal via ccc:focus-terminal; Alt+Enter's
+    // keyboard-run path (roving tabindex) is untouched.
+    ;(e.currentTarget as HTMLElement)?.blur?.()
     runCommand(cmd, e.ctrlKey && rect ? rect : undefined)
   }
 
