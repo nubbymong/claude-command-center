@@ -391,6 +391,22 @@ describe('mapUnameToTarget / buildArchProbeCommand / parseArchProbeSentinel', ()
     expect(parseArchProbeSentinel('some unrelated PTY output\r\n')).toBeUndefined()
   })
 
+  // 2026-08-27 ConPTY glued-escape immunity (ansi-strip.ts, same incident
+  // family as the tier-3 stage sentinel): ConPTY can glue a title OSC +
+  // cursor CSI between the combo and its terminator. Pre-fix, `\S+` swallowed
+  // the escapes, mapUnameToTarget saw `Linux-aarch64\x1b]0;…` -> null, and
+  // the call site LATCHED "unrecognised arch", killing tier 4 for the whole
+  // session. Fails when stripAnsiForSentinel is removed from the parser.
+  it('a probe reply with ConPTY-glued escapes before the terminator still maps to the right target', () => {
+    const glue = '\x1b]0;C:/WINDOWS/System32/OpenSSH/ssh.exe\x07\x1b[?25h'
+    expect(parseArchProbeSentinel(`${ARCH_PROBE_SENTINEL_PREFIX} Linux-aarch64${glue}\r\n`)).toBe('linux-arm64')
+    expect(parseArchProbeSentinel(`${ARCH_PROBE_SENTINEL_PREFIX} Darwin-arm64\x1b[?2004h\r\n`)).toBe('macos-arm64')
+    // charset-designation / two-byte families (a host tmux redraw) — the
+    // escape classes the first cut of ansi-strip.ts missed.
+    expect(parseArchProbeSentinel(`${ARCH_PROBE_SENTINEL_PREFIX} Linux-aarch64\x1b(B\r\n`)).toBe('linux-arm64')
+    expect(parseArchProbeSentinel(`${ARCH_PROBE_SENTINEL_PREFIX} Darwin-arm64\x1b7\r\n`)).toBe('macos-arm64')
+  })
+
   // The actual echo-immunity property buildArchProbeCommand's doc comment
   // argues for: the UNEXPANDED, as-typed command text (what a terminal
   // echoes back WHILE the line is being entered, before the shell has run

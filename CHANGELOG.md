@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.9] - 2026-08-27
+
+> The SSH statusline is solid across Linux and macOS remotes — key or password login, with or without tmux, fresh connect and reattach, all live-tested end to end. Two bugs that could quietly kill it on tmux-wrapped sessions are fixed.
+
+### Changed
+- A live SSH connectivity test pack now drives the real connection flow against real hosts — key and password login, tmux wrapped and bare, reattach after disconnect, on Linux and macOS remotes — so these paths stay verified for future releases. Windows-remote delivery is exercised too; its statusline is pending an upstream Claude Code fix on Windows hosts and is not yet claimed working.
+
+### Fixed
+- The statusline no longer sticks at "pending" on hosts that start their own tmux (a shell profile with "exec tmux" or similar). Nesting detection used to discard the tmux binary path along with the wrap decision, and without that path the statusline updates could not reach your terminal through tmux. The two are now independent, and the statusline shim also finds a usable tmux by itself — the configured one, the staged one, then PATH — so it recovers even when an earlier setup step left the path unset.
+- A successful tmux auto-install is no longer occasionally reported as failed. On Windows, the terminal can glue title and cursor codes onto the same line as the install confirmation (the same class of bug as rc.8’s password prompt), which made the app mis-read a clean result, fall back to launching without tmux, and lose session persistence. All remote-setup confirmations now strip those codes before parsing.
+
 ## [2.1.0-rc.8] - 2026-08-27
 
 > The session sleep and working indicators settle down. Clicking a sleeping session no longer wakes its moon (only real output does, consistently), sessions running monitors are no longer tagged asleep between triggers, and the moon and working pill now fade in and out instead of popping.
@@ -1386,6 +1397,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.9]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.9
 [2.1.0-rc.8]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.8
 [2.1.0-rc.7]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.7
 [2.1.0-rc.6]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.6

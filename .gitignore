@@ -92,3 +92,6 @@ process-snapshot-*.txt
 
 # loop-tree session-integration bookkeeping (untracked; never part of a PR)
 .loop/
+
+# Live connectivity test pack: real host addresses/credentials stay local
+tests/live/hosts.local.json

@@ -17,6 +17,7 @@
     "test": "vitest run && npm run test:unit:native && npx playwright test",
     "test:unit": "vitest run",
     "test:unit:native": "node scripts/run-native-tests.mjs",
+    "test:live:ssh": "vitest run --config vitest.live.config.ts",
     "test:e2e": "npx playwright test",
     "release": "node scripts/release.js",
     "promote": "node scripts/promote.js",

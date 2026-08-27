@@ -2354,3 +2354,88 @@ describe('spawnPty SSH branch — Windows remote skips the POSIX tmux staging la
     expect(claudeWrite as string).not.toContain(`--model 'opus[1m]'`)
   })
 })
+
+// 2026-08-27 Pi tier-3 incident: on Windows the app reads ssh.exe through
+// ConPTY, which re-encodes the remote stream and can glue its own escape
+// sequences (window-title OSC, cursor/bracketed-paste CSIs) BETWEEN a
+// sentinel's last token and its line terminator. Every parser here anchors on
+// `(?=[\r\n])`, so glue either breaks the match outright (setup-ok: silent
+// 20s timeout) or corrupts the capture (`\S+` swallows the escapes and a
+// SUCCESSFUL remote stage is declared fail=unsafe-path; the arch probe
+// latches "unrecognised"). The parsers now strip complete escape sequences
+// first (ansi-strip.ts). GLUE below is the RC8-captured ConPTY shape
+// (ui-detection.ts's incident comment), verbatim class: title OSC + cursor
+// CSIs. Every test whose glue sits BETWEEN a token and the terminator fails
+// when the stripAnsiForSentinel call is removed from its parser; the one
+// mid-buffer case (glue on an EARLIER line) instead guards against an
+// over-aggressive strip that would swallow the sentinel line — it passes
+// under a no-op strip, which is correct, and is the reason ansi-strip.ts's
+// OSC body aborts on \r\n rather than mirroring ui-detection's class.
+describe('sentinel parsers — ConPTY glued-escape immunity (2026-08-27)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+  const GLUE = '\x1b]0;C:/WINDOWS/System32/OpenSSH/ssh.exe\x07\x1b[?25h'
+  const NONCE = 'cafe0123deadbeef4567abcd'
+
+  it('parseTmuxStageSentinel: ok path= with glued title-OSC + CSI before the terminator still parses as ok, with the clean path', () => {
+    const r = parseTmuxStageSentinel(`ccc-tmux-stage ${NONCE} ok path=/home/pi/.claude/bin/tmux${GLUE}\r\n`, NONCE)
+    expect(r).toEqual({ ok: true, path: '/home/pi/.claude/bin/tmux' })
+  })
+
+  it('parseTmuxStageSentinel: bracketed-paste CSI glued directly after the path (bash prompt redraw) still parses ok', () => {
+    const r = parseTmuxStageSentinel(`ccc-tmux-stage ${NONCE} ok path=/home/pi/.claude/bin/tmux\x1b[?2004h\r\n`, NONCE)
+    expect(r).toEqual({ ok: true, path: '/home/pi/.claude/bin/tmux' })
+  })
+
+  it('parseTmuxStageSentinel: charset-designation + cursor-save glue (a host tmux redraw) still parses ok', () => {
+    // \x1b(B / \x1b7 are what conhost emits through a host-started tmux — the
+    // families the first cut of ansi-strip.ts missed (adversarial review).
+    const r = parseTmuxStageSentinel(`ccc-tmux-stage ${NONCE} ok path=/home/pi/.claude/bin/tmux\x1b(B\x1b7\r\n`, NONCE)
+    expect(r).toEqual({ ok: true, path: '/home/pi/.claude/bin/tmux' })
+  })
+
+  it('parseTmuxStageSentinel: fail=<reason> with glue still yields the clean reason, not invalid-reason', () => {
+    const r = parseTmuxStageSentinel(`ccc-tmux-stage ${NONCE} fail=download${GLUE}\r\n`, NONCE)
+    expect(r).toEqual({ ok: false, reason: 'download' })
+  })
+
+  it('parseTmuxStageSentinel: the charset gate is still live for REAL garbage (a spoofed path with a shell metachar is still unsafe-path)', () => {
+    const r = parseTmuxStageSentinel(`ccc-tmux-stage ${NONCE} ok path=/tmp/$(reboot)/tmux\r\n`, NONCE)
+    expect(r).toEqual({ ok: false, reason: 'unsafe-path' })
+  })
+
+  it('parseTmuxStageSentinel: a trailing UNTERMINATED escape (title OSC split at the chunk boundary) does not resolve a half-line, and the completed buffer parses on the next chunk', () => {
+    const chunk1 = `ccc-tmux-stage ${NONCE} ok path=/home/pi/.claude/bin/tmux\x1b]0;C:/WINDOWS/Sys`
+    expect(parseTmuxStageSentinel(chunk1, NONCE)).toBeUndefined()
+    expect(parseTmuxStageSentinel(`${chunk1}tem32/ssh.exe\x07\r\n`, NONCE)).toEqual({ ok: true, path: '/home/pi/.claude/bin/tmux' })
+  })
+
+  it('parseTmuxSentinel: setup-ok with glue between the class token and the terminator still reports the class', () => {
+    expect(parseTmuxSentinel(`setup ok ${NONCE} tmux=path${GLUE}\r\n`, NONCE)).toBe('path')
+    expect(parseTmuxSentinel(`setup ok ${NONCE} tmux=none${GLUE}\r\n`, NONCE)).toBe(null)
+  })
+
+  it('parseSetupAccountSentinel: glue after the acct field still yields the decoded account', () => {
+    const acct = Buffer.from('dev@example.com').toString('base64')
+    expect(parseSetupAccountSentinel(`setup ok ${NONCE} tmux=home acct=${acct}${GLUE}\r\n`, NONCE)).toBe('dev@example.com')
+  })
+
+  it('glue in the middle of the accumulated buffer (earlier chatty output) does not mask a later clean sentinel', () => {
+    const buf = `motd banner${GLUE}\r\nsetup ok ${NONCE} tmux=home\r\n`
+    expect(parseTmuxSentinel(buf, NONCE)).toBe('home')
+  })
+
+  it('end-to-end: a glued stage-ok sentinel still wraps the eventual claude launch in tmux (the incident regression — pre-fix this fell to the bare launch as unsafe-path)', () => {
+    driveToStageWrite('s-glue-e2e')
+    writeMock.mockClear()
+    feedPtyData(nonceSentinel('s-glue-e2e', `ccc-tmux-stage {NONCE} ok path=/home/pi/.claude/bin/tmux${GLUE}\r\n`))
+    vi.advanceTimersByTime(300)
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    expect((claudeWrite![0] as string)).toContain('"$HOME"/.claude/bin/tmux new-session -s ccc-s-glue-e2e')
+  })
+})

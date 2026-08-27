@@ -56,6 +56,7 @@
  */
 
 import { TMUX_STAGE_SHA256, TMUX_STAGE_SENTINEL_PREFIX, assertSafeNonce, type TmuxStageTarget } from './ssh-tmux-stage'
+import { stripAnsiForSentinel } from './ansi-strip'
 
 export { TMUX_STAGE_SENTINEL_PREFIX }
 export type { TmuxStageTarget }
@@ -432,7 +433,10 @@ export function mapUnameToTarget(combo: string): TmuxStageTarget | null {
  * cached archive to select for an arch tier 4 doesn't recognise.
  */
 export function parseArchProbeSentinel(data: string): TmuxStageTarget | null | undefined {
-  const m = data.match(new RegExp(`${ARCH_PROBE_SENTINEL_PREFIX} (\\S+)(?=[\\r\\n])`))
+  // ConPTY-glue hazard (ansi-strip.ts): without the strip, glued escapes ride
+  // into the `\S+` combo capture, mapUnameToTarget returns null, and the call
+  // site LATCHES "unrecognised arch" — tier 4 permanently lost this session.
+  const m = stripAnsiForSentinel(data).match(new RegExp(`${ARCH_PROBE_SENTINEL_PREFIX} (\\S+)(?=[\\r\\n])`))
   if (!m) return undefined
   return mapUnameToTarget(m[1])
 }

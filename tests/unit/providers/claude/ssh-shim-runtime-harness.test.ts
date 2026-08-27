@@ -101,7 +101,11 @@ function runShim(shimSource: string, opts: HarnessOptions): HarnessResult {
   const fakeRequire = (name: string): unknown => {
     if (name === 'fs') return fakeFs
     if (name === 'os') return fakeOs
-    if (name === 'path') return nodePath
+    // posix flavour deliberately (same as the setup-script harness): the shim
+    // runs on POSIX remotes; the host-side win32 path module would splice
+    // backslashes into the ~/.claude/bin/tmux self-heal candidate and trip
+    // the shim's own allowlist for reasons no real remote can reproduce.
+    if (name === 'path') return nodePath.posix
     if (name === 'child_process') return fakeChildProcess
     throw new Error('ssh-shim-runtime-harness: unexpected require: ' + name)
   }
@@ -221,7 +225,91 @@ describe('SSH statusline shim -- real runtime harness (#242 M7)', () => {
     })
     expect(result.writes.some((w) => w.path === '/dev/pts/9')).toBe(false)
     expect(result.traces.some((t) => t.includes('tmux-fail') && t.includes('/dev/pts/9') && t.includes('EACCES'))).toBe(true)
+    // Every self-heal candidate reaches the same server → same unwritable tty
+    // → the ladder exhausts and the /dev/tty fallback still runs (unchanged).
     expect(result.writes.some((w) => w.path === '/dev/tty')).toBe(true)
+  })
+
+  // Self-heal (2026-08-27): the two empty-CCC_TMUX_BIN routes that froze the
+  // statusline — the user-owned-tmux bake (pre-fix) and a tier-3 stage whose
+  // post-stage patch never landed — must no longer kill delivery: the shim
+  // resolves tmux itself.
+  describe('self-heal when $CCC_TMUX_BIN is empty or broken', () => {
+    const HOME_TMUX = '/fake-home/.claude/bin/tmux'
+    const noCccEnv = { TMUX: '/tmp/tmux-1000/default,1234,0', CLAUDE_MULTI_SESSION_ID: 'sid-harness' }
+
+    it('empty CCC_TMUX_BIN: falls to the staged ~/.claude/bin/tmux candidate and delivers', () => {
+      const src = extractShimSource()
+      const result = runShim(src, {
+        env: noCccEnv,
+        execFileSync: (file) => {
+          if (file === HOME_TMUX) return '/dev/pts/5\n'
+          throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+        },
+        charDevicePaths: new Set(['/dev/pts/5']),
+      })
+      expect(result.writes.some((w) => w.path === '/dev/pts/5')).toBe(true)
+      expect(result.traces.some((t) => t.includes('tmux-clienttty-ok') && t.includes(`via=${HOME_TMUX}`))).toBe(true)
+    })
+
+    it('empty CCC_TMUX_BIN + no staged bin: falls to PATH tmux and delivers (the user-owned-tmux case)', () => {
+      const src = extractShimSource()
+      const result = runShim(src, {
+        env: noCccEnv,
+        execFileSync: (file) => {
+          if (file === 'tmux') return '/dev/pts/6\n'
+          throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+        },
+        charDevicePaths: new Set(['/dev/pts/6']),
+      })
+      expect(result.writes.some((w) => w.path === '/dev/pts/6')).toBe(true)
+      expect(result.traces.some((t) => t.includes('tmux-clienttty-ok') && t.includes('via=tmux'))).toBe(true)
+    })
+
+    it('a baked bin that fails is healed by a later candidate (stale-bake route)', () => {
+      const src = extractShimSource()
+      const result = runShim(src, {
+        env: BASE_ENV, // CCC_TMUX_BIN=/fake/tmux — broken below
+        execFileSync: (file) => {
+          if (file === '/fake/tmux') throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+          if (file === HOME_TMUX) return '/dev/pts/8\n'
+          throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+        },
+        charDevicePaths: new Set(['/dev/pts/8']),
+      })
+      expect(result.traces.some((t) => t.includes('tmux-fail') && t.includes('cand=/fake/tmux'))).toBe(true)
+      expect(result.writes.some((w) => w.path === '/dev/pts/8')).toBe(true)
+      expect(result.traces.some((t) => t.includes('tmux-clienttty-ok') && t.includes(`via=${HOME_TMUX}`))).toBe(true)
+    })
+
+    it('a non-conforming baked value is SKIPPED (allowlist), never executed, and healed by PATH tmux', () => {
+      const src = extractShimSource()
+      const executed: string[] = []
+      const result = runShim(src, {
+        env: { ...noCccEnv, CCC_TMUX_BIN: '/tmp/evil$(rm -rf)/tmux' },
+        execFileSync: (file) => {
+          executed.push(file)
+          if (file === 'tmux') return '/dev/pts/4\n'
+          throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+        },
+        charDevicePaths: new Set(['/dev/pts/4']),
+      })
+      expect(executed).not.toContain('/tmp/evil$(rm -rf)/tmux')
+      expect(result.traces.some((t) => t.includes('tmux-skip') && t.includes('cand-unsafe'))).toBe(true)
+      expect(result.writes.some((w) => w.path === '/dev/pts/4')).toBe(true)
+    })
+
+    it('first success stops the ladder (the baked bin wins when it works)', () => {
+      const src = extractShimSource()
+      const executed: string[] = []
+      const result = runShim(src, {
+        env: BASE_ENV,
+        execFileSync: (file) => { executed.push(file); return '/dev/pts/3\n' },
+        charDevicePaths: new Set(['/dev/pts/3']),
+      })
+      expect(executed).toEqual(['/fake/tmux'])
+      expect(result.writes.filter((w) => w.path === '/dev/pts/3')).toHaveLength(1)
+    })
   })
 
   // The 2s timeout: execFileSync throwing an ETIMEDOUT-shaped error (what
