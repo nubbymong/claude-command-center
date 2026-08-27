@@ -1369,6 +1369,15 @@ export function spawnPty(
 
         // connecting → awaiting-{postcommand|claude} or shell-only.
         if (currentFlowState === 'connecting') {
+          // NEVER advance over a waiting auth prompt: the pane being quiet is
+          // exactly what a password prompt looks like. Stay in connecting and
+          // re-arm — the prompt resolving (auto-type or the user typing)
+          // produces output that re-enters the ladder normally.
+          if (PASSWORD_PROMPT_RE.test(lastPromptLineSeen)) {
+            logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms but an auth prompt is waiting — holding in connecting`)
+            armIdleFallback()
+            return
+          }
           logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms → advancing from connecting`)
           if (ssh.postCommand) setFlowState('awaiting-postcommand', 'idle-fallback')
           else if (options?.shellOnly) setFlowState('shell-only', 'idle-fallback')
@@ -1536,6 +1545,16 @@ export function spawnPty(
     // Claude Code's `❯` glyph via lastPromptLineForClaude below. setupDone is the
     // hard latch that prevents any retrigger regardless.
     const SHELL_PROMPT_RE = /[$#>~]\s*$/
+    // The last prompt-shaped line seen on this PTY, kept for the idle fallback:
+    // an ssh auth prompt is EXACTLY a stretch of output silence, and the
+    // fallback used to advance `connecting → awaiting-claude` over a waiting
+    // password prompt (the "asks to Launch Claude at the password prompt" bug,
+    // 2026-08-27 — the prompt itself went undetected because the ConPTY title
+    // OSC glued to it defeated the old escape stripping; see ui-detection.ts).
+    // Detection is fixed there; this guard is belt-and-braces so NO idle path
+    // can ever walk past a visible auth prompt again (including a manual-entry
+    // session with no saved password).
+    let lastPromptLineSeen = ''
 
     /**
      * Writers for the four discrete SSH stages. The manual
@@ -2571,9 +2590,18 @@ export function spawnPty(
         }
       }
 
+      // The current chunk's prompt-shaped last line, computed once for the
+      // password check, the sudo check, and the stage transitions below. The
+      // STICKY copy (lastPromptLineSeen) feeds the idle fallback's auth-prompt
+      // guard; a chunk whose last line strips to '' (a bare \r\n ack, a pure
+      // control-sequence repaint) does not clear it — the prompt is still on
+      // screen through those.
+      const promptLineNow = lastPromptLineForClaude(data)
+      if (promptLineNow !== '') lastPromptLineSeen = promptLineNow
+
       // Auto-type SSH password only on a real password prompt, not any MOTD
       // line containing the word.
-      if (!passwordSent && password && PASSWORD_PROMPT_RE.test(lastPromptLineForClaude(data))) {
+      if (!passwordSent && password && PASSWORD_PROMPT_RE.test(promptLineNow)) {
         passwordSent = true
         setTimeout(() => {
           ptyProcess.write(password + '\r')
@@ -2586,7 +2614,7 @@ export function spawnPty(
       // End-of-line match avoids false-triggering on a log message that
       // happens to mention `[sudo]` or `password for`.
       if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent) {
-        const promptLine = lastPromptLineForClaude(data)
+        const promptLine = promptLineNow
         if (promptLine && /(\[sudo\].*password.*:|password for .+:|^password:)\s*$/i.test(promptLine)) {
           sudoPasswordSent = true
           setTimeout(() => {
@@ -2602,7 +2630,7 @@ export function spawnPty(
         return
       }
 
-      const lastLine = lastPromptLineForClaude(data)
+      const lastLine = promptLineNow
       const sawShellPrompt = !!lastLine && SHELL_PROMPT_RE.test(lastLine)
 
       // ---- STAGE TRANSITION DETECTION ----
