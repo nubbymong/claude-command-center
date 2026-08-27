@@ -21,6 +21,16 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-rc.9',
+    date: '2026-08-27',
+    highlights: 'The SSH statusline works across the whole matrix — key or password login, with or without tmux, Linux, macOS and Windows remotes — every combination live-tested end to end. Two bugs that could quietly kill it on tmux-wrapped sessions are fixed.',
+    changes: [
+      { type: 'fix', description: 'The statusline no longer sticks at "pending" on hosts that start their own tmux (a shell profile with "exec tmux" or similar). Nesting detection used to discard the tmux binary path along with the wrap decision, and without that path the statusline updates could not reach your terminal through tmux. The two are now independent, and the statusline shim also finds a usable tmux by itself — the configured one, the staged one, then PATH — so it recovers even when an earlier setup step left the path unset.' },
+      { type: 'fix', description: 'A successful tmux auto-install is no longer occasionally reported as failed. On Windows, the terminal can glue title and cursor codes onto the same line as the install confirmation (the same class of bug as rc.8’s password prompt), which made the app mis-read a clean result, fall back to launching without tmux, and lose session persistence. All remote-setup confirmations now strip those codes before parsing.' },
+      { type: 'improvement', description: 'A live SSH connectivity test pack now covers the full matrix — key and password login, tmux wrapped and bare, reattach after disconnect, Linux, macOS and Windows remotes — driving the real connection flow against real hosts, so these paths stay verified for future releases.' },
+    ],
+  },
+  {
     version: '2.1.0-rc.8',
     date: '2026-08-27',
     highlights: 'The session sleep and working indicators settle down. Clicking a sleeping session no longer wakes its moon (only real output does, consistently), sessions running monitors are no longer tagged asleep between triggers, and the moon and working pill now fade in and out instead of popping.',

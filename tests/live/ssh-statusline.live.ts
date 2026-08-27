@@ -17,7 +17,7 @@
 //   mac key + tmux-or-bare (as detected)   [mac]
 //   windows remote (CONOUT$ shim, no tmux) [windows]
 import { describe, it, expect, vi, beforeAll } from 'vitest'
-import { readFileSync, existsSync, mkdtempSync } from 'node:fs'
+import { readFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -43,7 +43,7 @@ vi.mock('../../src/main/ipc/setup-handlers', async (importOriginal) => ({
   getResourcesDirectory: vi.fn(() => scratch),
 }))
 
-const { spawnPty, killPty, getSshFlow, writePty } = await import('../../src/main/pty-manager')
+const { spawnPty, killPty, getSshFlow, writePty, resizePty } = await import('../../src/main/pty-manager')
 const { registerProvider } = await import('../../src/main/providers')
 const { ClaudeProvider } = await import('../../src/main/providers/claude')
 const { startStatuslineWatcher } = await import('../../src/main/statusline-watcher')
@@ -56,7 +56,6 @@ type Hosts = Partial<Record<'linuxKey' | 'linuxPassword' | 'mac' | 'windows', Ho
 // under the ESM transform.
 const hostsPath = process.env.CCC_LIVE_HOSTS ?? join(process.cwd(), 'tests', 'live', 'hosts.local.json')
 const hosts: Hosts = existsSync(hostsPath) ? JSON.parse(readFileSync(hostsPath, 'utf-8')) : {}
-console.log('LIVE-HOSTS path=', hostsPath, 'exists=', existsSync(hostsPath), 'keys=', Object.keys(hosts))
 const itIf = (entry: HostEntry | undefined) => (entry ? it : it.skip)
 
 interface Captured { channel: string; payload: unknown }
@@ -73,11 +72,21 @@ function makeWin() {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const updates = (ev: Captured[]) => ev.filter((e) => e.channel === 'statusline:update').map((e) => e.payload as { sessionId?: string })
 const states = (ev: Captured[], sid: string) => ev.filter((e) => e.channel === `ssh:flowState:${sid}`).map((e) => (e.payload as { state: string }).state)
+// The 2026-08-27 Pi incident's signature: a stage sentinel that PARSED but
+// with a corrupted capture (ConPTY-glued escapes -> `unsafe-path` /
+// `invalid-reason`). A genuine environmental failure (download/digest/…) is
+// possible on a degraded network and is not what this guards; these two
+// reasons can only come from a mangled parse of a line the remote actually
+// emitted, so any live run that produces one is a regression.
+const misParsedStageFail = (ev: Captured[], sid: string) =>
+  ev.filter((e) => e.channel === `ssh:flowState:${sid}`)
+    .map((e) => (e.payload as { info?: string }).info ?? '')
+    .filter((i) => /tmux-stage-fail:(unsafe-path|invalid-reason)/.test(i))
 const pane = (ev: Captured[], sid: string) => ev.filter((e) => e.channel === `pty:data:${sid}`).map((e) => String(e.payload)).join('')
 
 /** Connect, auto-launch claude at the overlay point, capture until 2 statusline
  *  updates (or the cap), return the captured window. */
-async function runSession(sid: string, entry: HostEntry, opts: { detachable?: boolean; captureMs?: number; win?: ReturnType<typeof makeWin> } = {}) {
+async function runSession(sid: string, entry: HostEntry, opts: { detachable?: boolean; captureMs?: number; win?: ReturnType<typeof makeWin>; nudge?: boolean } = {}) {
   const w = opts.win ?? makeWin()
   try { startStatuslineWatcher(() => w.win as never) } catch { /* status-dir watch is irrelevant here */ }
   const ssh: Record<string, unknown> = { host: entry.host, port: 22, username: entry.username, remotePath: '~' }
@@ -96,8 +105,26 @@ async function runSession(sid: string, entry: HostEntry, opts: { detachable?: bo
   const cap = opts.captureMs ?? 90_000
   const launchedAt = Date.now()
   let trustAnswered = false
+  let nudged = false
   while (Date.now() - launchedAt < cap) {
     await sleep(1000)
+    // Reattach (nudge): claude re-runs its statusline command on CONVERSATION
+    // state changes, never on mere repaints — proven live 2026-08-27: a
+    // resize made the reattached TUI redraw fully, yet 90s passed with zero
+    // statusline ticks from an idle claude. So a reattached-but-idle session
+    // legitimately sits at "pending" until something actually happens; what
+    // the app promises is that the statusline RESUMES WITH ACTIVITY. Model
+    // that the way a user would: after 15 quiet seconds, resize (what the
+    // renderer's fit addon does on attach anyway) and type a line into
+    // claude — the response (even "not logged in") is a state change and
+    // must produce a tick through the reattached tmux client tty.
+    if (opts.nudge && !nudged && Date.now() - launchedAt > 15_000 && updates(w.events).filter((u) => u.sessionId === sid).length === 0) {
+      nudged = true
+      resizePty(sid, 121, 30) // spawn default is 120x30 — one-column wiggle
+      resizePty(sid, 120, 30)
+      writePty(sid, 'hi')
+      setTimeout(() => writePty(sid, '\r'), 300)
+    }
     // First-run gate: a host/dir this claude has not trusted yet parks at the
     // trust prompt and never ticks the statusline. Answer it once, the way a
     // user in the app terminal would (Enter on the highlighted default). The
@@ -125,6 +152,17 @@ function report(label: string, w: ReturnType<typeof makeWin>, sid: string): void
   // Stripped pane tail — where claude actually IS when the capture ends.
   const stripped = p.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '').replace(/\r/g, '')
   console.log(`${label} pane-tail: ${JSON.stringify(stripped.slice(-350))}`)
+  // Diagnostic capture (CCC_LIVE_DUMP=<dir>): the RAW pane byte stream and the
+  // full captured event list, per test. This is how a sentinel mis-parse gets
+  // root-caused from a live run — the pane bytes ARE the exact chunk stream
+  // the pty-manager parsers saw (glued escapes included), so a failure can be
+  // replayed against the parsers offline byte-for-byte.
+  const dumpDir = process.env.CCC_LIVE_DUMP
+  if (dumpDir) {
+    const base = join(dumpDir, label.replace(/\W+/g, '_'))
+    writeFileSync(`${base}.pane.bin`, p)
+    writeFileSync(`${base}.events.json`, JSON.stringify(w.events.map((e) => ({ channel: e.channel, payload: e.channel.startsWith('pty:data') ? undefined : e.payload })), null, 1))
+  }
 }
 
 /** Kill the remote tmux probe session over a separate key-auth exec (password
@@ -157,7 +195,7 @@ describe('SSH statusline matrix (LIVE, on-demand)', () => {
     const firstOk = updates(w1.events).some((u) => u.sessionId === sid)
     killPty(sid) // drop the local PTY; the remote tmux session survives
     await sleep(3000)
-    const w2 = await runSession(sid, e, { win: makeWin() })
+    const w2 = await runSession(sid, e, { win: makeWin(), nudge: true })
     report('T2b reattach', w2, sid)
     killPty(sid)
     killRemoteTmux(e, sid)
@@ -180,6 +218,7 @@ describe('SSH statusline matrix (LIVE, on-demand)', () => {
     const w = await runSession(sid, e)
     report('T4 password+tmux', w, sid)
     killPty(sid)
+    expect(misParsedStageFail(w.events, sid)).toEqual([])
     expect(updates(w.events).some((u) => u.sessionId === sid)).toBe(true)
   }, 240_000)
 

@@ -3,6 +3,7 @@ import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
 import { buildTmuxLaunchCommand, isSafeTmuxBin, buildSshClaudeFlags } from './ssh-tmux'
+import { stripAnsiForSentinel } from './ansi-strip'
 import { randomId } from '../shared/id'
 import { resolveRunningClaudeInfo } from '../shared/ssh-tmux-persistence'
 import { buildTmuxStageCommand, TMUX_STAGE_SENTINEL_PREFIX, TMUX_STAGE_SHA256, tmuxStageAssetUrl, type TmuxStageTarget } from './ssh-tmux-stage'
@@ -207,7 +208,10 @@ export type TmuxDetectionClass = 'path' | 'home'
  * arbitrary one.
  */
 export function parseTmuxSentinel(data: string, nonce: string): TmuxDetectionClass | null | undefined {
-  const m = data.match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(path|home|none)(?: acct=[A-Za-z0-9+/=]*)?(?=[\\r\\n])`))
+  // ConPTY can glue title-OSC/cursor-CSI escapes between the class token and
+  // its line terminator, making the lookahead unsatisfiable — strip complete
+  // sequences first (see ansi-strip.ts for the incident + class rationale).
+  const m = stripAnsiForSentinel(data).match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(path|home|none)(?: acct=[A-Za-z0-9+/=]*)?(?=[\\r\\n])`))
   if (!m) return undefined
   if (m[1] === 'none') return null
   return m[1] as TmuxDetectionClass
@@ -233,7 +237,8 @@ export function parseTmuxSentinel(data: string, nonce: string): TmuxDetectionCla
 const SSH_REMOTE_ACCOUNT_MAX = 254
 const SSH_REMOTE_ACCOUNT_DISPLAY_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/
 export function parseSetupAccountSentinel(data: string, nonce: string): string | undefined {
-  const m = data.match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(?:path|home|none) acct=([A-Za-z0-9+/=]*)(?=[\\r\\n])`))
+  // Same ConPTY-glue hazard as parseTmuxSentinel above (ansi-strip.ts).
+  const m = stripAnsiForSentinel(data).match(new RegExp(`setup ok ${escapeRegExp(nonce)} tmux=(?:path|home|none) acct=([A-Za-z0-9+/=]*)(?=[\\r\\n])`))
   if (!m || !m[1]) return undefined
   let decoded: string
   try {
@@ -315,7 +320,11 @@ export function parseTmuxStageSentinel(
   data: string,
   nonce: string,
 ): { ok: true; path: string } | { ok: false; reason: string } | undefined {
-  const m = data.match(new RegExp(`${TMUX_STAGE_SENTINEL_PREFIX} ${escapeRegExp(nonce)} (ok path=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}})|fail=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}}))(?=[\\r\\n])`))
+  // 2026-08-27 Pi incident: ConPTY glued escapes between `path=…/tmux` and
+  // the `\r\n`, `\S+` swallowed them, and isSafeTmuxBin declared a SUCCESSFUL
+  // remote stage `unsafe-path` — strip complete sequences before matching
+  // (see ansi-strip.ts). The charset gate below still guards real garbage.
+  const m = stripAnsiForSentinel(data).match(new RegExp(`${TMUX_STAGE_SENTINEL_PREFIX} ${escapeRegExp(nonce)} (ok path=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}})|fail=(\\S{1,${MAX_TMUX_STAGE_CAPTURE_LEN}}))(?=[\\r\\n])`))
   if (!m) return undefined
   if (m[2]) return isSafeTmuxBin(m[2]) ? { ok: true, path: m[2] } : { ok: false, reason: 'unsafe-path' }
   return { ok: false, reason: sanitizeFailReason(m[3] ?? 'unknown') }
