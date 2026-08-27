@@ -22,7 +22,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { getLogSupervisor, getTranscriptBinder } from '../logging/logging-service'
-import { rememberSessionName, writeNameSidecar, nodeNameSidecarDeps } from '../logging/session-name-sidecar'
+import { rememberSessionName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps } from '../logging/session-name-sidecar'
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -144,9 +144,18 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
     // known), and write now only against an EXACT bind — never a heuristic guess
     // (which in a shared folder could be a sibling card's transcript). Best-effort.
     const nameForSidecar = customName ?? configLabel
-    rememberSessionName(sessionId, nameForSidecar)
     const exactPath = getTranscriptBinder()?.getExactResumeTarget(sessionId)
-    if (exactPath) writeNameSidecar(exactPath, nameForSidecar, nodeNameSidecarDeps)
+    if (exactPath) {
+      // Already bound: write directly and DO NOT keep a pending entry — a lingering
+      // one would bleed this name onto the next conversation this session binds
+      // after a /clear rotates the uuid (adv review #536).
+      writeNameSidecar(exactPath, nameForSidecar, nodeNameSidecarDeps)
+      forgetSessionName(sessionId)
+    } else {
+      // Not bound yet: remember so onExactBind writes it once the path is known
+      // (a blank name clears the pending entry).
+      rememberSessionName(sessionId, nameForSidecar)
+    }
     return { ok: true }
   })
 

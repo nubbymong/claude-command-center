@@ -40,5 +40,9 @@ paths), transcript-corruption and fail-open all held. Findings fixed:
   the handler writes the sidecar from customName (blank removes it).
 - MINOR rename-time write used a heuristic-inclusive path (sibling mislabel in the ~20s pre-exact
   window) -> use getExactResumeTarget (exact-only); the pre-bind case is covered by onExactBind.
-Verdict after fixes: PASS. Gate: 328 targeted tests (sidecar + picker + store + binder + logging),
-typecheck clean (3 tsconfigs). Refs #480 #130 #535.
+Re-attack found one residual: the rename-AFTER-bind path still re-primed the registry (bled on the
+next /clear). Fixed: when already bound, write directly AND forgetSessionName; only remember when
+not yet bound. Guarded by logs2-ipc-handlers tests (bound -> write+forget, not-bound -> remember,
+blank -> '' write, omitted customName -> configLabel fallback). Verdict after round 2: PASS.
+Gate: 123 tests (handler + sidecar + store + picker) + binder/logging suites, typecheck clean
+(3 tsconfigs). Refs #480 #130 #535.
