@@ -51,12 +51,35 @@
 const CSI_SEQ = /\x1b\[[\x20-\x3f]*[\x40-\x7e]/g
 const OSC_SEQ = /\x1b\][^\x07\x1b\r\n]*(?:\x07|\x1b\\)/g
 const DCS_APC_PM_SEQ = /\x1b[P_X^][^\x07\x1b\r\n]*(?:\x07|\x1b\\)/g
+// nF escapes: ESC + one or more intermediate bytes (0x20-0x2f) + a final byte
+// (0x30-0x7e). This is the charset-designation family — `\x1b(B` (ASCII),
+// `\x1b(0` (line-drawing), `\x1b)0`, `\x1b#8` — which conhost emits after SGR
+// resets when a status bar redraws. On a host that starts its OWN tmux the
+// setup/stage sentinel is echoed THROUGH that tmux, so this family lands in
+// exactly the glued position the CSI/OSC fix targets (adversarial review,
+// 2026-08-27, two independent attackers): without it, `\x1b(B` glued before
+// the terminator reproduces the incident's unsafe-path / arch-latch.
+const NF_ESC_SEQ = /\x1b[\x20-\x2f]+[\x30-\x7e]/g
+// Two-byte Fe/Fp/Fs escapes: ESC + a single final byte, EXCLUDING the bytes
+// that introduce the multi-byte forms already handled above — `[` (CSI, 0x5b),
+// `]` (OSC, 0x5d), `P` (DCS, 0x50), `X` (SOS, 0x58), `^` (PM, 0x5e), `_` (APC,
+// 0x5f). Covers `\x1b7`/`\x1b8` (save/restore cursor), `\x1bM`/`\x1bD`/`\x1bE`,
+// `\x1bc` (reset), `\x1b=`/`\x1b>` (keypad) — the cursor-save/restore pair
+// conhost brackets a repaint with.
+const FE_ESC_SEQ = /\x1b[\x30-\x4f\x51-\x57\x59\x5a\x5c\x60-\x7e]/g
 const TRAILING_PARTIAL_ESC = /\x1b[^\r\n]*$/
 
 export function stripAnsiForSentinel(data: string): string {
+  // Multi-byte forms first (each is anchored on its own introducer, so order
+  // is not strictly required — a two-byte final can never match an introducer
+  // byte — but stripping the long forms first keeps the two-byte pass from
+  // ever seeing a stray introducer). Trailing-partial cleans an unterminated
+  // escape at the very end last of all.
   return data
     .replace(OSC_SEQ, '')
     .replace(DCS_APC_PM_SEQ, '')
     .replace(CSI_SEQ, '')
+    .replace(NF_ESC_SEQ, '')
+    .replace(FE_ESC_SEQ, '')
     .replace(TRAILING_PARTIAL_ESC, '')
 }

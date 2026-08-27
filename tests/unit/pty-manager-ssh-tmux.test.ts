@@ -2365,8 +2365,12 @@ describe('spawnPty SSH branch — Windows remote skips the POSIX tmux staging la
 // latches "unrecognised"). The parsers now strip complete escape sequences
 // first (ansi-strip.ts). GLUE below is the RC8-captured ConPTY shape
 // (ui-detection.ts's incident comment), verbatim class: title OSC + cursor
-// CSIs. Each positive test fails when the stripAnsiForSentinel call is
-// removed from its parser.
+// CSIs. Every test whose glue sits BETWEEN a token and the terminator fails
+// when the stripAnsiForSentinel call is removed from its parser; the one
+// mid-buffer case (glue on an EARLIER line) instead guards against an
+// over-aggressive strip that would swallow the sentinel line — it passes
+// under a no-op strip, which is correct, and is the reason ansi-strip.ts's
+// OSC body aborts on \r\n rather than mirroring ui-detection's class.
 describe('sentinel parsers — ConPTY glued-escape immunity (2026-08-27)', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -2384,6 +2388,13 @@ describe('sentinel parsers — ConPTY glued-escape immunity (2026-08-27)', () =>
 
   it('parseTmuxStageSentinel: bracketed-paste CSI glued directly after the path (bash prompt redraw) still parses ok', () => {
     const r = parseTmuxStageSentinel(`ccc-tmux-stage ${NONCE} ok path=/home/pi/.claude/bin/tmux\x1b[?2004h\r\n`, NONCE)
+    expect(r).toEqual({ ok: true, path: '/home/pi/.claude/bin/tmux' })
+  })
+
+  it('parseTmuxStageSentinel: charset-designation + cursor-save glue (a host tmux redraw) still parses ok', () => {
+    // \x1b(B / \x1b7 are what conhost emits through a host-started tmux — the
+    // families the first cut of ansi-strip.ts missed (adversarial review).
+    const r = parseTmuxStageSentinel(`ccc-tmux-stage ${NONCE} ok path=/home/pi/.claude/bin/tmux\x1b(B\x1b7\r\n`, NONCE)
     expect(r).toEqual({ ok: true, path: '/home/pi/.claude/bin/tmux' })
   })
 

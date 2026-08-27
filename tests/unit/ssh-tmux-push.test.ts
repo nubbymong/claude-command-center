@@ -401,6 +401,10 @@ describe('mapUnameToTarget / buildArchProbeCommand / parseArchProbeSentinel', ()
     const glue = '\x1b]0;C:/WINDOWS/System32/OpenSSH/ssh.exe\x07\x1b[?25h'
     expect(parseArchProbeSentinel(`${ARCH_PROBE_SENTINEL_PREFIX} Linux-aarch64${glue}\r\n`)).toBe('linux-arm64')
     expect(parseArchProbeSentinel(`${ARCH_PROBE_SENTINEL_PREFIX} Darwin-arm64\x1b[?2004h\r\n`)).toBe('macos-arm64')
+    // charset-designation / two-byte families (a host tmux redraw) — the
+    // escape classes the first cut of ansi-strip.ts missed.
+    expect(parseArchProbeSentinel(`${ARCH_PROBE_SENTINEL_PREFIX} Linux-aarch64\x1b(B\r\n`)).toBe('linux-arm64')
+    expect(parseArchProbeSentinel(`${ARCH_PROBE_SENTINEL_PREFIX} Darwin-arm64\x1b7\r\n`)).toBe('macos-arm64')
   })
 
   // The actual echo-immunity property buildArchProbeCommand's doc comment

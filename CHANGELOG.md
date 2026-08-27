@@ -11,10 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.1.0-rc.9] - 2026-08-27
 
-> The SSH statusline works across the whole matrix — key or password login, with or without tmux, Linux, macOS and Windows remotes — every combination live-tested end to end. Two bugs that could quietly kill it on tmux-wrapped sessions are fixed.
+> The SSH statusline is solid across Linux and macOS remotes — key or password login, with or without tmux, fresh connect and reattach, all live-tested end to end. Two bugs that could quietly kill it on tmux-wrapped sessions are fixed.
 
 ### Changed
-- A live SSH connectivity test pack now covers the full matrix — key and password login, tmux wrapped and bare, reattach after disconnect, Linux, macOS and Windows remotes — driving the real connection flow against real hosts, so these paths stay verified for future releases.
+- A live SSH connectivity test pack now drives the real connection flow against real hosts — key and password login, tmux wrapped and bare, reattach after disconnect, on Linux and macOS remotes — so these paths stay verified for future releases. Windows-remote delivery is exercised too; its statusline is pending an upstream Claude Code fix on Windows hosts and is not yet claimed working.
 
 ### Fixed
 - The statusline no longer sticks at "pending" on hosts that start their own tmux (a shell profile with "exec tmux" or similar). Nesting detection used to discard the tmux binary path along with the wrap decision, and without that path the statusline updates could not reach your terminal through tmux. The two are now independent, and the statusline shim also finds a usable tmux by itself — the configured one, the staged one, then PATH — so it recovers even when an earlier setup step left the path unset.
