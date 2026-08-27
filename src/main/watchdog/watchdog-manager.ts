@@ -740,10 +740,11 @@ export class WatchdogManager {
   }
 
   /** ServiceHealth snapshot so the watchdog appears in the services view merge,
-   *  modelled on the logging supervisor's getDiagnosticsSnapshot(). */
-  getDiagnosticsSnapshot(): DiagnosticsSnapshot {
+   *  modelled on the logging supervisor's getDiagnosticsSnapshot(). Callers
+   *  that already hold a monitor snapshot pass it in so the per-silent-session
+   *  pane read (paneHasMonitors) runs once per push, not twice. */
+  getDiagnosticsSnapshot(mon: WatchdogMonitorSnapshot = this.getMonitorSnapshot()): DiagnosticsSnapshot {
     const now = this.now()
-    const mon = this.getMonitorSnapshot()
     const health = createInitialHealth('watchdog', 'Watchdog')
     health.state = this.entries.size > 0 ? 'listening' : 'stopped'
     health.startedAt = this.startedAt

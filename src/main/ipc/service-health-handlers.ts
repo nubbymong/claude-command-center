@@ -54,10 +54,14 @@ export function getMergedDiagnostics(getSup: SupGetter, getPty: PtyGetter, getWa
   const wd = getWatchdog()
   let withWd: DiagnosticsSnapshot = withPty
   if (wd) {
-    const wdSnap = wd.getDiagnosticsSnapshot()
+    // One monitor snapshot per merge: getDiagnosticsSnapshot derives its
+    // ServiceHealth from the same snapshot, and the per-silent-session pane
+    // read it now carries (RC8 hasMonitors) should run once, not twice.
+    const mon = wd.getMonitorSnapshot()
+    const wdSnap = wd.getDiagnosticsSnapshot(mon)
     const log = [...withPty.log, ...wdSnap.log].sort((a, b) => a.ts - b.ts)
     if (log.length > LOG_CAP) log.splice(0, log.length - LOG_CAP)
-    withWd = { ...withPty, services: [...withPty.services, ...wdSnap.services], log, watchdog: wd.getMonitorSnapshot() }
+    withWd = { ...withPty, services: [...withPty.services, ...wdSnap.services], log, watchdog: mon }
   }
 
   // Stamp the MAIN-process event-loop jank onto EVERY service (both delivery
