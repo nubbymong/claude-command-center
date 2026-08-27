@@ -155,12 +155,13 @@ describe('ssh password auto-type', () => {
 describe('idle fallback vs a waiting auth prompt', () => {
   const flowStates = () => sentStates.map((s) => s.state)
 
-  it('never advances connecting over a visible password prompt (manual-entry session)', () => {
+  it('holds connecting over a visible password prompt instead of advancing at 1.5s', () => {
     // No saved password: the user must type it. The fallback used to advance
-    // to awaiting-claude after 1.5s of prompt silence anyway.
+    // to awaiting-claude after 1.5s of prompt silence anyway ("asks to Launch
+    // Claude at the password prompt").
     spawnPty(fakeWin, 's-idle-authhold', { ssh: { ...SSH } } as never)
     feedPtyData("dev@box.example.com's password: ")
-    vi.advanceTimersByTime(10_000) // several idle-fallback periods
+    vi.advanceTimersByTime(10_000) // several idle-fallback periods, inside the hold budget
     expect(flowStates()).not.toContain('awaiting-claude')
 
     // The user types the password; auth output + a shell prompt arrive —
@@ -176,6 +177,25 @@ describe('idle fallback vs a waiting auth prompt', () => {
     feedPtyData('\r\n')          // strips to '' — prompt still on screen
     feedPtyData('\x1b[?25l\x1b[?25h') // cursor-blink repaint, strips to ''
     vi.advanceTimersByTime(10_000)
+    expect(flowStates()).not.toContain('awaiting-claude')
+  })
+
+  it('the hold is BOUNDED: a stale sticky can delay but never wedge the flow', () => {
+    // A host whose post-login prompt strips to '' (a ❯-glyph PS1) never
+    // overwrites the sticky "password:" — the cap must let the fallback
+    // advance eventually rather than pinning connecting forever.
+    spawnPty(fakeWin, 's-idle-authbound', { ssh: { ...SSH } } as never)
+    feedPtyData("dev@box.example.com's password: ")
+    vi.advanceTimersByTime(30_000) // well past MAX_AUTH_HOLD_FIRES × 1.5s
+    expect(flowStates()).toContain('awaiting-claude')
+  })
+
+  it('fresh output resets the hold budget (a repainting prompt keeps its window)', () => {
+    spawnPty(fakeWin, 's-idle-authreset', { ssh: { ...SSH } } as never)
+    feedPtyData("dev@box.example.com's password: ")
+    vi.advanceTimersByTime(9_000)                    // 6 quiet holds
+    feedPtyData("dev@box.example.com's password: ")  // prompt repaints — budget resets
+    vi.advanceTimersByTime(9_000)                    // 6 more, still under the cap
     expect(flowStates()).not.toContain('awaiting-claude')
   })
 })

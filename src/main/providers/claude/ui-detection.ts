@@ -28,9 +28,16 @@ export function detectClaudeUi(data: string, claudeSent: boolean): boolean {
 // TRAILING UNTERMINATED escape (e.g. a title OSC split across chunks): after
 // complete sequences are removed, anything from a remaining `\x1b` to the end
 // of the line is an unfinished sequence, never visible prompt text.
+// NEGATED classes, not lazy dot-alls: this runs on every raw PTY chunk for
+// the life of an SSH session, and `[\s\S]*?` with an alternation terminator
+// is O(n²) on a flood of unterminated `\x1b]` introducers (measured ~1s of
+// main-thread stall per 64KB chunk — a hostile remote could pin the main
+// process; adversarial review, 2026-08-27). The negated form is linear; an
+// OSC carrying an embedded bare ESC simply fails the match and falls to
+// TRAILING_PARTIAL_ESC, which mirrors xterm's own abort-on-ESC semantics.
 const CSI_SEQ = /\x1b\[[\x20-\x3f]*[\x40-\x7e]/g
-const OSC_SEQ = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g
-const OTHER_ESC_SEQ = /\x1b[P_X^][\s\S]*?(?:\x07|\x1b\\)/g
+const OSC_SEQ = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g
+const OTHER_ESC_SEQ = /\x1b[P_X^][^\x07\x1b]*(?:\x07|\x1b\\)/g
 const TRAILING_PARTIAL_ESC = /\x1b[\s\S]*$/
 
 function stripEscapesForPrompt(line: string): string {

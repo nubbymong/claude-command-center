@@ -1369,12 +1369,19 @@ export function spawnPty(
 
         // connecting → awaiting-{postcommand|claude} or shell-only.
         if (currentFlowState === 'connecting') {
-          // NEVER advance over a waiting auth prompt: the pane being quiet is
+          // Do not advance over a waiting auth prompt: the pane being quiet is
           // exactly what a password prompt looks like. Stay in connecting and
           // re-arm — the prompt resolving (auto-type or the user typing)
-          // produces output that re-enters the ladder normally.
-          if (PASSWORD_PROMPT_RE.test(lastPromptLineSeen)) {
-            logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms but an auth prompt is waiting — holding in connecting`)
+          // produces output that re-enters the ladder normally. BOUNDED: if
+          // the sticky line is stale (a host whose real post-login prompt
+          // strips to '' never overwrites it), the cap lets the fallback
+          // advance after ~MAX_AUTH_HOLD_FIRES × IDLE_FALLBACK_MS instead of
+          // wedging the session here forever. Logged once per engagement.
+          if (PASSWORD_PROMPT_RE.test(lastPromptLineSeen) && authHoldFires < MAX_AUTH_HOLD_FIRES) {
+            authHoldFires++
+            if (authHoldFires === 1) {
+              logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms but an auth prompt is waiting — holding in connecting (bounded)`)
+            }
             armIdleFallback()
             return
           }
@@ -1459,7 +1466,7 @@ export function spawnPty(
     // Clickable question options (CC >= 2.1.195) default OFF in CCC -- the
     // clickable layer misfires inside xterm.js. Read fresh per spawn so the
     // Settings toggle applies to the next session without a restart.
-    const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean; theme?: string }>('settings')
+    const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean; theme?: string; classicTerminalCopyPaste?: boolean }>('settings')
     const clickableQuestions = spawnCfg?.clickableQuestions === true
     // item 3: PROTOTYPE Windows remote. Isolated behind this flag; every branch
     // below falls back to the unchanged POSIX path for auto/unix/undefined.
@@ -1472,6 +1479,16 @@ export function spawnPty(
     // inner command and escapes embedded quotes, so it survives that too.
     const sshHostColorScheme = resolveHostColorScheme(spawnCfg?.theme, nativeTheme.shouldUseDarkColors)
     const claudeEnvVars = [
+      // #546: mouse-selection parity with the LOCAL spawn (spawn.ts). Classic
+      // copy/paste (default on) disables CC's mouse tracking + alternate
+      // screen so xterm owns the mouse — without these, a remote Claude kept
+      // SGR mouse tracking on and drag-selection was dead in every SSH
+      // session. Compile-time constants, same shape as the siblings below;
+      // the tmux wrap single-quotes the whole inner command, so they survive
+      // the wrap. Opting out (classicTerminalCopyPaste === false) omits both,
+      // restoring CC's own mouse mode — matching local.
+      spawnCfg?.classicTerminalCopyPaste !== false ? 'CLAUDE_CODE_DISABLE_MOUSE=1' : '',
+      spawnCfg?.classicTerminalCopyPaste !== false ? 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1' : '',
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
       clickableQuestions ? '' : 'CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1',
       spawnCfg?.disableBackgroundTasks !== false ? 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1' : '',
@@ -1551,10 +1568,19 @@ export function spawnPty(
     // password prompt (the "asks to Launch Claude at the password prompt" bug,
     // 2026-08-27 — the prompt itself went undetected because the ConPTY title
     // OSC glued to it defeated the old escape stripping; see ui-detection.ts).
-    // Detection is fixed there; this guard is belt-and-braces so NO idle path
-    // can ever walk past a visible auth prompt again (including a manual-entry
-    // session with no saved password).
+    // Detection is fixed there; this guard is belt-and-braces so the
+    // CONNECT-TIME idle path cannot walk past a visible auth prompt (including
+    // a manual-entry session with no saved password). The postCommand sudo
+    // path keeps its existing idle behavior. The hold is BOUNDED (below): a
+    // host whose post-login prompt strips to '' (a ❯-glyph PS1, a 2-char
+    // escape lead) would otherwise leave a stale "password:" sticky and wedge
+    // the flow in connecting forever.
     let lastPromptLineSeen = ''
+    // Consecutive idle-fallback fires spent holding for an auth prompt; reset
+    // by every data chunk. At the cap the fallback advances anyway (~12s),
+    // so a stale sticky delays a quiet host but can never wedge it.
+    let authHoldFires = 0
+    const MAX_AUTH_HOLD_FIRES = 8
 
     /**
      * Writers for the four discrete SSH stages. The manual
@@ -2359,6 +2385,10 @@ export function spawnPty(
       // since once Claude is running we never want auto-writes again.
       if (data.length > 0 && !claudeRunning) {
         receivedAnyData = true
+        // Fresh output resets the auth-hold budget: the hold cap only counts
+        // CONSECUTIVE quiet fallback fires, so a genuinely waiting prompt that
+        // repaints keeps its full hold window.
+        authHoldFires = 0
         armIdleFallback()
       }
 
