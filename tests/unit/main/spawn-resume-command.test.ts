@@ -16,7 +16,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
-import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath } from '../../../src/main/spawn-claude-command'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath } from '../../../src/main/spawn-claude-command'
 
 const CWD = 'F:\\proj\\worktree'
 const CLAUDE = 'C:\\bin\\claude.cmd'
@@ -397,6 +397,207 @@ describe('resolveResumeLaunch — gate', () => {
   it('FIX 4: a canonical uuid still passes the new guard (no regression)', () => {
     const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps())
     expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(REAL_CWD) })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// recoverOrphanResumeLaunch — resume across a pruned worktree cwd (#535)
+// ---------------------------------------------------------------------------
+//
+// When a session ran in a git worktree that has since been deleted,
+// resolveResumeLaunch returns null (the raw cwd is gone) but the transcript
+// still lives under the worktree's mangled project folder. This helper relocates
+// that orphaned transcript into the surviving configured cwd's folder and resumes
+// there. It must fire ONLY for the genuine orphan case and fail CLOSED to null.
+describe('recoverOrphanResumeLaunch — pruned-worktree recovery', () => {
+  // Build paths from an ABSOLUTE, cross-platform base (os.tmpdir()) so the
+  // projectsRoot-containment check (which compares a path.resolve()d absolute
+  // path against projectsRoot) behaves identically on win32 and POSIX. Windows
+  // path literals like 'F:\\repo' are NOT absolute on POSIX — path.resolve()
+  // prepends the cwd there, breaking the startsWith() containment and failing
+  // these tests only on the macOS CI leg (the #535 review's cross-platform trap).
+  const HOME = path.join(os.tmpdir(), 'ccc535-home')
+  const PROJECTS_ROOT = path.join(HOME, '.claude', 'projects')
+  const T_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const REPO = path.join(os.tmpdir(), 'ccc535-repo')
+  const DEAD_WT = path.join(REPO, '.claude', 'worktrees', 'session-x')  // pruned worktree
+  const SURVIVING = REPO                                                // configured repo root, still present
+  const mangle = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
+  const transcriptOf = (cwd: string) => path.join(PROJECTS_ROOT, mangle(cwd), `${T_UUID}.jsonl`)
+
+  interface Spies {
+    renameFile: ReturnType<typeof vi.fn>
+    copyFile: ReturnType<typeof vi.fn>
+    removeFile: ReturnType<typeof vi.fn>
+    mkdirp: ReturnType<typeof vi.fn>
+    ensureCompanionDir: ReturnType<typeof vi.fn>
+    warn: ReturnType<typeof vi.fn>
+  }
+  const PID = 4242
+  function makeDeps(opts: {
+    existsPaths?: Set<string>
+    dirPaths?: Set<string>
+    isHomeOrAncestor?: (cwd: string) => boolean
+    mangleCwdToProjectDir?: (cwd: string) => string
+    renameFile?: (src: string, dst: string) => void
+    copyFile?: (src: string, dst: string) => void
+    removeFile?: (p: string) => void
+    projectsRoot?: string
+  } = {}): { deps: any; spies: Spies } {
+    const exists = opts.existsPaths
+    const dirs = opts.dirPaths
+    const spies: Spies = {
+      renameFile: vi.fn(opts.renameFile),
+      copyFile: vi.fn(opts.copyFile),
+      removeFile: vi.fn(opts.removeFile),
+      mkdirp: vi.fn(),
+      ensureCompanionDir: vi.fn(),
+      warn: vi.fn(),
+    }
+    const deps = {
+      existsSync: (p: string) => (exists ? exists.has(p) : true),
+      statSync: (p: string) => ({ isDirectory: () => (dirs ? dirs.has(p) : true) }),
+      mkdirp: spies.mkdirp,
+      renameFile: spies.renameFile,
+      copyFile: spies.copyFile,
+      removeFile: spies.removeFile,
+      pid: () => PID,
+      warn: spies.warn,
+      homedir: () => HOME,
+      mangleCwdToProjectDir: opts.mangleCwdToProjectDir ?? mangle,
+      projectsRoot: opts.projectsRoot ?? PROJECTS_ROOT,
+      isHomeOrAncestor: opts.isHomeOrAncestor ?? (() => false),
+      ensureCompanionDir: spies.ensureCompanionDir,
+    }
+    return { deps, spies }
+  }
+  const destTranscriptPath = () => path.join(PROJECTS_ROOT, mangle(path.resolve(SURVIVING)), `${T_UUID}.jsonl`)
+
+  it('happy path: dead worktree + surviving cwd + orphan transcript → relocates and resumes in surviving cwd', () => {
+    // Everything exists EXCEPT the dead worktree dir; dest folder has no transcript yet.
+    const existsPaths = new Set<string>([
+      path.resolve(SURVIVING),
+      transcriptOf(DEAD_WT),
+      // DEAD_WT absent (pruned); dest transcript absent
+    ])
+    const { deps, spies } = makeDeps({ existsPaths, dirPaths: new Set([path.resolve(SURVIVING)]) })
+    const out = recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(SURVIVING) })
+    expect(spies.mkdirp).toHaveBeenCalledWith(path.resolve(path.join(PROJECTS_ROOT, mangle(path.resolve(SURVIVING)))))
+    expect(spies.renameFile).toHaveBeenCalledWith(transcriptOf(DEAD_WT), path.join(PROJECTS_ROOT, mangle(path.resolve(SURVIVING)), `${T_UUID}.jsonl`))
+    expect(spies.ensureCompanionDir).toHaveBeenCalledTimes(1)
+  })
+
+  it('NOT an orphan: the target cwd still exists → null, relocates nothing', () => {
+    const existsPaths = new Set<string>([
+      path.resolve(SURVIVING),
+      path.resolve(DEAD_WT),          // still present → resolveResumeLaunch failed for another reason
+      transcriptOf(DEAD_WT),
+    ])
+    const { deps, spies } = makeDeps({ existsPaths })
+    const out = recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)
+    expect(out).toBeNull()
+    expect(spies.renameFile).not.toHaveBeenCalled()
+  })
+
+  it('refuses to relocate into home or an ancestor of home', () => {
+    const existsPaths = new Set<string>([path.resolve(SURVIVING), transcriptOf(DEAD_WT)])
+    const { deps, spies } = makeDeps({ existsPaths, isHomeOrAncestor: () => true })
+    const out = recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)
+    expect(out).toBeNull()
+    expect(spies.renameFile).not.toHaveBeenCalled()
+  })
+
+  it('surviving cwd missing → null', () => {
+    const existsPaths = new Set<string>([transcriptOf(DEAD_WT)]) // SURVIVING absent
+    const { deps } = makeDeps({ existsPaths })
+    expect(recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)).toBeNull()
+  })
+
+  it('orphan transcript missing → null (no conversation to recover)', () => {
+    const existsPaths = new Set<string>([path.resolve(SURVIVING)]) // transcript absent
+    const { deps, spies } = makeDeps({ existsPaths })
+    expect(recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)).toBeNull()
+    expect(spies.renameFile).not.toHaveBeenCalled()
+  })
+
+  it('non-UUID uuid → null, builds no path', () => {
+    const { deps } = makeDeps()
+    expect(recoverOrphanResumeLaunch({ uuid: '$(rm -rf /)', cwd: DEAD_WT }, SURVIVING, deps)).toBeNull()
+  })
+
+  it('SECURITY (adv #535): an existing destination transcript is NEVER overwritten — resume in place', () => {
+    // The orphan source path derives from target.cwd (transcript content, not
+    // trusted). If a transcript for this uuid already exists at the destination,
+    // that IS the conversation — resume it, move nothing, whatever the sizes.
+    const existsPaths = new Set<string>([path.resolve(SURVIVING), transcriptOf(DEAD_WT), destTranscriptPath()])
+    const { deps, spies } = makeDeps({ existsPaths })
+    const out = recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(SURVIVING) })
+    expect(spies.renameFile).not.toHaveBeenCalled()
+    expect(spies.copyFile).not.toHaveBeenCalled()
+  })
+
+  it('cross-device rename → copies to a SAME-DIR temp, renames temp→dst, removes source (no partial at the uuid name)', () => {
+    const dst = destTranscriptPath()
+    const tmp = `${dst}.partial-${PID}`
+    // The initial same-name rename throws EXDEV; the temp→dst rename succeeds.
+    const renameFile = vi.fn((src: string, d: string) => { if (d === dst && src === transcriptOf(DEAD_WT)) throw new Error('EXDEV') })
+    const existsPaths = new Set<string>([path.resolve(SURVIVING), transcriptOf(DEAD_WT)])
+    const { deps, spies } = makeDeps({ existsPaths, renameFile })
+    const out = recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(SURVIVING) })
+    expect(spies.copyFile).toHaveBeenCalledWith(transcriptOf(DEAD_WT), tmp)
+    expect(spies.renameFile).toHaveBeenCalledWith(tmp, dst)
+    expect(spies.removeFile).toHaveBeenCalledWith(transcriptOf(DEAD_WT))
+  })
+
+  it('partial copy (copyFile throws) → removes the temp and fails CLOSED to null (no file at the uuid name)', () => {
+    const dst = destTranscriptPath()
+    const tmp = `${dst}.partial-${PID}`
+    const renameFile = vi.fn((_src: string, d: string) => { if (d === dst) throw new Error('EXDEV') })
+    const copyFile = vi.fn(() => { throw new Error('ENOSPC') })
+    const existsPaths = new Set<string>([path.resolve(SURVIVING), transcriptOf(DEAD_WT)])
+    const { deps, spies } = makeDeps({ existsPaths, renameFile, copyFile })
+    const out = recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)
+    expect(out).toBeNull()                                   // fail closed → caller launches fresh
+    expect(spies.removeFile).toHaveBeenCalledWith(tmp)       // partial temp cleaned up
+    // dst (the <uuid>.jsonl name the heuristic binder scans) was never written
+    expect(spies.renameFile).not.toHaveBeenCalledWith(tmp, dst)
+  })
+
+  it('source unlink fails after a successful copy → WARNS and still resumes (non-fatal leak)', () => {
+    const dst = destTranscriptPath()
+    const renameFile = vi.fn((src: string, d: string) => { if (d === dst && src === transcriptOf(DEAD_WT)) throw new Error('EXDEV') })
+    const removeFile = vi.fn((p: string) => { if (p === transcriptOf(DEAD_WT)) throw new Error('EBUSY') })
+    const existsPaths = new Set<string>([path.resolve(SURVIVING), transcriptOf(DEAD_WT)])
+    const { deps, spies } = makeDeps({ existsPaths, renameFile, removeFile })
+    const out = recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(SURVIVING) })
+    expect(spies.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('containment: a mangle that escapes projectsRoot is refused (defense in depth)', () => {
+    // A malicious/buggy mangle returning a traversal must not let the move touch
+    // a path outside ~/.claude/projects.
+    const evilMangle = () => '..\\..\\Windows\\System32'
+    const existsPaths = new Set<string>([path.resolve(SURVIVING), transcriptOf(DEAD_WT)])
+    const { deps, spies } = makeDeps({ existsPaths, mangleCwdToProjectDir: evilMangle })
+    const out = recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)
+    expect(out).toBeNull()
+    expect(spies.renameFile).not.toHaveBeenCalled()
+  })
+
+  it('fails open (null) when a dep throws', () => {
+    const deps = {
+      existsSync: () => { throw new Error('boom') },
+      statSync: () => ({ isDirectory: () => true }),
+      mkdirp: vi.fn(), renameFile: vi.fn(), copyFile: vi.fn(), removeFile: vi.fn(),
+      pid: () => 1, warn: vi.fn(),
+      homedir: () => HOME, mangleCwdToProjectDir: mangle, projectsRoot: PROJECTS_ROOT,
+      isHomeOrAncestor: () => false, ensureCompanionDir: vi.fn(),
+    }
+    expect(recoverOrphanResumeLaunch({ uuid: T_UUID, cwd: DEAD_WT }, SURVIVING, deps)).toBeNull()
   })
 })
 

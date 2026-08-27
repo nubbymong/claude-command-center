@@ -241,6 +241,166 @@ export function resolveResumeLaunch(
 }
 
 // ---------------------------------------------------------------------------
+// recoverOrphanResumeLaunch — resume a conversation whose worktree cwd is gone (#535)
+// ---------------------------------------------------------------------------
+
+/**
+ * Injectable deps for {@link recoverOrphanResumeLaunch}. Production wraps node
+ * fs/os + path-utils; tests pass in-memory fakes so the relocation logic is
+ * unit-testable WITHOUT touching disk.
+ */
+export interface RecoverOrphanDeps {
+  existsSync: (p: string) => boolean
+  statSync: (p: string) => { isDirectory: () => boolean }
+  /** Recursively create a directory (mkdir -p). */
+  mkdirp: (dir: string) => void
+  /** Move a file (rename); may throw on cross-device, caller falls back to copy. */
+  renameFile: (src: string, dst: string) => void
+  /** Copy a file (cross-device fallback for renameFile). */
+  copyFile: (src: string, dst: string) => void
+  /** Best-effort unlink; must not throw fatally. */
+  removeFile: (p: string) => void
+  /** Current process id — makes the copy-fallback temp name unique. */
+  pid: () => number
+  /** Non-fatal diagnostic (e.g. a source that could not be removed post-copy). */
+  warn: (msg: string) => void
+  homedir: () => string
+  mangleCwdToProjectDir: (cwd: string) => string
+  /** Canonical `~/.claude/projects` root. */
+  projectsRoot: string
+  /** True when `cwd` IS or is an ANCESTOR of the user's home dir — never relocate there. */
+  isHomeOrAncestor: (cwd: string) => boolean
+  ensureCompanionDir: (projectDir: string, uuid: string) => void
+}
+
+/**
+ * Recover a resume whose ORIGINAL cwd (a git worktree) has been deleted (#535).
+ *
+ * {@link resolveResumeLaunch} deliberately returns null when the captured cwd
+ * is gone — it never retargets homedir. But a session that ran in a worktree
+ * created by session-guard / the loop system (ADR-012 / #522) has its transcript
+ * written under the worktree's mangled project folder, which SURVIVES the
+ * worktree deletion (the `~/.claude/projects/<mangle>/…` tree is a separate
+ * location from the git worktree on disk). The conversation is therefore intact
+ * but unreachable: `claude --resume <uuid>` looks in `<mangle(launchCwd)>/`, and
+ * no surviving cwd mangles to the dead worktree's folder.
+ *
+ * This recovers it by RELOCATING the orphaned `<uuid>.jsonl` into the surviving
+ * cwd's (the session's configured repo root) mangled folder, then resuming there.
+ *
+ * Applies ONLY to the genuine orphan case, and fails CLOSED to null (→ caller's
+ * fresh fallback) on anything else. ALL must hold:
+ *   - target present, uuid matches the canonical UUID format;
+ *   - the target's RAW cwd is MISSING (this is what makes it an orphan — if it
+ *     exists, resolveResumeLaunch's null was for another reason; do not relocate);
+ *   - `survivingCwd` exists, is a directory, and is NOT home or an ancestor of it
+ *     (never relocate a transcript into ~/.claude/projects/<mangle(home)>);
+ *   - the orphan transcript `projectsRoot/<mangle(targetCwd)>/<uuid>.jsonl` exists
+ *     and resolves INSIDE projectsRoot (containment — defense in depth);
+ *   - the destination path also resolves INSIDE projectsRoot.
+ *
+ * Collision rule (adversarial review #535): if a transcript ALREADY exists at
+ * the destination, that IS the conversation for this uuid in this project —
+ * resume it IN PLACE and NEVER overwrite it. The orphan source path is derived
+ * from `target.cwd` (transcript content, not a trusted value), so a size-compare
+ * "keep-larger" overwrite would let a planted duplicate clobber a live, possibly
+ * different conversation. Relocation only ever writes into an EMPTY dest slot.
+ *
+ * Returns `{ resumeUuid, claudeCwd }` (claudeCwd = the surviving cwd) or null.
+ */
+export function recoverOrphanResumeLaunch(
+  target: ResumeTarget | undefined,
+  survivingCwd: string,
+  deps: RecoverOrphanDeps,
+): { resumeUuid: string; claudeCwd: string } | null {
+  try {
+    if (!target || !target.uuid || !target.cwd) return null
+    if (!UUID_RE.test(target.uuid)) return null
+    if (!survivingCwd) return null
+
+    const home = deps.homedir()
+
+    // Expand a leading `~` in the target cwd the same way resolveResumeLaunch does.
+    let rawTargetCwd: string
+    if (target.cwd === '~') rawTargetCwd = home
+    else if (target.cwd.startsWith('~/') || target.cwd.startsWith('~\\')) rawTargetCwd = nodePath.join(home, target.cwd.slice(2))
+    else rawTargetCwd = nodePath.resolve(target.cwd)
+
+    // ORPHAN GATE: recovery applies ONLY when the original cwd is gone. If it
+    // still exists, resolveResumeLaunch failed for another reason (e.g. the
+    // transcript was pruned) and relocating would be wrong.
+    if (deps.existsSync(rawTargetCwd)) return null
+
+    // The surviving cwd must be a real directory and MUST NOT be home/an ancestor.
+    const survivingResolved = nodePath.resolve(survivingCwd)
+    if (!deps.existsSync(survivingResolved)) return null
+    if (!deps.statSync(survivingResolved).isDirectory()) return null
+    if (deps.isHomeOrAncestor(survivingResolved)) return null
+
+    const rootWithSep = deps.projectsRoot.endsWith(nodePath.sep) ? deps.projectsRoot : deps.projectsRoot + nodePath.sep
+    const contained = (p: string): boolean => p === deps.projectsRoot || p.startsWith(rootWithSep)
+
+    const orphanDir = nodePath.resolve(nodePath.join(deps.projectsRoot, deps.mangleCwdToProjectDir(target.cwd)))
+    const orphanTranscript = nodePath.join(orphanDir, `${target.uuid}.jsonl`)
+    if (!contained(orphanDir)) return null
+    if (!deps.existsSync(orphanTranscript)) return null
+
+    const destDir = nodePath.resolve(nodePath.join(deps.projectsRoot, deps.mangleCwdToProjectDir(survivingResolved)))
+    const destTranscript = nodePath.join(destDir, `${target.uuid}.jsonl`)
+    if (!contained(destDir)) return null
+
+    // Relocate ONLY into an empty destination slot. If the source already sits
+    // in the destination folder (the surviving cwd mangles to the same place), or
+    // a transcript for this uuid already exists there, resume in place and move
+    // nothing — never overwrite a live transcript (see the collision rule above).
+    if (destTranscript !== orphanTranscript && !deps.existsSync(destTranscript)) {
+      deps.mkdirp(destDir)
+      relocate(orphanTranscript, destTranscript, deps)
+    }
+
+    try { deps.ensureCompanionDir(destDir, target.uuid) } catch { /* best-effort */ }
+
+    return { resumeUuid: target.uuid, claudeCwd: survivingResolved }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Move src→dst. Caller guarantees dst does not yet exist.
+ *
+ * Prefer an atomic same-name rename. On cross-device (EXDEV) or a locked source,
+ * copy to a SAME-DIRECTORY temp sibling and rename THAT into place — so a partial
+ * copy never lands at the `<uuid>.jsonl` name the heuristic binder scans (adv
+ * review #535). The temp is a sibling of dst, so the final rename is same-device.
+ * On any copy failure the partial temp is removed before the error propagates
+ * (the outer catch in recoverOrphanResumeLaunch then fails the recovery closed).
+ * A source that cannot be unlinked after a successful copy is a non-fatal leak —
+ * warn, do not throw (resume already has a correct destination).
+ */
+function relocate(src: string, dst: string, deps: RecoverOrphanDeps): void {
+  try {
+    deps.renameFile(src, dst)
+    return
+  } catch {
+    // fall through to the copy fallback
+  }
+  const tmp = `${dst}.partial-${deps.pid()}`
+  try {
+    deps.copyFile(src, tmp)
+    deps.renameFile(tmp, dst)
+  } catch (e) {
+    try { deps.removeFile(tmp) } catch { /* best-effort cleanup */ }
+    throw e
+  }
+  try {
+    deps.removeFile(src)
+  } catch {
+    deps.warn(`[resume] orphan recovery: copied transcript to ${dst} but could not remove the source ${src} (left in place)`)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // buildResumeTranscriptPath — deterministic resume-bind path (Part A)
 // ---------------------------------------------------------------------------
 
