@@ -255,6 +255,25 @@ describe('spawnPty SSH branch — writeClaudeCmd tmux wrapping (#242)', () => {
     expect(written).toContain(`COLORFGBG='\\''15;0'\\'' `)
   })
 
+  // #546: classic terminal copy/paste is default-on (readConfig returns null in
+  // this harness, so `classicTerminalCopyPaste !== false` holds), so the remote
+  // launch must carry CLAUDE_CODE_DISABLE_MOUSE=1 + DISABLE_ALTERNATE_SCREEN=1 —
+  // the same env the LOCAL spawn sets (buildClaudeLocalSpawn) so xterm owns the
+  // mouse and drag-selection/right-click copy work over SSH just like locally.
+  // Mutation to prove this can fail: drop either token from claudeEnvVars in
+  // pty-manager.ts — the remote Claude keeps mouse tracking on, xterm forwards
+  // the drag, and selection is dead (the exact #546 symptom). The tokens ride
+  // inside the single-quoted tmux inner command, so they are present regardless
+  // of the wrap.
+  it('#546: default classic mode puts CLAUDE_CODE_DISABLE_MOUSE + DISABLE_ALTERNATE_SCREEN on the remote launch', () => {
+    driveToClaudeWrite('s-546-mouse-default', 'setup ok {NONCE} tmux=path\r\n')
+    const claudeWrite = writeMock.mock.calls.find((c) => typeof c[0] === 'string' && c[0].includes('claude '))
+    expect(claudeWrite).toBeDefined()
+    const written = claudeWrite![0] as string
+    expect(written).toContain('CLAUDE_CODE_DISABLE_MOUSE=1')
+    expect(written).toContain('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1')
+  })
+
   // #242 round-3 correction (I3): tier 2 (a pre-existing ~/.claude/bin/tmux)
   // shares the SAME fixed launch token as tier 3/4 -- STAGED_TMUX_BIN_EXPR --
   // since all three install/detect at the identical remote location.
