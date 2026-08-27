@@ -66,8 +66,12 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const silentSince = useSleepStore((s) => s.silentSince[session.id])
   const dismissedAt = useSleepStore((s) => s.attentionDismissedAt[session.id])
   useSleepStore((s) => s.graceTick)
+  // The raw store flag joins the prop: at the dismissal click the prop goes
+  // false before the passive effect stamps the grace, so the prop alone would
+  // flash the moon for one frame between those two moments.
   const asleep =
-    isClaudeSession && isAsleep({ silentSince, dismissedAt, needsAttention, now: Date.now() })
+    isClaudeSession &&
+    isAsleep({ silentSince, dismissedAt, needsAttention: needsAttention || session.needsAttention === true, now: Date.now() })
   const providerLabel = session.shellOnly ? 'shell' : (session.provider ?? 'claude')
   const metaLine = `${session.modelName ?? session.model ?? ''}${providerLabel ? ` · ${providerLabel}` : ''}`.trim()
 
