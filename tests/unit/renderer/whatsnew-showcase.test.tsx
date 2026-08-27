@@ -326,7 +326,7 @@ describe('#525 — the rename/roadmap page', () => {
     expect(q('rename-where')).toBeNull()
   })
 
-  it('post-rename upgraders never see it; fresh installs DO, under a Welcome lead-in', () => {
+  it('stable-channel post-rename upgraders never see it; fresh installs DO, under a Welcome lead-in', () => {
     render() // default meta: 2.1.0-beta.17 — lived through the rename
     expect(q('rename-page')).toBeNull()
     expect(q('whatsnew-dot-rename')).toBeNull()

@@ -1,5 +1,5 @@
 import type { UpdateChannel } from '../stores/settingsStore'
-import { releaseLine as sharedReleaseLine } from '../../shared/version-order'
+import { releaseLine as sharedReleaseLine, isPrerelease } from '../../shared/version-order'
 import { channelForVersion } from '../../shared/build-identity'
 
 // "current installed version + channel" label for the update UI -- the Settings
@@ -36,8 +36,7 @@ export function releaseLine(version: string): string {
  * stays the conservative one.
  */
 export function isPrereleaseVersion(version: string): boolean {
-  const m = /^v?\d+\.\d+\.\d+(?:-([0-9A-Za-z][0-9A-Za-z.-]*))?/.exec(String(version || '').trim())
-  return !!m && !!m[1]
+  return isPrerelease(String(version || ''))
 }
 
 /**
