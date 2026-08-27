@@ -458,6 +458,22 @@ function loadWorkNames(configDir) {
   return map
 }
 
+// ── CCC name sidecar (#536) ─────────────────────────────────────────
+// A CCC-owned `<uuid>.ccc-name.json` sibling of the transcript carries the
+// user's session name durably — written by main on rename / exact-bind. Prefer
+// it over loadWorkNames(): the sidecar sits next to the exact transcript, so it
+// survives the session-state.json last-writer-wins uuid->name collision and any
+// worktree / cross-account move of the projects tree. FAIL-SAFE → null.
+function readSidecarName(transcriptFilePath) {
+  try {
+    if (typeof transcriptFilePath !== 'string' || !transcriptFilePath.endsWith('.jsonl')) return null
+    const p = transcriptFilePath.slice(0, -'.jsonl'.length) + '.ccc-name.json'
+    const parsed = JSON.parse(fs.readFileSync(p, 'utf-8'))
+    const name = parsed && typeof parsed.name === 'string' ? parsed.name.trim() : ''
+    return name || null
+  } catch { return null }
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 async function main() {
   const cwd = process.cwd()
@@ -504,7 +520,7 @@ async function main() {
   for (let i = 0; i < conversations.length; i++) {
     const conv = conversations[i]
     const num = String(i + 1).padStart(2)
-    const workName = workNames.get(conv.sessionId)
+    const workName = readSidecarName(conv.filePath) || workNames.get(conv.sessionId)
     // Best available label, most→least useful: the user's own work name, then
     // Claude's AI title, then the first real user message, then the last prompt,
     // then the most recent user message. "(continued session)" only when the
@@ -720,6 +736,7 @@ module.exports = {
   parseConversation,
   computeLayoutWidth,
   loadWorkNames,
+  readSidecarName,
   sanitizeMessageText,
 }
 

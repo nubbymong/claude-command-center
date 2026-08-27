@@ -88,6 +88,13 @@ export interface TranscriptBinderDeps {
    * the transcripts.db worker). Defaults to a no-op.
    */
   persist?: (sessionId: string, canonicalPath: string, uuid: string) => void
+  /**
+   * #536: fired on every committed EXACT bind with the canonical transcript
+   * path, so a name remembered for this session (before its transcript was
+   * known) can be written to the `<uuid>.ccc-name.json` sidecar the moment the
+   * path becomes available. Fire-and-forget; keeps the binder pure. No-op default.
+   */
+  onExactBind?: (sessionId: string, canonicalPath: string) => void
 }
 
 const DEFAULT_DEBOUNCE_MS = 250
@@ -145,6 +152,7 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
   const heuristicRetryCap = deps.heuristicRetryCap ?? DEFAULT_HEURISTIC_RETRY_CAP
   const log = deps.log ?? (() => { /* no-op */ })
   const persist = deps.persist ?? (() => { /* no-op */ })
+  const onExactBind = deps.onExactBind ?? (() => { /* no-op */ })
 
   const sessions = new Map<string, SessionState>()
 
@@ -299,6 +307,8 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
     // #480: durable record, keyed by sessionId, of the exact conversation — the
     // authenticated source of truth for restart resume.
     if (uuid) persist(sessionId, canonical, uuid)
+    // #536: the transcript path is now known — write any pending CCC name sidecar.
+    onExactBind(sessionId, canonical)
     log(`[binder] exact bind committed sid=${sessionId} path=${canonical}`)
   }
 

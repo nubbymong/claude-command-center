@@ -25,6 +25,7 @@ import { makeTranscriptBinder } from './transcript-binder'
 import type { TranscriptBinder } from './transcript-binder'
 import { readConfig } from '../config-manager'
 import { logInfo } from '../debug-logger'
+import { getRememberedName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps } from './session-name-sidecar'
 
 // Module-level singleton. Null until initLogging() runs, and stays null when
 // logging is disabled (no fork, no worker, no native dep loaded).
@@ -67,6 +68,17 @@ export function initLogging(opts: {
     supervisor: sup,
     log: logInfo,
     persist: (sessionId, path, uuid) => sup.persistSessionConversation(sessionId, path, uuid),
+    // #536: when the exact transcript path becomes known, flush any CCC name that
+    // was set for this session (e.g. renamed before the bind) to its sidecar, then
+    // RETIRE the pending entry. Retiring here (a) stops the name bleeding onto the
+    // next conversation this card binds after a /clear rotates the uuid, and
+    // (b) bounds the registry — a later rename writes directly via the now-known
+    // exact path and needs no pending entry.
+    onExactBind: (sessionId, path) => {
+      const name = getRememberedName(sessionId)
+      if (name) writeNameSidecar(path, name, nodeNameSidecarDeps)
+      forgetSessionName(sessionId)
+    },
   })
 }
 

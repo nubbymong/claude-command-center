@@ -21,7 +21,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
-import { getLogSupervisor } from '../logging/logging-service'
+import { getLogSupervisor, getTranscriptBinder } from '../logging/logging-service'
+import { rememberSessionName, forgetSessionName, writeNameSidecar, nodeNameSidecarDeps } from '../logging/session-name-sidecar'
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -70,7 +71,7 @@ const searchSchema = z
 const deleteSlotSchema = z.object({ scope: scopeSchema }).strict()
 
 const renameSessionSchema = z
-  .object({ sessionId: z.string().min(1).max(200), configLabel: z.string().max(200) })
+  .object({ sessionId: z.string().min(1).max(200), configLabel: z.string().max(200), customName: z.string().max(200).optional() })
   .strict()
 
 const ingestStatusSchema = z.object({ sessionId: z.string().min(1).max(200) }).strict()
@@ -133,8 +134,28 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
   // logs/history tab reflects the custom work name durably. Fire-and-forget post
   // (buffered in the supervisor); no-op when logging is disabled.
   ipcMain.handle(IPC.LOGS2_RENAME_SESSION, async (_e, args: unknown) => {
-    const { sessionId, configLabel } = renameSessionSchema.parse(args)
+    const { sessionId, configLabel, customName } = renameSessionSchema.parse(args)
     getLogSupervisor()?.renameRun(sessionId, configLabel)
+    // #536: carry the user's OWN work name (customName, NOT the generic config
+    // label) onto the transcript so it survives outside CCC and identifies the
+    // conversation on resume. An empty customName is a real "cleared" signal and
+    // removes the sidecar. Older preload builds omit customName → fall back to
+    // configLabel. Remember it (the exact-bind callback writes it once the path is
+    // known), and write now only against an EXACT bind — never a heuristic guess
+    // (which in a shared folder could be a sibling card's transcript). Best-effort.
+    const nameForSidecar = customName ?? configLabel
+    const exactPath = getTranscriptBinder()?.getExactResumeTarget(sessionId)
+    if (exactPath) {
+      // Already bound: write directly and DO NOT keep a pending entry — a lingering
+      // one would bleed this name onto the next conversation this session binds
+      // after a /clear rotates the uuid (adv review #536).
+      writeNameSidecar(exactPath, nameForSidecar, nodeNameSidecarDeps)
+      forgetSessionName(sessionId)
+    } else {
+      // Not bound yet: remember so onExactBind writes it once the path is known
+      // (a blank name clears the pending entry).
+      rememberSessionName(sessionId, nameForSidecar)
+    }
     return { ok: true }
   })
 

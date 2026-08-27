@@ -17,6 +17,7 @@ import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
 import { buildClaudeLaunchCommand, resolveResumeLaunch, recoverOrphanResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
+import { forgetSessionName } from './logging/session-name-sidecar'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemoteTmuxKillCommand, getWindowsRemoteSetupCommand, buildWindowsClaudeCommand } from './providers/claude/ssh-shim'
@@ -3454,6 +3455,9 @@ export function spawnPty(
       // Logs v2 (Task 8): cancel any pending heuristic timer + clear the binder's
       // per-session bind state so a reused sessionId (restart) binds fresh.
       getTranscriptBinder()?.endRun(sessionId)
+      // #536: retire any remembered CCC name so a renamed-but-never-bound session
+      // does not leak an entry in the pending-name registry for the process life.
+      forgetSessionName(sessionId)
       getPtyIntegrityMonitor()?.endSession(sessionId)
       // (watchdog teardown now lives UNCONDITIONALLY in cleanupSessionResources
       //  below — see FINDING 1 — so the restart-race stale exit tears it down too)

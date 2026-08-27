@@ -265,11 +265,15 @@ describe('sessionStore', () => {
       useSessionStore.getState().addSession(makeSession({ id: 'a', label: 'Config A' }))
 
       useSessionStore.getState().renameSession('a', 'Boot perf')
-      expect(renameSessionIpc).toHaveBeenCalledWith({ sessionId: 'a', configLabel: 'Boot perf' })
+      // #536: customName (the user's own work name) rides alongside configLabel so
+      // the transcript sidecar carries the work name, never the generic config label.
+      expect(renameSessionIpc).toHaveBeenCalledWith({ sessionId: 'a', configLabel: 'Boot perf', customName: 'Boot perf' })
 
       // Blank => effective label falls back to the config label.
       useSessionStore.getState().renameSession('a', '   ')
-      expect(renameSessionIpc).toHaveBeenLastCalledWith({ sessionId: 'a', configLabel: 'Config A' })
+      // A blank rename sends an EMPTY customName — the real "cleared" signal that
+      // removes the sidecar — while configLabel still falls back to the label.
+      expect(renameSessionIpc).toHaveBeenLastCalledWith({ sessionId: 'a', configLabel: 'Config A', customName: '' })
 
       delete (globalThis as any).window
     })
