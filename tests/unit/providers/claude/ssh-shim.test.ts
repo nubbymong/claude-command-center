@@ -667,4 +667,18 @@ describe('buildWindowsClaudeCommand (item 3 — cmd.exe launch)', () => {
     expect(cmd).not.toContain('--continue')
     expect(cmd).not.toContain('  ')
   })
+  // #546: the classic-copy/paste mouse vars ride the SAME envPrefixVars array on
+  // a Windows remote. Pin that the two specific tokens survive the cmd set-syntax
+  // mapping (pure [A-Z_]+=1, no cmd metachar) so a Windows SSH session gets the
+  // same xterm-owns-the-mouse launch as POSIX.
+  it('maps the #546 classic-copy/paste mouse tokens into cmd set-syntax', () => {
+    const cmd = buildWindowsClaudeCommand({
+      sessionId: 'winsid',
+      envPrefixVars: ['CLAUDE_CODE_DISABLE_MOUSE=1', 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1'],
+      extraFlags: '',
+      continueFlag: '',
+    })
+    expect(cmd).toContain('set "CLAUDE_CODE_DISABLE_MOUSE=1"&& ')
+    expect(cmd).toContain('set "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1"&& ')
+  })
 })

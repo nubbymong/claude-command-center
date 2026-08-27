@@ -1450,8 +1450,17 @@ export function spawnPty(
     // Clickable question options (CC >= 2.1.195) default OFF in CCC -- the
     // clickable layer misfires inside xterm.js. Read fresh per spawn so the
     // Settings toggle applies to the next session without a restart.
-    const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean; theme?: string }>('settings')
+    const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean; theme?: string; classicTerminalCopyPaste?: boolean }>('settings')
     const clickableQuestions = spawnCfg?.clickableQuestions === true
+    // #546: classic terminal copy/paste (default on) must reach the REMOTE Claude
+    // too. The local spawn sets CLAUDE_CODE_DISABLE_MOUSE=1 +
+    // CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 (spawn.ts) so xterm owns the mouse →
+    // classic drag-selection + right-click copy/paste. Over SSH the local env
+    // never crosses, so these ride the remote launch line as env-prefix tokens
+    // just like the sibling *_MOUSE_CLICKS var below. Without them the remote
+    // Claude keeps SGR mouse tracking on, xterm forwards drags to Claude, and
+    // selection is dead — no parity with a local session.
+    const classicTerminalCopyPaste = spawnCfg?.classicTerminalCopyPaste !== false
     // item 3: PROTOTYPE Windows remote. Isolated behind this flag; every branch
     // below falls back to the unchanged POSIX path for auto/unix/undefined.
     const isWindowsRemote = ssh.remoteOs === 'windows'
@@ -1464,6 +1473,9 @@ export function spawnPty(
     const sshHostColorScheme = resolveHostColorScheme(spawnCfg?.theme, nativeTheme.shouldUseDarkColors)
     const claudeEnvVars = [
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
+      // #546: mirror buildClaudeLocalSpawn — classic mode → xterm owns the mouse.
+      classicTerminalCopyPaste ? 'CLAUDE_CODE_DISABLE_MOUSE=1' : '',
+      classicTerminalCopyPaste ? 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1' : '',
       clickableQuestions ? '' : 'CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1',
       spawnCfg?.disableBackgroundTasks !== false ? 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1' : '',
       colorFgBgEnvToken(sshHostColorScheme, isWindowsRemote ? 'windows-cmd' : 'posix'),
