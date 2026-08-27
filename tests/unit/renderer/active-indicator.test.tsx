@@ -137,6 +137,7 @@ describe('SessionRow — the sweep, precedence and Claude-only gate', () => {
     onRenameCancel: () => {}, onClick: () => {}, onContextMenu: () => {},
   }
   const fill = () => container.querySelector('[data-testid="context-meter-fill"]') as HTMLElement | null
+  const wbadge = () => container.querySelector('[data-testid="working-badge"]')
 
   beforeEach(() => {
     useActiveStore.setState({ activeIds: new Set() })
@@ -153,36 +154,42 @@ describe('SessionRow — the sweep, precedence and Claude-only gate', () => {
   const render = (session: Session, props: any = {}) =>
     act(() => { root.render(createElement(SessionRow, { session, ...baseProps, ...props })) })
 
-  it('a moving Claude session gets the sweep class', () => {
+  it('a moving Claude session gets the sweep AND the working pill', () => {
     useActiveStore.setState({ activeIds: new Set(['s1']) })
     render(makeSession())
     expect(fill()?.className).toContain('meter-active')
     expect(fill()?.getAttribute('data-active')).toBe('true')
+    expect(wbadge()).not.toBeNull()
   })
 
-  it('no sweep when the session is not moving', () => {
+  it('no sweep and no pill when the session is not moving', () => {
     render(makeSession())
     expect(fill()?.className).not.toContain('meter-active')
+    expect(wbadge()).toBeNull()
   })
 
-  it('ATTENTION suppresses the sweep', () => {
+  it('ATTENTION suppresses the sweep and the pill', () => {
     useActiveStore.setState({ activeIds: new Set(['s1']) })
     render(makeSession(), { needsAttention: true })
     expect(fill()?.className).not.toContain('meter-active')
+    expect(wbadge()).toBeNull()
   })
 
-  it('SLEEP suppresses the sweep (mutual exclusion enforced at the row)', () => {
+  it('SLEEP suppresses the sweep and the pill (mutual exclusion; moon shows instead)', () => {
     useActiveStore.setState({ activeIds: new Set(['s1']) })
     useSleepStore.setState({ silentSince: { s1: Date.now() - 130_000 } })
     render(makeSession())
     expect(fill()?.className).not.toContain('meter-active')
+    expect(wbadge()).toBeNull()
+    expect(container.querySelector('[data-testid="moon-badge"]')).not.toBeNull()
   })
 
-  it('Claude only: a codex session never gets the sweep', () => {
+  it('Claude only: a codex session never gets the sweep or the pill', () => {
     useActiveStore.setState({ activeIds: new Set(['s1']) })
     render(makeSession({ provider: 'codex' }))
-    // codex still has a meter row, but never the active sweep
+    // codex still has a meter row, but never the active sweep or the working pill
     expect(fill()).not.toBeNull()
     expect(fill()?.className).not.toContain('meter-active')
+    expect(wbadge()).toBeNull()
   })
 })

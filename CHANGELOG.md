@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-rc.7] - 2026-08-27
+
+> The active-session indicator is easier to catch: a Claude session that is producing output now shows a green "working" pill beside its type badge — a gently pulsing play glyph — as well as the context-bar sweep, so a live session reads at a glance.
+
+### Changed
+- A working Claude session now shows a small green play pill next to its type badge, in the same slot as the sleep moon and gently pulsing, alongside the context-bar sweep from the previous build. It marks a Claude session that is actively producing output, honours reduced motion, and never appears while a session needs your attention or is asleep.
+
 ## [2.1.0-rc.6] - 2026-08-27
 
 > Session cards now show life at a glance: a Claude session that is actively producing output gets a subtle green sweep across its context bar, and one that has gone quiet gets a moon with how long it has been asleep — two live opposites that update as work flows and stops. Plus: beta testers now see the full What's New story on every prerelease build.
@@ -1366,6 +1373,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-rc.7]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.7
 [2.1.0-rc.6]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.6
 [2.1.0-rc.5]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.5
 [2.1.0-rc.4]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-rc.4

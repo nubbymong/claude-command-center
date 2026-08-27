@@ -1,6 +1,6 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { MoonBadge, SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge } from './Badges'
+import { MoonBadge, SessionTypeBadge, SshBadge, SshPersistentBadge, WatchdogBadge, WorkingBadge } from './Badges'
 import { isAsleep, useSleepStore } from '../../stores/sleepStore'
 import { useActiveStore } from '../../stores/activeStore'
 import { type SessionState } from '../ui/StatusDot'
@@ -196,8 +196,11 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
             full width back. */}
         {session.sessionType === 'ssh' && (session.sshTmuxPersistent === true ? <SshPersistentBadge /> : <SshBadge />)}
         {/* Moon BESIDE the type badge (variant B): the type mark stays — the
-            moon is additional Watchdog state, not a replacement identity. */}
+            moon is additional Watchdog state, not a replacement identity. The
+            working pill is its inverse and shares the slot (mutually exclusive:
+            asleep vs. moving). */}
         {asleep && silentSince != null && <MoonBadge sinceMs={silentSince} />}
+        {showActive && <WorkingBadge />}
         <SessionTypeBadge kind={session.shellOnly ? 'shell' : (session.provider ?? 'claude') === 'codex' ? 'codex' : 'claude'} />
         <WatchdogBadge watchdog={session.watchdog} />
         {/* Graceful-fail: show effort ONLY once a live tick (statusline / hooks)

@@ -158,6 +158,28 @@ export function MoonBadge({ sinceMs }: { sinceMs: number }) {
   )
 }
 
+/**
+ * Working session (owner call, 2026-08-27): the Claude session's PTY output is
+ * MOVING — the inverse of the moon, in the same slot (variant B) and at the
+ * same chip weight as every other badge (tinted, not bold). A green play glyph
+ * with a gentle pulse; the motion is what says "live". Gated in SessionRow
+ * (Claude-only, suppressed by attention and sleep — it can never co-occur with
+ * the moon). Pairs with the context-bar sweep, which stays.
+ */
+export function WorkingBadge() {
+  return (
+    <div
+      className="flex items-center justify-center h-4 px-1 rounded shrink-0 bg-green/20 text-green working-pill"
+      title="Claude is working — output is moving"
+      data-testid="working-badge"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        <path d="M8 5v14l11-7z" />
+      </svg>
+    </div>
+  )
+}
+
 function formatWatchdogCountdown(totalSeconds: number): string {
   if (totalSeconds >= 3600) return `${Math.round(totalSeconds / 3600)}h`
   if (totalSeconds >= 60) return `${Math.round(totalSeconds / 60)}m`

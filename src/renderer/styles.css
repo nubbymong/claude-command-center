@@ -437,6 +437,19 @@ input[type="range"] {
   .meter-fill.meter-active::after { animation: none; opacity: 0.4; width: 100%; }
 }
 
+/* Working pill (owner call, 2026-08-27): a gentle opacity pulse on the green
+   play chip while a Claude session is producing output. Same chip weight as the
+   other badges — the MOTION is the "live" signal, not extra colour or size.
+   Respects prefers-reduced-motion (the chip just holds). */
+.working-pill { animation: working-pill-pulse 1.6s ease-in-out infinite; }
+@keyframes working-pill-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .working-pill { animation: none; }
+}
+
 /* CommandBar quick-actions strip: expand-in for the command rows when the
    bar is un-collapsed. Kept inside the 150-300ms project window. The rows are
    removed from the DOM when collapsed, so only the open direction animates. */
