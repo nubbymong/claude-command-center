@@ -95,6 +95,21 @@ describe('TerminalContextMenu', () => {
     r.unmount()
   })
 
+  // #21: "Copy link address" appears only when a link is under the cursor, and
+  // fires onCopyLink with that URI.
+  it('shows "Copy link address" only when linkUri is set, and fires onCopyLink with it', () => {
+    const noLink = renderMenu({ linkUri: undefined })
+    expect(noLink.container.textContent).not.toContain('Copy link address')
+    noLink.unmount()
+
+    const onCopyLink = vi.fn()
+    const r = renderMenu({ linkUri: 'https://example.dev/x', onCopyLink })
+    const item = buttonByText(r.container, 'Copy link address')
+    act(() => { item.click() })
+    expect(onCopyLink).toHaveBeenCalledWith('https://example.dev/x')
+    r.unmount()
+  })
+
   it('closes on backdrop mousedown but NOT on mousedown inside the menu', () => {
     const onClose = vi.fn()
     const r = renderMenu({ onClose })

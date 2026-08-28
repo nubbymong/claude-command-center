@@ -12,6 +12,9 @@ interface Props {
   x: number
   y: number
   hasSelection: boolean
+  /** #21: the http/https link under the cursor, if any — enables "Copy link address". */
+  linkUri?: string
+  onCopyLink?: (uri: string) => void
   onCopy: () => void
   onPaste: () => void
   /** Repaint + geometry re-sync (#503) — the rescue for a pane something wrote
@@ -20,7 +23,7 @@ interface Props {
   onClose: () => void
 }
 
-export default function TerminalContextMenu({ x, y, hasSelection, onCopy, onPaste, onRepaint, onClose }: Props) {
+export default function TerminalContextMenu({ x, y, hasSelection, linkUri, onCopyLink, onCopy, onPaste, onRepaint, onClose }: Props) {
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Clamp into the viewport after first paint (below-right of the pointer when
@@ -75,6 +78,11 @@ export default function TerminalContextMenu({ x, y, hasSelection, onCopy, onPast
         style={{ left: x, top: y, opacity: 0, background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        {linkUri && onCopyLink && (
+          <button type="button" className={itemClass} onClick={() => onCopyLink(linkUri)} title={linkUri}>
+            <span>Copy link address</span>
+          </button>
+        )}
         <button type="button" className={itemClass} onClick={onCopy} disabled={!hasSelection}>
           <span>Copy</span>
           <span style={{ color: 'var(--text-muted)' }}>Ctrl+Shift+C</span>

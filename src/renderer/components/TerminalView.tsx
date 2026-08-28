@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import '@xterm/xterm/css/xterm.css'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type ILinkProvider } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { decorateTerminalLinks } from './terminal/terminalLinks'
 import { installWebglWithRecovery, createAtlasResync, type WebglHandle } from './terminal/terminalWebgl'
 import { atlasCoordinator } from './terminal/atlasCoordinator'
 import {
@@ -144,9 +145,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // Whether #145 input diagnostics are on, readable from the init effect's
   // long-lived onData closure.
   const inputDiagRef = useRef(false)
+  // #21: the http/https URI under the cursor, recorded by the link provider's
+  // hover/leave, so the right-click menu can offer "Copy link address" for the
+  // exact link the linkifier matched. null = cursor is not over a link.
+  const hoveredLinkRef = useRef<string | null>(null)
   // Explicit right-click menu (Copy/Paste). Opened by the contextmenu handler
   // whenever a blind copy-or-paste decision would be unsafe; null = closed.
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSelection: boolean; linkUri?: string } | null>(null)
   // Close the menu the instant this tab is deactivated. Every TerminalView stays
   // mounted (App renders inactive ones display:none), and the menu arms a
   // document-level capture Escape listener — a menu left open in a hidden session
@@ -553,7 +558,35 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       fitAddon = new FitAddon()
       term.loadAddon(fitAddon)
+      // #21: WebLinksAddon detects http/https URLs (wrapped-line + wide-char
+      // aware) but registers them with the hover underline ON, which churns the
+      // WebGL underline overlay on every selection-drag mousemove over a link →
+      // high-speed flicker. The addon has no decorations option and its matcher
+      // is not exported, so wrap registerLinkProvider for the duration of
+      // loadAddon and pass each produced link set through decorateTerminalLinks:
+      // underline OFF (kills the flicker), pointer cursor kept, activation routed
+      // to the OS browser (the addon's default window.open is denied), and the
+      // hovered URI recorded for the context menu. Restored immediately after.
+      const originalRegister = term.registerLinkProvider.bind(term)
+      ;(term as unknown as { registerLinkProvider: (p: ILinkProvider) => { dispose(): void } }).registerLinkProvider = (
+        provider: ILinkProvider,
+      ) => {
+        const wrapped: ILinkProvider = {
+          provideLinks: (y, cb) =>
+            provider.provideLinks(y, (links) =>
+              cb(
+                decorateTerminalLinks(links, {
+                  open: (uri) => { void window.electronAPI.shell.openExternal(uri) },
+                  onHover: (uri) => { hoveredLinkRef.current = uri },
+                  onLeave: () => { hoveredLinkRef.current = null },
+                }),
+              ),
+            ),
+        }
+        return originalRegister(wrapped)
+      }
       term.loadAddon(new WebLinksAddon())
+      ;(term as unknown as { registerLinkProvider: typeof originalRegister }).registerLinkProvider = originalRegister
 
       term.open(container)
 
@@ -1222,6 +1255,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         if (!term) return
         const classicMode = useSettingsStore.getState().settings.classicTerminalCopyPaste !== false
         const { action, bracketedPaste } = resolveContextMenuIntent(term, classicMode)
+        // #21: right-clicking an http/https link with nothing selected opens the
+        // menu so "Copy link address" is available (instead of a blind paste).
+        // A live selection still copies the selection (action==='copy') and wins.
+        const linkUri = hoveredLinkRef.current
+        if (linkUri && action !== 'copy') {
+          setCtxMenu({ x: e.clientX, y: e.clientY, hasSelection: !!term.getSelection(), linkUri })
+          return
+        }
         if (action === 'copy') {
           const sel = term.getSelection()
           if (sel) {
@@ -1352,6 +1393,17 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     }
     term?.focus()
   }
+  // #21: copy the http/https link under the cursor to the clipboard. No scheme
+  // gate — copying a URL string is inert (opening it is https-gated in main).
+  const ctxMenuCopyLink = async (uri: string) => {
+    setCtxMenu(null)
+    try {
+      await navigator.clipboard.writeText(uri)
+    } catch {
+      // clipboard write denied (insecure context / not focused)
+    }
+    terminalRef.current?.focus()
+  }
 
   return (
     // data-terminal-session: lets the Ctrl+Alt+R capture handler resolve WHICH
@@ -1414,6 +1466,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           x={ctxMenu.x}
           y={ctxMenu.y}
           hasSelection={ctxMenu.hasSelection}
+          linkUri={ctxMenu.linkUri}
+          onCopyLink={ctxMenuCopyLink}
           onCopy={ctxMenuCopy}
           onPaste={ctxMenuPaste}
           onRepaint={() => {
