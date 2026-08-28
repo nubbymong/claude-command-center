@@ -162,7 +162,7 @@ process.stdout.write(' ');
 export function generateRemoteSetupScript(
   sessionId: string,
   hooksConfig: { port: number; secret: string } | null,
-  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
   nonce: string,
 ): string {
   // #242 finding F1 (b): the `setup ok` sentinel this script emits (bottom
@@ -178,7 +178,7 @@ export function generateRemoteSetupScript(
   if (!/^[A-Za-z0-9]+$/.test(nonce)) {
     throw new Error(`generateRemoteSetupScript: nonce "${nonce}" fails the charset guard (expected [A-Za-z0-9]+).`)
   }
-  const { includeStatusLine = true, includeConductorMcp = true } = opts ?? {}
+  const { includeStatusLine = true, includeConductorMcp = true, remoteMcpPort } = opts ?? {}
   // Conductor MCP server is always running (independent of browser/vision config),
   // so SSH sessions always get the conductor MCP entry pointing at the
   // reverse-tunneled MCP port. The fetch_host_screenshot tool is always available;
@@ -232,7 +232,7 @@ export function generateRemoteSetupScript(
         mcpServers: {
           'conductor': {
             type: 'sse',
-            url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`,
+            url: `http://localhost:${remoteMcpPort && remoteMcpPort > 0 ? remoteMcpPort : mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`,
           },
         },
       })
@@ -584,7 +584,7 @@ export function getRemoteSetupCommand(
   sessionId: string,
   remotePath: string,
   hooksConfig: { port: number; secret: string } | null,
-  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
   nonce: string,
 ): string {
   assertSafeRemotePath(remotePath)
@@ -700,13 +700,13 @@ const SSH_STATUSLINE_SHIM_WINDOWS = "const fs=require('fs'),os=require('os'),pat
 
 export function generateWindowsRemoteSetupScript(
   sessionId: string,
-  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
   nonce: string,
 ): string {
   if (!/^[A-Za-z0-9]+$/.test(nonce)) {
     throw new Error(`generateWindowsRemoteSetupScript: nonce "${nonce}" fails the charset guard (expected [A-Za-z0-9]+).`)
   }
-  const { includeStatusLine = true, includeConductorMcp = true } = opts ?? {}
+  const { includeStatusLine = true, includeConductorMcp = true, remoteMcpPort } = opts ?? {}
   const mcpPort = getConductorMcpPort()
   const hasVision = mcpPort > 0 && includeConductorMcp
   const shimLiteral = JSON.stringify(SSH_STATUSLINE_SHIM_WINDOWS)
@@ -716,7 +716,7 @@ export function generateWindowsRemoteSetupScript(
         mcpServers: {
           conductor: {
             type: 'sse',
-            url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`,
+            url: `http://localhost:${remoteMcpPort && remoteMcpPort > 0 ? remoteMcpPort : mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${mcpSessionToken(sessionId)}`,
           },
         },
       })
@@ -778,7 +778,7 @@ export function generateWindowsRemoteSetupScript(
  */
 export function getWindowsRemoteSetupCommand(
   sessionId: string,
-  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+  opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
   nonce: string,
 ): string {
   const script = generateWindowsRemoteSetupScript(sessionId, opts, nonce)

@@ -52,7 +52,7 @@ export class ClaudeProvider implements SshCapableProvider {
     sessionId: string,
     remotePath: string,
     hooksConfig: { port: number; secret: string } | null,
-    opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean } | undefined,
+    opts: { includeStatusLine?: boolean; includeConductorMcp?: boolean; remoteMcpPort?: number } | undefined,
     nonce: string,
   ): string {
     return getRemoteSetupCommand(sessionId, remotePath, hooksConfig, opts, nonce)

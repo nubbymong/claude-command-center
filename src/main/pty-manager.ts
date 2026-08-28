@@ -25,6 +25,7 @@ import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemote
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
+import { getRemoteMcpPort, releaseRemoteMcpPort } from './ssh-remote-port'
 import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
@@ -1153,7 +1154,13 @@ export function spawnPty(
     // resolves `localhost` IPv6-first (::1) -- a dead address that would
     // ECONNREFUSED and kill the channel ("socket connection closed unexpectedly"
     // on the remote MCP client).
-    const sshArgs = buildSshArgs(ssh, getConductorMcpPort(), os.platform())
+    // #24: a STABLE per-session remote listen port for the MCP reverse tunnel,
+    // so multiple sessions to the SAME host don't collide on one fixed port.
+    // Forward `-R <remoteMcpPort>:127.0.0.1:<localMcpPort>` and bake the remote
+    // Claude's MCP URL with the same per-session port (setupOpts below).
+    const localMcpPort = getConductorMcpPort()
+    const remoteMcpPort = getRemoteMcpPort(sessionId, localMcpPort)
+    const sshArgs = buildSshArgs(ssh, localMcpPort, os.platform(), remoteMcpPort)
 
     // HTTP Hooks Gateway: when enabled, tunnel the gateway's loopback port so
     // Claude Code inside the SSH session can reach it via http://localhost:<port>.
@@ -1625,6 +1632,7 @@ export function spawnPty(
           const setupOpts = {
             includeStatusLine: s?.statusLineEnabled !== false,
             includeConductorMcp: s?.conductorToolsEnabled !== false,
+            remoteMcpPort, // #24: bake the remote MCP URL with the per-session port
           }
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
           // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
@@ -1667,6 +1675,7 @@ export function spawnPty(
           const setupOpts = {
             includeStatusLine: s?.statusLineEnabled !== false,
             includeConductorMcp: s?.conductorToolsEnabled !== false,
+            remoteMcpPort, // #24: bake the remote MCP URL with the per-session port
           }
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
           // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
@@ -3753,6 +3762,7 @@ function cleanupSessionResources(sessionId: string): void {
   launchPendingSessions.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  releaseRemoteMcpPort(sessionId) // #24: free the session's reserved remote MCP port
   // #242 finding I1: drop ALL of this session's sentinel buffers alongside its
   // OSC sibling above -- same per-session-map shape, same leak risk if omitted.
   // All three kinds, not just 'setup': a session can die with its stage or arch
