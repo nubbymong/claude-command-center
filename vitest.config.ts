@@ -19,6 +19,8 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, '**/*.native.test.{ts,tsx}'],
     environment: 'node',
     setupFiles: ['tests/unit/setup.ts'],
+    // Sweeps orphaned per-worker temp roots + a stray drive-root \mock (#559).
+    globalSetup: ['tests/global-setup.ts'],
     // Integration tests (e.g. hooks synthetic path) spin up a real loopback
     // HTTP server and can take longer than a unit-test budget.
     //

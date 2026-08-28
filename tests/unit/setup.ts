@@ -2,11 +2,15 @@
  * Vitest setup — mocks for Electron and window.electronAPI
  */
 import { vi } from 'vitest'
+// Redirects the process temp dir to a disposable per-worker root and provides
+// real writable mock paths (instead of the drive-relative '/mock/...'). Imported
+// for its side effects too — must load before any test creates a temp fixture.
+import { MOCK_RESOURCES, MOCK_USERDATA } from '../helpers/test-tmp'
 
 // Mock electron module for main process tests
 vi.mock('electron', () => ({
   app: {
-    getPath: vi.fn(() => '/mock/userData'),
+    getPath: vi.fn(() => MOCK_USERDATA),
     getAppPath: vi.fn(() => process.cwd()),
     requestSingleInstanceLock: vi.fn(() => true),
     whenReady: vi.fn(() => Promise.resolve()),
@@ -52,7 +56,7 @@ vi.mock('../../src/main/debug-logger', () => ({
 
 // Mock setup-handlers to prevent registry access
 vi.mock('../../src/main/ipc/setup-handlers', () => ({
-  getResourcesDirectory: vi.fn(() => '/mock/resources'),
+  getResourcesDirectory: vi.fn(() => MOCK_RESOURCES),
   registerSetupHandlers: vi.fn(),
 }))
 
