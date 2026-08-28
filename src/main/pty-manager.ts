@@ -25,7 +25,7 @@ import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemote
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
-import { getRemoteMcpPort, releaseRemoteMcpPort } from './ssh-remote-port'
+import { getRemoteMcpPort } from './ssh-remote-port'
 import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
@@ -3762,7 +3762,6 @@ function cleanupSessionResources(sessionId: string): void {
   launchPendingSessions.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
-  releaseRemoteMcpPort(sessionId) // #24: free the session's reserved remote MCP port
   // #242 finding I1: drop ALL of this session's sentinel buffers alongside its
   // OSC sibling above -- same per-session-map shape, same leak risk if omitted.
   // All three kinds, not just 'setup': a session can die with its stage or arch

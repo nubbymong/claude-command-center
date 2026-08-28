@@ -1,64 +1,45 @@
 import { describe, it, expect } from 'vitest'
-import {
-  pickRemoteMcpPort,
-  getRemoteMcpPort,
-  releaseRemoteMcpPort,
-  _getRemoteMcpPortForTest,
-} from '../../src/main/ssh-remote-port'
+import { remoteMcpPortForSession, getRemoteMcpPort } from '../../src/main/ssh-remote-port'
 
-describe('pickRemoteMcpPort (#24)', () => {
-  it('returns a port in range not already used', () => {
-    const p = pickRemoteMcpPort(new Set(), () => 0.5, 20000, 60000)
-    expect(p).toBe(20000 + Math.floor(0.5 * 40001))
+describe('remoteMcpPortForSession (#24 — deterministic, reconnect-stable)', () => {
+  it('is a pure function of sessionId: same id ⇒ same port, always in range', () => {
+    const sid = 'a1b2c3d4e5f6a1b2c3d4e5f6'
+    const p = remoteMcpPortForSession(sid)
+    expect(p).toBe(remoteMcpPortForSession(sid)) // stable across calls
+    expect(p).toBe(remoteMcpPortForSession(sid)) // ...and again (reconnect/relaunch)
     expect(p).toBeGreaterThanOrEqual(20000)
     expect(p).toBeLessThanOrEqual(60000)
   })
 
-  it('skips a used port and advances the rng', () => {
-    // First rng() lands on a used port, second lands free.
-    const used = new Set([20000])
-    let calls = 0
-    const rng = () => (calls++ === 0 ? 0 : 0.5) // 0 -> 20000 (used), then 0.5
-    const p = pickRemoteMcpPort(used, rng, 20000, 60000)
-    expect(p).not.toBe(20000)
-  })
-
-  it('throws when the range is exhausted', () => {
-    const used = new Set([20000, 20001])
-    expect(() => pickRemoteMcpPort(used, () => 0, 20000, 20001)).toThrow(/no free port/)
+  it('gives different ports to different sessions (no global collision by construction)', () => {
+    // A spread of realistic 24-hex ids should not all collide.
+    const ports = new Set(
+      Array.from({ length: 200 }, (_, i) => remoteMcpPortForSession('sess' + i.toString(16).padStart(20, '0'))),
+    )
+    // Overwhelmingly distinct across 40k space; allow a couple of birthday hits.
+    expect(ports.size).toBeGreaterThan(196)
   })
 })
 
-describe('getRemoteMcpPort (#24 stable per-session mapping)', () => {
-  it('is stable across calls for one session (reconnect keeps the same port)', () => {
-    const sid = 'sess-stable-' + Math.random().toString(36).slice(2)
+describe('getRemoteMcpPort (#24 local-server gate)', () => {
+  it('returns the deterministic port when the local server is up', () => {
+    const sid = 'deadbeefdeadbeefdeadbeef'
+    expect(getRemoteMcpPort(sid, 19333)).toBe(remoteMcpPortForSession(sid))
+  })
+
+  it('returns 0 (no forward) when the local server is down — fail-closed', () => {
+    expect(getRemoteMcpPort('anything', 0)).toBe(0)
+    expect(getRemoteMcpPort('anything', -1)).toBe(0)
+  })
+
+  // The BLOCKER this design fixes: a reconnect (teardown + respawn) must forward
+  // the SAME port so the tmux-persisted remote Claude's baked URL still resolves.
+  // With a deterministic derivation there is no per-session state to lose.
+  it('is identical before and after a simulated teardown+respawn (reconnect)', () => {
+    const sid = 'reconnectsession01234567'
     const first = getRemoteMcpPort(sid, 19333)
-    const second = getRemoteMcpPort(sid, 19333)
-    expect(second).toBe(first)
-    releaseRemoteMcpPort(sid)
-  })
-
-  it('gives DISTINCT ports to two concurrent sessions', () => {
-    const a = 'sess-a-' + Math.random().toString(36).slice(2)
-    const b = 'sess-b-' + Math.random().toString(36).slice(2)
-    const pa = getRemoteMcpPort(a, 19333)
-    const pb = getRemoteMcpPort(b, 19333)
-    expect(pa).not.toBe(pb)
-    releaseRemoteMcpPort(a)
-    releaseRemoteMcpPort(b)
-  })
-
-  it('returns 0 (no forward) when the local server is down', () => {
-    const sid = 'sess-down-' + Math.random().toString(36).slice(2)
-    expect(getRemoteMcpPort(sid, 0)).toBe(0)
-    expect(_getRemoteMcpPortForTest(sid)).toBeUndefined()
-  })
-
-  it('release frees the mapping', () => {
-    const sid = 'sess-rel-' + Math.random().toString(36).slice(2)
-    getRemoteMcpPort(sid, 19333)
-    expect(_getRemoteMcpPortForTest(sid)).toBeDefined()
-    releaseRemoteMcpPort(sid)
-    expect(_getRemoteMcpPortForTest(sid)).toBeUndefined()
+    // ...session drops, cleanup runs (no state to release), respawn:
+    const afterReconnect = getRemoteMcpPort(sid, 19333)
+    expect(afterReconnect).toBe(first)
   })
 })

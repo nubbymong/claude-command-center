@@ -10,10 +10,18 @@ opens with its MCP silently cross-wired to session 1's tunnel.
 
 Fix: a STABLE per-session remote listen port R, forwarded to the one shared local
 server (`-R R:127.0.0.1:L`), with the remote Claude's MCP URL baked to
-`localhost:R`. R is allocated once per CCC sessionId and reused on reconnect (the
-tmux-persisted Claude keeps the URL it launched with), freed on teardown.
-- `src/main/ssh-remote-port.ts` (new): pickRemoteMcpPort (pure, testable) +
-  getRemoteMcpPort/releaseRemoteMcpPort (stable per-session map).
+`localhost:R`. R is DERIVED deterministically from the (random, unique) CCC
+sessionId (FNV-1a → [20000,60000]) so it is identical across reconnects AND app
+relaunches — the tmux-persisted Claude keeps the URL it launched with, so the
+reconnect must forward the same R.
+- `src/main/ssh-remote-port.ts` (new): remoteMcpPortForSession (pure,
+  deterministic) + getRemoteMcpPort (applies the server-down 0 gate). No map, no
+  release.
+
+Adversarial review (fable LEAD) caught the first cut as a BLOCKER: an in-memory
+map freed in cleanupSessionResources changed R on every reconnect (cleanup runs
+on transient drops AND before each respawn), killing MCP for the default-on tmux
+reconnect path. Deterministic derivation removes the per-session state entirely.
 - `src/main/ssh-args.ts`: buildSshArgs gains `remoteMcpPort` (defaults to mcpPort
   = pre-#24 shape); forwards `-R remote:127.0.0.1:local`.
 - `ssh-shim.ts`: generateRemoteSetupScript + generateWindowsRemoteSetupScript bake

@@ -10,57 +10,48 @@
 // `-R <R>:127.0.0.1:<L>` (distinct remote binds, one shared local server). The
 // remote Claude's MCP URL then points at localhost:<R> on the remote.
 //
-// R must be STABLE for the life of a session: a tmux reconnect re-establishes
-// the forward, and the already-running remote Claude keeps the URL it launched
-// with, so the reconnect must forward the SAME R. Hence the per-session map
-// (keyed by the CCC sessionId), populated once and reused on every respawn until
-// the session is torn down.
+// R MUST be STABLE for a session across reconnects AND app relaunches: a tmux
+// reconnect re-establishes the forward while the already-running remote Claude
+// keeps the URL it launched with, so the reconnect must forward the SAME R — and
+// an app relaunch that reattaches a persisted session must too. So R is DERIVED
+// deterministically from the (random, unique) CCC sessionId rather than drawn
+// from a live counter/map: the same sessionId always maps to the same port, with
+// no per-session state to allocate, free, or lose on restart. (An in-memory map
+// freed on teardown looked simpler but broke exactly this: cleanupSessionResources
+// runs on transient drops and before every respawn, so R would change on every
+// reconnect — regressing MCP for the default-on tmux-persistence path.)
+//
+// The port space is [20000, 60000] (40001 values). Two DIFFERENT sessions to the
+// SAME host could hash to the same R (birthday-style), but with the handful of
+// concurrent sessions a user runs against one host the probability is ~N^2/80002
+// — negligible — and a collision degrades to the pre-#24 "one session's MCP
+// wins" behaviour, never a hard failure. sshd picks the loser's forward off with
+// a non-fatal warning (CCC sets no ExitOnForwardFailure).
 
-// sessionId -> allocated remote listen port
-const bySession = new Map<string, number>()
+const PORT_LO = 20000
+const PORT_HI = 60000
+const PORT_SPAN = PORT_HI - PORT_LO + 1
 
 /**
- * Pick a port in [lo, hi] that is not already in `used`. Pure + injectable rng
- * so the "distinct per concurrent session" property is unit-testable. Throws if
- * the range is exhausted (never in practice — the range is ~40k wide and real
- * concurrent-session counts are tiny).
+ * Deterministic remote listen port for a session — pure function of sessionId
+ * (FNV-1a → [20000, 60000]). Stable across reconnects and app relaunches. Same
+ * sessionId ⇒ same port; different sessionIds ⇒ (almost always) different ports.
  */
-export function pickRemoteMcpPort(
-  used: ReadonlySet<number>,
-  rng: () => number = Math.random,
-  lo = 20000,
-  hi = 60000,
-): number {
-  const span = hi - lo + 1
-  for (let attempt = 0; attempt < span; attempt++) {
-    const p = lo + Math.floor(rng() * span)
-    if (!used.has(p)) return p
+export function remoteMcpPortForSession(sessionId: string): number {
+  let h = 2166136261 >>> 0 // FNV-1a offset basis
+  for (let i = 0; i < sessionId.length; i++) {
+    h ^= sessionId.charCodeAt(i)
+    h = Math.imul(h, 16777619) >>> 0
   }
-  throw new Error('pickRemoteMcpPort: no free port in range')
+  return PORT_LO + (h % PORT_SPAN)
 }
 
 /**
- * The stable remote MCP listen port for this session. Returns 0 (no forward)
- * when the local server is down (localPort === 0), matching the pre-#24
- * "mcpPort === 0 => no -R, empty remote mcpServers" fail-closed behaviour.
- * Idempotent: the first call allocates, later calls (reconnects) return the
- * same port.
+ * The remote MCP listen port to forward for this session, or 0 (no forward) when
+ * the local server is down (localPort === 0) — matching the pre-#24 "mcpPort ===
+ * 0 ⇒ no -R, empty remote mcpServers" fail-closed behaviour.
  */
 export function getRemoteMcpPort(sessionId: string, localPort: number): number {
   if (localPort <= 0) return 0
-  const existing = bySession.get(sessionId)
-  if (existing !== undefined) return existing
-  const port = pickRemoteMcpPort(new Set(bySession.values()))
-  bySession.set(sessionId, port)
-  return port
-}
-
-/** Free the session's reserved port on teardown so the range can't leak. */
-export function releaseRemoteMcpPort(sessionId: string): void {
-  bySession.delete(sessionId)
-}
-
-/** Test-only: inspect the current mapping. */
-export function _getRemoteMcpPortForTest(sessionId: string): number | undefined {
-  return bySession.get(sessionId)
+  return remoteMcpPortForSession(sessionId)
 }
