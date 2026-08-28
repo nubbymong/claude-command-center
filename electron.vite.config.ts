@@ -29,7 +29,7 @@ export default defineConfig({
     },
     build: {
       outDir: 'out/main',
-      rollupOptions: {
+      rolldownOptions: {
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           'hooks-host': resolve(__dirname, 'src/main/services/hooks-host.ts'),
@@ -45,7 +45,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       outDir: 'out/preload',
-      rollupOptions: {
+      rolldownOptions: {
         input: {
           index: resolve(__dirname, 'src/preload/index.ts'),
         }
@@ -62,7 +62,7 @@ export default defineConfig({
     },
     build: {
       outDir: resolve(__dirname, 'out/renderer'),
-      rollupOptions: {
+      rolldownOptions: {
         input: {
           index: resolve(__dirname, 'src/renderer/index.html')
         }
