@@ -637,6 +637,169 @@ function gitInvocationRisk(inv) {
   return 'allow'
 }
 
+// ---------------------------------------------------- write-location fence
+//
+// Sessions must not scatter files across the machine. Observed strays: hand
+// rolled roots (F:\ccc-attack-*, F:\ccc-sec advisory clones), and POSIX paths
+// mangled onto the cwd's drive (`/tmp/x` handed to a Windows-native tool with
+// cwd on F: materialises F:\tmp\x; same for F:\c and F:\Users). Outside this
+// repo's worktrees a write is allowed only under a sanctioned root; inside
+// them the lease rules decide, as before. An EXISTING foreign repo stays
+// writable -- editing another project is a task, a new drive root is clutter.
+// The fence denies only literal paths it can resolve statically; anything
+// with an expansion passes through (fail open). CCC_SESSION_GUARD=off is the
+// deliberate-exception hatch, as everywhere else in this guard.
+
+/** Case-folded (win/mac) prefix test: p is root or inside it. */
+function isUnderDir(p, root) {
+  const norm = (x) => {
+    let r = path.resolve(x).replace(/[\\/]+$/, '')
+    try {
+      r = fs.realpathSync.native(r)
+    } catch {
+      /* not on disk (yet) -- lexical form */
+    }
+    return process.platform === 'win32' || process.platform === 'darwin' ? r.toLowerCase() : r
+  }
+  const a = norm(p)
+  const b = norm(root)
+  return a === b || a.startsWith(b + path.sep)
+}
+
+/** Where a session may create things OUTSIDE the repo's own worktrees. All
+ *  derived (never personal paths): OS temp (the session scratchpad lives
+ *  there), the primary checkout's `<name>_RESOURCES` sibling, the worktree
+ *  base itself, plus any roots the user lists in CCC_WRITE_ROOTS. */
+function sanctionedWriteRoots(cwd) {
+  const roots = []
+  const add = (p) => {
+    if (!p || typeof p !== 'string' || !p.trim()) return
+    try {
+      roots.push(path.resolve(p.trim()))
+    } catch {
+      /* ignore */
+    }
+  }
+  add(os.tmpdir())
+  add(process.env.TMP)
+  add(process.env.TEMP)
+  add(process.env.TMPDIR)
+  const common = gitSafe(['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd })
+  if (common) {
+    const primary = path.dirname(common)
+    add(`${primary}_RESOURCES`)
+    add(process.env.CCC_WT_ROOT || path.join(path.dirname(primary), 'ccc-wt'))
+  }
+  for (const p of (process.env.CCC_WRITE_ROOTS || '').split(path.delimiter)) add(p)
+  return roots
+}
+
+/**
+ * The absolute path a Windows-native tool would actually touch for a command
+ * token, or null when it cannot be resolved statically. `/f/x` (MSYS) becomes
+ * F:\x; a bare `/tmp/x` resolves against the cwd's DRIVE -- which is exactly
+ * the drive-root mangling this fence exists to stop.
+ */
+function resolveWriteTarget(token, cwd) {
+  if (!token || typeof token !== 'string') return null
+  const t = token.replace(/^["']|["']$/g, '')
+  if (!t || /[$%`]/.test(t)) return null // shell/PS expansion -- fail open
+  const msys = t.match(/^\/([A-Za-z])(\/|$)/)
+  if (msys) return path.resolve(`${msys[1].toUpperCase()}:${t.slice(2) || '/'}`)
+  try {
+    return path.resolve(cwd, t)
+  } catch {
+    return null
+  }
+}
+
+function explainOutsideRoots(target, roots) {
+  return [
+    `session-guard: BLOCKED -- ${target} is outside every sanctioned write location.`,
+    '',
+    'Create files only in your claimed worktree or under one of:',
+    ...roots.map((r) => `  - ${r}`),
+    '',
+    'Stray drive roots (ccc-attack-*, ccc-sec, \\tmp, ...) are what this fence',
+    'stops. Add a root via CCC_WRITE_ROOTS (path-list), or set',
+    'CCC_SESSION_GUARD=off for a deliberate exception.',
+  ].join('\n')
+}
+
+/** null = allowed; string = deny reason. `roots` from sanctionedWriteRoots.
+ *  Ownership is checked FIRST: a sanctioned root (the worktree base
+ *  especially) must never launder a write into another session's worktree. */
+function writeFence(rawTarget, cwd, roots) {
+  const abs = resolveWriteTarget(rawTarget, cwd)
+  if (!abs) return null
+  const o = ownership(abs, cwd)
+  if (o.kind === 'mine') return null
+  if (o.kind === 'not-a-repo') {
+    return roots.some((r) => isUnderDir(abs, r)) ? null : explainOutsideRoots(abs, roots)
+  }
+  // An existing worktree of a DIFFERENT repository: someone else's project,
+  // not our clutter -- leave it to that repo's own rules.
+  if (o.kind === 'unmanaged' && !isRepoWorktree(o.root, cwd)) return null
+  return explain(o, abs)
+}
+
+/** Git invocations that materialise a NEW tree on disk get the fence too. */
+const GIT_VALUE_FLAGS = /^-(b|B|o|u|c|-branch|-origin|-upstream|-depth|-reference|-reference-if-able|-template|-separate-git-dir|-shallow-since|-shallow-exclude|-filter|-jobs|-config)$/
+
+function gitCreationTarget(inv) {
+  const argv = inv.argv
+  let i = argv.indexOf(inv.verb)
+  if (i < 0) return null
+  if (inv.verb === 'worktree') {
+    i = argv.indexOf('add', i + 1)
+    if (i < 0) return null
+  }
+  const rest = []
+  for (let j = i + 1; j < argv.length; j++) {
+    const a = argv[j]
+    if (a.startsWith('-')) {
+      if (GIT_VALUE_FLAGS.test(a)) j++
+      continue
+    }
+    rest.push(a)
+  }
+  if (inv.verb === 'clone') return rest[1] || null // no explicit dir -> lands under cwd
+  if (inv.verb === 'init') return rest[0] || '.'
+  return rest[0] || null // worktree add <path>
+}
+
+/** Creation targets in one shell segment: mkdir/md/New-Item and >/>> redirects. */
+function segmentWriteTargets(seg) {
+  const out = []
+  const toks = seg.match(/"[^"]*"|'[^']*'|\S+/g) || []
+  const bare = toks.map((t) => t.replace(/^["']|["']$/g, ''))
+  const head = bare.findIndex((t) => /^(mkdir|md|new-item)(\.exe)?$/i.test(t))
+  if (head >= 0) {
+    for (let j = head + 1; j < toks.length; j++) {
+      const flag = bare[j]
+      if (flag.startsWith('-')) {
+        if (/^-{1,2}path$/i.test(flag)) continue // its value is a target
+        if (/^-(itemtype|name|value|m|-mode)$/i.test(flag)) j++ // skip the flag's value
+        continue
+      }
+      out.push(toks[j])
+    }
+  }
+  // > target / >> target -- skip fd duplication and the null devices. A `>`
+  // inside a quoted argument can still match; harmless when the token resolves
+  // inside an allowed root, and the escape hatch covers the rest.
+  const re = /(?:^|[^-=<>&|])>{1,2}\s*("[^"]+"|'[^']+'|[^\s&|;]+)/g
+  let m
+  while ((m = re.exec(seg))) {
+    const c = m[1].replace(/^["']|["']$/g, '')
+    if (/^(&\d+|\/dev\/null|nul)$/i.test(c)) continue
+    out.push(m[1])
+  }
+  return out
+}
+
+const SHELL_SPLIT = /\|\||&&|[;|\n]/
+
 function hookDecision(input) {
   const tool = input.tool_name || ''
   const ti = input.tool_input || {}
@@ -648,25 +811,40 @@ function hookDecision(input) {
   const raw = typeof ti.command === 'string' ? ti.command : ''
   if (/session-guard\.mjs/.test(raw)) return null
 
+  // sanctionedWriteRoots shells out to git once -- compute only when needed.
+  let rootsMemo = null
+  const roots = () => (rootsMemo ??= sanctionedWriteRoots(cwd))
+
   if (tool === 'Edit' || tool === 'Write' || tool === 'NotebookEdit' || tool === 'MultiEdit') {
     const f = ti.file_path || ti.notebook_path || ti.path
     if (!f) return null
-    const o = ownership(f, cwd)
-    // Only guard files that live inside this repo's worktrees.
-    if (o.kind === 'not-a-repo' || o.kind === 'mine') return null
-    if (o.kind === 'unmanaged' && !isRepoWorktree(o.root, cwd)) return null
-    return explain(o, f)
+    // mine -> allow; other/stale/unmanaged worktree of this repo -> deny (as
+    // before); outside every repo -> allowed only under a sanctioned root.
+    return writeFence(f, cwd, roots())
   }
 
   if (tool === 'Bash' || tool === 'PowerShell') {
     if (!raw) return null
     for (const inv of parseGitInvocations(raw)) {
+      if (inv.verb === 'clone' || inv.verb === 'init' || (inv.verb === 'worktree' && inv.sub === 'add')) {
+        const base = inv.dashC ? resolveWriteTarget(inv.dashC, cwd) || cwd : cwd
+        const t = gitCreationTarget(inv)
+        const r = t ? writeFence(t, base, roots()) : null
+        if (r) return r
+        continue
+      }
       if (gitInvocationRisk(inv) !== 'mutating') continue
       const target = inv.dashC || cwd
       const o = ownership(target, cwd)
       if (o.kind === 'not-a-repo' || o.kind === 'mine') continue
       if (o.kind === 'unmanaged' && !isRepoWorktree(o.root, cwd)) continue
       return explain(o, target)
+    }
+    for (const seg of raw.split(SHELL_SPLIT)) {
+      for (const t of segmentWriteTargets(seg)) {
+        const r = writeFence(t, cwd, roots())
+        if (r) return r
+      }
     }
   }
   return null

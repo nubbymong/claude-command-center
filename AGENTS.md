@@ -24,6 +24,16 @@ uncommitted work. A `PreToolUse` hook denies writes and mutating git outside the
 worktree you own; `CCC_SESSION_GUARD=off` is the escape hatch. See
 `docs/session-isolation.md` and ADR-012.
 
+**Where files go (enforced by the same hook, #557):** create things ONLY in your
+claimed worktree or the session scratchpad/OS temp. Never invent a new drive
+root — attack harnesses, probe packs, one-off configs, and advisory-fork clones
+all go in one of those two places (a gitignored subdir of the worktree is fine).
+The hook denies writes, `mkdir`, `git clone`/`init`/`worktree add`, and shell
+redirects that land outside the sanctioned roots (worktree, OS temp, the
+checkout's `_RESOURCES` sibling, the worktree base, plus any `CCC_WRITE_ROOTS`
+extras). Beware POSIX paths handed to Windows-native tools: `/tmp/x` with cwd on
+`F:` materialises `F:\tmp\x` — the fence blocks exactly that mangling.
+
 ## Ticket creation & premise review — policy
 
 **Every repo change starts from a GitHub issue, and every issue carries a premise
