@@ -22,11 +22,19 @@ export default function () {
     } catch {
       /* ignore */
     }
-    try {
-      const mock = path.resolve('/mock')
-      if (fs.existsSync(mock)) fs.rmSync(mock, { recursive: true, force: true })
-    } catch {
-      /* ignore */
+    // A drive-relative `/mock` resolves onto whichever drive is current, so a
+    // suite run from C: scattered to C:\mock and one from F: to F:\mock. Sweep
+    // the roots that can be hit: the cwd drive, the temp drive, and C:.
+    const drives = new Set(
+      [process.cwd(), os.tmpdir(), 'C:\\'].map((p) => path.parse(path.resolve(p)).root),
+    )
+    for (const root of drives) {
+      try {
+        const mock = path.join(root, 'mock')
+        if (fs.existsSync(mock)) fs.rmSync(mock, { recursive: true, force: true })
+      } catch {
+        /* ignore */
+      }
     }
   }
 }
