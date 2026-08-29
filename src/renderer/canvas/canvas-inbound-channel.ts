@@ -60,6 +60,7 @@ import {
   type CanvasZoomAction,
   canvasOrigin,
 } from '../../shared/canvas'
+import { canvasPageText } from '../../shared/canvas-page-text'
 import { finite, safeHit, safeViewport } from '../utils/canvas-geometry-guard'
 
 /**
@@ -627,9 +628,18 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
       const pathname = (msg as { pathname?: unknown }).pathname
       const hash = (msg as { hash?: unknown }).hash
       if (typeof pathname !== 'string') return
-      // The same ceiling the stored stamp's route carries, applied at the trust
-      // boundary rather than at the record's.
-      const route = `${pathname}${typeof hash === 'string' ? hash : ''}`.slice(0, MAX_STAMP_ROUTE_CHARS)
+      // CLEANED with the shared page-text rule, not merely capped.
+      //
+      // A bare slice bounded the length and nothing else, so a route carrying a
+      // right-to-left override (U+202E) travelled intact into the trail, the
+      // stamp and the `canvas_review` payload — reversing the rest of the line
+      // for the person reading it while the agent was handed the unreversed
+      // bytes. That is the 2026-08-15 bidi finding arriving through a new door,
+      // and it takes the same answer: `canvasPageText` sheds Cc, Cf, Zl and Zp
+      // and applies the cap, and it is the ONE cleaner both sides of this
+      // pipeline run — every other page-reported string here (`safeHit`'s role,
+      // name and ux-id) already reaches storage through it.
+      const route = canvasPageText(`${pathname}${typeof hash === 'string' ? hash : ''}`, MAX_STAMP_ROUTE_CHARS)
       if (pendingTrail.length < MAX_INBOUND_TRAIL_PER_FRAME) {
         pendingTrail.push({ kind: 'navigated', route })
       }

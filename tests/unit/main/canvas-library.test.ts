@@ -89,13 +89,21 @@ describe('listAllCanvases', () => {
     // this channel as well as on the Library, because the totals sweep reads
     // this list — a row returned here would put somebody else's private work
     // into a count on the button.
+    //
+    // Liveness is INJECTED, and the injected answer comes from main's own PTY
+    // registry. It is deliberately NOT derived from the open-tile array the
+    // caller passes: that array is composed by the CALLING session, so a peer
+    // would only have to omit the owner from its own request to make a live
+    // owner look dead. The tiles here badge rows and decide nothing.
     const { canvasId } = renderDesign(SID_A, 'one')
-    const ids = (tiles: string[], asking: string) =>
-      store.listAllCanvases(tiles, undefined, asking).map((e) => e.canvasId)
+    const ids = (asking: string, live: (sid: string) => boolean) =>
+      store.listAllCanvases([SID_A], undefined, asking, live).map((e) => e.canvasId)
 
-    expect(ids([SID_A], SID_B)).not.toContain(canvasId)
+    expect(ids(SID_B, (sid) => sid === SID_A)).not.toContain(canvasId)
     // ...and it comes back the moment its owner is no longer live.
-    expect(ids([], SID_B)).toContain(canvasId)
+    expect(ids(SID_B, () => false)).toContain(canvasId)
+    // The owner always sees its own, live or not.
+    expect(ids(SID_A, (sid) => sid === SID_A)).toContain(canvasId)
   })
 
   it('survives a restart — the library is what is on DISK', () => {

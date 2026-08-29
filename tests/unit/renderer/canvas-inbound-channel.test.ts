@@ -333,6 +333,24 @@ describe('the trail reports (M3)', () => {
     expect(handlers.onNavigated).toHaveBeenCalledWith('/checkout#pay')
   })
 
+  it('neutralises a BIDI override in a route before it can become a trail entry', async () => {
+    // The route reached storage through a bare `.slice()` — bounded in length
+    // and cleaned of nothing — so one right-to-left override rode into the
+    // trail, the stamp and the `canvas_review` payload, reversing the line for
+    // the person reading it while the agent was handed the unreversed bytes.
+    // The 2026-08-15 finding through a new door; the same answer, which is the
+    // one cleaner both sides of this pipeline already run.
+    arm()
+    const RLO = String.fromCharCode(0x202e)
+    const BOM = String.fromCharCode(0xfeff)
+    fromFrame({ type: 'navigated', pathname: `/checkout${RLO}nimda/`, hash: `#${BOM}pay` })
+    await flushFrame()
+    const route = (handlers.onNavigated as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as string
+    expect(route).toBe('/checkoutnimda/#pay')
+    expect(route).not.toContain(RLO)
+    expect(route).not.toContain(BOM)
+  })
+
   it('refuses a navigation with no pathname, and bounds an enormous one', async () => {
     arm()
     fromFrame({ type: 'navigated', hash: '#x' })

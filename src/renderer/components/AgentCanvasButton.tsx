@@ -122,6 +122,10 @@ export default function AgentCanvasButton({ sessionId }: Props) {
                   : 'Open Agent Canvas'
         }
         data-testid="canvas-button"
+        // The guided tour anchors on this, not on data-testid: the tour is
+        // shipped behaviour and must not depend on a test hook that a cleanup
+        // pass would feel free to rename.
+        data-tour="canvas-button"
         data-waiting={waiting ? 'true' : undefined}
       >
         {isOpen ? (

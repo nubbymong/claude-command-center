@@ -567,6 +567,19 @@ export function readImageFileChecked(abs: string): EvidenceImage | null {
     fd = fs.openSync(abs, 'r')
     const stat = fs.fstatSync(fd)
     if (!stat.isFile()) return null
+    // A HARD LINK defeats realpath entirely: a second name for an inode resolves
+    // to ITSELF, not to the file it shares bytes with, so `mklink /H` — which
+    // needs no privilege and no Developer Mode — plants a name inside the canvas
+    // directory that reads back whatever that inode holds. The symlink refusal
+    // above cannot see it. `readCheckedFile` has refused these since 2026-08-15;
+    // this reader was written without the check.
+    //
+    // FAIL CLOSED when the count is unavailable, for the reason stated there: a
+    // guard spelled `nlink !== undefined && nlink !== 1` skips itself entirely on
+    // any volume that does not report link counts, which is exactly where its
+    // absence is hardest to notice.
+    const nlink = typeof stat.nlink === 'number' && Number.isFinite(stat.nlink) ? stat.nlink : null
+    if (nlink !== 1) return null
     if (stat.size === 0 || stat.size > MAX_EVIDENCE_READ_BYTES) return null
     const bytes = Buffer.allocUnsafe(stat.size)
     const read = fs.readSync(fd, bytes, 0, stat.size, 0)
@@ -589,6 +602,27 @@ export function readImageFileChecked(abs: string): EvidenceImage | null {
       }
     }
   }
+}
+
+/**
+ * One SKETCH or PASTED attachment, for `canvas_review` — the same discipline an
+ * evidence shot gets, and it is here because it did not have it.
+ *
+ * The MCP server read these with a bare `fs.readFileSync`: no reparse-point
+ * refusal, no link count, no size check before the allocation, no magic. Same
+ * directory, same user-selectable resources root, same swap — the only
+ * difference was which of the two readers happened to be wired to it.
+ *
+ * PNG ONLY: the store writes these having enforced PNG magic, so a JPEG at that
+ * path is not a lenient encoder, it is a file that changed identity. Throws
+ * rather than answering null, because the tool's attachment loop already treats
+ * a throw as "this one could not be loaded" and reports the count — and its
+ * catch never relays the message, so nothing about the path escapes.
+ */
+export function readAttachmentChecked(abs: string): Buffer {
+  const image = readImageFileChecked(abs)
+  if (!image || image.mime !== 'image/png') throw new Error('attachment refused')
+  return image.bytes
 }
 
 /** Test seam: drop the in-memory registers so each test starts cold. */

@@ -56,8 +56,10 @@ const CONTROL_BYTES = new RegExp('[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\
 const IS_POSIX = process.platform !== 'win32'
 
 const SKILL_REL = ['skills', 'agent-canvas', 'SKILL.md']
+const PLAN_SKILL_REL = ['skills', 'canvas-plan', 'SKILL.md']
 const MANIFEST_REL = ['.claude-plugin', 'plugin.json']
 const skillPath = (root: string) => path.join(root, ...SKILL_REL)
+const planSkillPath = (root: string) => path.join(root, ...PLAN_SKILL_REL)
 const manifestPath = (root: string) => path.join(root, ...MANIFEST_REL)
 
 beforeEach(() => {
@@ -101,6 +103,108 @@ describe('ensureCanvasPlugin', () => {
     expect(CONTROL_BYTES.test(skill)).toBe(false)
   })
 
+  it('ships the plan skill in the same layout', () => {
+    const dir = ensureCanvasPlugin()!
+    const plan = fs.readFileSync(planSkillPath(dir), 'utf8')
+    expect(plan.startsWith('---\n')).toBe(true)
+    expect(plan).toMatch(/^name: canvas-plan$/m)
+    expect(CONTROL_BYTES.test(plan)).toBe(false)
+  })
+})
+
+// The SETTLED MACHINE (2026-08-29 rework, W43). The skill is the only thing
+// that tells an agent what a decision MEANS, and the meanings changed: a
+// version-level Approve/Reject replaced per-note approve chips, an approval
+// closes its notes as observations rather than handing them back, a reject's
+// notes drive vN+1 and are resolved with `updatedIn`, and the user's decision
+// on a later version settles every earlier round. A skill that still described
+// the old machine would not fail any integrity check — the bytes would be
+// perfectly "ours" — so the CONTENT is pinned here, both what it must say and
+// what it must no longer say.
+describe('the skill teaches the settled machine', () => {
+  const readSkill = () => fs.readFileSync(skillPath(ensureCanvasPlugin()!), 'utf8')
+
+  it('states that an approval owes nothing and its notes are observations', () => {
+    const skill = readSkill()
+    expect(skill).toMatch(/OBSERVATIONS/)
+    expect(skill).toMatch(/NOTHING IS OWED/)
+    // The decision is on the VERSION, not on individual notes.
+    expect(skill).toMatch(/decision is on the VERSION/i)
+    // ...and the Testing words for the same two decisions.
+    expect(skill).toMatch(/Passed/)
+    expect(skill).toMatch(/Failed/)
+  })
+
+  it("names `updatedIn` as how a reject's fix is reported", () => {
+    const skill = readSkill()
+    expect(skill).toContain('updatedIn')
+    expect(skill).toContain('canvas_resolve')
+    // The code-only fix still gets resolved, without a version to name.
+    expect(skill).toMatch(/shipped in CODE/i)
+  })
+
+  it('tells the agent to read a Testing round\'s structure and ask for shots on demand', () => {
+    const skill = readSkill()
+    expect(skill).toContain('includeShots')
+    // Never a habit: the structure answers most questions.
+    expect(skill).toMatch(/Read that structure first/i)
+    // ...and never make the user walk back to the screen they were on.
+    expect(skill).toMatch(/re-reach a screen/i)
+    // One build under test is one run is one pack.
+    expect(skill).toMatch(/One build = one run = one pack/)
+  })
+
+  it('carries the owner-mandated mockup rules', () => {
+    const skill = readSkill()
+    // Draw the screen, not a description of it (owner, testing R2).
+    expect(skill).toMatch(/Draw what the user will SEE/)
+    expect(skill).toMatch(/never put explanatory or meta text on a\s+mockup/i)
+    // And in any UI, one message has one home.
+    expect(skill).toMatch(/say a thing ONCE/)
+  })
+
+  it('keeps the safety rules the rework did not touch', () => {
+    const skill = readSkill()
+    expect(skill).toMatch(/A render IS a handover/)
+    expect(skill).toMatch(/ENDS\s+YOUR TURN/)
+    // Approval is the user's alone, and canvas_verdict cannot make one.
+    expect(skill).toMatch(/It cannot approve, and neither can you/)
+    expect(skill).toMatch(/Not in the same breath as the work/)
+    // A different title files the canvas and starts a fresh one.
+    expect(skill).toMatch(/a different title files that canvas/i)
+    // canvas_complete stays only-on-their-word, and an approval already did it.
+    expect(skill).toMatch(/do NOT call `canvas_complete`/i)
+  })
+
+  it('covers ownership etiquette: private canvas, Resume, never take over', () => {
+    const skill = readSkill()
+    expect(skill).toMatch(/private to THIS session/)
+    expect(skill).toMatch(/Resume it/)
+  })
+
+  it('carries NO wording the rework made false', () => {
+    const skill = readSkill()
+    // The mockup lane that stranded canvases; deleted outright by the rework.
+    expect(skill).not.toMatch(/approved[- ]with[- ]tweaks/i)
+    // Per-note verdicts are gone, so nothing "waits on the user" note by note.
+    expect(skill).not.toMatch(/waiting on the user/i)
+    // The interim escape hatch in the pane, replaced by the settle rules.
+    expect(skill).not.toMatch(/Close all waiting/i)
+    // Per-note approve chips: the pane's variant labels are read-only now.
+    expect(skill).not.toMatch(/picks IN THE PANE|approve the note WITHOUT picking|bulk approve/i)
+  })
+
+  it('teaches the plan skill the same version-level decision', () => {
+    const plan = fs.readFileSync(planSkillPath(ensureCanvasPlugin()!), 'utf8')
+    expect(plan).toMatch(/Approve owes nothing/i)
+    expect(plan).toContain('updatedIn')
+    // An approval signs the canvas off; the agent must not complete after it.
+    expect(plan).toMatch(/do not call `canvas_complete`/i)
+    expect(plan).not.toMatch(/waiting on the user/i)
+  })
+})
+
+describe('ensureCanvasPlugin — the tree it owns', () => {
   it('WIPES the plugin tree before writing — nothing CCC did not put there survives', () => {
     // A Claude Code plugin root auto-loads hooks/, .mcp.json, commands/ and
     // agents/. An agent that can only WRITE FILES could drop a hooks entry

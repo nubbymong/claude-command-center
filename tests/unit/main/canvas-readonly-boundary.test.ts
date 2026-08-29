@@ -51,7 +51,10 @@ vi.mock('../../../src/main/canvas/canvas-snapshot-broker', () => ({
 // OWNER has quit, which is the state in which its completed canvas is visible
 // to the whole project — and the state a would-be mutator is most likely to
 // find it in.
-vi.mock('../../../src/main/session-registry', () => ({ getSessionMeta: () => undefined }))
+vi.mock('../../../src/main/session-registry', () => ({
+  isPtySessionLive: () => false,
+  getSessionMeta: () => undefined,
+}))
 vi.mock('../../../src/main/logging/logging-service', () => ({ getTranscriptBinder: () => null }))
 
 const { getResourcesDirectory } = await import('../../../src/main/ipc/setup-handlers')

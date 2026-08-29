@@ -9,7 +9,34 @@
 // mistaken for operator voice by construction. The operator-authored header
 // (review id, counts) is the TOOL's job and rides outside, as envelope notes.
 
+import { MAX_STAMP_ROUTE_CHARS, MAX_STAMP_TARGET_CHARS, MAX_STAMP_TITLE_CHARS, cleanPageReportedText } from './canvas'
 import type { AnchorRef, Annotation, EvidenceStateStamp, Rect, ReviewPayload, TrailEntry } from './canvas'
+
+/**
+ * PAGE-REPORTED text, at the moment it is rendered into a line this format gives
+ * meaning to.
+ *
+ * Deliberately redundant with the keepers — a stored stamp carrying the
+ * separator or the quote has already been refused. It is here because THE FORMAT
+ * OWNS ITS OWN PUNCTUATION: a renderer that joins with ` · `, quotes with `"`,
+ * and then trusts every upstream validator to have thought about that is one
+ * validator away from printing a forged action as recorded fact. The keeper
+ * protects the RECORD; this protects the RENDERING, and neither needs the other
+ * to have been right.
+ */
+function pageText(value: string, max: number, opts?: { allowQuotes?: boolean }): string {
+  return cleanPageReportedText(value, max, opts)
+}
+
+/** A field name, for the one line that joins names with `", "`. Every renderer
+ *  that invents a separator owns stripping it — the shared cleaner knows about
+ *  the format's ` · ` and `"`, and cannot know about a list this one builds. */
+function fieldName(value: string): string {
+  return pageText(value, MAX_STAMP_TARGET_CHARS)
+    .replace(/,/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
 // ── Testing-mode evidence, rendered (M3) ────────────────────────────────────
 //
@@ -52,13 +79,14 @@ export function trailGapLabel(gapMs: number): string {
  *  there is no branch here that could print a value, because no branch of
  *  `TrailEntry` carries one. */
 export function trailAction(entry: TrailEntry): string {
+  const target = (t: { name: string; role: string }): string => pageText(t.name || t.role, MAX_STAMP_TARGET_CHARS)
   switch (entry.kind) {
     case 'click':
-      return entry.target ? `click "${entry.target.name || entry.target.role}"` : 'click'
+      return entry.target ? `click "${target(entry.target)}"` : 'click'
     case 'typed':
-      return `typed into "${entry.target.name || entry.target.role}"`
+      return `typed into "${target(entry.target)}"`
     case 'navigate':
-      return `navigate ${entry.route}`
+      return `navigate ${pageText(entry.route, MAX_STAMP_ROUTE_CHARS)}`
     case 'scroll':
       return `scroll to ${Math.round(entry.scrollY)}`
     case 'note':
@@ -101,15 +129,24 @@ function fmtTrail(trail: readonly TrailEntry[], indent: string): string[] {
  */
 function fmtStamp(stamp: EvidenceStateStamp): string {
   const parts: string[] = []
-  if (stamp.route) parts.push(`route ${stamp.route}`)
-  if (stamp.title) parts.push(`title "${stamp.title}"`)
-  for (const dialog of stamp.dialogs) parts.push(`dialog "${dialog.name || dialog.role}" open`)
-  if (stamp.focused) parts.push(`focused ${stamp.focused.role} "${stamp.focused.name}"`)
+  if (stamp.route) parts.push(`route ${pageText(stamp.route, MAX_STAMP_ROUTE_CHARS)}`)
+  if (stamp.title) parts.push(`title "${pageText(stamp.title, MAX_STAMP_TITLE_CHARS)}"`)
+  for (const dialog of stamp.dialogs) {
+    parts.push(`dialog "${pageText(dialog.name || dialog.role, MAX_STAMP_TARGET_CHARS)}" open`)
+  }
+  if (stamp.focused) {
+    parts.push(
+      `focused ${pageText(stamp.focused.role, MAX_STAMP_TARGET_CHARS)} "${pageText(stamp.focused.name, MAX_STAMP_TARGET_CHARS)}"`,
+    )
+  }
   const counts = { filled: 0, changed: 0, invalid: 0, empty: 0 }
   const invalidNames: string[] = []
   for (const field of stamp.fields) {
     counts[field.fill] += 1
-    if (field.fill === 'invalid' && field.name) invalidNames.push(field.name)
+    // The invalid names are joined with ", " — this line's OWN separator, which
+    // the shared cleaner has no reason to know about — so a field named
+    // `Email, Password` would read as two fields the page does not have.
+    if (field.fill === 'invalid' && field.name) invalidNames.push(fieldName(field.name))
   }
   const fieldBits: string[] = []
   if (counts.filled > 0) fieldBits.push(`${counts.filled} filled`)
@@ -128,10 +165,48 @@ function fmtBox(box: Rect): string {
   return `[box=${Math.round(box.x)},${Math.round(box.y)},${Math.round(box.width)},${Math.round(box.height)}]`
 }
 
+/**
+ * An anchor, rendered — and cleaned HERE and nowhere else.
+ *
+ * `role`, `name` and `ancestorPath` are read off the page, and this line quotes
+ * them and joins anchors with `; ` while the note's other lines join with ` · `.
+ * So they get the same treatment the stamp and the trail do.
+ *
+ * AT RENDER ONLY. An `AnchorRef`'s strings are compared for EXACT EQUALITY
+ * against freshly recomputed live values when a note re-anchors (bridge/anchors
+ * and canvas-geometry-guard), so cleaning them on ingress — without mirroring
+ * the same cleaning in resolution — would make a stored fingerprint stop
+ * matching the element it names. That is the "present element reads
+ * needs-re-pointing" failure of 2026-08-15, and it is the reason this is a
+ * display concern and not a storage one.
+ */
 function fmtAnchor(anchor: AnchorRef): string {
-  if (anchor.kind === 'ux-id') return `ux-id ${anchor.id}`
-  return `fingerprint role="${anchor.role}" name="${anchor.name}" path="${anchor.ancestorPath}" ordinal=${anchor.ordinal}`
+  if (anchor.kind === 'ux-id') return `ux-id ${anchorText(anchor.id)}`
+  return (
+    `fingerprint role="${anchorText(anchor.role)}"` +
+    ` name="${anchorText(anchor.name)}"` +
+    ` path="${anchorText(anchor.ancestorPath)}"` +
+    ` ordinal=${anchor.ordinal}`
+  )
 }
+
+/** One anchor field. The `anchors:` line joins anchors with `"; "` — its OWN
+ *  separator, which the shared cleaner has no reason to know about — so the
+ *  semicolon goes here, exactly as `fieldName` drops the comma from the one line
+ *  that joins names with `", "`. Every renderer that invents a separator owns
+ *  stripping it. */
+function anchorText(value: string): string {
+  return pageText(value, MAX_ANCHOR_CHARS)
+    .replace(/;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** An anchor string's bound at RENDER. Matches the store's own ANCHOR_STRING_MAX
+ *  so nothing is truncated here — this pass is about punctuation, not length. */
+const MAX_ANCHOR_CHARS = 512
+/** Likewise for a focus label, matching the store's LABEL_MAX_CHARS. */
+const MAX_FOCUS_LABEL_CHARS = 120
 
 /** A multi-line user note, indented so continuation lines sit visibly under
  *  their `note:` opener. Purely cosmetic — inside the envelope every line is
@@ -173,13 +248,18 @@ function fmtAnnotation(a: Annotation, blocksByAnnotation: Map<string, NoteAttach
   // shows its own claim rather than only the note.
   if (a.addressedIn) lines.push(`  updated-in: ${a.addressedIn}`)
   if (a.focus) {
+    // The focus LABEL is page-derived too — an `aria-label` becomes it — so the
+    // separator goes. Its QUOTES stay: the label is prose (`button "Save"`) in a
+    // field that holds nothing else, where a quote delimits nothing a reader
+    // parses. Cleaned at render, like the anchors below and for the same reason.
+    const label = pageText(a.focus.label, MAX_FOCUS_LABEL_CHARS, { allowQuotes: true })
     if (a.scope === 'element') {
-      lines.push(`  target: ${a.focus.label} ${fmtBox(a.focus.bboxPage)}`)
+      lines.push(`  target: ${label} ${fmtBox(a.focus.bboxPage)}`)
       if (a.focus.targets.length > 0) {
         lines.push(`  anchors: ${a.focus.targets.map(fmtAnchor).join('; ')}`)
       }
     } else {
-      lines.push(`  region: ${a.focus.label} ${fmtBox(a.focus.bboxPage)}`)
+      lines.push(`  region: ${label} ${fmtBox(a.focus.bboxPage)}`)
     }
   }
   if (a.supersededBy) lines.push(`  superseded-by: ${a.supersededBy}`)

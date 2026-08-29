@@ -842,6 +842,16 @@ function CanvasSurface({
   isTestingRef.current = isTesting
   const versionOpenRef = useRef(versionOpen)
   versionOpenRef.current = versionOpen
+  /**
+   * READ-ONLY, readable from the bridge callbacks.
+   *
+   * The inbound channel is built once per document and its handlers close over
+   * refs, so a prop alone cannot reach them — and this is the one flag that
+   * MUST reach them: the content-click path is the only way into the pane's
+   * write side that the user does not press a button for.
+   */
+  const readOnlyRef = useRef(readOnly)
+  readOnlyRef.current = readOnly
   /** The framed stage — the rectangle `capturePage` is asked for. Not the
    *  iframe: the frame's border and the layers over it are what the user sees
    *  as "the page under review". */
@@ -1246,6 +1256,15 @@ function CanvasSurface({
    * mounted first, it would be the thing the screenshot captured.
    */
   const beginEvidence = useCallback(() => {
+    // READ-ONLY FIRST, and stated rather than implied (adversarial pass).
+    // The two conditions below happen to be false on the read-only surfaces we
+    // render today, but they are conditions about a RUN, not about ownership:
+    // `versionOpen` is `!draft && !verdict`, and a reject-fix-approve history
+    // leaves earlier versions verdict-less, so stepping back through one would
+    // have satisfied both and sent an `evidenceCapture` for somebody else's
+    // canvas. Main refuses it — and a refused write is still a write attempted
+    // from a surface whose contract is that it makes none.
+    if (readOnlyRef.current) return
     if (!isTestingRef.current || !versionOpenRef.current) return
     if (pendingEvidenceRef.current || evidenceBusyRef.current) return
     evidenceBusyRef.current = true
@@ -1338,6 +1357,13 @@ function CanvasSurface({
    *  and the RPC layer's per-frame cap is a backstop, not the design. */
   const inspectAndLock = useCallback(
     async (pageX: number, pageY: number) => {
+      // Not on a read-only surface, whatever the version looks like. Locking a
+      // selection writes `focus` into THIS session's review mirror — with a
+      // chain read out of a foreign document and stamped with a foreign version
+      // id — and then starts a note. Neither belongs to a canvas the session
+      // does not own, and neither is prevented by the run-shaped guards inside
+      // `beginEvidence`. Browsing and hovering still work; only the lock stops.
+      if (readOnlyRef.current) return
       const target = iframeRef.current?.contentWindow
       if (!target || inspectPendingRef.current) return
       inspectPendingRef.current = true
@@ -3008,7 +3034,11 @@ function CanvasSurface({
               being written the site underneath it is frozen, so the words the
               user types are about the screen the note actually locked. Testing
               only — a mockup and a plan never sprout one. */}
-          {isTesting && pendingEvidence && (
+          {/* Never on a read-only surface: the shield exists to freeze a site
+              while the user writes a note about it, and a read-only pane has no
+              composer to write one in — a shield there would be a dead overlay
+              over somebody else's work. Belt to the two guards above. */}
+          {isTesting && !readOnly && pendingEvidence && (
             <CanvasPauseShield
               onCancelHint="Esc cancels this note"
               // In draw mode the glass already covers the page and owns the

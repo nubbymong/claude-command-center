@@ -53,13 +53,33 @@ vi.mock('../../../src/renderer/components/CanvasNotesPanel', () => ({
   },
 }))
 vi.mock('../../../src/renderer/utils/config-saver', () => ({ saveConfigNow: vi.fn(async () => true) }))
+
+/** What the frame answers an `inspect` with. Empty by default — a test that
+ *  wants the click path to reach `lockFocus` says so. */
+let inspectChain: unknown[] = []
+const askFrame = vi.fn(async () => ({ chain: inspectChain }))
 vi.mock('../../../src/renderer/canvas/canvas-frame-rpc', () => ({
-  askCanvasFrame: vi.fn(() => new Promise(() => {})),
+  askCanvasFrame: (...args: unknown[]) => askFrame(...(args as [])),
   framesInFlight: () => 0,
   MAX_FRAME_REQUESTS_IN_FLIGHT: 4,
 }))
+
+/**
+ * The inbound channel is CAPTURED, not stubbed away.
+ *
+ * The page's own reports — a click on the content, above all — are the one way
+ * into this pane's write side that the user does not press a button for, so a
+ * no-op mock would leave the whole path untested. The handlers the pane
+ * registers are kept so a test can play the page.
+ */
+interface ChannelHandlers {
+  onReady: () => void
+  onViewport: (vp: { scrollX: number; scrollY: number; width: number; height: number; dpr: number; scale: number }) => void
+  onContentClick: (pageX: number, pageY: number, hit: unknown) => void
+}
+const createChannel = vi.fn(() => vi.fn())
 vi.mock('../../../src/renderer/canvas/canvas-inbound-channel', () => ({
-  createCanvasInboundChannel: vi.fn(() => vi.fn()),
+  createCanvasInboundChannel: (...args: unknown[]) => createChannel(...(args as [])),
   INBOUND_FLOOD_BUDGET: 600,
   INBOUND_FLOOD_WINDOW_MS: 1000,
   reportedKeyIsPlausible: () => true,
@@ -155,6 +175,22 @@ const design = (id: string): CanvasVersion => ({
   verdict: { state: 'approved', at: '2026-08-29T11:00:00Z', by: 'user' },
 }) as CanvasVersion
 
+/**
+ * A design version with NO verdict — `versionOpen` is true on it.
+ *
+ * This is the shape the adversarial pass turned up: `versionOpen` is
+ * `!draft && !verdict`, a fact about where a RUN has got to, and a
+ * reject-fix-approve history leaves earlier versions verdict-less forever. Any
+ * guard that leans on it to mean "this is yours to write on" is wrong by
+ * accident, and stepping back one version is all it takes to prove it.
+ */
+const openDesign = (id: string): CanvasVersion => ({
+  id,
+  mode: 'design',
+  createdAt: '2026-08-29T10:00:00Z',
+  source: { mode: 'design', entry: 'index.html' },
+}) as CanvasVersion
+
 /** A PLAN version — a design-sourced document whose mode says what it is. */
 const plan = (id: string): CanvasVersion => ({
   id,
@@ -232,6 +268,36 @@ let root: Root
 
 const byTestId = (id: string): HTMLElement | null => container.querySelector(`[data-testid="${id}"]`)
 
+/** The handlers the pane registered with the (captured) inbound channel — how
+ *  a test plays the page. */
+function channelHandlers(): ChannelHandlers {
+  const call = createChannel.mock.calls.at(-1)?.[0] as { handlers: ChannelHandlers } | undefined
+  expect(call, 'the pane must have opened an inbound channel').toBeTruthy()
+  return call!.handlers
+}
+
+/** One inspect-chain entry, shaped as the geometry guard will keep it. */
+const chainEntry = () => ({
+  role: 'button',
+  name: 'Save',
+  tag: 'button',
+  box: { x: 10, y: 20, width: 80, height: 24 },
+  fingerprint: { role: 'button', name: 'Save', tag: 'button' },
+})
+
+/** The page reports a click on the content. */
+async function reportContentClick(): Promise<void> {
+  const handlers = channelHandlers()
+  await act(async () => {
+    handlers.onContentClick(120, 80, { role: 'button', name: 'Save', tag: 'button', box: { x: 10, y: 20, width: 80, height: 24 } })
+  })
+  // The inspect is an async round trip to the frame; let it settle.
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
 async function render(): Promise<void> {
   await act(async () => {
     root.render(<AgentCanvasPane sessionId={SID} isActive />)
@@ -258,6 +324,9 @@ beforeEach(() => {
   called = []
   notesPanelMounted = 0
   readonlyState = null
+  inspectChain = []
+  askFrame.mockClear()
+  createChannel.mockClear()
   _resetCanvasReadonlyRequestsForTest()
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
   useSessionStore.setState({ sessions: [{ id: SID }] } as any)
@@ -406,6 +475,45 @@ describe('the pane never calls a mutating channel while read-only', () => {
     expect(forbidden, `forbidden canvas calls: ${forbidden.join(', ')}`).toEqual([])
     // Specifically: stepping a version must not move the SESSION's active one.
     expect(called).not.toContain('setActiveVersion')
+  })
+
+  /**
+   * THE CONTENT-CLICK PATH (adversarial pass).
+   *
+   * Everything else on this pane is a control the user presses, and controls can
+   * be removed. This one is the PAGE reporting a click through the bridge, and
+   * it lands on `inspectAndLock` -> `lockFocus` -> `beginEvidence` with no
+   * button anywhere near it. The old guards were about the RUN — `isTesting`,
+   * `versionOpen` — which is why the fixture below is a VERDICT-LESS version:
+   * `versionOpen` is true on it, exactly as it is on any version an earlier
+   * reject left behind, so a run-shaped guard says "go ahead" about a canvas the
+   * session does not own.
+   */
+  it('a reported content click on a read-only page locks nothing and captures nothing', async () => {
+    await openReadonly([openDesign('v1')])
+    inspectChain = [chainEntry()]
+    await reportContentClick()
+
+    const forbidden = called.filter((name) => !READ_ONLY_ALLOWED.has(name))
+    expect(forbidden, `forbidden canvas calls: ${forbidden.join(', ')}`).toEqual([])
+    expect(called).not.toContain('evidenceCapture')
+    // The focus lives in THIS session's review mirror; a foreign document's
+    // element chain must never be written into it.
+    expect(useCanvasReviewStore.getState().bySessionId[SID]?.focus ?? null).toBeNull()
+    // And nothing froze the page for a note that has nowhere to be written.
+    expect(byTestId('canvas-pause-shield')).toBeNull()
+  })
+
+  it('the same click DOES lock on your own canvas — so the test above is not clicking into a void', async () => {
+    // The positive control for the callback wiring: without it, a renamed
+    // handler or a channel that was never opened would make the assertions
+    // above pass against a click nobody received.
+    seedOwn([openDesign('v1')], 'v1')
+    await render()
+    inspectChain = [chainEntry()]
+    await reportContentClick()
+    expect(askFrame).toHaveBeenCalled()
+    expect(useCanvasReviewStore.getState().bySessionId[SID]?.focus ?? null).not.toBeNull()
   })
 
   it('holds for a completed test pack, which shows a plain notice instead of a recall', async () => {

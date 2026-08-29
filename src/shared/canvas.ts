@@ -1317,13 +1317,85 @@ export type EvidenceCaptureResult =
  *  same one every other stored stamp carries. */
 const STAMP_TIME_MAX = 64
 
-// eslint-disable-next-line no-control-regex
-const EVIDENCE_CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/
+/**
+ * Everything that can make one string RENDER as another.
+ *
+ * Cc + Zl/Zp was the old list and it was never the whole class: **Cf** — the
+ * bidi overrides, the zero-width family, the BOM, the tag block — is the half
+ * that does the impersonating, and leaving it out re-opened, on the trail's
+ * route, a finding this codebase already paid for on 2026-08-15. Matched to
+ * `canvas-page-text.ts` and `safeRootLabel`, which is the point: cleaners that
+ * must agree, agreeing by naming the same class.
+ */
+const PAGE_TEXT_FORMAT_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
 
-/** A page-reported string that is safe to store and show: bounded, and with no
- *  control character that could make one line read as two. */
+/**
+ * THE SERIALIZER'S OWN PUNCTUATION, which page-reported text may not contain.
+ *
+ * `canvas_review` renders a trail as `16:43:58 click "Checkout" · +3.1s typed
+ * into "Email"` and a stamp as `route /checkout · title "Checkout" · dialog
+ * "Confirm" open`. Both join fields with ` · ` and quote names with `"` — and
+ * the PAGE chooses the routes and the names, so a route of
+ * `/checkout · +0.1s click "Approve and pay"` writes into that line an action
+ * the user never took, which the agent then reads as recorded fact.
+ *
+ * LINE-level forgery was already closed (no newline survives the class above);
+ * this is the INTRA-line separator, which nothing was defending. Stripped rather
+ * than escaped because these fields are labels: losing a middle dot from a
+ * page's title costs a reader nothing, while an escaping scheme is one more
+ * thing that has to stay in step with the renderer.
+ */
+const SERIALIZER_PUNCTUATION = /["·]/g
+
+/** The separator alone — structural in every line this format writes, so it is
+ *  stripped even where a quote may stay. */
+const SERIALIZER_SEPARATOR = /[·]/g
+
+/**
+ * A page-reported string, cleaned to what may be stored and shown: nothing that
+ * can impersonate another character, none of the serializer's own punctuation,
+ * whitespace collapsed, trimmed, capped BY CODE POINT.
+ *
+ * Idempotent by construction — `clean(clean(x)) === clean(x)` — which is what
+ * lets the keeper below be a round trip instead of a second list of rules that
+ * has to be maintained alongside this one.
+ */
+export function cleanPageReportedText(
+  value: unknown,
+  max: number,
+  /**
+   * Keep the double quote, for the one renderer whose field is PROSE rather than
+   * a delimited list.
+   *
+   * A focus label is written `button "Save"` deliberately, and it sits alone
+   * between `target: ` and the box, where a quote opens and closes nothing a
+   * reader parses structurally. Stripping it there would degrade every element
+   * note to fix nothing. The SEPARATOR still goes — that one is structural
+   * wherever it appears.
+   */
+  opts?: { allowQuotes?: boolean },
+): string {
+  if (typeof value !== 'string' || value.length === 0) return ''
+  const punctuation = opts?.allowQuotes === true ? SERIALIZER_SEPARATOR : SERIALIZER_PUNCTUATION
+  const cleaned = value
+    .replace(PAGE_TEXT_FORMAT_CHARS, ' ')
+    .replace(punctuation, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return Array.from(cleaned).slice(0, max).join('').trim()
+}
+
+/**
+ * A page-reported string that is safe to store and show.
+ *
+ * Asked as a ROUND TRIP: a value is clean iff it is its own cleaning. Same shape
+ * `isKeepableVersion` uses for a pack name, and for the same reason — a
+ * validator written as its own list of forbidden things drifts from the cleaner,
+ * and every expensive bug in this pipeline has been two halves of one rule with
+ * only one of them maintained.
+ */
 function isCleanReportedString(value: unknown, max: number): value is string {
-  return typeof value === 'string' && value.length <= max && !EVIDENCE_CONTROL_CHARS.test(value)
+  return typeof value === 'string' && cleanPageReportedText(value, max) === value
 }
 
 /**

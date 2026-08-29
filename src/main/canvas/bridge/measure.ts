@@ -434,7 +434,21 @@ export function stateOf(el: Element, opts?: { srOnly?: boolean; opacity?: number
 
   if ((isControl && control.disabled === true) || ariaFlag(el, 'aria-disabled')) state.disabled = true
 
-  if (isControl && type !== 'checkbox' && type !== 'radio' && type !== 'file' && type !== 'submit' && type !== 'button') {
+  if (
+    isControl &&
+    type !== 'checkbox' &&
+    type !== 'radio' &&
+    type !== 'file' &&
+    type !== 'submit' &&
+    type !== 'button' &&
+    // A PASSWORD's exact length is not review data, it is the secret's shape.
+    // Every other field reports one because overflow and truncation review needs
+    // it; here the PAGE has already declared what the field holds, so there is
+    // no heuristic to get wrong and nothing legitimate lost. `state.type` still
+    // says `password`, so a reviewer still sees the field is there — only the
+    // count goes.
+    type !== 'password'
+  ) {
     // The LENGTH of what the user typed, never the text of it. See
     // SnapshotNode['state'].valueLength for why this is not a heuristic.
     const value = typeof control.value === 'string' ? control.value : ''

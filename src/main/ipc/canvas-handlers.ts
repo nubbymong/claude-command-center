@@ -80,6 +80,7 @@ import {
   MAX_TRAIL_ENTRIES_PER_RUN,
   artifactPhaseOf,
   artifactRuns,
+  cleanPageReportedText,
   sanitizeAuditLabel,
   sanitizeStamp,
   sanitizeTrail,
@@ -125,8 +126,11 @@ function reportedText(max: number) {
   return z
     .string()
     .max(max * 4)
-    // eslint-disable-next-line no-control-regex
-    .transform((s) => s.replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g, ' ').slice(0, max))
+    // ONE cleaner, shared with the keeper that will re-check this value on the
+    // way back off disk (`cleanPageReportedText`). The local regex this replaces
+    // covered Cc but not Cf, so a bidi override rode through the seam and the
+    // keeper let it stand — two halves of one rule, with only one maintained.
+    .transform((s) => cleanPageReportedText(s, max))
 }
 
 const stampTargetSchema = z
@@ -791,8 +795,12 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
    * where the cap does.
    */
   ipcMain.handle(IPC.CANVAS_LIBRARY_LIST, async (_e, args: unknown): Promise<CanvasLibraryResult> => {
-    const { sessionId, openTileSessionIds, query, tab, filter } = libraryListSchema.parse(args)
-    const tiles = openTileSessionIds ?? []
+    // `openTileSessionIds` is accepted by the schema (callers send it) and
+    // deliberately NOT read here: the Library's privacy rule reads the
+    // PTY-lifecycle oracle alone, and threading a caller-composed hint through
+    // would read as though it still gated something. It survives on
+    // `canvas:listResumables`, where it decides only what to OFFER.
+    const { sessionId, query, tab, filter } = libraryListSchema.parse(args)
     const configNameOf = configNameResolver()
     // Resolved HERE from main's own spawn record, never accepted from the
     // renderer, so a caller cannot ask to see another project by naming it.
@@ -800,8 +808,7 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     return buildLibraryRows({
       askingSessionId: sessionId,
       ...(projectCwd ? { projectCwd } : {}),
-      openTileSessionIds: tiles,
-      isSessionLive: canvasLivenessQuery(tiles).isSessionLive,
+      isSessionLive: canvasLivenessQuery().isSessionLive,
       ...(query ? { query } : {}),
       ...(tab ? { tab } : {}),
       ...(filter ? { filter } : {}),
@@ -882,12 +889,7 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     // THE PRIVACY RULE, on this channel too (M4). The totals sweep reads this
     // list, so a row withheld from the Library but returned here would put
     // another live session's private in-flight work into a COUNT on the button.
-    const entries = listAllCanvases(
-      openTileSessionIds ?? [],
-      cwd,
-      sessionId,
-      canvasLivenessQuery(openTileSessionIds ?? []).isSessionLive,
-    )
+    const entries = listAllCanvases(openTileSessionIds ?? [], cwd, sessionId, canvasLivenessQuery().isSessionLive)
     // What is outstanding on each, joined HERE: the review store imports the
     // canvas store, so the reverse import would be a cycle, and this handler
     // already holds both (same reason the delete handler drops reviews here).

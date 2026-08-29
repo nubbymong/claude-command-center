@@ -80,7 +80,10 @@ const EMPTY_SNAPSHOT: ReviewSnapshot = { reviews: [], annotations: [] }
 export interface LibraryRowsArgs {
   askingSessionId: string
   projectCwd?: string
-  openTileSessionIds?: readonly string[]
+  /** THE PRIVACY RULE'S ORACLE, and the only thing that decides whether another
+   *  session's in-flight canvas is visible. There is deliberately no open-tile
+   *  field beside it: that array is composed by the calling session, so it can
+   *  gate nothing here. */
   isSessionLive?: (sessionId: string) => boolean
   /** Free text, lowercased and matched against titles, pack names and note
    *  text. Main-side, so `truncated` counts what actually matched. */
@@ -262,7 +265,6 @@ export function buildLibraryRows(args: LibraryRowsArgs): CanvasLibraryResult {
   const canvases = listCanvasesForLibrary({
     askingSessionId: args.askingSessionId,
     ...(args.projectCwd ? { projectCwd: args.projectCwd } : {}),
-    ...(args.openTileSessionIds ? { openTileSessionIds: args.openTileSessionIds } : {}),
     ...(args.isSessionLive ? { isSessionLive: args.isSessionLive } : {}),
   })
   const needle = (args.query ?? '').slice(0, MAX_QUERY_CHARS).trim().toLowerCase()

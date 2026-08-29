@@ -481,3 +481,66 @@ describe('the MCP surface (canvas_complete)', () => {
     expect(canvasStore.getCanvasStateById(canvasId)?.completed?.by).toBe('agent')
   })
 })
+
+describe('MARK COMPLETE IS NEVER DEAD, even after an archive (W3)', () => {
+  // Live repro. `openVersionIdsOf` skips ARCHIVED runs — correctly: the user
+  // has put those down. But `setArtifactArchived` left `awaitingReview`
+  // pointing INTO the archived run, and the force path checks that stamp after
+  // it has already force-closed everything else. So the canvas reached a state
+  // where Mark complete refused forever and there was no gesture left that
+  // could clear it: the version it named was archived, so nothing would ever
+  // dismiss it, and the stamp was the last thing standing.
+  //
+  // The stamp and the run must agree: an archived run is not owed, so a
+  // review-needed stamp pointing into one is not owed either.
+
+  it('force-completes a canvas whose AWAITING version has been archived', () => {
+    const rendered = canvasStore.renderVersion(SID, {
+      mode: 'design',
+      title: 'Archived awaiting',
+      html: '<!doctype html><p>v1</p>',
+    })
+    expect(canvasStore.getCanvasStateById(rendered.canvasId)?.awaitingReview?.versionId).toBe(rendered.versionId)
+
+    expect(canvasStore.setArtifactArchived(rendered.canvasId, rendered.versionId, true)).not.toBeNull()
+
+    const done = completion.completeCanvasGuarded(rendered.canvasId, 'user', SID, { force: true })
+    expect('error' in done ? done.error : 'ok').toBe('ok')
+    expect(canvasStore.getCanvasStateById(rendered.canvasId)?.completed).toBeTruthy()
+  })
+
+  it('drops the review-needed stamp at the archive itself, so every reader agrees', () => {
+    const rendered = canvasStore.renderVersion(SID, {
+      mode: 'design',
+      title: 'Archived stamp',
+      html: '<!doctype html><p>v1</p>',
+    })
+    canvasStore.setArtifactArchived(rendered.canvasId, rendered.versionId, true)
+    // Not merely "the force path tolerates it" — the record itself no longer
+    // claims a review is owed, so the queue, the pill and the guard read the
+    // same thing.
+    expect(canvasStore.getCanvasStateById(rendered.canvasId)?.awaitingReview).toBeUndefined()
+    // ...and a PLAIN complete now succeeds too, because nothing is owed.
+    const done = completion.completeCanvasGuarded(rendered.canvasId, 'user', SID)
+    expect('error' in done ? done.error : 'ok').toBe('ok')
+  })
+
+  it('leaves a stamp that points at a LIVE run exactly where it was', () => {
+    // The archive only clears what it archives. A second artefact still
+    // awaiting review keeps its stamp, and completion still refuses.
+    const first = canvasStore.renderVersion(SID, {
+      mode: 'design',
+      title: 'Two artefacts',
+      html: '<!doctype html><p>a</p>',
+    })
+    const second = canvasStore.renderVersion(SID, {
+      mode: 'plan',
+      title: 'Two artefacts',
+      html: '<!doctype html><p>b</p>',
+    })
+    canvasStore.setArtifactArchived(first.canvasId, first.versionId, true)
+    expect(canvasStore.getCanvasStateById(first.canvasId)?.awaitingReview?.versionId).toBe(second.versionId)
+    const refused = completion.completeCanvasGuarded(first.canvasId, 'user', SID)
+    expect('error' in refused ? refused.error : '').toMatch(/awaiting/)
+  })
+})

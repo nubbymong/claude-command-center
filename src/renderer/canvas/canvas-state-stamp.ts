@@ -32,42 +32,32 @@ import {
   type SnapshotNode,
   type StampTarget,
 } from '../../shared/canvas'
+import { canvasPageText } from '../../shared/canvas-page-text'
 
 /** Roles that mean "a modal is over the page". */
 const DIALOG_ROLES = new Set(['dialog', 'alertdialog'])
 
 /**
- * The character class the shared record validator refuses.
- *
- * Written as a code-point test rather than a regexp literal on purpose: a
- * literal for this range has to carry the escapes verbatim, and an editing pass
- * that mangles one leaves a regexp that silently matches something else. The
- * two line separators are in the set for the same reason the rest are — a page
- * that can put one in an accessible name can make one stamp line read as two.
- */
-function isControlCode(code: number): boolean {
-  if (code < 0x20) return true
-  if (code >= 0x7f && code <= 0x9f) return true
-  return code === 0x2028 || code === 0x2029
-}
-
-/**
  * A page-reported string, made safe to store and to show.
  *
- * The snapshot sanitiser has already done this once; it is done again here
- * because the stamp crosses IPC into a record that main validates, and a
- * legitimate note must never be refused because a page put a newline in an
- * accessible name. Sliced by CODE POINT so a clamp cannot split a surrogate
- * pair and produce the lone half main's cleanliness check rejects.
+ * DELEGATED, not re-implemented. This used to carry its own code-point test for
+ * the control class, and that test covered Cc plus the two line separators and
+ * stopped there — so the FORMAT class (Cf) walked straight through it, and a
+ * route or a title carrying a right-to-left override reached the stamp, the
+ * trail and the `canvas_review` payload intact. One override reverses the rest
+ * of the line, so the reviewer reads something other than what was stored and
+ * the agent is handed something other than what the reviewer read: the
+ * 2026-08-15 bidi finding, re-opened on a new path.
+ *
+ * `canvasPageText` is the ONE cleaner this pipeline has — Cc, Cf, Zl, Zp, plus
+ * the cap — and it is the one the bridge, the anchor fingerprints and
+ * `safeHit` already run. A second list here is not a second defence; it is the
+ * next place the two drift apart. The strip semantics come with it: a control
+ * character is REMOVED rather than replaced by a space, which is what both
+ * sides of the anchoring comparison do.
  */
 export function reportedStampText(value: unknown, max: number): string {
-  if (typeof value !== 'string') return ''
-  const out: string[] = []
-  for (const ch of value) {
-    if (out.length >= max) break
-    out.push(isControlCode(ch.codePointAt(0) ?? 0) ? ' ' : ch)
-  }
-  return out.join('')
+  return canvasPageText(value, max)
 }
 
 /** Identity only. Built field by field — never `{...node}` — so a snapshot

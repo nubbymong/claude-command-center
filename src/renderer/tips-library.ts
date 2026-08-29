@@ -340,19 +340,11 @@ export const TIPS_LIBRARY: Tip[] = [
     },
   },
 
-  {
-    id: 'tip.excalidraw-scratchpad',
-    category: 'productivity',
-    complexity: 'simple',
-    priority: 50,
-    variants: {
-      primary: {
-        shortText: 'Sketch ideas in the Canvas scratchpad',
-        title: 'Excalidraw Scratchpad',
-        body: 'The **Canvas** button next to Snap opens the Agent Canvas — an empty one is a full Excalidraw scratchpad. Sketch architecture, annotate flowcharts, draw selectors over a screenshot -- anything you\'d normally reach for a tablet for.\n\n• **Copy** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session -- no per-config setup.\n• Close it with the close control, or press the same toolbar button again -- it reads **Terminal** while the pane is open.',
-      },
-    },
-  },
+  // tip.excalidraw-scratchpad removed at the 2.1.0-rc.10 canvas sweep: the
+  // rewritten canvas front page has no "open the sketchpad instead" door, so the
+  // tip told users to click something that is no longer there. The browser
+  // pane's Freeze -> Excalidraw flow is untouched and is covered by
+  // tip.webview-freeze.
 
   {
     id: 'tip.command-webview',
@@ -665,13 +657,13 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Have your agent SHOW you the work',
         title: 'Agent Canvas',
-        body: 'The **Canvas** button in the session toolbar -- next to Snap -- opens a pane your agent can draw into. Ask for a mockup, a design or a look at the site it just built and it arrives as something you can see, instead of a wall of markdown describing it.\n\nIt is a two-way surface. Click anywhere on the render to leave a **note** (**Ctrl+V** in the composer attaches a pasted screenshot to it), then send the round back as a **review**. The agent reads the notes, changes the work and renders the next version.\n\nWhen a round is waiting on you, the button turns **amber and says "Review needed"**, with the number of rounds owed beside it -- click the count for the list, newest first. **Right-click the button** to clear the whole queue in one sweep (a confirm card first; nothing is deleted and every cleared note keeps a one-click Reopen). The session tab carries a dot for the same thing, so a hand-back is visible from any tab.',
+        body: 'The **Canvas** button in the session toolbar -- next to Snap -- opens a pane your agent can draw into. Ask for a mockup, a design, a plan or a look at the site it just built and it arrives as something you can see, instead of a wall of markdown describing it.\n\nIt is a two-way surface. Click anywhere on the render to leave a **note** -- **Ctrl+V** adds pasted screenshots to it, and anything you draw over the page rides it automatically -- then **approve or reject** the version and send the round. The agent reads the notes, changes the work and renders the next version.\n\nWhen a round is waiting on you, the button turns **amber and says "Review needed"**, with the number of rounds owed beside it -- click the count, or right-click the button, for the list. The session tab carries a dot for the same thing, so a hand-back is visible from any tab.',
         focusHint: 'Session toolbar -- the Canvas button, beside Snap',
       },
       postUse: {
         shortText: 'Every canvas version is kept -- walk back through them',
         title: 'Canvas: Versions, Reviews and the Library',
-        body: 'You already use the canvas. A few things it does that are easy to miss:\n\n• **Nothing is overwritten.** **History** picks the artifact (a plan, a mockup, an older test build under Archived), and a per-artifact stepper walks its versions. A History row can also **archive** an artifact (reversible) or **delete it permanently**.\n• **Agents draft in private now.** While an agent is still checking its own work it renders invisible drafts; you are only shown versions it deliberately marks ready, and those are what the "Review needed" queue counts.\n• **A note can offer alternatives.** When a fix has more than one defensible answer, the agent renders them all and the note grows **A/B/C chips** -- clicking a chip (or just naming your pick in chat) approves the note AND names the winner, and the agent builds only that one.\n• **Library** lists the canvases for this project, so a mockup from last week is two clicks away rather than lost with the session.\n• The pane **replaces the terminal** while it is open -- its mode (PLAN / MOCKUP / TESTING) is the pane title, so you always know what you are looking at.',
+        body: 'You already use the canvas. A few things it does that are easy to miss:\n\n• **A review is one decision.** You approve or reject the version in front of you, and Submit says exactly what it will do. Notes sent with an **approve** are kept as observations rather than work, and when nothing else is open the artifact signs itself off. Nothing the agent does can re-open a settled round -- reopening a note, or a whole round, is yours alone.\n• **Nothing is overwritten.** **History**, folded at the top of the review panel, picks the artifact (a plan, a mockup, an older test build under Archived), and a per-artifact stepper walks its versions. A History row can also **archive** an artifact (reversible) or **delete it permanently**.\n• **Agents draft in private.** While an agent is still checking its own work it renders invisible drafts; you are only shown versions it deliberately marks ready, and those are what the "Review needed" queue counts.\n• **A note can carry alternatives.** When a fix has more than one defensible answer the agent builds them all and labels them **A**, **B**, **C** on the note. Name your pick in chat and it records the winner, then builds only that one.\n• **The Library** searches every artifact in the project by title and note text, filters by kind and state, expands a test pack to page through its evidence, and archives or deletes in bulk.\n• The pane **replaces the terminal** while it is open -- its mode (PLAN / MOCKUP / TESTING) is the pane title, so you always know what you are looking at.',
       },
     },
   },
@@ -686,8 +678,58 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'Ask for the plan as a flow, not a document',
         title: 'Plan Mode on the Canvas',
-        body: 'Nobody reads a long markdown plan. Ask your agent to **put the plan on the canvas** and it comes back as a visual flow with a summary: the steps, what each one touches, and what has to happen before what.\n\nA plan is stored and served exactly like a design, so everything you already know still works on it -- click a step to leave a **note**, send the round as a **review**, and walk the versions as the plan changes.\n\nUse it before a big change rather than after: correcting a step on the canvas costs a click, correcting it in the code costs an afternoon.',
+        body: 'Nobody reads a long markdown plan. Ask your agent to **put the plan on the canvas** and it comes back as a visual flow with a summary: the steps, what each one touches, and what has to happen before what.\n\nA plan is stored and served exactly like a design, so everything you already know still works on it -- click a step to leave a **note**, walk the versions as the plan changes, and **approve or reject** the version in front of you. Approving it signs the plan off, and the canvas front page keeps a **View plan** jump to it, so the agreed version stays one click away while the work is being done.\n\nUse it before a big change rather than after: correcting a step on the canvas costs a click, correcting it in the code costs an afternoon.',
         focusHint: 'Session toolbar -- the Canvas button, once your agent has rendered a plan',
+      },
+    },
+  },
+
+  {
+    id: 'tip.canvas-testing-evidence',
+    category: 'agents',
+    complexity: 'intermediate',
+    priority: 74,
+    requires: ['canvas.opened'],
+    variants: {
+      primary: {
+        shortText: 'Test a live build and save what you actually saw',
+        title: 'Testing Mode: Evidence Notes',
+        body: 'Ask your agent to serve the build it just made on the canvas and you can click through the real thing, instead of describing what went wrong from memory.\n\nThe moment you start writing a note the screen **pauses** and locks the evidence together: a **screenshot** with your drawings over it, the **page state** (the route, an open dialog, where the focus is, which fields are filled, changed or invalid) and a **timed trail** of what you did to get there. It never records a character of what you typed into a field, only that you typed into it.\n\n**Ctrl+V** adds screenshots of your own, as many as a note needs, and drops **Image 1**, **Image 2** markers where your cursor is -- so your words can point at a specific picture.\n\nNotes collect into a **test pack** you can name, and the build takes one **pass or fail**. After the verdict the pack is a record: the pane shows the saved evidence rather than the live site, and the Library keeps it.',
+        focusHint: 'Canvas pane -- TESTING MODE in the title, then just use the page',
+      },
+    },
+  },
+
+  {
+    id: 'tip.canvas-explained',
+    category: 'agents',
+    complexity: 'simple',
+    priority: 70,
+    requires: ['canvas.opened'],
+    variants: {
+      primary: {
+        shortText: 'One page that draws how canvas reviews work',
+        title: 'Canvas Explained',
+        body: 'Versions, notes, verdicts, observations, packs -- the canvas has its own vocabulary, and **Canvas Explained** draws all of it on one page instead of describing it.\n\nIt covers what an artifact and its versions are, what a single note actually stores (the element you pointed at, your drawings, pasted images, your words), and the three shapes the loop takes: a **mockup** (versions until you approve), a **plan** (the same machine, where the versions are drafts of the plan) and a **test run** (one build, one verdict, one pack).\n\nTwo doors: the **Canvas Explained** card at the foot of the canvas front page, or the **Feature Guide**, which shows the same page inline.',
+        actionLabel: 'Open the Feature Guide',
+        actionTarget: 'help',
+        focusHint: 'Canvas front page -- the Canvas Explained card at the bottom',
+      },
+    },
+  },
+
+  {
+    id: 'tip.canvas-resume',
+    category: 'agents',
+    complexity: 'simple',
+    priority: 66,
+    requires: ['canvas.opened'],
+    variants: {
+      primary: {
+        shortText: 'Unfinished canvas work survives its session',
+        title: 'Resume Unfinished Canvas Work',
+        body: 'A canvas belongs to the session that made it, and while that session is live nobody else sees it. When the session goes away, the work does not.\n\nOpen the canvas in any session on the same project and the front page lists what can be picked up. **Resume** takes a canvas over with its versions, notes and evidence -- the first press wins, and if another session got there first you are told so rather than left guessing. **Dismiss** throws it away, and says how many notes and how much evidence go with it before you confirm.\n\nA small **mauve dot** on the Canvas button is how you know there is something to pick up. It is deliberately quiet: the loud amber "Review needed" state is what YOU owe an answer on, while the dot is work nobody currently holds.\n\nAnything that was signed off is shared with every session on the project as read-only history.',
+        focusHint: 'Session toolbar -- the small dot on the Canvas button, then the front page',
       },
     },
   },
@@ -864,8 +906,8 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'X-Ray and zoom: inspect a render without disturbing it',
         title: 'Canvas X-Ray and Zoom',
-        body: 'The pane header carries three tool chips -- **Inspect**, **Sketch** and **Region** -- and X-Ray belongs to Inspect (it only governs inspecting, so the Off/Stealth/On setting rides that chip):\n\n**X-Ray** decides what hovering does while you Inspect. **On** outlines and labels the element under the pointer (the default). **Stealth** still identifies it -- the identity and box are read out in the panel -- but draws nothing on the page, so a hover-sensitive design stays undisturbed. **Off** makes the page behave like a normal browser tab. Plan pages lock to Stealth: the flow itself is the picture, and boxes on top of it were noise.\n\n**Zoom** is **Ctrl+wheel** anywhere over the pane -- chrome, render or notes panel. The level shows in the header while you are zoomed and holds for as long as the pane is open, so a dense mockup can be read at 150% without asking the agent to render it bigger.',
-        focusHint: 'Canvas pane header -- the Inspect chip (X-Ray rides it) and the zoom readout',
+        body: 'The pane\'s tool row has two groups, **X-RAY** and **ANNOTATE**.\n\n**X-Ray** decides what hovering does while you are reading the page. **On** outlines and labels the element under the pointer (the default). **Stealth** still identifies it -- the identity and box are read out in the panel -- but draws nothing on the page, so a hover-sensitive design stays undisturbed. **Off** makes the page behave like a normal browser tab. Clicking any X-Ray segment is also the way back to using the page when you have been drawing. Plan pages lock to Stealth: the flow itself is the picture, and boxes on top of it were noise.\n\n**Annotate** is **Sketch** (a toggle -- press it again to give the page back the pointer), **Tools** (hide the drawing tools without leaving Sketch) and **Region** (drag a rectangle to target an area).\n\n**Zoom** is **Ctrl+wheel** anywhere over the pane -- chrome, render or notes panel. The level shows in the header while you are zoomed and holds for as long as the pane is open, so a dense mockup can be read at 150% without asking the agent to render it bigger.',
+        focusHint: 'Canvas pane tool row -- the X-RAY and ANNOTATE groups, and the zoom readout',
       },
     },
   },

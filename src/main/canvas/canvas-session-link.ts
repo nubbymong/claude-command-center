@@ -34,10 +34,12 @@ import {
   openOwnCanvasForSession,
   resumeCanvasForSession,
   sameProjectDir,
+  sameProjectDirExactCase,
   setCanvasSessionInfoResolver,
+  type CanvasWorkspaceCheck,
 } from './canvas-store'
 import { dropReviewsForCanvas, getReviewCountsForCanvas, rebindReviewsToSession } from './canvas-review-store'
-import { getSessionMeta } from '../session-registry'
+import { isPtySessionLive } from '../session-registry'
 import { getTranscriptBinder } from '../logging/logging-service'
 import { listProfiles } from '../account-profiles'
 import { logInfo } from '../debug-logger'
@@ -185,31 +187,53 @@ export function noteSessionSpawnForCanvas(
 const MAX_OPEN_TILE_HINTS = 256
 
 /**
- * IS THIS SESSION LIVE?
+ * IS THIS SESSION LIVE? — THE SECURITY GATE, AND IT READS ONE SIGNAL.
  *
- * Two sources, and only two:
+ * `isPtySessionLive` is a set in `session-registry` written by exactly two
+ * lines of `pty-manager`: add on spawn, remove on cleanup. A fact about this
+ * process that no caller can shape, and — the part that took a second round to
+ * get right — a fact about the PTY's LIFETIME rather than about session
+ * metadata.
  *
- *   - main's own `getSessionMeta` — a PTY running in THIS app run;
- *   - `openTileSessionIds`, the tiles the renderer says are on screen. Only the
- *     renderer knows which tiles are open, so it says. THE MISSING ORACLE
- *     (adversarial review, 2026-08-15): a tile the user has open whose PTY has
- *     exited (`/exit`, a crash, the Restart button) is still the user's own
- *     work on their own screen, and was previously offered to a new session as
- *     "an earlier session" while its own tile sat there showing it. This input
- *     can only ADD sessions to the live set — and live means untouchable — so
- *     it tightens the answer and can never widen it, which is why a
- *     renderer-supplied hint is admissible here at all.
+ * ROUND 2. This first read `getSessionMeta`, which looked equivalent and was
+ * not: that map is shared metadata with a second writer,
+ * `github-handlers.bindGitHubMeta`, which patches `{ id, repo, branch }` for
+ * every saved session with a GitHub integration at handler-registration — no
+ * PTY, no spawn. An id that had never run therefore read LIVE for the rest of
+ * the run, and its canvas was stranded three ways: un-resumable,
+ * un-dismissable, and invisible in the Library (the same oracle scopes the
+ * privacy rule). "Unforgeable" was true of it; "about a PTY" was not, and the
+ * lease needs both.
  *
- * THE SAVED-TILE FILE IS DELIBERATELY GONE (M4). It was the third branch, and
- * it answered a different question: "did this session exist when the app was
- * last closed". A closed app's tiles cannot review anything, so treating them
- * as live meant every canvas from a graceful Save & Close stayed untouchable
- * for the rest of time — the exact stranding the resume path exists to end. The
- * lease is liveness NOW.
+ * THE SPLIT, AND WHY IT EXISTS (adversarial review). This used to OR in
+ * `openTileSessionIds`, the renderer's list of tiles on screen — a per-call
+ * array that the CALLING session composes. It reached three destructive
+ * decisions: whether a peer may resume another session's canvas, whether it may
+ * dismiss or delete it, and whether it may see it at all. A same-project peer
+ * needed no forgery to defeat it, only to leave the owner out of a request it
+ * writes itself. A protection that the attacker opts into is not one.
+ *
+ * The argument that admitted the hint — "it can only ADD sessions to the live
+ * set, so it tightens and never widens" — was sound while the set only
+ * WITHHELD rows from a read-only list. It stopped being sound the moment the
+ * same set decided who may destroy somebody else's work, because the caller
+ * chooses what to add.
+ *
+ * So the model is stated plainly and the code matches it:
+ *   - PTY-ALIVE  = protected, unforgeably;
+ *   - PTY-DEAD   = OWNERLESS by the M4 lease = resumable and dismissable.
+ * The hint survives as a DISPLAY filter only (see `listResumableRows`): do not
+ * OFFER a resume row for a corpse tile the user can still see on their own
+ * screen. It permits nothing, and it protects nothing.
+ *
+ * THE SAVED-TILE FILE IS DELIBERATELY GONE TOO (M4). It answered a different
+ * question — "did this session exist when the app was last closed" — and a
+ * closed app's tiles cannot review anything, so treating them as live left
+ * every canvas from a graceful Save & Close untouchable for ever, which is the
+ * exact stranding the resume path exists to end.
  */
-export function isSessionLive(sessionId: string, openTileHint: ReadonlySet<string>): boolean {
-  if (getSessionMeta(sessionId)) return true // live PTY this run
-  return openTileHint.has(sessionId) // tile still on screen, PTY or not
+export function isSessionLive(sessionId: string): boolean {
+  return isPtySessionLive(sessionId)
 }
 
 /** The open-tile hint, bounded and shape-checked once per call. */
@@ -222,15 +246,75 @@ function openTileSet(openTileSessionIds: readonly string[] | undefined): Set<str
 }
 
 /**
- * The liveness oracle the store's guards take — built ONCE per call so the
- * lister, the resume and the delete guard can never disagree. A list that
- * refuses while the by-id action allows is the hole, not the fix.
+ * The liveness oracle the store's guards take — one object, so the lister, the
+ * resume and the delete guard can never disagree. A list that refuses while the
+ * by-id action allows is the hole, not the fix.
+ *
+ * Takes NO hint, deliberately: see `isSessionLive`.
  */
-export function canvasLivenessQuery(openTileSessionIds: readonly string[] = []): {
-  isSessionLive: (sessionId: string) => boolean
-} {
-  const open = openTileSet(openTileSessionIds)
-  return { isSessionLive: (sid) => isSessionLive(sid, open) }
+export function canvasLivenessQuery(): { isSessionLive: (sessionId: string) => boolean } {
+  return { isSessionLive }
+}
+
+/**
+ * SAME PROJECT AND SAME CONFIG — the second factor on every destructive
+ * cross-session action (dismiss, whole-canvas delete, resume).
+ *
+ * WHY A SECOND FACTOR. `sameProjectDir` decides case-sensitivity from
+ * `process.platform`, so on Windows and macOS it folds case for the whole
+ * machine. Both platforms can carry case-SENSITIVE volumes — an NTFS directory
+ * with the per-directory flag set, an APFS case-sensitive volume — on which
+ * `…\Foo` and `…\foo` are two genuinely different projects that this compares
+ * equal. A peer sitting in `foo` could then dismiss or resume a victim's canvas
+ * rooted at `Foo`, and choosing where to sit is not an attack that needs any
+ * privilege.
+ *
+ * WHERE THE CALLER'S configId COMES FROM, since that decides whether it is worth
+ * anything: main's own spawn record (`noteSessionSpawnForCanvas`, called only
+ * from `pty:spawn`), captured once when the user launched the tile. It is not a
+ * per-call IPC argument, so nothing reachable from a canvas channel — and in
+ * particular nothing an agent can drive — chooses it. Same standing as `cwd`.
+ *
+ * TWO SHAPES, because the second factor is only available on the newer rows:
+ *
+ *   - BOTH configIds known: they must be equal, and the project may then be
+ *     compared the way the filesystem would.
+ *   - EITHER missing — every pre-M4 canvas, and every session not launched from
+ *     a named saved config, i.e. the common and legacy case — the project must
+ *     match EXACTLY, case included. Round 1 fell back to the case-folded
+ *     compare here, which left the whole case-fold hole open for precisely the
+ *     rows most likely to hit it.
+ *
+ * THE RESIDUALS, STATED:
+ *   - with both configIds known, a case-only-different pair of real projects
+ *     whose sessions ALSO run the same config still matches. Both factors have
+ *     to collide, which a peer cannot arrange by choosing a directory name;
+ *   - the exact-case fallback is STRICTER than a case-insensitive filesystem,
+ *     so an honest peer whose recorded cwd differs from the record's only by
+ *     case is refused a dismiss/resume. The cost is one refusal on a
+ *     destructive action — their own work is still theirs, and the canvas stays
+ *     until its owner returns or they delete it from their own Library — which
+ *     is the right side to fail on.
+ *
+ * Fails closed: a caller we have no project for, or a record that records none,
+ * matches nothing.
+ */
+function sameWorkspace(
+  mine: { cwd?: string; configId?: string },
+  theirs: { cwd?: string; configId?: string },
+): boolean {
+  if (!mine.cwd || !theirs.cwd) return false
+  if (mine.configId && theirs.configId) {
+    return mine.configId === theirs.configId && sameProjectDir(mine.cwd, theirs.cwd)
+  }
+  return sameProjectDirExactCase(mine.cwd, theirs.cwd)
+}
+
+/** The workspace check for one caller, as the store's guards take it. */
+function workspaceCheckFor(sessionId: string): CanvasWorkspaceCheck {
+  const info = spawnInfo.get(sessionId)
+  const mine = { ...(info?.cwd ? { cwd: info.cwd } : {}), ...(info?.configId ? { configId: info.configId } : {}) }
+  return (theirs) => sameWorkspace(mine, theirs)
 }
 
 /** How many LIVE notes plus unsent drafts a canvas is carrying — the "N notes"
@@ -261,12 +345,19 @@ export function listResumableRows(
   configNameOf?: (configId: string) => string | undefined,
 ): ResumableRow[] {
   const info = spawnInfo.get(sessionId)
-  return listResumableCanvases(sessionId, canvasLivenessQuery(openTileSessionIds), {
-    ...(info?.cwd ? { projectCwd: info.cwd } : {}),
+  const rows = listResumableCanvases(sessionId, canvasLivenessQuery(), {
+    isEligible: workspaceCheckFor(sessionId),
     ...(info?.configId ? { configId: info.configId } : {}),
     noteCountOf: liveNoteCount,
     ...(configNameOf ? { configNameOf } : {}),
   })
+  // THE HINT'S ONLY REMAINING JOB, and it is cosmetic: do not OFFER to resume a
+  // canvas whose tile the user can still see on their own screen. That tile's
+  // PTY has exited, so the canvas IS resumable — nothing here permits or
+  // forbids anything, it only declines to put a confusing row in front of
+  // somebody who is looking at the thing it describes.
+  const onScreen = openTileSet(openTileSessionIds)
+  return rows.filter((row) => !onScreen.has(row.expectedOwnerSessionId))
 }
 
 /**
@@ -282,13 +373,19 @@ export function resumeCanvasFromSession(
   sessionId: string,
   canvasId: string,
   expectedOwnerSessionId: string,
-  openTileSessionIds: readonly string[] = [],
+  /** Accepted for the wire's sake and NOT consulted: liveness is the PTY
+   *  registry's answer alone (see `isSessionLive`), and the hint only shapes
+   *  what `listResumableRows` offers. */
+  _openTileSessionIds: readonly string[] = [],
 ): { ok: true; canvasId: string } | { ok: false; reason: NonNullable<CanvasResumeResult['reason']> } {
   const result = resumeCanvasForSession(
     sessionId,
     canvasId,
     expectedOwnerSessionId,
-    canvasLivenessQuery(openTileSessionIds),
+    canvasLivenessQuery(),
+    // Same project AND same config — the same predicate the list is scoped by,
+    // so a row that was never offered cannot be taken by naming its id.
+    workspaceCheckFor(sessionId),
   )
   if (!result.ok) return { ok: false, reason: result.reason }
   rebindReviewsToSession(result.canvasId, sessionId)
@@ -321,35 +418,39 @@ export function openOwnCanvasForSessionLink(sessionId: string, canvasId: string)
  *
  *   1. THE OWNER may. Always, including while it is completed — Reopen and
  *      Delete of your own memorialised work stay yours;
- *   2. a LIVE OTHER owner means NO. In-flight work is private to the live
- *      session holding it, and a delete is the sharpest thing a stranger could
- *      do to it;
+ *   2. a LIVE OTHER owner means NO — live meaning a PTY running in this app
+ *      run, which is the one signal no caller can shape. In-flight work is
+ *      private to the live session holding it, and a delete is the sharpest
+ *      thing a stranger could do to it;
  *   3. a COMPLETED canvas is OWNER-ONLY. Memorialised work is shared history
  *      that non-owners get to READ; archiving or deleting somebody else's
  *      signed-off pack is not a housekeeping gesture, it is destroying their
  *      record of it.
  *
  * What is left — an OWNERLESS IN-FLIGHT canvas — is allowed to a caller in the
- * SAME PROJECT. That is the dismiss case: work whose session is gone, sitting
- * in the project the caller is in, which somebody has to be able to clear.
+ * same WORKSPACE (project AND config; see `sameWorkspace`). That is the dismiss
+ * case: work whose session is gone, sitting where the caller is, which somebody
+ * has to be able to clear.
  *
- * Fails closed: an unknown canvas, and a caller whose project we cannot
+ * Fails closed: an unknown canvas, and a caller whose workspace we cannot
  * establish against a canvas that records one, both refuse.
  */
 export function canvasMutationAllowed(
   sessionId: string,
   canvasId: string,
-  openTileSessionIds: readonly string[] = [],
+  /** Accepted for the wire's sake and NOT consulted — see `isSessionLive`. */
+  _openTileSessionIds: readonly string[] = [],
 ): { ok: true } | { ok: false; reason: 'owner-live' | 'not-eligible' } {
   const owner = canvasOwnershipOf(canvasId)
   if (!owner) return { ok: false, reason: 'not-eligible' }
   if (owner.sessionId === sessionId) return { ok: true }
-  if (isSessionLive(owner.sessionId, openTileSet(openTileSessionIds))) return { ok: false, reason: 'owner-live' }
+  if (isSessionLive(owner.sessionId)) return { ok: false, reason: 'owner-live' }
   if (owner.completed) return { ok: false, reason: 'not-eligible' }
-  // Ownerless and in flight: same project only.
-  const mine = spawnInfo.get(sessionId)?.cwd
-  if (!mine || !owner.cwd) return { ok: false, reason: 'not-eligible' }
-  return sameProjectDir(mine, owner.cwd) ? { ok: true } : { ok: false, reason: 'not-eligible' }
+  // Ownerless and in flight: same WORKSPACE — project AND config, not the
+  // project alone. See `sameWorkspace`.
+  return workspaceCheckFor(sessionId)({ cwd: owner.cwd, configId: owner.configId })
+    ? { ok: true }
+    : { ok: false, reason: 'not-eligible' }
 }
 
 /**
@@ -370,16 +471,15 @@ export function canvasMutationAllowed(
 export function canvasArtifactMutationAllowed(
   sessionId: string,
   canvasId: string,
-  openTileSessionIds: readonly string[] = [],
+  /** Accepted for the wire's sake and NOT consulted — see `isSessionLive`. */
+  _openTileSessionIds: readonly string[] = [],
 ): { ok: true } | { ok: false; reason: 'owner-live' | 'not-eligible' } {
   const owner = canvasOwnershipOf(canvasId)
   if (!owner) return { ok: false, reason: 'not-eligible' }
   if (owner.sessionId === sessionId) return { ok: true }
   // 'owner-live' when the owner is actually live, so the refusal says the more
   // informative of the two true things; 'not-eligible' otherwise.
-  return isSessionLive(owner.sessionId, openTileSet(openTileSessionIds))
-    ? { ok: false, reason: 'owner-live' }
-    : { ok: false, reason: 'not-eligible' }
+  return isSessionLive(owner.sessionId) ? { ok: false, reason: 'owner-live' } : { ok: false, reason: 'not-eligible' }
 }
 
 /**

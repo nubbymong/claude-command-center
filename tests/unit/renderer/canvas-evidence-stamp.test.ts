@@ -189,9 +189,43 @@ describe('the privacy bar', () => {
     const sneaky = `Email${String.fromCharCode(10)}route /admin`
     const snap = snapshot(node({ ref: 'root', children: [field('f1', sneaky)] }))
     const stamp = buildEvidenceStamp({ snapshot: snap, baseline: null, viewport: null, zoom: 1, at: 'now' })
-    expect(stamp.fields[0].name).toBe('Email route /admin')
-    expect(reportedStampText(`a${String.fromCharCode(0x2028)}b`, 50)).toBe('a b')
+    // REMOVED, not replaced by a space: the shared cleaner both sides of the
+    // anchoring comparison run sheds the character, and a stamp that
+    // substituted something would be a second rule to keep in step.
+    expect(stamp.fields[0].name).toBe('Emailroute /admin')
+    expect(reportedStampText(`a${String.fromCharCode(0x2028)}b`, 50)).toBe('ab')
     expect(reportedStampText(42, 50)).toBe('')
+  })
+
+  it('neutralises a BIDI override before it can reach the stamp', () => {
+    // The 2026-08-15 finding, arriving on the M3 path: one right-to-left
+    // override in a page-reported string reverses the rest of the line, so the
+    // person reading the pane and the agent reading the payload are shown
+    // different things. The stamp's own control test covered Cc and the two
+    // line separators only, and the whole FORMAT class — overrides,
+    // embeddings, isolates, joiners, the BOM — walked through it.
+    const RLO = String.fromCharCode(0x202e)
+    const ZWJ = String.fromCharCode(0x200d)
+    const BOM = String.fromCharCode(0xfeff)
+    const snap = snapshot(
+      node({
+        ref: 'root',
+        children: [
+          node({ ref: 'd1', role: 'dialog', name: `Confirm${RLO}redro` }),
+          field('f1', `Em${ZWJ}ail`, { valueLength: 3 }),
+        ],
+      }),
+      { page: { pathname: `/checkout${RLO}nimda/`, hash: `#${BOM}pay`, title: `Check${RLO}tuo` }, focusedRef: 'f1' },
+    )
+    const stamp = buildEvidenceStamp({ snapshot: snap, baseline: null, viewport: null, zoom: 1, at: 'now' })
+    const serialised = JSON.stringify(stamp)
+
+    for (const ch of [RLO, ZWJ, BOM]) expect(serialised).not.toContain(ch)
+    // Still present, still readable, and now in ONE direction.
+    expect(stamp.route).toBe('/checkoutnimda/#pay')
+    expect(stamp.title).toBe('Checktuo')
+    expect(stamp.dialogs[0].name).toBe('Confirmredro')
+    expect(stamp.focused?.name).toBe('Email')
   })
 
   it('drops a page-reported query string with the route it never asked for', () => {

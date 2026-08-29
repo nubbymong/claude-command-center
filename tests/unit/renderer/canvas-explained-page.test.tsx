@@ -126,7 +126,12 @@ describe('app-knowledge: the canvas review model section', () => {
     const body = section!.body
     expect(body).toContain('artefact')
     expect(body).toContain('version')
-    expect(body).toContain('owes you nothing')
+    // Reworded at the rc.10 surface sweep. "owes you nothing" read as a claim
+    // about the USER; the promise the state machine actually makes is about the
+    // AGENT -- notes sent with an approval are recorded as observations rather
+    // than work. Both halves are asserted so the sentence cannot lose one.
+    expect(body).toContain('owes the agent nothing')
+    expect(body).toContain('observations')
     expect(body).toContain('test pack')
     expect(body).toContain('resume')
   })

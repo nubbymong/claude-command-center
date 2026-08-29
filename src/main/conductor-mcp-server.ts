@@ -53,7 +53,7 @@ import {
   settleReviewsForSupersededVersions,
 } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
-import { readImageFileChecked } from './canvas/canvas-evidence'
+import { readAttachmentChecked, readImageFileChecked } from './canvas/canvas-evidence'
 import { canvasConfigNameForSession } from './canvas/canvas-session-link'
 import { readCheckedFile } from './utils/safe-file-read'
 
@@ -874,13 +874,19 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         reopenVersion: (sessionId, versionId) => reopenVersionForReview(sessionId, versionId, 'agent-chat'),
         settleSuperseded: (canvasId, versionIds) => settleReviewsForSupersededVersions(canvasId, versionIds),
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
-        readAttachment: (absPath) => fs.readFileSync(absPath),
-        // Testing evidence shots go through the DISCIPLINED reader, not the
-        // plain read above: lstat refuses a reparse point, the size is checked
-        // on an OPEN HANDLE before anything is allocated, and the MIME comes
-        // from the bytes. A store-resolved path is not a promise about the file
-        // still at it — the canvas dir lives under a user-selectable resources
-        // root, writable by anything with access to it (ADR-009 pass on M3).
+        // The user's drawings and pasted screenshots go through the SAME
+        // disciplined reader the evidence shots do. This was a bare
+        // `fs.readFileSync` — no reparse-point refusal, no link count, no size
+        // check before the allocation, no magic — for files in the same
+        // directory, under the same user-selectable resources root, at paths the
+        // same store resolved. The only thing that differed was which reader
+        // happened to be wired to it.
+        readAttachment: (absPath) => readAttachmentChecked(absPath),
+        // Testing evidence shots: lstat refuses a reparse point, the link count
+        // refuses a hard link, the size is checked on an OPEN HANDLE before
+        // anything is allocated, and the MIME comes from the bytes. A
+        // store-resolved path is not a promise about the file still at it
+        // (ADR-009 pass on M3).
         readEvidenceShot: (absPath) => readImageFileChecked(absPath),
         // The config a session runs, by display name — the first part of a test
         // pack's generated name (M3). A LABEL: read from the same spawn record

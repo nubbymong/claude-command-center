@@ -438,6 +438,97 @@ describe('resume candidates + resumeCanvasForSession (user-chosen, compare-and-s
   })
 })
 
+describe('the session index can never point a session at a canvas it does not own', () => {
+  // THE REENTRANCY. `isSessionLive` is a callback the CALLER supplies, and the
+  // store invokes it in the middle of the resume — after it has read the
+  // record, before it writes the maps. A hostile oracle that re-enters the
+  // store from inside that window moves ownership under the outer call's feet:
+  // the outer call then finishes with stamps it captured BEFORE the re-entry
+  // and cleans up only the owner IT remembers, leaving some third session's
+  // index entry pointing at a canvas that now belongs to somebody else.
+  //
+  // That is a cross-session WRITE, not merely a stale badge:
+  // `getRecordForSession` resolved the index and never re-checked the record,
+  // so `setVersionVerdict` / `setActiveVersion` / `setPackName` /
+  // `reopenVersionForReview` would all land on the foreign canvas.
+  //
+  // Two defences, both asserted here: the resume cleans EVERY index entry that
+  // named the canvas (the way `deleteCanvas` always has), and
+  // `getRecordForSession` verifies the record agrees before handing it over.
+
+  const dead = { isSessionLive: notCurrent }
+
+  it('cleans every stale index entry when a re-entrant resume moves the canvas', () => {
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'contended')
+    restart()
+
+    // SID_C takes the canvas from inside SID_B's liveness check.
+    let reentered = false
+    const hostile = {
+      isSessionLive: () => {
+        if (!reentered) {
+          reentered = true
+          store.resumeCanvasForSession(SID_C, canvasId, SID_A, dead)
+        }
+        return false
+      },
+    }
+    store.resumeCanvasForSession(SID_B, canvasId, SID_A, hostile)
+    expect(reentered).toBe(true)
+
+    // Whoever ends up owning it, NO other session may still be pointed at it.
+    const owner = store.getCanvasStateById(canvasId)!.sessionId
+    for (const sid of [SID_A, SID_B, SID_C]) {
+      if (sid === owner) continue
+      expect(store.getCanvasStateForSession(sid)?.canvasId, `${sid} still points at it`).not.toBe(canvasId)
+    }
+  })
+
+  it('refuses the WRITE even if an index entry does go stale', () => {
+    // The second line, tested on its own so it holds whatever the first misses:
+    // a session whose index entry names a canvas the record says is somebody
+    // else's gets NOTHING, and every session-keyed mutation refuses.
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'contended')
+    restart()
+    let reentered = false
+    const hostile = {
+      isSessionLive: () => {
+        if (!reentered) {
+          reentered = true
+          store.resumeCanvasForSession(SID_C, canvasId, SID_A, dead)
+        }
+        return false
+      },
+    }
+    store.resumeCanvasForSession(SID_B, canvasId, SID_A, hostile)
+
+    const owner = store.getCanvasStateById(canvasId)!.sessionId
+    const stranger = [SID_A, SID_B, SID_C].find((sid) => sid !== owner)!
+    expect(store.getCanvasStateForSession(stranger)?.canvasId).not.toBe(canvasId)
+    // ...and the mutations that resolve through the index refuse rather than
+    // writing into the foreign record.
+    const verdict = store.setVersionVerdict(stranger, 'v1', { state: 'dismissed' }, 'user')
+    expect(verdict).toHaveProperty('error')
+    expect(store.getCanvasStateById(canvasId)!.versions[0].verdict).toBeUndefined()
+    expect(store.setPackName(stranger, canvasId, 'v1', 'renamed')).toHaveProperty('error')
+    expect(store.reopenVersionForReview(stranger, 'v1', 'user')).toHaveProperty('error')
+  })
+
+  it('self-heals a stale index entry rather than serving the foreign record', () => {
+    // Reached without any re-entrancy: OPEN HERE points A at its own canvas,
+    // then a resume moves it to B. A's entry is cleaned; even if it were not,
+    // the record check is what answers.
+    const { canvasId } = renderAs(SID_A, CWD, CONV_1, 'one')
+    restart()
+    expect(store.openOwnCanvasForSession(SID_A, canvasId)).toMatchObject({ canvasId })
+    expect(store.resumeCanvasForSession(SID_B, canvasId, SID_A, dead)).toMatchObject({ ok: true })
+
+    expect(store.getCanvasStateForSession(SID_A)).toBeNull()
+    expect(store.getCanvasStateForSession(SID_B)?.canvasId).toBe(canvasId)
+    expect(() => store.setActiveVersion(SID_A, 'v1')).toThrow(/no canvas for session/)
+  })
+})
+
 describe('resolveInsideCanvasRoot (the htmlPath confinement)', () => {
   it('refuses everything when no root is registered, and confines to a registered one', () => {
     // Outside the resources directory: the floor now refuses a served root

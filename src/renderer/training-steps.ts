@@ -317,8 +317,12 @@ export const trainingSteps: TrainingStep[] = [
   {
     id: 'excalidraw',
     // "Sketchpad", not "Canvas": the Agent Canvas is a different feature that
-    // shares the toolbar button, and the in-app landing already calls this one
-    // the sketchpad ("Open the sketchpad instead").
+    // shares the toolbar button. The v8 canvas front page dropped its "Open
+    // the sketchpad instead" button, so the pad currently has NO front-page
+    // entry -- a session already showing it keeps it (the store value
+    // survives; see CanvasEmptyView). The trigger copy below states that
+    // plainly instead of pointing at the removed door; restoring a real route
+    // is an owner-flagged follow-up, and this copy changes with it.
     title: 'Excalidraw Sketchpad',
     sinceVersion: '1.4.0',
     section: 'productivity',
@@ -332,7 +336,7 @@ export const trainingSteps: TrainingStep[] = [
       'Replaces the terminal in place -- no fullscreen modal eating the toolbar',
     ],
     howToTrigger: [
-      { label: 'Open', value: 'Session toolbar → Canvas → Open the sketchpad instead' },
+      { label: 'Open', value: 'No front-page entry right now -- the canvas front page is the agent’s review surface; a session already on the sketchpad keeps it' },
       { label: 'Switch back', value: 'Agent Canvas (bottom-right), or Canvas again to close the pane' },
       { label: 'New drawing', value: 'Left rail → + (rename with ✎, delete with ×)' },
     ],

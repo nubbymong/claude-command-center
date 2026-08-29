@@ -141,7 +141,15 @@ vi.mock('../../../src/main/claude-account-identity', () => ({
   stopWatchingAccountIdentity: () => {},
   getWatchedProfileId: () => null,
 }))
-vi.mock('../../../src/main/session-registry', () => ({ updateSessionMeta: () => {}, clearSessionMeta: () => {} }))
+vi.mock('../../../src/main/session-registry', () => ({
+  updateSessionMeta: () => {},
+  clearSessionMeta: () => {},
+  // The PTY-lifecycle set the canvas ownership lease reads. Stubbed here
+  // because `spawnPty` marks it, and a missing export would make the real
+  // spawn throw at that line rather than wherever this harness runs out.
+  markPtySessionAlive: () => {},
+  markPtySessionGone: () => {},
+}))
 vi.mock('../../../src/main/services/pty-integrity-monitor', () => ({ getPtyIntegrityMonitor: () => null }))
 vi.mock('../../../src/main/config-manager', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/main/config-manager')>()),

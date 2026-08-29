@@ -43,7 +43,11 @@ vi.mock('../../../src/main/canvas/canvas-snapshot-broker', () => ({
   setSnapshotSender: vi.fn(),
 }))
 vi.mock('../../../src/main/session-registry', () => ({
-  getSessionMeta: (id: string) => (h.livePtySessions.has(id) ? { id } : undefined),
+  // The canvas lease reads the PTY-lifecycle set, never the metadata map — see
+  // canvas-session-link.isSessionLive. Both are stubbed so a stray reader shows
+  // up as a failure rather than as a silent undefined.
+  isPtySessionLive: (id: string) => h.livePtySessions.has(id),
+  getSessionMeta: () => undefined,
 }))
 vi.mock('../../../src/main/logging/logging-service', () => ({ getTranscriptBinder: () => null }))
 
@@ -281,11 +285,27 @@ describe('THE PRIVACY RULE — in flight is private to the live session holding 
     expect(result.rows.map((r) => r.canvasId)).not.toContain(canvasId)
   })
 
-  it('hides it when the renderer says its tile is on screen, PTY or not', async () => {
+  it('does NOT hide it merely because the caller says the owner’s tile is on screen', async () => {
+    // The hint is the CALLING session's own array, so it cannot be what decides
+    // whether another session's work is protected — a peer would simply leave
+    // the owner out of it. Visibility follows the PTY, and a PTY-dead owner's
+    // canvas is ownerless by the M4 lease: visible, and resumable.
     const canvasId = ownerRenders()
     spawn(FOREIGN)
-    const result = await listLibrary({ sessionId: FOREIGN, openTileSessionIds: [FOREIGN, OWNER] })
-    expect(result.rows.map((r) => r.canvasId)).not.toContain(canvasId)
+    const padded = await listLibrary({ sessionId: FOREIGN, openTileSessionIds: [FOREIGN, OWNER] })
+    const omitted = await listLibrary({ sessionId: FOREIGN, openTileSessionIds: [FOREIGN] })
+    expect(padded.rows.map((r) => r.canvasId)).toContain(canvasId)
+    expect(omitted.rows.map((r) => r.canvasId)).toEqual(padded.rows.map((r) => r.canvasId))
+  })
+
+  it('hides it the moment the owner’s PTY is alive, whatever the caller sends', async () => {
+    const canvasId = ownerRenders()
+    spawn(FOREIGN)
+    h.livePtySessions.add(OWNER)
+    for (const tiles of [[FOREIGN], [FOREIGN, OWNER], []]) {
+      const result = await listLibrary({ sessionId: FOREIGN, openTileSessionIds: tiles })
+      expect(result.rows.map((r) => r.canvasId), JSON.stringify(tiles)).not.toContain(canvasId)
+    }
   })
 
   it('shows it OWNERLESS once nothing is live, so it can be resumed', async () => {

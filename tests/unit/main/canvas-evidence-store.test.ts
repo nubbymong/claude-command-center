@@ -432,6 +432,30 @@ describe('the read channel resolves against the RECORD, never the string', () =>
     fs.writeFileSync(real, Buffer.concat([PNG_MAGIC, Buffer.from('body')]))
     expect(evidence.readImageFileChecked(real)?.mime).toBe('image/png')
 
+    // A HARD LINK needs no privilege on Windows and defeats realpath entirely:
+    // a second name for an inode resolves to ITSELF, not to the file it shares
+    // bytes with, so a link planted at a recorded path hands back foreign
+    // content. `readCheckedFile` has refused these since 2026-08-15; this reader
+    // had only the symlink check.
+    const linkTarget = path.join(dir, 'elsewhere.png')
+    fs.writeFileSync(linkTarget, Buffer.concat([PNG_MAGIC, Buffer.from('foreign-bytes')]))
+    const hardLink = path.join(dir, 'hard.png')
+    let hardLinked = false
+    try {
+      fs.linkSync(linkTarget, hardLink)
+      hardLinked = true
+    } catch {
+      hardLinked = false
+    }
+    if (hardLinked) {
+      // BOTH names are refused: what fails is the link COUNT on the inode, which
+      // is the only thing either name can be asked about.
+      expect(evidence.readImageFileChecked(hardLink)).toBeNull()
+      expect(evidence.readImageFileChecked(linkTarget)).toBeNull()
+    } else {
+      console.warn('[canvas-evidence-store.test] hard links unavailable on this host; link-count case not exercised')
+    }
+
     // The symlink half needs a privilege Windows does not grant by default. Its
     // absence is REPORTED rather than silently skipped — a test that quietly
     // checks nothing is worse than one that says so.
@@ -447,6 +471,47 @@ describe('the read channel resolves against the RECORD, never the string', () =>
       expect(evidence.readImageFileChecked(link)).toBeNull()
     } else {
       console.warn('[canvas-evidence-store.test] symlink creation unavailable on this host; reparse-point case not exercised')
+    }
+  })
+
+  it('holds a SKETCH/PASTED attachment to the same discipline as an evidence shot', () => {
+    // `readAttachmentChecked` is what the MCP server hands `canvas_review` for
+    // the user's drawings and pasted screenshots. It was a bare `readFileSync`:
+    // no reparse-point refusal, no link count, no size check before the
+    // allocation, no magic. Same file, same resources root, same swap.
+    const dir = path.join(getResourcesDirectory(), 'canvas', 'attachcheck')
+    fs.mkdirSync(dir, { recursive: true })
+
+    const ok = path.join(dir, 'a1.png')
+    fs.writeFileSync(ok, Buffer.concat([PNG_MAGIC, Buffer.from('drawing')]))
+    expect(evidence.readAttachmentChecked(ok).subarray(0, 8).equals(PNG_MAGIC)).toBe(true)
+
+    const notPng = path.join(dir, 'a2.png')
+    fs.writeFileSync(notPng, Buffer.from('<html>not a png</html>'))
+    expect(() => evidence.readAttachmentChecked(notPng)).toThrow()
+
+    // A JPEG is a real image, and still not what the store wrote there — a file
+    // that changed KIND changed identity.
+    const jpeg = path.join(dir, 'a3.png')
+    fs.writeFileSync(jpeg, Buffer.concat([JPEG_MAGIC, Buffer.from('swapped')]))
+    expect(() => evidence.readAttachmentChecked(jpeg)).toThrow()
+
+    const oversized = path.join(dir, 'a4.png')
+    fs.writeFileSync(oversized, Buffer.concat([PNG_MAGIC, Buffer.alloc(evidence.MAX_EVIDENCE_READ_BYTES)]))
+    expect(() => evidence.readAttachmentChecked(oversized)).toThrow()
+
+    const target = path.join(dir, 'other.png')
+    fs.writeFileSync(target, Buffer.concat([PNG_MAGIC, Buffer.from('foreign')]))
+    const hard = path.join(dir, 'a5.png')
+    try {
+      fs.linkSync(target, hard)
+      expect(() => evidence.readAttachmentChecked(hard)).toThrow()
+    } catch (err) {
+      if ((err as { code?: string })?.code) {
+        console.warn('[canvas-evidence-store.test] hard links unavailable; attachment link-count case not exercised')
+      } else {
+        throw err
+      }
     }
   })
 
