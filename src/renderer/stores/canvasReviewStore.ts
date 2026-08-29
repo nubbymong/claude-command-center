@@ -14,13 +14,16 @@
 
 import { create } from 'zustand'
 import { useCanvasTotalsStore } from './canvasTotalsStore'
+import { artifactPhaseOf, artifactRunContaining, isLiveNote, isSettledNote } from '../../shared/canvas'
 import type {
   Annotation,
+  ArtifactPhase,
   CanvasAnchorResolution,
   CanvasAnnotationDraft,
   CanvasInspectEntry,
   CanvasReviewState,
   CanvasSketchExport,
+  CanvasVersion,
   FocusObject,
   Rect,
   Review,
@@ -114,26 +117,16 @@ interface CanvasReviewStoreState {
   dismissHelp: (sessionId: string) => void
   upsertNote: (sessionId: string, draft: CanvasAnnotationDraft) => Promise<string | null>
   deleteNote: (sessionId: string, annotationId: string) => Promise<void>
-  submitReview: (sessionId: string, reviewId: string, sketches: CanvasSketchExport[], decision?: 'approve' | 'reject') => Promise<Review | null>
-  /**
-   * The user's verdict on one note. `canvasId` is the canvas the caller composed
-   * the verdict against — for a bulk pass, the one it STARTED on — and main
-   * refuses the write if the session has moved to another canvas since. Note ids
-   * restart at a1 on every canvas, so without it a verdict can land on a
-   * stranger's note under the user's own name.
-   */
-  resolveNote: (
-    sessionId: string,
-    annotationId: string,
-    action: 'approve' | 'dismiss' | 'reannotate' | 'stale',
-    canvasId: string,
-    /** The alternative being approved, when the note offers variants. Rides an
-     *  approval only — main refuses it on any other action. */
-    variantKey?: string,
-  ) => Promise<void>
+  /** The decision is REQUIRED: notes have no verdicts of their own any more, so
+   *  the submit IS the user's word on the version. */
+  submitReview: (sessionId: string, reviewId: string, sketches: CanvasSketchExport[], decision: 'approve' | 'reject') => Promise<Review | null>
   /** Put a closed note back in play. Returns nothing to decide — the mirror
    *  main returns is the answer, as with every other mutation here. */
   reopenNote: (sessionId: string, annotationId: string) => Promise<void>
+  /** Put a whole settled ROUND back in play. `canvasId` is the canvas the caller
+   *  composed against; main refuses the write if the session has moved on, since
+   *  review ids restart at R1 on every canvas. */
+  reopenRound: (sessionId: string, canvasId: string, reviewId: string) => Promise<void>
   /**
    * Tell main the user has these addressed notes ON SCREEN.
    *
@@ -289,7 +282,7 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
 
   submitReview: async (sessionId, reviewId, sketches, decision) => {
     try {
-      const state = await window.electronAPI.canvas.reviewSubmit({ sessionId, reviewId, sketches, ...(decision ? { decision } : {}) })
+      const state = await window.electronAPI.canvas.reviewSubmit({ sessionId, reviewId, sketches, decision })
       set((s) => ({
         bySessionId: {
           ...s.bySessionId,
@@ -303,27 +296,14 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
     }
   },
 
-  resolveNote: async (sessionId, annotationId, action, canvasId, variantKey) => {
+  reopenRound: async (sessionId, canvasId, reviewId) => {
     try {
-      const { state, reannotationId } = await window.electronAPI.canvas.annotationResolve({
-        sessionId,
-        canvasId,
-        annotationId,
-        action,
-        ...(variantKey ? { variantKey } : {}),
-      })
+      const state = await window.electronAPI.canvas.reviewReopen({ sessionId, canvasId, reviewId })
       set((s) => ({
-        bySessionId: {
-          ...s.bySessionId,
-          [sessionId]: {
-            ...fromMain(s.bySessionId[sessionId], state),
-            // A re-annotation opens straight in the editor, pre-filled.
-            ...(reannotationId ? { editingAnnotationId: reannotationId } : {}),
-          },
-        },
+        bySessionId: { ...s.bySessionId, [sessionId]: fromMain(s.bySessionId[sessionId], state) },
       }))
     } catch (err) {
-      console.error('[canvasReviewStore] resolveNote failed:', err)
+      console.error('[canvasReviewStore] reopenRound failed:', err)
     }
   },
 
@@ -411,33 +391,34 @@ export interface ReviewGroup {
    *  notes are done and live in `closedNotes` instead. */
   notes: Annotation[]
   /**
-   * Notes already ruled on: approved, dismissed, or closed as stale — by you,
-   * or by the agent on your instruction.
+   * Notes nobody is waiting on any more: observations you filed with an
+   * approval, and notes settled by a later decision, a supersede, or the agent
+   * on your word.
    *
-   * Kept and shown rather than dropped, because close-out CLEARS a note and
-   * never deletes it: the text stays, the row says who closed it, and Reopen is
-   * one click. A bulk action you cannot see the results of, and cannot undo, is
-   * not one anybody should be asked to click.
+   * Kept and shown rather than dropped, because settling CLEARS a note and never
+   * deletes it: the text stays, the row says how it settled, and Reopen is one
+   * click. A bulk action you cannot see the results of, and cannot undo, is not
+   * one anybody should be asked to click.
    *
    * 'reannotated' is excluded — that note has a live successor carrying the
    * same issue, so listing it here would show the same feedback twice.
    */
   closedNotes: Annotation[]
-  /** 'agent' while ANY note is still open — the round cannot be closed by you
-   *  alone. 'you' once every remaining note is addressed. 'closed' when nothing
-   *  is left. */
-  waitingOn: 'you' | 'agent' | 'closed'
+  /**
+   * 'agent' while the round is LIVE — the version is with them, and your next
+   * decision on it is what ends the round. 'closed' when it is settled.
+   *
+   * There is deliberately no 'you'. Notes have no verdicts of their own any
+   * more, so a round can never be waiting on the user: what waits on you is the
+   * VERSION, and the pane's decision bar is where that lives.
+   */
+  waitingOn: 'agent' | 'closed'
   openCount: number
   addressedCount: number
   /** Of `closedNotes`, how many the AGENT closed on your instruction. Drives
    *  the one line that tells you this round was cleared on your word rather
    *  than by your own click. */
   agentClosedCount: number
-}
-
-/** A note nobody is waiting on any more. Not the same as "gone". */
-function isClosedNote(a: Annotation): boolean {
-  return a.state === 'approved' || a.state === 'dismissed' || a.state === 'stale'
 }
 
 /** Sort key for a review: when it was sent, falling back to when it was
@@ -462,7 +443,7 @@ export function reviewGroupsOf(state: CanvasReviewSessionState): ReviewGroup[] {
   const byReview = new Map<string, Annotation[]>()
   const closedByReview = new Map<string, Annotation[]>()
   for (const a of state.annotations) {
-    const bucket = a.state === 'open' || a.state === 'addressed' ? byReview : isClosedNote(a) ? closedByReview : null
+    const bucket = isLiveNote(a) ? byReview : isSettledNote(a) ? closedByReview : null
     if (!bucket) continue
     const list = bucket.get(a.reviewId)
     if (list) list.push(a)
@@ -475,8 +456,11 @@ export function reviewGroupsOf(state: CanvasReviewSessionState): ReviewGroup[] {
       const closedNotes = closedByReview.get(review.id) ?? []
       const openCount = notes.filter((n) => n.state === 'open').length
       const addressedCount = notes.length - openCount
-      const waitingOn: ReviewGroup['waitingOn'] =
-        notes.length === 0 ? 'closed' : openCount > 0 ? 'agent' : 'you'
+      // Read from the ROUND's status, not re-derived from its notes. The status
+      // is one-way now (only the user's own Reopen walks it back), so it is the
+      // authority — and deriving it here as well is how the panel and the pill
+      // came to give two answers to one question.
+      const waitingOn: ReviewGroup['waitingOn'] = review.status === 'submitted' ? 'agent' : 'closed'
       // The "N on your instruction — not approved" chip. A chat PICK is
       // closedBy 'agent' too, but it IS an approval the user made (in chat), so
       // it does not belong in a "not approved" count — it carries its own
@@ -492,30 +476,75 @@ export function reviewGroupsOf(state: CanvasReviewSessionState): ReviewGroup[] {
     })
 }
 
-/** Notes from SUBMITTED reviews still awaiting the USER's verdict — what the
- *  resolution checklist works through (oldest review first, so the list reads
- *  in the order given). 'addressed' is included: the agent has said it acted,
- *  and that is exactly when the user needs to look and approve or dismiss. */
+/** LIVE notes on LIVE rounds — what the resolution checklist re-anchors, oldest
+ *  round first so the list reads in the order it was given. 'addressed' is
+ *  included: the agent says it acted, and the note stays on screen so the user
+ *  can see the claim before they decide on the next version. It is NOT a
+ *  to-do list for them — nothing on this panel is. */
 export function openSubmittedNotesOf(state: CanvasReviewSessionState): Annotation[] {
   const submitted = new Set(state.reviews.filter((r) => r.status === 'submitted').map((r) => r.id))
   return state.annotations.filter((a) => submitted.has(a.reviewId) && (a.state === 'open' || a.state === 'addressed'))
 }
 
 /**
- * The rounds a bulk close-out would actually clear: the ones waiting on YOU.
+ * The phase of the artefact the pane is DISPLAYING — needs-you, with-agent,
+ * settled, or empty.
  *
- * A round still holding open notes is excluded, and that is the whole scope
- * rule on this side — the same one the store enforces for the agent. "Close all
- * rounds waiting on me" must never quietly clear feedback the agent has not
- * claimed to have acted on, so the button counts what it will do from this and
- * from nothing else.
+ * A pure wrapper over the shared `artifactPhaseOf`, and it exists so the
+ * renderer and main compute this from ONE implementation. Main joins the same
+ * helper onto every Library row (`CanvasLibraryEntry.phase`); the pane reads it
+ * live from its own mirror. Two implementations of "who is this waiting on" is
+ * exactly how the pill and the panel came to disagree, which is the class of
+ * bug the settled machine exists to end.
+ *
+ * `displayedVersionId` picks the RUN, because a canvas holds several artefacts
+ * and the pane shows one at a time — the newest run is not necessarily the one
+ * on screen.
  */
-export function roundsWaitingOnYou(groups: ReviewGroup[]): ReviewGroup[] {
-  return groups.filter((g) => g.waitingOn === 'you')
+export function artifactPhaseFor(
+  state: CanvasReviewSessionState | undefined,
+  canvasVersions: readonly CanvasVersion[],
+  displayedVersionId: string | null,
+): ArtifactPhase {
+  const run = displayedVersionId ? artifactRunContaining(canvasVersions, displayedVersionId) : null
+  if (!run) return { kind: 'empty' }
+  return artifactPhaseOf(run, state?.reviews ?? [], state?.annotations ?? [])
 }
 
-/** The notes those rounds hold, in the order the rounds are listed. What a
- *  bulk close iterates, and what its label counts. */
-export function notesWaitingOnYou(groups: ReviewGroup[]): Annotation[] {
-  return roundsWaitingOnYou(groups).flatMap((g) => g.notes.filter((n) => n.state === 'addressed'))
+/**
+ * How a settled round settled, in the user's own terms.
+ *
+ * The row has to say WHY, or a round the user never closed themselves reads as
+ * one they did — the whole reason `Review.settled` is stored beside the status.
+ * Every value here is derived from store-minted provenance; nothing is guessed.
+ */
+export function settledLabel(group: ReviewGroup, versions: readonly CanvasVersion[] = []): string | null {
+  const settled = group.review.settled
+  if (!settled) return null
+  switch (settled.by) {
+    case 'observation':
+      return 'passed with observations'
+    case 'decision': {
+      // A decision that carried a ROUND of its own is named by that round —
+      // "superseded by your Review #8" is what the user can go and re-read.
+      if (settled.reviewId) return `superseded by your ${settled.reviewId.replace('R', 'Review #')}`
+      // A bare version verdict (the zero-note approve/reject) has no round to
+      // name, so it names the version AND WHAT THE USER SAID: "settled by your
+      // v8 approval" is a sentence they recognise; "settled by your v8
+      // decision" makes them go and look up which way it went. The word comes
+      // from the version record — falling back to the neutral one only when the
+      // version is not in the list we were handed.
+      const verdict = versions.find((v) => v.id === settled.versionId)?.verdict?.state
+      const word = verdict === 'approved' ? 'approval' : verdict === 'rejected' ? 'rejection' : 'decision'
+      return `settled by your ${settled.versionId ?? 'later'} ${word}`
+    }
+    case 'agent':
+      return 'closed by the agent on your instruction'
+    case 'supersede':
+      return 'settled when its version was superseded'
+    case 'force':
+      return 'closed by you, as not done'
+    case 'legacy':
+      return 'settled when this canvas was brought up to date'
+  }
 }

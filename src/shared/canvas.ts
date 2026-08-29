@@ -258,16 +258,15 @@ export type CanvasRenderSource =
 /**
  * How an annotation points at content across re-renders.
  *
- * 'ux-id' is primary for uat/design (the authoring contract's `data-ux-id`);
- * 'plan-step' is primary for plan mode (P5); 'fingerprint' is a FALLBACK only —
- * the name in it is a weak signal. One element commonly carries two refs: its
+ * 'ux-id' is primary for uat/design/plan alike (the authoring contract's
+ * `data-ux-id`; a plan's steps carry `data-ux-id="step-N"`). 'fingerprint' is a
+ * FALLBACK only — the name in it is a weak signal. One element commonly carries two refs: its
  * ux-id and, captured at the same moment, its fingerprint. Resolution walks the
  * list in order and stops at the first hit, which is what makes "ux-id lookup →
  * fingerprint fallback" one loop rather than two code paths.
  */
 export type AnchorRef =
   | { kind: 'ux-id'; id: string }
-  | { kind: 'plan-step'; id: string }
   | { kind: 'fingerprint'; role: string; name: string; ancestorPath: string; ordinal: number }
 
 /**
@@ -304,12 +303,18 @@ export type AnnotationScope = 'element' | 'region' | 'general'
  * reusing `approved`: "this went out" and "I looked and it is right" are
  * different facts, and only the second is the user's verdict to give.
  *
+ * `observation` is what a note filed WITH an approval becomes (the settled
+ * machine, 2026-08-29). Approve means NOTHING OWED: anything that needs work is
+ * a reject, so a note that rides an approval is a remark the agent should read
+ * and nobody has to answer. Terminal, written ONLY by the user's own
+ * approve/pass submit (`closedBy: 'user'`, `closedFrom: 'open'`), and reachable
+ * from no MCP tool at all — the review store refuses to move one, by name.
+ *
  * `approved` is the one state NO tool can write. Enforced in the review store
  * (`closeAnnotationsByAgent`), not merely described in a tool schema — a tool
  * description is a request, and MCP arguments are model-generated.
  */
-export type AnnotationState = 'open' | 'addressed' | 'approved' | 'reannotated' | 'dismissed' | 'stale'
-export type PlanVerdict = 'accept' | 'reject' | 'question'
+export type AnnotationState = 'open' | 'addressed' | 'approved' | 'reannotated' | 'dismissed' | 'stale' | 'observation'
 
 /**
  * The two terminal states an AGENT may set, and then only on the user's
@@ -326,10 +331,18 @@ export type AgentCloseVerdict = (typeof AGENT_CLOSE_VERDICTS)[number]
 /** Who moved a note to a terminal state. `agent` means `canvas_verdict` wrote
  *  it on the user's instruction — which the panel says out loud, and lists
  *  apart from the user's own approvals. */
-/** 'supersede' is the store itself settling an addressed note because the user
- *  ruled on a LATER round of the same canvas (#470) — neither party clicked
- *  this particular note, and the row must not claim one did. */
-export type AnnotationClosedBy = 'user' | 'agent' | 'supersede'
+/** 'supersede' is the store itself settling an addressed note because the
+ *  VERSION it was written against died (a newer ready render, a withdraw) —
+ *  neither party clicked this particular note, and the row must not claim one
+ *  did.
+ *
+ *  'decision' is the settled machine's own (2026-08-29): the user made a
+ *  DECISION on a later version of the same artefact, and their newest
+ *  submission is their authoritative statement of what is still wrong, so every
+ *  earlier round beneath it closes. Always written beside `settledBy`, which
+ *  names the decision — the row reads "settled by your v8 approval" rather than
+ *  claiming anybody ruled on this note. */
+export type AnnotationClosedBy = 'user' | 'agent' | 'supersede' | 'decision'
 
 /**
  * Who moved a note into `addressed` — the state the agent's close-out
@@ -431,8 +444,6 @@ export interface Annotation {
   /** 'general' has no focus and can never orphan. */
   scope: AnnotationScope
   note: string
-  /** Plan mode only (P5). */
-  verdict?: PlanVerdict
   /** Element/region only. */
   focus?: FocusObject
   sketch?: AnnotationSketch
@@ -483,6 +494,26 @@ export interface Annotation {
    * imitated.
    */
   closedBy?: AnnotationClosedBy
+  /**
+   * WHICH user decision settled this note (the settled machine, 2026-08-29).
+   *
+   * Present iff `closedBy === 'decision'`, and it is what makes that provenance
+   * legible: the panel says "settled by your v8 approval" / "superseded by your
+   * Review #8" rather than the anonymous "the store closed it". `reviewId` is
+   * present only when the decision carried a round of its own — a zero-note
+   * approve settles just as hard and has no review to name.
+   */
+  settledBy?: { versionId: string; reviewId?: string }
+  /**
+   * The version the AGENT says its fix landed in (`canvas_resolve`'s
+   * `updatedIn`), rendered as the chip "updated in v9".
+   *
+   * A claim, not a verdict — the same standing as `addressed` itself. It is
+   * validated as a version id that exists on the canvas so the chip can never
+   * point at nothing, and it is the one piece of "what happened since you
+   * wrote this" the panel can show without the user re-reading the diff.
+   */
+  addressedIn?: string
   /**
    * The state this note held when it was closed, so REOPEN can put it back
    * exactly where it was rather than guessing.
@@ -542,6 +573,28 @@ export interface Annotation {
   userSawAddressed?: boolean
 }
 
+/**
+ * Why a round is no longer live. Present iff `status === 'resolved'`; cleared by
+ * the user's Reopen.
+ *
+ *  - 'observation' — every note on it was filed WITH an approval, so nothing was
+ *    ever owed;
+ *  - 'decision'    — the user's later decision on `versionId` settled it (W4),
+ *    with `reviewId` when that decision carried a round of its own;
+ *  - 'agent'       — `canvas_verdict` / `canvas_pick` closed its last live note
+ *    on the user's word, behind the seen barrier that still guards both;
+ *  - 'supersede'   — the VERSION its notes hang off died (a newer ready render,
+ *    a withdraw) and the store settled what was left;
+ *  - 'force'       — the user's Mark complete force-closed it;
+ *  - 'legacy'      — healed on load from a pre-rework record.
+ */
+export interface ReviewSettled {
+  at: string
+  by: 'observation' | 'decision' | 'agent' | 'supersede' | 'force' | 'legacy'
+  versionId?: string
+  reviewId?: string
+}
+
 export interface Review {
   /** 'R7' — rendered as 'Review #7'. Minted by the store. */
   id: string
@@ -550,9 +603,20 @@ export interface Review {
    *  agent's FINAL render of its turn, one pass per turn). */
   versionId: string
   annotationIds: string[]
+  /**
+   * 'submitted' is LIVE (the artefact's one active round) and 'resolved' is
+   * SETTLED. The pair is one-way from here on: nothing but the user's own
+   * Reopen — of the round, or of a single note on it — may move `resolved` back
+   * to `submitted`. Every automatic path that used to walk backwards is what
+   * produced the zombie rounds the settled machine exists to kill.
+   */
   status: 'draft' | 'submitted' | 'resolved'
   createdAt: string
   submittedAt?: string
+  /** The decision this round carried, stamped at submit. Absent on rounds
+   *  submitted before decisions existed. */
+  decision?: 'approve' | 'reject'
+  settled?: ReviewSettled
 }
 
 /** What `canvas_review` returns to the agent (the pull side of D10). */
@@ -564,7 +628,152 @@ export interface ReviewPayload {
   generalNotes: Annotation[]
   /** Sketch PNGs, served to the agent as images alongside the text. */
   attachments: Array<{ annotationId: string; pngPath: string }>
+  /**
+   * Earlier rounds THIS submission settled (W4), and per round the notes that
+   * were still `open` when it did — never answered by anybody.
+   *
+   * Reported because the settle is silent otherwise: the user's newest
+   * submission is their authoritative statement of what is still wrong, so an
+   * unanswered note from three rounds ago legitimately stops being owed — but
+   * the agent should still SEE that it existed rather than have it vanish
+   * between two tool calls.
+   */
+  settledByThisSubmission?: Array<{ reviewId: string; neverResolved: Annotation[] }>
   envelope: 'untrusted-content'
+}
+
+// ── The derived reading of a canvas (the settled machine, 2026-08-29) ───────
+//
+// NEEDS-YOU / WITH-THE-AGENT / SETTLED are DERIVED, after the settle rules have
+// run — never stored. A stored phase is a phase that can be WRONG, and every
+// strand in the live repros was a stored answer that the record had already
+// contradicted. These live in shared/ because main and the renderer both read
+// them, and two implementations of "who is this waiting on" is exactly how the
+// pill and the panel came to disagree.
+
+/** The two states a note is still waiting on somebody in: 'open' waits on the
+ *  agent, 'addressed' waits on nobody but is still part of the live round. */
+export type LiveNoteState = 'open' | 'addressed'
+
+export function isLiveNote(a: Annotation): boolean {
+  return a.state === 'open' || a.state === 'addressed'
+}
+
+/**
+ * A note nobody is waiting on any more. NOT the same as "gone" — the text
+ * stays, the row says how it settled, and Reopen is one click.
+ *
+ * 'reannotated' is neither live nor settled: it has a LIVE SUCCESSOR carrying
+ * the same issue, so counting it either way double-counts one piece of feedback.
+ */
+export function isSettledNote(a: Annotation): boolean {
+  return a.state === 'observation' || a.state === 'stale' || a.state === 'dismissed' || a.state === 'approved'
+}
+
+/**
+ * The artefact's phase — what the pane's status line and the Library's owed-text
+ * read.
+ *
+ * Priority is the ball's: an OPEN version is the user's to decide, whatever else
+ * is on the record, because that is the gesture that also settles everything
+ * beneath it. Only with no open version does a live round mean the agent has the
+ * ball.
+ */
+export type ArtifactPhase =
+  | { kind: 'needs-you'; versionId: string }
+  | { kind: 'with-agent'; reviewId: string; openNotes: number; addressedNotes: number; awaiting: 'next-version' }
+  | { kind: 'settled'; versionId: string; verdict: 'approved' | 'rejected' | 'dismissed' | 'withdrawn' | 'superseded' }
+  | { kind: 'empty' }
+
+/**
+ * Which rounds belong to ONE artefact run.
+ *
+ * A round belongs only when its frozen version AND every one of its notes lie
+ * inside the run. A round that SPANS artefacts (the agent rendered a plan
+ * between the user's note and their submit, so the round froze on the plan while
+ * its notes point at the mockup) belongs to neither — the fail-closed side, and
+ * the same rule the store's settle uses, so the phase the user reads and the
+ * settle the store performs can never disagree about scope.
+ */
+function reviewsOfRun(
+  runVersionIds: ReadonlySet<string>,
+  reviews: readonly Review[],
+  annotations: readonly Annotation[],
+): Review[] {
+  const notesByReview = new Map<string, Annotation[]>()
+  for (const a of annotations) {
+    const list = notesByReview.get(a.reviewId)
+    if (list) list.push(a)
+    else notesByReview.set(a.reviewId, [a])
+  }
+  return reviews.filter((r) => {
+    if (!runVersionIds.has(r.versionId)) return false
+    return (notesByReview.get(r.id) ?? []).every((a) => runVersionIds.has(a.versionId))
+  })
+}
+
+export function artifactPhaseOf(
+  run: readonly CanvasVersion[],
+  reviews: readonly Review[],
+  annotations: readonly Annotation[],
+): ArtifactPhase {
+  const ready = run.filter((v) => !v.draft)
+  if (ready.length === 0) return { kind: 'empty' }
+
+  const open = openVersionOf(run)
+  if (open) return { kind: 'needs-you', versionId: open.id }
+
+  const runIds = new Set(run.map((v) => v.id))
+  const mine = reviewsOfRun(runIds, reviews, annotations)
+  const memberIds = new Set(mine.map((r) => r.id))
+  // The newest LIVE round. There is meant to be at most one — "ONE active
+  // round" is the invariant — but a user Reopen can legitimately make a second,
+  // and reporting the newest is the honest reading of "what is in flight".
+  const live = mine
+    .filter((r) => r.status === 'submitted')
+    .sort((a, b) => Number(b.id.slice(1)) - Number(a.id.slice(1)))[0]
+  if (live) {
+    const notes = annotations.filter((a) => a.reviewId === live.id && memberIds.has(a.reviewId))
+    return {
+      kind: 'with-agent',
+      reviewId: live.id,
+      openNotes: notes.filter((a) => a.state === 'open').length,
+      addressedNotes: notes.filter((a) => a.state === 'addressed').length,
+      awaiting: 'next-version',
+    }
+  }
+
+  // Nothing open, nothing live: the artefact's outcome is its newest decided
+  // version. A run whose ready versions carry no verdict at all was never
+  // offered for review (a show-and-tell lane), so it reports `empty` rather
+  // than inventing a verdict nobody gave.
+  const decided = [...ready].reverse().find((v) => v.verdict)
+  if (!decided?.verdict) return { kind: 'empty' }
+  return { kind: 'settled', versionId: decided.id, verdict: decided.verdict.state }
+}
+
+/**
+ * Exactly what a FORCE complete would close on one canvas (W3).
+ *
+ * ONE declaration, because four surfaces read it and the confirm's label is
+ * built from it: main composes it (`describeForceClosures`), the preload bridge
+ * and the renderer d.ts carry it, and the button turns it into the sentence the
+ * user is asked to agree to. Two copies of this shape is how a confirm comes to
+ * promise something the mutation does not do.
+ */
+export interface ForceClosures {
+  /** Draft notes the user never sent. A force DELETES these: an unsent note is
+   *  their own scratch, and closing it "as not done" would file a claim they
+   *  never made. */
+  unsentNotes: number
+  /** Live notes still with the agent. */
+  openNotes: number
+  /** Live notes the agent has claimed. */
+  addressedNotes: number
+  /** EVERY artefact run's open version, not just the awaited one — an open
+   *  version anywhere on the canvas is a decision the user still owes, and a
+   *  force stamps each of them `dismissed`. */
+  unreviewedVersionIds: string[]
 }
 
 /** Ids the review store mints. Tighter than path-safe on purpose (these appear
@@ -1094,18 +1303,22 @@ export interface CanvasLibraryEntry {
   openReviewCount?: number
   draftNoteCount?: number
   /**
-   * How many notes a bulk close-out on this row would ACTUALLY clear.
+   * How many rounds on this canvas are LIVE — submitted, not yet settled.
    *
-   * Not "addressed notes on this canvas", which is a different and larger
-   * number: the close-out skips any round still holding an open note, so on a
-   * partial round (one note handled, one not) there are addressed notes and
-   * nothing closeable. Labelling the button from the larger number promised
-   * work it would not do and left a control that never went away.
-   *
-   * `undefined` for an unreadable store, exactly like the two above: the
-   * library must never offer "close 0 notes" when the truth is "could not tell".
+   * Replaces the old `closeableNoteCount`, which existed to label a bulk
+   * close-out button that no longer exists: notes have no per-note controls in
+   * the settled machine, and what the row needs to say is simply whether a round
+   * is still in flight. `undefined` for an unreadable store, exactly like the
+   * counts above — "no live rounds" and "could not tell" must never render the
+   * same.
    */
-  closeableNoteCount?: number
+  liveRoundCount?: number
+  /**
+   * The phase of the canvas's most recent live artefact, derived (never stored)
+   * by `artifactPhaseOf` after the settle rules have run — so the Library's
+   * owed-text and the pane's status line are the same answer computed once.
+   */
+  phase?: ArtifactPhase['kind']
   /** A ready-marked render on this canvas awaits the user's first review
    *  (#366). From the canvas record, so it is always present when true. */
   awaitingReview?: boolean

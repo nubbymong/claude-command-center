@@ -15,16 +15,15 @@
  *    same issue, so listing it would show the same feedback twice;
  *  - `agentClosedCount` counts only what the AGENT closed on the user's word,
  *    which is the one thing on that list the user did not do themselves;
- *  - `roundsWaitingOnYou` / `notesWaitingOnYou` are the bulk button's scope, and
- *    they exclude any round still holding an open note — the same scope rule the
- *    store enforces on the agent's side.
+ *  - `settledLabel` is how a settled round says WHY, because a round the user
+ *    never closed themselves must not read as one they did.
  */
 import { describe, it, expect } from 'vitest'
-import type { Annotation, Review } from '../../../src/shared/canvas'
+import { artifactPhaseOf, type Annotation, type CanvasVersion, type Review } from '../../../src/shared/canvas'
 import {
-  notesWaitingOnYou,
+  artifactPhaseFor,
   reviewGroupsOf,
-  roundsWaitingOnYou,
+  settledLabel,
   type CanvasReviewSessionState,
 } from '../../../src/renderer/stores/canvasReviewStore'
 
@@ -105,7 +104,7 @@ describe('closed notes are kept, not dropped', () => {
     expect(g.agentClosedCount).toBe(1)
   })
 
-  it('keeps a round live while anything on it still is', () => {
+  it('keeps a round live while the ROUND is, and splits its notes either side', () => {
     const s = stateOf(
       [review('R1', 'submitted', '2026-08-22T10:00:00.000Z')],
       [note('a1', 'R1', 'stale', { closedBy: 'agent' }), note('a2', 'R1', 'addressed')],
@@ -113,51 +112,92 @@ describe('closed notes are kept, not dropped', () => {
     const [g] = reviewGroupsOf(s)
     expect(g.notes.map((n) => n.id)).toEqual(['a2'])
     expect(g.closedNotes.map((n) => n.id)).toEqual(['a1'])
-    expect(g.waitingOn).toBe('you')
+    expect(g.waitingOn).toBe('agent')
     expect(g.addressedCount).toBe(1)
+  })
+
+  it('lists an OBSERVATION under closedNotes — recorded, and owed by nobody', () => {
+    const s = stateOf(
+      [review('R1', 'resolved', '2026-08-22T10:00:00.000Z')],
+      [note('a1', 'R1', 'observation', { closedBy: 'user', closedFrom: 'open' })],
+    )
+    const [g] = reviewGroupsOf(s)
+    expect(g.notes).toHaveLength(0)
+    expect(g.closedNotes.map((n) => n.id)).toEqual(['a1'])
+    // An observation is the USER's own close, never the agent's.
+    expect(g.agentClosedCount).toBe(0)
+  })
+})
+describe('settledLabel — a settled round says HOW it settled', () => {
+  const settledWith = (settled: Review['settled']): ReturnType<typeof reviewGroupsOf>[number] =>
+    reviewGroupsOf(stateOf([{ ...review('R1', 'resolved', '2026-08-22T10:00:00.000Z'), settled }], []))[0]
+
+  it('names each provenance in the user`s own terms, and never as a click nobody made', () => {
+    expect(settledLabel(settledWith({ at: 'x', by: 'observation' }))).toBe('passed with observations')
+    expect(settledLabel(settledWith({ at: 'x', by: 'decision', versionId: 'v8' }))).toBe('settled by your v8 decision')
+    expect(settledLabel(settledWith({ at: 'x', by: 'decision', versionId: 'v8', reviewId: 'R8' }))).toBe('superseded by your Review #8')
+    expect(settledLabel(settledWith({ at: 'x', by: 'agent' }))).toBe('closed by the agent on your instruction')
+    expect(settledLabel(settledWith({ at: 'x', by: 'supersede' }))).toBe('settled when its version was superseded')
+    expect(settledLabel(settledWith({ at: 'x', by: 'force' }))).toBe('closed by you, as not done')
+    expect(settledLabel(settledWith({ at: 'x', by: 'legacy' }))).toBe('settled when this canvas was brought up to date')
+  })
+
+  it('says nothing at all for a LIVE round — there is no settlement to describe', () => {
+    const [g] = reviewGroupsOf(stateOf([review('R1', 'submitted', '2026-08-22T10:00:00.000Z')], [note('a1', 'R1', 'open')]))
+    expect(settledLabel(g)).toBeNull()
+  })
+
+  it('a ZERO-NOTE decision names the VERDICT, not the neutral word', () => {
+    // "settled by your v8 decision" makes the user go and look up which way it
+    // went; "your v8 approval" is a sentence they recognise. The word comes from
+    // the version record they were given, and falls back only when it is absent.
+    const g = settledWith({ at: 'x', by: 'decision', versionId: 'v8' })
+    const version = (state: 'approved' | 'rejected'): CanvasVersion =>
+      ({ id: 'v8', mode: 'design', createdAt: 'x', source: { mode: 'design', entry: 'i.html' }, verdict: { state, by: 'user', at: 'x' } }) as CanvasVersion
+    expect(settledLabel(g, [version('approved')])).toBe('settled by your v8 approval')
+    expect(settledLabel(g, [version('rejected')])).toBe('settled by your v8 rejection')
+    // Unknown version: the neutral word, never a guessed verdict.
+    expect(settledLabel(g, [])).toBe('settled by your v8 decision')
   })
 })
 
-describe('the bulk button’s scope', () => {
-  const s = stateOf(
-    [
-      review('R1', 'submitted', '2026-08-22T10:00:00.000Z'), // all addressed -> yours
-      review('R2', 'submitted', '2026-08-22T11:00:00.000Z'), // one open -> the agent's
-      review('R3', 'resolved', '2026-08-22T12:00:00.000Z'), // nothing left
-      review('R4', 'draft'),
-    ],
-    [
-      note('a1', 'R1', 'addressed'),
-      note('a2', 'R1', 'addressed'),
-      note('a3', 'R2', 'addressed'),
-      note('a4', 'R2', 'open'),
-      note('a5', 'R3', 'stale', { closedBy: 'user' }),
-      note('a6', 'R4', 'open'),
-    ],
-  )
+describe('artifactPhaseFor — main and the renderer answer with ONE implementation (D3)', () => {
+  const version = (id: string, over: Partial<CanvasVersion> = {}): CanvasVersion =>
+    ({ id, mode: 'design', createdAt: '2026-08-22T09:00:00.000Z', source: { mode: 'design', entry: 'i.html' }, ...over }) as CanvasVersion
 
-  it('takes only the rounds waiting on YOU', () => {
-    expect(roundsWaitingOnYou(reviewGroupsOf(s)).map((g) => g.review.id)).toEqual(['R1'])
+  it('agrees with the shared helper on the same fixture, for every phase', () => {
+    const versions = [version('v1', { verdict: { state: 'rejected', by: 'user', at: 'x' } }), version('v2')]
+    const live = stateOf([review('R1', 'submitted', '2026-08-22T10:00:00.000Z')], [note('a1', 'R1', 'open')])
+
+    // needs-you: v2 is open, whatever the round says.
+    expect(artifactPhaseFor(live, versions, 'v2')).toEqual({ kind: 'needs-you', versionId: 'v2' })
+    // The SHARED helper, over the same run, gives the same answer — the point
+    // of the wrapper is that there is only ever one of these computations.
+    expect(artifactPhaseFor(live, versions, 'v2')).toEqual(artifactPhaseOf(versions, live.reviews, live.annotations))
+
+    // with-agent: no open version, one live round.
+    const decided = [versions[0], version('v2', { verdict: { state: 'approved', by: 'user', at: 'x' } })]
+    expect(artifactPhaseFor(live, decided, 'v2')).toMatchObject({ kind: 'with-agent', reviewId: 'R1', openNotes: 1 })
+
+    // settled: nothing open, nothing live.
+    const done = stateOf([review('R1', 'resolved', '2026-08-22T10:00:00.000Z')], [note('a1', 'R1', 'stale')])
+    expect(artifactPhaseFor(done, decided, 'v2')).toEqual({ kind: 'settled', versionId: 'v2', verdict: 'approved' })
+
+    // A version the canvas does not hold names no run at all.
+    expect(artifactPhaseFor(done, decided, 'v99')).toEqual({ kind: 'empty' })
+    expect(artifactPhaseFor(done, decided, null)).toEqual({ kind: 'empty' })
   })
 
-  it('never reaches into a round still holding a note the agent has not claimed', () => {
-    // a3 is addressed, but it sits in a round that is still with the agent —
-    // closing it would clear feedback as part of a round nobody finished.
-    const ids = notesWaitingOnYou(reviewGroupsOf(s)).map((n) => n.id)
-    expect(ids).toEqual(['a1', 'a2'])
-    expect(ids).not.toContain('a3')
-  })
-
-  it('never reaches into the draft — that is the composer’s own list', () => {
-    expect(notesWaitingOnYou(reviewGroupsOf(s)).map((n) => n.id)).not.toContain('a6')
-  })
-
-  it('is empty once everything has been closed, so the button disappears', () => {
-    const cleared = stateOf(
-      [review('R1', 'resolved', '2026-08-22T10:00:00.000Z')],
-      [note('a1', 'R1', 'stale', { closedBy: 'user', closedFrom: 'addressed' })],
-    )
-    expect(notesWaitingOnYou(reviewGroupsOf(cleared))).toEqual([])
-    expect(roundsWaitingOnYou(reviewGroupsOf(cleared))).toEqual([])
+  it('picks the DISPLAYED artefact`s run, not the newest one', () => {
+    // A plan (v1, still open) and a mockup (v2, approved). Which phase you get
+    // depends on which one the pane is showing — the whole reason the wrapper
+    // takes a version id rather than reading "the latest".
+    const versions = [
+      version('v1', { mode: 'plan' }),
+      version('v2', { verdict: { state: 'approved', by: 'user', at: 'x' } }),
+    ]
+    const empty = stateOf([], [])
+    expect(artifactPhaseFor(empty, versions, 'v1')).toEqual({ kind: 'needs-you', versionId: 'v1' })
+    expect(artifactPhaseFor(empty, versions, 'v2')).toEqual({ kind: 'settled', versionId: 'v2', verdict: 'approved' })
   })
 })

@@ -44,10 +44,10 @@ export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeveri
 import type {
   CanvasAnnotationDraft, CanvasChangedEvent, CanvasRenderSource, CanvasReviewChangedEvent,
   CanvasReviewState, CanvasSketchExport, CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasState,
-  ReclaimableCanvas,
+  ForceClosures, ReclaimableCanvas,
 } from '../../shared/canvas'
 export type {
-  AnchorRef, Annotation, AnnotationScope, AnnotationState,
+  AnchorRef, Annotation, AnnotationScope, AnnotationState, ForceClosures,
   CanvasAnnotationDraft, CanvasChangedEvent, CanvasHandle, CanvasHitInfo, CanvasMode, CanvasRenderSource,
   CanvasReviewChangedEvent, CanvasReviewState, CanvasSketchExport,
   CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasSnapshotResult,
@@ -407,31 +407,26 @@ export interface ElectronAPI {
     reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
     annotationDelete: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
-    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision?: 'approve' | 'reject' }) => Promise<CanvasReviewState>
+    /** The decision is REQUIRED — the user's word is version-level. */
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) => Promise<CanvasReviewState>
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
-    annotationResolve: (args: {
-      sessionId: string
-      /** The canvas the panel was showing. Refused if the session has moved on. */
-      canvasId: string
-      annotationId: string
-      action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
-    }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
-    /** The user puts a closed note back in play — the undo half of close-out. */
+    /** The user puts a closed note back in play. With `reviewReopen`, one of the
+     *  only two writes that may revive a settled round. */
     annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The user puts a whole settled ROUND back in play. */
+    reviewReopen: (args: { sessionId: string; canvasId: string; reviewId: string }) => Promise<CanvasReviewState>
     /** The user has these addressed notes on screen — the release side of the
      *  agent close-out barrier. Renderer-only; no MCP tool reaches it. */
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
-    /** Bulk close-out for one canvas whose work has shipped. Clears, never
-     *  deletes. `ok: false` means the store could not be read. */
-    reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
-    /** One sweep: everything waiting on the user across this session's own
-     *  canvases (close-outs + awaiting-first-review clears). The Canvas
-     *  button's right-click. `unreadable` mirrors the queue's "unknown". */
-    reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<{ closedNotes: number; closedReviews: number; clearedAwaiting: number; unreadable: number }>
     /** Sign the subject off (#476). Refused (`ok:false` + reason) while
      *  anything is owed either way; the pane then shows its front page. */
     complete: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** Force-close what is owed, then sign off (W3). USER-only. */
+    completeForce: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** What that force would close, so the armed confirm can name it. `null`
+     *  for an unreadable store, or a session that does not own the canvas. */
+    describeForceClosures: (args: { sessionId: string; canvasId: string }) => Promise<ForceClosures | null>
     /** The one-click undo: clear a canvas's completed stamp. */
     completeReopen: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void

@@ -409,15 +409,15 @@ export const IPC = {
   CANVAS_REVIEW_GET_STATE: 'canvas:reviewGetState',    // renderer -> main: { sessionId } -> CanvasReviewState | null
   CANVAS_ANNOTATION_UPSERT: 'canvas:annotationUpsert', // renderer -> main: create/update a draft note
   CANVAS_ANNOTATION_DELETE: 'canvas:annotationDelete', // renderer -> main: remove a draft note
-  CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports); C1: carries the decision (approve/reject)
-  CANVAS_VERSION_VERDICT: 'canvas:versionVerdict',     // renderer -> main: C1 zero-note verdict on a version { sessionId, versionId?, state, note? }
-  CANVAS_VERSION_REOPEN: 'canvas:versionReopen',       // renderer -> main: C1 reopen a version for review (later ready versions -> withdrawn)
-  CANVAS_ANNOTATION_RESOLVE: 'canvas:annotationResolve', // renderer -> main: approve / dismiss / stale / reannotate a live note
+  CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports); carries the decision (approve/reject) — required
+  CANVAS_VERSION_VERDICT: 'canvas:versionVerdict',     // renderer -> main: zero-note verdict on a version { sessionId, versionId?, state, note? }; approve/reject also settles that artefact's earlier rounds, approve auto-completes
+  CANVAS_VERSION_REOPEN: 'canvas:versionReopen',       // renderer -> main: C1 reopen a version for review (later ready versions -> withdrawn); wakes no round
   CANVAS_ANNOTATION_REOPEN: 'canvas:annotationReopen', // renderer -> main: the USER puts a closed note back in play
+  CANVAS_REVIEW_REOPEN: 'canvas:reviewReopen',         // renderer -> main: { sessionId, canvasId, reviewId } -> the USER puts a whole settled ROUND back in play (the only other revival there is)
   CANVAS_REVIEW_MARK_SEEN: 'canvas:reviewMarkSeen',    // renderer -> main: the USER has these addressed notes on screen (releases the agent close-out barrier; no MCP path here, ever)
-  CANVAS_REVIEW_CLOSE_OUT: 'canvas:reviewCloseOut',    // renderer -> main: { canvasId } -> bulk-stale one canvas's rounds waiting on the user (the library)
-  CANVAS_REVIEW_DISMISS_ALL: 'canvas:reviewDismissAll',// renderer -> main: { sessionId } -> one sweep over the session's own canvases: close-out per canvas + clear awaiting-first-review (the Canvas button's right-click)
   CANVAS_COMPLETE: 'canvas:complete',                  // renderer -> main: { sessionId, canvasId } -> the USER signs the subject off (#476; refused while anything is owed, or not owned by that session)
+  CANVAS_COMPLETE_FORCE: 'canvas:completeForce',       // renderer -> main: { sessionId, canvasId } -> the USER force-closes what is owed and signs off (W3; USER-only — canvas_complete keeps every refusal)
+  CANVAS_DESCRIBE_FORCE_CLOSURES: 'canvas:describeForceClosures', // renderer -> main: { sessionId, canvasId } -> what a force would close, so the armed confirm can name it
   CANVAS_COMPLETE_REOPEN: 'canvas:completeReopen',     // renderer -> main: { sessionId, canvasId } -> clear a canvas's completed stamp (one-click Reopen; owner-only)
   CANVAS_REVIEW_CHANGED: 'canvas:reviewChanged',       // push: main -> renderer (a review/annotation mutation happened)
 

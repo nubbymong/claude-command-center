@@ -1477,7 +1477,10 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
         <span className="text-[var(--text-secondary)] truncate" data-testid="canvas-tool-hint">{modeStrip.hint}</span>
         <div className="flex-1" />
         {/* Subject-level sign-off (#476) — far right of the tools row (C3). */}
-        <CanvasCompleteButton sessionId={sessionId} canvasId={canvasId} title={canvasTitle} />
+        {/* The version ON SCREEN, so the button asks "is this artefact still
+            open?" of the run the user is actually looking at — a canvas holds
+            several, and the newest is not necessarily the displayed one. */}
+        <CanvasCompleteButton sessionId={sessionId} canvasId={canvasId} title={canvasTitle} displayedVersionId={version.id} />
       </div>
 
       <div className="relative flex-1 flex min-h-0">

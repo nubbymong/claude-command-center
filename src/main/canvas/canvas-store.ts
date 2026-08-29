@@ -1554,11 +1554,13 @@ export function renderVersion(
 /**
  * The user has responded to the ready-marked round on this canvas — clear the
  * "review needed" entry (#366). Called by the review store on submit (it
- * already imports this store, so the dependency points the existing way), and
- * by the dismiss-all IPC sweep when the user clears their queue without
- * reviewing (`canvas:reviewDismissAll`). Both callers are user gestures; no
- * MCP path reaches this. Idempotent, and a no-op for a canvas that owes
- * nothing.
+ * already imports this store, so the dependency points the existing way). A
+ * user gesture; no MCP path reaches this. Idempotent, and a no-op for a canvas
+ * that owes nothing.
+ *
+ * `setVersionVerdict` clears the same stamp inside its own persist, so a
+ * decision and the queue can never disagree — this entry point exists for the
+ * submit, which freezes and stamps in two steps.
  */
 export function clearAwaitingReview(canvasId: string): void {
   if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return
@@ -1599,15 +1601,40 @@ function openVersionInRecord(record: CanvasRecord, versionId?: string): CanvasVe
 }
 
 /**
+ * WHICH version a verdict with this (possibly absent) id would land on.
+ *
+ * Exported because the IPC handler has to know it BEFORE the write: after
+ * `setVersionVerdict` runs, that version is decided and no longer "the open
+ * one", so the handler could not read it back — and it needs the id to settle
+ * that artefact's earlier rounds (W4). Read-only; the same resolution
+ * `setVersionVerdict` performs, kept in one place so the two cannot diverge.
+ */
+export function verdictTargetVersionId(sessionId: string, versionId?: string): string | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null
+  if (versionId !== undefined && !CANVAS_VERSION_ID_RE.test(versionId)) return null
+  const record = getRecordForSession(sessionId)
+  if (!record) return null
+  if (versionId) return record.versions.some((v) => v.id === versionId) ? versionId : null
+  return openVersionInRecord(record)?.id ?? null
+}
+
+/**
  * Stamp a version's review outcome (C1) — the write behind BOTH mouths:
  * the user's own submit in the pane (`by: 'user'`) and the agent recording
  * the user's chat words (`by: 'agent-chat'`, always rendered as such).
  *
  * The target is the named version, or the active artifact's OPEN version when
- * none is named. Refused for drafts, for a version already decided (reopen it
- * first — a verdict is never silently overwritten), and on a completed
- * canvas. Clearing `awaitingReview` rides the same persist so the queue and
- * the verdict can never disagree.
+ * none is named — resolved by `verdictTargetVersionId`, the ONE implementation
+ * of that question, so this and the handler that settles rounds around it can
+ * never land on different versions. Refused for drafts, for a version already
+ * decided (reopen it first — a verdict is never silently overwritten), and on a
+ * completed canvas. Clearing `awaitingReview` rides the same persist so the
+ * queue and the verdict can never disagree.
+ *
+ * A USER REJECTION MUST SAY WHY. "Rejected" with no words leaves the agent a
+ * verdict it cannot act on and the History a row that explains nothing — the
+ * pane's own composer mandates a note, and this is the boundary that means it.
+ * An agent-chat rejection relays the user's words, which is the note.
  */
 export function setVersionVerdict(
   sessionId: string,
@@ -1620,12 +1647,14 @@ export function setVersionVerdict(
   if (decision.state !== 'approved' && decision.state !== 'rejected' && decision.state !== 'dismissed') {
     return { error: 'invalid verdict state' }
   }
+  if (decision.state === 'rejected' && !cleanVerdictNote(decision.note)) {
+    return { error: 'a rejection needs a note — say what is wrong' }
+  }
   const record = getRecordForSession(sessionId)
   if (!record) return { error: 'no canvas for this session' }
   if (record.completed) return { error: 'this canvas is signed off; reopen it from the library first' }
-  const target = versionId
-    ? record.versions.find((v) => v.id === versionId)
-    : (openVersionInRecord(record) ?? undefined)
+  const targetId = verdictTargetVersionId(sessionId, versionId)
+  const target = targetId ? record.versions.find((v) => v.id === targetId) : undefined
   if (!target) return { error: versionId ? `no version ${versionId} on this canvas` : 'no open version awaiting a verdict' }
   if (target.draft) return { error: 'that version is still a draft' }
   if (target.verdict) return { error: `${target.id} is already decided (${target.verdict.state}) — reopen it first` }

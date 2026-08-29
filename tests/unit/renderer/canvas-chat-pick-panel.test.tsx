@@ -82,7 +82,6 @@ let currentState: CanvasReviewState
   canvas: {
     ...((globalThis as any).window?.electronAPI?.canvas ?? {}),
     reviewGetState: vi.fn(async () => currentState),
-    annotationResolve: vi.fn(async () => ({ state: currentState })),
     reviewMarkSeen: vi.fn(async () => currentState),
   },
 }
@@ -193,3 +192,4 @@ describe('the Ctrl+V paste listener is scoped to the active pane', () => {
     remove.mockRestore()
   })
 })
+

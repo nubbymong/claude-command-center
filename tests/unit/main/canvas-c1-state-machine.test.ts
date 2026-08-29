@@ -150,7 +150,7 @@ describe('review-note settlement rides supersession', () => {
   it('an OPEN note is NEVER auto-settled by supersession — it is agent debt (adv FINDING 1)', () => {
     render(1)
     const { reviewId } = addNote('v1', 'the login button is broken')
-    reviews.submitReview(SID, reviewId, [])
+    reviews.submitReview(SID, reviewId, [], 'reject')
     const result = render(2) // agent renders a new version WITHOUT addressing the note
     const settled = reviews.settleReviewsForSupersededVersions(result.canvasId, result.superseded!)
     expect(settled).toBe(0)
@@ -161,30 +161,32 @@ describe('review-note settlement rides supersession', () => {
   it('an ADDRESSED note settles only once the user has SEEN it addressed — the seen-barrier (adv FINDING 1b)', () => {
     render(1)
     const { reviewId, annotationId } = addNote('v1')
-    reviews.submitReview(SID, reviewId, [])
+    reviews.submitReview(SID, reviewId, [], 'reject')
     const canvasId = reviews.getReviewStateForSession(SID)!.canvasId
     reviews.markAnnotationsAddressed(SID, reviewId, [annotationId], {})
     // Not yet seen: supersession must NOT close it (the unattended-close bypass).
-    const result = render(2)
-    expect(reviews.settleReviewsForSupersededVersions(result.canvasId, result.superseded!)).toBe(0)
+    expect(reviews.settleReviewsForSupersededVersions(canvasId, ['v1'])).toBe(0)
     expect(reviews.getReviewStateForSession(SID)!.annotations[0].state).toBe('addressed')
-    // The user sees it addressed → the load heal (v1 is dead) may now settle it.
+    // The user sees it addressed → the settle may now close it.
     reviews.markAddressedNotesSeen(SID, canvasId, [annotationId])
-    reviews._resetCanvasReviewStoreForTest()
+    expect(reviews.settleReviewsForSupersededVersions(canvasId, ['v1'])).toBe(1)
     expect(reviews.getReviewStateForSession(SID)!.annotations[0]).toMatchObject({ state: 'stale', closedBy: 'supersede', closedFrom: 'addressed' })
+    expect(reviews.getReviewStateForSession(SID)!.reviews[0]).toMatchObject({ status: 'resolved', settled: { by: 'supersede' } })
   })
 
   it('a REOPENED note is shielded from the settle', () => {
-    const first = render(1)
+    render(1)
     const { reviewId, annotationId } = addNote('v1')
-    reviews.submitReview(SID, reviewId, [])
-    // The user dismisses, then deliberately reopens — the #470 shield.
-    reviews.resolveAnnotation(SID, annotationId, 'dismiss', first.canvasId)
+    reviews.submitReview(SID, reviewId, [], 'reject')
+    const canvasId = reviews.getReviewStateForSession(SID)!.canvasId
+    reviews.markAnnotationsAddressed(SID, reviewId, [annotationId], {})
+    reviews.markAddressedNotesSeen(SID, canvasId, [annotationId])
+    reviews.settleReviewsForSupersededVersions(canvasId, ['v1'])
+    // The user deliberately puts it back in play — no automatic settle may
+    // touch it again.
     reviews.reopenAnnotation(SID, annotationId)
-    const result = render(2)
-    const settled = reviews.settleReviewsForSupersededVersions(result.canvasId, result.superseded!)
-    expect(settled).toBe(0)
-    expect(reviews.getReviewStateForSession(SID)!.annotations[0].state).toBe('open')
+    expect(reviews.settleReviewsForSupersededVersions(canvasId, ['v1'])).toBe(0)
+    expect(reviews.getReviewStateForSession(SID)!.annotations[0].state).toBe('addressed')
   })
 
   it('submitReview carries the decision onto the version', () => {
@@ -195,18 +197,22 @@ describe('review-note settlement rides supersession', () => {
   })
 
   it('the legacy backlog heals on load: a SEEN addressed note on a dead version settles', () => {
+    // The agent renders twice while the user is still writing, so v1 is
+    // SUPERSEDED (it was open when v2 arrived). The user's note is anchored to
+    // v1 — the dead page — while the round freezes against v2 (D12).
     render(1)
+    const result = render(2)
+    expect(result.superseded).toEqual(['v1'])
     const { reviewId, annotationId } = addNote('v1')
-    reviews.submitReview(SID, reviewId, [])
+    reviews.submitReview(SID, reviewId, [], 'reject')
     const canvasId = reviews.getReviewStateForSession(SID)!.canvasId
     reviews.markAnnotationsAddressed(SID, reviewId, [annotationId], {})
     reviews.markAddressedNotesSeen(SID, canvasId, [annotationId])
-    const result = render(2)
+
     // Pre-C1 pile: the review store never heard about the supersession. A
     // fresh load heals it — but only within the seen-barrier the settle keeps.
     reviews._resetCanvasReviewStoreForTest()
     const st = reviews.getReviewStateForSession(SID)!
-    expect(result.superseded).toEqual(['v1'])
     expect(st.annotations[0]).toMatchObject({ state: 'stale', closedBy: 'supersede' })
   })
 

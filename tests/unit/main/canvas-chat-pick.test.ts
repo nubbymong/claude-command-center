@@ -45,7 +45,7 @@ function submittedRound(): { versionId: string } {
   const { versionId } = renderCanvas()
   store.upsertAnnotation(SID, { scope: 'general', note: 'first', versionId })
   store.upsertAnnotation(SID, { scope: 'general', note: 'second', versionId })
-  store.submitReview(SID, 'R1', [])
+  store.submitReview(SID, 'R1', [], 'reject')
   return { versionId }
 }
 
@@ -53,7 +53,7 @@ function submittedRound(): { versionId: string } {
 function pickableNote(labels: string[] = ['thin rule', 'no rule']): void {
   const { versionId } = renderCanvas()
   store.upsertAnnotation(SID, { scope: 'general', note: 'only', versionId })
-  store.submitReview(SID, 'R1', [])
+  store.submitReview(SID, 'R1', [], 'reject')
   store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: labels })
 }
 
@@ -128,10 +128,12 @@ describe('recordChatPick — every gate fails closed', () => {
   it('refuses a note that is not on the named round (and an unknown note)', () => {
     submittedRound()
     store.markAnnotationsAddressed(SID, 'R1', ['a1', 'a2'], { a1: ['one', 'two'] })
-    // A second round with its own note.
-    const versionId = canvasStore.getCanvasStateForSession(SID)!.activeVersionId!
-    store.upsertAnnotation(SID, { scope: 'general', note: 'third', versionId })
-    store.submitReview(SID, 'R2', [])
+    // A second round with its own note, on a DIFFERENT ARTEFACT — a decision on
+    // the same one would settle R1, which is the machine working rather than
+    // what this test is about.
+    const plan = canvasStore.renderVersion(SID, { mode: 'plan', html: '<!doctype html><p>plan</p>' })
+    store.upsertAnnotation(SID, { scope: 'general', note: 'third', versionId: plan.versionId })
+    store.submitReview(SID, 'R2', [], 'reject')
     expect(() => store.recordChatPick(SID, 'R2', 'a1', 'A')).toThrow(/note not on this review/)
     expect(() => store.recordChatPick(SID, 'R1', 'a3', 'A')).toThrow(/note not on this review/)
     expect(() => store.recordChatPick(SID, 'R1', 'a99', 'A')).toThrow(/note not on this review/)
@@ -143,9 +145,11 @@ describe('recordChatPick — every gate fails closed', () => {
   })
 
   it('refuses a note already ruled on', () => {
-    pickableNote()
-    const canvasId = store.getReviewStateForSession(SID)!.canvasId
-    store.resolveAnnotation(SID, 'a1', 'approve', canvasId, 'A')
+    submittedRound()
+    // Two addressed notes, so picking one leaves the round LIVE — otherwise the
+    // whole round settles and the second call is refused for that instead.
+    store.markAnnotationsAddressed(SID, 'R1', ['a1', 'a2'], { a1: ['one', 'two'] })
+    store.recordChatPick(SID, 'R1', 'a1', 'A')
     expect(() => store.recordChatPick(SID, 'R1', 'a1', 'B')).toThrow(/note is already ruled on/)
   })
 
@@ -265,12 +269,12 @@ describe('the serializer says which kind of pick it was', () => {
       chosenVariantKey: 'B',
     }
     const chat = serializeReviewPayload(
-      { reviewId: 'R1', versionId: 'v1', annotations: [], generalNotes: [{ ...base, closedBy: 'agent', pickSource: 'chat' }] } as any,
+      { review: { id: 'R1', versionId: 'v1' }, annotations: [], generalNotes: [{ ...base, closedBy: 'agent', pickSource: 'chat' }] } as any,
       [],
     )
     expect(chat.text).toContain('chosen-variant: B (picked in chat)')
     const click = serializeReviewPayload(
-      { reviewId: 'R1', versionId: 'v1', annotations: [], generalNotes: [{ ...base, closedBy: 'user' }] } as any,
+      { review: { id: 'R1', versionId: 'v1' }, annotations: [], generalNotes: [{ ...base, closedBy: 'user' }] } as any,
       [],
     )
     expect(click.text).toContain('chosen-variant: B')

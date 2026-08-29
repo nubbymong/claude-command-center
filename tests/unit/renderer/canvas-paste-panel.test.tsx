@@ -42,7 +42,6 @@ const STATE: CanvasReviewState = { canvasId: 'canvas-1', sessionId: SID, reviews
   canvas: {
     ...((globalThis as any).window?.electronAPI?.canvas ?? {}),
     reviewGetState: vi.fn(async () => STATE),
-    annotationResolve: vi.fn(async () => ({ state: STATE })),
     reviewMarkSeen: vi.fn(async () => STATE),
   },
 }
@@ -133,3 +132,4 @@ describe('Ctrl+V target gating', () => {
     expect(container.querySelector('[data-testid="composer-paste-error"]')).toBeNull()
   })
 })
+

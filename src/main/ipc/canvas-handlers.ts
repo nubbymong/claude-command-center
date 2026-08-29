@@ -12,9 +12,9 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import {
-  clearAwaitingReview,
   deleteArtifact,
   deleteCanvas,
+  getCanvasStateById,
   getCanvasStateForSession,
   listAllCanvases,
   onCanvasChanged,
@@ -23,25 +23,28 @@ import {
   setActiveVersion,
   setArtifactArchived,
   setVersionVerdict,
+  verdictTargetVersionId,
 } from '../canvas/canvas-store'
 import {
   MAX_SKETCH_PNG_BYTES,
-  closeOutCanvasReviews,
   deleteAnnotation,
   dropReviewsForCanvas,
   getReviewCountsForCanvas,
+  getReviewSnapshotForCanvas,
   getReviewStateForSession,
   deleteAnnotationsForVersions,
   markAddressedNotesSeen,
   onReviewChanged,
   reopenAnnotation,
-  resolveAnnotation,
-  reviewStoreFileExists,
+  reopenReview,
   settleReviewsForSupersededVersions,
+  settleRoundsForUserDecision,
   submitReview,
   upsertAnnotation,
 } from '../canvas/canvas-review-store'
-import { completeCanvasGuarded, reopenCanvasGuarded } from '../canvas/canvas-completion'
+import { completeCanvasGuarded, describeForceClosures, reopenCanvasGuarded } from '../canvas/canvas-completion'
+import { logInfo } from '../debug-logger'
+import { artifactPhaseOf, artifactRuns, type CanvasLibraryEntry } from '../../shared/canvas'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 import {
   canvasCwdForSession,
@@ -54,6 +57,56 @@ import {
  *  read per library open. Their own are always counted; the rest are a courtesy
  *  and must not turn one click into a hundred synchronous file reads. */
 const MAX_REVIEW_SWEEP = 20
+
+/**
+ * The DERIVED phase of a canvas's most recent artefact, for the Library row.
+ *
+ * Composed here for the same reason the counts are: `artifactPhaseOf` needs the
+ * versions (canvas store) and the rounds (review store), and this handler is the
+ * one place that already holds both. Undefined when either side cannot be read —
+ * a row with no phase renders without one, never as "settled".
+ */
+function latestArtifactPhase(canvasId: string): CanvasLibraryEntry['phase'] {
+  const canvas = getCanvasStateById(canvasId)
+  if (!canvas) return undefined
+  // The latest LIVE run. `artifactRuns` breaks a run on the archive flip, so
+  // the last run is often an ARCHIVED one — the artefacts the user has
+  // deliberately tucked away — and reporting its phase would make the Library
+  // row describe something the user has already put down.
+  const runs = artifactRuns(canvas.versions).filter((r) => !r[0]?.archived)
+  const run = runs[runs.length - 1]
+  if (!run) return undefined
+  const snapshot = getReviewSnapshotForCanvas(canvasId)
+  return artifactPhaseOf(run, snapshot?.reviews ?? [], snapshot?.annotations ?? []).kind
+}
+
+/**
+ * W2 — a USER APPROVAL auto-completes the artefact when nothing is owed anywhere
+ * on the canvas.
+ *
+ * The gesture the old model made the user perform twice: approve the version,
+ * then hunt for a Mark complete button that was disabled anyway. An approval
+ * over a canvas with nothing outstanding IS the sign-off, so it is recorded as
+ * one (`completed: { by: 'user' }`) and the existing `canvas:changed
+ * { completed: true }` push returns the pane to its front page.
+ *
+ * A REFUSAL IS NOT AN ERROR. Another artefact on the same canvas may still be
+ * mid-flight, or a draft note may be half-written — perfectly ordinary states —
+ * so the refusal is logged at info and the caller returns its own result. The
+ * user's approval landed either way.
+ *
+ * NEVER reachable from an MCP path: `canvas_version_verdict` stamps 'agent-chat'
+ * and does not come through here, which is what keeps an agent from
+ * self-approving and self-completing in one turn.
+ */
+function autoCompleteAfterUserApproval(canvasId: string, sessionId: string): void {
+  try {
+    const result = completeCanvasGuarded(canvasId, 'user', sessionId)
+    if ('error' in result) logInfo(`[canvas] approval did not complete ${canvasId}: ${result.error}`)
+  } catch (err) {
+    logInfo(`[canvas] auto-complete failed for ${canvasId}: ${err}`)
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Bounds + Zod schemas
@@ -209,7 +262,6 @@ const rectSchema = z
 
 const anchorRefSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('ux-id'), id: z.string().min(1).max(512) }).strict(),
-  z.object({ kind: z.literal('plan-step'), id: z.string().min(1).max(512) }).strict(),
   z
     .object({
       kind: z.literal('fingerprint'),
@@ -273,14 +325,23 @@ const reviewSubmitSchema = z
     sketches: z
       .array(z.object({ annotationId: annotationIdSchema, pngBase64: sketchPngBase64Schema }).strict())
       .max(100),
-    /** C1: the decision this submit carries (owner state machine 2026-08-26).
-     *  Optional for compatibility; the composer always sends one. */
-    decision: z.enum(['approve', 'reject']).optional(),
+    /** The decision this submit carries. REQUIRED (the settled machine): the
+     *  user's word is version-level, and a submit with no decision is the shape
+     *  that produced rounds nobody could close. */
+    decision: z.enum(['approve', 'reject']),
   })
   .strict()
 
-/** C1: a zero-note verdict (the plain Approve, or a Dismiss) — no review
- *  record involved, just the version's outcome. */
+/**
+ * A zero-note verdict (the plain Approve, a Reject, or a Dismiss) — no review
+ * record involved, just the version's outcome.
+ *
+ * A REJECTION carries a note or it is refused, here and again in the store.
+ * "Rejected" with nothing said is a decision the agent cannot act on and a
+ * History row that explains nothing, and — because a reject settles every
+ * earlier round of the artefact — it would close the user's own outstanding
+ * feedback while saying why to nobody.
+ */
 const versionVerdictSchema = z
   .object({
     sessionId: sessionIdSchema,
@@ -289,6 +350,10 @@ const versionVerdictSchema = z
     note: z.string().max(4000).optional(),
   })
   .strict()
+  .refine((v) => v.state !== 'rejected' || (v.note?.trim().length ?? 0) > 0, {
+    message: 'a rejection needs a note — say what is wrong',
+    path: ['note'],
+  })
 
 const versionReopenSchema = z
   .object({
@@ -302,27 +367,11 @@ const versionReopenSchema = z
  *  canvas it meant is exactly the one the mismatch check exists to refuse. */
 const canvasIdSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/)
 
-const annotationResolveSchema = z
-  .object({
-    sessionId: sessionIdSchema,
-    // The canvas the panel had on screen when the user clicked. The store
-    // refuses the call if the session has since moved to another canvas —
-    // annotation ids restart at a1 on every one, so without it a verdict aimed
-    // at the round the user was reading can land on a stranger's note.
-    canvasId: canvasIdSchema,
-    annotationId: annotationIdSchema,
-    // 'stale' is the close-out verdict: the work shipped, so the note is no
-    // longer live. Deliberately distinct from 'approve' — the user is saying
-    // "this went out", not "I checked it and it is right".
-    action: z.enum(['approve', 'dismiss', 'reannotate', 'stale']),
-    // Which of the note's offered alternatives the user is approving. Rides an
-    // approval only — the store throws on any other action — and must name a
-    // variant that exists on the note.
-    variantKey: z
-      .string()
-      .regex(/^[A-D]$/)
-      .optional(),
-  })
+/** The user puts a whole settled ROUND back in play. Names the canvas it was
+ *  composed against for the same reason mark-seen does: review ids are ordinals
+ *  within whichever canvas is active right now. */
+const reviewReopenSchema = z
+  .object({ sessionId: sessionIdSchema, canvasId: canvasIdSchema, reviewId: reviewIdSchema })
   .strict()
 
 /** "The user has these addressed notes on screen." The release side of the
@@ -337,24 +386,6 @@ const reviewMarkSeenSchema = z
   .strict()
 
 const annotationReopenSchema = z.object({ sessionId: sessionIdSchema, annotationId: annotationIdSchema }).strict()
-
-/** The library's bulk close-out. Takes a canvas ID and nothing else — same
- *  charset bound as delete, and like delete it is keyed by canvas rather than
- *  session because the library shows the whole project, including canvases
- *  owned by sessions that have since closed. Clearing notes is housekeeping: it
- *  never moves ownership, and it never removes a file. */
-const reviewCloseOutSchema = z
-  .object({ canvasId: z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/) })
-  .strict()
-
-/** Dismiss-all sweeps the ASKING session's own canvases. The tile list feeds
- *  the same library read `canvas:listAll` uses and can only mark rows as
- *  on-screen — it can never widen the sweep beyond rows owned by (or active
- *  for) sessionId, and the project scope is resolved in main from the session
- *  id, never accepted as a path. */
-const reviewDismissAllSchema = z
-  .object({ sessionId: sessionIdSchema, openTileSessionIds: openTileSessionIdsSchema })
-  .strict()
 
 // ---------------------------------------------------------------------------
 // Registration
@@ -416,14 +447,15 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
       if (!counts) continue
       e.openReviewCount = counts.openReviewIds.length
       e.draftNoteCount = counts.draftNotes
-      // What a bulk close-out on this row would ACTUALLY clear. The store
-      // computes it with the same per-review gate the mutation applies, so the
-      // button's label and the button's effect cannot disagree. Left undefined
-      // with the other two when the store is unreadable.
-      e.closeableNoteCount = counts.closeableNotes
+      // LIVE rounds — the owed term the settled machine derives everything from.
+      // Left undefined with the others when the store is unreadable.
+      e.liveRoundCount = counts.liveRounds
       // Rounds waiting on the user's verdicts — the queue's second input
       // (#364). Same sweep bound and same undefined-when-unreadable rule.
       e.verdictRounds = counts.verdictRounds
+      // The DERIVED phase of the row's most recent artefact, computed once here
+      // so the Library's owed-text and the pane's status line are one answer.
+      e.phase = latestArtifactPhase(e.canvasId)
     }
     return entries
   })
@@ -451,12 +483,35 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     return result
   })
 
-  // C1 (owner state machine, 2026-08-26): the zero-note verdict — the plain
-  // Approve, or a Dismiss — and the reopen. Renderer-only ingresses: the
-  // agent's mouth is the MCP canvas_verdict tool, which stamps 'agent-chat'.
+  // The zero-note verdict — the plain Approve, a Reject, or a Dismiss — and
+  // THE COMPOSITION the settled machine hangs on. Renderer-only: the agent's
+  // mouth is the MCP canvas_version_verdict tool, which stamps 'agent-chat' and
+  // deliberately reaches none of this (A2 — a relayed verdict settles nothing
+  // and completes nothing).
+  //
+  // Three steps, in this order, and only here because only this file holds both
+  // stores:
+  //   1. stamp the verdict;
+  //   2. an approve or a reject SETTLES that artefact's earlier rounds (W4) —
+  //      the user's newest word is their authoritative statement of what is
+  //      still wrong. A `dismissed` settles nothing: "I am not looking at this"
+  //      says nothing about the feedback beneath it;
+  //   3. an approve then tries the AUTO-COMPLETE (W2). A refusal there is not
+  //      an error — it means something is still owed elsewhere on the canvas,
+  //      which is a perfectly ordinary state — so it is logged and the verdict
+  //      is returned as the result.
   ipcMain.handle(IPC.CANVAS_VERSION_VERDICT, async (_e, args: unknown) => {
     const { sessionId, versionId, state, note } = versionVerdictSchema.parse(args)
-    return setVersionVerdict(sessionId, versionId, { state, ...(note ? { note } : {}) }, 'user')
+    // Resolved BEFORE the write: afterwards the version is decided and is no
+    // longer "the open one", so the settle would have nothing to key on.
+    const target = verdictTargetVersionId(sessionId, versionId)
+    const result = setVersionVerdict(sessionId, versionId, { state, ...(note ? { note } : {}) }, 'user')
+    if ('error' in result) return result
+    if (target && (state === 'approved' || state === 'rejected')) {
+      settleRoundsForUserDecision(result.canvasId, target)
+    }
+    if (state === 'approved') autoCompleteAfterUserApproval(result.canvasId, sessionId)
+    return result
   })
 
   ipcMain.handle(IPC.CANVAS_VERSION_REOPEN, async (_e, args: unknown) => {
@@ -512,12 +567,20 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
 
   ipcMain.handle(IPC.CANVAS_REVIEW_SUBMIT, async (_e, args: unknown) => {
     const { sessionId, reviewId, sketches, decision } = reviewSubmitSchema.parse(args)
-    return submitReview(sessionId, reviewId, sketches, decision)
+    const state = submitReview(sessionId, reviewId, sketches, decision)
+    // The submit-with-notes half of the auto-complete (W2). The store already
+    // settled the earlier rounds and turned this round's notes into
+    // observations; if that left nothing owed anywhere, an approval signs the
+    // subject off and the pane returns to its front page.
+    if (decision === 'approve') autoCompleteAfterUserApproval(state.canvasId, sessionId)
+    return state
   })
 
-  ipcMain.handle(IPC.CANVAS_ANNOTATION_RESOLVE, async (_e, args: unknown) => {
-    const { sessionId, canvasId, annotationId, action, variantKey } = annotationResolveSchema.parse(args)
-    return resolveAnnotation(sessionId, annotationId, action, canvasId, variantKey)
+  // The USER puts a settled ROUND back in play — with the per-note reopen
+  // below, the ONLY two writes that may move a round `resolved -> submitted`.
+  ipcMain.handle(IPC.CANVAS_REVIEW_REOPEN, async (_e, args: unknown) => {
+    const { sessionId, canvasId, reviewId } = reviewReopenSchema.parse(args)
+    return reopenReview(sessionId, canvasId, reviewId)
   })
 
   // The user's eyes on an addressed round — the one input to the close-out
@@ -535,68 +598,6 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     return reopenAnnotation(sessionId, annotationId)
   })
 
-  // "The work on this canvas shipped — clear its notes." Clears, never deletes:
-  // the canvas, its versions and every note's text stay exactly where they are,
-  // and each cleared note keeps a Reopen.
-  ipcMain.handle(IPC.CANVAS_REVIEW_CLOSE_OUT, async (_e, args: unknown) => {
-    const { canvasId } = reviewCloseOutSchema.parse(args)
-    const result = closeOutCanvasReviews(canvasId)
-    // null is "could not read the store", which must not render as "cleared 0".
-    if (!result) return { ok: false as const }
-    return { ok: true as const, closed: result.closed, reviews: result.reviews }
-  })
-
-  // "Clear my whole canvas queue" — the Canvas button's right-click. One sweep
-  // over exactly the rows the queue number counts (owned by or active for this
-  // session, per totalsFromEntries): rounds already waiting on the user close
-  // out per canvas, and a ready-marked render still awaiting its first review
-  // stops being owed. Scope is resolved HERE (cwd from main's own spawn
-  // record), so the renderer cannot aim the sweep at another project, and a
-  // canvas some other session owns is never touched. Composed from the two
-  // existing user-driven mutations rather than a new store path — this handler
-  // is the one place that already holds both stores (same reason listAll joins
-  // counts here).
-  ipcMain.handle(IPC.CANVAS_REVIEW_DISMISS_ALL, async (_e, args: unknown) => {
-    const { sessionId, openTileSessionIds } = reviewDismissAllSchema.parse(args)
-    const cwd = canvasCwdForSession(sessionId)
-    const entries = listAllCanvases(openTileSessionIds ?? [], cwd, sessionId)
-    let closedNotes = 0
-    let closedReviews = 0
-    let clearedAwaiting = 0
-    let unreadable = 0
-    for (const e of entries) {
-      if (!e.ownedByThisSession && !e.isActiveForThisSession) continue
-      // The review counts have to be READ here, per owned row: `listAllCanvases`
-      // does not carry `verdictRounds`/`openReviewCount` — only the `listAll`
-      // handler's own join loop above sets them, and this is a different call.
-      // Reading them off the entry made the whole close-out branch dead (the
-      // fields were always undefined) and inflated `unreadable` to the owned
-      // count. Join the same read `listAll` does, so the sweep clears exactly
-      // what the queue number promised.
-      const counts = getReviewCountsForCanvas(e.canvasId)
-      // A null count is either a genuinely unreadable store (a file exists but
-      // will not read) or simply a canvas with no reviews.json yet (rendered,
-      // never annotated). Only the first is "unreadable"; calling a healthy
-      // note-less canvas unreadable would over-report the diagnostic. Distinguish
-      // by whether the file is actually present.
-      if (!counts && reviewStoreFileExists(e.canvasId)) unreadable++
-      // Close out only where the label counted work (verdictRounds > 0), so
-      // the gesture clears precisely what the number promised.
-      if (counts && counts.verdictRounds > 0) {
-        const res = closeOutCanvasReviews(e.canvasId)
-        if (res) {
-          closedNotes += res.closed
-          closedReviews += res.reviews.length
-        }
-      }
-      if (e.awaitingReview) {
-        clearAwaitingReview(e.canvasId)
-        clearedAwaiting++
-      }
-    }
-    return { closedNotes, closedReviews, clearedAwaiting, unreadable }
-  })
-
   // Sign the subject off (#476). The guard module owns the "nothing left owed
   // either way" rule (drafts, open notes, verdicts) and fails closed on an
   // unreadable review store; the canvas store re-checks ownership against the
@@ -606,6 +607,25 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
     const { sessionId, canvasId } = canvasCompleteSchema.parse(args)
     const result = completeCanvasGuarded(canvasId, 'user', sessionId)
     return 'error' in result ? { ok: false as const, reason: result.error } : { ok: true as const, state: result }
+  })
+
+  // MARK COMPLETE IS NEVER DEAD (W3): the user force-closes what is still owed
+  // and signs the subject off. USER-only by construction — `completeCanvasGuarded`
+  // honours `force` only for `by: 'user'`, and there is no MCP path to this
+  // channel — so `canvas_complete` keeps every refusal it has.
+  ipcMain.handle(IPC.CANVAS_COMPLETE_FORCE, async (_e, args: unknown) => {
+    const { sessionId, canvasId } = canvasCompleteSchema.parse(args)
+    const result = completeCanvasGuarded(canvasId, 'user', sessionId, { force: true })
+    return 'error' in result ? { ok: false as const, reason: result.error } : { ok: true as const, state: result }
+  })
+
+  // What that force WOULD close, so the armed confirm names it before the user
+  // commits. Pure read — and OWNER-ONLY: these tallies are the canvas's private
+  // review state, so answering them to a foreign session would be an oracle for
+  // exactly what `canvas:completeForce` refuses to act on. Null for a stranger.
+  ipcMain.handle(IPC.CANVAS_DESCRIBE_FORCE_CLOSURES, async (_e, args: unknown) => {
+    const { sessionId, canvasId } = canvasCompleteSchema.parse(args)
+    return describeForceClosures(canvasId, sessionId)
   })
 
   // The undo half (#476): clears the stamp, restores obligations, and rebinds

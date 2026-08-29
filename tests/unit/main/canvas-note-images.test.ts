@@ -131,7 +131,7 @@ describe('delete + egress + restart', () => {
   it('submit needs no export for an image note, and the payload lists the PNG as an attachment', () => {
     const { canvasId, versionId } = renderCanvas()
     const r = store.upsertAnnotation(SID, { scope: 'general', note: 'shot attached', versionId, image: { pngBase64: PNG_B64 } })
-    store.submitReview(SID, 'R1', [])
+    store.submitReview(SID, 'R1', [], 'reject')
     const payload = store.getReviewPayload(SID, 'R1')
     expect(payload.payload.attachments).toEqual([{ annotationId: r.annotationId, pngPath: `reviews/pasted/${r.annotationId}.png` }])
     expect(payload.attachmentFiles).toEqual([

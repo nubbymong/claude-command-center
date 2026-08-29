@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
-import type { Annotation, Review } from '../../../src/shared/canvas'
+import type { Annotation, CanvasVersion, ForceClosures, Review } from '../../../src/shared/canvas'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -26,12 +26,18 @@ const SID = 'session-complete'
 const CID = 'canvas-a'
 
 const complete = vi.fn(async (_args: { sessionId: string; canvasId: string }) => ({ ok: true }))
+const completeForce = vi.fn(async (_args: { sessionId: string; canvasId: string }) => ({ ok: true }))
 const completeReopen = vi.fn(async (_args: { sessionId: string; canvasId: string }) => ({ ok: true }))
+/** What main says a force would close. The armed confirm's label is built from
+ *  this, so the label and the effect are drawn from one read. */
+let closures: ForceClosures | null = { unsentNotes: 0, openNotes: 0, addressedNotes: 0, unreviewedVersionIds: [] }
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
   canvas: {
     ...((globalThis as any).window?.electronAPI?.canvas ?? {}),
     complete: (args: { sessionId: string; canvasId: string }) => complete(args),
+    completeForce: (args: { sessionId: string; canvasId: string }) => completeForce(args),
+    describeForceClosures: vi.fn(async () => closures),
     completeReopen: (args: { sessionId: string; canvasId: string }) => completeReopen(args),
   },
 }
@@ -56,7 +62,7 @@ function seed(opts: {
   annotations?: Annotation[]
   awaitingReview?: boolean
   completed?: { at: string; by: 'user' | 'agent' }
-  versions?: Array<{ id: string; draft?: true; show?: true }>
+  versions?: Array<{ id: string; draft?: true; show?: true; mode?: 'design' | 'plan' | 'uat'; verdict?: CanvasVersion['verdict'] }>
 }): void {
   useCanvasStore.setState({
     bySessionId: {
@@ -99,9 +105,11 @@ function passGuard(): void {
   nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => later)
 }
 
-async function render(): Promise<void> {
+async function render(displayedVersionId: string | null = 'v1'): Promise<void> {
   await act(async () => {
-    root.render(<CanvasCompleteButton sessionId={SID} canvasId={CID} title="Quick Start rows" />)
+    root.render(
+      <CanvasCompleteButton sessionId={SID} canvasId={CID} title="Quick Start rows" displayedVersionId={displayedVersionId} />,
+    )
   })
 }
 
@@ -114,8 +122,11 @@ async function click(el: Element | null): Promise<void> {
 
 beforeEach(() => {
   complete.mockClear()
+  completeForce.mockClear()
   completeReopen.mockClear()
   complete.mockResolvedValue({ ok: true })
+  completeForce.mockResolvedValue({ ok: true })
+  closures = { unsentNotes: 0, openNotes: 0, addressedNotes: 0, unreviewedVersionIds: [] }
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -135,28 +146,130 @@ describe('when it is offered', () => {
     expect(byId('canvas-complete-arm')!.disabled).toBe(false)
   })
 
-  it('blocks on an open round and says so', async () => {
+  // MARK COMPLETE IS NEVER DEAD (W3). The old button went dark the moment
+  // anything was owed, which left a canvas nobody could finish: the agent's
+  // canvas_complete refuses while notes are outstanding (correctly, and still
+  // does), and the user's only control was disabled. So it is HIDDEN or
+  // ENABLED, never disabled.
+  it('stays ENABLED with an open round, and offers to force it closed', async () => {
     seed({ reviews: [review('R1', 'submitted')], annotations: [note('a1', 'R1', 'open')] })
     await render()
     const arm = byId('canvas-complete-arm')!
-    expect(arm.disabled).toBe(true)
-    expect(arm.title).toContain('still open')
+    expect(arm.disabled).toBe(false)
+    expect(arm.title).toContain('closing what is still outstanding as not done')
   })
 
-  it('blocks on unsubmitted draft notes, naming the sharper loss first', async () => {
+  it('stays ENABLED with unsubmitted draft notes', async () => {
     seed({ reviews: [review('R1', 'draft', ['a1'])], annotations: [note('a1', 'R1', 'open')] })
     await render()
-    const arm = byId('canvas-complete-arm')!
-    expect(arm.disabled).toBe(true)
-    expect(arm.title).toContain('unsubmitted')
+    expect(byId('canvas-complete-arm')!.disabled).toBe(false)
   })
 
-  it('blocks while a ready render awaits the first review', async () => {
-    seed({ awaitingReview: true })
+  it('is HIDDEN while the artefact`s latest ready version is still OPEN', async () => {
+    // The gesture that belongs to that state is the DECISION — approve or
+    // reject in the panel — and an approval completes the canvas by itself.
+    seed({ versions: [{ id: 'v1' }], awaitingReview: true })
     await render()
-    const arm = byId('canvas-complete-arm')!
-    expect(arm.disabled).toBe(true)
-    expect(arm.title).toContain('first review')
+    expect(byId('canvas-complete-arm')).toBeNull()
+    expect(byId('canvas-dismiss-button')).toBeNull()
+  })
+
+  it('asks that question of the DISPLAYED artefact, not the canvas`s latest version (D2)', async () => {
+    // A plan (v1, still open) and a mockup (v2, approved) on one canvas. Keyed
+    // on the canvas's latest version, the button would show while the user is
+    // looking at the plan they are supposed to decide on, and hide while they
+    // are looking at the settled mockup — exactly backwards, both times.
+    seed({
+      versions: [
+        { id: 'v1', mode: 'plan' },
+        { id: 'v2', verdict: { state: 'approved', by: 'user', at: 'now' } },
+      ],
+    })
+    await render('v1')
+    expect(byId('canvas-complete-arm')).toBeNull() // the plan is open — decide
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    await render('v2')
+    expect(byId('canvas-complete-arm')).toBeTruthy() // the mockup is settled
+  })
+})
+
+describe('the armed confirm NAMES what it will force-close', () => {
+  it('says each closure, and "as not done" — never as approved', async () => {
+    closures = { unsentNotes: 1, openNotes: 1, addressedNotes: 2, unreviewedVersionIds: ['v3'] }
+    seed({ reviews: [review('R1', 'submitted')], annotations: [note('a1', 'R1', 'open')] })
+    await render()
+    await click(byId('canvas-complete-arm'))
+    const confirm = byId('canvas-complete-confirm')!
+    expect(confirm.textContent).toContain('deletes 1 unsent note')
+    expect(confirm.textContent).toContain('closes 1 note still with the agent, as not done')
+    expect(confirm.textContent).toContain('closes 2 notes the agent answered, as not done')
+    expect(confirm.textContent).toContain('closes v3 unreviewed')
+  })
+
+  it('forces through canvas:completeForce when something is owed', async () => {
+    closures = { unsentNotes: 0, openNotes: 1, addressedNotes: 0 }
+    seed({ reviews: [review('R1', 'submitted')], annotations: [note('a1', 'R1', 'open')] })
+    await render()
+    await click(byId('canvas-complete-arm'))
+    passGuard()
+    await click(byId('canvas-complete-confirm'))
+    expect(completeForce).toHaveBeenCalledWith({ sessionId: SID, canvasId: CID })
+    expect(complete).not.toHaveBeenCalled()
+  })
+
+  it('uses the PLAIN complete when nothing is owed — the full guard still runs', async () => {
+    seed({ reviews: [review('R1', 'resolved')], annotations: [note('a1', 'R1', 'approved')] })
+    await render()
+    await click(byId('canvas-complete-arm'))
+    // The arm and the confirm say the SAME words — the second click is plainly
+    // the same action, not a new one to re-read. The subject's name rides the
+    // tooltip, where it does not compete with the closures for label width.
+    expect(byId('canvas-complete-confirm')!.textContent).toBe('Mark complete')
+    expect(byId('canvas-complete-confirm')!.title).toContain('“Quick Start rows”')
+    passGuard()
+    await click(byId('canvas-complete-confirm'))
+    expect(complete).toHaveBeenCalledWith({ sessionId: SID, canvasId: CID })
+    expect(completeForce).not.toHaveBeenCalled()
+  })
+
+  it('names every open version the force will dismiss, not just one', async () => {
+    closures = { unsentNotes: 0, openNotes: 0, addressedNotes: 0, unreviewedVersionIds: ['v1', 'v3'] }
+    seed({ reviews: [review('R1', 'resolved')], annotations: [] })
+    await render()
+    await click(byId('canvas-complete-arm'))
+    expect(byId('canvas-complete-confirm')!.textContent).toContain('closes v1, v3 unreviewed')
+  })
+
+  it('FORCES even when the describe came back null, so an owed canvas never gets a dead click', async () => {
+    // main returning null (unreadable store, a canvas it will not describe)
+    // leaves no phrases. Taking the plain path there sends the sign-off through
+    // a guard that will refuse it, which reads to the user as a dead button.
+    closures = null
+    seed({ reviews: [review('R1', 'submitted')], annotations: [note('a1', 'R1', 'open')] })
+    await render()
+    await click(byId('canvas-complete-arm'))
+    expect(byId('canvas-complete-confirm')!.textContent).toContain('closes whatever is still outstanding, as not done')
+    passGuard()
+    await click(byId('canvas-complete-confirm'))
+    expect(completeForce).toHaveBeenCalledTimes(1)
+    expect(complete).not.toHaveBeenCalled()
+  })
+
+  it('a subject switch clears the previous canvas`s phrases', async () => {
+    closures = { unsentNotes: 4, openNotes: 0, addressedNotes: 0, unreviewedVersionIds: [] }
+    seed({ reviews: [review('R1', 'resolved')], annotations: [] })
+    await render()
+    await click(byId('canvas-complete-arm'))
+    expect(byId('canvas-complete-confirm')!.textContent).toContain('deletes 4 unsent notes')
+
+    // The pane switches subject under a mounted button. The confirm must not
+    // carry canvas A's sentence onto canvas B.
+    await act(async () => {
+      root.render(<CanvasCompleteButton sessionId={SID} canvasId="canvas-OTHER" title="Other" displayedVersionId="v1" />)
+    })
+    expect(byId('canvas-complete-confirm')).toBeNull()
+    expect(container.textContent).not.toContain('deletes 4 unsent notes')
   })
 })
 
@@ -166,7 +279,8 @@ describe('the two-step', () => {
     await render()
     await click(byId('canvas-complete-arm'))
     const confirm = byId('canvas-complete-confirm')!
-    expect(confirm.textContent).toContain('“Quick Start rows”')
+    expect(confirm.textContent).toBe('Mark complete')
+    expect(confirm.title).toContain('“Quick Start rows”')
     await click(confirm)
     expect(complete).not.toHaveBeenCalled()
 
@@ -274,7 +388,13 @@ describe('ADV: the armed confirm does not carry across a subject switch', () => 
       bySessionId: { [SID]: { loaded: true, canvasId: 'canvas-OTHER', reviews: [], annotations: [] } },
     } as any)
     await render()
-    expect(byId('canvas-complete-arm')!.disabled).toBe(true)
+    // The stale mirror no longer decides anything: the button is never
+    // disabled, and what the confirm SAYS comes from main's own describe —
+    // which is read against the canvas id, not against the mirror. A renderer
+    // that guessed here is how a confirm came to promise what the mutation
+    // would not do.
+    expect(byId('canvas-complete-arm')!.disabled).toBe(false)
+    expect(byId('canvas-complete-arm')!.title).toContain('closing what is still outstanding')
   })
 })
 
@@ -288,14 +408,14 @@ describe('show-and-tell dismiss (owner call, 2026-08-27)', () => {
     expect(complete).toHaveBeenCalledWith({ sessionId: SID, canvasId: CID })
   })
 
-  it('any review-intent ready version falls back to the armed Mark-complete flow', async () => {
+  it('a review-intent version still OPEN hides the whole slot — decide first', async () => {
     seed({ versions: [{ id: 'v1', show: true }, { id: 'v2' }], awaitingReview: true })
     await render()
     expect(byId('canvas-dismiss-button')).toBeNull()
-    expect(byId('canvas-complete-arm')).toBeTruthy()
+    expect(byId('canvas-complete-arm')).toBeNull()
   })
 
-  it('review activity on a show version disables the one-click path', async () => {
+  it('review activity on a show version falls back to the armed Mark-complete flow', async () => {
     seed({
       versions: [{ id: 'v1', show: true }],
       reviews: [review('R1', 'submitted', ['a1'])],
@@ -303,8 +423,9 @@ describe('show-and-tell dismiss (owner call, 2026-08-27)', () => {
     })
     await render()
     expect(byId('canvas-dismiss-button')).toBeNull()
-    expect(byId('canvas-complete-arm')).toBeTruthy()
-    expect(byId('canvas-complete-arm')!.disabled).toBe(true)
+    // Enabled, not disabled: the round it grew is exactly what the force exists
+    // to close when the user decides they are done with the subject.
+    expect(byId('canvas-complete-arm')!.disabled).toBe(false)
   })
 
   it('a refused dismiss surfaces its reason like the armed flow does', async () => {

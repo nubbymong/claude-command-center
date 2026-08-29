@@ -17,6 +17,7 @@ import type {
   CanvasLibraryEntry,
   CanvasSnapshotRequestEvent,
   CanvasState,
+  ForceClosures,
 } from '../shared/canvas'
 
 /** Mirrors src/main/watchdog/session-watchdog.ts's WatchdogPublicState — kept
@@ -309,38 +310,35 @@ export interface ElectronAPI {
     reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
     annotationDelete: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
-    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision?: 'approve' | 'reject' }) => Promise<CanvasReviewState>
-    /** C1: zero-note verdict on a version (plain Approve / Dismiss). */
+    /** The decision is REQUIRED: the user's word is version-level, and a submit
+     *  that carried none is what produced rounds nobody could close. */
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) => Promise<CanvasReviewState>
+    /** The zero-note verdict on a version (plain Approve / Reject / Dismiss).
+     *  An approve or reject also settles that artefact's earlier rounds; an
+     *  approve auto-completes when nothing else is owed. */
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
-    /** C1: reopen a version for review; later ready versions become withdrawn. */
+    /** C1: reopen a version for review; later ready versions become withdrawn.
+     *  Wakes no ROUND — settled stays settled. */
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
-    annotationResolve: (args: {
-      sessionId: string
-      /** The canvas the panel was showing. Refused if the session has moved on. */
-      canvasId: string
-      annotationId: string
-      action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
-      /** The alternative being approved, when the note offers variants. Approve only. */
-      variantKey?: string
-    }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
-    /** The user puts a closed note back in play — the undo half of close-out. */
+    /** The user puts a closed note back in play. With `reviewReopen`, one of the
+     *  only two writes that may revive a settled round. */
     annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The user puts a whole settled ROUND back in play. Names the canvas it was
+     *  composed against — review ids are ordinals within the active canvas. */
+    reviewReopen: (args: { sessionId: string; canvasId: string; reviewId: string }) => Promise<CanvasReviewState>
     /** The user has these addressed notes on screen. The only input to the agent
      *  close-out barrier that no MCP tool can produce — renderer-only by design. */
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
-    /** Bulk close-out for one canvas whose work has shipped. Clears the rounds
-     *  already waiting on the user; deletes nothing. `ok: false` means the
-     *  review store could not be read — never "there was nothing to clear". */
-    reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
-    /** One sweep: everything waiting on the user across this session's own
-     *  canvases — the per-canvas close-out repeated, plus the clears for
-     *  ready-marked renders still awaiting a first review. The Canvas button's
-     *  right-click. `unreadable` counts canvases whose review store could not
-     *  be read (the queue's own "unknown" rule) — never folded into zero. */
-    reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<{ closedNotes: number; closedReviews: number; clearedAwaiting: number; unreadable: number }>
     /** Sign the subject off (#476). Refused (`ok:false` + reason) while
      *  anything is owed either way; the pane then falls back to its front page. */
     complete: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** Force-close what is owed, then sign off (W3) — so Mark complete is never
+     *  dead. USER-only: `canvas_complete` (the agent's mouth) keeps every refusal. */
+    completeForce: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** What that force would close, so the armed confirm can name it. `null`
+     *  when the review store could not be read, or for a session that does not
+     *  own the canvas — never zeroes. */
+    describeForceClosures: (args: { sessionId: string; canvasId: string }) => Promise<ForceClosures | null>
     /** The one-click undo: clear a canvas's completed stamp. */
     completeReopen: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
@@ -935,22 +933,22 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_UPSERT, args),
     annotationDelete: (args: { sessionId: string; annotationId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_DELETE, args),
-    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision?: 'approve' | 'reject' }) =>
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_VERDICT, args),
     versionReopen: (args: { sessionId: string; versionId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_REOPEN, args),
-    annotationResolve: (args: { sessionId: string; canvasId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' | 'stale'; variantKey?: string }) =>
-      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_RESOLVE, args),
     annotationReopen: (args: { sessionId: string; annotationId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_REOPEN, args),
+    reviewReopen: (args: { sessionId: string; canvasId: string; reviewId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_REVIEW_REOPEN, args),
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_MARK_SEEN, args),
-    reviewCloseOut: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_CLOSE_OUT, args),
-    reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
-      ipcRenderer.invoke(IPC.CANVAS_REVIEW_DISMISS_ALL, args),
     complete: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE, args),
+    completeForce: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE_FORCE, args),
+    describeForceClosures: (args: { sessionId: string; canvasId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DESCRIBE_FORCE_CLOSURES, args),
     completeReopen: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE_REOPEN, args),
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
       const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)

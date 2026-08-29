@@ -402,7 +402,7 @@ describe('reviews follow the adoption', () => {
       versionId: 'v1',
     })
     const draft = state.reviews.find((r) => r.status === 'draft')!
-    reviews.submitReview(sessionId, draft.id, [])
+    reviews.submitReview(sessionId, draft.id, [], 'reject')
     expect(annotationId).toBeTruthy()
     return { reviewId: draft.id }
   }

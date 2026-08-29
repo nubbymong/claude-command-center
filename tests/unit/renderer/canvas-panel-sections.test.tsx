@@ -19,7 +19,7 @@ const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canv
 const SID = 'session-1'
 const VERSION: CanvasVersion = { id: 'v1', mode: 'design', createdAt: '2026-08-24T10:00:00Z', source: { mode: 'design', entry: 'index.html' } } as CanvasVersion
 
-const review = (id: string, annotationIds: string[]): Review => ({
+const review = (id: string, annotationIds: string[], over: Partial<Review> = {}): Review => ({
   id,
   canvas: { canvasId: 'canvas-1', versionId: 'v1' } as Review['canvas'],
   versionId: 'v1',
@@ -27,6 +27,7 @@ const review = (id: string, annotationIds: string[]): Review => ({
   status: 'submitted',
   createdAt: '2026-08-24T09:00:00Z',
   submittedAt: '2026-08-24T09:05:00Z',
+  ...over,
 })
 const note = (id: string, reviewId: string, over: Partial<Annotation>): Annotation => ({
   id,
@@ -38,16 +39,22 @@ const note = (id: string, reviewId: string, over: Partial<Annotation>): Annotati
   ...over,
 })
 
-/** One round in each section: R1 needs the user (addressed, unseen), R2 is with
- *  the agent (open), R3 is closed (approved). */
+/** One round in each of the TWO sections the settled machine leaves: R1 and R2
+ *  are with the agent (one addressed, one open — both live rounds), R3 is
+ *  SETTLED. There is no third section: nothing on this panel waits on the user,
+ *  because the user's word is a decision on the VERSION. */
 const STATE: CanvasReviewState = {
   canvasId: 'canvas-1',
   sessionId: SID,
-  reviews: [review('R1', ['a1']), review('R2', ['a2']), review('R3', ['a3'])],
+  reviews: [
+    review('R1', ['a1']),
+    review('R2', ['a2']),
+    review('R3', ['a3'], { status: 'resolved', settled: { at: '2026-08-24T09:30:00Z', by: 'decision', versionId: 'v2' } }),
+  ],
   annotations: [
     note('a1', 'R1', { state: 'addressed' }),
     note('a2', 'R2', { state: 'open' }),
-    note('a3', 'R3', { state: 'approved', closedBy: 'user', closedFrom: 'addressed' }),
+    note('a3', 'R3', { state: 'stale', closedBy: 'decision', closedFrom: 'addressed', settledBy: { versionId: 'v2' } }),
   ],
 }
 
@@ -90,53 +97,53 @@ afterEach(async () => {
 })
 
 describe('section headers', () => {
-  it('groups the rounds under NEEDS YOU / WITH THE AGENT / CLOSED', async () => {
+  it('groups the rounds under WITH THE AGENT / SETTLED, and offers no NEEDS-YOU section', async () => {
     seed(STATE)
     await render()
-    const you = container.querySelector('[data-testid="review-section-you"]')
     const agent = container.querySelector('[data-testid="review-section-agent"]')
     const closed = container.querySelector('[data-testid="review-section-closed"]')
-    expect(you?.textContent).toContain('NEEDS YOU')
     expect(agent?.textContent).toContain('WITH THE AGENT')
-    expect(closed?.textContent).toContain('CLOSED')
-    // Counts: one round each.
-    expect(you?.textContent).toContain('1')
-    expect(agent?.textContent).toContain('1')
+    expect(closed?.textContent).toContain('SETTLED')
+    expect(container.querySelector('[data-testid="review-section-you"]')).toBeNull()
+    // Counts: two live rounds, one settled.
+    expect(agent?.textContent).toContain('2')
     expect(closed?.textContent).toContain('1')
   })
 
-  it('orders the sections needs-you, then with-agent, then closed', async () => {
+  it('orders the sections with-agent, then settled', async () => {
     seed(STATE)
     await render()
     const order = Array.from(container.querySelectorAll('[data-testid^="review-section-"]')).map((el) =>
       el.getAttribute('data-testid'),
     )
-    expect(order).toEqual(['review-section-you', 'review-section-agent', 'review-section-closed'])
+    expect(order).toEqual(['review-section-agent', 'review-section-closed'])
   })
 })
 
-describe('seen-aware collapse', () => {
-  it('keeps an UNSEEN needs-you round expanded (the seen-barrier depends on it rendering)', async () => {
+describe('collapse defaults', () => {
+  it('keeps a LIVE round expanded — its addressed rows have to render for the user to read them', async () => {
     seed(STATE)
     await render()
     expect(header('R1').getAttribute('aria-expanded')).toBe('true')
+    expect(header('R2').getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('folds a needs-you round once every addressed note in it has been seen', async () => {
+  it('folds a SETTLED round by default — history, not something to read past', async () => {
+    seed(STATE)
+    await render()
+    expect(header('R3').getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('keeps a live round expanded even once every note on it has been seen', async () => {
+    // The old fold was seen-aware, because an addressed round was work owed by
+    // the user. It is not any more, so the round stays open until it settles.
     seed({
       ...STATE,
       reviews: [review('R1', ['a1'])],
       annotations: [note('a1', 'R1', { state: 'addressed', userSawAddressed: true })],
     })
     await render()
-    expect(header('R1').getAttribute('aria-expanded')).toBe('false')
-  })
-
-  it('folds a closed round by default, and leaves an agent round open', async () => {
-    seed(STATE)
-    await render()
-    expect(header('R3').getAttribute('aria-expanded')).toBe('false') // closed
-    expect(header('R2').getAttribute('aria-expanded')).toBe('true') // with the agent
+    expect(header('R1').getAttribute('aria-expanded')).toBe('true')
   })
 })
 

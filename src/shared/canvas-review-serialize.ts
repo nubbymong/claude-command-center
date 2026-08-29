@@ -17,7 +17,6 @@ function fmtBox(box: Rect): string {
 
 function fmtAnchor(anchor: AnchorRef): string {
   if (anchor.kind === 'ux-id') return `ux-id ${anchor.id}`
-  if (anchor.kind === 'plan-step') return `plan-step ${anchor.id}`
   return `fingerprint role="${anchor.role}" name="${anchor.name}" path="${anchor.ancestorPath}" ordinal=${anchor.ordinal}`
 }
 
@@ -32,6 +31,14 @@ function fmtAnnotation(a: Annotation, imageIndexByAnnotation: Map<string, number
   const lines: string[] = []
   const head = `- ${a.id} [${a.scope}] [${a.state}] on ${a.versionId}`
   lines.push(head)
+  // An OBSERVATION is a note the user filed WITH an approval. It is here to be
+  // read, not answered, and saying so on the line is the difference between an
+  // agent acting on it (fine) and an agent treating it as outstanding work that
+  // blocks the round (the working-pill strand, from the other side).
+  if (a.state === 'observation') lines.push('  nothing owed — recorded for you')
+  // Where the agent said the fix landed, echoed back so a re-read of the round
+  // shows its own claim rather than only the note.
+  if (a.addressedIn) lines.push(`  updated-in: ${a.addressedIn}`)
   if (a.focus) {
     if (a.scope === 'element') {
       lines.push(`  target: ${a.focus.label} ${fmtBox(a.focus.bboxPage)}`)
@@ -76,11 +83,33 @@ export interface SerializedReview {
  * order the tool will append images in — the serializer numbers sketches from
  * it (1-based) so the text and the image blocks can never drift apart.
  */
-export function serializeReviewPayload(payload: ReviewPayload, attachmentOrder: string[]): SerializedReview {
+export function serializeReviewPayload(
+  payload: ReviewPayload,
+  attachmentOrder: string[],
+  /** The mode of the version this round froze against. Testing mode calls the
+   *  same two decisions Pass and Fail; the machine is one, only the words
+   *  change, and the agent should read back the word the user saw. */
+  opts?: { uat?: boolean },
+): SerializedReview {
   const imageIndexByAnnotation = new Map<string, number>()
   attachmentOrder.forEach((annotationId, i) => imageIndexByAnnotation.set(annotationId, i + 1))
 
   const parts: string[] = []
+  // THE DECISION FIRST. It is the single most load-bearing fact about a round —
+  // an approval means nothing on it is owed, a rejection means all of it drives
+  // the next version — and an agent reading a list of notes without it has to
+  // guess which.
+  const decision = payload.review.decision
+  if (decision === 'approve') {
+    parts.push(
+      `decision: ${opts?.uat ? 'PASSED' : 'APPROVED'} — nothing on this round is owed. The notes below are observations.`,
+    )
+  } else if (decision === 'reject') {
+    parts.push(
+      `decision: ${opts?.uat ? 'FAILED' : 'REJECTED'} — the notes below drive the next version. ` +
+        'Call canvas_resolve with updatedIn when you render it.',
+    )
+  }
   const anchored = payload.annotations
   if (anchored.length > 0) {
     parts.push(anchored.map((a) => fmtAnnotation(a, imageIndexByAnnotation)).join('\n'))
@@ -89,6 +118,26 @@ export function serializeReviewPayload(payload: ReviewPayload, attachmentOrder: 
     parts.push('general notes:')
     parts.push(payload.generalNotes.map((a) => fmtAnnotation(a, imageIndexByAnnotation)).join('\n'))
   }
-  if (parts.length === 0) parts.push('(this review has no notes)')
+  if (anchored.length === 0 && payload.generalNotes.length === 0) parts.push('(this review has no notes)')
+  // A4: the earlier rounds this submission settled, and the notes on them that
+  // nobody ever answered. Listed rather than dropped, because the settle is
+  // otherwise invisible: the agent would simply find those rounds gone between
+  // one canvas_review and the next, with no way to tell a note it handled from
+  // a note that timed out.
+  const settled = payload.settledByThisSubmission ?? []
+  if (settled.length > 0) {
+    // The COUNT is every round this decision closed; the list under it is only
+    // the notes nobody ever answered. Two different numbers, said as two —
+    // heading the block "never resolved" and then counting rounds made the
+    // count read as a count of lost notes, which it is not.
+    const lost = settled.flatMap((r) => r.neverResolved)
+    parts.push(`settled by this submission (${settled.length}): ${settled.map((r) => r.reviewId).join(', ')}`)
+    parts.push(lost.length > 0 ? `never resolved (${lost.length}):` : 'never resolved: none — every note on them was answered')
+    for (const round of settled) {
+      if (round.neverResolved.length === 0) continue
+      parts.push(`- ${round.reviewId}`)
+      parts.push(round.neverResolved.map((a) => fmtAnnotation(a, imageIndexByAnnotation)).join('\n'))
+    }
+  }
   return { text: parts.join('\n') }
 }

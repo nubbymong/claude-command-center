@@ -26,9 +26,10 @@ function renderCanvas(): { canvasId: string; versionId: string } {
   return canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>page</p>' })
 }
 
-function resolveNow(annotationId: string, action: import('../../../src/main/canvas/canvas-review-store').ResolveAction, variantKey?: string) {
-  const canvasId = store.getReviewStateForSession(SID)?.canvasId ?? ''
-  return store.resolveAnnotation(SID, annotationId, action, canvasId, variantKey)
+/** The user names the winner IN CHAT and the agent records it — the one path
+to a chosen variant now that per-note verdicts are gone (canvas_pick). */
+function pickNow(annotationId: string, variantKey: string) {
+  return store.recordChatPick(SID, 'R1', annotationId, variantKey)
 }
 
 function noteOf(state: import('../../../src/shared/canvas').CanvasReviewState, id: string) {
@@ -40,7 +41,7 @@ function submittedRound(): { versionId: string } {
   const { versionId } = renderCanvas()
   store.upsertAnnotation(SID, { scope: 'general', note: 'first', versionId })
   store.upsertAnnotation(SID, { scope: 'general', note: 'second', versionId })
-  store.submitReview(SID, 'R1', [])
+  store.submitReview(SID, 'R1', [], 'reject')
   return { versionId }
 }
 
@@ -97,49 +98,34 @@ describe('minting on address', () => {
     expect(noteOf(state, 'a1').variants).toBeUndefined()
   })
 
-  it('an already-addressed note is skipped: the set and any state it carries stay put', () => {
+  it('a RE-address replaces the set whole — a second pass is a fresh offer', () => {
     submittedRound()
     store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['one', 'two'] })
-    // A second address of the same (still-addressed) note lands nowhere — the
-    // note is skipped, so the entry that names it cannot replace the set.
     const r2 = store.markAnnotationsAddressed(SID, 'R1', ['a1', 'a2'], { a1: ['three'] })
-    expect(r2.skipped).toContain('a1')
-    expect(r2.addressed).toEqual(['a2'])
-    expect(noteOf(r2.state, 'a1').variants).toEqual([
-      { key: 'A', label: 'one' },
-      { key: 'B', label: 'two' },
-    ])
+    expect(r2.addressed.sort()).toEqual(['a1', 'a2'])
+    expect(noteOf(r2.state, 'a1').variants).toEqual([{ key: 'A', label: 'three' }])
     // a2 was addressed without an entry: no variants.
     expect(noteOf(r2.state, 'a2').variants).toBeUndefined()
   })
 })
 
-describe('the approval names the winner', () => {
-  it('approve with a key sets chosenVariantKey; the serializer line is how the agent reads it back', () => {
+describe('the pick names the winner', () => {
+  it('a chat pick sets chosenVariantKey; the serializer line is how the agent reads it back', () => {
     submittedRound()
     store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['thin rule', 'no rule'] })
-    const r = resolveNow('a1', 'approve', 'B')
+    const r = pickNow('a1', 'B')
     const a1 = noteOf(r.state, 'a1')
     expect(a1.state).toBe('approved')
     expect(a1.chosenVariantKey).toBe('B')
+    expect(a1.pickSource).toBe('chat')
   })
 
-  it('plain approve picks nothing', () => {
-    submittedRound()
-    store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['thin rule', 'no rule'] })
-    const r = resolveNow('a1', 'approve')
-    expect(noteOf(r.state, 'a1').chosenVariantKey).toBeUndefined()
-  })
-
-  it('a key rides an approval only, must be A-D, and must exist on the note', () => {
+  it('a key must be A-D and must exist on the note', () => {
     submittedRound()
     store.markAnnotationsAddressed(SID, 'R1', ['a1', 'a2'], { a1: ['one', 'two'] })
-    expect(() => resolveNow('a1', 'dismiss', 'A')).toThrow(/a variant choice rides an approval only/)
-    expect(() => resolveNow('a1', 'stale', 'A')).toThrow(/a variant choice rides an approval only/)
-    expect(() => resolveNow('a1', 'reannotate', 'A')).toThrow(/a variant choice rides an approval only/)
-    expect(() => resolveNow('a1', 'approve', 'E')).toThrow(/invalid variant key/)
-    expect(() => resolveNow('a1', 'approve', 'C')).toThrow(/unknown variant/) // only A and B exist
-    expect(() => resolveNow('a2', 'approve', 'A')).toThrow(/unknown variant/) // a2 has no variants
+    expect(() => pickNow('a1', 'E')).toThrow(/invalid variant key/)
+    expect(() => pickNow('a1', 'C')).toThrow(/variant not offered/) // only A and B exist
+    expect(() => pickNow('a2', 'A')).toThrow(/no variants/) // a2 has no variants
     // None of the refusals moved the note.
     expect(noteOf(store.getReviewStateForSession(SID)!, 'a1').state).toBe('addressed')
   })
@@ -147,10 +133,10 @@ describe('the approval names the winner', () => {
 })
 
 describe('reopen semantics', () => {
-  it('reopen after an approved pick clears the choice but keeps the variants on the addressed note', () => {
+  it('reopen after a picked winner clears the choice but keeps the variants on the addressed note', () => {
     submittedRound()
     store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['one', 'two'] })
-    resolveNow('a1', 'approve', 'A')
+    pickNow('a1', 'A')
     const state = store.reopenAnnotation(SID, 'a1')
     const a1 = noteOf(state, 'a1')
     expect(a1.state).toBe('addressed')
@@ -206,7 +192,7 @@ describe('file validator (hand-edited reviews.json)', () => {
   it('refuses a choice naming a variant the note does not carry', () => {
     submittedRound()
     store.markAnnotationsAddressed(SID, 'R1', ['a1'], { a1: ['one'] })
-    resolveNow('a1', 'approve', 'A')
+    pickNow('a1', 'A')
     mutateOnDisk((rec) => {
       rec.annotations.find((a: any) => a.id === 'a1').chosenVariantKey = 'B'
     })
@@ -260,7 +246,7 @@ describe('restart round-trip', () => {
   it('variants and the chosen winner survive a restart', () => {
     submittedRound()
     store.markAnnotationsAddressed(SID, 'R1', ['a1', 'a2'], { a1: ['thin rule', 'no rule'], a2: ['left', 'right', 'center'] })
-    resolveNow('a1', 'approve', 'B')
+    pickNow('a1', 'B')
 
     store._resetCanvasReviewStoreForTest()
     canvasStore._resetCanvasStoreForTest()
@@ -279,3 +265,5 @@ describe('restart round-trip', () => {
     expect(a2.chosenVariantKey).toBeUndefined()
   })
 })
+
+

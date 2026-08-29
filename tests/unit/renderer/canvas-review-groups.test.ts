@@ -59,24 +59,31 @@ describe('reviewGroupsOf', () => {
     expect(g.addressedCount).toBe(2)
   })
 
-  it('waits on YOU only once every remaining note is addressed', () => {
+  it('STILL waits on the agent once every note is addressed — nothing ever waits on you', () => {
+    // The change the settled machine makes here: "addressed" is the agent's
+    // claim about its own work, not a debt owed by the user. A round with two
+    // addressed notes is the agent's until the user's next DECISION ends it,
+    // and the old third state ('you') is what let six of these stack up.
     const s = stateOf(
       [review('R1', 'submitted', '2026-08-20T10:00:00.000Z')],
       [note('a1', 'R1', 'addressed'), note('a2', 'R1', 'addressed')],
     )
     const [g] = reviewGroupsOf(s)
-    expect(g.waitingOn).toBe('you')
+    expect(g.waitingOn).toBe('agent')
     expect(g.addressedCount).toBe(2)
   })
 
-  it('is closed when nothing is left, and lists no notes', () => {
+  it('is closed once the ROUND is resolved, whatever its notes say', () => {
+    // Read from the round's status, which is one-way now — not re-derived from
+    // the notes, which is how the panel and the pill came to disagree.
     const s = stateOf(
-      [review('R1', 'submitted', '2026-08-20T10:00:00.000Z')],
-      [note('a1', 'R1', 'resolved' as Annotation['state']), note('a2', 'R1', 'dismissed' as Annotation['state'])],
+      [review('R1', 'resolved', '2026-08-20T10:00:00.000Z')],
+      [note('a1', 'R1', 'observation' as Annotation['state']), note('a2', 'R1', 'dismissed' as Annotation['state'])],
     )
     const [g] = reviewGroupsOf(s)
     expect(g.waitingOn).toBe('closed')
     expect(g.notes).toHaveLength(0)
+    expect(g.closedNotes).toHaveLength(2)
   })
 
   it('still lists a resolved review, so a closed round does not vanish from the history', () => {

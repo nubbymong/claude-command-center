@@ -68,7 +68,7 @@ function seed(): string {
   store.upsertAnnotation(OWNER, note('second'))
   const state = store.upsertAnnotation(OWNER, note('third')).state
   const draftId = state.reviews.find((r) => r.status === 'draft')?.id
-  store.submitReview(OWNER, draftId as string, [])
+  store.submitReview(OWNER, draftId as string, [], 'reject')
   // A second, still-draft review so both counters are non-zero.
   store.upsertAnnotation(OWNER, note('still drafting'))
   return canvasId
