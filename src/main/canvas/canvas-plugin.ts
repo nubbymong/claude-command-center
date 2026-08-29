@@ -532,8 +532,8 @@ let ensured: string | undefined
  * control turns it into an execution surface: adversarial review (2026-08-14)
  * noted that an agent with nothing but file-write could drop a `hooks/` entry
  * there and get unapproved command execution in every later session, surviving
- * app restarts. Nothing but the two files below may live in this tree, and the
- * cheapest way to guarantee that is to not carry anything forward.
+ * app restarts. Nothing but the owned files below may live in this tree, and
+ * the cheapest way to guarantee that is to not carry anything forward.
  *
  * Only SUCCESS is memoised: caching a failure would disable the workflow skill
  * for the rest of the app's life after one transient AV lock or a resources dir
@@ -552,8 +552,8 @@ export function ensureCanvasPlugin(): string | null {
     // the wipe run once per app process, so a hooks entry planted after the
     // first spawn was loaded by every session for the rest of the run — hours or
     // days in a desktop app people leave open (adversarial review round 2). The
-    // check is four readdirs and two small reads on the spawn path; a tree that
-    // is not exactly ours, down to the bytes, is rebuilt from nothing.
+    // check is a few readdirs and small file reads on the spawn path; a tree
+    // that is not exactly ours, down to the bytes, is rebuilt from nothing.
     if (ensured === pluginDir && treeIsPristine(pluginDir)) return ensured
     ensured = undefined
     // CCC-owned tree: anything already here is not ours (or is a stale copy
