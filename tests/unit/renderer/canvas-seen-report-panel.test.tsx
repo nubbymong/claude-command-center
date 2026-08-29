@@ -25,10 +25,12 @@ import type { Annotation, CanvasReviewState, CanvasVersion, Review } from '../..
 
 vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
 
+import { paneSketchProps } from './canvas-panel-harness'
 const CanvasNotesPanel = (await import('../../../src/renderer/components/CanvasNotesPanel')).default
 const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canvasReviewStore')
 
 const SID = 'session-1'
+const CID = 'canvas-a'
 const VERSION: CanvasVersion = {
   id: 'v1',
   mode: 'design',
@@ -95,6 +97,8 @@ async function render(isActive = false): Promise<void> {
   await act(async () => {
     root.render(
       <CanvasNotesPanel
+        {...paneSketchProps()}
+        canvasId={CID}
         sessionId={SID}
         version={VERSION}
         getGlassApi={() => null}

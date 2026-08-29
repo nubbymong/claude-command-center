@@ -51,12 +51,14 @@ describe('serializeReviewPayload', () => {
       },
       sketch: { excalidrawElementIds: ['e1'], pngPath: 'reviews/R1/a1.png', bboxPage: { x: 1, y: 2, width: 3, height: 4 } },
     })
-    const { text } = serializeReviewPayload(payload([a], []), ['a1'])
+    const { text } = serializeReviewPayload(payload([a], []), [{ annotationId: 'a1', kind: 'sketch' }])
     expect(text).toContain('- a1 [element] [open] on v2')
     expect(text).toContain('target: button "Save" [box=10,20,100,30]')
     expect(text).toContain('anchors: ux-id save; fingerprint role="button" name="Save" path="main>form" ordinal=2')
     expect(text).toContain('note: too small')
-    expect(text).toContain('sketch: attached as image 1 [box=1,2,3,4]')
+    // A drawing RIDES its note — the user does not attach it, they draw on the
+    // page and it goes with the note they write next. The words say so.
+    expect(text).toContain('drawing: rides this note, attached as attachment 1 [box=1,2,3,4]')
   })
 
   it('renders regions with their box, generals in their own section, and indents multi-line notes', () => {
@@ -119,10 +121,45 @@ describe('serializeReviewPayload', () => {
     const first = note({ id: 'a1', sketch: { excalidrawElementIds: ['e'], pngPath: 'p1', bboxPage: { x: 0, y: 0, width: 1, height: 1 } } })
     const second = note({ id: 'a2', sketch: { excalidrawElementIds: ['e'], pngPath: 'p2', bboxPage: { x: 0, y: 0, width: 1, height: 1 } } })
     // a1's file failed to load: only a2 made it into the reply.
-    const { text } = serializeReviewPayload(payload([], [first, second]), ['a2'])
+    const { text } = serializeReviewPayload(payload([], [first, second]), [{ annotationId: 'a2', kind: 'sketch' }])
     expect(text).not.toContain('a1.png')
-    expect(text).toMatch(/- a2[\s\S]*attached as image 1/)
-    // a1 carries no image line at all.
-    expect(text.split('- a2')[0]).not.toContain('attached as image')
+    expect(text).toMatch(/- a2[\s\S]*attached as attachment 1/)
+    // a1 carries no attachment line at all.
+    expect(text.split('- a2')[0]).not.toContain('attached as attachment')
+  })
+
+  it('maps each note`s OWN image numbers onto the blocks that carry them (W15)', () => {
+    // The note text says "Image 2" and means the second screenshot pasted onto
+    // THAT note; the image blocks are numbered across the whole payload. An
+    // agent handed only one of those numbers cannot tell which picture is which,
+    // so the line says both.
+    const a = note({
+      id: 'a1',
+      note: 'the gap in Image 1 and the label in Image 2',
+      images: [{ pngPath: 'reviews/pasted/a1-0.png' }, { pngPath: 'reviews/pasted/a1-1.png' }],
+    })
+    const b = note({ id: 'a2', note: 'and this', images: [{ pngPath: 'reviews/pasted/a2-0.png' }] })
+    const { text } = serializeReviewPayload(payload([], [a, b]), [
+      { annotationId: 'a1', kind: 'image', imageIndex: 1 },
+      { annotationId: 'a1', kind: 'image', imageIndex: 2 },
+      { annotationId: 'a2', kind: 'image', imageIndex: 1 },
+    ])
+    expect(text).toContain('images (2): Image 1 = attachment 1; Image 2 = attachment 2')
+    expect(text).toContain('images (1): Image 1 = attachment 3')
+  })
+
+  it('says both when a note carries images AND a drawing', () => {
+    const a = note({
+      id: 'a1',
+      note: 'see Image 1, and the circle',
+      images: [{ pngPath: 'reviews/pasted/a1-0.png' }],
+      sketch: { excalidrawElementIds: ['e'], pngPath: 'reviews/R1/a1.png', bboxPage: { x: 5, y: 6, width: 7, height: 8 } },
+    })
+    const { text } = serializeReviewPayload(payload([], [a]), [
+      { annotationId: 'a1', kind: 'image', imageIndex: 1 },
+      { annotationId: 'a1', kind: 'sketch' },
+    ])
+    expect(text).toContain('images (1): Image 1 = attachment 1')
+    expect(text).toContain('drawing: rides this note, attached as attachment 2 [box=5,6,7,8]')
   })
 })

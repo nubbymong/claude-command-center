@@ -144,3 +144,81 @@ describe('the History picker', () => {
     expect(onDelete).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('the open-round pill (W21)', () => {
+  it('names the state instead of counting it', async () => {
+    // A single ready version with no verdict IS the open one.
+    await render({ versions: [v('v1', 'design')], activeVersionId: 'v1' })
+    const pill = container.querySelector('[data-testid="canvas-history-pending"]')
+    expect(pill).not.toBeNull()
+    expect(pill!.textContent).toBe('OPEN')
+    // "1 pending" read as a count of NOTES and repeated a number the review
+    // panel already carries; the same number twice is the thing to avoid.
+    expect(container.textContent).not.toContain('pending')
+  })
+
+  it('goes away once the version has been decided', async () => {
+    await render({
+      versions: [v('v1', 'design', { verdict: { state: 'approved', at: '2026-08-29T11:00:00Z', by: 'user' } })],
+      activeVersionId: 'v1',
+    })
+    expect(container.querySelector('[data-testid="canvas-history-pending"]')).toBeNull()
+  })
+})
+
+describe('a test run reads in Testing mode`s own words (M3)', () => {
+  it('badges a decided uat version PASSED / FAILED, not APPROVED / REJECTED', async () => {
+    await render({
+      versions: [
+        v('v1', 'uat', { verdict: { state: 'rejected', at: '2026-08-29T11:00:00Z', by: 'user' } }),
+        v('v2', 'uat', { verdict: { state: 'approved', at: '2026-08-29T12:00:00Z', by: 'user' } }),
+      ],
+      activeVersionId: 'v2',
+    })
+    await act(async () => (container.querySelector('[data-testid="canvas-history-button"]') as HTMLButtonElement).click())
+    expect(container.querySelector('[data-testid="canvas-history-badge-v1"]')!.textContent).toBe('FAILED')
+    expect(container.querySelector('[data-testid="canvas-history-badge-v2"]')!.textContent).toBe('PASSED')
+  })
+
+  it('keeps the design vocabulary for a mockup — one machine, two words', async () => {
+    await render({
+      versions: [
+        v('v1', 'design', { verdict: { state: 'rejected', at: '2026-08-29T11:00:00Z', by: 'user' } }),
+        v('v2', 'design', { verdict: { state: 'approved', at: '2026-08-29T12:00:00Z', by: 'user' } }),
+      ],
+      activeVersionId: 'v2',
+    })
+    await act(async () => (container.querySelector('[data-testid="canvas-history-button"]') as HTMLButtonElement).click())
+    expect(container.querySelector('[data-testid="canvas-history-badge-v1"]')!.textContent).toBe('REJECTED')
+    expect(container.querySelector('[data-testid="canvas-history-badge-v2"]')!.textContent).toBe('APPROVED')
+  })
+
+  it('names a test artefact by its PACK NAME — the thing the user asks for later', async () => {
+    await render({
+      versions: [
+        v('v1', 'design'),
+        v('v2', 'uat', { packName: 'Checkout smoke' } as Partial<CanvasVersion>),
+      ],
+      activeVersionId: 'v1',
+      title: 'Checkout flow',
+    })
+    await act(async () => (container.querySelector('[data-testid="canvas-history-button"]') as HTMLButtonElement).click())
+    const labels = Array.from(container.querySelectorAll('[data-testid="canvas-history-artifact-label"]')).map(
+      (el) => el.textContent,
+    )
+    expect(labels).toContain('Checkout smoke')
+  })
+
+  it('derives a pack name from the subject and the build when nobody has set one', async () => {
+    await render({
+      versions: [v('v1', 'design'), v('v2', 'uat')],
+      activeVersionId: 'v1',
+      title: 'Checkout flow',
+    })
+    await act(async () => (container.querySelector('[data-testid="canvas-history-button"]') as HTMLButtonElement).click())
+    const labels = Array.from(container.querySelectorAll('[data-testid="canvas-history-artifact-label"]')).map(
+      (el) => el.textContent ?? '',
+    )
+    expect(labels.some((l) => l.startsWith('Checkout flow · build v2 · '))).toBe(true)
+  })
+})

@@ -53,6 +53,8 @@ import {
   settleReviewsForSupersededVersions,
 } from './canvas/canvas-review-store'
 import { requestCanvasSnapshot } from './canvas/canvas-snapshot-broker'
+import { readAttachmentChecked, readImageFileChecked } from './canvas/canvas-evidence'
+import { canvasConfigNameForSession } from './canvas/canvas-session-link'
 import { readCheckedFile } from './utils/safe-file-read'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
@@ -872,8 +874,27 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         reopenVersion: (sessionId, versionId) => reopenVersionForReview(sessionId, versionId, 'agent-chat'),
         settleSuperseded: (canvasId, versionIds) => settleReviewsForSupersededVersions(canvasId, versionIds),
         getReviewPayload: (sessionId, reviewId) => getReviewPayload(sessionId, reviewId),
-        readAttachment: (absPath) => fs.readFileSync(absPath),
-        markAddressed: (sessionId, reviewId, ids, variantsByNote) => markAnnotationsAddressed(sessionId, reviewId, ids, variantsByNote),
+        // The user's drawings and pasted screenshots go through the SAME
+        // disciplined reader the evidence shots do. This was a bare
+        // `fs.readFileSync` — no reparse-point refusal, no link count, no size
+        // check before the allocation, no magic — for files in the same
+        // directory, under the same user-selectable resources root, at paths the
+        // same store resolved. The only thing that differed was which reader
+        // happened to be wired to it.
+        readAttachment: (absPath) => readAttachmentChecked(absPath),
+        // Testing evidence shots: lstat refuses a reparse point, the link count
+        // refuses a hard link, the size is checked on an OPEN HANDLE before
+        // anything is allocated, and the MIME comes from the bytes. A
+        // store-resolved path is not a promise about the file still at it
+        // (ADR-009 pass on M3).
+        readEvidenceShot: (absPath) => readImageFileChecked(absPath),
+        // The config a session runs, by display name — the first part of a test
+        // pack's generated name (M3). A LABEL: read from the same spawn record
+        // the canvas library's project scope comes from, and it authorizes
+        // nothing.
+        getConfigName: (sessionId) => canvasConfigNameForSession(sessionId),
+        markAddressed: (sessionId, reviewId, ids, variantsByNote, addressedIn) =>
+          markAnnotationsAddressed(sessionId, reviewId, ids, variantsByNote, addressedIn),
         // canvas_verdict. The store is what refuses 'approved' and what refuses
         // a round still waiting on the agent — this is a pass-through on
         // purpose, so there is exactly one place either rule can be read or

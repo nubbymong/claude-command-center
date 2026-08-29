@@ -657,9 +657,15 @@ input[type="range"] {
    the content (zoom is re-pinned to 1, scenes are per-session), and every
    floating island it draws sits ON TOP of the page under review. Hide the
    app chrome — main menu (open/save/reset), library sidebar, help, and the
-   whole footer (zoom + undo buttons; Ctrl+Z still works) — leaving only the
-   top tool island, which draw mode needs. The classic sketchpad pane keeps
-   full chrome; this is scoped to the canvas glass layer only. */
+   whole footer (zoom + undo buttons; Ctrl+Z still works) — leaving the top
+   tool island AND the properties island (stroke colour, font, size, opacity),
+   which draw mode needs. The classic sketchpad pane keeps full chrome; this is
+   scoped to the canvas glass layer only.
+
+   Nothing here may name `.App-menu_top`, `.App-toolbar` or `.App-menu__left`:
+   those ARE the two islands, and hiding the second is exactly the bug W18
+   fixes — zen mode used to drop the properties island, so a text mark could be
+   written but never coloured or resized. */
 [data-canvas-layer='glass'] .main-menu-trigger,
 [data-canvas-layer='glass'] .default-sidebar-trigger,
 [data-canvas-layer='glass'] .sidebar-trigger,
@@ -668,43 +674,49 @@ input[type="range"] {
   display: none !important;
 }
 
-/* ── Agent Canvas landing: the empty state IS the canvas, unfilled ─────────
+/* The Tools chip (W17): the islands out of the way for a look at the page,
+   without leaving draw mode and losing the marks in progress. One selector —
+   `.App-menu_top` is the row that holds both islands and the top-right slot,
+   so the page is uncovered in one move and the canvas itself stays live. */
+[data-canvas-layer='glass'][data-glass-tools='hidden'] .App-menu_top {
+  display: none !important;
+}
+
+/* INERT MEANS INERT (W24).
+   The pane declares who owns the pointer by setting `pointer-events` on the
+   glass wrapper — but that property is INHERITED, not absolute, and
+   Excalidraw's own stylesheet re-declares it on its UI descendants
+   (`.FixedSideContainer > *`, `.App-menu_top > *`, `.layer-ui__wrapper__top-right > *`,
+   `.sidebar`, `.scroll-back-to-content` all resolve `--ui-pointerEvents`,
+   which is `all` except during a laser drag). A descendant that sets its own
+   value does not inherit the host's `none`, so an island that happens to sit
+   over the reviewed page takes the wheel and the mouse-down while the host
+   believes the glass is transparent — and a page that will not scroll is
+   indistinguishable from a broken render. Browse mode is safe today only
+   because Excalidraw's view mode renders no islands at all; that is its
+   choice, not our guarantee. This makes it ours. */
+[data-canvas-layer='glass'][data-glass-inert='true'] * {
+  pointer-events: none !important;
+}
+
+/* ── Agent Canvas landing: the query container and the motion floor ───────
    The stage is a query CONTAINER, not a viewport breakpoint consumer: the
    canvas pane is user-resizable and docks beside the terminal, so a viewport
-   media query would still paint five columns inside a 320px pane. Everything
-   that has to answer to the pane's width lives here (sheet padding, the loop
-   track, the return arc, the headline); the rest stays in Tailwind classes on
-   the component. Tailwind v4 emits utilities inside @layer, so these unlayered
-   rules win without !important — do not also set these properties as classes. */
+   media query would still paint three columns inside a 320px pane. Everything
+   that has to answer to the pane's width hangs off this container — the front
+   page's own rules are in the v8 section further down.
+
+   The sheet, headline, loop track and return arc that used to live here went
+   with the v8 rewrite, which removed every consumer of them.
+
+   Tailwind v4 emits utilities inside @layer, so these unlayered rules win
+   without !important — do not also set these properties as classes. */
 .canvas-stage {
   container-type: inline-size;
 }
-.canvas-sheet {
-  padding: 52px 56px 44px;
-}
-.canvas-headline {
-  font-size: 27px;
-  line-height: 1.25;
-  letter-spacing: -0.025em;
-}
-.canvas-loop-track {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-}
-@container (max-width: 760px) {
-  .canvas-sheet { padding: 32px 22px 26px; }
-  .canvas-headline { font-size: 22px; }
-  .canvas-loop-track { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-  /* The return arc is drawn for the five-across track. Once the track wraps it
-     points at the wrong steps, so it goes rather than lie. */
-  .canvas-loop-arc { display: none; }
-}
-@container (max-width: 420px) {
-  .canvas-loop-track { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-}
 /* Nothing on this surface animates to convey meaning — honour the OS setting
-   (same treatment as footer-update-pulse above). */
+   (same treatment as footer-update-pulse above). Deliberately a blanket over
+   the whole landing subtree, so the v8 bands inherit it too. */
 @media (prefers-reduced-motion: reduce) {
   .canvas-landing,
   .canvas-landing * {
@@ -712,3 +724,527 @@ input[type="range"] {
     animation: none !important;
   }
 }
+
+/* ── Canvas ⇄ terminal swap (W23) ─────────────────────────────────────────
+   The two panes replace each other by conditional render, so the swap was a
+   hard cut: a wall of terminal text became a page under review between one
+   frame and the next, with nothing to say which way you had just gone. A
+   short opacity fade in BOTH directions carries the eye across. Opacity only
+   — never transform or width — because the terminal container holds a live
+   xterm whose layout must not move, and 150ms sits at the fast end of the
+   project's 150-300ms window since this is a navigation, not an entrance.
+
+   Reduced motion nulls it. That also means no `animationend` ever fires, so
+   whoever adds this class must clear it on a timer as well — see PaneFade. */
+.pane-fade-in {
+  animation: pane-fade-in 150ms ease-out;
+}
+@keyframes pane-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-fade-in { animation: none; }
+}
+
+/* ── Agent Canvas, Testing mode: the pause shield (M3) ────────────────────
+   A note in Testing mode locks a screenshot, the page state and the action
+   trail, so the site is FROZEN while it is written — the shield is what says
+   so, and what makes it true. It fades in rather than snapping, because it
+   appears the instant the caret lands in the composer and a hard cut there
+   reads as the page having broken.
+
+   Opacity only, and inside the project's 150-300ms window. Reduced motion
+   nulls it: the shield is still there, it simply arrives whole. */
+.canvas-shield-fade {
+  animation: canvas-shield-fade 160ms ease-out;
+}
+@keyframes canvas-shield-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .canvas-shield-fade { animation: none; }
+}
+
+/* ── Agent Canvas front page v8 (M4/W33) ──────────────────────────────────
+   The landing stopped being a lesson and became a desk: what is in flight,
+   what can be resumed, what this project has recently produced. Approved on
+   the canvas 2026-08-29 (`canvas-front-page-v5.html`), with every colour of
+   the mock mapped onto an app token — the mock's own palette is a stand-in for
+   these, not a second source of truth.
+
+   Everything that has to answer to the PANE's width (not the window's) lives
+   here, inside the same `.canvas-stage` container the old landing established:
+   the pane is user-resizable and docks beside the terminal, so a viewport media
+   query would still paint three columns inside a 320px pane. Tailwind v4 emits
+   utilities inside @layer, so these unlayered rules win without !important —
+   do not also set these properties as classes.
+
+   The reduced-motion blanket above (`.canvas-landing *`) already covers this
+   whole subtree; nothing here animates to convey meaning. */
+.cfp-col {
+  max-width: 880px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Masthead: the artwork sits in RELIEF, lit from above — a saturation pull
+   plus two drop-shadows (a 1px light edge, then a soft cast). Deliberately not
+   a silhouette, a mask or a tinted band: the owner rejected all three, and the
+   shot is drawn exactly as the user sees it. */
+.cfp-masthead {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-top: 2px;
+}
+.cfp-mast-art {
+  width: 96px;
+  height: auto;
+  flex: none;
+  opacity: 0.96;
+  filter: saturate(0.9) drop-shadow(0 1px 0 color-mix(in srgb, var(--brand) 12%, transparent))
+    drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
+}
+/* The wordmark reuses the rename page's `.rn-name` gradient recipe with the
+   canvas's brand blue. `line-height: 1.18` is not decorative: at 1.05 the
+   background-clip box crops the descender of the "g" in "Agent" — a logged
+   defect, pinned by a computed-style test. */
+.cfp-mast-word {
+  font-size: 42px;
+  font-weight: 800;
+  letter-spacing: -1px;
+  line-height: 1.18;
+  padding-bottom: 2px;
+  background: linear-gradient(
+    100deg,
+    var(--text-primary) 30%,
+    color-mix(in srgb, var(--brand) 55%, var(--text-primary)) 75%,
+    var(--brand)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Band headers: one type size, one rhythm, for every section of the sheet. */
+.cfp-band-h {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.cfp-band-t {
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.cfp-band-n {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.cfp-band-seeall {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--brand);
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+/* In flight work beside Resume, asymmetric 2:1 — the owed card is the subject
+   and the resume offer is a margin note, so they must not read as peers. */
+.cfp-now-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.cfp-need-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 17px 18px 17px 21px;
+  border-radius: 13px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-strong);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.cfp-need-card:hover {
+  border-color: color-mix(in srgb, var(--brand) 55%, var(--border-strong));
+  transform: translateY(-1px);
+}
+.cfp-need-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--color-peach);
+}
+.cfp-need-title {
+  font-size: 15.5px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.cfp-need-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cfp-chip {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+}
+.cfp-chip-warn {
+  color: var(--color-peach);
+  border-color: color-mix(in srgb, var(--color-peach) 45%, transparent);
+  background: color-mix(in srgb, var(--color-peach) 10%, transparent);
+}
+.cfp-go {
+  margin-left: auto;
+  flex: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ob-on);
+  background: var(--brand);
+  border: 0;
+  border-radius: 9px;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+.cfp-go:hover { filter: brightness(1.1); }
+.cfp-go:disabled { opacity: 0.45; cursor: default; filter: none; }
+
+.cfp-plan-jump {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  text-align: left;
+  padding: 11px 16px;
+  border-radius: 11px;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  margin-top: 11px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.cfp-plan-jump:hover { border-color: var(--border-strong); }
+/* The margin above assumes a need-card sits over it. With an approved plan and
+   nothing in flight the jump stands alone, and that gap reads as a card that
+   failed to render. */
+.cfp-plan-jump:first-child { margin-top: 0; }
+.cfp-pj-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: var(--status-success);
+  flex: none;
+}
+.cfp-plan-jump b { color: var(--text-primary); font-weight: 650; }
+.cfp-pj-go {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--brand);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Resume: dashed and sunken, because it is work that is NOT currently anyone's
+   — an offer, never something already taken. */
+.cfp-resume-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 15px 16px;
+  border-radius: 13px;
+  background: var(--surface-sunken);
+  border: 1px dashed var(--border-strong);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.cfp-rc-item { display: flex; flex-direction: column; gap: 8px; }
+.cfp-rc-item + .cfp-rc-item {
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 70%, transparent);
+}
+.cfp-rc-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cfp-rc-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 99px;
+  background: var(--color-mauve);
+  flex: none;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-mauve) 18%, transparent);
+}
+.cfp-rc-title {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfp-rc-meta {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.cfp-rc-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+.cfp-rc-resume {
+  flex: 1 1 auto;
+  text-align: center;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--color-mauve);
+  cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--color-mauve) 45%, transparent);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: transparent;
+}
+.cfp-rc-resume:hover { background: color-mix(in srgb, var(--color-mauve) 12%, transparent); }
+.cfp-rc-resume:disabled, .cfp-rc-dismiss:disabled { opacity: 0.45; cursor: default; }
+.cfp-rc-dismiss {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 7px 13px;
+  background: transparent;
+  cursor: pointer;
+}
+.cfp-rc-dismiss:hover { color: var(--text-primary); border-color: var(--border-strong); }
+/* The armed confirm names what goes. Danger colours, same geometry. */
+.cfp-rc-confirm {
+  flex: 1 1 100%;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--status-danger);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 50%, transparent);
+  background: color-mix(in srgb, var(--status-danger) 15%, transparent);
+  border-radius: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.cfp-rc-confirm:hover { background: color-mix(in srgb, var(--status-danger) 25%, transparent); }
+.cfp-rc-note { font-size: 11.5px; color: var(--text-secondary); }
+
+/* Recents: three typed columns, because "what have I got?" is asked by TYPE. */
+.cfp-recents-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.cfp-type-card {
+  background: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 13px;
+  padding: 13px 13px 12px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cfp-type-h { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.cfp-type-icon { width: 15px; height: 15px; color: var(--text-muted); flex: none; }
+.cfp-type-lbl { font-size: 12.5px; font-weight: 700; color: var(--text-secondary); }
+.cfp-type-count {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.cfp-type-more {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brand);
+  background: transparent;
+  border: 0;
+  padding: 5px 6px;
+  cursor: pointer;
+}
+.cfp-type-empty { font-size: 11.5px; color: var(--text-muted); padding: 4px 9px 6px; }
+.cfp-rrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 9px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.cfp-rrow:hover { background: var(--surface-raised); border-color: var(--border-subtle); }
+.cfp-rt {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cfp-rmeta { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.cfp-age {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+/* Verdict badges. Filled for a decided state, outlined for a terminal or
+   dormant one — `--color-crust` is the app's established "text ON a filled
+   status colour" pairing and flips correctly with the theme. */
+.cfp-vb {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 2.5px 7px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.cfp-vb-open { color: var(--color-crust); background: var(--color-peach); }
+.cfp-vb-ok { color: var(--color-crust); background: var(--status-success); }
+.cfp-vb-bad { color: var(--color-crust); background: var(--status-danger); }
+.cfp-vb-done {
+  color: var(--status-success);
+  background: color-mix(in srgb, var(--status-success) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-success) 38%, transparent);
+}
+.cfp-vb-muted {
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+}
+
+/* Canvas Explained: the one card on the sheet that is a door, not a summary. */
+.cfp-explain {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  padding: 16px 18px;
+  border-radius: 13px;
+  cursor: pointer;
+  font: inherit;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-mauve) 13%, var(--surface-panel)),
+    var(--surface-panel) 62%
+  );
+  border: 1px solid color-mix(in srgb, var(--color-mauve) 32%, var(--border-subtle));
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.cfp-explain:hover {
+  border-color: color-mix(in srgb, var(--color-mauve) 55%, var(--border-subtle));
+  transform: translateY(-1px);
+}
+.cfp-ex-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-mauve) 20%, transparent);
+  color: color-mix(in srgb, var(--color-mauve) 45%, var(--text-primary));
+}
+.cfp-ex-title { font-size: 14.5px; font-weight: 700; color: var(--text-primary); }
+.cfp-ex-sub { font-size: 12.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.45; }
+.cfp-ex-arrow { margin-left: auto; color: var(--color-mauve); font-size: 20px; flex: none; line-height: 1; }
+
+/* The pane can be 320px wide. Columns collapse before anything truncates into
+   nonsense, and the masthead scales rather than pushing the wordmark off. */
+@container (max-width: 760px) {
+  .cfp-now-grid { grid-template-columns: minmax(0, 1fr); }
+  .cfp-recents-grid { grid-template-columns: minmax(0, 1fr); }
+  .cfp-resume-card { max-height: none; }
+}
+@container (max-width: 480px) {
+  .cfp-col { gap: 18px; }
+  .cfp-masthead { gap: 12px; }
+  .cfp-mast-art { width: 64px; }
+  .cfp-mast-word { font-size: 30px; letter-spacing: -0.6px; }
+  .cfp-need-card { flex-wrap: wrap; gap: 10px; }
+  .cfp-go { margin-left: 0; width: 100%; }
+}
+
+/* ── The Canvas button's resume dot (W37) ─────────────────────────────────
+   A quiet mauve dot beside the idle label when ownerless canvas work is
+   waiting to be picked up. Its SLOT is reserved whenever the button is idle,
+   because the dot's arrival is asynchronous — a sweep result, not a click —
+   and a button that grew by 9px under the cursor would shove every tool to its
+   right. Reserved in the idle state ONLY: the loud "Review needed" state has
+   its own width and must not carry dead space, the same rule ReservedLabel
+   already follows for the label itself. */
+.canvas-resume-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  flex: none;
+  color: var(--color-mauve);
+}
+.canvas-resume-dot[data-empty='true'] { visibility: hidden; }
+
+/* The same resume identity inside the queue popover. These live in CSS rather
+   than as inline `var(--color-mauve)` on the component because the popover IS a
+   dialog by #360's detector, and dialogs may not carry raw palette vars — see
+   tests/unit/renderer/dialog-palette-retired.test.ts. */
+.cqp-resume-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: var(--color-mauve);
+}
+.cqp-resume-btn {
+  flex: 1 1 auto;
+  color: var(--color-mauve);
+  border: 1px solid color-mix(in srgb, var(--color-mauve) 45%, transparent);
+}
+.cqp-resume-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--color-mauve) 12%, transparent); }
+.cqp-dismiss-btn { color: var(--text-muted); border: 1px solid var(--border-subtle); }
+.cqp-dismiss-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--border-strong); }
+.cqp-dismiss-confirm {
+  flex-basis: 100%;
+  color: var(--status-danger);
+  background: color-mix(in srgb, var(--status-danger) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 50%, transparent);
+}
+.cqp-dismiss-confirm:hover:not(:disabled) { background: color-mix(in srgb, var(--status-danger) 25%, transparent); }

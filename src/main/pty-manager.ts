@@ -54,7 +54,7 @@ import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, isValidProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
-import { updateSessionMeta, clearSessionMeta } from './session-registry'
+import { updateSessionMeta, clearSessionMeta, markPtySessionAlive, markPtySessionGone } from './session-registry'
 import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { getWatchdogManager } from './watchdog/watchdog-manager'
@@ -3507,6 +3507,23 @@ export function spawnPty(
     }
   })
 
+  // A PTY IS RUNNING FOR THIS ID — armed HERE, immediately beside the exit
+  // handler that clears it, and deliberately NOT beside `updateSessionMeta`
+  // above.
+  //
+  // Recorded separately from the metadata map because that map is also written
+  // by github-handlers for sessions that never spawn, and the canvas ownership
+  // lease needs the lifecycle fact rather than "somebody described this id".
+  //
+  // Recorded LATE because of what sits between: `spawnPty` runs from an
+  // uncaught `ipcMain.on('pty:spawn')`, and the ninety-odd lines after the
+  // metadata write (config reads, run registration, the data hook) can throw.
+  // A throw there used to leave the id marked live with no exit handler ever
+  // armed to unmark it — stranding that session's canvas as un-resumable,
+  // un-dismissable and invisible for the rest of the run, which is the exact
+  // failure this signal exists to end. The mark and its only eraser are now
+  // adjacent, so the window is one statement wide.
+  markPtySessionAlive(sessionId)
   ptyProcess.onExit(({ exitCode }) => {
     logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
     // Restart-race guard: the renderer's restart flow kills the old PTY
@@ -3540,6 +3557,10 @@ export function spawnPty(
       }
       ptySessions.delete(sessionId)
       clearSessionMeta(sessionId)
+      // ...and the PTY is gone. Paired with the spawn-side mark above; a
+      // canvas this session owned becomes ownerless from here, which is what
+      // makes it resumable again.
+      markPtySessionGone(sessionId)
       // Close the run (the worker final-drains + retires its transcript tails).
       // Gated on weAreCurrent so the restart-race stale exit can't end the
       // just-respawned session's run. No-op when logging is disabled / this

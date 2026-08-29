@@ -77,7 +77,7 @@ describe('opening a canvas this session already owns', () => {
     expect(second.canvasId).not.toBe(first.canvasId)
 
     // Going back to the first is a switch between the session's OWN canvases.
-    const reopened = store.adoptCanvasForSession(MINE, first.canvasId, { isSessionCurrent: allCurrent })
+    const reopened = store.openOwnCanvasForSession(MINE, first.canvasId)
     expect(reopened).not.toBeNull()
     expect(reopened?.canvasId).toBe(first.canvasId)
 
@@ -88,7 +88,7 @@ describe('opening a canvas this session already owns', () => {
   it('does not change the record owner, because there is nothing to transfer', () => {
     const first = renderAs(MINE, PROJECT, 'one')
     renderAs(MINE, PROJECT, 'two')
-    store.adoptCanvasForSession(MINE, first.canvasId, { isSessionCurrent: allCurrent })
+    store.openOwnCanvasForSession(MINE, first.canvasId)
 
     const record = JSON.parse(
       fs.readFileSync(path.join(getResourcesDirectory(), 'canvas', first.canvasId, 'canvas.json'), 'utf8'),
@@ -99,7 +99,7 @@ describe('opening a canvas this session already owns', () => {
 
   it('is idempotent — re-opening the ALREADY active canvas still succeeds', () => {
     const only = renderAs(MINE, PROJECT, 'one')
-    const again = store.adoptCanvasForSession(MINE, only.canvasId, { isSessionCurrent: allCurrent })
+    const again = store.openOwnCanvasForSession(MINE, only.canvasId)
     expect(again?.canvasId).toBe(only.canvasId)
   })
 
@@ -107,10 +107,14 @@ describe('opening a canvas this session already owns', () => {
     const theirs = renderAs(THEIRS, PROJECT, 'theirs')
     renderAs(MINE, PROJECT, 'mine')
 
-    // The asking session holds its own canvas AND the target belongs to a
-    // session that is still current. Both reasons to refuse; it must refuse.
-    const stolen = store.adoptCanvasForSession(MINE, theirs.canvasId, { isSessionCurrent: allCurrent })
+    // Open here is OWN-CANVAS ONLY since M4 — a foreign canvas is refused
+    // whatever its owner is doing, because this path transfers nothing. Taking
+    // one is `resumeCanvasForSession`, which has an oracle and a
+    // compare-and-set; asserted here too so the two cannot drift.
+    const stolen = store.openOwnCanvasForSession(MINE, theirs.canvasId)
     expect(stolen).toBeNull()
+    expect(store.resumeCanvasForSession(MINE, theirs.canvasId, THEIRS, { isSessionLive: allCurrent }))
+      .toEqual({ ok: false, reason: 'owner-live' })
 
     const record = JSON.parse(
       fs.readFileSync(path.join(getResourcesDirectory(), 'canvas', theirs.canvasId, 'canvas.json'), 'utf8'),
@@ -129,7 +133,7 @@ describe('the ACCOUNT does not decide anything about a canvas (ADR-017)', () => 
   it('opens a canvas drawn under a DIFFERENT account', () => {
     const first = renderAs(MINE, PROJECT, 'under account one', P1)
     renderAs(MINE, PROJECT, 'two', P1)
-    const reopened = store.adoptCanvasForSession(MINE, first.canvasId, { isSessionCurrent: allCurrent })
+    const reopened = store.openOwnCanvasForSession(MINE, first.canvasId)
     expect(reopened?.canvasId).toBe(first.canvasId)
     expect(store.getCanvasStateForSession(MINE)?.canvasId).toBe(first.canvasId)
   })
@@ -142,8 +146,7 @@ describe('the ACCOUNT does not decide anything about a canvas (ADR-017)', () => 
 
   it('opens an UNSTAMPED legacy canvas just the same', () => {
     const legacy = renderAs(MINE, PROJECT, 'no account stamp')
-    expect(store.adoptCanvasForSession(MINE, legacy.canvasId, { isSessionCurrent: allCurrent })?.canvasId)
-      .toBe(legacy.canvasId)
+    expect(store.openOwnCanvasForSession(MINE, legacy.canvasId)?.canvasId).toBe(legacy.canvasId)
   })
 
   it('mentions the account nowhere in what the library hands back', () => {
@@ -228,10 +231,10 @@ describe('project scope does not strand a session on a respelling', () => {
 
 describe('project scope never hides a session OWN canvas', () => {
   it('keeps every canvas the asking session authored, whatever project it asks from', () => {
-    // The foreclosing case. ADR-017 says the reclaim list is the route back for
-    // a canvas outside the current project; it is not — listOrphanCandidateCanvases
-    // returns nothing once the session owns a canvas, and excludes its own anyway.
-    // So the library is the only route and it must not drop these.
+    // The foreclosing case. ADR-017 says the resume list is the route back for
+    // a canvas outside the current project; it is not — that list excludes the
+    // caller's own canvases by construction. So the library is the only route
+    // to work you authored, and it must not drop these.
     const first = renderAs(MINE, OTHER, 'authored elsewhere')
     const active = renderAs(MINE, OTHER, 'still elsewhere')
 
@@ -256,10 +259,14 @@ describe('project scope never hides a session OWN canvas', () => {
     expect(ids).not.toContain(theirs.canvasId)
   })
 
-  it('reclaim really is closed as a route back, which is why the above matters', () => {
-    // Pins the premise rather than asserting it in a comment: once MINE holds a
-    // canvas, the reclaim list is empty, so the library is all there is.
+  it('the resume list is not a route back to your OWN work, which is why the above matters', () => {
+    // Pins the premise rather than asserting it in a comment. M4 made the
+    // resume list independent of what the caller already owns, but it still
+    // excludes the caller's own canvases by construction — resuming your own is
+    // Open here, not a transfer — so the library remains the only route to work
+    // you authored yourself.
     renderAs(MINE, OTHER, 'owned')
-    expect(store.listOrphanCandidateCanvases(MINE, { isSessionCurrent: allCurrent })).toEqual([])
+    expect(store.listResumableCanvases(MINE, { isSessionLive: allCurrent })).toEqual([])
+    expect(store.listResumableCanvases(MINE, { isSessionLive: () => false })).toEqual([])
   })
 })

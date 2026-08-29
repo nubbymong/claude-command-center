@@ -13,10 +13,22 @@ import type {
   CanvasReviewState,
   CanvasSketchExport,
   CanvasSnapshotReply,
-  ReclaimableCanvas,
+  CanvasDismissRefusal,
+  CanvasDismissResult,
+  CanvasLibraryFilter,
+  CanvasLibraryResult,
+  CanvasLibraryTab,
+  CanvasResumeResult,
+  ResumableRow,
   CanvasLibraryEntry,
   CanvasSnapshotRequestEvent,
   CanvasState,
+  ComposerDraftInput,
+  EvidenceCaptureResult,
+  EvidenceStateStamp,
+  ForceClosures,
+  Rect,
+  TrailEntry,
 } from '../shared/canvas'
 
 /** Mirrors src/main/watchdog/session-watchdog.ts's WatchdogPublicState — kept
@@ -283,23 +295,76 @@ export interface ElectronAPI {
      *  answers exactly once per requestId via sendSnapshotResult. */
     onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
     sendSnapshotResult: (reply: CanvasSnapshotReply) => void
-    /** Canvases from earlier sessions this one could reclaim (read-only).
-     *  `openTileSessionIds` are the tiles the user has on screen; main uses
-     *  them only to EXCLUDE candidates whose own tile is still live. */
-    listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ReclaimableCanvas[]>
-    /** The canvases for this session's PROJECT, for the library. Pure read:
-     *  listing a canvas never binds it to a session. sessionId scopes the
-     *  list to that project; main resolves the directory itself. */
+    /** THE PROJECT LIBRARY (M4), one row per ARTEFACT RUN. Search, tab, chip
+     *  and the cap are applied in MAIN, so `truncated` is honest and another
+     *  live session's in-flight work never crosses the boundary at all. */
+    libraryList: (args: {
+      sessionId: string
+      openTileSessionIds?: string[]
+      query?: string
+      tab?: CanvasLibraryTab
+      filter?: CanvasLibraryFilter
+      sort?: 'recent'
+    }) => Promise<CanvasLibraryResult>
+    /** OWNERLESS IN-FLIGHT canvases on this project. Pure read; nothing moves
+     *  until the user picks one. Each row carries the owner it was listed
+     *  with — pass it straight back to `resume`. */
+    listResumables: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ResumableRow[]>
+    /** RESUME one, first-wins. `expectedOwnerSessionId` is the row's own
+     *  `expectedOwnerSessionId`: main compares and sets in one synchronous
+     *  step, so a second session racing you is told 'changed'. */
+    resume: (args: {
+      sessionId: string
+      canvasId: string
+      expectedOwnerSessionId: string
+      openTileSessionIds?: string[]
+    }) => Promise<CanvasResumeResult>
+    /** DISCARD an in-flight canvas and its evidence. Owner, or a same-project
+     *  caller when it is ownerless; never while another session is live-owner. */
+    dismiss: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<CanvasDismissResult>
+    /** READ a COMPLETED canvas owned by another session in this project, for
+     *  the read-only view. Never transfers ownership and grants no write. */
+    getReadonly: (args: { sessionId: string; canvasId: string }) => Promise<CanvasState | null>
+    /** The canvases for this session's PROJECT, for the totals sweep. Pure
+     *  read: listing a canvas never binds it to a session. sessionId scopes the
+     *  list to that project AND names the caller for the privacy rule; main
+     *  resolves the directory itself. */
     listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) => Promise<CanvasLibraryEntry[]>
-    /** The user deletes a canvas and its files. The only destructive canvas call. */
-    deleteCanvas: (args: { canvasId: string }) => Promise<{ ok: boolean }>
-    /** Archive/unarchive one artifact (item C): reversible, returns the state. */
-    archiveArtifact: (args: { canvasId: string; versionId: string; archived: boolean }) => Promise<{ ok: boolean; state: CanvasState | null }>
-    /** Permanently delete one artifact, its versions and their review notes. */
-    deleteArtifact: (args: { canvasId: string; versionId: string }) => Promise<
-      { ok: true; deletedVersions: number; notesDeleted: number } | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' }
+    /** The user deletes a canvas and its files. The only destructive canvas
+     *  call, and OWNER-GUARDED since M4: `sessionId` says who is asking, and a
+     *  canvas a live other session owns — or somebody else's signed-off one —
+     *  is refused with a reason. */
+    deleteCanvas: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; reason?: CanvasDismissRefusal }>
+    /** Archive/unarchive one artifact (item C): reversible, returns the state.
+     *  Owner-guarded since M4, same rule as delete. */
+    archiveArtifact: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      archived: boolean
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; state: CanvasState | null; reason?: CanvasDismissRefusal }>
+    /** Permanently delete one artifact, its versions and their review notes.
+     *  Owner-guarded since M4, same rule as delete. */
+    deleteArtifact: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      openTileSessionIds?: string[]
+    }) => Promise<
+      | { ok: true; deletedVersions: number; notesDeleted: number }
+      | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' | CanvasDismissRefusal }
     >
-    /** The user reclaims a named canvas — the only path that moves ownership. */
+    /** OPEN HERE: point this session at a canvas IT ALREADY OWNS. Transfers
+     *  nothing; a foreign canvas is refused (taking one is `resume`). */
     reclaim: (args: {
       sessionId: string
       canvasId: string
@@ -309,41 +374,76 @@ export interface ElectronAPI {
     reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
     annotationDelete: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
-    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision?: 'approve' | 'reject' }) => Promise<CanvasReviewState>
-    /** C1: zero-note verdict on a version (plain Approve / Dismiss). */
+    /** The decision is REQUIRED: the user's word is version-level, and a submit
+     *  that carried none is what produced rounds nobody could close. */
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) => Promise<CanvasReviewState>
+    /** The zero-note verdict on a version (plain Approve / Reject / Dismiss).
+     *  An approve or reject also settles that artefact's earlier rounds; an
+     *  approve auto-completes when nothing else is owed. */
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
-    /** C1: reopen a version for review; later ready versions become withdrawn. */
+    /** C1: reopen a version for review; later ready versions become withdrawn.
+     *  Wakes no ROUND — settled stays settled. */
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
-    annotationResolve: (args: {
-      sessionId: string
-      /** The canvas the panel was showing. Refused if the session has moved on. */
-      canvasId: string
-      annotationId: string
-      action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
-      /** The alternative being approved, when the note offers variants. Approve only. */
-      variantKey?: string
-    }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
-    /** The user puts a closed note back in play — the undo half of close-out. */
+    /** The user puts a closed note back in play. With `reviewReopen`, one of the
+     *  only two writes that may revive a settled round. */
     annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The user puts a whole settled ROUND back in play. Names the canvas it was
+     *  composed against — review ids are ordinals within the active canvas. */
+    reviewReopen: (args: { sessionId: string; canvasId: string; reviewId: string }) => Promise<CanvasReviewState>
     /** The user has these addressed notes on screen. The only input to the agent
      *  close-out barrier that no MCP tool can produce — renderer-only by design. */
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
-    /** Bulk close-out for one canvas whose work has shipped. Clears the rounds
-     *  already waiting on the user; deletes nothing. `ok: false` means the
-     *  review store could not be read — never "there was nothing to clear". */
-    reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
-    /** One sweep: everything waiting on the user across this session's own
-     *  canvases — the per-canvas close-out repeated, plus the clears for
-     *  ready-marked renders still awaiting a first review. The Canvas button's
-     *  right-click. `unreadable` counts canvases whose review store could not
-     *  be read (the queue's own "unknown" rule) — never folded into zero. */
-    reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<{ closedNotes: number; closedReviews: number; clearedAwaiting: number; unreadable: number }>
+    /** Persist the half-written note (W14) — text, decision, target, pasted
+     *  images and the sketch scene. Owner-scoped; no MCP path reaches it. */
+    composerDraftSet: (args: { sessionId: string; canvasId: string; draft: ComposerDraftInput }) => Promise<CanvasReviewState>
+    /** Drop it: the round was submitted, or the user emptied the composer. */
+    composerDraftClear: (args: { sessionId: string; canvasId: string }) => Promise<CanvasReviewState>
     /** Sign the subject off (#476). Refused (`ok:false` + reason) while
      *  anything is owed either way; the pane then falls back to its front page. */
     complete: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** Force-close what is owed, then sign off (W3) — so Mark complete is never
+     *  dead. USER-only: `canvas_complete` (the agent's mouth) keeps every refusal. */
+    completeForce: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** What that force would close, so the armed confirm can name it. `null`
+     *  when the review store could not be read, or for a session that does not
+     *  own the canvas — never zeroes. */
+    describeForceClosures: (args: { sessionId: string; canvasId: string }) => Promise<ForceClosures | null>
     /** The one-click undo: clear a canvas's completed stamp. */
     completeReopen: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
+    /** TESTING MODE (M3) — a note is a locked evidence record.
+     *  Screenshot the framed page and hold it, with the state stamp and the
+     *  trail slice taken at the same instant, until a note locks it. The rect is
+     *  clamped in main against the window's content box; the refusal is one word
+     *  from a closed set. */
+    evidenceCapture: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      rect: Rect
+      stamp: EvidenceStateStamp
+      trail: TrailEntry[]
+    }) => Promise<EvidenceCaptureResult>
+    /** The user cancelled the note: the pending capture is thrown away. */
+    evidenceDiscard: (args: { sessionId: string; canvasId: string; evidenceId: string }) => Promise<{ ok: boolean }>
+    /** Read back one image this canvas RECORDS — a note's evidence shot, a
+     *  pasted image, a sketch export, a composer image. The path must be one on
+     *  the record; anything else answers null. Owner session, or one in the same
+     *  project (the Library opens memorialised packs). */
+    evidenceRead: (args: { sessionId: string; canvasId: string; path: string }) => Promise<{ dataUrl: string } | null>
+    /** Name the test pack (the inline rename in the Testing header). `null`
+     *  clears it back to the generated default. Owner-only; a refused rename
+     *  answers with the state main kept, so the header snaps back to the truth. */
+    setPackName: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      name: string | null
+    }) => Promise<CanvasState | null>
+    /** A full-document navigation inside the canvas frame, for the action trail.
+     *  The session is resolved in main from the canvas record — never from the
+     *  page. */
+    onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -920,38 +1020,77 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.CANVAS_SNAPSHOT_REQUEST, handler)
     },
     sendSnapshotResult: (reply: CanvasSnapshotReply) => ipcRenderer.send(IPC.CANVAS_SNAPSHOT_RESULT, reply),
-    listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
-      ipcRenderer.invoke(IPC.CANVAS_LIST_RECLAIMABLE, args),
+    libraryList: (args: {
+      sessionId: string
+      openTileSessionIds?: string[]
+      query?: string
+      tab?: CanvasLibraryTab
+      filter?: CanvasLibraryFilter
+      sort?: 'recent'
+    }) => ipcRenderer.invoke(IPC.CANVAS_LIBRARY_LIST, args),
+    listResumables: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_LIST_RESUMABLES, args),
+    resume: (args: { sessionId: string; canvasId: string; expectedOwnerSessionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_RESUME, args),
+    dismiss: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DISMISS, args),
+    getReadonly: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_GET_READONLY, args),
     reclaim: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_RECLAIM, args),
     listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_LIST_ALL, args ?? {}),
-    deleteCanvas: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_DELETE, args),
-    archiveArtifact: (args: { canvasId: string; versionId: string; archived: boolean }) =>
+    deleteCanvas: (args: { sessionId: string; canvasId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DELETE, args),
+    archiveArtifact: (args: { sessionId: string; canvasId: string; versionId: string; archived: boolean; openTileSessionIds?: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_ARCHIVE_ARTIFACT, args),
-    deleteArtifact: (args: { canvasId: string; versionId: string }) => ipcRenderer.invoke(IPC.CANVAS_DELETE_ARTIFACT, args),
+    deleteArtifact: (args: { sessionId: string; canvasId: string; versionId: string; openTileSessionIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DELETE_ARTIFACT, args),
     reviewGetState: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_GET_STATE, args),
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_UPSERT, args),
     annotationDelete: (args: { sessionId: string; annotationId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_DELETE, args),
-    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision?: 'approve' | 'reject' }) =>
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_SUBMIT, args),
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_VERDICT, args),
     versionReopen: (args: { sessionId: string; versionId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_VERSION_REOPEN, args),
-    annotationResolve: (args: { sessionId: string; canvasId: string; annotationId: string; action: 'approve' | 'dismiss' | 'reannotate' | 'stale'; variantKey?: string }) =>
-      ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_RESOLVE, args),
     annotationReopen: (args: { sessionId: string; annotationId: string }) =>
       ipcRenderer.invoke(IPC.CANVAS_ANNOTATION_REOPEN, args),
+    reviewReopen: (args: { sessionId: string; canvasId: string; reviewId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_REVIEW_REOPEN, args),
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_MARK_SEEN, args),
-    reviewCloseOut: (args: { canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_REVIEW_CLOSE_OUT, args),
-    reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) =>
-      ipcRenderer.invoke(IPC.CANVAS_REVIEW_DISMISS_ALL, args),
+    composerDraftSet: (args: { sessionId: string; canvasId: string; draft: ComposerDraftInput }) =>
+      ipcRenderer.invoke(IPC.CANVAS_COMPOSER_DRAFT_SET, args),
+    composerDraftClear: (args: { sessionId: string; canvasId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_COMPOSER_DRAFT_CLEAR, args),
     complete: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE, args),
+    completeForce: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE_FORCE, args),
+    describeForceClosures: (args: { sessionId: string; canvasId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_DESCRIBE_FORCE_CLOSURES, args),
     completeReopen: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE_REOPEN, args),
+    // TESTING MODE (M3) — the evidence channels.
+    evidenceCapture: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      rect: Rect
+      stamp: EvidenceStateStamp
+      trail: TrailEntry[]
+    }) => ipcRenderer.invoke(IPC.CANVAS_EVIDENCE_CAPTURE, args),
+    evidenceDiscard: (args: { sessionId: string; canvasId: string; evidenceId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_EVIDENCE_DISCARD, args),
+    evidenceRead: (args: { sessionId: string; canvasId: string; path: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_EVIDENCE_READ, args),
+    setPackName: (args: { sessionId: string; canvasId: string; versionId: string; name: string | null }) =>
+      ipcRenderer.invoke(IPC.CANVAS_SET_PACK_NAME, args),
+    onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => {
+      const handler = (_e: unknown, e: { sessionId: string; canvasId: string; route: string }) => cb(e)
+      ipcRenderer.on(IPC.CANVAS_FRAME_NAVIGATED, handler)
+      return () => ipcRenderer.removeListener(IPC.CANVAS_FRAME_NAVIGATED, handler)
+    },
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => {
       const handler = (_e: unknown, e: CanvasReviewChangedEvent) => cb(e)
       ipcRenderer.on(IPC.CANVAS_REVIEW_CHANGED, handler)

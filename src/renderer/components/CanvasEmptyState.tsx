@@ -1,105 +1,124 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ExcalidrawPane from './ExcalidrawPane'
+import CanvasExplainedPage from './CanvasExplainedPage'
 import { useCanvasStore } from '../stores/canvasStore'
+import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { relativeTime } from '../utils/relativeTime'
-import type { ReclaimableCanvas } from '../../shared/canvas'
+import {
+  dismissCanvas,
+  dismissConfirmAriaLabel,
+  dismissConfirmLabel,
+  queueAge,
+  resumeCanvas,
+  resumeRefusalText,
+  useCanvasResumableRows,
+} from '../lib/canvasQueue'
+import type { CanvasLibraryRow, CanvasLibraryTab, LibraryRowKind, ResumableRow } from '../../shared/canvas'
 import { CanvasLibrary } from './CanvasLibrary'
 import { useArmedConfirm } from '../hooks/useArmedConfirm'
+import { DismissButton } from './ui/DismissButton'
+import heroUrl from '../assets/aicc-agent-canvas.svg'
 
 interface Props {
   sessionId: string
   onClose: () => void
 }
 
-/** JetBrains Mono ships with the app (@font-face in styles.css) but Tailwind's
- *  `font-mono` resolves to the generic stack, so mono is named explicitly —
- *  the same way ui/Kbd and ui/MetricChip do it. */
-const MONO = "'JetBrains Mono', ui-monospace, monospace"
+/** How many artefacts of each type the front page shows before "See all". */
+const RECENTS_PER_COLUMN = 3
 
-/** What one keypress asks the agent to do. Typed into the terminal WITHOUT a
- *  newline — the user reads it, can edit it, and presses Enter themselves.
- *  Plain words, no tool names: the agent-canvas skill (canvas-plugin.ts)
- *  carries the workflow — htmlPath, data-ux-ids, self-check, hand-back — so
- *  the user never has to speak MCP (owner feedback 2026-08-14). */
-const STARTER_PROMPT =
-  'Show me a design mockup of what you are building on my Agent Canvas.'
-
-/** The loop, in order. `you` marks the steps the USER owns — those titles are
- *  brand blue so the division of labour reads at a glance, and the return arc
- *  below the track closes 05 back onto 02. */
-const LOOP_STEPS: Array<{ title: string; detail: string; you: boolean }> = [
-  { title: 'Agent renders', detail: 'a real page appears here', you: false },
-  { title: 'You annotate', detail: 'click elements, drag regions, sketch', you: true },
-  { title: 'Submit review', detail: 'your notes land in the chat', you: true },
-  { title: 'Agent revises', detail: 'it reads every note and re-renders', you: false },
-  { title: 'You resolve', detail: 'approve or follow up, note by note', you: true },
+/** The three typed columns, in the order the loop produces them. */
+const RECENT_COLUMNS: Array<{ kind: LibraryRowKind; label: string; testid: string }> = [
+  { kind: 'mockup', label: 'Mockups', testid: 'canvas-recents-mockups' },
+  { kind: 'plan', label: 'Plans', testid: 'canvas-recents-plans' },
+  { kind: 'pack', label: 'Test packs', testid: 'canvas-recents-packs' },
 ]
 
+/** One artefact type, in the words the user reads on a row. */
+function kindWord(kind: LibraryRowKind): string {
+  return kind === 'pack' ? 'test pack' : kind
+}
+
 /**
- * Corner crop mark. Registration marks are the vernacular of proofing and
- * redlines — which is literally what this surface does: a sheet of glass laid
- * over someone else's work. The one decorative move on the sheet, and it earns
- * its place by naming the product's own metaphor.
+ * Which badge treatment a row's verdict wears.
+ *
+ * ARCHIVED and SIGNED OFF are row-level facts, not verdicts, so they win over
+ * the verdict string — an archived rejected mockup is archived first. Below
+ * that the mapping is by prefix, because `verdictLabel` appends
+ * "WITH OBSERVATIONS" to an approved or passed run.
  */
-function RegistrationMark({ corner }: { corner: 'tl' | 'tr' | 'bl' | 'br' }) {
-  const top = corner[0] === 't'
-  const left = corner[1] === 'l'
-  const box: React.CSSProperties = { position: 'absolute', width: 13, height: 13, pointerEvents: 'none' }
-  if (top) box.top = 11
-  else box.bottom = 11
-  if (left) box.left = 11
-  else box.right = 11
+export function verdictBadge(row: Pick<CanvasLibraryRow, 'verdict' | 'archived' | 'completed'>): {
+  text: string
+  className: string
+} {
+  if (row.archived) return { text: 'ARCHIVED', className: 'cfp-vb cfp-vb-muted' }
+  if (row.completed) return { text: 'SIGNED OFF', className: 'cfp-vb cfp-vb-done' }
+  const v = (row.verdict || '').toUpperCase()
+  if (v.startsWith('APPROVED') || v.startsWith('PASSED')) return { text: v, className: 'cfp-vb cfp-vb-ok' }
+  if (v.startsWith('REJECTED') || v.startsWith('FAILED')) return { text: v, className: 'cfp-vb cfp-vb-bad' }
+  if (v === 'OPEN' || v === 'DRAFT') return { text: v, className: 'cfp-vb cfp-vb-open' }
+  return { text: v || 'OPEN', className: 'cfp-vb cfp-vb-muted' }
+}
 
-  const rule: React.CSSProperties = { position: 'absolute', background: 'var(--border-strong)' }
-  const horizontal: React.CSSProperties = { ...rule, left: 0, width: 13, height: 1 }
-  if (top) horizontal.top = 0
-  else horizontal.bottom = 0
-  const vertical: React.CSSProperties = { ...rule, top: 0, width: 1, height: 13 }
-  if (left) vertical.left = 0
-  else vertical.right = 0
-
+/** Type marks, one stroked glyph per artefact kind (the mock's own family). */
+function KindIcon({ kind, className }: { kind: LibraryRowKind; className?: string }) {
+  const paths =
+    kind === 'plan' ? (
+      <>
+        <path d="M4 2.5h8v11H4z" />
+        <path d="M6 5.5h4M6 8h4M6 10.5h2.5" />
+      </>
+    ) : kind === 'pack' ? (
+      <>
+        <path d="M6 2v4L2.5 12a1.5 1.5 0 0 0 1.3 2.2h8.4A1.5 1.5 0 0 0 13.5 12L10 6V2" />
+        <path d="M5 2h6" />
+      </>
+    ) : (
+      <>
+        <rect x="1.5" y="2.5" width="13" height="9" rx="1" />
+        <path d="M5 14h6" />
+      </>
+    )
   return (
-    <span aria-hidden="true" style={box}>
-      <span style={horizontal} />
-      <span style={vertical} />
-    </span>
+    <svg
+      className={className}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths}
+    </svg>
   )
 }
 
-/** Shared ghost-button treatment for the sheet's secondary actions. */
-const GHOST_CLASS =
-  'shrink-0 rounded-md px-3 py-2 text-[12px] font-medium bg-[var(--surface-panel)] ' +
-  'border border-[var(--border-subtle)] text-[var(--text-secondary)] ' +
-  'hover:text-[var(--text-primary)] hover:border-[var(--border-strong)] ' +
-  'disabled:opacity-40 transition-colors focus-ring'
-
-/** The armed delete confirm — same geometry as GHOST_CLASS, danger colours
- *  (the library's own confirm recipe). */
-const DANGER_CLASS =
-  'shrink-0 rounded-md px-3 py-2 text-[12px] font-medium ' +
-  'bg-[color-mix(in_srgb,var(--status-danger)_15%,transparent)] ' +
-  'border border-[color-mix(in_srgb,var(--status-danger)_50%,transparent)] ' +
-  'text-[var(--status-danger)] hover:bg-[color-mix(in_srgb,var(--status-danger)_25%,transparent)] ' +
-  'disabled:opacity-40 transition-colors focus-ring'
-
 /**
- * The Agent Canvas landing (owner feedback 2026-08-13): with nothing rendered
- * yet, the pane used to fall straight back to the old Draw sketchpad —
- * indistinguishable from the feature it replaced, teaching nothing. This is
- * the empty state's actual job: say what the surface IS, put the first render
- * one keypress away, and keep the classic sketchpad one click away (spec D2 —
- * old Draw behaviour is preserved, it just is not the greeting).
+ * The Agent Canvas front page (v8, approved on the canvas 2026-08-29).
  *
- * Visually the empty state IS the canvas, unfilled: the same bordered sheet
- * with the same registration marks that a rendered version will occupy. It
- * teaches the surface by being it rather than describing it from a card.
+ * It used to be a lesson: an eyebrow, a headline, a starter prompt to type into
+ * the terminal, the review loop drawn as five numbered steps, a sketchpad
+ * escape hatch and a reclaim list. Every one of those is gone. A user who opens
+ * this pane is not asking "what is a canvas" — they are asking "what is waiting
+ * on me, what can I pick back up, and what has this project produced". So the
+ * page answers exactly that, in three bands, and the explanation moved behind
+ * one card for the one time it is actually wanted.
+ *
+ * What the removal costs, recorded honestly: the sketchpad has NO entry point
+ * here any more (the store value survives — see `CanvasEmptyView`), and the
+ * starter prompt is gone, so a brand-new user's first render now starts from
+ * their own words rather than a canned one.
  */
 export default function CanvasEmptyState({ sessionId, onClose }: Props) {
   const emptyView = useCanvasStore((s) => s.bySessionId[sessionId]?.emptyView ?? 'intro')
   const setEmptyView = useCanvasStore((s) => s.setEmptyView)
   const completedNotice = useCanvasStore((s) => s.bySessionId[sessionId]?.completedNotice ?? null)
   const dismissCompleted = useCanvasStore((s) => s.dismissCompleted)
+  const refreshCanvas = useCanvasStore((s) => s.refresh)
+
   // Reopen from the acknowledgment: clear the stamp; main rebinds the canvas
   // as current (the session shows nothing else right now, by construction),
   // and the change push swaps the pane back onto it.
@@ -117,115 +136,176 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
     },
     [sessionId],
   )
-  const [typed, setTyped] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [controlsOpen, setControlsOpen] = useState(false)
-  const [libraryOpen, setLibraryOpen] = useState(false)
-  const [reclaimable, setReclaimable] = useState<ReclaimableCanvas[]>([])
-  const [reclaiming, setReclaiming] = useState<string | null>(null)
-  // Delete on the reclaim rows (#452): the front page has no top bar, so
-  // before this the only way to be rid of an old canvas from here was to
-  // open the library. Same two-step confirm + IPC as the library's delete.
-  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
-  // Double-click-proofing (#456).
-  const delConfirm = useArmedConfirm(confirmingDelete)
-  const [deleting, setDeleting] = useState<string | null>(null)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
-  const refreshCanvas = useCanvasStore((s) => s.refresh)
 
-  // What this session could take back. A pure read — nothing moves until the
-  // user clicks Reopen.
+  // Which Library tab this page is sending the user to, or `null` for closed.
+  // A typed column's "See all" must land on THAT type — arriving on All and
+  // having to re-find the tab you just clicked out of is the whole reason the
+  // per-column link exists.
+  const [libraryTab, setLibraryTab] = useState<CanvasLibraryTab | null>(null)
+  const [rows, setRows] = useState<CanvasLibraryRow[]>([])
+  const [truncated, setTruncated] = useState(false)
+  const [opening, setOpening] = useState(false)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [confirmingDismiss, setConfirmingDismiss] = useState<string | null>(null)
+  // Double-click-proofing (#456): the confirm swaps into the Dismiss button's
+  // footprint, so both clicks of one gesture land on the same point.
+  const dismissConfirm = useArmedConfirm(confirmingDismiss)
+
+  const resumables = useCanvasResumableRows(sessionId)
+  const totalsLoaded = useCanvasTotalsStore((s) => !!s.bySessionId[sessionId]?.loaded)
+  const refreshTotals = useCanvasTotalsStore((s) => s.refresh)
+
+  // The resume rows come from the same sweep that feeds the Canvas button's
+  // dot, so the two can never disagree about what is going spare. Hydrated
+  // here as well as there because the pane can be the first thing to mount.
+  useEffect(() => {
+    if (!totalsLoaded) void refreshTotals(sessionId)
+  }, [sessionId, totalsLoaded, refreshTotals])
+
+  // What this project has produced, artefact by artefact. One read feeds the
+  // in-flight card, the plan jump and all three recents columns — the front
+  // page must not ask three times for one answer.
   //
-  // The open tiles go WITH the ask. Main has no reliable way to tell that a
-  // session whose PTY exited still has a tile on screen (the saved-tile file
-  // exists only between a graceful Save & Close and the next restore), so it
-  // was offering canvases whose own tile was open and visible. The renderer is
-  // the only party that knows, and the hint can only shorten the list.
-  //
-  // Callable, not just an effect: the library overlay can delete a canvas this
-  // list still shows, and a stale row's Delete would then dead-end on a
-  // truthful-but-inverted "could not be deleted". The epoch keeps overlapping
+  // Callable, not just an effect: the Library overlay sits OVER this page and
+  // can archive or delete a row it still shows. The epoch keeps overlapping
   // loads last-write-wins.
-  const reclaimEpoch = useRef(0)
-  const loadReclaimable = useCallback(async () => {
-    const epoch = ++reclaimEpoch.current
+  const listEpoch = useRef(0)
+  const loadRows = useCallback(async () => {
+    const epoch = ++listEpoch.current
     const openTileSessionIds = useSessionStore.getState().sessions.map((s) => s.id)
     try {
-      const list = await window.electronAPI.canvas.listReclaimable({ sessionId, openTileSessionIds })
-      if (reclaimEpoch.current === epoch) setReclaimable(Array.isArray(list) ? list : [])
+      const res = await window.electronAPI.canvas.libraryList({
+        sessionId,
+        openTileSessionIds,
+        sort: 'recent',
+      })
+      if (listEpoch.current !== epoch) return
+      setRows(Array.isArray(res?.rows) ? res.rows : [])
+      setTruncated(!!res?.truncated)
     } catch {
-      /* nothing to offer is the safe default */
+      // Nothing to show is the safe default — an unread list must not invent
+      // rows, and the bands simply do not draw.
+      if (listEpoch.current === epoch) {
+        setRows([])
+        setTruncated(false)
+      }
     }
   }, [sessionId])
 
   useEffect(() => {
-    void loadReclaimable()
-  }, [loadReclaimable])
+    void loadRows()
+  }, [loadRows])
 
-  const reclaim = useCallback(
-    async (canvasId: string) => {
-      setReclaiming(canvasId)
-      setDeleteError(null)
-      try {
-        // Re-read the tiles at CLICK time, not at list time: main applies the
-        // same rule on both calls and the truth may have changed in between.
-        const openTileSessionIds = useSessionStore.getState().sessions.map((s) => s.id)
-        const result = await window.electronAPI.canvas.reclaim({ sessionId, canvasId, openTileSessionIds })
-        if (result?.ok) {
-          // The pane swaps to the canvas surface as soon as the store has it.
-          await refreshCanvas(sessionId)
-        } else {
-          // Refused (the owner came back, or it is gone) — drop it from the list.
-          setReclaimable((list) => list.filter((c) => c.canvasId !== canvasId))
-        }
-      } catch {
-        setReclaimable((list) => list.filter((c) => c.canvasId !== canvasId))
-      } finally {
-        setReclaiming(null)
-      }
-    },
-    [sessionId, refreshCanvas],
+  // Archived work is history, not "recent in this project" — it is reachable
+  // through the Library's Archived filter, which is where someone looking for
+  // it goes. This is a DISPLAY choice on rows main already decided we may see;
+  // the privacy rule (never another live session's in-flight work) is enforced
+  // in main and is not re-applied, or second-guessed, here.
+  const live = useMemo(() => rows.filter((r) => !r.archived), [rows])
+
+  // The one thing owed. Own, in play, and main says something is outstanding.
+  const inFlight = useMemo(
+    () => live.find((r) => r.ownedByThisSession && !r.completed && !!r.owed) ?? null,
+    [live],
   )
 
-  const removeCanvas = useCallback(async (canvasId: string) => {
-    setDeleting(canvasId)
-    setDeleteError(null)
-    try {
-      const res = await window.electronAPI.canvas.deleteCanvas({ canvasId })
-      if (res?.ok) setReclaimable((list) => list.filter((c) => c.canvasId !== canvasId))
-      else setDeleteError('That canvas could not be deleted.')
-    } catch {
-      setDeleteError('That canvas could not be deleted.')
-    } finally {
-      setDeleting(null)
-      setConfirmingDelete(null)
-    }
-  }, [])
+  // A plan the project has already agreed. Offered as a jump, not an action:
+  // the approved plan is the thing you re-read while the work happens.
+  //
+  // Excluded by ROW identity (canvasId + anchorVersionId), not by canvas. One
+  // canvas ACCUMULATES artefacts — a plan gets approved, then a mockup run
+  // starts on the same canvas — which is the normal shape, not the exception.
+  // Matching on canvasId alone suppressed the jump in exactly that case, so the
+  // most common project on earth never got a "View plan" link.
+  const approvedPlan = useMemo(
+    () =>
+      live.find(
+        (r) =>
+          r.kind === 'plan' &&
+          !(r.canvasId === inFlight?.canvasId && r.anchorVersionId === inFlight?.anchorVersionId) &&
+          (r.completed || /^APPROVED/.test((r.verdict || '').toUpperCase())),
+      ) ?? null,
+    [live, inFlight],
+  )
 
-  const typeIntoTerminal = useCallback(() => {
-    // No newline: the terminal shows the request, the user sends it.
-    window.electronAPI.pty.write(sessionId, STARTER_PROMPT)
-    setTyped(true)
-    window.setTimeout(() => setTyped(false), 4000)
-  }, [sessionId])
+  const byKind = useMemo(() => {
+    const map: Record<LibraryRowKind, CanvasLibraryRow[]> = { mockup: [], plan: [], pack: [] }
+    for (const r of live) map[r.kind]?.push(r)
+    return map
+  }, [live])
 
-  const copyPrompt = useCallback(() => {
-    void navigator.clipboard?.writeText(STARTER_PROMPT).then(() => {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    })
-  }, [])
+  const openTiles = useCallback(() => useSessionStore.getState().sessions.map((s) => s.id), [])
+
+  /** Put the pane on one of THIS session's own canvases. An index repoint of
+   *  work it already owns, never an adoption — the same open-here path the
+   *  Library and the queue list use. */
+  const openHere = useCallback(
+    async (canvasId: string) => {
+      setOpening(true)
+      setNotice(null)
+      try {
+        const res = await window.electronAPI.canvas.reclaim({
+          sessionId,
+          canvasId,
+          openTileSessionIds: openTiles(),
+        })
+        if (res?.ok) await refreshCanvas(sessionId)
+        else setNotice('That canvas could not be opened here.')
+      } catch {
+        setNotice('That canvas could not be opened here.')
+      } finally {
+        setOpening(false)
+      }
+    },
+    [sessionId, refreshCanvas, openTiles],
+  )
+
+  const onResume = useCallback(
+    async (row: ResumableRow) => {
+      setBusy(row.canvasId)
+      setNotice(null)
+      const res = await resumeCanvas(sessionId, row, openTiles())
+      if (res.ok) {
+        // The pane swaps to the canvas surface as soon as the store has it.
+        await refreshCanvas(sessionId)
+      } else {
+        // Refused: someone else got there first, or it is gone. Say which, then
+        // re-read — the row must not linger offering an action that cannot run.
+        setNotice(resumeRefusalText(res.reason))
+      }
+      await refreshTotals(sessionId)
+      await loadRows()
+      setBusy(null)
+    },
+    [sessionId, refreshCanvas, refreshTotals, loadRows, openTiles],
+  )
+
+  const onDismiss = useCallback(
+    async (row: ResumableRow) => {
+      setBusy(row.canvasId)
+      setNotice(null)
+      const res = await dismissCanvas(sessionId, row.canvasId, openTiles())
+      if (!res.ok) setNotice(resumeRefusalText(res.reason))
+      await refreshTotals(sessionId)
+      await loadRows()
+      setBusy(null)
+      setConfirmingDismiss(null)
+    },
+    [sessionId, refreshTotals, loadRows, openTiles],
+  )
 
   if (emptyView === 'sketchpad') {
     return (
       <div className="flex-1 flex flex-col min-h-0 relative">
         <ExcalidrawPane sessionId={sessionId} />
         {/* The way back to the canvas identity — floating so the classic pane
-            keeps its whole chrome untouched. */}
+            keeps its whole chrome untouched. The v8 front page has no way IN
+            to the sketchpad any more, so this is the only door, and it stays. */}
         <button
           onClick={() => setEmptyView(sessionId, 'intro')}
           className="absolute bottom-3 right-3 z-10 px-2.5 py-1 text-[11px] rounded-full border border-[var(--border-strong)] bg-[var(--surface-panel)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] shadow-lg transition-colors focus-ring"
-          title="Back to the Agent Canvas introduction"
+          title="Back to the Agent Canvas front page"
         >
           Agent Canvas
         </button>
@@ -233,34 +313,43 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
     )
   }
 
+  const chrome = (
+    // Same chrome as the live canvas surface: 38px, one type size, and no
+    // version affordances — an empty canvas has nothing to version.
+    <div className="h-[38px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)] border-b border-[var(--border-subtle)]">
+      <span className="w-[5px] h-[5px] rounded-full bg-[var(--brand)]" aria-hidden="true" />
+      <span className="text-[12px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]">Agent Canvas</span>
+      <div className="flex-1" />
+      <DismissButton onClick={onClose} label="Close Agent Canvas" size={12} data-testid="canvas-empty-close" />
+    </div>
+  )
+
+  if (emptyView === 'explained') {
+    return (
+      <div className="canvas-landing relative flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
+        {chrome}
+        {/* `canvas-stage` stays the container-query root so the Explained page
+            answers to the PANE's width the same way the front page does. */}
+        <div className="canvas-stage flex-1 min-h-0 overflow-y-auto" data-testid="canvas-explained-view">
+          <CanvasExplainedPage onHome={() => setEmptyView(sessionId, 'intro')} />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="canvas-landing relative flex-1 flex flex-col min-h-0 bg-[var(--surface-stage)]">
-      {/* Same chrome as the live canvas surface: 38px, one type size, and no
-          version affordances — an empty canvas has nothing to version. */}
-      <div className="h-[38px] shrink-0 flex items-center gap-2.5 px-3 bg-[var(--surface-chrome)] border-b border-[var(--border-subtle)]">
-        <span className="w-[5px] h-[5px] rounded-full bg-[var(--brand)]" aria-hidden="true" />
-        <span className="text-[12px] font-semibold tracking-[-0.01em] text-[var(--text-primary)]">Agent Canvas</span>
-        <div className="flex-1" />
-        <button
-          onClick={onClose}
-          aria-label="Close Agent Canvas"
-          title="Close Agent Canvas"
-          className="p-[5px] rounded leading-none text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring"
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-            <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" />
-          </svg>
-        </button>
-      </div>
+      {chrome}
 
       {/* The stage. `canvas-stage` makes this a container query root so the
-          sheet answers to the PANE's width, not the window's. */}
-      <div className="canvas-stage flex-1 min-h-0 overflow-y-auto px-5 py-7">
+          page answers to the PANE's width, not the window's. */}
+      <div className="canvas-stage flex-1 min-h-0 overflow-y-auto px-5 py-7" data-testid="canvas-front-page">
         {/* One quiet acknowledgment for a subject just signed off (#476) —
-            session-local, gone on dismissal, Reopen, or the next render. */}
+            session-local, gone on dismissal, Reopen, or the next render. It
+            stays ABOVE the page, where the filed strip also sits. */}
         {completedNotice && (
           <div
-            className="w-full max-w-[840px] mx-auto mb-4 flex items-center gap-2.5 rounded border px-3.5 py-2 text-[12px]"
+            className="w-full max-w-[880px] mx-auto mb-4 flex items-center gap-2.5 rounded border px-3.5 py-2 text-[12px]"
             style={{
               background: 'var(--surface-panel)',
               borderColor: 'color-mix(in srgb, var(--status-success) 35%, transparent)',
@@ -269,7 +358,7 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
             data-testid="canvas-completed-notice"
           >
             <span className="font-semibold" style={{ color: 'var(--status-success)' }}>
-              ✓ {completedNotice.title ? `“${completedNotice.title}”` : 'Canvas'} completed
+              {completedNotice.title ? `“${completedNotice.title}”` : 'Canvas'} completed
             </span>
             <span>· in the Library</span>
             <button
@@ -282,294 +371,261 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
               Reopen
             </button>
             <div className="flex-1" />
-            <button
+            <DismissButton
               onClick={() => dismissCompleted(sessionId)}
-              className="text-[11px] focus-ring rounded"
-              style={{ color: 'var(--text-muted)' }}
-              aria-label="Dismiss"
-              title="Dismiss"
+              label="Dismiss this notice"
               data-testid="canvas-completed-notice-dismiss"
-            >
-              ✕
-            </button>
+            />
           </div>
         )}
-        <div className="canvas-sheet relative w-full max-w-[840px] mx-auto flex flex-col rounded border border-[var(--border-subtle)] bg-[var(--surface-raised)]">
-          <RegistrationMark corner="tl" />
-          <RegistrationMark corner="tr" />
-          <RegistrationMark corner="bl" />
-          <RegistrationMark corner="br" />
 
-          <p
-            className="mb-4 uppercase text-[10.5px] font-medium tracking-[0.16em] text-[var(--text-secondary)]"
-            style={{ fontFamily: MONO }}
-          >
-            Nothing rendered yet
-          </p>
-          <h2 className="canvas-headline m-0 mb-3 max-w-[19ch] font-semibold text-[var(--text-primary)]">
-            Your agent draws here. <span className="text-[var(--brand)]">You mark it up.</span>
-          </h2>
-          <p className="m-0 mb-7 max-w-[52ch] text-[14px] leading-relaxed text-[var(--text-secondary)]">
-            This is a review surface, not a drawing app. Ask the agent for something visual — a
-            mockup, a plan, the app you&rsquo;re building — and it renders a real page onto this
-            sheet. You point at what&rsquo;s wrong and send it back.
-          </p>
-
-          {/* The starter prompt is set in mono because it is literally terminal
-              input, not because mono looks technical. */}
-          <div className="flex items-stretch flex-wrap gap-2.5 mb-3.5">
-            {/* basis, not a min-width: the pane is resizable and a hard
-                min-width would push the sheet into horizontal overflow. */}
-            <div className="grow shrink basis-[260px] min-w-0 flex items-center gap-2.5 rounded-md px-3.5 py-2.5 bg-[var(--surface-panel)] border border-[var(--border-subtle)]">
-              <span className="text-[12px] font-semibold leading-none text-[var(--brand)]" style={{ fontFamily: MONO }} aria-hidden="true">
-                &gt;
-              </span>
-              <code className="min-w-0 break-words text-[12.5px] leading-snug text-[var(--text-primary)]" style={{ fontFamily: MONO }}>
-                {STARTER_PROMPT}
-              </code>
-            </div>
-            <button
-              onClick={typeIntoTerminal}
-              className="shrink-0 inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-4 py-2 text-[12.5px] font-semibold bg-[var(--brand)] text-[var(--ob-on)] hover:brightness-110 transition-colors focus-ring"
-              title="Types the request into this session's terminal — you press Enter to send it"
-            >
-              <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M2 7h9M7.5 3.5L11 7l-3.5 3.5" />
-              </svg>
-              {typed ? 'Typed — press Enter in the terminal' : 'Put this in the terminal'}
-            </button>
-            <button onClick={copyPrompt} className={GHOST_CLASS}>
-              {copied ? 'Copied' : 'Copy'}
-            </button>
+        <div className="cfp-col">
+          {/* ── Masthead. The artwork in relief beside the wordmark; nothing
+              else. No eyebrow, no tagline, no explanatory line. ───────── */}
+          <div className="cfp-masthead" data-ux-id="brand-hero" data-testid="canvas-masthead">
+            <img className="cfp-mast-art" src={heroUrl} alt="" aria-hidden="true" data-testid="canvas-masthead-art" />
+            <h2 className="cfp-mast-word m-0" data-testid="canvas-masthead-word">
+              Agent Canvas
+            </h2>
           </div>
-          <p className="m-0 text-[12px] text-[var(--text-secondary)]">
-            Lands in your prompt unsent — edit it, then press{' '}
-            <kbd
-              className="rounded-[3px] px-1.5 py-0.5 text-[11px] leading-none bg-[var(--surface-panel)] text-[var(--text-secondary)]"
-              style={{ fontFamily: MONO, border: '1px solid var(--border-subtle)', borderBottomWidth: 2 }}
-            >
-              Enter
-            </kbd>{' '}
-            yourself.
-          </p>
 
-          {/* The loop, drawn as a loop. The numbering encodes a real sequence
-              and the return arc from 05 back to 02 IS the feature. */}
-          <div className="mt-9 pt-6 border-t border-dashed border-[var(--border-subtle)]">
-            <p
-              className="mb-[18px] uppercase text-[10.5px] font-medium tracking-[0.14em] text-[var(--text-secondary)]"
-              style={{ fontFamily: MONO }}
-            >
-              The review loop
+          {notice && (
+            <p className="m-0 cfp-rc-note" role="status" data-testid="canvas-front-page-notice">
+              {notice}
             </p>
-            <ol className="canvas-loop-track m-0 p-0 list-none">
-              {LOOP_STEPS.map((step, i) => (
-                <li key={step.title} className="relative pt-[22px]">
-                  <span
-                    className="absolute top-0 left-0 text-[10px] font-semibold leading-none text-[var(--brand)]"
-                    style={{ fontFamily: MONO }}
-                    aria-hidden="true"
-                  >
-                    {String(i + 1).padStart(2, '0')}
-                  </span>
-                  <h4
-                    className={`m-0 mb-[3px] text-[12.5px] font-semibold tracking-[-0.01em] ${
-                      step.you ? 'text-[var(--brand)]' : 'text-[var(--text-primary)]'
-                    }`}
-                  >
-                    {step.title}
-                  </h4>
-                  <p className="m-0 text-[11.5px] leading-[1.45] text-[var(--text-secondary)]">{step.detail}</p>
-                </li>
-              ))}
-            </ol>
-            {/* The return arc: 05 loops back to 02. Deliberately a little
-                irregular — the same rough hand the glass layer draws in, so it
-                previews what you are about to do. Hidden by the container query
-                once the track wraps (it would point at the wrong steps). */}
-            <svg
-              className="canvas-loop-arc block w-full h-[34px] mt-0.5 overflow-visible"
-              viewBox="0 0 1000 34"
-              preserveAspectRatio="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M905 3 C 902 22, 880 27, 830 28 C 640 31, 420 30, 260 28 C 210 27, 190 22, 187 5"
-                fill="none"
-                stroke="var(--brand)"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-                opacity="0.55"
-              />
-              <path
-                d="M187 5 l-4.5 7.5 M187 5 l5 7"
-                fill="none"
-                stroke="var(--brand)"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-                opacity="0.55"
-              />
-            </svg>
-          </div>
-
-          {/* Secondary row: the sketchpad escape hatch (spec D2) and the control
-              vocabulary, disclosed rather than always-on so the sheet stays a
-              sheet. */}
-          <div className="flex items-center flex-wrap gap-2 mt-6">
-            <button
-              onClick={() => setEmptyView(sessionId, 'sketchpad')}
-              className={GHOST_CLASS}
-              title="Open the classic free-form sketchpad"
-            >
-              Open the sketchpad instead
-            </button>
-            <button
-              onClick={() => setControlsOpen((open) => !open)}
-              aria-expanded={controlsOpen}
-              className={GHOST_CLASS}
-            >
-              Once something is rendered
-            </button>
-          </div>
-          {controlsOpen && (
-            <ul className="mt-3 flex flex-col gap-1.5 rounded-md px-3.5 py-3 bg-[var(--surface-panel)] border border-[var(--border-subtle)] text-[12px] leading-relaxed text-[var(--text-secondary)]">
-              <li>
-                <span className="text-[var(--text-primary)]">Browse</span> — the page is live: hover to
-                inspect, <span className="text-[var(--text-primary)]">click to select</span> what a note
-                is about.{' '}
-                <span className="text-[11px] px-1 rounded bg-[var(--surface-raised)] border border-[var(--border-subtle)]" style={{ fontFamily: MONO }}>↑</span>{' '}
-                selects the parent,{' '}
-                <span className="text-[11px] px-1 rounded bg-[var(--surface-raised)] border border-[var(--border-subtle)]" style={{ fontFamily: MONO }}>Esc</span>{' '}
-                clears.
-              </li>
-              <li>
-                <span className="text-[var(--text-primary)]">Region</span> — drag a rectangle when a note
-                is about an area, not one element.
-              </li>
-              <li>
-                <span className="text-[var(--text-primary)]">Draw</span> — sketch on the glass; attach the
-                sketch to a note to show what you mean.
-              </li>
-              <li>
-                <span className="text-[var(--text-primary)]">Submit review</span> — your notes go to the
-                agent as one batch; it revises and the loop continues.
-              </li>
-            </ul>
           )}
 
-          {/* The library. Offered here as well as in the pane header because this
-              is the state where the user is asking "what have I got?" — and,
-              before it existed, the reclaim list below was the only place old
-              canvases appeared, with nothing the user could do about them. */}
-          <button
-            onClick={() => setLibraryOpen(true)}
-            className="mt-4 self-start text-[11.5px] rounded px-2 py-1 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-ring"
-            data-testid="canvas-empty-library-open"
-          >
-            Browse the canvas library
-          </button>
-
-          {/* Reclaim — a canvas from an earlier session (spec D2 continuity).
-              Offered, never taken: moving a canvas moves the user's private
-              review notes with it, and only the user can authorise that. */}
-          {reclaimable.length > 0 && (
-            <div className="mt-5">
-              <p
-                className="mb-2 uppercase text-[10.5px] font-medium tracking-[0.14em] text-[var(--text-secondary)]"
-                style={{ fontFamily: MONO }}
-              >
-                Pick up where you left off
-              </p>
-              <ul className="flex flex-col gap-2">
-                {reclaimable.map((c) => (
-                  <li
-                    key={c.canvasId}
-                    className="flex items-center gap-3 rounded-md px-3.5 py-3 bg-[var(--surface-panel)] border border-[var(--border-subtle)]"
-                    style={{ borderLeft: '2px solid var(--accent)' }}
-                  >
-                    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="var(--accent)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" className="shrink-0" aria-hidden="true">
-                      <path d="M14 8A6 6 0 1 1 8 2a6 6 0 0 1 4.5 2M13 2v3h-3" />
-                    </svg>
-                    <div className="min-w-0 flex-1">
-                      {/* The TITLE is what the user reads before clicking, and
-                          a constant one made two canvases from the same project
-                          indistinguishable — a mis-click re-binds another
-                          project's private review notes to this session. The
-                          conversation (or, failing that, the canvas's own id)
-                          is what actually differs, so it goes in the name. */}
-                      <div className="text-[12.5px] font-semibold text-[var(--text-primary)] mb-0.5 truncate">
-                        Canvas from conversation{' '}
-                        <span style={{ fontFamily: MONO }}>{canvasLabel(c)}</span>
-                      </div>
-                      <div
-                        className="text-[11.5px] text-[var(--text-secondary)] truncate"
-                        title={c.cwd || undefined}
-                      >
-                        {c.versionCount} version{c.versionCount === 1 ? '' : 's'} · last rendered{' '}
-                        {lastRenderedLabel(c.lastRenderedAt)}
-                        {c.cwd && (
-                          <>
-                            {' · '}
-                            <span style={{ fontFamily: MONO }} className="text-[11px]">
-                              {c.sameProject ? 'this project' : c.cwd}
+          {/* ── In flight work, beside what can be picked back up ────────
+              The plan jump does NOT depend on the need-card: a project with an
+              agreed plan and nothing currently owed still wants the way back to
+              the plan it is working to. */}
+          {(inFlight || approvedPlan || resumables.length > 0) && (
+            <div>
+              <div className="cfp-band-h">
+                <span className="cfp-band-t">In flight work</span>
+              </div>
+              <div className="cfp-now-grid">
+                {(inFlight || approvedPlan) && (
+                  <div data-ux-id="band-continue">
+                    {inFlight && (
+                      <div className="cfp-need-card" data-testid="canvas-inflight-card">
+                        <div className="min-w-0">
+                          <div className="cfp-need-title truncate">{inFlight.title}</div>
+                          <div className="cfp-need-meta">
+                            <span className="cfp-chip">{kindWord(inFlight.kind).toUpperCase()}</span>
+                            <span className="cfp-chip">{inFlight.versionLabel}</span>
+                            <span className="cfp-chip cfp-chip-warn" data-testid="canvas-inflight-owed">
+                              {inFlight.owed}
                             </span>
-                          </>
-                        )}
+                            {/* The owed line already carries a note count when
+                                notes are what is owed — showing it twice on one
+                                card is the thing the counts rule forbids. */}
+                            {inFlight.noteCount > 0 && !/note/i.test(inFlight.owed ?? '') && (
+                              <span>
+                                {inFlight.noteCount} note{inFlight.noteCount === 1 ? '' : 's'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          className="cfp-go focus-ring"
+                          onClick={() => void openHere(inFlight.canvasId)}
+                          disabled={opening}
+                          data-testid="canvas-inflight-open"
+                          title="Open this canvas in the pane"
+                        >
+                          {opening ? 'Opening…' : 'Open'}
+                        </button>
                       </div>
-                    </div>
-                    <button
-                      onClick={() => void reclaim(c.canvasId)}
-                      disabled={reclaiming !== null || deleting !== null}
-                      className={GHOST_CLASS}
-                      title="Reopen this canvas in this session, with its version history and notes"
-                    >
-                      {reclaiming === c.canvasId ? 'Reopening…' : 'Reopen'}
-                    </button>
-                    {confirmingDelete === c.canvasId ? (
+                    )}
+                    {approvedPlan && (
                       <button
-                        ref={delConfirm.confirmRef}
-                        onClick={delConfirm.guarded(() => void removeCanvas(c.canvasId))}
-                        disabled={reclaiming !== null || deleting !== null}
-                        className={DANGER_CLASS}
-                        aria-label={`Delete ${c.versionCount} version${c.versionCount === 1 ? '' : 's'} of canvas ${canvasLabel(c)}`}
-                        data-testid="canvas-reclaim-confirm-delete"
+                        className="cfp-plan-jump focus-ring"
+                        onClick={() => setLibraryTab('plan')}
+                        data-ux-id="plan-jump"
+                        data-testid="canvas-plan-jump"
+                        title="Find this plan in the Library"
                       >
-                        {deleting === c.canvasId
-                          ? 'Deleting…'
-                          : `Delete ${c.versionCount} version${c.versionCount === 1 ? '' : 's'}`}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => { setConfirmingDelete(c.canvasId); setDeleteError(null) }}
-                        disabled={reclaiming !== null || deleting !== null}
-                        className={`${GHOST_CLASS} hover:!text-[var(--status-danger)]`}
-                        title="Permanently delete this canvas — its versions and review notes go with it"
-                        aria-label={`Delete canvas ${canvasLabel(c)}`}
-                        data-testid="canvas-reclaim-delete"
-                      >
-                        Delete
+                        <span className="cfp-pj-dot" aria-hidden="true" />
+                        <span className="min-w-0 truncate">
+                          <b>{approvedPlan.title}</b> · approved plan
+                        </span>
+                        <span className="cfp-pj-go">View plan →</span>
                       </button>
                     )}
-                  </li>
-                ))}
-              </ul>
-              {deleteError && (
-                <p className="mt-2 m-0 text-[11.5px] text-[var(--status-danger)]" role="alert" data-testid="canvas-reclaim-delete-error">
-                  {deleteError}
-                </p>
-              )}
+                  </div>
+                )}
+
+                {resumables.length > 0 && (
+                  <div className="cfp-resume-card" data-ux-id="resume-row" data-testid="canvas-resume-card">
+                    {resumables.map((row) => (
+                      <div key={row.canvasId} className="cfp-rc-item" data-testid="canvas-resume-row">
+                        <div className="cfp-rc-h">
+                          <span className="cfp-rc-dot" aria-hidden="true" />
+                          <span className="cfp-rc-title">{row.title}</span>
+                        </div>
+                        <div className="cfp-rc-meta">
+                          {kindWord(row.kind)} · {row.noteCount} note{row.noteCount === 1 ? '' : 's'} ·{' '}
+                          {renderedLabel(row.lastRenderedAt)}
+                          {row.configName ? ` · ${row.configName}` : ''}
+                        </div>
+                        <div className="cfp-rc-actions">
+                          <button
+                            className="cfp-rc-resume focus-ring"
+                            onClick={() => void onResume(row)}
+                            disabled={busy !== null}
+                            data-testid="canvas-resume-action"
+                            title="Take this canvas over in this session, with its versions and notes"
+                          >
+                            {busy === row.canvasId && confirmingDismiss !== row.canvasId ? 'Resuming…' : 'Resume'}
+                          </button>
+                          {confirmingDismiss === row.canvasId ? (
+                            <button
+                              ref={dismissConfirm.confirmRef}
+                              className="cfp-rc-confirm focus-ring"
+                              onClick={dismissConfirm.guarded(() => void onDismiss(row))}
+                              disabled={busy !== null}
+                              data-testid="canvas-resume-dismiss-confirm"
+                              aria-label={dismissConfirmAriaLabel(row.title, row.noteCount)}
+                            >
+                              {busy === row.canvasId ? 'Discarding…' : dismissConfirmLabel(row.noteCount)}
+                            </button>
+                          ) : (
+                            <button
+                              className="cfp-rc-dismiss focus-ring"
+                              onClick={() => { setConfirmingDismiss(row.canvasId); setNotice(null) }}
+                              disabled={busy !== null}
+                              data-testid="canvas-resume-dismiss"
+                              title="Discard this canvas — its versions, notes and evidence go with it"
+                            >
+                              Dismiss
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
+
+          {/* ── Recent in this project ─────────────────────────────────── */}
+          <div data-ux-id="band-recents" data-testid="canvas-recents">
+            <div className="cfp-band-h">
+              <span className="cfp-band-t">Recent in this project</span>
+              <span className="cfp-band-n" data-testid="canvas-recents-total">
+                {live.length}
+                {truncated ? '+' : ''} artefact{live.length === 1 && !truncated ? '' : 's'}
+              </span>
+              <button
+                className="cfp-band-seeall focus-ring"
+                onClick={() => setLibraryTab('all')}
+                data-ux-id="recents-seeall"
+                data-testid="canvas-empty-library-open"
+              >
+                All in Library →
+              </button>
+            </div>
+            <div className="cfp-recents-grid">
+              {RECENT_COLUMNS.map((col) => {
+                const items = byKind[col.kind]
+                return (
+                  <div className="cfp-type-card" key={col.kind} data-ux-id={col.testid} data-testid={col.testid}>
+                    <div className="cfp-type-h">
+                      <KindIcon kind={col.kind} className="cfp-type-icon" />
+                      <span className="cfp-type-lbl">{col.label}</span>
+                      <span className="cfp-type-count">{items.length}</span>
+                      {items.length > RECENTS_PER_COLUMN && (
+                        <button
+                          className="cfp-type-more focus-ring"
+                          onClick={() => setLibraryTab(col.kind)}
+                          data-testid="canvas-recents-see-all"
+                          data-kind={col.kind}
+                        >
+                          See all
+                        </button>
+                      )}
+                    </div>
+                    {items.length === 0 ? (
+                      <p className="cfp-type-empty m-0">None yet.</p>
+                    ) : (
+                      items.slice(0, RECENTS_PER_COLUMN).map((row) => {
+                        const badge = verdictBadge(row)
+                        return (
+                          <button
+                            key={row.canvasId + row.anchorVersionId}
+                            className="cfp-rrow focus-ring"
+                            // A row lands on its OWN type's tab, so a click and
+                            // the "See all" directly above it go to the same
+                            // place — one meaning per card.
+                            onClick={() => setLibraryTab(row.kind)}
+                            data-testid="canvas-recent-row"
+                            data-kind={row.kind}
+                            title={`${row.title} — open in the Library`}
+                          >
+                            <span className="cfp-rt">{row.title}</span>
+                            <span className="cfp-rmeta">
+                              <span className={badge.className}>{badge.text}</span>
+                              <span className="cfp-age">{queueAge(row.updatedAt)}</span>
+                            </span>
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* ── Canvas Explained. The only teaching left on the page, behind
+              one door, for the one time it is wanted. ─────────────────── */}
+          <button
+            className="cfp-explain focus-ring"
+            onClick={() => setEmptyView(sessionId, 'explained')}
+            data-ux-id="explain-card"
+            data-testid="canvas-explained-card"
+          >
+            <span className="cfp-ex-icon">
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="2.5" width="12" height="8.5" rx="1" />
+                <path d="M8 11v2.5M5 15h6M5.5 5.5h5M5.5 8h3" />
+              </svg>
+            </span>
+            <span>
+              <span className="cfp-ex-title block">Canvas Explained</span>
+              <span className="cfp-ex-sub block">
+                How reviews work — versions, notes and verdicts across mockup, plan and testing.
+              </span>
+            </span>
+            <span className="cfp-ex-arrow" aria-hidden="true">
+              ›
+            </span>
+          </button>
         </div>
       </div>
-      {libraryOpen && (
+
+      {libraryTab !== null && (
         <CanvasLibrary
           sessionId={sessionId}
+          initialTab={libraryTab}
           onClose={() => {
-            setLibraryOpen(false)
-            // The library can delete (or adopt) a canvas the reclaim list still
-            // shows — re-read so no row offers an action on a ghost.
-            void loadReclaimable()
+            setLibraryTab(null)
+            // The Library can archive, adopt or delete a row this page still
+            // shows — re-read so nothing offers an action on a ghost.
+            void loadRows()
+            void refreshTotals(sessionId)
           }}
         />
       )}
@@ -579,20 +635,7 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
 
 /** "2d ago" when the stamp parses, the raw stamp when it does not — a stored
  *  value we cannot read is still worth showing, just not worth guessing at. */
-function lastRenderedLabel(iso: string): string {
+function renderedLabel(iso: string): string {
   const ms = Date.parse(iso)
   return Number.isFinite(ms) ? relativeTime(ms) : iso
-}
-
-/**
- * The short name that tells one candidate from another.
- *
- * The conversation is the right answer (two canvases from one project are two
- * conversations), and the canvas id is the fallback for a canvas that was never
- * rendered under a conversation the binder could name — it is at least unique,
- * which is the whole job here. Both are already `[0-9a-f]` by construction; the
- * slice bounds what a card can be made to render regardless.
- */
-function canvasLabel(c: ReclaimableCanvas): string {
-  return (c.conversationShortId || c.canvasId).slice(0, 8)
 }

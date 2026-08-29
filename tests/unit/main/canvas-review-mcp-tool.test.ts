@@ -71,10 +71,17 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
     renderVersion: () => ({ canvasId: 'canvas-abc', versionId: 'v3' }),
     getReviewPayload: () => ({
       payload: payload(),
-      attachmentFiles: [{ annotationId: 'a1', absPath: 'C:/fixture/reviews/R2/a1.png' }],
+      attachmentFiles: [{ annotationId: 'a1', absPath: 'C:/fixture/reviews/R2/a1.png', kind: 'sketch' as const }],
+      // Testing-mode evidence (M3): this fixture is a MOCKUP round, so it has
+      // none. Present as an empty list rather than absent — the shape is part of
+      // the contract the tool reads.
+      evidenceFiles: [],
       submittedReviewIds: ['R1', 'R2'],
     }),
     readAttachment: () => PNG_BYTES,
+    // Testing evidence shots go through the disciplined reader (M3). This
+    // fixture is a mockup round and has none, so it is never called.
+    readEvidenceShot: () => null,
     readDesignFile: () => {
       throw new Error('no design files in this fixture')
     },
@@ -173,7 +180,7 @@ describe('the successful fetch', () => {
     expect(inside).toContain('general notes:')
     expect(inside).toContain('overall: ship it')
     // The sketch is numbered, and exactly that many images ride along.
-    expect(inside).toContain('attached as image 1')
+    expect(inside).toContain('drawing: rides this note, attached as attachment 1')
     expect(out.images).toHaveLength(1)
     expect(out.images[0].mimeType).toBe('image/png')
     expect(Buffer.from(out.images[0].data, 'base64').equals(PNG_BYTES)).toBe(true)
@@ -192,7 +199,7 @@ describe('the successful fetch', () => {
     expect(out.isError).toBe(false)
     expect(out.images).toHaveLength(0)
     expect(out.text).toContain('1 image attachment(s) could not be loaded')
-    expect(out.text).not.toContain('attached as image')
+    expect(out.text).not.toContain('attached as attachment')
 
     const big = await runCanvasReview(
       { reviewId: 'R2' },

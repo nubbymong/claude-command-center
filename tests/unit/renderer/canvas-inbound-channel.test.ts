@@ -25,6 +25,7 @@ import {
   INBOUND_FLOOD_BUDGET,
   INBOUND_OVERSIZE_COST,
   MAX_INBOUND_STRING_CHARS,
+  MAX_INBOUND_TRAIL_PER_FRAME,
   MAX_INBOUND_VALUES,
   type CanvasInboundHandlers,
 } from '../../../src/renderer/canvas/canvas-inbound-channel'
@@ -46,6 +47,8 @@ function makeHandlers(): CanvasInboundHandlers {
     onViewport: vi.fn(),
     onPointer: vi.fn(),
     onContentClick: vi.fn(),
+    onTypedInto: vi.fn(),
+    onNavigated: vi.fn(),
     onContentKey: vi.fn(),
     onContentZoom: vi.fn(),
     onFlood: vi.fn(),
@@ -250,7 +253,9 @@ describe('a forged contentClick cannot lock a focus', () => {
     setUserActivation(true)
     fromFrame({ type: 'contentClick', pageX: 10, pageY: 20 })
     await flushFrame()
-    expect(handlers.onContentClick).toHaveBeenCalledWith(10, 20)
+    // The third argument is the page's account of WHAT was clicked (M3) — the
+    // channel used to drop it, and the action trail is what needs it.
+    expect(handlers.onContentClick).toHaveBeenCalledWith(10, 20, null)
   })
 
   it('finite-guards the reported point', async () => {
@@ -258,7 +263,137 @@ describe('a forged contentClick cannot lock a focus', () => {
     iframe.focus()
     fromFrame({ type: 'contentClick', pageX: Number.NaN, pageY: 'boom' })
     await flushFrame()
-    expect(handlers.onContentClick).toHaveBeenCalledWith(0, 0)
+    expect(handlers.onContentClick).toHaveBeenCalledWith(0, 0, null)
+  })
+
+  it('carries the click hit through, bounded by the same guard the hover uses', async () => {
+    arm()
+    iframe.focus()
+    setUserActivation(true)
+    fromFrame({
+      type: 'contentClick',
+      pageX: 5,
+      pageY: 6,
+      hit: { role: 'button', name: 'x'.repeat(400), tag: 'button', uxId: 'pay', box: { x: 1, y: 2, width: 3, height: 4 } },
+    })
+    await flushFrame()
+    const hit = (handlers.onContentClick as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][2] as {
+      role: string
+      name: string
+      uxId?: string
+    }
+    expect(hit.role).toBe('button')
+    expect(hit.uxId).toBe('pay')
+    // Clamped on the way in, not on the way to the store.
+    expect(hit.name.length).toBeLessThan(400)
+  })
+})
+
+describe('the trail reports (M3)', () => {
+  it('takes a typedInto the host can vouch for, and carries identity only', async () => {
+    arm()
+    iframe.focus()
+    setUserActivation(true)
+    fromFrame({
+      type: 'typedInto',
+      hit: { role: 'textbox', name: 'Email', tag: 'input', box: { x: 0, y: 0, width: 1, height: 1 } },
+    })
+    await flushFrame()
+    expect(handlers.onTypedInto).toHaveBeenCalledTimes(1)
+    const hit = (handlers.onTypedInto as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]
+    expect(JSON.stringify(hit)).not.toContain('value')
+  })
+
+  it('refuses a typedInto the user could not have made — the same gate a click gets', async () => {
+    arm()
+    composer.focus()
+    setUserActivation(true)
+    fromFrame({
+      type: 'typedInto',
+      hit: { role: 'textbox', name: 'Email', tag: 'input', box: { x: 0, y: 0, width: 1, height: 1 } },
+    })
+    await flushFrame()
+    expect(handlers.onTypedInto).not.toHaveBeenCalled()
+
+    // ...and with the frame focused but no activation behind it.
+    iframe.focus()
+    setUserActivation(false)
+    fromFrame({
+      type: 'typedInto',
+      hit: { role: 'textbox', name: 'Email', tag: 'input', box: { x: 0, y: 0, width: 1, height: 1 } },
+    })
+    await flushFrame()
+    expect(handlers.onTypedInto).not.toHaveBeenCalled()
+  })
+
+  it('takes a navigation as a REPORT — no activation needed, a redirect is real', async () => {
+    arm()
+    fromFrame({ type: 'navigated', pathname: '/checkout', hash: '#pay' })
+    await flushFrame()
+    expect(handlers.onNavigated).toHaveBeenCalledWith('/checkout#pay')
+  })
+
+  it('neutralises a BIDI override in a route before it can become a trail entry', async () => {
+    // The route reached storage through a bare `.slice()` — bounded in length
+    // and cleaned of nothing — so one right-to-left override rode into the
+    // trail, the stamp and the `canvas_review` payload, reversing the line for
+    // the person reading it while the agent was handed the unreversed bytes.
+    // The 2026-08-15 finding through a new door; the same answer, which is the
+    // one cleaner both sides of this pipeline already run.
+    arm()
+    const RLO = String.fromCharCode(0x202e)
+    const BOM = String.fromCharCode(0xfeff)
+    fromFrame({ type: 'navigated', pathname: `/checkout${RLO}nimda/`, hash: `#${BOM}pay` })
+    await flushFrame()
+    const route = (handlers.onNavigated as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as string
+    expect(route).toBe('/checkoutnimda/#pay')
+    expect(route).not.toContain(RLO)
+    expect(route).not.toContain(BOM)
+  })
+
+  it('refuses a navigation with no pathname, and bounds an enormous one', async () => {
+    arm()
+    fromFrame({ type: 'navigated', hash: '#x' })
+    await flushFrame()
+    expect(handlers.onNavigated).not.toHaveBeenCalled()
+
+    fromFrame({ type: 'navigated', pathname: '/' + 'a'.repeat(2000), hash: '' })
+    await flushFrame()
+    const route = (handlers.onNavigated as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as string
+    expect(route.length).toBeLessThanOrEqual(512)
+  })
+
+  it('delivers trail reports in ARRIVAL order, after the click of the same frame', async () => {
+    arm()
+    iframe.focus()
+    setUserActivation(true)
+    const order: string[] = []
+    ;(handlers.onContentClick as unknown as { mockImplementation: (f: () => void) => void }).mockImplementation(() =>
+      order.push('click'),
+    )
+    ;(handlers.onTypedInto as unknown as { mockImplementation: (f: () => void) => void }).mockImplementation(() =>
+      order.push('typed'),
+    )
+    ;(handlers.onNavigated as unknown as { mockImplementation: (f: () => void) => void }).mockImplementation(() =>
+      order.push('navigated'),
+    )
+    fromFrame({ type: 'contentClick', pageX: 1, pageY: 1 })
+    fromFrame({
+      type: 'typedInto',
+      hit: { role: 'textbox', name: 'Email', tag: 'input', box: { x: 0, y: 0, width: 1, height: 1 } },
+    })
+    fromFrame({ type: 'navigated', pathname: '/done', hash: '' })
+    await flushFrame()
+    expect(order).toEqual(['click', 'typed', 'navigated'])
+  })
+
+  it('caps how many trail reports one frame may deliver', async () => {
+    arm()
+    for (let i = 0; i < MAX_INBOUND_TRAIL_PER_FRAME + 12; i++) {
+      fromFrame({ type: 'navigated', pathname: `/n-${i}`, hash: '' })
+    }
+    await flushFrame()
+    expect(handlers.onNavigated).toHaveBeenCalledTimes(MAX_INBOUND_TRAIL_PER_FRAME)
   })
 })
 
@@ -418,7 +553,7 @@ describe('the frame cannot spend the host main thread', () => {
     expect(handlers.onContentClick).not.toHaveBeenCalled()
     await flushFrame()
     expect(handlers.onContentClick).toHaveBeenCalledTimes(1)
-    expect(handlers.onContentClick).toHaveBeenCalledWith(499, 499)
+    expect(handlers.onContentClick).toHaveBeenCalledWith(499, 499, null)
   })
 
   it('schedules ONE flush per frame, not one per message', async () => {

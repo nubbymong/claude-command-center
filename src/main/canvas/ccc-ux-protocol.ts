@@ -1192,6 +1192,61 @@ export interface FrameNavigationEmitter {
   on(event: 'will-frame-navigate', listener: (details: CanvasFrameNavigationDetails) => void): unknown
 }
 
+/** One ALLOWED full-document navigation inside a canvas frame (M3). */
+export interface CanvasFrameNavigatedFact {
+  canvasId: string
+  versionId: string
+  /** pathname + hash of the target, capped. Page-chosen text: it is the URL the
+   *  document navigated to, so it is marked as page-reported wherever shown. */
+  route: string
+}
+
+type CanvasFrameNavigatedSink = (fact: CanvasFrameNavigatedFact) => void
+
+let frameNavigatedSink: CanvasFrameNavigatedSink | null = null
+
+/**
+ * Where an allowed canvas-frame navigation gets reported (M3 action trail).
+ *
+ * A SINK rather than a parameter on the installer, because the guard is
+ * installed from `main/index.ts` (which holds the window) while the thing that
+ * needs to hear about it is the canvas IPC layer (which holds the canvas →
+ * session mapping and the push). One registration point keeps the guard itself
+ * free of both.
+ */
+export function setCanvasFrameNavigatedSink(sink: CanvasFrameNavigatedSink | null): void {
+  frameNavigatedSink = sink
+}
+
+/** Longest route reported. Matches the shared stamp bound — the trail and the
+ *  stamp show the same kind of string and must agree about how long it can be. */
+const MAX_REPORTED_ROUTE_CHARS = 512
+
+/**
+ * The route a canvas URL points at, as pathname + hash — or null when it is not
+ * a canvas URL at all.
+ *
+ * NEVER THE QUERY STRING. A query is where applications put tokens, ids and
+ * search terms, and the trail's whole discipline is structure without content;
+ * the route says WHERE the user went, and that is the pathname.
+ */
+function reportableRoute(url: string): { canvasId: string; versionId: string; route: string } | null {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== `${CCC_UX_SCHEME}:`) return null
+  const segments = parsed.pathname.split('/').filter((s) => s.length > 0)
+  const versionId = segments[0] ?? ''
+  if (!CANVAS_ID_RE.test(parsed.hostname) || !CANVAS_VERSION_ID_RE.test(versionId)) return null
+  // The path BELOW the version id is what the page calls its route; the version
+  // segment is our own addressing and would be noise in every trail line.
+  const route = `/${segments.slice(1).join('/')}${parsed.hash}`.slice(0, MAX_REPORTED_ROUTE_CHARS)
+  return { canvasId: parsed.hostname, versionId, route }
+}
+
 /**
  * The ONE navigation an unidentified frame is allowed to be: the canvas pane's
  * own iframe, which has committed nothing yet (`frame.url === ''`), taking its
@@ -1204,6 +1259,21 @@ export interface FrameNavigationEmitter {
  * rather than to any first hop: a frame nobody can identify navigating OFF the
  * scheme is the exfiltration shape, not a mount.
  */
+/** Tell the sink about an allowed navigation. Never lets a listener's throw
+ *  reach the guard: the guard's job is the refusal, and a reporting failure must
+ *  not change a navigation decision. */
+function reportFrameNavigation(url: string): void {
+  const sink = frameNavigatedSink
+  if (!sink) return
+  const fact = reportableRoute(url)
+  if (!fact) return
+  try {
+    sink(fact)
+  } catch (err) {
+    console.warn('[ccc-ux] frame-navigation listener failed:', err)
+  }
+}
+
 function isCanvasPaneMount(details: CanvasFrameNavigationDetails): boolean {
   const parentUrl = details.frame?.parent?.url
   if (typeof parentUrl !== 'string' || parentUrl.length === 0) return false
@@ -1282,6 +1352,16 @@ export function installCanvasFrameNavigationGuard(contents: FrameNavigationEmitt
         )
         return
       }
+      // ALLOWED, and it is a canvas URL: report it for the Testing action trail
+      // (M3). A full-document navigation never reaches the in-page bridge's
+      // `navigated` event — the document that would have sent it is being
+      // replaced — so without this the trail simply loses every real page load.
+      //
+      // Reported from MAIN's own reading of the target URL, and the session is
+      // resolved downstream from main's canvas → session map: the page has no
+      // say in which session hears about this, which is the property that keeps a
+      // report from becoming a cross-session write primitive.
+      reportFrameNavigation(details.url)
     } catch (err) {
       // A throw inside an Electron event listener does not cancel anything, so
       // failing closed has to be explicit.

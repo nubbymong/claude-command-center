@@ -430,6 +430,129 @@ function install(): void {
     { capture: true, passive: false },
   )
 
+  // ── Testing-mode trail reports (M3) ───────────────────────────────────────
+  //
+  // Two events, and the same rule governs both: they say WHAT HAPPENED and never
+  // WHAT WAS ENTERED. `navigated` carries a route, `typedInto` carries the field's
+  // identity, and there is no shape of either that could carry a value. That is
+  // the same line the key relay above draws — relaying a page's real keystrokes
+  // would be a keylogger wearing a feature's name — and it holds here even though
+  // these two are the events a "what did the user do" feature would most want to
+  // fatten.
+  //
+  // NOT gated on `hoverReporting`. x-ray Off means the page does no per-mousemove
+  // work; these fire on route changes and on the first input of a focus session,
+  // which is a handful of events in a whole run, not per-frame work. The trail is
+  // the record of a TEST, and a test run with the overlays turned off is still a
+  // test.
+
+  /** Longest route reported. Matches the shared stamp bound. */
+  const MAX_ROUTE_CHARS = 512
+  /** At most four navigation reports a second: a router that re-pushes in a loop
+   *  is a page spending the host's thread, and the trail only needs the fact. */
+  const NAVIGATED_MIN_INTERVAL_MS = 250
+
+  let lastNavigatedAt = 0
+  let lastRoute = ''
+  let navigatedPending = false
+
+  function currentRoute(): { pathname: string; hash: string } {
+    return {
+      pathname: String(location.pathname || '').slice(0, MAX_ROUTE_CHARS),
+      hash: String(location.hash || '').slice(0, MAX_ROUTE_CHARS),
+    }
+  }
+
+  function reportNavigated(): void {
+    const route = currentRoute()
+    const key = route.pathname + route.hash
+    // The route the trail already knows about. A router that replaces state
+    // without moving is not a navigation, and reporting it would fill the trail
+    // with lines saying nothing changed.
+    if (key === lastRoute) return
+    const now = Date.now()
+    const wait = NAVIGATED_MIN_INTERVAL_MS - (now - lastNavigatedAt)
+    if (wait > 0) {
+      // COALESCED, not dropped: the last route of a burst is the one the user
+      // ended on, and that is the one the trail wants. One timer at a time.
+      if (navigatedPending) return
+      navigatedPending = true
+      setTimeout(() => {
+        navigatedPending = false
+        reportNavigated()
+      }, wait)
+      return
+    }
+    lastNavigatedAt = now
+    lastRoute = key
+    send({ ns: NS, type: 'navigated', pathname: route.pathname, hash: route.hash })
+  }
+
+  // Seeded with where the document already is, so the first load is not reported
+  // as a navigation — the trail's job starts once the user moves.
+  lastRoute = (() => {
+    const route = currentRoute()
+    return route.pathname + route.hash
+  })()
+
+  window.addEventListener('hashchange', reportNavigated, { passive: true })
+  window.addEventListener('popstate', reportNavigated, { passive: true })
+
+  // THE ONE PLACE THIS SCRIPT WRITES A PAGE GLOBAL, and it is worth being exact
+  // about what that costs. A History API route change fires NO event at all —
+  // `pushState` is silent by design — so a single-page app can move through a
+  // whole checkout flow without the host hearing one thing. The wrapper calls
+  // through first, returns the original's own result, and reports afterwards:
+  // nothing about the navigation is prevented, retargeted or altered, which is
+  // the D8 line ("content is never commanded"). It is the same class of change
+  // the analysis chunk already makes (axe assigns `window.axe` and polyfills
+  // `elementsFromPoint`) — page globals move, nothing the page RENDERS does.
+  //
+  // A page that replaces `history.pushState` after us simply is not reported, in
+  // exactly the way this script's header says a page can decline to be reported
+  // on. That is a stated non-goal, not a hole this wrapper opens.
+  for (const method of ['pushState', 'replaceState'] as const) {
+    const original = window.history?.[method]
+    if (typeof original !== 'function') continue
+    try {
+      window.history[method] = function (this: History, ...args: Parameters<History['pushState']>) {
+        const result = original.apply(this, args)
+        try {
+          reportNavigated()
+        } catch {
+          /* reporting must never break the page's own navigation */
+        }
+        return result
+      }
+    } catch {
+      /* a frozen History is a page that will not be reported on; see above */
+    }
+  }
+
+  // "The user typed into Email" — ONCE per focus session per field, and never a
+  // keystroke or a value. Reset on blur, so returning to a field reports again;
+  // that is what makes a re-visit visible in the trail without making the trail
+  // per-character.
+  let typedTarget: Element | null = null
+  document.addEventListener(
+    'input',
+    (event: Event) => {
+      const target = event.target
+      if (!(target instanceof Element) || !isEditableTarget(target)) return
+      if (target === typedTarget) return
+      typedTarget = target
+      send({ ns: NS, type: 'typedInto', hit: describe(target) })
+    },
+    { capture: true, passive: true },
+  )
+  document.addEventListener(
+    'blur',
+    () => {
+      typedTarget = null
+    },
+    { capture: true, passive: true },
+  )
+
   function announceReady(): void {
     send({ ns: NS, type: 'ready' })
     send({ ns: NS, type: 'viewport', viewport: viewportInfo() })

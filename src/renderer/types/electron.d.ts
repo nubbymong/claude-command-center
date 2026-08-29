@@ -44,15 +44,22 @@ export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeveri
 import type {
   CanvasAnnotationDraft, CanvasChangedEvent, CanvasRenderSource, CanvasReviewChangedEvent,
   CanvasReviewState, CanvasSketchExport, CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasState,
-  ReclaimableCanvas,
+  ComposerDraftInput, EvidenceCaptureResult, EvidenceStateStamp, ForceClosures, Rect,
+  CanvasDismissRefusal, CanvasDismissResult, CanvasLibraryFilter, CanvasLibraryResult, CanvasLibraryTab,
+  CanvasResumeResult, ResumableRow,
+  TrailEntry,
 } from '../../shared/canvas'
 export type {
-  AnchorRef, Annotation, AnnotationScope, AnnotationState,
+  AnchorRef, Annotation, AnnotationScope, AnnotationState, ForceClosures,
   CanvasAnnotationDraft, CanvasChangedEvent, CanvasHandle, CanvasHitInfo, CanvasMode, CanvasRenderSource,
-  CanvasReviewChangedEvent, CanvasReviewState, CanvasSketchExport,
+  CanvasReviewChangedEvent, CanvasReviewState, CanvasSketchExport, ComposerDraft, ComposerDraftInput,
   CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasSnapshotResult,
   CanvasState, CanvasVersion, CanvasVersionSource, CanvasViewportInfo,
-  FocusObject, ReclaimableCanvas, Review, CanvasLibraryEntry,
+  FocusObject, Review, CanvasLibraryEntry,
+  // Testing-mode evidence (M3): the renderer builds the stamp and the trail and
+  // renders the recall view from them.
+  AnnotationEvidence, EvidenceCaptureRefusal, EvidenceCaptureResult, EvidenceStateStamp,
+  FieldFill, StampTarget, TrailEntry,
 } from '../../shared/canvas'
 import type {
   ChannelPayload,
@@ -385,19 +392,71 @@ export interface ElectronAPI {
      *  answers exactly once per requestId via sendSnapshotResult. */
     onSnapshotRequest: (cb: (e: CanvasSnapshotRequestEvent) => void) => () => void
     sendSnapshotResult: (reply: CanvasSnapshotReply) => void
-    /** Canvases from earlier sessions this one could reclaim (read-only).
-     *  `openTileSessionIds` are the tiles the user has on screen; main uses
-     *  them only to EXCLUDE candidates whose own tile is still live. */
-    listReclaimable: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ReclaimableCanvas[]>
+    /** THE PROJECT LIBRARY (M4), one row per ARTEFACT RUN. Search, tab, chip
+     *  and the cap are applied in MAIN, so `truncated` is honest and another
+     *  live session's in-flight work never crosses the boundary at all. */
+    libraryList: (args: {
+      sessionId: string
+      openTileSessionIds?: string[]
+      query?: string
+      tab?: CanvasLibraryTab
+      filter?: CanvasLibraryFilter
+      sort?: 'recent'
+    }) => Promise<CanvasLibraryResult>
+    /** OWNERLESS IN-FLIGHT canvases on this project. Pure read; nothing moves
+     *  until the user picks one. Each row carries the owner it was listed
+     *  with — pass it straight back to `resume`. */
+    listResumables: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<ResumableRow[]>
+    /** RESUME one, first-wins. `expectedOwnerSessionId` is the row's own
+     *  `expectedOwnerSessionId`: main compares and sets in one synchronous
+     *  step, so a second session racing you is told 'changed'. */
+    resume: (args: {
+      sessionId: string
+      canvasId: string
+      expectedOwnerSessionId: string
+      openTileSessionIds?: string[]
+    }) => Promise<CanvasResumeResult>
+    /** DISCARD an in-flight canvas and its evidence. Owner, or a same-project
+     *  caller when it is ownerless; never while another session is live-owner. */
+    dismiss: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<CanvasDismissResult>
+    /** READ a COMPLETED canvas owned by another session in this project, for
+     *  the read-only view. Never transfers ownership and grants no write. */
+    getReadonly: (args: { sessionId: string; canvasId: string }) => Promise<CanvasState | null>
     listAll: (args?: { openTileSessionIds?: string[]; sessionId?: string }) => Promise<CanvasLibraryEntry[]>
-    deleteCanvas: (args: { canvasId: string }) => Promise<{ ok: boolean }>
-    /** Archive/unarchive one artifact (item C): reversible, returns the state. */
-    archiveArtifact: (args: { canvasId: string; versionId: string; archived: boolean }) => Promise<{ ok: boolean; state: CanvasState | null }>
-    /** Permanently delete one artifact, its versions and their review notes. */
-    deleteArtifact: (args: { canvasId: string; versionId: string }) => Promise<
-      { ok: true; deletedVersions: number; notesDeleted: number } | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' }
+    /** The user deletes a canvas and its files. OWNER-GUARDED since M4:
+     *  `sessionId` says who is asking, and a canvas a live other session owns —
+     *  or somebody else's signed-off one — is refused with a reason. */
+    deleteCanvas: (args: {
+      sessionId: string
+      canvasId: string
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; reason?: CanvasDismissRefusal }>
+    /** Archive/unarchive one artifact (item C): reversible, returns the state.
+     *  Owner-guarded since M4, same rule as delete. */
+    archiveArtifact: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      archived: boolean
+      openTileSessionIds?: string[]
+    }) => Promise<{ ok: boolean; state: CanvasState | null; reason?: CanvasDismissRefusal }>
+    /** Permanently delete one artifact, its versions and their review notes.
+     *  Owner-guarded since M4, same rule as delete. */
+    deleteArtifact: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      openTileSessionIds?: string[]
+    }) => Promise<
+      | { ok: true; deletedVersions: number; notesDeleted: number }
+      | { ok: false; reason: 'not-found' | 'only-artifact' | 'unsafe' | CanvasDismissRefusal }
     >
-    /** The user reclaims a named canvas — the only path that moves ownership. */
+    /** OPEN HERE: point this session at a canvas IT ALREADY OWNS. Transfers
+     *  nothing; a foreign canvas is refused (taking one is `resume`). */
     reclaim: (args: {
       sessionId: string
       canvasId: string
@@ -407,34 +466,61 @@ export interface ElectronAPI {
     reviewGetState: (args: { sessionId: string }) => Promise<CanvasReviewState | null>
     annotationUpsert: (args: { sessionId: string; draft: CanvasAnnotationDraft }) => Promise<{ state: CanvasReviewState; annotationId: string }>
     annotationDelete: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
-    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision?: 'approve' | 'reject' }) => Promise<CanvasReviewState>
+    /** The decision is REQUIRED — the user's word is version-level. */
+    reviewSubmit: (args: { sessionId: string; reviewId: string; sketches: CanvasSketchExport[]; decision: 'approve' | 'reject' }) => Promise<CanvasReviewState>
     versionVerdict: (args: { sessionId: string; versionId?: string; state: 'approved' | 'rejected' | 'dismissed'; note?: string }) => Promise<CanvasState | { error: string }>
     versionReopen: (args: { sessionId: string; versionId: string }) => Promise<CanvasState | { error: string }>
-    annotationResolve: (args: {
-      sessionId: string
-      /** The canvas the panel was showing. Refused if the session has moved on. */
-      canvasId: string
-      annotationId: string
-      action: 'approve' | 'dismiss' | 'reannotate' | 'stale'
-    }) => Promise<{ state: CanvasReviewState; reannotationId?: string }>
-    /** The user puts a closed note back in play — the undo half of close-out. */
+    /** The user puts a closed note back in play. With `reviewReopen`, one of the
+     *  only two writes that may revive a settled round. */
     annotationReopen: (args: { sessionId: string; annotationId: string }) => Promise<CanvasReviewState>
+    /** The user puts a whole settled ROUND back in play. */
+    reviewReopen: (args: { sessionId: string; canvasId: string; reviewId: string }) => Promise<CanvasReviewState>
     /** The user has these addressed notes on screen — the release side of the
      *  agent close-out barrier. Renderer-only; no MCP tool reaches it. */
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
-    /** Bulk close-out for one canvas whose work has shipped. Clears, never
-     *  deletes. `ok: false` means the store could not be read. */
-    reviewCloseOut: (args: { canvasId: string }) => Promise<{ ok: boolean; closed?: number; reviews?: string[] }>
-    /** One sweep: everything waiting on the user across this session's own
-     *  canvases (close-outs + awaiting-first-review clears). The Canvas
-     *  button's right-click. `unreadable` mirrors the queue's "unknown". */
-    reviewDismissAll: (args: { sessionId: string; openTileSessionIds?: string[] }) => Promise<{ closedNotes: number; closedReviews: number; clearedAwaiting: number; unreadable: number }>
+    /** Persist the half-written note (W14): text, decision, target, pasted
+     *  images, sketch scene. Owner-scoped; no MCP tool reaches it. */
+    composerDraftSet: (args: { sessionId: string; canvasId: string; draft: ComposerDraftInput }) => Promise<CanvasReviewState>
+    /** Drop it — the round was submitted, or the composer was emptied. */
+    composerDraftClear: (args: { sessionId: string; canvasId: string }) => Promise<CanvasReviewState>
     /** Sign the subject off (#476). Refused (`ok:false` + reason) while
      *  anything is owed either way; the pane then shows its front page. */
     complete: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** Force-close what is owed, then sign off (W3). USER-only. */
+    completeForce: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
+    /** What that force would close, so the armed confirm can name it. `null`
+     *  for an unreadable store, or a session that does not own the canvas. */
+    describeForceClosures: (args: { sessionId: string; canvasId: string }) => Promise<ForceClosures | null>
     /** The one-click undo: clear a canvas's completed stamp. */
     completeReopen: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
     onReviewChanged: (cb: (e: CanvasReviewChangedEvent) => void) => () => void
+    /** TESTING MODE (M3): screenshot the framed page and hold it, with the state
+     *  stamp and the trail slice taken at the same instant, until a note locks
+     *  it. The rect is clamped in main; refusals are one word from a closed set
+     *  ('rate' | 'pack-full' | 'capture-failed' | 'not-owner' | 'not-uat'). */
+    evidenceCapture: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      rect: Rect
+      stamp: EvidenceStateStamp
+      trail: TrailEntry[]
+    }) => Promise<EvidenceCaptureResult>
+    /** The user cancelled: the pending capture is thrown away. */
+    evidenceDiscard: (args: { sessionId: string; canvasId: string; evidenceId: string }) => Promise<{ ok: boolean }>
+    /** Read one image the canvas RECORDS (evidence shot, pasted image, sketch
+     *  export, composer image). A path that is not on the record answers null. */
+    evidenceRead: (args: { sessionId: string; canvasId: string; path: string }) => Promise<{ dataUrl: string } | null>
+    /** Name the test pack; `null` clears it back to the generated default. A
+     *  refused rename answers with the state main kept. */
+    setPackName: (args: {
+      sessionId: string
+      canvasId: string
+      versionId: string
+      name: string | null
+    }) => Promise<CanvasState | null>
+    /** A full-document navigation inside the canvas frame, for the action trail. */
+    onFrameNavigated: (cb: (e: { sessionId: string; canvasId: string; route: string }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<any>

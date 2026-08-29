@@ -243,6 +243,45 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-vision.jpg',
   },
   {
+    // The Canvas Explained page (2.1 canvas rework, M4): a full-page explainer
+    // of the review model, opened from the card on the canvas front page. It
+    // exists because the model has real depth users kept missing -- versions,
+    // what a note stores, evidence records -- and the front-page card is only
+    // discoverable once you are already on the canvas, so this guide card
+    // EMBEDS the page itself (View Canvas Explained) as a route that works
+    // with zero sessions open.
+    id: 'canvas-explained',
+    title: 'Canvas Explained',
+    sinceVersion: '2.1.0-rc.10',
+    section: 'integrations',
+    summary:
+      'A one-page explainer built into the Agent Canvas: how an artefact moves through versions, what a review stores (the element you anchored to, your drawings, pasted images, and your words, all kept on the version they were made against), and what a Testing note locks together as evidence.',
+    highlights: [
+      'The **artefact** model in one diagram -- versions increment, and each review with its objects is stored on its version',
+      'Rejecting a version **never loses your notes** -- the agent reads them to build the next one, and History keeps the trail',
+      'The **Mockup, Plan, and Testing** loops drawn end to end, including the evidence record one saved Testing note stores',
+      'Plain terms where they apply: a note reads **resolved** once the agent has acted on it; a review reads **settled** once every note is closed',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Agent Canvas front page → Canvas Explained card' },
+      // Second route on purpose: the front-page card lives inside an open
+      // session's canvas pane; the guide one needs no session at all.
+      { label: 'Guide', value: 'Feature Guide → this card → View Canvas Explained' },
+      { label: 'Back', value: '‹ Home in the page header' },
+    ],
+    proTip:
+      'Skim it once before your first review. Knowing that every note is stored on its version -- and that rejecting never loses them -- changes how freely you annotate.',
+    bullets: [
+      'One page that explains the **whole canvas review model**',
+      'Versions, reviews, and **what each note stores**, drawn as diagrams',
+      'Open it from the **Canvas Explained** card on the canvas front page, or right here via **View Canvas Explained**',
+    ],
+    // No dedicated capture yet; the Vision shot is the nearest canvas surface,
+    // the same stand-in the Agent Canvas card uses. (Future capture:
+    // step-canvas-explained.jpg.)
+    screenshotFilename: 'step-vision.jpg',
+  },
+  {
     id: 'webview',
     title: 'Webview Pane',
     sinceVersion: '1.4.0',
@@ -278,8 +317,12 @@ export const trainingSteps: TrainingStep[] = [
   {
     id: 'excalidraw',
     // "Sketchpad", not "Canvas": the Agent Canvas is a different feature that
-    // shares the toolbar button, and the in-app landing already calls this one
-    // the sketchpad ("Open the sketchpad instead").
+    // shares the toolbar button. The v8 canvas front page dropped its "Open
+    // the sketchpad instead" button, so the pad currently has NO front-page
+    // entry -- a session already showing it keeps it (the store value
+    // survives; see CanvasEmptyView). The trigger copy below states that
+    // plainly instead of pointing at the removed door; restoring a real route
+    // is an owner-flagged follow-up, and this copy changes with it.
     title: 'Excalidraw Sketchpad',
     sinceVersion: '1.4.0',
     section: 'productivity',
@@ -293,7 +336,7 @@ export const trainingSteps: TrainingStep[] = [
       'Replaces the terminal in place -- no fullscreen modal eating the toolbar',
     ],
     howToTrigger: [
-      { label: 'Open', value: 'Session toolbar → Canvas → Open the sketchpad instead' },
+      { label: 'Open', value: 'No front-page entry right now -- the canvas front page is the agent’s review surface; a session already on the sketchpad keeps it' },
       { label: 'Switch back', value: 'Agent Canvas (bottom-right), or Canvas again to close the pane' },
       { label: 'New drawing', value: 'Left rail → + (rename with ✎, delete with ×)' },
     ],

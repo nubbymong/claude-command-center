@@ -151,19 +151,28 @@ describe('form-state semantics (HARD P2 requirement)', () => {
   })
 
   it('reports how much every field holds and the contents of none of them', async () => {
-    // There is no longer a secret field and an ordinary one — the fixture's
-    // email and its password are treated identically, which is the property.
-    // See canvas-bridge-field-values.test.ts for why the distinction went away.
+    // No heuristic decides which field is secret — that is the property, and why
+    // the old "is this name sensitive?" guess went away (see
+    // canvas-bridge-field-values.test.ts). Every field reports a LENGTH, because
+    // overflow and truncation review needs one.
     const nodes = flatten((await snapshot()).root)
     const email = nodes.find((n) => n.state?.type === 'email')
     expect(email?.state?.valueLength).toBe('nick@example.com'.length)
 
-    const password = nodes.find((n) => n.state?.type === 'password')
-    expect(password?.state?.valueLength).toBe('hunter2'.length)
-
     const serialized = JSON.stringify(nodes)
     expect(serialized).not.toContain('hunter2')
     expect(serialized).not.toContain('nick@example.com')
+  })
+
+  it('reports NO length for a password — the one field whose length is the secret’s shape', async () => {
+    // The single exception to the rule above, and not a heuristic: the PAGE has
+    // declared what the field holds, so there is nothing to guess and nothing
+    // legitimate lost. `type` still says `password`, so a reviewer still sees
+    // the field is there — only the exact count goes (M3 adversarial pass).
+    const nodes = flatten((await snapshot()).root)
+    const password = nodes.find((n) => n.state?.type === 'password')
+    expect(password).toBeDefined()
+    expect(password?.state?.valueLength).toBeUndefined()
   })
 
   it('reports effective opacity so faded-to-nothing content is visible in text', async () => {

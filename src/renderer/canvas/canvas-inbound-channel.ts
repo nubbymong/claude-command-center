@@ -53,12 +53,14 @@
 
 import {
   CANVAS_BRIDGE_NS,
+  MAX_STAMP_ROUTE_CHARS,
   type CanvasBridgeEvent,
   type CanvasHitInfo,
   type CanvasViewportInfo,
   type CanvasZoomAction,
   canvasOrigin,
 } from '../../shared/canvas'
+import { canvasPageText } from '../../shared/canvas-page-text'
 import { finite, safeHit, safeViewport } from '../utils/canvas-geometry-guard'
 
 /**
@@ -247,12 +249,53 @@ export function withinInboundSizeBounds(value: unknown): boolean {
   return true
 }
 
+/**
+ * How many trail reports one frame may deliver (M3).
+ *
+ * `typedInto` is emitted once per focus session per target and `navigated` is
+ * coalesced in the page, so a real document produces at most a couple per frame.
+ * The cap is here because the ORDERED list below is the one inbound queue whose
+ * length the page influences: latest-wins bounds the others by construction, and
+ * this one has to bound itself. Over it the extra reports are dropped — they
+ * have already been charged against the flood budget, and a page spending eight
+ * trail entries a frame is not describing a user's actions.
+ */
+export const MAX_INBOUND_TRAIL_PER_FRAME = 8
+
 export interface CanvasInboundHandlers {
   onReady: () => void
   onViewport: (viewport: CanvasViewportInfo) => void
   onPointer: (hit: CanvasHitInfo | null) => void
-  /** A click the host could verify was a real user click inside the frame. */
-  onContentClick: (pageX: number, pageY: number) => void
+  /**
+   * A click the host could verify was a real user click inside the frame.
+   *
+   * `hit` is the page's own account of WHAT was clicked, and it used to be
+   * dropped here. The action trail (M3) needs it: "click Checkout" is the line
+   * that makes a defect reproducible, and the alternative — re-asking the frame
+   * what is at those coordinates — is a second round trip for a fact the report
+   * already carried. Identity only, bounded by `safeHit`, and shown marked as
+   * the page's word wherever it is rendered.
+   */
+  onContentClick: (pageX: number, pageY: number, hit: CanvasHitInfo | null) => void
+  /**
+   * The user typed into a field in the page (M3 trail) — WHICH field, once per
+   * focus session, and never a keystroke.
+   *
+   * Gated exactly as a click is (frame focused, host not typing, live user
+   * activation): it writes an evidence record, so a page must not be able to
+   * manufacture one while the user is elsewhere.
+   */
+  onTypedInto: (hit: CanvasHitInfo) => void
+  /**
+   * The page changed route (M3 trail) — pathname + hash, page-reported.
+   *
+   * A REPORT, not a gesture: a redirect or a router transition is a real
+   * navigation with no user input behind it, so requiring activation here would
+   * drop the honest majority. What bounds it is the page-side coalescing, the
+   * flood budget, the per-frame cap above and the trail ring itself; what keeps
+   * it honest is that every surface renders the route as the page's claim.
+   */
+  onNavigated: (route: string) => void
   onContentKey: (key: 'Escape' | 'ArrowUp') => void
   /** Zoom intent relayed from the frame (#368), coalesced per animation frame:
    *  `steps` is the net ladder movement (+in / −out), `reset` wins over steps. */
@@ -400,8 +443,12 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
 
   let pendingViewport: CanvasViewportInfo | null = null
   let pendingPointer: { hit: CanvasHitInfo | null } | null = null
-  let pendingClick: { pageX: number; pageY: number } | null = null
+  let pendingClick: { pageX: number; pageY: number; hit: CanvasHitInfo | null } | null = null
   let pendingZoom: { steps: number; reset: boolean } | null = null
+  /** Trail reports, in ARRIVAL ORDER — the one queue here that is a list rather
+   *  than a latest-wins slot, because a trail read back out of order is a
+   *  reproduction that does not reproduce. Capped per frame. */
+  let pendingTrail: Array<{ kind: 'typed'; hit: CanvasHitInfo } | { kind: 'navigated'; route: string }> = []
   let flushQueued = false
 
   const dispose = () => {
@@ -412,6 +459,7 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
     pendingPointer = null
     pendingClick = null
     pendingZoom = null
+    pendingTrail = []
   }
 
   // Latest wins. A page that reports twice inside one frame gets one delivery,
@@ -427,13 +475,23 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
       const pointer = pendingPointer
       const click = pendingClick
       const zoom = pendingZoom
+      const trail = pendingTrail
       pendingViewport = null
       pendingPointer = null
       pendingClick = null
       pendingZoom = null
+      pendingTrail = []
       if (viewport) handlers.onViewport(viewport)
       if (pointer) handlers.onPointer(pointer.hit)
-      if (click) handlers.onContentClick(click.pageX, click.pageY)
+      if (click) handlers.onContentClick(click.pageX, click.pageY, click.hit)
+      // AFTER the click, deliberately: a click that causes a navigation arrives
+      // first in real time, and the trail should read click-then-navigate — the
+      // causal order — rather than have the click's one-frame coalescing put it
+      // second. Within this list arrival order is preserved exactly.
+      for (const entry of trail) {
+        if (entry.kind === 'typed') handlers.onTypedInto(entry.hit)
+        else handlers.onNavigated(entry.route)
+      }
       if (zoom && (zoom.reset || zoom.steps !== 0)) handlers.onContentZoom(zoom)
     })
   }
@@ -538,6 +596,52 @@ export function createCanvasInboundChannel(options: CanvasInboundChannelOptions)
       pendingClick = {
         pageX: finite((msg as { pageX?: unknown }).pageX, 0),
         pageY: finite((msg as { pageY?: unknown }).pageY, 0),
+        // Identity only, clamped by the same guard the hover chip's is.
+        hit: msg.hit ? safeHit(msg.hit) : null,
+      }
+      queueFlush()
+      return
+    }
+    if (msg.type === 'typedInto') {
+      // The same gate a click gets, and for the same reason: this writes a line
+      // into an evidence record that is replayed to the agent, so the host has
+      // to be able to see for itself that the user was in the frame doing
+      // something at the time.
+      if (
+        !reportedClickIsPlausible({
+          activeElement: document.activeElement,
+          frameElement: options.getFrameElement(),
+          userActivation: hostUserActivation(),
+        })
+      ) {
+        return
+      }
+      const hit = (msg as { hit?: CanvasHitInfo | null }).hit
+      if (!hit) return
+      if (pendingTrail.length < MAX_INBOUND_TRAIL_PER_FRAME) {
+        pendingTrail.push({ kind: 'typed', hit: safeHit(hit) })
+      }
+      queueFlush()
+      return
+    }
+    if (msg.type === 'navigated') {
+      const pathname = (msg as { pathname?: unknown }).pathname
+      const hash = (msg as { hash?: unknown }).hash
+      if (typeof pathname !== 'string') return
+      // CLEANED with the shared page-text rule, not merely capped.
+      //
+      // A bare slice bounded the length and nothing else, so a route carrying a
+      // right-to-left override (U+202E) travelled intact into the trail, the
+      // stamp and the `canvas_review` payload — reversing the rest of the line
+      // for the person reading it while the agent was handed the unreversed
+      // bytes. That is the 2026-08-15 bidi finding arriving through a new door,
+      // and it takes the same answer: `canvasPageText` sheds Cc, Cf, Zl and Zp
+      // and applies the cap, and it is the ONE cleaner both sides of this
+      // pipeline run — every other page-reported string here (`safeHit`'s role,
+      // name and ux-id) already reaches storage through it.
+      const route = canvasPageText(`${pathname}${typeof hash === 'string' ? hash : ''}`, MAX_STAMP_ROUTE_CHARS)
+      if (pendingTrail.length < MAX_INBOUND_TRAIL_PER_FRAME) {
+        pendingTrail.push({ kind: 'navigated', route })
       }
       queueFlush()
       return

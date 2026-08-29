@@ -9,6 +9,7 @@ import SessionStatusStrip from './components/SessionStatusStrip'
 import WebviewPane from './components/WebviewPane'
 import AgentCanvasPane from './components/AgentCanvasPane'
 import LogsPane from './components/LogsPane'
+import { PaneFade } from './components/PaneFade'
 import { useWebviewStore } from './stores/webviewStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
 import { setupCanvasListener } from './stores/canvasStore'
@@ -1006,7 +1007,12 @@ export default function App() {
                     minHeight: 0,
                   }}
                 >
-                  <div
+                  {/* W23: the way back from the canvas fades in, the same
+                      150ms the pane fades in with. PaneFade is the div this
+                      used to be — a wrapper, never a re-key: re-keying here
+                      would remount xterm and take the scrollback with it. */}
+                  <PaneFade
+                    covered={isShowingExcalidraw}
                     className="flex-1 flex flex-col"
                     style={{
                       display: isShowingPartner || altPaneShowing ? 'none' : 'flex',
@@ -1035,9 +1041,10 @@ export default function App() {
                       provider={session.provider}
                       codexOptions={session.codexOptions}
                     />
-                  </div>
+                  </PaneFade>
                   {hasPartner && (
-                    <div
+                    <PaneFade
+                      covered={isShowingExcalidraw}
                       className="flex-1 flex flex-col"
                       style={{
                         display: isShowingPartner && !altPaneShowing ? 'flex' : 'none',
@@ -1084,7 +1091,7 @@ export default function App() {
                         shellOnly={true}
                         isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner && !altPaneShowing}
                       />
-                    </div>
+                    </PaneFade>
                   )}
                   {/* Alt-pane priority: Logs > Webview > Agent Canvas. Each
                       alternative pane replaces the underlying terminal panes.

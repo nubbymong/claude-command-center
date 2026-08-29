@@ -15,10 +15,12 @@ import type { Annotation, CanvasReviewState, CanvasVersion, Review } from '../..
 
 vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
 
+import { paneSketchProps } from './canvas-panel-harness'
 const CanvasNotesPanel = (await import('../../../src/renderer/components/CanvasNotesPanel')).default
 const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canvasReviewStore')
 
 const SID = 'session-1'
+const CID = 'canvas-1'
 const V2: CanvasVersion = {
   id: 'v2',
   mode: 'design',
@@ -88,33 +90,33 @@ const STATE: CanvasReviewState = {
   annotations: [OFFERED, PLAIN, PICKED],
 }
 
-const annotationResolve = vi.fn(async () => ({ state: STATE }))
 const ptyWrite = vi.fn()
 
 let container: HTMLDivElement
 let root: Root
 
+// No `annotationResolve` mock, deliberately: the channel is gone, and a mock
+// for a method the bridge no longer carries is a test that would keep passing
+// after the panel started calling something that does not exist.
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
   pty: { ...((globalThis as any).window?.electronAPI?.pty ?? {}), write: ptyWrite },
   canvas: {
     ...((globalThis as any).window?.electronAPI?.canvas ?? {}),
     reviewGetState: vi.fn(async () => STATE),
-    annotationResolve,
   },
 }
 
 async function render(): Promise<void> {
   await act(async () => {
     root.render(
-      <CanvasNotesPanel sessionId={SID} version={V2} getGlassApi={() => null} onReturnToTerminal={() => {}} />,
+      <CanvasNotesPanel sessionId={SID} version={V2} getGlassApi={() => null} onReturnToTerminal={() => {}} {...paneSketchProps()} canvasId={CID} />,
     )
   })
 }
 
 beforeEach(async () => {
   useCanvasReviewStore.getState().reset()
-  annotationResolve.mockClear()
   ptyWrite.mockClear()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -135,82 +137,22 @@ describe('variant chips on an addressed note', () => {
     const b = container.querySelector('[data-testid="note-variant-B"]')!
     expect(a.textContent).toContain('A · thin rule')
     expect(b.textContent).toContain('B · no rule')
-    // The plain Approve is still there beside them.
-    const row = chipRows[0].parentElement!
-    expect(row.textContent).toContain('Approve')
   })
 
-  it('clicking a chip approves WITH that key', async () => {
+  it('the chips are READ-ONLY labels, not buttons that approve', async () => {
+    // They used to be buttons: clicking one approved the note and named the
+    // winner. That click is gone with every other per-note verdict (W6) — the
+    // user picks in chat, which the agent records with canvas_pick, or simply
+    // says so in the next round`s notes. The chips stay because the version on
+    // screen renders all of them and a label is how the user tells them apart.
     await render()
-    await act(async () => {
-      ;(container.querySelector('[data-testid="note-variant-B"]') as HTMLButtonElement).click()
-    })
-    expect(annotationResolve).toHaveBeenCalledWith({
-      sessionId: SID,
-      canvasId: 'canvas-1',
-      annotationId: 'a1',
-      action: 'approve',
-      variantKey: 'B',
-    })
-  })
-
-  it('the plain Approve still approves WITHOUT a key', async () => {
-    await render()
-    const chipRow = container.querySelector('[data-testid="note-variant-chips"]')!
-    const approve = Array.from(chipRow.parentElement!.querySelectorAll('button')).find(
-      (el) => el.textContent === 'Approve',
-    )!
-    await act(async () => {
-      approve.click()
-    })
-    const args = annotationResolve.mock.calls[0][0] as Record<string, unknown>
-    expect(args.action).toBe('approve')
-    expect('variantKey' in args).toBe(false)
-  })
-})
-
-describe('the pick marker in chat', () => {
-  it('tells the agent once the store confirms the pick landed', async () => {
-    // Main confirms: a1 comes back approved with the clicked key.
-    annotationResolve.mockResolvedValueOnce({
-      state: {
-        ...STATE,
-        annotations: [{ ...OFFERED, state: 'approved', closedBy: 'user', closedFrom: 'addressed', chosenVariantKey: 'B' }, PLAIN, PICKED],
-      },
-    } as never)
-    await render()
-    await act(async () => {
-      ;(container.querySelector('[data-testid="note-variant-B"]') as HTMLButtonElement).click()
-    })
-    expect(ptyWrite).toHaveBeenCalledWith(SID, 'Picked B on a1 — approved · canvas_review R1\r')
-  })
-
-  it('stays silent when the write did not land', async () => {
-    // Default mock: the state comes back with a1 still addressed (main refused
-    // or the canvas moved) — announcing a decision nobody recorded would lie.
-    await render()
-    await act(async () => {
-      ;(container.querySelector('[data-testid="note-variant-B"]') as HTMLButtonElement).click()
-    })
-    expect(ptyWrite).not.toHaveBeenCalled()
-  })
-
-  it('a plain approve writes no marker', async () => {
-    annotationResolve.mockResolvedValueOnce({
-      state: {
-        ...STATE,
-        annotations: [{ ...OFFERED, state: 'approved', closedBy: 'user', closedFrom: 'addressed' }, PLAIN, PICKED],
-      },
-    } as never)
-    await render()
-    const chipRow = container.querySelector('[data-testid="note-variant-chips"]')!
-    const approve = Array.from(chipRow.parentElement!.querySelectorAll('button')).find(
-      (el) => el.textContent === 'Approve',
-    )!
-    await act(async () => {
-      approve.click()
-    })
-    expect(ptyWrite).not.toHaveBeenCalled()
+    const a = container.querySelector('[data-testid="note-variant-A"]')!
+    expect(a.tagName).toBe('SPAN')
+    expect(container.querySelectorAll('[data-testid="note-variant-chips"] button')).toHaveLength(0)
+    // …and no per-note Approve beside them. (The composer's decision bar still
+    // says Approve — that is the VERSION decision, which is the whole point.)
+    const noteRow = container.querySelector('[data-testid="note-variant-chips"]')!.parentElement!
+    expect(noteRow.querySelectorAll('button')).toHaveLength(0)
   })
 })
 

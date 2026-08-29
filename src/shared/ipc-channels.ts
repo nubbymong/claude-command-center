@@ -398,28 +398,47 @@ export const IPC = {
   CANVAS_CHANGED: 'canvas:changed',                    // push: main -> renderer (a render/switch happened)
   CANVAS_SNAPSHOT_REQUEST: 'canvas:snapshotRequest',   // push: main -> renderer: capture the live frame (id-correlated)
   CANVAS_SNAPSHOT_RESULT: 'canvas:snapshotResult',     // renderer -> main: the reply to one snapshotRequest
-  CANVAS_LIST_RECLAIMABLE: 'canvas:listReclaimable',   // renderer -> main: { sessionId, openTileSessionIds? } -> ReclaimableCanvas[] (read-only)
-  CANVAS_RECLAIM: 'canvas:reclaim',                    // renderer -> main: the USER moves a named canvas to this session
-  CANVAS_LIST_ALL: 'canvas:listAll',                   // renderer -> main: { openTileSessionIds?, sessionId? } -> CanvasLibraryEntry[] (the library, scoped to that session's project; read-only)
-  CANVAS_DELETE: 'canvas:delete',                      // renderer -> main: the USER deletes a canvas and its files
-  CANVAS_ARCHIVE_ARTIFACT: 'canvas:archiveArtifact',   // renderer -> main: { canvasId, versionId, archived } -> tuck an artifact into (or out of) the Archived history group (reversible)
-  CANVAS_DELETE_ARTIFACT: 'canvas:deleteArtifact',     // renderer -> main: { canvasId, versionId } -> permanently delete an artifact, its versions and their review notes
+  CANVAS_RECLAIM: 'canvas:reclaim',                    // renderer -> main: OPEN HERE — point this session at a canvas IT ALREADY OWNS. Transfers nothing; a foreign canvas is refused (M4: the transfer path is canvas:resume)
+  CANVAS_LIST_ALL: 'canvas:listAll',                   // renderer -> main: { openTileSessionIds?, sessionId? } -> CanvasLibraryEntry[] (the totals sweep, scoped to that session's project; read-only, and subject to the SAME privacy rule as libraryList)
+  CANVAS_DELETE: 'canvas:delete',                      // renderer -> main: the USER deletes a canvas and its files (refused when a LIVE other session owns it; a completed canvas is its owner's alone)
+  CANVAS_ARCHIVE_ARTIFACT: 'canvas:archiveArtifact',   // renderer -> main: { sessionId, canvasId, versionId, archived } -> tuck an artifact into (or out of) the Archived history group (reversible; owner-scoped)
+  CANVAS_DELETE_ARTIFACT: 'canvas:deleteArtifact',     // renderer -> main: { sessionId, canvasId, versionId } -> permanently delete an artifact, its versions and their review notes (owner-scoped)
+
+  // Agent Canvas M4 — the ownership lease: the project Library, resume/dismiss
+  // of ownerless in-flight work, and the read-only view of somebody else's
+  // memorialised canvas. The PRIVACY RULE — an in-flight canvas whose owner is
+  // LIVE and is not the caller is invisible — is enforced in MAIN, on both
+  // listing channels, never left to the renderer.
+  CANVAS_LIBRARY_LIST: 'canvas:libraryList',           // renderer -> main: { sessionId, openTileSessionIds, query?, tab?, filter?, sort? } -> { rows: CanvasLibraryRow[]; truncated }
+  CANVAS_LIST_RESUMABLES: 'canvas:listResumables',     // renderer -> main: { sessionId, openTileSessionIds } -> ResumableRow[] (ownerless in-flight, same project; independent of what the caller already owns)
+  CANVAS_RESUME: 'canvas:resume',                      // renderer -> main: { sessionId, canvasId, expectedOwnerSessionId, openTileSessionIds } -> compare-and-set adoption; first wins, everyone else gets 'changed'
+  CANVAS_DISMISS: 'canvas:dismiss',                    // renderer -> main: { sessionId, canvasId, openTileSessionIds } -> DISCARD an ownerless (or own) in-flight canvas and its evidence
+  CANVAS_GET_READONLY: 'canvas:getReadonly',           // renderer -> main: { sessionId, canvasId } -> CanvasState | null; COMPLETED canvases only for a non-owner, same project
 
   // Agent Canvas P3 — reviews & annotations (the review loop, spec §6)
   CANVAS_REVIEW_GET_STATE: 'canvas:reviewGetState',    // renderer -> main: { sessionId } -> CanvasReviewState | null
   CANVAS_ANNOTATION_UPSERT: 'canvas:annotationUpsert', // renderer -> main: create/update a draft note
   CANVAS_ANNOTATION_DELETE: 'canvas:annotationDelete', // renderer -> main: remove a draft note
-  CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports); C1: carries the decision (approve/reject)
-  CANVAS_VERSION_VERDICT: 'canvas:versionVerdict',     // renderer -> main: C1 zero-note verdict on a version { sessionId, versionId?, state, note? }
-  CANVAS_VERSION_REOPEN: 'canvas:versionReopen',       // renderer -> main: C1 reopen a version for review (later ready versions -> withdrawn)
-  CANVAS_ANNOTATION_RESOLVE: 'canvas:annotationResolve', // renderer -> main: approve / dismiss / stale / reannotate a live note
+  CANVAS_REVIEW_SUBMIT: 'canvas:reviewSubmit',         // renderer -> main: freeze the draft (+ sketch PNG exports); carries the decision (approve/reject) — required
+  CANVAS_VERSION_VERDICT: 'canvas:versionVerdict',     // renderer -> main: zero-note verdict on a version { sessionId, versionId?, state, note? }; approve/reject also settles that artefact's earlier rounds, approve auto-completes
+  CANVAS_VERSION_REOPEN: 'canvas:versionReopen',       // renderer -> main: C1 reopen a version for review (later ready versions -> withdrawn); wakes no round
   CANVAS_ANNOTATION_REOPEN: 'canvas:annotationReopen', // renderer -> main: the USER puts a closed note back in play
+  CANVAS_REVIEW_REOPEN: 'canvas:reviewReopen',         // renderer -> main: { sessionId, canvasId, reviewId } -> the USER puts a whole settled ROUND back in play (the only other revival there is)
   CANVAS_REVIEW_MARK_SEEN: 'canvas:reviewMarkSeen',    // renderer -> main: the USER has these addressed notes on screen (releases the agent close-out barrier; no MCP path here, ever)
-  CANVAS_REVIEW_CLOSE_OUT: 'canvas:reviewCloseOut',    // renderer -> main: { canvasId } -> bulk-stale one canvas's rounds waiting on the user (the library)
-  CANVAS_REVIEW_DISMISS_ALL: 'canvas:reviewDismissAll',// renderer -> main: { sessionId } -> one sweep over the session's own canvases: close-out per canvas + clear awaiting-first-review (the Canvas button's right-click)
+  CANVAS_COMPOSER_DRAFT_SET: 'canvas:composerDraftSet',     // renderer -> main: { sessionId, canvasId, draft } -> persist the half-written note (W14: text, decision, target, images, sketch scene)
+  CANVAS_COMPOSER_DRAFT_CLEAR: 'canvas:composerDraftClear', // renderer -> main: { sessionId, canvasId } -> drop it (submitted, or the user cleared the composer)
   CANVAS_COMPLETE: 'canvas:complete',                  // renderer -> main: { sessionId, canvasId } -> the USER signs the subject off (#476; refused while anything is owed, or not owned by that session)
+  CANVAS_COMPLETE_FORCE: 'canvas:completeForce',       // renderer -> main: { sessionId, canvasId } -> the USER force-closes what is owed and signs off (W3; USER-only — canvas_complete keeps every refusal)
+  CANVAS_DESCRIBE_FORCE_CLOSURES: 'canvas:describeForceClosures', // renderer -> main: { sessionId, canvasId } -> what a force would close, so the armed confirm can name it
   CANVAS_COMPLETE_REOPEN: 'canvas:completeReopen',     // renderer -> main: { sessionId, canvasId } -> clear a canvas's completed stamp (one-click Reopen; owner-only)
   CANVAS_REVIEW_CHANGED: 'canvas:reviewChanged',       // push: main -> renderer (a review/annotation mutation happened)
+
+  // Agent Canvas M3 — Testing mode evidence (a note is a locked evidence record)
+  CANVAS_EVIDENCE_CAPTURE: 'canvas:evidenceCapture',   // renderer -> main: { sessionId, canvasId, versionId, rect, dpr, stamp, trail } -> screenshot the framed page (owner + uat only; rect clamped in main) -> { ok, evidenceId, previewDataUrl, width, height } | { ok:false, reason }
+  CANVAS_EVIDENCE_DISCARD: 'canvas:evidenceDiscard',   // renderer -> main: { sessionId, canvasId, evidenceId } -> the user cancelled the note; delete the pending shot
+  CANVAS_EVIDENCE_READ: 'canvas:evidenceRead',         // renderer -> main: { sessionId, canvasId, path } -> { dataUrl } | null; the path must be one RECORDED on that canvas (owner, or same project)
+  CANVAS_SET_PACK_NAME: 'canvas:setPackName',          // renderer -> main: { sessionId, canvasId, versionId, name } -> rename the test pack inline (null clears; owner-only)
+  CANVAS_FRAME_NAVIGATED: 'canvas:frameNavigated',     // push: main -> renderer { sessionId, canvasId, route } -> a full-document navigation inside the canvas frame, for the action trail
 
   // Session Watchdog (#235): auto-retry on rate-limit/overload/safeguard.
   // Default off. Push on every state change (main -> renderer); invoke to

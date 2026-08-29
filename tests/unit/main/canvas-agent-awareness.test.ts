@@ -40,7 +40,7 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
     getReviewPayload: () => { throw new Error('unknown review') },
     readAttachment: () => { throw new Error('unused') },
     readDesignFile: () => { throw new Error('unused') },
-    markAddressed: () => ({ addressed: ['a1'], skipped: [] }),
+    markAddressed: () => ({ addressed: ['a1'], skipped: [], refused: [] }),
     getReviewCounts: NO_COUNTS,
     canvasRootsForSession: () => ({ project: null, worktree: null, worktreePending: false }),
     ...overrides,
@@ -146,7 +146,7 @@ describe('canvas_render — filing', () => {
     expect(r.text).toContain('canvas-old')
     expect(r.text).toContain('2 review(s) with open notes')
     expect(r.text).toContain('the user reopens it from the Canvas library')
-    expect(r.text).not.toMatch(/R[0-9]+/)
+    expect(r.text).not.toMatch(/\bR[0-9]+\b/)
   })
 
   it('does not call a canvas NEW when the render returned to one this session had already started', async () => {
@@ -293,3 +293,5 @@ describe('canvas_resolve — what is left', () => {
     expect(r.text).toContain('Marked 1 note(s) as addressed')
   })
 })
+
+

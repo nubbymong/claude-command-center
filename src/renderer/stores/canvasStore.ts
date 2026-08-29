@@ -5,7 +5,8 @@
 // old Draw button (spec D2), and its empty state is the classic sketchpad.
 
 import { create } from 'zustand'
-import type { CanvasAwaitingReview, CanvasCompletion, CanvasState, CanvasVersion } from '../../shared/canvas'
+import type { CanvasAwaitingReview, CanvasCompletion, CanvasSketchScene, CanvasState, CanvasVersion } from '../../shared/canvas'
+import { resetAllTrails, resetTrailsForCanvas } from '../canvas/canvas-trail'
 import { useExcalidrawStore } from './excalidrawStore'
 import { useCanvasReviewStore } from './canvasReviewStore'
 import { useCanvasTotalsStore } from './canvasTotalsStore'
@@ -13,11 +14,17 @@ import { useCanvasTotalsStore } from './canvasTotalsStore'
 export type CanvasInteractionMode = 'draw' | 'browse'
 
 /** What the pane shows while NOTHING has been rendered: the Agent Canvas
- *  landing (what this is + how to start), or the classic sketchpad. The
- *  landing is the default — the old Draw behaviour is one click away, not
- *  the first thing a user meets (owner feedback 2026-08-13: the empty pane
- *  was indistinguishable from old Draw and taught nothing). */
-export type CanvasEmptyView = 'intro' | 'sketchpad'
+ *  landing (what is in flight, what is recent, what can be resumed), the
+ *  Canvas Explained page, or the classic sketchpad.
+ *
+ *  `sketchpad` has NO entry point on the v8 landing — the front page rewrite
+ *  dropped the "Open the sketchpad instead" button along with the rest of the
+ *  old teaching copy. The value stays in the union because it is still a
+ *  reachable STORE state (set programmatically, and remembered per session
+ *  within a run), and removing it would silently strand any session already
+ *  sitting on it. Restoring a user-facing way in is an owner decision, not a
+ *  builder's. */
+export type CanvasEmptyView = 'intro' | 'sketchpad' | 'explained'
 
 export interface CanvasSessionState {
   canvasId: string | null
@@ -57,6 +64,31 @@ export interface CanvasSessionState {
   loaded: boolean
 }
 
+// The serialised glass scene is declared ONCE, in the shared contract — four
+// files hand it to each other (pane, panel, IPC, main) and a structural copy in
+// each is how they drift into disagreeing about a field. Re-exported so the
+// stores' own importers need not know where it lives.
+export type { CanvasSketchScene }
+
+/**
+ * A canvas's sketch state that lives only in renderer memory (W20).
+ *
+ * The scene ITSELF is persisted to disk by the notes panel (it owns the
+ * composer-draft IPC). Two things do not need to be, and are kept here instead:
+ *
+ * - `attached` — which strokes a note has already taken. That is a fact about
+ *   the notes, which are persisted; re-deriving it costs nothing and writing it
+ *   would be a second, forkable copy of the same truth.
+ * - `scene` — a BELT, not the record. Closing and reopening the pane unmounts
+ *   the glass, and waiting for a disk round-trip to put the strokes back reads
+ *   as having lost them. Keyed by canvas, because a Library "open here" swaps
+ *   the canvas under a mounted pane and v1 exists on all of them.
+ */
+export interface CanvasSketchMemory {
+  attached: string[]
+  scene: CanvasSketchScene | null
+}
+
 /** What was filed, and what went with it. The note counts come from the review
  *  mirror as it stood BEFORE the switch — the only moment the renderer knows
  *  them, since every session-scoped read follows the session to its new canvas. */
@@ -71,10 +103,16 @@ export interface FiledNotice {
 
 interface CanvasStoreState {
   bySessionId: Record<string, CanvasSessionState>
+  /** Per-CANVAS sketch memory (W20) — see CanvasSketchMemory. Not per session:
+   *  the glass belongs to the canvas on screen, not to the tile showing it. */
+  sketchByCanvasId: Record<string, CanvasSketchMemory>
   refresh: (sessionId: string) => Promise<void>
   setInteractionMode: (sessionId: string, mode: CanvasInteractionMode) => void
   setEmptyView: (sessionId: string, view: CanvasEmptyView) => void
   setActiveVersion: (sessionId: string, versionId: string) => Promise<void>
+  /** Testing mode (M3): name (or un-name) the test pack for one uat version.
+   *  `null` clears the user's name and the derived default takes over. */
+  setPackName: (sessionId: string, versionId: string, name: string | null) => Promise<void>
   markUnseenRender: (sessionId: string) => void
   clearUnseenRender: (sessionId: string) => void
   /** The user is deliberately switching canvas — the next change under this
@@ -89,8 +127,17 @@ interface CanvasStoreState {
   dismissFiled: (sessionId: string) => void
   noteCompleted: (sessionId: string, notice: { canvasId: string; title?: string }) => void
   dismissCompleted: (sessionId: string) => void
+  /** These strokes now ride a note, so the next note must not take them again. */
+  markSketchAttached: (canvasId: string, ids: readonly string[]) => void
+  /** Park (or clear) the glass scene for a canvas — the pane-toggle belt. */
+  stashSketchScene: (canvasId: string, scene: CanvasSketchScene | null) => void
   reset: () => void
 }
+
+const EMPTY_SKETCH: CanvasSketchMemory = { attached: [], scene: null }
+
+/** "The user cleared the glass", said positively — see stashSketchScene. */
+const EMPTY_SKETCH_SCENE: CanvasSketchScene = { scene: '[]', versions: {} }
 
 const EMPTY: CanvasSessionState = {
   canvasId: null,
@@ -145,6 +192,7 @@ function consumeExpectedSwitch(sessionId: string): boolean {
 
 export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
   bySessionId: {},
+  sketchByCanvasId: {},
 
   refresh: async (sessionId: string) => {
     try {
@@ -251,12 +299,55 @@ export const useCanvasStore = create<CanvasStoreState>((set, get) => ({
     }
   },
 
-  // Resets the pending-switch counts too. They live outside the store object
-  // but they ARE store state, and a reset that left them behind meant an
-  // expectation could outlive everything it referred to.
+  setPackName: async (sessionId: string, versionId: string, name: string | null) => {
+    const canvasId = get().bySessionId[sessionId]?.canvasId
+    if (!canvasId) return
+    try {
+      const state = await window.electronAPI.canvas.setPackName({ sessionId, canvasId, versionId, name })
+      set((s) => ({
+        bySessionId: { ...s.bySessionId, [sessionId]: fromMain(s.bySessionId[sessionId], state) },
+      }))
+    } catch (err) {
+      // A refused rename is cosmetic: the derived default still names the pack,
+      // and the header simply shows what main kept.
+      console.error('[canvasStore] setPackName failed:', err)
+    }
+  },
+
+  markSketchAttached: (canvasId: string, ids: readonly string[]) => {
+    if (ids.length === 0) return
+    set((s) => {
+      const prev = s.sketchByCanvasId[canvasId] ?? EMPTY_SKETCH
+      // Deduped: a note can be added twice from the same strokes only if the
+      // pane asked twice, and a doubled id would make the unattached set look
+      // right while the count of what rides the note did not.
+      const attached = Array.from(new Set([...prev.attached, ...ids]))
+      return { sketchByCanvasId: { ...s.sketchByCanvasId, [canvasId]: { ...prev, attached } } }
+    })
+  },
+
+  stashSketchScene: (canvasId: string, scene: CanvasSketchScene | null) => {
+    set((s) => {
+      const prev = s.sketchByCanvasId[canvasId] ?? EMPTY_SKETCH
+      // Null never DOWNGRADES a belt that has held a scene. Null means "nothing
+      // parked here, fall through to disk", and once this canvas has parked a
+      // scene that answer is wrong in the one case it matters: a user who
+      // cleared the glass and closed the pane would have the disk copy put
+      // their deleted strokes back. An emptied glass parks an empty scene
+      // instead — the pane sends one — and this refuses to lose it.
+      const next = scene ?? (prev.scene ? EMPTY_SKETCH_SCENE : null)
+      return { sketchByCanvasId: { ...s.sketchByCanvasId, [canvasId]: { ...prev, scene: next } } }
+    })
+  },
+
+  // Resets the pending-switch counts too, and the action trails (M3). Both live
+  // outside the store object but they ARE store state, and a reset that left
+  // them behind meant an expectation — or a run's recorded actions — could
+  // outlive everything it referred to.
   reset: () => {
     expectedSwitches.clear()
-    set({ bySessionId: {} })
+    resetAllTrails()
+    set({ bySessionId: {}, sketchByCanvasId: {} })
   },
 }))
 
@@ -332,6 +423,11 @@ export function setupCanvasListener(): void {
       !event.reopened && prev?.canvasId && event.canvasId && event.canvasId !== prev.canvasId,
     )
     const userAsked = switched && consumeExpectedSwitch(event.sessionId)
+    // The session has left that canvas, so its runs are no longer being
+    // recorded. The trail is renderer-memory evidence of a LIVE run; anything
+    // already locked to a note is on disk, and keeping the rest would leave a
+    // ring per canvas the user ever passed through.
+    if (switched && prev?.canvasId) resetTrailsForCanvas(prev.canvasId)
     const filedCanvasId: string | null = switched && !prev!.completed ? prev!.canvasId : null
     if (!userAsked && filedCanvasId !== null) {
       // Counted from the review mirror as it stands NOW, before the refresh

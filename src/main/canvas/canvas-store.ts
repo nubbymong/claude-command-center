@@ -29,13 +29,18 @@ import {
   CanvasState,
   CanvasVersion,
   MAX_CANVAS_TITLE_CHARS,
+  MAX_PACK_NAME_CHARS,
   MAX_PRIOR_VERDICTS,
   MAX_VERDICT_NOTE_CHARS,
-  ReclaimableCanvas,
+  type AuditStamp,
+  type ResumableRow,
   artifactRunContaining,
   artifactRuns,
   isKeepableVerdict,
+  libraryRowKindOf,
   openVersionOf,
+  sanitizeAuditStamp,
+  sanitizeCanvasConfigId,
   type CanvasVersionVerdict,
 } from '../../shared/canvas'
 import { atomicWriteSecure, mkdirSecure } from '../account-profiles'
@@ -567,48 +572,108 @@ interface CanvasRecord extends CanvasState {
 }
 
 /**
- * The constraints that still apply even when the USER picks a canvas by id.
+ * THE LEASE, as this store sees it (M4).
  *
- * There is no identity-matching key here any more, and that is the point. Two
- * rounds of adversarial review killed every automatic rule: the project
- * directory is ambiguous (two tiles on one repo), the conversation uuid is
- * derived from the transcript binder and is both heuristic and agent-writable,
- * and "is the owner still current" has no reliable oracle. A canvas carries
- * the user's private review notes, so moving one is an authorization decision
- * — and the only party able to make it is the user, who is asked (see
- * canvas-session-link.listReclaimableCanvases).
+ * The lease is LIVENESS, not a stored field: a canvas belongs to the session
+ * that rendered it for exactly as long as that session is live, and when it is
+ * not, the canvas is OWNERLESS IN FLIGHT — resumable, dismissable, but never
+ * auto-attached to anybody.
  *
- * What remains is one floor the user's choice cannot lower: a canvas whose owner
- * might still come back is never taken.
+ * This store is deliberately lifecycle-blind (it cannot see PTYs or tiles), so
+ * the answer is injected. It fails SAFE in the direction that matters: an
+ * oracle that throws counts as LIVE, and live means untouchable.
  *
  * The account is deliberately NOT part of this. A canvas belongs to the PROJECT
  * it was made for, not to whichever Claude account happened to be signed in when
  * it was drawn — switching accounts in a tile is an ordinary thing to do, and
  * making it an adoption key left users unable to open their own mockups. The
- * project is the axis, and it organises rather than forecloses: the library
- * scopes to it, the reclaim list marks and sorts by it. See ADR-017.
+ * project is the axis, and it organises rather than forecloses. See ADR-017.
  */
-export interface CanvasAdoptionQuery {
+export interface CanvasLivenessQuery {
   /**
-   * True when the given session can still come back and claim its canvas by
-   * id — a live PTY, or a tile still in the saved-session list. Fails SAFE:
-   * uncertain means current, and current means untouchable.
+   * True when the given session is LIVE right now.
+   *
+   * THE ANSWER MUST COME FROM AN UNFORGEABLE SIGNAL — main's own PTY registry,
+   * never anything a caller supplies. This predicate gates who may resume,
+   * dismiss and even SEE another session's canvas, and an earlier cut ORed in
+   * the renderer's open-tile hint: a per-call array the CALLING session
+   * composes. A same-project peer needed no forgery to defeat that, only to
+   * leave the owner out of its own request. See
+   * canvas-session-link.isSessionLive for the split that replaced it.
+   *
+   * A closed app's saved tiles are NOT live either: they cannot review
+   * anything, and treating them as owners is what left work stranded with no
+   * route back.
    */
-  isSessionCurrent: (sessionId: string) => boolean
+  isSessionLive: (sessionId: string) => boolean
 }
 
-export type { ReclaimableCanvas }
+/**
+ * "May this session act on a canvas stamped with THAT workspace?" — the second
+ * factor on every destructive cross-session action.
+ *
+ * Injected for the same reason the liveness oracle is: the store holds the
+ * record's stamps but not the caller's. canvas-session-link owns the rule (see
+ * `sameWorkspace`) and hands the SAME predicate to the resume LIST and the
+ * resume ACTION, because a list that offers what the action refuses is the
+ * hole rather than the fix.
+ */
+export type CanvasWorkspaceCheck = (info: { cwd?: string; configId?: string }) => boolean
 
-/** What renderVersion stamps onto records; resolved per session by the pty
- *  layer (canvas-session-link) so this store stays lifecycle-blind. */
-export type CanvasSessionInfoResolver = (
-  sessionId: string,
-) => { cwd?: string; conversationUuid?: string } | null
+/**
+ * What renderVersion stamps onto records; resolved per session by the pty
+ * layer (canvas-session-link) so this store stays lifecycle-blind.
+ *
+ * `cwd`/`conversationUuid` are the continuity keys. `configId` and `auditLabels`
+ * are M4 audit metadata: a lookup key into the user's own configs.json, and the
+ * two display strings the Library's audit line reads. Neither authorizes
+ * anything.
+ *
+ * The labels arrive WITHOUT a moment, deliberately: `at` is minted in this
+ * store from main's own clock, so a stamp can never claim to have been written
+ * at a time of the resolver's choosing.
+ */
+export type CanvasSessionInfoResolver = (sessionId: string) => {
+  cwd?: string
+  conversationUuid?: string
+  configId?: string
+  auditLabels?: Pick<AuditStamp, 'sessionLabel' | 'account'>
+} | null
 
 let sessionInfoResolver: CanvasSessionInfoResolver | null = null
 
 export function setCanvasSessionInfoResolver(resolver: CanvasSessionInfoResolver | null): void {
   sessionInfoResolver = resolver
+}
+
+/** The spawn record for a session, or null. Resolver failures are swallowed:
+ *  the stamps IMPROVE a row, and their absence must never refuse a write. */
+function sessionInfoFor(sessionId: string): ReturnType<CanvasSessionInfoResolver> {
+  try {
+    return sessionInfoResolver ? sessionInfoResolver(sessionId) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The audit stamp for a write made BY this session, right now (M4).
+ *
+ * Exported because the review store stamps notes with it and imports this store
+ * already (the dependency points this way). `at` is main's own clock — a stamp
+ * whose moment a caller could choose is not provenance. The labels are cleaned
+ * by `sanitizeAuditStamp`, so nothing that could make one audit line read as
+ * two ever reaches disk.
+ */
+export function auditStampForSession(sessionId: string): AuditStamp | undefined {
+  if (!SESSION_ID_RE.test(sessionId)) return undefined
+  const spawn = sessionInfoFor(sessionId)?.auditLabels
+  return sanitizeAuditStamp({
+    sessionId,
+    ...(spawn?.sessionLabel ? { sessionLabel: spawn.sessionLabel } : {}),
+    ...(spawn?.account ? { account: spawn.account } : {}),
+    at: new Date().toISOString(),
+  })
 }
 
 /** What the ccc-ux:// protocol needs to serve a version. `contentRoot` is the
@@ -690,8 +755,8 @@ function versionDir(canvasId: string, versionId: string): string {
 // bound a record to something CCC actually wrote, so anyone able to create a
 // file under `<resources>/canvas/` could hand-write `<24-hex>/canvas.json`
 // naming a victim `sessionId` and a `distRoot` of their choosing, and after the
-// next app start the store served it and the reclaim card offered it to the
-// user as their own earlier work. It survived a restart, which made it the one
+// next app start the store served it and offered it to the user as their own
+// earlier work. It survived a restart, which made it the one
 // disk-persistent deception primitive in this feature.
 //
 // It compounded: `record.sessionId` is the AUTHORIZATION key for serving
@@ -824,6 +889,21 @@ function isKeepableVersion(v: unknown): v is CanvasVersion {
   // also honoured, but reject an obviously-broken distRoot shape here too.
   if (!isSafeEntry(ver.source.entry)) return false
   if (ver.source.mode === 'uat' && (typeof ver.source.distRoot !== 'string' || ver.source.distRoot.length === 0)) return false
+  // The user's pack name (M3): OUR sanitised shape or absent. Checked by
+  // ROUND-TRIP rather than by a character class — the value is written through
+  // `sanitizePackName`, so a stored name that does not equal its own
+  // re-sanitisation was not written by this build, and a hand-edited one
+  // carrying bidi overrides or an over-long run is dropped with its version
+  // rather than rendered in the header the user reads.
+  if (ver.packName !== undefined && sanitizePackName(ver.packName) !== ver.packName) return false
+  // WHO rendered it (M4). Checked by ROUND-TRIP against the shared healer, for
+  // the same reason `packName` is: a stamp that does not equal its own
+  // re-sanitisation was not written by this build. It is DROPPED rather than
+  // fatal — `sanitizeRecord` strips a malformed one before this runs, so
+  // reaching here out of shape means a writer inside this process produced
+  // something this build does not define, and a version is worth more than an
+  // audit line.
+  if (ver.renderedBy !== undefined && sanitizeAuditStamp(ver.renderedBy) === undefined) return false
   return true
 }
 
@@ -869,6 +949,18 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
 
   const versions: CanvasVersion[] = []
   for (const v of r.versions) {
+    // AUDIT STAMPS HEAL, THEY NEVER CONDEMN (M4). A stamp is provenance, not
+    // content: a malformed one is rebuilt to what this build understands and,
+    // failing that, removed — dropping the whole VERSION (and with it the
+    // user's rendered document) over an audit line would be the mistake this
+    // file's load path exists to prevent. Done before the keeper runs, so what
+    // it validates is either our shape or absent.
+    const raw = v as { renderedBy?: unknown } | null
+    if (raw && typeof raw === 'object' && raw.renderedBy !== undefined) {
+      const healed = sanitizeAuditStamp(raw.renderedBy)
+      if (healed) raw.renderedBy = healed
+      else delete raw.renderedBy
+    }
     if (!isKeepableVersion(v)) continue
     if (versions.some((kept) => kept.id === v.id)) continue // ids are the serve key
     versions.push(v)
@@ -942,6 +1034,13 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
   const rawNext = (r as { nextVersion?: unknown }).nextVersion
   const nextVersion = Number.isInteger(rawNext) && (rawNext as number) > maxId ? (rawNext as number) : maxId + 1
 
+  // The M4 audit fields. Both DROP rather than condemn, for the reason the
+  // per-version stamp does: they describe provenance, and a record written by a
+  // build that did not know them is not corrupt. Absent = unknown everywhere
+  // downstream, which every reader already has to handle.
+  const createdBy = sanitizeAuditStamp((r as { createdBy?: unknown }).createdBy)
+  const configId = sanitizeCanvasConfigId((r as { configId?: unknown }).configId)
+
   // Built field by field, not spread from what was on disk.
   //
   // The MAC is the envelope rather than part of the record, so it has to come
@@ -965,6 +1064,8 @@ function sanitizeRecord(value: unknown): CanvasRecord | null {
     nextVersion,
     ...(awaitingReview ? { awaitingReview } : {}),
     ...(completed ? { completed } : {}),
+    ...(createdBy ? { createdBy } : {}),
+    ...(configId ? { configId } : {}),
   }
 }
 
@@ -1071,10 +1172,33 @@ function moreRecentlyActive(a: CanvasRecord, b: CanvasRecord): boolean {
   return a.canvasId > b.canvasId
 }
 
+/**
+ * The canvas this session is CURRENTLY pointed at — and only if the record
+ * agrees that it is theirs.
+ *
+ * `sessionIndex` is a cache of a fact the RECORD owns, and this used to trust
+ * it alone. Every session-keyed mutation resolves through here
+ * (`setVersionVerdict`, `reopenVersionForReview`, `setActiveVersion`,
+ * `setPackName`, and the review store's `canvasForSession`), so ONE stale entry
+ * turns all of them into cross-session writes. The index can genuinely go
+ * stale: a caller-supplied liveness oracle is invoked mid-resume, and a
+ * re-entrant call from inside it moves ownership under the outer call's feet.
+ * The resume and `deleteCanvas` both sweep the index, but a cache that is only
+ * ever swept is one missed path away from lying — so the record is asked, every
+ * time, and a disagreeing entry is DROPPED rather than served.
+ */
 function getRecordForSession(sessionId: string): CanvasRecord | null {
   ensureDiskScanned()
   const canvasId = sessionIndex.get(sessionId)
-  return canvasId ? (canvases.get(canvasId) ?? null) : null
+  if (!canvasId) return null
+  const record = canvases.get(canvasId)
+  // Self-heal: the entry names a canvas that is gone, or one the record says
+  // belongs to somebody else. Either way this session is pointed at nothing.
+  if (!record || record.sessionId !== sessionId) {
+    sessionIndex.delete(sessionId)
+    return null
+  }
+  return record
 }
 
 function getRecord(canvasId: string): CanvasRecord | null {
@@ -1088,10 +1212,16 @@ function toState(record: CanvasRecord): CanvasState {
     canvasId: record.canvasId,
     sessionId: record.sessionId,
     activeVersionId: record.activeVersionId,
-    versions: record.versions.map((v) => ({ ...v, source: { ...v.source } })),
+    versions: record.versions.map((v) => ({
+      ...v,
+      source: { ...v.source },
+      ...(v.renderedBy ? { renderedBy: { ...v.renderedBy } } : {}),
+    })),
     ...(record.title ? { title: record.title } : {}),
     ...(record.awaitingReview ? { awaitingReview: { ...record.awaitingReview } } : {}),
     ...(record.completed ? { completed: { ...record.completed } } : {}),
+    ...(record.createdBy ? { createdBy: { ...record.createdBy } } : {}),
+    ...(record.configId ? { configId: record.configId } : {}),
   }
 }
 
@@ -1152,7 +1282,7 @@ function nextVersionNumber(versions: CanvasVersion[]): number {
  * without one keeps the old behaviour of appending to whatever canvas the
  * session holds.
  */
-function sanitizeCanvasTitle(raw: unknown): string | undefined {
+function sanitizeLabelText(raw: unknown, maxChars: number): string | undefined {
   if (typeof raw !== 'string') return undefined
   // Strip → cap → strip again. The cap is in UTF-16 code units and can cut a
   // surrogate pair in half, and it can leave a trailing space that a re-clean
@@ -1163,9 +1293,26 @@ function sanitizeCanvasTitle(raw: unknown): string | undefined {
   const clean = (s: string) => s.replace(TITLE_STRIP_RE, '').replace(/\s+/g, ' ').trim()
   const cleaned = clean(raw)
   if (cleaned.length === 0) return undefined
-  const capped = Array.from(cleaned).slice(0, MAX_CANVAS_TITLE_CHARS).join('')
+  const capped = Array.from(cleaned).slice(0, maxChars).join('')
   const final = clean(capped)
   return final.length === 0 ? undefined : final
+}
+
+function sanitizeCanvasTitle(raw: unknown): string | undefined {
+  return sanitizeLabelText(raw, MAX_CANVAS_TITLE_CHARS)
+}
+
+/**
+ * The user's own name for a TEST PACK (M3).
+ *
+ * The title's rules, at the pack's cap: the pack name sits in the pane header
+ * and in the Library beside a delete button, so the question is the title's
+ * question — can this make one row read as another — and the answer is the same
+ * strip list. Idempotent for the same MAC reason: this string is inside the
+ * record the HMAC covers.
+ */
+function sanitizePackName(raw: unknown): string | undefined {
+  return sanitizeLabelText(raw, MAX_PACK_NAME_CHARS)
 }
 
 /**
@@ -1219,7 +1366,7 @@ function sameSubject(a: string, b: string): boolean {
 /**
  * A canvas this session filed earlier under the same subject, if any. Owned by
  * THIS session only: another session's canvas is never adopted here — that is
- * an authorization decision and stays with `adoptCanvasForSession`, which the
+ * an authorization decision and stays with `resumeCanvasForSession`, which the
  * user drives. Newest first, so returning to a subject the session has filed
  * twice picks the one most recently worked on.
  */
@@ -1434,18 +1581,26 @@ export function renderVersion(
   // the LATEST render, so a canvas re-rendered under a resumed conversation
   // follows that conversation. Resolver failures stamp nothing (fail open —
   // stamps improve adoption, their absence must never refuse a render).
-  let info: ReturnType<CanvasSessionInfoResolver> = null
-  try {
-    info = sessionInfoResolver ? sessionInfoResolver(sessionId) : null
-  } catch {
-    info = null
-  }
+  const info: ReturnType<CanvasSessionInfoResolver> = sessionInfoFor(sessionId)
   const cwdStamp =
     typeof info?.cwd === 'string' && info.cwd.length > 0 && info.cwd.length <= MAX_CWD_CHARS ? info.cwd : undefined
   const conversationStamp =
     typeof info?.conversationUuid === 'string' && CONVERSATION_UUID_RE.test(info.conversationUuid)
       ? info.conversationUuid
       : undefined
+  // M4 audit metadata. `configId` and `createdBy` are CREATION stamps: they say
+  // what the canvas was made under and by whom, so — like `cwd` — they are
+  // written once and never drift. A later render (or an adoption) changes the
+  // owner, not the history. `renderedBy` is per version, so it tracks whoever
+  // actually produced that version.
+  const configIdStamp = sanitizeCanvasConfigId(info?.configId)
+  const renderStamp = sanitizeAuditStamp({
+    sessionId,
+    ...(info?.auditLabels?.sessionLabel ? { sessionLabel: info.auditLabels.sessionLabel } : {}),
+    ...(info?.auditLabels?.account ? { account: info.auditLabels.account } : {}),
+    at: createdAt,
+  })
+  version = { ...version, ...(renderStamp ? { renderedBy: renderStamp } : {}) }
 
   const base: CanvasRecord = existing ?? { canvasId, sessionId, createdAt, activeVersionId: null, versions: [] }
   // Not-a-draft means READY — a deliberate ready-mark, or a render from a flow
@@ -1498,6 +1653,17 @@ export function renderVersion(
     ...base,
     ...(cwdStamp && !base.cwd ? { cwd: cwdStamp } : {}),
     ...(conversationStamp ? { conversationUuid: conversationStamp } : {}),
+    // CREATION STAMPS, and only on the NEW-CANVAS branch (`!existing`).
+    //
+    // Backfilling them onto a record that already exists would let a RESUME
+    // rewrite history: session B picks up a canvas A made before stamps
+    // existed, renders once, and the record now says B created it under B's
+    // config — which the Library then prints as the canvas's authorship. A
+    // resume moves the work, not its history. A legacy canvas simply keeps no
+    // creation stamp; the row still has an audit line, because `renderedBy` is
+    // stamped per VERSION and says who actually produced each one.
+    ...(!existing && configIdStamp ? { configId: configIdStamp } : {}),
+    ...(!existing && renderStamp ? { createdBy: renderStamp } : {}),
     // The subject. Only ever set to a title that names the SAME subject (a
     // different one took the new-canvas branch above), so this fills in a
     // missing title and refreshes the wording, never repurposes the canvas.
@@ -1554,11 +1720,13 @@ export function renderVersion(
 /**
  * The user has responded to the ready-marked round on this canvas — clear the
  * "review needed" entry (#366). Called by the review store on submit (it
- * already imports this store, so the dependency points the existing way), and
- * by the dismiss-all IPC sweep when the user clears their queue without
- * reviewing (`canvas:reviewDismissAll`). Both callers are user gestures; no
- * MCP path reaches this. Idempotent, and a no-op for a canvas that owes
- * nothing.
+ * already imports this store, so the dependency points the existing way). A
+ * user gesture; no MCP path reaches this. Idempotent, and a no-op for a canvas
+ * that owes nothing.
+ *
+ * `setVersionVerdict` clears the same stamp inside its own persist, so a
+ * decision and the queue can never disagree — this entry point exists for the
+ * submit, which freezes and stamps in two steps.
  */
 export function clearAwaitingReview(canvasId: string): void {
   if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return
@@ -1599,15 +1767,40 @@ function openVersionInRecord(record: CanvasRecord, versionId?: string): CanvasVe
 }
 
 /**
+ * WHICH version a verdict with this (possibly absent) id would land on.
+ *
+ * Exported because the IPC handler has to know it BEFORE the write: after
+ * `setVersionVerdict` runs, that version is decided and no longer "the open
+ * one", so the handler could not read it back — and it needs the id to settle
+ * that artefact's earlier rounds (W4). Read-only; the same resolution
+ * `setVersionVerdict` performs, kept in one place so the two cannot diverge.
+ */
+export function verdictTargetVersionId(sessionId: string, versionId?: string): string | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null
+  if (versionId !== undefined && !CANVAS_VERSION_ID_RE.test(versionId)) return null
+  const record = getRecordForSession(sessionId)
+  if (!record) return null
+  if (versionId) return record.versions.some((v) => v.id === versionId) ? versionId : null
+  return openVersionInRecord(record)?.id ?? null
+}
+
+/**
  * Stamp a version's review outcome (C1) — the write behind BOTH mouths:
  * the user's own submit in the pane (`by: 'user'`) and the agent recording
  * the user's chat words (`by: 'agent-chat'`, always rendered as such).
  *
  * The target is the named version, or the active artifact's OPEN version when
- * none is named. Refused for drafts, for a version already decided (reopen it
- * first — a verdict is never silently overwritten), and on a completed
- * canvas. Clearing `awaitingReview` rides the same persist so the queue and
- * the verdict can never disagree.
+ * none is named — resolved by `verdictTargetVersionId`, the ONE implementation
+ * of that question, so this and the handler that settles rounds around it can
+ * never land on different versions. Refused for drafts, for a version already
+ * decided (reopen it first — a verdict is never silently overwritten), and on a
+ * completed canvas. Clearing `awaitingReview` rides the same persist so the
+ * queue and the verdict can never disagree.
+ *
+ * A USER REJECTION MUST SAY WHY. "Rejected" with no words leaves the agent a
+ * verdict it cannot act on and the History a row that explains nothing — the
+ * pane's own composer mandates a note, and this is the boundary that means it.
+ * An agent-chat rejection relays the user's words, which is the note.
  */
 export function setVersionVerdict(
   sessionId: string,
@@ -1620,12 +1813,14 @@ export function setVersionVerdict(
   if (decision.state !== 'approved' && decision.state !== 'rejected' && decision.state !== 'dismissed') {
     return { error: 'invalid verdict state' }
   }
+  if (decision.state === 'rejected' && !cleanVerdictNote(decision.note)) {
+    return { error: 'a rejection needs a note — say what is wrong' }
+  }
   const record = getRecordForSession(sessionId)
   if (!record) return { error: 'no canvas for this session' }
   if (record.completed) return { error: 'this canvas is signed off; reopen it from the library first' }
-  const target = versionId
-    ? record.versions.find((v) => v.id === versionId)
-    : (openVersionInRecord(record) ?? undefined)
+  const targetId = verdictTargetVersionId(sessionId, versionId)
+  const target = targetId ? record.versions.find((v) => v.id === targetId) : undefined
   if (!target) return { error: versionId ? `no version ${versionId} on this canvas` : 'no open version awaiting a verdict' }
   if (target.draft) return { error: 'that version is still a draft' }
   if (target.verdict) return { error: `${target.id} is already decided (${target.verdict.state}) — reopen it first` }
@@ -1643,6 +1838,74 @@ export function setVersionVerdict(
   canvases.set(record.canvasId, next)
   emitChanged(next)
   return toState(next)
+}
+
+/**
+ * Name the TEST PACK (M3) — the inline rename in the Testing header.
+ *
+ * OWNER-SCOPED, like every other renderer write on this store: the canvas named
+ * has to be the one this session actually holds. A pack name is a label the user
+ * reads in their own Library, and letting a session rename another's would be a
+ * way to make one row read as another.
+ *
+ * `null` clears it, which is how "empty the field and press Enter" gets back to
+ * the generated default — and the default is DERIVED, never written, so clearing
+ * is a delete rather than a write of today's default frozen forever.
+ *
+ * The version does not have to be `uat`: a pack name on a mockup version is
+ * harmless (nothing reads it there), and refusing here would mean the pane had
+ * to know the mode before it could offer the field. What it must be is a version
+ * on THIS canvas, and not a draft — a draft is invisible to the user, so a name
+ * on one names something they cannot see.
+ */
+export function setPackName(
+  sessionId: string,
+  canvasId: string,
+  versionId: string,
+  name: string | null,
+): CanvasState | { error: string } {
+  if (!SESSION_ID_RE.test(sessionId)) return { error: 'invalid session id' }
+  if (!CANVAS_ID_RE.test(canvasId)) return { error: 'invalid canvas id' }
+  if (!CANVAS_VERSION_ID_RE.test(versionId)) return { error: 'invalid version id' }
+  const record = getRecordForSession(sessionId)
+  if (!record) return { error: 'no canvas for this session' }
+  if (record.canvasId !== canvasId) return { error: 'that canvas is not this session’s' }
+  const target = record.versions.find((v) => v.id === versionId)
+  if (!target) return { error: `no version ${versionId} on this canvas` }
+  if (target.draft) return { error: 'that version is still a draft' }
+  const cleaned = name === null ? undefined : sanitizePackName(name)
+  const versions = record.versions.map((v) => {
+    if (v.id !== target.id) return v
+    const { packName: _old, ...rest } = v
+    return cleaned ? { ...rest, packName: cleaned } : rest
+  })
+  const next: CanvasRecord = { ...record, versions }
+  persist(next)
+  canvases.set(record.canvasId, next)
+  emitChanged(next)
+  return toState(next)
+}
+
+/**
+ * The project directory a canvas was rendered in, for SCOPING a read.
+ *
+ * A LABEL everywhere else in this store (ADR-017: the project organises, it
+ * never forecloses), and it stays one here — this answers "are these two things
+ * in the same project", which is a relevance question the evidence read channel
+ * turns into a scope. It is never an ownership key: ownership is the record's
+ * own `sessionId`, and the read channel checks that first.
+ */
+export function canvasProjectDirOf(canvasId: string): string | undefined {
+  if (!CANVAS_ID_RE.test(canvasId)) return undefined
+  ensureDiskScanned()
+  return canvases.get(canvasId)?.cwd
+}
+
+/** Whether two directories name the same project, by this store's own rule —
+ *  exported so the evidence read channel scopes exactly as the Library lists. */
+export function isSameCanvasProject(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false
+  return sameProjectDir(a, b)
 }
 
 /**
@@ -1872,67 +2135,45 @@ export function setActiveVersion(sessionId: string, versionId: string): CanvasSt
   return toState(next)
 }
 
+/** "Is this session live, and is an oracle that throws allowed to say no?" —
+ *  no. Every privacy and ownership decision in this store fails CLOSED: an
+ *  oracle that cannot answer is treated as "live", which withholds a row and
+ *  refuses a transfer rather than leaking or taking. */
+function isLiveOrUnknown(sessionId: string, isSessionLive: (sid: string) => boolean): boolean {
+  try {
+    return isSessionLive(sessionId)
+  } catch {
+    return true
+  }
+}
+
 /**
- * Let a session that owns NO canvas reclaim the canvas of the SAME CONVERSATION
- * (2026-08-14, the VM "repush" bug: app restart → fresh tile → same
- * conversation resumed → the canvas stranded under the dead session id and a
- * second render minted a parallel canvas, both called "v1").
+ * Is this canvas OWNERLESS IN FLIGHT for the asking session — i.e. resumable?
  *
- * THE MATCH KEY IS THE CONVERSATION, AND ONLY THE CONVERSATION.
+ * Three floors, and each closes a different hole:
  *
- * The first cut of this also adopted on a project-directory match. Adversarial
- * review (2026-08-14) showed that to be a canvas-theft primitive reachable in
- * the app's most ordinary state, with no attacker required: two tiles open on
- * one repo is normal usage; a PTY exit (`/exit`, a crash, the Restart button)
- * makes the first session stop looking "current"; the second tile would then
- * inherit the first's canvas AND the user's private review notes — and, since
- * nothing consulted the account, across two different Claude accounts. Three
- * further findings (Windows Unicode case-folding matching two DISTINCT real
- * directories, a relative/'.' cwd resolving onto one shared key, no realpath)
- * were all consequences of treating a directory as an identity. It is not one.
- * Resuming a conversation is.
+ *   - it is not already the caller's (resuming your own is `openOwnCanvas`,
+ *     which transfers nothing);
+ *   - it has versions (there is nothing to inherit from an empty canvas);
+ *   - it is NOT completed. A signed-off canvas is terminal history (#476): it
+ *     must not be offered as orphaned work, and — the sharper hole — must not
+ *     be adoptable at all, which would hand over its private review notes AND
+ *     let the adopter Reopen a sign-off it never made. Completion detached it
+ *     from its owner's sessionIndex, so without this it looks exactly like an
+ *     orphan;
+ *   - its owner is NOT LIVE. In flight is PRIVATE to the live session that
+ *     rendered it.
  *
- * There is no identity key here at all any more. The account used to be one —
- * compared exactly, `undefined` included — and ADR-017 removed it: a canvas
- * belongs to the PROJECT it was made for, not to whichever Claude account
- * happened to be signed in, and a session id outlives an account switch, so the
- * check locked users out of their own mockups. Do not re-add it without a new
- * decision; the ADR is the record of why it went.
- *
- * A canvas is only adoptable when its owner session is not current per the
- * caller's check — a live PTY or a saved tile keeps its canvas reclaimable by
- * id, and this function will not touch it. That check fails SAFE (see
- * canvas-session-link).
- *
- * The re-bind persists BEFORE memory moves (the renderVersion discipline), and
- * the caller is expected to re-bind the canvas's review store next
- * (rebindReviewsToSession) — reviews.json carries the owner session id too.
+ * Fails safe: an oracle that throws counts as live, and live means untouchable.
  */
-/**
- * Is `record` one this session could be OFFERED? Shared by the lister and the
- * reclaim, so the list can never advertise something reclaim would refuse.
- *
- * The project is NOT a filter here, deliberately. The library is already
- * per-project, so if this path hid other projects' canvases too, a canvas whose
- * project you never open again would have no route back at all — and being
- * locked out of your own canvas is a bug this app has already shipped once. The
- * reclaim list instead offers everything reclaimable and MARKS which rows are
- * from the project you are in (`sameProject`, sorted first), so the project is
- * what organises the choice rather than what forecloses it.
- */
-function isReclaimCandidate(record: CanvasRecord, sessionId: string, query: CanvasAdoptionQuery): boolean {
+function isResumeCandidate(record: CanvasRecord, sessionId: string, query: CanvasLivenessQuery): boolean {
   if (record.sessionId === sessionId) return false
   if (record.versions.length === 0) return false // nothing to inherit
-  // A signed-off canvas is terminal history (#476): it must not be OFFERED as
-  // orphaned work to reclaim, and — the sharper hole — must not be adoptable
-  // by another session, which would hand over its private review notes AND let
-  // the adopter Reopen a sign-off it never made. Completion detached it from
-  // its owner's sessionIndex; without this it looks exactly like an orphan.
   if (record.completed) return false
   try {
-    if (query.isSessionCurrent(record.sessionId)) return false
+    if (query.isSessionLive(record.sessionId)) return false
   } catch {
-    return false // cannot tell → treat as current → untouchable
+    return false // cannot tell → treat as live → untouchable
   }
   return true
 }
@@ -1952,16 +2193,16 @@ function isReclaimCandidate(record: CanvasRecord, sessionId: string, query: Canv
  * 2026-08-16). The ranges had gaps that were invisible to read and measurable to
  * test: U+061C ARABIC LETTER MARK (a Bidi_Control), U+00AD SOFT HYPHEN, the C1
  * controls U+0080-U+009F, and U+2028/U+2029 all walked straight through into the
- * reclaim card's text and its `title` tooltip. `\p{Cf}` is the set the gaps kept
+ * Library row's text and its `title` tooltip. `\p{Cf}` is the set the gaps kept
  * falling out of — it also covers the tag characters U+E0020-U+E007F, which no
  * enumeration written by hand was ever going to include. Display-only: nothing
- * downstream matches on this value (a reclaim is addressed by canvas id).
+ * downstream matches on this value (every action is addressed by canvas id).
  */
 const FORMAT_CONTROLS_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu
 
 /** Never render a stamp from the future: it would sort above every real canvas
- *  in the reclaim list. Server-generated today (so this is a floor against
- *  clock skew rather than against a caller), and cheap enough to keep. */
+ *  in the resume list and the Library. Server-generated today (so this is a
+ *  floor against clock skew rather than against a caller), and cheap to keep. */
 function clampToNow(iso: string): string {
   const ms = Date.parse(iso)
   const now = Date.now()
@@ -1987,65 +2228,256 @@ function clampToNow(iso: string): string {
  * stronger but throws on a directory that no longer exists, which is exactly
  * the case where someone most needs to find their old canvases.
  */
-function sameProjectDir(a: string, b: string): boolean {
-  const clean = (p: string) => {
-    const stripped = p.replace(FORMAT_CONTROLS_RE, '')
-    // path.resolve normalises separators and `.` segments, but only makes sense
-    // on an absolute path -- a relative one would be resolved against the main
-    // process's cwd, which has nothing to do with either session.
-    return path.isAbsolute(stripped) ? path.resolve(stripped) : stripped
-  }
-  return sameFsPath(clean(a), clean(b))
+export function sameProjectDir(a: string, b: string): boolean {
+  return sameFsPath(cleanProjectDir(a), cleanProjectDir(b))
 }
 
-/** Canvases this session could reclaim, for the user to choose from. Pure read
- *  — nothing moves until the user names one. */
-export function listOrphanCandidateCanvases(sessionId: string, query: CanvasAdoptionQuery): ReclaimableCanvas[] {
-  if (!SESSION_ID_RE.test(sessionId)) return []
-  ensureDiskScanned()
-  if (sessionIndex.has(sessionId)) return [] // already owns one
-  const out: ReclaimableCanvas[] = []
-  for (const record of canvases.values()) {
-    if (!isReclaimCandidate(record, sessionId, query)) continue
-    const cwd = record.cwd?.replace(FORMAT_CONTROLS_RE, '')
-    out.push({
-      canvasId: record.canvasId,
-      versionCount: record.versions.length,
-      lastRenderedAt: clampToNow(record.versions[record.versions.length - 1]?.createdAt ?? record.createdAt),
-      // The disambiguator. Two canvases from one project were previously
-      // indistinguishable on the card — same title, same cwd, often the same
-      // version count — and picking the wrong one re-binds ANOTHER project's
-      // private review notes to this session, which the pre-allowed
-      // `canvas_review` can then read. The conversation is what actually
-      // differs between them, so it is what the user is shown.
-      ...(record.conversationUuid ? { conversationShortId: record.conversationUuid.slice(0, 8) } : {}),
-      ...(cwd ? { cwd } : {}),
-    })
-  }
-  return out
+/** The shared normalisation both project comparisons use: format controls out,
+ *  separators and `.` segments resolved. `path.resolve` only makes sense on an
+ *  absolute path -- a relative one would resolve against the MAIN process's
+ *  cwd, which has nothing to do with either session -- so it is applied only
+ *  there. */
+function cleanProjectDir(p: string): string {
+  const stripped = p.replace(FORMAT_CONTROLS_RE, '')
+  return path.isAbsolute(stripped) ? path.resolve(stripped) : stripped
 }
 
 /**
- * Move the canvas the USER named to this session.
+ * The same question, asked CASE-SENSITIVELY — for the destructive
+ * cross-session paths only.
  *
- * Addressed by id, never matched: the canvas the user picked out of
- * listOrphanCandidateCanvases is the one that moves. The floor still applies —
- * owner not current — so a stale id or a canvas that came back to life is
- * refused rather than taken. That floor is now the ONLY one (ADR-017 removed
- * the account half), so its oracle is what the whole guarantee rests on.
+ * `sameProjectDir` folds case whenever `process.platform` is win32 or darwin,
+ * i.e. for the whole machine. Both platforms can carry case-SENSITIVE volumes
+ * (an NTFS directory with the per-directory flag, an APFS case-sensitive
+ * volume), on which `…\Foo` and `…\foo` are two genuinely different projects
+ * that it calls equal. For a LISTING that is the right trade — the cost of a
+ * false match is a row you did not need to see, and the cost of a false miss is
+ * being unable to find your own work. For a DISMISS or a RESUME of somebody
+ * else's canvas it is not: choosing which directory to sit in is not an attack
+ * that needs any privilege.
  *
- * Persists BEFORE memory moves (the renderVersion discipline), and the caller
- * re-binds the review store next (rebindReviewsToSession) — reviews.json
+ * Still normalised the way the filesystem would for everything EXCEPT case:
+  * one tile's recorded cwd legitimately alternates spelling across its life (a
+ * trailing separator; a relaunch reading it out of the transcript rather than
+ * the config), so raw string equality would refuse honest peers. Only case is
+ * treated as a real difference.
+ */
+export function sameProjectDirExactCase(a: string, b: string): boolean {
+  const norm = (p: string) => cleanProjectDir(p).replace(/[\\/]+$/, '')
+  return norm(a) === norm(b)
+}
+
+/**
+ * How many resume rows the front page is ever offered.
+ *
+ * A card the user has to read is a card they can mis-click, and the list is
+ * input to a component that renders every entry. The most recently worked
+ * survive (the sort runs first), which is what someone scanning for their own
+ * work would have looked at anyway.
+ */
+const MAX_RESUMABLE_ROWS = 12
+
+/**
+ * OWNERLESS IN-FLIGHT canvases this session could resume. Pure read — nothing
+ * moves until the user names one and `resumeCanvasForSession` performs the
+ * compare-and-set.
+ *
+ * INDEPENDENT OF WHAT THE CALLER ALREADY OWNS, and that is a deliberate fix.
+ * The old lister returned [] the moment the asking session held any canvas,
+ * which meant a session that had ever rendered could never see stranded work —
+ * so the only route back to it was the library, and the library is scoped to
+ * the project. Owning a canvas is not a reason to be unable to pick up another.
+ *
+ * Scoped by `isEligible`, which is the SAME predicate the resume ACTION
+ * applies: this is a list of canvases the user may actually take, so offering
+ * more than that would be advertising a refusal. `configId` here tightens the
+ * ORDER only — the caller's own config floats its work to the top.
+ */
+export function listResumableCanvases(
+  sessionId: string,
+  query: CanvasLivenessQuery,
+  opts: {
+    /** The SAME rule the resume action applies (see `CanvasWorkspaceCheck`), so
+     *  the list can never advertise a canvas the action would refuse. Absent =
+     *  no workspace restriction, which is a TEST affordance: the one production
+     *  caller (canvas-session-link) always supplies it. */
+    isEligible?: CanvasWorkspaceCheck
+    /** ORDERING only. */
+    configId?: string
+    noteCountOf?: (canvasId: string) => number
+    /** configId -> the config's CURRENT display name. Injected because this
+     *  store cannot read configs.json, and resolved AT READ so a renamed config
+     *  renames the row. An id that names no config resolves to nothing: a raw
+     *  id on a card is noise, not a name. */
+    configNameOf?: (configId: string) => string | undefined
+  } = {},
+): ResumableRow[] {
+  if (!SESSION_ID_RE.test(sessionId)) return []
+  ensureDiskScanned()
+  const rows: Array<ResumableRow & { sameConfig: boolean }> = []
+  for (const record of canvases.values()) {
+    if (!isResumeCandidate(record, sessionId, query)) continue
+    if (opts.isEligible && !opts.isEligible({ cwd: record.cwd, configId: record.configId })) continue
+    const shown = record.versions.filter((v) => !v.draft)
+    const latest = shown[shown.length - 1]
+    if (!latest) continue
+    // The title has to tell two canvases from one project apart. The subject is
+    // best; a pack name next; and failing both the CONVERSATION short id, which
+    // is the thing that actually differs when everything else matches (the
+    // mis-click that re-binds another project's private notes is what this
+    // exists to prevent).
+    const title =
+      record.title ??
+      (latest.mode === 'uat' ? latest.packName : undefined) ??
+      (record.conversationUuid ? `conversation ${record.conversationUuid.slice(0, 8)}` : 'Untitled canvas')
+    let noteCount = 0
+    try {
+      noteCount = opts.noteCountOf ? opts.noteCountOf(record.canvasId) : 0
+    } catch {
+      noteCount = 0 // an unreadable review store costs a number, never the row
+    }
+    const configName = record.configId ? opts.configNameOf?.(record.configId) : undefined
+    rows.push({
+      canvasId: record.canvasId,
+      title,
+      kind: libraryRowKindOf(latest.mode),
+      noteCount,
+      lastRenderedAt: clampToNow(latest.createdAt),
+      // The config the canvas was MADE under, by its CURRENT name. Absent is
+      // absent — never a placeholder, and never the raw id.
+      ...(configName ? { configName } : {}),
+      expectedOwnerSessionId: record.sessionId,
+      sameConfig: !!opts.configId && record.configId === opts.configId,
+    })
+  }
+  rows.sort((a, b) => {
+    if (a.sameConfig !== b.sameConfig) return a.sameConfig ? -1 : 1
+    return b.lastRenderedAt.localeCompare(a.lastRenderedAt)
+  })
+  return rows.slice(0, MAX_RESUMABLE_ROWS).map(({ sameConfig: _drop, ...row }) => row)
+}
+
+/**
+ * RESUME an ownerless in-flight canvas — the one path that moves ownership
+ * between sessions, and the only one there is.
+ *
+ * COMPARE-AND-SET, AND IT IS SYNCHRONOUS END TO END. The caller passes the
+ * owner it SAW when the row was listed; between the read of `record.sessionId`
+ * here and the `persist` + map write below there is no `await`, no I/O the
+ * event loop can interleave a second resume into, and no re-read. That is what
+ * makes first-wins mean something: two sessions racing on the same row both
+ * pass the liveness floor (nobody is live), and without the CAS both would
+ * "succeed", the second silently taking a canvas the first had already started
+ * working in. With it, the loser is told 'changed'.
+ *
+ * `persist` throwing leaves memory untouched (the renderVersion discipline), so
+ * a failed write is a refused resume rather than a half-moved canvas. The
+ * caller re-binds the review store next (rebindReviewsToSession) — reviews.json
  * carries the owner session id too.
  */
+export function resumeCanvasForSession(
+  sessionId: string,
+  canvasId: string,
+  expectedOwnerSessionId: string,
+  query: CanvasLivenessQuery,
+  /**
+   * The WORKSPACE gate — same project AND same config, per
+   * `CanvasWorkspaceCheck`. Absent = unrestricted, a TEST affordance:
+   * canvas-session-link is the only production caller and always supplies it.
+   *
+   * This path had NO project term at all before, so a peer that learned a
+   * canvas id could take work out of a project it has never opened.
+   *
+   * Evaluated inside the critical section below, beside the compare-and-set, so
+   * one synchronous block decides the whole question. (The facts it reads —
+   * `cwd`, `configId` — are creation stamps that never drift, so it could not
+   * race even if it ran earlier; keeping it here is about having one place to
+   * read the decision from.)
+   */
+  isEligible?: CanvasWorkspaceCheck,
+): { ok: true; canvasId: string; activeVersionId: string | null } | { ok: false; reason: 'owner-live' | 'changed' | 'completed' | 'gone' } {
+  if (!SESSION_ID_RE.test(sessionId)) return { ok: false, reason: 'gone' }
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return { ok: false, reason: 'gone' }
+  if (!SESSION_ID_RE.test(expectedOwnerSessionId)) return { ok: false, reason: 'changed' }
+  ensureDiskScanned()
+
+  // ── the critical section: read, decide, write. NO await below this line. ──
+  const record = canvases.get(canvasId)
+  if (!record) return { ok: false, reason: 'gone' }
+  if (record.versions.length === 0) return { ok: false, reason: 'gone' }
+  // Resuming your own canvas is not a resume; it is Open here, and it has its
+  // own entry point. Reported as 'changed' rather than as success so a stale
+  // row can never look like it did something.
+  if (record.sessionId === sessionId) return { ok: false, reason: 'changed' }
+  if (record.sessionId !== expectedOwnerSessionId) return { ok: false, reason: 'changed' }
+  if (record.completed) return { ok: false, reason: 'completed' }
+  // Reported as 'gone', deliberately: a caller outside this canvas's workspace
+  // learns that there is nothing here for it, and nothing else. A distinct
+  // reason would answer "does a canvas with this id exist elsewhere on this
+  // machine", which is not a question a peer gets to ask.
+  if (isEligible && !isEligible({ cwd: record.cwd, configId: record.configId })) return { ok: false, reason: 'gone' }
+  let live: boolean
+  try {
+    live = query.isSessionLive(record.sessionId)
+  } catch {
+    live = true // cannot tell → treat as live → untouchable
+  }
+  if (live) return { ok: false, reason: 'owner-live' }
+
+  // Only the OWNER changes. The stamps are the record's identity — rewriting
+  // them here is how an earlier cut let an adopting session redefine what the
+  // canvas "is" (it re-stamped cwd to the adopter's directory). `createdBy` is
+  // untouched for the same reason: a resume moves the work, not its history.
+  const next: CanvasRecord = { ...record, sessionId }
+  persist(next)
+  canvases.set(next.canvasId, next)
+  // EXHAUSTIVE, the way `deleteCanvas` has always been. Clearing only the owner
+  // THIS call happened to read leaves any other session that was pointed here
+  // — reachable when a caller-supplied liveness oracle re-enters this very
+  // function and moves the canvas first — holding an index entry that names a
+  // canvas it no longer owns, which is a cross-session write waiting for its
+  // next mutation. `getRecordForSession` is the second line under this one.
+  for (const [sid, id] of sessionIndex) {
+    if (id === next.canvasId && sid !== sessionId) sessionIndex.delete(sid)
+  }
+  // The resumed canvas becomes the caller's CURRENT one. A caller that already
+  // owns canvases MAY resume: its previous current stays owned, it simply stops
+  // being what the pane points at.
+  sessionIndex.set(sessionId, next.canvasId)
+  draftIndex.delete(sessionId)
+  // ── end of critical section ──────────────────────────────────────────────
+  emitChanged(next)
+  return { ok: true, canvasId: next.canvasId, activeVersionId: next.activeVersionId }
+}
+
+/** Who owns a canvas right now, and whether it is memorialised — the read every
+ *  mutation guard at the IPC seam is built from. Undefined for an unknown id. */
+export function canvasOwnershipOf(
+  canvasId: string,
+): { sessionId: string; completed: boolean; cwd?: string; configId?: string } | undefined {
+  if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return undefined
+  ensureDiskScanned()
+  const record = canvases.get(canvasId)
+  if (!record) return undefined
+  return {
+    sessionId: record.sessionId,
+    completed: !!record.completed,
+    ...(record.cwd ? { cwd: record.cwd } : {}),
+    // The workspace's SECOND factor. A creation stamp, so it names the config
+    // the canvas was made under and cannot be re-pointed by whoever holds it.
+    ...(record.configId ? { configId: record.configId } : {}),
+  }
+}
+
 /**
  * The canvas LIBRARY: every canvas on disk, newest first.
  *
- * Housekeeping, not authorization. Unlike `listOrphanCandidateCanvases` this
- * deliberately does NOT filter to what the asking session could adopt — the
+ * Housekeeping, not authorization. Unlike `listResumableCanvases` this
+ * deliberately does NOT filter to what the asking session could resume — the
  * whole point is to show the user what has accumulated so they can remove it.
- * Nothing here binds a canvas to a session; only `adoptCanvasForSession` does,
- * and it is unchanged.
+ * Nothing here binds a canvas to a session; only `resumeCanvasForSession` and
+ * `openOwnCanvasForSession` do. It DOES apply the M4 privacy rule: another
+ * live session's in-flight work is not the asking session's to see.
  */
 export function listAllCanvases(
   openTileSessionIds: readonly string[] = [],
@@ -2057,7 +2489,7 @@ export function listAllCanvases(
    *
    * Undefined = no filter (a session we have no cwd for still sees everything,
    * which is the fail-open side). This is relevance, never authorization —
-   * ownership is decided by adoptCanvasForSession alone.
+   * ownership is decided by the record's own `sessionId` alone.
    */
   projectCwd?: string,
   /**
@@ -2066,28 +2498,49 @@ export function listAllCanvases(
    * only its own, while the library shows everything.
    *
    * DISPLAY ONLY, and the distinction matters: nothing here grants anything.
-   * Ownership is decided by adoptCanvasForSession, and delete is id-only with
-   * no ownership check at the IPC seam, so a "mine" badge must never be read as
-   * a permission.
+   * Ownership is decided by the record's own `sessionId`, so a "mine" badge
+   * must never be read as a permission — every mutating channel re-checks it.
    */
   askingSessionId?: string,
+  /**
+   * THE PRIVACY RULE'S ORACLE (M4). In-flight work is private to the LIVE
+   * session that rendered it, so a row whose owner is live and is not the
+   * caller is withheld here unless the canvas is completed.
+   *
+   * Injected because this store is lifecycle-blind — and it must NOT be derived
+   * from `openTileSessionIds`. That array is composed by the CALLING session,
+   * so deriving a protection from it makes the protection opt-in by whoever it
+   * protects against: a peer that leaves the owner out of its own request makes
+   * a live owner look dead. The one production caller passes main's PTY
+   * registry. Absent = nothing is live, a TEST affordance for a cold read.
+   */
+  isSessionLive?: (sessionId: string) => boolean,
 ): CanvasLibraryEntry[] {
   ensureDiskScanned()
   const open = new Set(openTileSessionIds.filter((id) => SESSION_ID_RE.test(id)))
   const asking = askingSessionId && SESSION_ID_RE.test(askingSessionId) ? askingSessionId : undefined
   const activeForAsking = asking ? sessionIndex.get(asking) : undefined
+  const live = isSessionLive ?? (() => false)
   const out: CanvasLibraryEntry[] = []
   for (const record of canvases.values()) {
-    // The same question adoptCanvasForSession answers, so the badge and the
+    // The same question every mutation guard answers, so the badge and the
     // action can never disagree: did THIS session author it.
     const mine = asking !== undefined && record.sessionId === asking
+    // THE PRIVACY RULE (M4). Another live session's IN-FLIGHT canvas is
+    // invisible — no row here, and therefore no count in the totals sweep this
+    // list feeds. Enforced in MAIN rather than in the renderer, because a
+    // filter the renderer applies is a filter that shipped the data first. A
+    // COMPLETED canvas is memorialised into the shared project library and
+    // stays visible (read-only to non-owners); an OWNERLESS in-flight one stays
+    // visible so it can be resumed.
+    if (!mine && !record.completed && isLiveOrUnknown(record.sessionId, live)) continue
     // Project scope NEVER hides a session's own canvas.
     //
     // ADR-017 scopes the library to the project, and justifies it by saying the
-    // reclaim list stays unfiltered so a canvas whose project you never open
-    // again still has a route back. It does not: listOrphanCandidateCanvases
-    // returns [] the moment the asking session owns a canvas, and excludes the
-    // session's own regardless. So for any session that has ever rendered, the
+    // resume list stays unfiltered so a canvas whose project you never open
+    // again still has a route back. It is scoped too (by relevance, never by
+    // authorization) and excludes the session's own. So for a session whose own
+    // work is what it is looking for, the
     // scoped library is the ONLY route to its own work -- and a project key that
     // merely RESPELLS (a trailing separator, a relaunch reading cwd from the
     // transcript instead of the config) would strand every canvas it authored,
@@ -2110,6 +2563,12 @@ export function listAllCanvases(
       createdAt: clampToNow(record.createdAt),
       lastRenderedAt: clampToNow(latest?.createdAt ?? record.createdAt),
       ...(latest?.source.mode ? { latestMode: latest.source.mode } : {}),
+      // The TEST PACK's identity (M3), for uat rows. Only the user's own name is
+      // carried: the generated default is composed by whoever renders the row,
+      // from `defaultPackName`, so a row never shows a default frozen at the
+      // moment of capture. `buildLabel` is the agent's own label for the build.
+      ...(latest?.source.mode === 'uat' && latest.packName ? { packName: latest.packName } : {}),
+      ...(latest?.source.mode === 'uat' && latest.source.buildLabel ? { buildLabel: latest.source.buildLabel } : {}),
       ...(record.conversationUuid ? { conversationShortId: record.conversationUuid.slice(0, 8) } : {}),
       ...(cwd ? { cwd } : {}),
       ...(record.title ? { title: record.title } : {}),
@@ -2150,6 +2609,65 @@ export function listAllCanvases(
 /** How many library rows one call returns. Well above a session's own cap
  *  (MAX_CANVASES_PER_SESSION) so a session always sees all of its own. */
 const MAX_LIBRARY_ENTRIES = 120
+
+/**
+ * One canvas the LIBRARY may show, with its versions — the artefact-level read
+ * `canvas:libraryList` builds rows from (M4).
+ *
+ * `listAllCanvases` answers a canvas-level question and cannot serve this: a
+ * canvas accumulates several ARTEFACTS (a mockup run, then a plan, then a test
+ * pack) and a per-canvas row could only ever describe the newest of them. This
+ * hands back the versions so the caller — which also holds the review store and
+ * config-manager, neither of which this store may import — can split them into
+ * runs and compose a row per artefact.
+ *
+ * Same project scope and the SAME privacy rule, applied here rather than left
+ * to the caller, so the two listing channels cannot drift apart.
+ */
+export interface LibraryCanvas {
+  state: CanvasState
+  createdAt: string
+  cwd?: string
+  ownedByThisSession: boolean
+  isActiveForThisSession: boolean
+}
+
+export function listCanvasesForLibrary(args: {
+  askingSessionId: string
+  projectCwd?: string
+  /**
+   * THE PRIVACY RULE'S ORACLE. NEVER derived from an open-tile hint — see
+   * `listAllCanvases` for why a caller-composed array cannot gate the
+   * visibility of another session's work. Absent = nothing is live.
+   */
+  isSessionLive?: (sessionId: string) => boolean
+}): LibraryCanvas[] {
+  ensureDiskScanned()
+  if (!SESSION_ID_RE.test(args.askingSessionId)) return []
+  const live = args.isSessionLive ?? (() => false)
+  const activeForAsking = sessionIndex.get(args.askingSessionId)
+  const out: LibraryCanvas[] = []
+  for (const record of canvases.values()) {
+    const mine = record.sessionId === args.askingSessionId
+    // THE PRIVACY RULE (M4) — the same one `listAllCanvases` applies, and for
+    // the same reason: an in-flight canvas whose owner is LIVE and is not the
+    // caller is not the caller's to see. Completed work is memorialised into
+    // the shared project library; ownerless work is resumable, so it shows.
+    if (!mine && !record.completed && isLiveOrUnknown(record.sessionId, live)) continue
+    // Project scope NEVER hides a session's own canvas — the same fail-open
+    // `listAllCanvases` takes, because the library is the only route back to
+    // work whose project key merely respells.
+    if (!mine && args.projectCwd && record.cwd && !sameProjectDir(record.cwd, args.projectCwd)) continue
+    out.push({
+      state: toState(record),
+      createdAt: clampToNow(record.createdAt),
+      ...(record.cwd ? { cwd: record.cwd.replace(FORMAT_CONTROLS_RE, '') } : {}),
+      ownedByThisSession: mine,
+      isActiveForThisSession: mine && activeForAsking === record.canvasId,
+    })
+  }
+  return out
+}
 
 /**
  * Remove a tree WITHOUT ever descending through a reparse point.
@@ -2340,6 +2858,23 @@ export function setArtifactArchived(canvasId: string, versionId: string, archive
   const run = artifactRunContaining(record.versions, versionId)
   if (!run) return toState(record)
   const runIds = new Set(run.map((v) => v.id))
+  // ARCHIVING CLEARS A REVIEW-NEEDED STAMP THAT POINTS INTO THIS RUN (W3, live
+  // repro).
+  //
+  // The two had drifted apart: every OTHER reader treats an archived run as not
+  // owed — `openVersionIdsOf` skips it, so a force never dismisses its open
+  // version — while `awaitingReview` went on naming a version inside it. The
+  // force path checks that stamp AFTER it has already force-closed everything
+  // else, so the canvas reached a state where Mark complete refused for ever
+  // and no gesture remained that could clear it: the version it named was
+  // archived, so nothing would ever rule on it. "Mark complete is never dead"
+  // has to hold.
+  //
+  // Cleared HERE rather than tolerated in the force path, so the queue, the
+  // pill, the Library's owed text and the completion guard all read one answer.
+  // Un-archiving restores nothing: the version still carries no verdict, so it
+  // is an OPEN version again and the ordinary owed rules pick it straight up.
+  const dropAwaiting = archived && !!record.awaitingReview && runIds.has(record.awaitingReview.versionId)
   const nextRecord: CanvasRecord = {
     ...record,
     versions: record.versions.map((v) => {
@@ -2349,6 +2884,7 @@ export function setArtifactArchived(canvasId: string, versionId: string, archive
       return rest
     }),
   }
+  if (dropAwaiting) delete (nextRecord as { awaitingReview?: unknown }).awaitingReview
   persist(nextRecord)
   canvases.set(canvasId, nextRecord)
   emitChanged(nextRecord)
@@ -2505,57 +3041,43 @@ export function deleteArtifact(
   return { ok: true, deletedVersionIds }
 }
 
-export function adoptCanvasForSession(
+/**
+ * OPEN HERE: point this session at a canvas IT ALREADY OWNS.
+ *
+ * RE-OPENING YOUR OWN CANVAS IS NOT AN ADOPTION, and since M4 it is all this
+ * function does. A session owns one ACTIVE canvas (sessionIndex) but may have
+ * authored many: rendering a new subject files the previous one and points the
+ * index at the new record, leaving the earlier canvases still stamped with this
+ * session's id. Switching back to one of them transfers nothing — the record
+ * already says this session — so no ownership machinery applies.
+ *
+ * THE FOREIGN BRANCH IS GONE. It used to adopt an orphan here, guarded by
+ * "is the owner still current" and by `sessionIndex.has(sessionId)`, with no
+ * compare-and-set: two sessions racing on one stranded canvas both passed. That
+ * transfer now lives in `resumeCanvasForSession`, which is the single ownership
+ * -moving path and does the CAS synchronously. A foreign canvas named here is
+ * simply refused — which is also what the Library's own-rows-only actions
+ * expect.
+ *
+ * An earlier cut additionally required the record's account stamp to match the
+ * asking session's, which made a tile that had switched accounts unable to
+ * re-open the canvases it had drawn itself — the account is not what a canvas
+ * belongs to (ADR-017).
+ */
+export function openOwnCanvasForSession(
   sessionId: string,
   canvasId: string,
-  query: CanvasAdoptionQuery,
 ): { canvasId: string; activeVersionId: string | null } | null {
   if (!SESSION_ID_RE.test(sessionId)) return null
   if (typeof canvasId !== 'string' || !CANVAS_ID_RE.test(canvasId)) return null
   ensureDiskScanned()
 
-  // RE-OPENING YOUR OWN CANVAS IS NOT AN ADOPTION.
-  //
-  // A session owns one ACTIVE canvas (sessionIndex) but may have authored many:
-  // rendering a new subject files the previous one and points the index at the
-  // new record, leaving the earlier canvases still stamped with this session's
-  // id. Switching back to one of them transfers nothing — the record already
-  // says this session — so none of the ownership machinery below applies.
-  //
-  // The `sessionIndex.has(sessionId)` guard underneath is what stops a session
-  // that already holds a canvas from taking SOMEONE ELSE'S. It ran first, so it
-  // also refused every canvas the session had made itself, which made the
-  // library's "Open here" fail for any session that had ever rendered — i.e.
-  // every session that has a library to open. Reported as "it says I can't open
-  // it", with the list showing the user's own three canvases as belonging to
-  // another session.
-  // Nothing else applies to it. An earlier cut also required the record's
-  // account stamp to match the asking session's, which made a tile that had
-  // switched accounts unable to re-open the canvases it had drawn itself — the
-  // account is not what a canvas belongs to (ADR-017).
   const own = canvases.get(canvasId)
-  if (own && own.sessionId === sessionId) {
-    sessionIndex.set(sessionId, own.canvasId)
-    emitChanged(own)
-    return { canvasId: own.canvasId, activeVersionId: own.activeVersionId }
-  }
-
-  if (sessionIndex.has(sessionId)) return null
-
-  const best = canvases.get(canvasId)
-  if (!best || !isReclaimCandidate(best, sessionId, query)) return null
-
-  // Only the owner changes. The stamps are the record's identity — rewriting
-  // them here is how the first cut let an adopting session redefine what the
-  // canvas "is" (it re-stamped cwd to the adopter's directory).
-  const next: CanvasRecord = { ...best, sessionId }
-  persist(next)
-  const previousOwner = best.sessionId
-  canvases.set(next.canvasId, next)
-  if (sessionIndex.get(previousOwner) === next.canvasId) sessionIndex.delete(previousOwner)
-  sessionIndex.set(sessionId, next.canvasId)
-  emitChanged(next)
-  return { canvasId: next.canvasId, activeVersionId: next.activeVersionId }
+  if (!own || own.sessionId !== sessionId) return null
+  sessionIndex.set(sessionId, own.canvasId)
+  draftIndex.delete(sessionId)
+  emitChanged(own)
+  return { canvasId: own.canvasId, activeVersionId: own.activeVersionId }
 }
 
 /** Resolve what the ccc-ux:// protocol may serve for a canvas/version pair.

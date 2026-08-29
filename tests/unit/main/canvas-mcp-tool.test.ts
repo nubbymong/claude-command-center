@@ -55,7 +55,7 @@ function deps(overrides: Partial<CanvasToolDeps> = {}): CanvasToolDeps {
     readDesignFile: () => {
       throw new Error('no design files in this fixture')
     },
-    markAddressed: () => ({ addressed: [], skipped: [] }),
+    markAddressed: () => ({ addressed: [], skipped: [], refused: [] }),
     closeByAgent: () => ({ closed: [], skipped: [], reviewClosed: false }),
     // Defaults are the "could not tell" answers, so every pre-existing
     // expectation over the reply text stays exactly as it was. Tests that care
@@ -362,7 +362,15 @@ describe('registration', () => {
     // The description has to carry the untrusted-data framing: the notes are
     // what the user wrote ABOUT the page, never instructions to follow blindly.
     expect(String(description)).toMatch(/untrusted|DATA/i)
-    expect(Object.keys(shape as object).sort()).toEqual(['canvasId', 'cccSessionId', 'format', 'reviewId'])
+    // `includeShots` (M3) is the Testing-mode opt-in for the screenshots: the
+    // structure comes back every time, the pixels only when asked.
+    expect(Object.keys(shape as object).sort()).toEqual([
+      'canvasId',
+      'cccSessionId',
+      'format',
+      'includeShots',
+      'reviewId',
+    ])
     expect(typeof handler).toBe('function')
   })
 
@@ -373,7 +381,7 @@ describe('registration', () => {
     expect(name).toBe('canvas_resolve')
     // It must say what it is NOT: the agent never approves for the user.
     expect(String(description)).toMatch(/never approves/i)
-    expect(Object.keys(shape as object).sort()).toEqual(['annotationIds', 'cccSessionId', 'reviewId', 'variants'])
+    expect(Object.keys(shape as object).sort()).toEqual(['annotationIds', 'cccSessionId', 'reviewId', 'updatedIn', 'variants'])
     expect(typeof handler).toBe('function')
   })
 
@@ -400,14 +408,25 @@ describe('runCanvasResolve', () => {
     const out = runCanvasResolve(
       { reviewId: 'R3', annotationIds: ['a2', 'a3'] },
       'sess-mine',
-      { markAddressed: (_sid, rid, ids) => { calls.push([rid, ...ids]); return { addressed: ['a2'], skipped: ['a3'] } } },
+      { markAddressed: (_sid, rid, ids) => { calls.push([rid, ...ids]); return { addressed: ['a2'], skipped: ['a3'], refused: [] } } },
     )
     expect(calls).toEqual([['R3', 'a2', 'a3']])
     expect(out.isError).toBe(false)
     expect(out.text).toMatch(/Marked 1 note/)
     expect(out.text).toMatch(/Left 1 unchanged/)
-    // And it says who still has the last word.
-    expect(out.text).toMatch(/final verdict/)
+    // And it says who still has the last word — the DECISION on the version,
+    // not a verdict on each note.
+    expect(out.text).toMatch(/rules on the VERSION/)
+  })
+
+  it('relays a refusal BY NAME rather than folding it into a skip count', () => {
+    const out = runCanvasResolve(
+      { reviewId: 'R3', annotationIds: ['a2'] },
+      'sess-mine',
+      { markAddressed: () => ({ addressed: [], skipped: [], refused: [{ id: 'a2', reason: 'a2 is an observation — nothing owed' }] }) },
+    )
+    expect(out.isError).toBe(false)
+    expect(out.text).toMatch(/Refused 1: a2 is an observation/)
   })
 
   it('takes the session from the transport, never from the arguments', () => {
@@ -415,7 +434,7 @@ describe('runCanvasResolve', () => {
     runCanvasResolve(
       { reviewId: 'R1', annotationIds: ['a1'], cccSessionId: 'sess-other' } as never,
       'sess-mine',
-      { markAddressed: (sid) => { seen = sid; return { addressed: ['a1'], skipped: [] } } },
+      { markAddressed: (sid) => { seen = sid; return { addressed: ['a1'], skipped: [], refused: [] } } },
     )
     expect(seen).toBe('sess-mine')
   })
@@ -426,7 +445,7 @@ describe('runCanvasResolve', () => {
       const out = runCanvasResolve(
         { reviewId: 'R1', annotationIds: bad },
         'sess-mine',
-        { markAddressed: () => { touched = true; return { addressed: [], skipped: [] } } },
+        { markAddressed: () => { touched = true; return { addressed: [], skipped: [], refused: [] } } },
       )
       expect(out.isError).toBe(true)
     }
@@ -434,13 +453,13 @@ describe('runCanvasResolve', () => {
   })
 
   it('refuses an empty, missing, or oversized list', () => {
-    const d = { markAddressed: () => ({ addressed: [], skipped: [] }) }
+    const d = { markAddressed: () => ({ addressed: [], skipped: [], refused: [] }) }
     expect(runCanvasResolve({ reviewId: 'R1' }, 'sess-mine', d).isError).toBe(true)
     expect(runCanvasResolve({ reviewId: 'R1', annotationIds: [] }, 'sess-mine', d).isError).toBe(true)
     expect(runCanvasResolve({ reviewId: 'R1', annotationIds: Array.from({ length: 101 }, (_, i) => `a${i + 1}`) }, 'sess-mine', d).isError).toBe(true)
     // ...and a missing or malformed reviewId is refused before the store is touched.
     let touched = false
-    const spy = { markAddressed: () => { touched = true; return { addressed: [], skipped: [] } } }
+    const spy = { markAddressed: () => { touched = true; return { addressed: [], skipped: [], refused: [] } } }
     expect(runCanvasResolve({ annotationIds: ['a1'] }, 'sess-mine', spy).isError).toBe(true)
     expect(runCanvasResolve({ reviewId: 'a1', annotationIds: ['a1'] }, 'sess-mine', spy).isError).toBe(true)
     expect(runCanvasResolve({ reviewId: '../R1', annotationIds: ['a1'] }, 'sess-mine', spy).isError).toBe(true)
@@ -475,7 +494,7 @@ describe('runCanvasResolve', () => {
 describe('runCanvasResolve variants', () => {
   it('refuses malformed variants before the store is touched', () => {
     let touched = false
-    const spy = { markAddressed: () => { touched = true; return { addressed: [], skipped: [] } } }
+    const spy = { markAddressed: () => { touched = true; return { addressed: [], skipped: [], refused: [] } } }
     const bad: unknown[] = [
       'a3=thin rule', // not an object
       ['thin rule'], // an array
@@ -506,7 +525,7 @@ describe('runCanvasResolve variants', () => {
       {
         markAddressed: (_sid, _rid, _ids, variantsByNote) => {
           got = variantsByNote
-          return { addressed: ['a1', 'a2'], skipped: [] }
+          return { addressed: ['a1', 'a2'], skipped: [], refused: [] }
         },
       },
     )
@@ -520,7 +539,7 @@ describe('runCanvasResolve variants', () => {
     const out = runCanvasResolve(
       { reviewId: 'R2', annotationIds: ['a1', 'a2'], variants: { a2: ['thin rule'] } },
       'sess-mine',
-      { markAddressed: () => ({ addressed: ['a1'], skipped: ['a2'] }) },
+      { markAddressed: () => ({ addressed: ['a1'], skipped: ['a2'], refused: [] }) },
     )
     expect(out.isError).toBe(false)
     expect(out.text).not.toMatch(/Attached alternatives/)
@@ -922,6 +941,81 @@ describe('canvas_render', () => {
   })
 })
 
+describe('canvas_version_verdict — a relayed verdict settles nothing and completes nothing (A2)', () => {
+  /** The registered tool, so this exercises the wiring rather than a helper the
+   *  wiring might not call. */
+  function verdictTool(overrides: Partial<CanvasToolDeps> = {}) {
+    const tools: Record<string, (args: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }>> = {}
+    const server = {
+      tool: (name: string, _d: string, _s: unknown, handler: (args: unknown) => Promise<never>) => {
+        tools[name] = handler
+      },
+    }
+    registerCanvasTools(server, z, () => 'sess-mine', deps(overrides))
+    return tools.canvas_version_verdict
+  }
+
+  it('an APPROVED from chat stamps the version and reaches no settle and no completion', async () => {
+    // The one agent write with no mechanical barrier. It clears the awaiting
+    // stamp, so if it also settled earlier rounds — or auto-completed, as the
+    // user's own approve does — an agent could close the user's outstanding
+    // feedback and sign the subject off with zero user gestures. Both are wired
+    // ONLY into the IPC handler, never here, and this is the test that says so.
+    const stamped: Array<{ versionId?: string; state: string }> = []
+    const settled: string[] = []
+    const completed: string[] = []
+    const tool = verdictTool({
+      setVersionVerdict: (_sid, versionId, decision) => {
+        stamped.push({ versionId, state: decision.state })
+        return STATE
+      },
+      settleSuperseded: (canvasId) => {
+        settled.push(canvasId)
+        return 0
+      },
+      completeCanvas: (_sid, canvasId) => {
+        completed.push(canvasId)
+        return STATE
+      },
+    })
+
+    const reply = await tool({ action: 'approved', versionId: 'v8' })
+    expect(reply.isError).toBe(false)
+    expect(stamped).toEqual([{ versionId: 'v8', state: 'approved' }])
+    expect(settled).toEqual([])
+    expect(completed).toEqual([])
+    // …and it says out loud that it is a relayed verdict, not a click.
+    expect(reply.content[0].text).toContain('recorded from chat')
+  })
+
+  it('a REJECTED from chat is the same — stamp only, and the store refuses one with no reason', async () => {
+    const settled: string[] = []
+    const completed: string[] = []
+    const tool = verdictTool({
+      // The real store refuses a note-less rejection; the tool relays that.
+      setVersionVerdict: (_sid, _v, decision) =>
+        decision.note ? STATE : { error: 'a rejection needs a note — say what is wrong' },
+      settleSuperseded: (canvasId) => {
+        settled.push(canvasId)
+        return 0
+      },
+      completeCanvas: (_sid, canvasId) => {
+        completed.push(canvasId)
+        return STATE
+      },
+    })
+
+    const bare = await tool({ action: 'rejected', versionId: 'v8' })
+    expect(bare.isError).toBe(true)
+    expect(bare.content[0].text).toContain('a rejection needs a note')
+
+    const withReason = await tool({ action: 'rejected', versionId: 'v8', note: 'the logo is wrong' })
+    expect(withReason.isError).toBe(false)
+    expect(settled).toEqual([])
+    expect(completed).toEqual([])
+  })
+})
+
 describe('canvas_render htmlPath (the terminal-friendly design ingress)', () => {
   it('renders the file the agent wrote, and the reply echoes neither path nor content', async () => {
     const seen: string[] = []
@@ -1145,3 +1239,5 @@ describe('canvas_render -- the ready flag (#366)', () => {
     expect(out.text).toContain('Draft v4')
   })
 })
+
+

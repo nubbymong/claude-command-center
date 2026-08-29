@@ -544,6 +544,36 @@ function sameBox(a: Rect | undefined, b: Rect | undefined): boolean {
   return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 }
 
+/** How many shadow boundaries the focus walk descends. Same bound the hit test
+ *  uses, and for the same reason: each level is another engine call. */
+const MAX_FOCUS_RETARGET = 8
+
+/**
+ * The emitted node holding keyboard focus, if any (M3).
+ *
+ * `document.activeElement` RETARGETS to the shadow host, so a focused input
+ * inside a web component reports the component — the same trap the hit test
+ * documents. Descend, then attribute to the nearest node this walk actually
+ * emitted, because a ref for a node that is not in the tree resolves to nothing.
+ * Body (the resting state of every page nobody has clicked into) has no node and
+ * correctly yields none.
+ */
+function focusedSnapshotNode(ctx: WalkContext): SnapshotNode | null {
+  let el: Element | null = null
+  try {
+    el = document.activeElement
+  } catch {
+    return null
+  }
+  for (let i = 0; i < MAX_FOCUS_RETARGET && el?.shadowRoot; i++) {
+    const inner: Element | null = el.shadowRoot.activeElement
+    if (!inner || inner === el) break
+    el = inner
+  }
+  if (!el || el === document.body || el === document.documentElement) return null
+  return nearestNode(el, ctx.byElement)
+}
+
 export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Promise<CanvasSnapshotResult> {
   const scope = (options.scope ?? []).filter((id) => typeof id === 'string' && id.length > 0)
   let analysis: AnalysisApi | null = null
@@ -731,6 +761,21 @@ export async function captureSnapshot(options: CanvasSnapshotOptions = {}): Prom
     },
     root,
   }
+  // WHERE the page is and what it calls itself (M3 state stamp). Taken from the
+  // SAME capture as the tree, so a stamp describes one instant rather than two:
+  // asking for the route in a second round-trip would let it drift a navigation
+  // away from the structure it is filed beside.
+  //
+  // Pathname and hash, never the search string. A query is where applications
+  // put tokens, ids and search terms, and the stamp records structure, not
+  // content — the same line `state.valueLength` draws one field over.
+  out.page = {
+    pathname: squash(location.pathname),
+    hash: squash(location.hash),
+    title: squash(document.title),
+  }
+  const focusedNode = focusedSnapshotNode(ctx)
+  if (focusedNode) out.focusedRef = focusedNode.ref
   if (unmatched.length > 0) out.unmatchedScope = unmatched
   if (ctx.truncated) out.truncated = true
   if (ctx.depthLimited) out.depthLimited = true

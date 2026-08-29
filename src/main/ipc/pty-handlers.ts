@@ -388,14 +388,30 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     // laundered the same model-chosen path through a different file (second
     // pass, 2026-08-15). Only the configured directory may become a served root.
     if (!options?.ssh) {
-      // Canvas continuity: stamp this session's work identity and let it adopt
-      // an orphaned canvas from a previous session of the same conversation /
-      // project (the VM "repush" bug, 2026-08-14). LOCAL sessions only — an SSH
-      // session's cwd names a path on the REMOTE machine. These stamps LABEL a
-      // canvas (ordering, the reclaim list); they never authorize a read.
+      // Canvas continuity: stamp this session's work identity so it can find
+      // (and resume) work stranded by a previous session of the same
+      // conversation / project (the VM "repush" bug, 2026-08-14). LOCAL
+      // sessions only — an SSH session's cwd names a path on the REMOTE
+      // machine. These stamps LABEL a canvas (ordering, the resume list, the
+      // audit line); they never authorize a read.
       noteSessionSpawnForCanvas(sessionId, {
         cwd: options?.resume?.cwd ?? options?.cwd,
         resumeUuid: options?.resume?.uuid,
+        // The config's display name, for the Testing pack's generated title
+        // (M3). A label like the two above it: it names a run for the user and
+        // authorizes nothing.
+        configLabel: options?.configLabel,
+        // The config's STABLE id (M4). It is what lets the Library resolve the
+        // config's CURRENT name at read time, so renaming a config renames
+        // every row rather than leaving frozen labels behind. A lookup key into
+        // the user's own configs.json — never a serving or authorization key,
+        // and the canvas layer re-checks its shape before recording it.
+        configId: options?.configId,
+        // The ACCOUNT this session runs, for the audit line. Only the profile's
+        // DISPLAY NAME is ever resolved from it (never the email), and only for
+        // a profile session — see accountDisplayNameFor. Display metadata: the
+        // account decides nothing about a canvas (ADR-017).
+        profileId: options?.profileId,
       })
     }
 

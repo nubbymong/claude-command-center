@@ -68,7 +68,7 @@ function seed(): string {
   store.upsertAnnotation(OWNER, note('second'))
   const state = store.upsertAnnotation(OWNER, note('third')).state
   const draftId = state.reviews.find((r) => r.status === 'draft')?.id
-  store.submitReview(OWNER, draftId as string, [])
+  store.submitReview(OWNER, draftId as string, [], 'reject')
   // A second, still-draft review so both counters are non-zero.
   store.upsertAnnotation(OWNER, note('still drafting'))
   return canvasId
@@ -79,8 +79,8 @@ function seed(): string {
  * the cache so the next read must come from disk.
  *
  * This is the real shape of the dangerous state, and it is reached entirely
- * through the store's own API: adoption transfers the canvas record, and
- * `rebindReviewsToSession` (which the reclaim path calls separately) is what
+ * through the store's own API: a resume transfers the canvas record, and
+ * `rebindReviewsToSession` (which the resume path calls separately) is what
  * catches reviews.json up. In between, reviews.json names a session that no
  * longer owns the canvas — which is exactly when `loadRecord` re-stamps and
  * persists. Hand-editing the file instead would not do: the per-review owner
@@ -88,10 +88,10 @@ function seed(): string {
  * test would pass for the wrong reason.
  */
 function detachReviewsOwner(canvasId: string): void {
-  const moved = canvasStore.adoptCanvasForSession(OTHER, canvasId, {
-    isSessionCurrent: () => false,
+  const moved = canvasStore.resumeCanvasForSession(OTHER, canvasId, OWNER, {
+    isSessionLive: () => false,
   })
-  expect(moved?.canvasId).toBe(canvasId)
+  expect(moved).toMatchObject({ ok: true, canvasId })
   expect(JSON.parse(fs.readFileSync(reviewsPath(canvasId), 'utf8')).sessionId).toBe(OWNER)
   store._resetCanvasReviewStoreForTest()
 }

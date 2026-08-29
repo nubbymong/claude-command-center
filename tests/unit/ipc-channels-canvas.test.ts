@@ -15,14 +15,38 @@ describe('canvas IPC channels', () => {
     expect(IPC.CANVAS_ANNOTATION_UPSERT).toBe('canvas:annotationUpsert')
     expect(IPC.CANVAS_ANNOTATION_DELETE).toBe('canvas:annotationDelete')
     expect(IPC.CANVAS_REVIEW_SUBMIT).toBe('canvas:reviewSubmit')
-    expect(IPC.CANVAS_ANNOTATION_RESOLVE).toBe('canvas:annotationResolve')
-    // Close-out (#365): the undo half, and the library's per-canvas bulk.
+    expect(IPC.CANVAS_VERSION_VERDICT).toBe('canvas:versionVerdict')
+    // The ONLY two revivals of a settled round — both the user's own gesture.
     expect(IPC.CANVAS_ANNOTATION_REOPEN).toBe('canvas:annotationReopen')
-    expect(IPC.CANVAS_REVIEW_CLOSE_OUT).toBe('canvas:reviewCloseOut')
+    expect(IPC.CANVAS_REVIEW_REOPEN).toBe('canvas:reviewReopen')
     // The seen report — renderer-only, and the one input to the agent's
     // close-out barrier that no MCP tool can produce.
     expect(IPC.CANVAS_REVIEW_MARK_SEEN).toBe('canvas:reviewMarkSeen')
+    // W14 — the half-written note, persisted. Renderer-only, like mark-seen:
+    // the payload is the user's unsent words and no MCP tool may reach it.
+    expect(IPC.CANVAS_COMPOSER_DRAFT_SET).toBe('canvas:composerDraftSet')
+    expect(IPC.CANVAS_COMPOSER_DRAFT_CLEAR).toBe('canvas:composerDraftClear')
+    // W3 — the user's force exit, and the read that lets the confirm name it.
+    expect(IPC.CANVAS_COMPLETE_FORCE).toBe('canvas:completeForce')
+    expect(IPC.CANVAS_DESCRIBE_FORCE_CLOSURES).toBe('canvas:describeForceClosures')
     expect(IPC.CANVAS_REVIEW_CHANGED).toBe('canvas:reviewChanged')
+    // M3 — Testing-mode evidence. Capture and discard are the pair that make a
+    // note a locked record; read is the recall view's only way to a picture;
+    // frameNavigated is main telling the trail the page moved.
+    expect(IPC.CANVAS_EVIDENCE_CAPTURE).toBe('canvas:evidenceCapture')
+    expect(IPC.CANVAS_EVIDENCE_DISCARD).toBe('canvas:evidenceDiscard')
+    expect(IPC.CANVAS_EVIDENCE_READ).toBe('canvas:evidenceRead')
+    expect(IPC.CANVAS_SET_PACK_NAME).toBe('canvas:setPackName')
+    expect(IPC.CANVAS_FRAME_NAVIGATED).toBe('canvas:frameNavigated')
+  })
+
+  it('no longer carries the channels the settled machine removed', () => {
+    // Per-note verdicts, the library close-out and the session-wide dismiss-all
+    // are gone (W6). Pinned as ABSENT so a revival has to be deliberate.
+    const channels = IPC as unknown as Record<string, string | undefined>
+    expect(channels.CANVAS_ANNOTATION_RESOLVE).toBeUndefined()
+    expect(channels.CANVAS_REVIEW_CLOSE_OUT).toBeUndefined()
+    expect(channels.CANVAS_REVIEW_DISMISS_ALL).toBeUndefined()
   })
 
   it('keeps every channel value unique', () => {

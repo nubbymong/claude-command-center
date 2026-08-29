@@ -89,10 +89,11 @@ const credDelete = vi.fn(() => Promise.resolve(true))
 const credSave = vi.fn(() => Promise.resolve(true))
 // The Notes tool lists names on mount; an empty index keeps it quiet.
 const notesApi = { list: vi.fn(() => Promise.resolve([])), load: vi.fn(() => Promise.resolve('')), save: vi.fn(() => Promise.resolve(true)), delete: vi.fn(() => Promise.resolve(true)) }
-// The dismiss-all sweep plus the reads the post-sweep refreshes make.
-const canvasDismissAll = vi.fn(() => Promise.resolve({ closedNotes: 2, closedReviews: 2, clearedAwaiting: 1, unreadable: 0 }))
+// The reads the canvas tool makes on mount. `reviewDismissAll` is deliberately
+// NOT here: the channel is gone, and the spy below exists only so the test can
+// assert that nothing reaches for it.
+const canvasDismissAll = vi.fn()
 const canvasApi = {
-  reviewDismissAll: canvasDismissAll,
   listAll: vi.fn(() => Promise.resolve([])),
   getState: vi.fn(() => Promise.resolve(null)),
   reviewGetState: vi.fn(() => Promise.resolve(null)),
@@ -776,7 +777,13 @@ describe('right-click a Core tool: the core tool menu', () => {
     expect(byTestId('menu-canvas-dismiss-all')).toBeNull()
   })
 
-  it('Canvas: "Dismiss everything waiting on me (N)…" raises the confirm card, and only its Dismiss button sweeps via canvas.reviewDismissAll', async () => {
+  it('Canvas: the menu SHOWS what is waiting and never sweeps it — the dismiss-all is gone (W6)', async () => {
+    // The sweep that used to live here cleared rounds from a menu, with none of
+    // the notes on screen and no statement of what it was closing. It is the
+    // bulk gesture that let "settled" mean whatever the last sweep touched, and
+    // it has no replacement HERE: what waits on the user is now a decision in
+    // the pane, and the only bulk exit is Mark complete, which names each
+    // closure before the user commits.
     SESSIONS = [LOCAL_CLAUDE]
     const { useCanvasTotalsStore } = await import('../../../src/renderer/stores/canvasTotalsStore')
     const seed = { loaded: true, canvases: 1, openReviews: 0, withOpenReviews: 0, unknown: 0, onActive: 0, queue: 3, queueOnActive: 1, queueRows: [] }
@@ -784,8 +791,8 @@ describe('right-click a Core tool: the core tool menu', () => {
     act(() => { useCanvasTotalsStore.setState({ bySessionId: { 's-1': seed } }) })
     try {
       rightClick(mustGet('core-tool-canvas'))
-      const item = byTestId('menu-canvas-dismiss-all')
-      expect(item?.textContent).toBe('Dismiss everything waiting on me (3)…')
+      expect(byTestId('menu-canvas-dismiss-all')).toBeNull()
+      expect(byTestId('menu-canvas-show-queue')?.textContent).toBe("Show what's waiting (3)")
 
       // "Show what's waiting" reaches the button's popover by event.
       const heard: unknown[] = []
@@ -795,25 +802,8 @@ describe('right-click a Core tool: the core tool menu', () => {
       window.removeEventListener('ccc:canvasShowQueue', onShow)
       expect(heard).toEqual([{ sessionId: 's-1' }])
       expect(menus()).toHaveLength(0)
-
-      rightClick(mustGet('core-tool-canvas'))
-
-      // Cancel clears nothing.
-      click(byTestId('menu-canvas-dismiss-all'))
-      expect(menus()).toHaveLength(0)
-      expect(byTestId('confirm-canvas-dismiss')).not.toBeNull()
-      click(byTestId('confirm-canvas-dismiss-cancel'))
       expect(byTestId('confirm-canvas-dismiss')).toBeNull()
       expect(canvasDismissAll).not.toHaveBeenCalled()
-
-      // Confirm sweeps, scoped to this session with the open tiles as marks.
-      rightClick(mustGet('core-tool-canvas'))
-      click(byTestId('menu-canvas-dismiss-all'))
-      click(byTestId('confirm-canvas-dismiss-ok'))
-      await flush()
-      expect(canvasDismissAll).toHaveBeenCalledTimes(1)
-      expect(canvasDismissAll).toHaveBeenCalledWith({ sessionId: 's-1', openTileSessionIds: ['s-1'] })
-      expect(byTestId('confirm-canvas-dismiss')).toBeNull()
     } finally {
       act(() => { useCanvasTotalsStore.setState({ bySessionId: {} }) })
     }

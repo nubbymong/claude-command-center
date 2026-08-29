@@ -143,7 +143,9 @@ describe('the pane toggles disable while the hand-back is in flight', () => {
     const fs = require('node:fs') as typeof import('node:fs')
     const path = require('node:path') as typeof import('node:path')
     const pane = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/AgentCanvasPane.tsx'), 'utf8')
-    expect(pane).toMatch(/disabled=\{returning\}\s*\n\s*aria-label="Close Agent Canvas"/)
+    // The close control is the shared DismissButton since M2, so the pin is on
+    // the two props that carry the contract rather than on their adjacency.
+    expect(pane).toMatch(/disabled=\{returning\}[\s\S]{0,120}label="Close Agent Canvas"/)
     const panel = fs.readFileSync(path.resolve(__dirname, '../../../src/renderer/components/CanvasNotesPanel.tsx'), 'utf8')
     expect(panel).toContain('beginSubmitReturn(sessionId)')
     expect(panel).toContain('cancelSubmitReturn(sessionId)')

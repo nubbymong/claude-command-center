@@ -48,16 +48,24 @@ function renderCanvas(ready?: boolean): { canvasId: string; versionId: string; t
   return { canvasId: r.canvasId, versionId: r.versionId, title }
 }
 
-/** A canvas whose whole review cycle FINISHED: render → note → submit →
- *  addressed → seen → the user approved. Nothing is owed either way. */
+/**
+ * A canvas whose whole review cycle FINISHED: render → note → REJECT → the
+ * agent addresses → the agent renders the fix → the user APPROVES that version.
+ *
+ * That last decision is what settles the round under the settled machine — a
+ * round never ends note by note any more, so a finished cycle always has two
+ * versions and one user approval at the end of it.
+ */
 function finishedCycle(): { canvasId: string; title: string } {
   const { canvasId, versionId, title } = renderCanvas()
   const { annotationId } = reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'one note', versionId })
-  const submitted = reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [])
+  const submitted = reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [], 'reject')
   const reviewId = submitted.reviews.find((r) => r.status === 'submitted')!.id
   reviewStore.markAnnotationsAddressed(SID, reviewId, [annotationId])
   reviewStore.markAddressedNotesSeen(SID, canvasId, [annotationId])
-  reviewStore.resolveAnnotation(SID, annotationId, 'approve', canvasId)
+  const fixed = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>fixed</p>', title })
+  canvasStore.setVersionVerdict(SID, fixed.versionId, { state: 'approved' }, 'user')
+  reviewStore.settleRoundsForUserDecision(canvasId, fixed.versionId)
   return { canvasId, title }
 }
 
@@ -118,7 +126,7 @@ describe('the completion guard — nothing owed, or no sign-off', () => {
     // with the ownership reason, never with that canvas's private note counts.
     const { canvasId, versionId } = renderCanvas()
     reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'secret', versionId })
-    reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [])
+    reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [], 'reject')
     const res = completion.completeCanvasGuarded(canvasId, 'agent', 'ffffffffffffffffffffffff')
     expect(err(res)).toBe('not this session’s canvas')
   })
@@ -134,19 +142,22 @@ describe('the completion guard — nothing owed, or no sign-off', () => {
   it('refuses notes still with the agent', () => {
     const { canvasId, versionId } = renderCanvas()
     reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'open', versionId })
-    reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [])
+    reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [], 'reject')
     const res = completion.completeCanvasGuarded(canvasId, 'user', SID)
     expect(err(res)).toContain('still with the agent')
   })
 
-  it('refuses notes awaiting the user’s verdict', () => {
+  it('refuses a round the agent has answered but the user has not decided on', () => {
+    // "Addressed" is no longer work owed by the USER — but the ROUND is still
+    // live, and a live round is something owed. The refusal says so in the
+    // agent's terms rather than claiming a verdict is outstanding.
     const { canvasId, versionId } = renderCanvas()
     const { annotationId } = reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'n', versionId })
-    const submitted = reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [])
+    const submitted = reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [], 'reject')
     const reviewId = submitted.reviews.find((r) => r.status === 'submitted')!.id
     reviewStore.markAnnotationsAddressed(SID, reviewId, [annotationId])
     const res = completion.completeCanvasGuarded(canvasId, 'user', SID)
-    expect(err(res)).toContain('awaiting your verdict')
+    expect(err(res)).toContain('the agent has answered')
   })
 
   it('fails CLOSED on an unreadable review store', () => {
@@ -167,8 +178,12 @@ describe('the completion guard — nothing owed, or no sign-off', () => {
     expect(err(resA)).toBe('')
     expect((resA as { completed?: { by: string } }).completed?.by).toBe('user')
 
+    // …and a never-annotated one, once the user has DECIDED on its version.
+    // Clearing the ask alone is not enough any more and no longer happens on
+    // its own: a version with no verdict is a decision the user still owes, and
+    // signing off over it would strand the version permanently.
     const b = renderCanvas()
-    canvasStore.clearAwaitingReview(b.canvasId)
+    canvasStore.setVersionVerdict(SID, b.versionId, { state: 'approved' }, 'user')
     const resB = completion.completeCanvasGuarded(b.canvasId, 'agent', SID)
     expect(err(resB)).toBe('')
     expect((resB as { completed?: { by: string } }).completed?.by).toBe('agent')
@@ -210,17 +225,18 @@ describe('what completion does', () => {
 
 describe('adversarial — reclaim, review-writes, cap, fork', () => {
   it('a completed canvas is never offered to, or adopted by, another session', () => {
-    // isReclaimCandidate must exclude completed: completion detaches the owner,
+    // isResumeCandidate must exclude completed: completion detaches the owner,
     // so without the check a signed-off canvas looks like an orphan — offered
-    // in the reclaim card and adoptable, handing over its notes AND the right
-    // to Reopen a sign-off the adopter never made.
+    // on the front page and resumable, handing over its notes AND the right to
+    // Reopen a sign-off the resumer never made.
     const done = finishedCycle()
     completion.completeCanvasGuarded(done.canvasId, 'user', SID)
     const OTHER = 'bbbbbbbbbbbbbbbbbbbbbbbb'
-    const offered = canvasStore.listOrphanCandidateCanvases(OTHER, { isSessionCurrent: () => false })
+    const offered = canvasStore.listResumableCanvases(OTHER, { isSessionLive: () => false })
     expect(offered.some((c) => c.canvasId === done.canvasId)).toBe(false)
-    const adopted = canvasStore.adoptCanvasForSession(OTHER, done.canvasId, { isSessionCurrent: () => false })
-    expect(adopted).toBeNull()
+    expect(canvasStore.resumeCanvasForSession(OTHER, done.canvasId, SID, { isSessionLive: () => false }))
+      .toEqual({ ok: false, reason: 'completed' })
+    expect(canvasStore.openOwnCanvasForSession(OTHER, done.canvasId)).toBeNull()
   })
 
   it('a completed canvas refuses EVERY note-writing mutation over the store (terminal, main-side)', () => {
@@ -230,10 +246,11 @@ describe('adversarial — reclaim, review-writes, cap, fork', () => {
     // stays open so history is still viewable.
     const done = finishedCycle()
     completion.completeCanvasGuarded(done.canvasId, 'user', SID)
-    canvasStore.adoptCanvasForSession(SID, done.canvasId, { isSessionCurrent: () => false })
+    canvasStore.openOwnCanvasForSession(SID, done.canvasId)
     const v = canvasStore.getCanvasStateForSession(SID)!.versions[0].id
     expect(() => reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'x', versionId: v })).toThrow(/signed off/)
-    expect(() => reviewStore.resolveAnnotation(SID, 'a1', 'reannotate', done.canvasId)).toThrow(/signed off/)
+    expect(() => reviewStore.markAnnotationsAddressed(SID, 'R1', ['a1'])).toThrow(/signed off/)
+    expect(() => reviewStore.reopenReview(SID, done.canvasId, 'R1')).toThrow(/signed off/)
     expect(() => reviewStore.reopenAnnotation(SID, 'a1')).toThrow(/signed off/)
     expect(() => reviewStore.deleteAnnotation(SID, 'a1')).toThrow(/signed off/)
     expect(() => reviewStore.markAnnotationsAddressed(SID, 'R1', ['a1'])).toThrow(/signed off/)
@@ -317,7 +334,7 @@ describe('survival and viewing', () => {
     // The deferred draft is agent-visible; the user still sees base.
     expect(canvasStore.getAgentCanvasStateForSession(SID)?.canvasId).toBe(draft.canvasId)
     expect(canvasStore.getCanvasStateForSession(SID)?.canvasId).toBe(base.canvasId)
-    canvasStore.clearAwaitingReview(base.canvasId)
+    canvasStore.setVersionVerdict(SID, base.versionId, { state: 'approved' }, 'user')
     const res = completion.completeCanvasGuarded(base.canvasId, 'user', SID)
     expect(err(res)).toBe('')
     // Both bindings gone: the session is on the front page, and the agent-side
@@ -344,7 +361,7 @@ describe('survival and viewing', () => {
     // escape) and must not resume — fresh canvas, viewing record untouched.
     const done = finishedCycle()
     completion.completeCanvasGuarded(done.canvasId, 'user', SID)
-    const adopted = canvasStore.adoptCanvasForSession(SID, done.canvasId, { isSessionCurrent: () => false })
+    const adopted = canvasStore.openOwnCanvasForSession(SID, done.canvasId)
     expect(adopted?.canvasId).toBe(done.canvasId)
     expect(canvasStore.getCanvasStateForSession(SID)?.canvasId).toBe(done.canvasId)
     const next = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>new</p>', title: done.title })
@@ -425,16 +442,22 @@ describe('the MCP surface (canvas_complete)', () => {
     const v2 = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>v2</p>', title, ready: true })
     expect(v2.versionId).not.toBe(v1.versionId)
     expect(canvasStore.getCanvasStateForSession(SID)?.awaitingReview?.versionId).toBe(v2.versionId)
-    // User submits their v1 note. The submit does not cover v2.
-    reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews.find((r) => r.status === 'draft')!.id, [])
-    // v2 still awaits review → completion refused.
-    expect(canvasStore.getCanvasStateForSession(SID)?.awaitingReview?.versionId).toBe(v2.versionId)
-    expect(err(completion.completeCanvasGuarded(v1.canvasId, 'agent', SID))).toContain('first review')
+    // User submits their v1 note. The ROUND freezes against the latest ready
+    // version (D12) — v2 — while the NOTE stays anchored to the page they were
+    // actually looking at, which is the property that keeps the agent from
+    // reading their v1 feedback as being about v2.
+    reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews.find((r) => r.status === 'draft')!.id, [], 'reject')
+    const state = reviewStore.getReviewStateForSession(SID)!
+    expect(state.reviews.find((r) => r.status === 'submitted')!.versionId).toBe(v2.versionId)
+    expect(state.annotations[0].versionId).toBe(v1.versionId)
+    // The round is live, so completion is still refused — just for the round
+    // rather than for the un-reviewed render (their decision covered that).
+    expect(err(completion.completeCanvasGuarded(v1.canvasId, 'agent', SID))).toContain('not everything is settled')
   })
 
   it('the end-to-end agent path: refused before the user has seen the round, allowed after their cycle finished', () => {
     // Before: a fresh ready render — first-review barrier.
-    const { canvasId } = renderCanvas()
+    const { canvasId, title } = renderCanvas()
     const deps = {
       getCanvasState: (sid: string) => canvasStore.getCanvasStateForSession(sid),
       completeCanvas: (sid: string, cid: string) => completion.completeCanvasGuarded(cid, 'agent' as const, sid),
@@ -445,13 +468,79 @@ describe('the MCP surface (canvas_complete)', () => {
     // Finish the cycle on THIS canvas, then the same call signs off.
     const { versionId } = { versionId: canvasStore.getCanvasStateForSession(SID)!.versions[0].id }
     const { annotationId } = reviewStore.upsertAnnotation(SID, { scope: 'general', note: 'n', versionId })
-    const submitted = reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [])
+    const submitted = reviewStore.submitReview(SID, reviewStore.getReviewStateForSession(SID)!.reviews[0].id, [], 'reject')
     const reviewId = submitted.reviews.find((r) => r.status === 'submitted')!.id
     reviewStore.markAnnotationsAddressed(SID, reviewId, [annotationId])
     reviewStore.markAddressedNotesSeen(SID, canvasId, [annotationId])
-    reviewStore.resolveAnnotation(SID, annotationId, 'approve', canvasId)
+    // The user's decision on the fix is what ends the round.
+    const fixed = canvasStore.renderVersion(SID, { mode: 'design', html: '<!doctype html><p>fixed</p>', title })
+    canvasStore.setVersionVerdict(SID, fixed.versionId, { state: 'approved' }, 'user')
+    reviewStore.settleRoundsForUserDecision(canvasId, fixed.versionId)
     const ok = runCanvasComplete(SID, deps)
     expect(ok.isError).toBe(false)
     expect(canvasStore.getCanvasStateById(canvasId)?.completed?.by).toBe('agent')
+  })
+})
+
+describe('MARK COMPLETE IS NEVER DEAD, even after an archive (W3)', () => {
+  // Live repro. `openVersionIdsOf` skips ARCHIVED runs — correctly: the user
+  // has put those down. But `setArtifactArchived` left `awaitingReview`
+  // pointing INTO the archived run, and the force path checks that stamp after
+  // it has already force-closed everything else. So the canvas reached a state
+  // where Mark complete refused forever and there was no gesture left that
+  // could clear it: the version it named was archived, so nothing would ever
+  // dismiss it, and the stamp was the last thing standing.
+  //
+  // The stamp and the run must agree: an archived run is not owed, so a
+  // review-needed stamp pointing into one is not owed either.
+
+  it('force-completes a canvas whose AWAITING version has been archived', () => {
+    const rendered = canvasStore.renderVersion(SID, {
+      mode: 'design',
+      title: 'Archived awaiting',
+      html: '<!doctype html><p>v1</p>',
+    })
+    expect(canvasStore.getCanvasStateById(rendered.canvasId)?.awaitingReview?.versionId).toBe(rendered.versionId)
+
+    expect(canvasStore.setArtifactArchived(rendered.canvasId, rendered.versionId, true)).not.toBeNull()
+
+    const done = completion.completeCanvasGuarded(rendered.canvasId, 'user', SID, { force: true })
+    expect('error' in done ? done.error : 'ok').toBe('ok')
+    expect(canvasStore.getCanvasStateById(rendered.canvasId)?.completed).toBeTruthy()
+  })
+
+  it('drops the review-needed stamp at the archive itself, so every reader agrees', () => {
+    const rendered = canvasStore.renderVersion(SID, {
+      mode: 'design',
+      title: 'Archived stamp',
+      html: '<!doctype html><p>v1</p>',
+    })
+    canvasStore.setArtifactArchived(rendered.canvasId, rendered.versionId, true)
+    // Not merely "the force path tolerates it" — the record itself no longer
+    // claims a review is owed, so the queue, the pill and the guard read the
+    // same thing.
+    expect(canvasStore.getCanvasStateById(rendered.canvasId)?.awaitingReview).toBeUndefined()
+    // ...and a PLAIN complete now succeeds too, because nothing is owed.
+    const done = completion.completeCanvasGuarded(rendered.canvasId, 'user', SID)
+    expect('error' in done ? done.error : 'ok').toBe('ok')
+  })
+
+  it('leaves a stamp that points at a LIVE run exactly where it was', () => {
+    // The archive only clears what it archives. A second artefact still
+    // awaiting review keeps its stamp, and completion still refuses.
+    const first = canvasStore.renderVersion(SID, {
+      mode: 'design',
+      title: 'Two artefacts',
+      html: '<!doctype html><p>a</p>',
+    })
+    const second = canvasStore.renderVersion(SID, {
+      mode: 'plan',
+      title: 'Two artefacts',
+      html: '<!doctype html><p>b</p>',
+    })
+    canvasStore.setArtifactArchived(first.canvasId, first.versionId, true)
+    expect(canvasStore.getCanvasStateById(first.canvasId)?.awaitingReview?.versionId).toBe(second.versionId)
+    const refused = completion.completeCanvasGuarded(first.canvasId, 'user', SID)
+    expect('error' in refused ? refused.error : '').toMatch(/awaiting/)
   })
 })

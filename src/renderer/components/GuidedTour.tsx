@@ -33,6 +33,16 @@ const STEPS: TourStep[] = [
     body: 'The left panel has two modes — Saved is your launcher, Running is your live sessions. A saved config is a reusable launcher: project folder, model, account. Open the Saved tab, press "+ New" and pick Config to create one, then start a session from it whenever you want (Claude or Codex, local or over SSH).',
   },
   {
+    // The Agent Canvas had no step at all, which made the app's second-largest
+    // surface invisible to a new user. Its button lives in a session's command
+    // bar, so on a first run (no session yet) the anchor is unmounted and
+    // available() skips this step -- the same graceful degradation every
+    // anchored step relies on. It earns its place the moment a session exists.
+    selector: '[data-tour="canvas-button"]',
+    title: 'Review what your agent builds',
+    body: 'Every session has a Canvas button beside Snap. Your agent renders a mockup, a plan, or the site it just built, and you review it by pointing: click an element to leave a note, draw over it, then approve or reject that version. Testing mode goes further — click through a running build and every note saves the screen, the page state and how you got there. A small dot on the button means there is unfinished canvas work anyone here can pick up.',
+  },
+  {
     // Anchored on data-tour, not aria-label: the nav button's label is dynamic
     // (collapsed state, logs-disabled, running jobs), so an aria-label selector
     // silently missed and the tour skipped this step with no visible error.

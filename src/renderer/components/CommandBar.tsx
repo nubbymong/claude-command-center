@@ -8,9 +8,6 @@ import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { useLogsStore } from '../stores/useLogsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { openArtifactsPerSetting, resolveArtifactsOpenTarget } from '../lib/claude-web-targets'
-import { useCanvasStore } from '../stores/canvasStore'
-import { useCanvasReviewStore } from '../stores/canvasReviewStore'
-import { useCanvasTotalsStore } from '../stores/canvasTotalsStore'
 import { useCanvasQueue } from '../lib/canvasQueue'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
@@ -142,8 +139,6 @@ type ConfirmState =
   | { kind: 'delete'; commandId: string }
   | { kind: 'hide'; tool: CoreToolId }
   | { kind: 'section-band'; sectionId: string; band: CommandBand }
-  /** The Canvas button's right-click: clear the whole review queue in one sweep. */
-  | { kind: 'canvas-dismiss' }
 
 export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, mainPaneIsShell = false, configCount }: Props) {
   const webviewKey = parentSessionId ?? sessionId
@@ -154,23 +149,16 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
-  // The canvas review queue, for the Canvas tool's right-click dismiss-all —
-  // the same number the button pill shows, so menu and button cannot disagree.
+  // The canvas review queue, for the Canvas tool's right-click menu — the same
+  // number the button pill shows, so menu and button cannot disagree.
+  //
+  // The "Dismiss everything waiting on me" sweep that used to live here is gone
+  // (W6). It cleared rounds from a menu, with none of the notes on screen and no
+  // statement of what it was closing — the bulk gesture that made "settled" mean
+  // whatever the last sweep happened to touch. What waits on the user is now a
+  // VERSION decision in the pane, and the only bulk exit is Mark complete, which
+  // names each closure before the user commits.
   const canvasQueue = useCanvasQueue(sessionId)
-  const doCanvasDismissAll = useCallback(async () => {
-    setConfirm(null)
-    try {
-      const openTileSessionIds = useSessionStore.getState().sessions.map((s) => s.id)
-      await window.electronAPI.canvas.reviewDismissAll({ sessionId, openTileSessionIds })
-    } catch {
-      // Nothing destructive happened; the queue count simply stays.
-    }
-    // The change pushes refresh these anyway; doing it here makes the count
-    // drop with the dialog instead of a beat later.
-    void useCanvasTotalsStore.getState().refresh(sessionId)
-    void useCanvasReviewStore.getState().refresh(sessionId)
-    void useCanvasStore.getState().refresh(sessionId)
-  }, [sessionId])
   const [overflowOpen, setOverflowOpen] = useState<{ band: CommandBand; anchor: DOMRect } | null>(null)
   const [argsPopover, setArgsPopover] = useState<{ cmd: CustomCommand; rect: DOMRect } | null>(null)
   const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection; band: CommandBand } | null>(null)
@@ -957,7 +945,6 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                 { label: 'Open notes', onClick: () => { setMenu(null); notesRef.current?.openList() }, testId: 'menu-notes-open' },
               ]
             : menu.tool === 'canvas' && canvasQueue > 0 ? [
-                { label: `Dismiss everything waiting on me (${canvasQueue})…`, onClick: () => { setMenu(null); setConfirm({ kind: 'canvas-dismiss' }) }, testId: 'menu-canvas-dismiss-all' },
                 { label: `Show what's waiting (${canvasQueue})`, onClick: () => { setMenu(null); window.dispatchEvent(new CustomEvent('ccc:canvasShowQueue', { detail: { sessionId } })) }, testId: 'menu-canvas-show-queue' },
               ]
             : menu.tool === 'artifacts' ? [
@@ -1169,19 +1156,6 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           />
         )
       })()}
-      {confirm?.kind === 'canvas-dismiss' && (
-        <ConfirmCard
-          testId="confirm-canvas-dismiss"
-          title="Dismiss everything waiting on you?"
-          body={<>
-            {canvasQueue} canvas{canvasQueue === 1 ? '' : 'es'} with rounds waiting on you. Notes the agent
-            answered are closed — each keeps a <b>Reopen</b> — and a render still waiting for its first review
-            stops asking. Nothing is deleted, and rounds still with the agent are left alone.
-          </>}
-          actions={[{ label: 'Dismiss all', danger: true, testId: 'confirm-canvas-dismiss-ok', onClick: () => { void doCanvasDismissAll() } }]}
-          onCancel={() => setConfirm(null)}
-        />
-      )}
     </div>
   )
 }

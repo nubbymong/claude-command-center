@@ -49,7 +49,7 @@ function seed(reviews: Review[], annotations: Annotation[] = [], loaded = true) 
       s1: {
         loaded, canvasId: 'c1', reviews, annotations,
         focus: null, focusChain: [], focusChainIndex: 0, marqueeArmed: false,
-        editingAnnotationId: null, resolution: null, panelHighlight: null, helpDismissed: false,
+        editingAnnotationId: null, resolution: null, panelHighlight: null,
       },
     },
   })
@@ -62,7 +62,7 @@ describe('openReviewsOf', () => {
       reviews: [review('R1', 'resolved'), review('R2', 'submitted'), review('R3', 'submitted'), review('R4', 'draft')],
       annotations: [],
       focus: null, focusChain: [], focusChainIndex: 0, marqueeArmed: false,
-      editingAnnotationId: null, resolution: null, panelHighlight: null, helpDismissed: false,
+      editingAnnotationId: null, resolution: null, panelHighlight: null,
     }
     expect(openReviewsOf(s).map((r) => r.id)).toEqual(['R2', 'R3'])
   })
@@ -74,7 +74,7 @@ describe('openReviewsOf', () => {
       reviews: [review('R2', 'submitted', ['a1', 'a2', 'a3'])],
       annotations: notes,
       focus: null, focusChain: [], focusChainIndex: 0, marqueeArmed: false,
-      editingAnnotationId: null, resolution: null, panelHighlight: null, helpDismissed: false,
+      editingAnnotationId: null, resolution: null, panelHighlight: null,
     }
     expect(openReviewsOf(s)).toHaveLength(1)
     // The note list is 3, and mixes "waiting on the agent" with "waiting on you".
