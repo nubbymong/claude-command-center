@@ -215,6 +215,11 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server netcat-openbsd
+          # The runner account is password-locked in /etc/shadow; sshd (UsePAM no)
+          # refuses locked accounts even for pubkey auth. Set a throwaway password
+          # to UNLOCK it — PasswordAuthentication stays off, so it's never usable
+          # for login; the ephemeral runner is discarded after the job.
+          echo "$(whoami):ci-ssh-smoke-$(date +%s)" | sudo chpasswd
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 -q
           cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
