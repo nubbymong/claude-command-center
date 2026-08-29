@@ -27,6 +27,7 @@ import {
 } from '../canvas/canvas-store'
 import {
   MAX_SKETCH_PNG_BYTES,
+  clearComposerDraft,
   deleteAnnotation,
   dropReviewsForCanvas,
   getReviewCountsForCanvas,
@@ -37,6 +38,7 @@ import {
   onReviewChanged,
   reopenAnnotation,
   reopenReview,
+  setComposerDraft,
   settleReviewsForSupersededVersions,
   settleRoundsForUserDecision,
   submitReview,
@@ -44,7 +46,15 @@ import {
 } from '../canvas/canvas-review-store'
 import { completeCanvasGuarded, describeForceClosures, reopenCanvasGuarded } from '../canvas/canvas-completion'
 import { logInfo } from '../debug-logger'
-import { artifactPhaseOf, artifactRuns, type CanvasLibraryEntry } from '../../shared/canvas'
+import {
+  MAX_NOTE_CHARS,
+  MAX_NOTE_IMAGES,
+  MAX_SKETCH_SCENE_BYTES,
+  MAX_SKETCH_SCENE_ELEMENTS,
+  artifactPhaseOf,
+  artifactRuns,
+  type CanvasLibraryEntry,
+} from '../../shared/canvas'
 import { resolveCanvasSnapshot, setSnapshotSender } from '../canvas/canvas-snapshot-broker'
 import {
   canvasCwdForSession,
@@ -289,22 +299,79 @@ const sketchMetaSchema = z
   })
   .strict()
 
+/** Base64 of ONE attachment PNG: 4 chars per 3 bytes, plus padding slack. The
+ *  store re-measures in BYTES after decoding, which is the real bound. */
+const attachmentBase64Schema = z.string().min(8).max(Math.ceil(MAX_SKETCH_PNG_BYTES / 3) * 4 + 8)
+
+/**
+ * The images riding a note save, in order (W15).
+ *
+ * Three forms because the renderer holds BYTES only for a fresh paste; for
+ * anything already persisted it holds a POSITION — `fromComposer` into the
+ * persisted composer draft, `fromNote` into the note's own current list. The
+ * store resolves both against what is actually on disk and refuses a dangling
+ * index; the indices are bounded here so a hostile one never reaches it.
+ */
+const draftImageSchema = z.union([
+  z.object({ pngBase64: attachmentBase64Schema }).strict(),
+  z.object({ fromComposer: z.number().int().min(0).max(MAX_NOTE_IMAGES - 1) }).strict(),
+  z.object({ fromNote: z.number().int().min(0).max(MAX_NOTE_IMAGES - 1) }).strict(),
+])
+
 const annotationDraftSchema = z
   .object({
     annotationId: annotationIdSchema.optional(),
     scope: z.enum(['element', 'region', 'general']),
-    // min(0): empty text is legal ONLY beside a pasted image — the store is
-    // the gate (validateDraft), this schema only bounds the shape.
-    note: z.string().min(0).max(4000),
+    // min(0): empty text is legal ONLY when an attachment is the note — the
+    // store is the gate (validateDraft), this schema only bounds the shape.
+    note: z.string().min(0).max(MAX_NOTE_CHARS),
     focus: focusSchema.optional(),
     sketch: sketchMetaSchema.optional(),
-    // A pasted screenshot riding the save: fresh bytes, or 'keep' for an
-    // existing one the renderer no longer holds. Base64 bound reuses the
-    // sketch cap (declared below; hoisted const).
-    image: z
-      .union([z.literal('keep'), z.object({ pngBase64: z.string().min(8).max(Math.ceil(MAX_SKETCH_PNG_BYTES / 3) * 4 + 8) }).strict()])
-      .optional(),
+    images: z.array(draftImageSchema).max(MAX_NOTE_IMAGES).optional(),
     versionId: versionIdSchema,
+  })
+  .strict()
+
+/**
+ * The persisted composer (W14).
+ *
+ * `'keep'` is positional — "the image already at this index" — so a debounced
+ * save costs no bytes for images the renderer stopped holding. The sketch scene
+ * is OPAQUE: bounded in bytes here and never parsed anywhere in main, exactly
+ * like the note text. The element→version stamps are bounded in count and each
+ * value must be a store-minted version id, so the map cannot become a general
+ * key/value store riding on the review record.
+ */
+const composerDraftSchema = z
+  .object({
+    versionId: versionIdSchema,
+    decision: z.enum(['approve', 'reject']).optional(),
+    text: z.string().min(0).max(MAX_NOTE_CHARS),
+    focus: focusSchema.optional(),
+    images: z
+      .array(
+        z.union([
+          z.literal('keep'),
+          z.object({ keepIndex: z.number().int().min(0).max(MAX_NOTE_IMAGES - 1) }).strict(),
+          z.object({ pngBase64: attachmentBase64Schema }).strict(),
+        ]),
+      )
+      .max(MAX_NOTE_IMAGES),
+    sketch: z
+      .object({
+        scene: z.string().max(MAX_SKETCH_SCENE_BYTES),
+        // Bounded in KEY COUNT as well as in value shape. Without a count the
+        // map is an unbounded key/value store riding on the review record: the
+        // scene has a byte cap, the stamps had none, so a caller could send one
+        // element of scene and a million stamps.
+        versions: z
+          .record(z.string().min(1).max(128), versionIdSchema)
+          .refine((v) => Object.keys(v).length <= MAX_SKETCH_SCENE_ELEMENTS, {
+            message: `at most ${MAX_SKETCH_SCENE_ELEMENTS} drawing elements`,
+          }),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -314,9 +381,8 @@ const annotationUpsertSchema = z.object({ sessionId: sessionIdSchema, draft: ann
 
 const annotationDeleteSchema = z.object({ sessionId: sessionIdSchema, annotationId: annotationIdSchema }).strict()
 
-/** Base64 of a PNG capped at MAX_SKETCH_PNG_BYTES: 4 chars per 3 bytes, plus
- *  padding slack. The store re-measures in BYTES after decoding. */
-const sketchPngBase64Schema = z.string().min(8).max(Math.ceil(MAX_SKETCH_PNG_BYTES / 3) * 4 + 8)
+/** Base64 of a sketch-export PNG — the same bound every attachment gets. */
+const sketchPngBase64Schema = attachmentBase64Schema
 
 const reviewSubmitSchema = z
   .object({
@@ -366,6 +432,17 @@ const versionReopenSchema = z
  *  library's close-out id. Required, not optional: a call that cannot say which
  *  canvas it meant is exactly the one the mismatch check exists to refuse. */
 const canvasIdSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/)
+
+/** The composer draft's own envelope. Names the canvas for the same reason
+ *  mark-seen does — and here it is load-bearing rather than defensive: the
+ *  payload is the user's unsent words, so answering (or accepting) one for a
+ *  canvas this session does not own would be both a leak and a way to plant
+ *  text in somebody else's composer. The store re-checks it. */
+const composerDraftSetSchema = z
+  .object({ sessionId: sessionIdSchema, canvasId: canvasIdSchema, draft: composerDraftSchema })
+  .strict()
+
+const composerDraftClearSchema = z.object({ sessionId: sessionIdSchema, canvasId: canvasIdSchema }).strict()
 
 /** The user puts a whole settled ROUND back in play. Names the canvas it was
  *  composed against for the same reason mark-seen does: review ids are ordinals
@@ -589,6 +666,21 @@ export function registerCanvasHandlers(getWindow: () => BrowserWindow | null): v
   ipcMain.handle(IPC.CANVAS_REVIEW_MARK_SEEN, async (_e, args: unknown) => {
     const { sessionId, canvasId, annotationIds } = reviewMarkSeenSchema.parse(args)
     return markAddressedNotesSeen(sessionId, canvasId, annotationIds)
+  })
+
+  // THE HALF-WRITTEN NOTE, PERSISTED (W14). Before this, the composer lived
+  // only in React state, so switching to the terminal and back threw away the
+  // note, the target, the pasted screenshots and the drawing without asking.
+  // Renderer-only and owner-scoped: no MCP tool reaches this channel, and the
+  // store refuses a canvas this session does not hold.
+  ipcMain.handle(IPC.CANVAS_COMPOSER_DRAFT_SET, async (_e, args: unknown) => {
+    const { sessionId, canvasId, draft } = composerDraftSetSchema.parse(args)
+    return setComposerDraft(sessionId, canvasId, draft)
+  })
+
+  ipcMain.handle(IPC.CANVAS_COMPOSER_DRAFT_CLEAR, async (_e, args: unknown) => {
+    const { sessionId, canvasId } = composerDraftClearSchema.parse(args)
+    return clearComposerDraft(sessionId, canvasId)
   })
 
   // The undo half of close-out. Cheap and one click away, which is what makes

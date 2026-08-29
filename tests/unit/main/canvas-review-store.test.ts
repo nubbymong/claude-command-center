@@ -350,7 +350,9 @@ describe('getReviewPayload (the canvas_review read)', () => {
     expect(result.payload.annotations.map((a) => a.id)).toEqual(['a1'])
     expect(result.payload.generalNotes.map((a) => a.id)).toEqual(['a2'])
     expect(result.payload.envelope).toBe('untrusted-content')
-    expect(result.payload.attachments).toEqual([{ annotationId: 'a1', pngPath: 'reviews/R1/a1.png' }])
+    // Attachments say WHICH kind they are now: a note can carry both a drawing
+    // and several pasted images, and the serializer numbers them from this.
+    expect(result.payload.attachments).toEqual([{ annotationId: 'a1', pngPath: 'reviews/R1/a1.png', kind: 'sketch' }])
     expect(result.attachmentFiles[0].absPath).toBe(
       path.join(getResourcesDirectory(), 'canvas', canvasId, 'reviews', 'R1', 'a1.png'),
     )

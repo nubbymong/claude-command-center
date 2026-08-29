@@ -22,6 +22,10 @@ describe('canvas IPC channels', () => {
     // The seen report — renderer-only, and the one input to the agent's
     // close-out barrier that no MCP tool can produce.
     expect(IPC.CANVAS_REVIEW_MARK_SEEN).toBe('canvas:reviewMarkSeen')
+    // W14 — the half-written note, persisted. Renderer-only, like mark-seen:
+    // the payload is the user's unsent words and no MCP tool may reach it.
+    expect(IPC.CANVAS_COMPOSER_DRAFT_SET).toBe('canvas:composerDraftSet')
+    expect(IPC.CANVAS_COMPOSER_DRAFT_CLEAR).toBe('canvas:composerDraftClear')
     // W3 — the user's force exit, and the read that lets the confirm name it.
     expect(IPC.CANVAS_COMPLETE_FORCE).toBe('canvas:completeForce')
     expect(IPC.CANVAS_DESCRIBE_FORCE_CLOSURES).toBe('canvas:describeForceClosures')

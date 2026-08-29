@@ -49,7 +49,7 @@ const note = (
 const stateOf = (reviews: Review[], annotations: Annotation[]): CanvasReviewSessionState => ({
   loaded: true, canvasId: 'c1', reviews, annotations,
   focus: null, focusChain: [], focusChainIndex: 0, marqueeArmed: false,
-  editingAnnotationId: null, resolution: null, panelHighlight: null, helpDismissed: false,
+  editingAnnotationId: null, resolution: null, panelHighlight: null,
 })
 
 describe('closed notes are kept, not dropped', () => {
@@ -133,7 +133,11 @@ describe('settledLabel — a settled round says HOW it settled', () => {
     reviewGroupsOf(stateOf([{ ...review('R1', 'resolved', '2026-08-22T10:00:00.000Z'), settled }], []))[0]
 
   it('names each provenance in the user`s own terms, and never as a click nobody made', () => {
-    expect(settledLabel(settledWith({ at: 'x', by: 'observation' }))).toBe('passed with observations')
+    // The observation wording follows the MODE: Testing mode calls the decision
+    // Pass, everything else calls it Approve, and a row that said "passed" about
+    // a mockup the user approved describes a different event. With no versions
+    // handed in, the non-Testing word is the honest default.
+    expect(settledLabel(settledWith({ at: 'x', by: 'observation' }))).toBe('approved with observations')
     expect(settledLabel(settledWith({ at: 'x', by: 'decision', versionId: 'v8' }))).toBe('settled by your v8 decision')
     expect(settledLabel(settledWith({ at: 'x', by: 'decision', versionId: 'v8', reviewId: 'R8' }))).toBe('superseded by your Review #8')
     expect(settledLabel(settledWith({ at: 'x', by: 'agent' }))).toBe('closed by the agent on your instruction')
@@ -145,6 +149,19 @@ describe('settledLabel — a settled round says HOW it settled', () => {
   it('says nothing at all for a LIVE round — there is no settlement to describe', () => {
     const [g] = reviewGroupsOf(stateOf([review('R1', 'submitted', '2026-08-22T10:00:00.000Z')], [note('a1', 'R1', 'open')]))
     expect(settledLabel(g)).toBeNull()
+  })
+
+  it('says PASSED with observations in Testing mode — the user`s own word for it', () => {
+    // Same gesture, two names. The round froze against a version, and that
+    // version's mode is what the button said when the user clicked it.
+    const g = settledWith({ at: 'x', by: 'observation' })
+    const uat: CanvasVersion = {
+      id: 'v1',
+      mode: 'uat',
+      createdAt: 'x',
+      source: { mode: 'uat', distRoot: 'C:/build', entry: 'index.html' },
+    } as CanvasVersion
+    expect(settledLabel(g, [uat])).toBe('passed with observations')
   })
 
   it('a ZERO-NOTE decision names the VERDICT, not the neutral word', () => {

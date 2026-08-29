@@ -16,6 +16,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 import CanvasNotesPanel from '../../../src/renderer/components/CanvasNotesPanel'
 import type { CanvasReviewState, CanvasVersion, Review, Annotation } from '../../../src/shared/canvas'
+import { paneSketchProps } from './canvas-panel-harness'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
@@ -23,6 +24,7 @@ vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
 const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canvasReviewStore')
 
 const SID = 'session-1'
+const CID = 'canvas-1'
 const V2 = { id: 'v2', mode: 'design', createdAt: '2026-08-23T10:00:00Z', source: { mode: 'design', entry: 'index.html' } } as CanvasVersion
 const REVIEW: Review = {
   id: 'R1',
@@ -75,7 +77,7 @@ let root: Root
 async function render(): Promise<void> {
   await act(async () => {
     root.render(
-      <CanvasNotesPanel sessionId={SID} version={V2} getGlassApi={() => null} onReturnToTerminal={() => {}} isActive />,
+      <CanvasNotesPanel sessionId={SID} version={V2} getGlassApi={() => null} onReturnToTerminal={() => {}} {...paneSketchProps()} canvasId={CID} isActive />,
     )
   })
 }
@@ -124,7 +126,7 @@ describe('Ctrl+V target gating', () => {
   it('does nothing at all while the pane is inactive', async () => {
     await act(async () => {
       root.render(
-        <CanvasNotesPanel sessionId={SID} version={V2} getGlassApi={() => null} onReturnToTerminal={() => {}} isActive={false} />,
+        <CanvasNotesPanel sessionId={SID} version={V2} getGlassApi={() => null} onReturnToTerminal={() => {}} {...paneSketchProps()} canvasId={CID} isActive={false} />,
       )
     })
     const ev = await paste(document.body, imageClipboard())

@@ -479,10 +479,3 @@ describe('the sketchpad escape hatch (spec D2)', () => {
   })
 })
 
-describe('the notes-panel primer flag', () => {
-  it('defaults to visible and dismisses per session', () => {
-    expect(useCanvasReviewStore.getState().bySessionId[SID]?.helpDismissed ?? false).toBe(false)
-    useCanvasReviewStore.getState().dismissHelp(SID)
-    expect(useCanvasReviewStore.getState().bySessionId[SID].helpDismissed).toBe(true)
-  })
-})

@@ -27,11 +27,13 @@ import type { Annotation, CanvasReviewState, CanvasVersion, Review } from '../..
 
 vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
 
+import { paneSketchProps } from './canvas-panel-harness'
 const CanvasNotesPanel = (await import('../../../src/renderer/components/CanvasNotesPanel')).default
 const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canvasReviewStore')
 const { useCanvasStore } = await import('../../../src/renderer/stores/canvasStore')
 
 const SID = 'session-1'
+const CID = 'canvas-a'
 const VERSION: CanvasVersion = {
   id: 'v1',
   mode: 'design',
@@ -92,10 +94,15 @@ let roundReopens: Array<{ canvasId: string; reviewId: string }>
   },
 }
 
+/** Renders, then unfolds History — every test in this file is ABOUT settled
+ *  rounds, and settled rounds live inside it. That History folds by default is
+ *  pinned in canvas-panel-sections, not re-asserted here. */
 async function render(isActive = false): Promise<void> {
   await act(async () => {
     root.render(
       <CanvasNotesPanel
+        {...paneSketchProps()}
+        canvasId={CID}
         sessionId={SID}
         version={VERSION}
         getGlassApi={() => null}
@@ -104,6 +111,7 @@ async function render(isActive = false): Promise<void> {
       />,
     )
   })
+  await openHistory()
 }
 
 function byTestId(id: string): HTMLElement | null {
@@ -116,8 +124,15 @@ function group(reviewId: string): HTMLElement {
   return el as HTMLElement
 }
 
-/** A settled round starts COLLAPSED by design — settled work folds away rather
- *  than burying what is still in play — so it has to be opened first. */
+/** Settled rounds live inside the folded History and start collapsed in there —
+ *  settled work folds away rather than burying what is still in play. */
+async function openHistory(): Promise<void> {
+  const folded = byTestId('canvas-history-folded')
+  if (folded && folded.getAttribute('aria-expanded') === 'false') {
+    await act(async () => folded.click())
+  }
+}
+
 async function expandRound(reviewId: string): Promise<void> {
   const header = group(reviewId).querySelector('button')
   expect(header).toBeTruthy()
@@ -160,9 +175,10 @@ describe('the panel offers no per-note verdicts at all', () => {
     expect(byTestId('review-approve-rest')).toBeNull()
     expect(byTestId('review-accept-as-built')).toBeNull()
     expect(byTestId('review-dismiss-rest')).toBeNull()
-    // The rounds are still listed — they are with the AGENT, not with the user.
+    // The rounds are still listed — they are with the AGENT, not with the user,
+    // and each says so with an OPEN pill rather than a count.
     expect(container.querySelectorAll('[data-testid="review-group"]')).toHaveLength(2)
-    expect(byTestId('review-section-agent')).toBeTruthy()
+    expect(container.querySelectorAll('[data-testid="round-open-pill"]')).toHaveLength(2)
     expect(byTestId('review-section-you')).toBeNull()
   })
 
@@ -181,7 +197,7 @@ describe('the panel offers no per-note verdicts at all', () => {
   it('shows the agent`s "updated in vN" claim beside the note', async () => {
     current = { ...current, annotations: [note('a1', 'R1', 'addressed', { addressedIn: 'v9' })] }
     await render()
-    expect(byTestId('note-updated-in')!.textContent).toContain('updated in v9')
+    expect(byTestId('note-state-chip')!.textContent).toContain('updated in v9')
   })
 })
 
@@ -196,7 +212,6 @@ describe('a settled round says HOW it settled', () => {
     await render()
     expect(group('R1').textContent).toContain('settled by your v8 decision')
     await expandRound('R1')
-    await click(byTestId('review-closed-toggle'))
     const rows = container.querySelectorAll('[data-testid="review-closed-note"]')
     expect(rows).toHaveLength(1)
     expect(rows[0].textContent).toContain('settled by your v8 decision')
@@ -220,7 +235,6 @@ describe('a settled round says HOW it settled', () => {
     }
     await render()
     await expandRound('R1')
-    await click(byTestId('review-closed-toggle'))
     const rows = container.querySelectorAll('[data-testid="review-closed-note"]')
     // Nobody ever answered a1 — the user should be able to SEE that in the list.
     expect(rows[0].textContent).toContain('closed — never resolved · superseded by your Review #8')
@@ -273,9 +287,10 @@ describe('a settled round says HOW it settled', () => {
       annotations: [note('a1', 'R1', 'observation', { closedBy: 'user', closedFrom: 'open' })],
     }
     await render()
-    expect(group('R1').textContent).toContain('passed with observations')
+    // A MOCKUP was approved, so the row says approved. The Pass wording belongs
+    // to Testing mode, and saying it here would describe a different event.
+    expect(group('R1').textContent).toContain('approved with observations')
     await expandRound('R1')
-    await click(byTestId('review-closed-toggle'))
     expect(container.querySelector('[data-testid="review-closed-note"]')!.textContent).toContain('nothing owed')
   })
 
@@ -292,7 +307,6 @@ describe('a settled round says HOW it settled', () => {
     await render()
     await expandRound('R1')
     expect(byTestId('review-agent-closed-chip')!.textContent).toContain('1 on your instruction')
-    await click(byTestId('review-closed-toggle'))
     const rows = container.querySelectorAll('[data-testid="review-closed-note"]')
     expect(rows[0].textContent).toContain('by the agent on your instruction')
     // The user's own approval is never attributed to the agent.
@@ -316,7 +330,6 @@ describe('settled work reopens — the only revivals there are', () => {
   it('reopens one note', async () => {
     await render()
     await expandRound('R1')
-    await click(byTestId('review-closed-toggle'))
     await click(byTestId('review-reopen-note'))
     expect(reopens).toEqual(['a1'])
     expect(current.annotations[0].state).toBe('addressed')
@@ -342,5 +355,42 @@ describe('settled work reopens — the only revivals there are', () => {
     await render()
     await expandRound('R1')
     expect(byTestId('review-reopen-round')).toBeNull()
+  })
+})
+
+describe('a count is never shown twice (W46)', () => {
+  it('folds "Closed · N" and "N on your instruction" into ONE line when they agree', async () => {
+    // Two labels for one fact. They stay separate only when the numbers really
+    // differ, which is the only case where reading both tells you anything.
+    current = {
+      canvasId: 'canvas-a',
+      sessionId: SID,
+      reviews: [review('R1', 'resolved', '01', { settled: { at: '2026-08-22T09:05:00Z', by: 'agent' } })],
+      annotations: [
+        note('a1', 'R1', 'stale', { closedBy: 'agent', closedFrom: 'addressed' }),
+        note('a2', 'R1', 'stale', { closedBy: 'agent', closedFrom: 'addressed' }),
+      ],
+    }
+    await render()
+    await expandRound('R1')
+    const chip = byTestId('review-agent-closed-chip')!
+    expect(chip.textContent).toBe('Closed · 2 — on your instruction')
+    expect(group('R1').textContent).not.toContain('2 on your instruction')
+  })
+
+  it('keeps them apart when only SOME were closed by the agent', async () => {
+    current = {
+      canvasId: 'canvas-a',
+      sessionId: SID,
+      reviews: [review('R1', 'resolved', '01', { settled: { at: '2026-08-22T09:05:00Z', by: 'agent' } })],
+      annotations: [
+        note('a1', 'R1', 'stale', { closedBy: 'agent', closedFrom: 'addressed' }),
+        note('a2', 'R1', 'approved', { closedBy: 'user', closedFrom: 'addressed' }),
+      ],
+    }
+    await render()
+    await expandRound('R1')
+    expect(group('R1').textContent).toContain('Closed · 2')
+    expect(byTestId('review-agent-closed-chip')!.textContent).toBe('1 on your instruction')
   })
 })

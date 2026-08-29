@@ -378,15 +378,54 @@ export interface AnnotationSketch {
 /**
  * A pasted screenshot attached to a note (Ctrl+V, item B). Unlike a sketch the
  * PNG exists at COMPOSE time — it is written when the note is saved, under
- * 'reviews/pasted/<noteId>.png' (note ids are unique per canvas), and simply
- * stays there through submit. A note carries ONE attachment: a sketch or a
- * pasted image, never both.
+ * 'reviews/pasted/<noteId>-<k>.png', and simply stays there through submit.
+ *
+ * A note carries a LIST of these now (`Annotation.images`), and may carry a
+ * sketch beside them: the one-attachment rule went with the rework. It came
+ * from a single React state slot, so a second Ctrl+V silently overwrote the
+ * first — the user pasted three screenshots and the agent was handed one.
  */
 export interface AnnotationImage {
-  /** Relative to the canvas's own directory ('reviews/pasted/a7.png'). Never
+  /** Relative to the canvas's own directory ('reviews/pasted/a7-1.png'). Never
    *  empty — the file is written before the record references it. */
   pngPath: string
 }
+
+/**
+ * Most pasted images one note may carry.
+ *
+ * Eight is past any real note and short of a paste-loop turning a review into a
+ * disk-filling primitive: each image is separately capped at
+ * MAX_ATTACHMENT_PNG_BYTES, so this is the multiplier on that bound.
+ */
+export const MAX_NOTE_IMAGES = 8
+
+/** Longest note text, at every seam that touches one: the composer's textarea,
+ *  the draft schema, the store's validator, and the persisted composer draft.
+ *  One constant, because a cap the UI and the store disagree about is a note the
+ *  user can write and not save. */
+export const MAX_NOTE_CHARS = 4000
+
+/**
+ * Ceiling on a persisted composer sketch scene (the Excalidraw elements JSON).
+ *
+ * Main never parses it — the scene is opaque there, exactly like the note text
+ * is opaque to the bridge — so the only defence against a runaway glass is a
+ * byte bound. Half a megabyte is a few thousand strokes; a scene past that is a
+ * bug, not a drawing.
+ */
+export const MAX_SKETCH_SCENE_BYTES = 512 * 1024
+
+/**
+ * Most elements a persisted composer scene may stamp.
+ *
+ * The companion to the byte cap, and keyed by what it actually bounds: one
+ * stamp per glass element. The bound it replaces was `MAX_SKETCH_ELEMENT_IDS * 4`
+ * — a per-NOTE limit multiplied by a guess — which sat far below what half a
+ * megabyte of scene can legitimately hold, so a large drawing was refused by the
+ * stamps long before its bytes were anywhere near the ceiling.
+ */
+export const MAX_SKETCH_SCENE_ELEMENTS = 2000
 
 /** Byte cap shared by every note-attachment PNG — sketch exports and pasted
  *  images alike. The IPC base64 bound and the store's decoder both derive from
@@ -447,9 +486,20 @@ export interface Annotation {
   /** Element/region only. */
   focus?: FocusObject
   sketch?: AnnotationSketch
-  /** A pasted screenshot (Ctrl+V). Mutually exclusive with `sketch`. When
-   *  present the note's TEXT may be empty — the image is the note. */
-  image?: AnnotationImage
+  /**
+   * Pasted screenshots (Ctrl+V), in PASTE ORDER and at most MAX_NOTE_IMAGES.
+   *
+   * Ordered because the order is referenced: the note's text may say "Image 2",
+   * and the serializer numbers the attachments from this list so the words and
+   * the image blocks cannot drift. A note may carry these AND a sketch — the old
+   * mutual exclusion is gone, since a drawing now rides its note automatically
+   * rather than competing with a paste for one slot. When the list is non-empty
+   * the note's TEXT may be empty: the images are the note.
+   *
+   * Records written before the rework carry a single `image` instead; the load
+   * heal lifts it to `images: [image]`.
+   */
+  images?: AnnotationImage[]
   /** The version the note was made against (a draft review can span versions;
    *  each note remembers its own). */
   versionId: string
@@ -626,8 +676,16 @@ export interface ReviewPayload {
    *  captured with the note (optional — absent in v1). */
   annotations: Array<Annotation & { snapshotContext?: SnapshotNode }>
   generalNotes: Annotation[]
-  /** Sketch PNGs, served to the agent as images alongside the text. */
-  attachments: Array<{ annotationId: string; pngPath: string }>
+  /**
+   * Attachment PNGs, served to the agent as image blocks alongside the text, in
+   * the order the notes refer to them: each note's pasted images (1..N), then
+   * its drawing.
+   *
+   * `kind` and `imageIndex` are what let the text say "Image 2 = attachment 5":
+   * a note carries several images now and its prose names them by position, so
+   * an untyped flat list could not tell the agent which block is which.
+   */
+  attachments: Array<{ annotationId: string; pngPath: string; kind: 'sketch' | 'image'; imageIndex?: number }>
   /**
    * Earlier rounds THIS submission settled (W4), and per round the notes that
    * were still `open` when it did — never answered by anybody.
@@ -781,12 +839,83 @@ export interface ForceClosures {
 export const CANVAS_REVIEW_ID_RE = /^R[0-9]{1,9}$/
 export const CANVAS_ANNOTATION_ID_RE = /^a[0-9]{1,9}$/
 
+/**
+ * The half-written note, PERSISTED (W14).
+ *
+ * Everything the composer holds — the decision, the text, the target, the pasted
+ * images, the drawing on the glass — lived only in React state before the
+ * rework, so switching to the terminal and back threw it away without asking.
+ * A draft belongs to the version it was written on (`versionId`) and to the
+ * canvas it is filed under; there is exactly one per canvas, because there is
+ * exactly one composer.
+ *
+ * `sketch.scene` is OPAQUE to main: it is the Excalidraw elements JSON the pane
+ * serialised, bounded by MAX_SKETCH_SCENE_BYTES and never parsed there. `versions`
+ * stamps each element with the version it was drawn on, so a restore can put the
+ * foreign-version stash back where the pane had it.
+ */
+/**
+ * The glass, serialised — ONE declaration, because four places carry it.
+ *
+ * The pane produces it (`getSketchSceneForPersist`) and consumes it
+ * (`restoreSketchScene`), the panel moves it to and from main, and main stores
+ * it verbatim. `scene` is the Excalidraw elements JSON and is OPAQUE everywhere
+ * outside the glass: bounded in bytes, never parsed. `versions` stamps each
+ * element with the version it was drawn on, so a restore can put the
+ * foreign-version stash back where the pane had it.
+ *
+ * Declared here rather than beside any one of its users because a structural
+ * copy in each is how the four drift into disagreeing about a field.
+ */
+export interface CanvasSketchScene {
+  scene: string
+  versions: Record<string, string>
+}
+
+export interface ComposerDraft {
+  versionId: string
+  decision?: 'approve' | 'reject'
+  /** ≤ MAX_NOTE_CHARS. */
+  text: string
+  focus?: FocusObject
+  /** 'reviews/composer/img-<k>.png', in paste order. */
+  images: AnnotationImage[]
+  sketch?: CanvasSketchScene
+  updatedAt: string
+}
+
+/**
+ * Renderer → main for the composer draft.
+ *
+ * The images name a SOURCE, never a destination: `{ keepIndex: k }` is "the
+ * image persisted at index k of the draft you already hold", so a debounced save
+ * costs no bytes for images the renderer stopped holding. `'keep'` is the
+ * shorthand for "the one at this same index" and means exactly
+ * `{ keepIndex: <its own position> }`.
+ *
+ * Naming the source is what makes REMOVAL and REORDER safe. Under a
+ * destination-indexed scheme, deleting image 1 of three and sending
+ * `['keep','keep']` resolves both entries against the old list's first two —
+ * silently keeping the image the user just deleted and dropping the last one.
+ */
+export interface ComposerDraftInput {
+  versionId: string
+  decision?: 'approve' | 'reject'
+  text: string
+  focus?: FocusObject
+  images: Array<'keep' | { keepIndex: number } | { pngBase64: string }>
+  sketch?: CanvasSketchScene
+}
+
 /** What the renderer holds per session for reviews (IPC `canvas:reviewGetState`). */
 export interface CanvasReviewState {
   canvasId: string
   sessionId: string
   reviews: Review[]
   annotations: Annotation[]
+  /** The unsent composer for THIS canvas, restored on mount (W14). Absent when
+   *  nothing is half-written. */
+  composer?: ComposerDraft
 }
 
 /** Payload of the `canvas:reviewChanged` main → renderer push. */
@@ -808,12 +937,21 @@ export interface CanvasAnnotationDraft {
   /** Sketch metadata only (ids + bbox). The PNG is exported at submit (D6). */
   sketch?: { excalidrawElementIds: string[]; bboxPage: Rect }
   /**
-   * A pasted screenshot riding the save (item B). `{ pngBase64 }` sets or
-   * replaces it (written to disk immediately); `'keep'` leaves an existing one
-   * as it is (the renderer never holds the bytes after a reload); absent
-   * removes it. Mutually exclusive with `sketch`.
+   * The pasted screenshots this save carries, in order (item B, W15).
+   *
+   * Three forms, and the last two exist because the renderer stops holding the
+   * BYTES the moment an image is persisted — it holds a position:
+   *   - `{ pngBase64 }`      a fresh paste, bytes riding the call;
+   *   - `{ fromComposer: k }` image k of the PERSISTED COMPOSER draft — main
+   *                           moves that file onto the note;
+   *   - `{ fromNote: k }`     image k this note ALREADY carries, kept where the
+   *                           list now puts it (the position may have moved:
+   *                           removing image 1 renumbers the rest).
+   *
+   * Absent removes every image; an empty array does the same. A note may carry
+   * these AND a sketch.
    */
-  image?: 'keep' | { pngBase64: string }
+  images?: Array<{ pngBase64: string } | { fromComposer: number } | { fromNote: number }>
   versionId: string
 }
 

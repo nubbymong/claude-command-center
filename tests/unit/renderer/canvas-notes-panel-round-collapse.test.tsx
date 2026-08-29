@@ -19,6 +19,7 @@ import type { Annotation, CanvasReviewState, CanvasVersion, Review } from '../..
 // The panel imports exportToBlob for submit; nothing here submits.
 vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
 
+import { paneSketchProps } from './canvas-panel-harness'
 const CanvasNotesPanel = (await import('../../../src/renderer/components/CanvasNotesPanel')).default
 const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canvasReviewStore')
 
@@ -66,6 +67,9 @@ const CANVAS_A = stateFor('canvas-a', 'the header is cramped', 'the sidebar is n
 const CANVAS_B = stateFor('canvas-b', 'the footer needs work')
 
 let current: CanvasReviewState = CANVAS_A
+/** The canvas the PANE is showing. The panel is told it explicitly now, and
+ *  every composer read hangs off it agreeing with the mirror. */
+let paneCanvasId = 'canvas-a'
 let container: HTMLDivElement
 let root: Root
 
@@ -81,7 +85,7 @@ let root: Root
 async function render(): Promise<void> {
   await act(async () => {
     root.render(
-      <CanvasNotesPanel sessionId={SID} version={VERSION} getGlassApi={() => null} onReturnToTerminal={() => {}} />,
+      <CanvasNotesPanel sessionId={SID} version={VERSION} getGlassApi={() => null} onReturnToTerminal={() => {}} {...paneSketchProps()} canvasId={paneCanvasId} />,
     )
   })
 }
@@ -98,6 +102,7 @@ function roundHeader(reviewId = 'R1'): HTMLButtonElement {
 /** Swap which canvas the session is on, the way the subject picker does. */
 async function switchTo(next: CanvasReviewState): Promise<void> {
   current = next
+  paneCanvasId = next.canvasId
   await act(async () => {
     useCanvasReviewStore.setState((s) => ({
       bySessionId: { ...s.bySessionId, [SID]: { ...s.bySessionId[SID], ...next } },
@@ -108,6 +113,7 @@ async function switchTo(next: CanvasReviewState): Promise<void> {
 
 beforeEach(async () => {
   current = CANVAS_A
+  paneCanvasId = 'canvas-a'
   useCanvasReviewStore.getState().reset()
   container = document.createElement('div')
   document.body.appendChild(container)

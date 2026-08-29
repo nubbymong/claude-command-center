@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import type { CanvasLibraryEntry } from '../../shared/canvas'
 import { useSessionStore } from '../stores/sessionStore'
 import { useArmedConfirm } from '../hooks/useArmedConfirm'
+import { DismissButton } from './ui/DismissButton'
 
 /**
  * The canvas LIBRARY.
@@ -134,12 +135,18 @@ export function CanvasLibrary({
           {entries === null ? '' : `${entries.length} canvas${entries.length === 1 ? '' : 'es'}`}
         </span>
         <div className="flex-1" />
-        <button
+        {/* The ONE dismiss control (M2): the library used to close on a
+            bordered "Done" while the pane closed on an inline ✕ and the strips
+            on a `&times;` — three weights for the same gesture. The word stays
+            because this one closes a full-pane overlay rather than a corner
+            notice, and a bare ✕ there reads as "delete this". */}
+        <DismissButton
           onClick={onClose}
-          className="text-[11.5px] rounded px-2 py-0.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] border border-[var(--border-subtle)] focus-ring"
-        >
-          Done
-        </button>
+          text="Done"
+          label="Close the canvas library"
+          data-testid="canvas-library-done"
+          className="border border-[var(--border-subtle)]"
+        />
       </div>
 
       {error && <div className="px-3 py-1.5 text-[11px] text-[var(--status-danger)] shrink-0">{error}</div>}

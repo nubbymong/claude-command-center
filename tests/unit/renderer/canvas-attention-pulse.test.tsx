@@ -146,7 +146,7 @@ describe('the Canvas button (pick B)', () => {
         [SID]: {
           loaded: true, canvasId: 'c1', reviews: [], annotations: [],
           focus: null, focusChain: [], focusChainIndex: 0, marqueeArmed: false,
-          editingAnnotationId: null, resolution: null, panelHighlight: null, helpDismissed: false,
+          editingAnnotationId: null, resolution: null, panelHighlight: null,
         },
       },
     })

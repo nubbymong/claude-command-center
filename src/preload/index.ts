@@ -17,6 +17,7 @@ import type {
   CanvasLibraryEntry,
   CanvasSnapshotRequestEvent,
   CanvasState,
+  ComposerDraftInput,
   ForceClosures,
 } from '../shared/canvas'
 
@@ -329,6 +330,11 @@ export interface ElectronAPI {
     /** The user has these addressed notes on screen. The only input to the agent
      *  close-out barrier that no MCP tool can produce — renderer-only by design. */
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
+    /** Persist the half-written note (W14) — text, decision, target, pasted
+     *  images and the sketch scene. Owner-scoped; no MCP path reaches it. */
+    composerDraftSet: (args: { sessionId: string; canvasId: string; draft: ComposerDraftInput }) => Promise<CanvasReviewState>
+    /** Drop it: the round was submitted, or the user emptied the composer. */
+    composerDraftClear: (args: { sessionId: string; canvasId: string }) => Promise<CanvasReviewState>
     /** Sign the subject off (#476). Refused (`ok:false` + reason) while
      *  anything is owed either way; the pane then falls back to its front page. */
     complete: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>
@@ -945,6 +951,10 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_REOPEN, args),
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) =>
       ipcRenderer.invoke(IPC.CANVAS_REVIEW_MARK_SEEN, args),
+    composerDraftSet: (args: { sessionId: string; canvasId: string; draft: ComposerDraftInput }) =>
+      ipcRenderer.invoke(IPC.CANVAS_COMPOSER_DRAFT_SET, args),
+    composerDraftClear: (args: { sessionId: string; canvasId: string }) =>
+      ipcRenderer.invoke(IPC.CANVAS_COMPOSER_DRAFT_CLEAR, args),
     complete: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE, args),
     completeForce: (args: { sessionId: string; canvasId: string }) => ipcRenderer.invoke(IPC.CANVAS_COMPLETE_FORCE, args),
     describeForceClosures: (args: { sessionId: string; canvasId: string }) =>

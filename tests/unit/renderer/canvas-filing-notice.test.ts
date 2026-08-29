@@ -61,7 +61,7 @@ function seedReviews(canvasId: string, reviews: Review[], annotations: Annotatio
       s1: {
         loaded: true, canvasId, reviews, annotations,
         focus: null, focusChain: [], focusChainIndex: 0, marqueeArmed: false,
-        editingAnnotationId: null, resolution: null, panelHighlight: null, helpDismissed: false,
+        editingAnnotationId: null, resolution: null, panelHighlight: null,
       },
     },
   })

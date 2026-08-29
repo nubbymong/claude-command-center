@@ -144,3 +144,24 @@ describe('the History picker', () => {
     expect(onDelete).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('the open-round pill (W21)', () => {
+  it('names the state instead of counting it', async () => {
+    // A single ready version with no verdict IS the open one.
+    await render({ versions: [v('v1', 'design')], activeVersionId: 'v1' })
+    const pill = container.querySelector('[data-testid="canvas-history-pending"]')
+    expect(pill).not.toBeNull()
+    expect(pill!.textContent).toBe('OPEN')
+    // "1 pending" read as a count of NOTES and repeated a number the review
+    // panel already carries; the same number twice is the thing to avoid.
+    expect(container.textContent).not.toContain('pending')
+  })
+
+  it('goes away once the version has been decided', async () => {
+    await render({
+      versions: [v('v1', 'design', { verdict: { state: 'approved', at: '2026-08-29T11:00:00Z', by: 'user' } })],
+      activeVersionId: 'v1',
+    })
+    expect(container.querySelector('[data-testid="canvas-history-pending"]')).toBeNull()
+  })
+})

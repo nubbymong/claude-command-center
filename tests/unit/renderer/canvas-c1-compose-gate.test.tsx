@@ -14,10 +14,12 @@ import type { Annotation, CanvasReviewState, CanvasVersion, Review } from '../..
 
 vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
 
+import { paneSketchProps } from './canvas-panel-harness'
 const CanvasNotesPanel = (await import('../../../src/renderer/components/CanvasNotesPanel')).default
 const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canvasReviewStore')
 
 const SID = 'session-1'
+const CID = 'canvas-a'
 const OPEN_VERSION: CanvasVersion = {
   id: 'v3',
   mode: 'design',
@@ -69,12 +71,14 @@ let root: Root
 async function render(version: CanvasVersion = OPEN_VERSION): Promise<void> {
   await act(async () => {
     root.render(
-      <CanvasNotesPanel sessionId={SID} version={version} getGlassApi={() => null} onReturnToTerminal={() => {}} isActive={false} />,
+      <CanvasNotesPanel sessionId={SID} version={version} getGlassApi={() => null} onReturnToTerminal={() => {}} {...paneSketchProps()} canvasId={CID} isActive={false} />,
     )
   })
 }
 const q = (id: string) => container.querySelector(`[data-testid="${id}"]`) as HTMLElement | null
-const submit = () => Array.from(container.querySelectorAll('button')).find((b) => b.textContent!.includes('Submit review')) as HTMLButtonElement
+/** Submit says what it FILES rather than the bare word, so it is found by its
+ *  testid — the label itself is what the assertions below read. */
+const submit = () => q('canvas-submit') as HTMLButtonElement
 
 beforeEach(() => {
   current = draftState('canvas-a', [])
@@ -104,7 +108,7 @@ describe('the decision gate', () => {
     act(() => q('decision-approve')!.click())
     const btn = submit()
     expect(btn.disabled).toBe(false)
-    expect(btn.textContent).toContain('Approve v3')
+    expect(btn.textContent).toBe('Submit — Approve v3')
     await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 0)) })
     expect(versionVerdict).toHaveBeenCalledWith({ sessionId: SID, versionId: 'v3', state: 'approved' })
     expect(reviewSubmit).not.toHaveBeenCalled()
@@ -122,14 +126,19 @@ describe('the decision gate', () => {
     await render() // decision 'reject' still armed — the note arriving is what arms Submit
     const btn = submit()
     expect(btn.disabled).toBe(false)
-    expect(btn.textContent).toContain('Rejected, 1 note')
+    expect(btn.textContent).toBe('Submit — Reject v3, 1 note')
     expect(q('reject-needs-note')).toBeNull()
   })
 
-  it('a decided version takes no review: no decision row, Submit dead, the hint says so', async () => {
+  it('a decided version takes no review: no composer, no decision row, and a line saying why', async () => {
     await render(DECIDED_VERSION)
     expect(q('decision-row')).toBeNull()
-    expect(q('version-decided-hint')!.textContent).toContain('already decided')
-    expect(submit().disabled).toBe(true)
+    // Never a dead compose area, and never "already decided (rejected)" — the
+    // line says what happened in the words the user used, and what follows.
+    const line = q('canvas-version-closed-line')!
+    expect(line.textContent).toContain('v3 is approved')
+    expect(container.textContent).not.toContain('already decided')
+    expect(submit()).toBeNull()
+    expect(q('composer-textarea')).toBeNull()
   })
 })

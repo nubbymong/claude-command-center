@@ -415,6 +415,8 @@ export const IPC = {
   CANVAS_ANNOTATION_REOPEN: 'canvas:annotationReopen', // renderer -> main: the USER puts a closed note back in play
   CANVAS_REVIEW_REOPEN: 'canvas:reviewReopen',         // renderer -> main: { sessionId, canvasId, reviewId } -> the USER puts a whole settled ROUND back in play (the only other revival there is)
   CANVAS_REVIEW_MARK_SEEN: 'canvas:reviewMarkSeen',    // renderer -> main: the USER has these addressed notes on screen (releases the agent close-out barrier; no MCP path here, ever)
+  CANVAS_COMPOSER_DRAFT_SET: 'canvas:composerDraftSet',     // renderer -> main: { sessionId, canvasId, draft } -> persist the half-written note (W14: text, decision, target, images, sketch scene)
+  CANVAS_COMPOSER_DRAFT_CLEAR: 'canvas:composerDraftClear', // renderer -> main: { sessionId, canvasId } -> drop it (submitted, or the user cleared the composer)
   CANVAS_COMPLETE: 'canvas:complete',                  // renderer -> main: { sessionId, canvasId } -> the USER signs the subject off (#476; refused while anything is owed, or not owned by that session)
   CANVAS_COMPLETE_FORCE: 'canvas:completeForce',       // renderer -> main: { sessionId, canvasId } -> the USER force-closes what is owed and signs off (W3; USER-only — canvas_complete keeps every refusal)
   CANVAS_DESCRIBE_FORCE_CLOSURES: 'canvas:describeForceClosures', // renderer -> main: { sessionId, canvasId } -> what a force would close, so the armed confirm can name it

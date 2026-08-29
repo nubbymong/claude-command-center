@@ -24,10 +24,12 @@ import type { Annotation, CanvasReviewState, CanvasVersion, Review } from '../..
 // does not load under raw Node and nothing here submits.
 vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
 
+import { paneSketchProps } from './canvas-panel-harness'
 const CanvasNotesPanel = (await import('../../../src/renderer/components/CanvasNotesPanel')).default
 const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canvasReviewStore')
 
 const SID = 'session-1'
+const CID = 'canvas-1'
 const V2: CanvasVersion = {
   id: 'v2',
   mode: 'design',
@@ -106,16 +108,16 @@ function pageClaimsReanchored(via: 'ux-id' | 'fingerprint' = 'ux-id'): void {
 async function render(): Promise<void> {
   await act(async () => {
     root.render(
-      <CanvasNotesPanel sessionId={SID} version={V2} getGlassApi={() => null} onReturnToTerminal={() => {}} />,
+      <CanvasNotesPanel sessionId={SID} version={V2} getGlassApi={() => null} onReturnToTerminal={() => {}} {...paneSketchProps()} canvasId={CID} />,
     )
   })
 }
 
-/** The checklist row for the element note — the row itself, not the text node
+/** The live-round row for the element note — the row itself, not the text node
  *  inside it, so the status badge is part of what it reads. */
 function checklistRow(): HTMLElement {
-  const row = Array.from(container.querySelectorAll('div')).find(
-    (el) => el.textContent?.includes('this button is too small') && el.className.includes('border-t'),
+  const row = Array.from(container.querySelectorAll('[data-testid="round-note"]')).find((el) =>
+    el.textContent?.includes('this button is too small'),
   )
   expect(row, 'checklist row for the open element note').toBeTruthy()
   return row as HTMLElement

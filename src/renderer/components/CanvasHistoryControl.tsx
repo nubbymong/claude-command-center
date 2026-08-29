@@ -266,7 +266,10 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
   return (
     <div className="relative shrink-0 flex items-center" ref={rootRef}>
       {/* ONE version control (C3): the ‹ › stepper folded into the History
-          trigger, with the pending pill riding it — "v8 of 8 (1 pending) ▾". */}
+          trigger, with the open-round pill riding it — "v8 of 8 OPEN ▾".
+          The pill says OPEN rather than "1 pending" (W21): it marks the one
+          version still awaiting a decision, and a COUNT there was read as a
+          number of notes and repeated a number the panel already carries. */}
       <div
         className="flex items-center gap-0.5 rounded-md border border-[var(--border-subtle)] bg-[var(--surface-panel)] text-[12px] px-1"
         data-testid="canvas-version-stepper"
@@ -300,7 +303,7 @@ export default function CanvasHistoryControl({ versions, activeVersionId, onSele
               style={{ background: 'var(--color-peach)', color: 'var(--surface-chrome)' }}
               data-testid="canvas-history-pending"
             >
-              1 pending
+              OPEN
             </span>
           )}
           <span aria-hidden style={{ color: 'var(--text-muted)', fontSize: 9 }}>▾</span>

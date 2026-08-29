@@ -36,7 +36,7 @@ const note = (id: string, reviewId: string, state: Annotation['state']): Annotat
 const stateOf = (reviews: Review[], annotations: Annotation[]): CanvasReviewSessionState => ({
   loaded: true, canvasId: 'c1', reviews, annotations,
   focus: null, focusChain: [], focusChainIndex: 0, marqueeArmed: false,
-  editingAnnotationId: null, resolution: null, panelHighlight: null, helpDismissed: false,
+  editingAnnotationId: null, resolution: null, panelHighlight: null,
 })
 
 describe('reviewGroupsOf', () => {

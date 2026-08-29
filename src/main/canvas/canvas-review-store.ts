@@ -28,6 +28,10 @@ import {
   artifactRunContaining,
   artifactRuns,
   MAX_ATTACHMENT_PNG_BYTES,
+  MAX_NOTE_CHARS,
+  MAX_NOTE_IMAGES,
+  MAX_SKETCH_SCENE_BYTES,
+  MAX_SKETCH_SCENE_ELEMENTS,
   isCleanVariantLabel,
   isLiveNote,
   isSettledNote,
@@ -43,6 +47,9 @@ import {
   type CanvasReviewChangedEvent,
   type CanvasReviewState,
   type CanvasSketchExport,
+  type CanvasSketchScene,
+  type ComposerDraft,
+  type ComposerDraftInput,
   type CanvasVersion,
   type FocusObject,
   type Rect,
@@ -58,7 +65,7 @@ import { clearAwaitingReview, getCanvasStateById, getCanvasStateForSession, setV
 // ── Bounds (shared intent with the IPC schemas; the store re-checks because it
 //    is the last line, and the MCP tool reads through it) ────────────────────
 
-const NOTE_MAX_CHARS = 4000
+const NOTE_MAX_CHARS = MAX_NOTE_CHARS
 const LABEL_MAX_CHARS = 120
 const ANCHOR_STRING_MAX = 512
 const MAX_TARGETS_PER_FOCUS = 8
@@ -80,9 +87,22 @@ const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 /** The one shape a stored pngPath may have — minted here, revalidated on load
  *  so a hand-edited record cannot point the MCP tool at an arbitrary file. */
 const PNG_PATH_RE = /^reviews\/R[0-9]{1,9}\/a[0-9]{1,9}\.png$/
-/** Same rule for a pasted image's path — its own directory, because the file
- *  exists before the note's review is submitted (no review id yet). */
-const IMAGE_PNG_PATH_RE = /^reviews\/pasted\/a[0-9]{1,9}\.png$/
+/**
+ * Same rule for a pasted image's path — its own directory, because the file
+ * exists before the note's review is submitted (no review id yet).
+ *
+ * Two shapes, and the bare one is not legacy tolerance for its own sake: a
+ * record written before multi-image support carries `image: { pngPath:
+ * 'reviews/pasted/a7.png' }`, and the load heal lifts that value UNCHANGED into
+ * `images[0]`. Rewriting the path would mean moving a file during a heal, which
+ * is the one thing a heal must not do (it runs in memory, and a failed move
+ * would leave the record pointing at nothing).
+ */
+const IMAGE_PNG_PATH_RE = /^reviews\/pasted\/a[0-9]{1,9}(-[0-9]{1,3})?\.png$/
+
+/** Where the PERSISTED COMPOSER's images live — one directory per canvas, keyed
+ *  by position rather than by note, because at compose time no note exists yet. */
+const COMPOSER_PNG_PATH_RE = /^reviews\/composer\/img-[0-9]{1,3}\.png$/
 
 // ── Record shape on disk ────────────────────────────────────────────────────
 
@@ -93,6 +113,9 @@ interface ReviewFileRecord {
   nextAnnotation: number
   reviews: Review[]
   annotations: Annotation[]
+  /** The unsent composer (W14). One per canvas — there is one composer — and
+   *  absent when nothing is half-written. */
+  composer?: ComposerDraft
 }
 
 const records = new Map<string, ReviewFileRecord>()
@@ -244,20 +267,40 @@ function isValidAnnotation(value: unknown): value is Annotation {
   if (typeof a.id !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(a.id)) return false
   if (typeof a.reviewId !== 'string' || !CANVAS_REVIEW_ID_RE.test(a.reviewId)) return false
   if (typeof a.scope !== 'string' || !ANNOTATION_SCOPES.has(a.scope)) return false
-  if (!(a.image !== undefined ? isCleanNoteOrEmpty(a.note) : isCleanNote(a.note))) return false
+  // Empty text is legal when SOMETHING ELSE is the note — a pasted image or a
+  // drawing. Both count now: a note that is only a circle round a broken button
+  // is a real note, and the composer lets it be saved.
+  const hasAttachment = (Array.isArray(a.images) && a.images.length > 0) || a.sketch !== undefined
+  if (!(hasAttachment ? isCleanNoteOrEmpty(a.note) : isCleanNote(a.note))) return false
   if (typeof a.versionId !== 'string' || !CANVAS_VERSION_ID_RE.test(a.versionId)) return false
   if (typeof a.state !== 'string' || !ANNOTATION_STATES.has(a.state)) return false
   if (a.scope === 'general') {
     if (a.focus !== undefined) return false
   } else if (!isValidFocus(a.focus)) return false
   if (a.sketch !== undefined && !isValidStoredSketch(a.sketch)) return false
-  // A pasted image: our minted path shape or absent, and never beside a sketch.
-  if (a.image !== undefined) {
-    const img = a.image as Partial<AnnotationImage> | null
-    if (typeof img !== 'object' || img === null) return false
-    if (typeof img.pngPath !== 'string' || !IMAGE_PNG_PATH_RE.test(img.pngPath)) return false
-    if (a.sketch !== undefined) return false
+  // Pasted images: OUR minted path shapes, in order, capped, and distinct.
+  //
+  // Distinctness is not pedantry. The note's text refers to them by position
+  // ("Image 2"), the serializer numbers the image blocks from this list, and a
+  // repeated path would let one file answer to two numbers — so a hand-edited
+  // record could make "Image 1" and "Image 2" the same picture while the note
+  // says they differ. A sketch beside them is fine now (the mutual-exclusion
+  // rule is gone): a drawing rides its note automatically.
+  if (a.images !== undefined) {
+    if (!Array.isArray(a.images) || a.images.length === 0 || a.images.length > MAX_NOTE_IMAGES) return false
+    const seen = new Set<string>()
+    for (const raw of a.images) {
+      const img = raw as Partial<AnnotationImage> | null
+      if (typeof img !== 'object' || img === null) return false
+      if (typeof img.pngPath !== 'string' || !IMAGE_PNG_PATH_RE.test(img.pngPath)) return false
+      if (seen.has(img.pngPath)) return false
+      seen.add(img.pngPath)
+    }
   }
+  // The retired single-image field. `sanitizeLoadedRecord` lifts it into
+  // `images` before validation runs, so reaching here still wearing it means a
+  // writer inside this process produced a shape this build does not define.
+  if ((a as { image?: unknown }).image !== undefined) return false
   if (a.supersededBy !== undefined && (typeof a.supersededBy !== 'string' || !CANVAS_ANNOTATION_ID_RE.test(a.supersededBy))) return false
   // Alternatives (#373): OUR minted shape or absent — keys are positional
   // 'A'…, labels are held to note cleanliness, and a hand-edited set that
@@ -402,6 +445,25 @@ function sanitizeLoadedRecord(value: unknown): void {
       if (focus && Array.isArray(focus.targets)) {
         focus.targets = focus.targets.filter((t) => (t as { kind?: unknown })?.kind !== 'plan-step')
       }
+      // The single pasted image becomes a LIST of one (W15). Same file, same
+      // path, same bytes — only the shape moves, so a note written before
+      // multi-image support keeps its screenshot and simply becomes "Image 1".
+      // A malformed `image` is dropped rather than fatal: it is an attachment,
+      // and condemning a canvas's whole review history over one unreadable
+      // reference would lose the user's notes to a migration.
+      const legacyImage = a.image as { pngPath?: unknown } | undefined
+      if (legacyImage !== undefined) {
+        if (
+          a.images === undefined &&
+          typeof legacyImage === 'object' &&
+          legacyImage !== null &&
+          typeof legacyImage.pngPath === 'string' &&
+          IMAGE_PNG_PATH_RE.test(legacyImage.pngPath)
+        ) {
+          a.images = [{ pngPath: legacyImage.pngPath }]
+        }
+        delete a.image
+      }
       // New optional fields: a malformed one is DROPPED rather than fatal. They
       // describe provenance, and a record written by a build that did not know
       // them is not corrupt.
@@ -422,6 +484,47 @@ function sanitizeLoadedRecord(value: unknown): void {
       if (r.settled !== undefined && r.status !== 'resolved') delete r.settled
     }
   }
+  // The persisted composer is a CONVENIENCE, never evidence: it is the note the
+  // user has not sent yet. A malformed one is dropped, not fatal — losing an
+  // unsent draft is a bad afternoon, losing the whole review history to it would
+  // be a bug.
+  const withComposer = value as { composer?: unknown }
+  if (withComposer.composer !== undefined && !isValidComposerDraft(withComposer.composer)) delete withComposer.composer
+}
+
+/** The persisted composer's shape. Every string bounded, the scene left OPAQUE
+ *  (main never parses it) but byte-capped, and the images held to the composer
+ *  directory's own path shape so a hand-edit cannot point the panel — which
+ *  renders them — at a file outside the canvas. */
+function isValidComposerDraft(value: unknown): value is ComposerDraft {
+  if (typeof value !== 'object' || value === null) return false
+  const d = value as Partial<ComposerDraft> & Record<string, unknown>
+  if (typeof d.versionId !== 'string' || !CANVAS_VERSION_ID_RE.test(d.versionId)) return false
+  if (d.decision !== undefined && (typeof d.decision !== 'string' || !REVIEW_DECISIONS.has(d.decision))) return false
+  if (!isCleanNoteOrEmpty(d.text)) return false
+  if (d.focus !== undefined && !isValidFocus(d.focus)) return false
+  if (!Array.isArray(d.images) || d.images.length > MAX_NOTE_IMAGES) return false
+  const seen = new Set<string>()
+  for (const raw of d.images) {
+    const img = raw as Partial<AnnotationImage> | null
+    if (typeof img !== 'object' || img === null) return false
+    if (typeof img.pngPath !== 'string' || !COMPOSER_PNG_PATH_RE.test(img.pngPath)) return false
+    if (seen.has(img.pngPath)) return false
+    seen.add(img.pngPath)
+  }
+  if (d.sketch !== undefined) {
+    const s = d.sketch as Partial<CanvasSketchScene> & Record<string, unknown>
+    if (typeof s !== 'object' || s === null) return false
+    if (typeof s.scene !== 'string' || Buffer.byteLength(s.scene, 'utf8') > MAX_SKETCH_SCENE_BYTES) return false
+    if (typeof s.versions !== 'object' || s.versions === null || Array.isArray(s.versions)) return false
+    const stamps = Object.entries(s.versions as Record<string, unknown>)
+    if (stamps.length > MAX_SKETCH_SCENE_ELEMENTS) return false
+    for (const [id, versionId] of stamps) {
+      if (!isCleanString(id, SKETCH_ELEMENT_ID_MAX) || id.length === 0) return false
+      if (typeof versionId !== 'string' || !CANVAS_VERSION_ID_RE.test(versionId)) return false
+    }
+  }
+  return isCleanString(d.updatedAt, 64)
 }
 
 function isValidReview(value: unknown, canvasId: string, sessionId: string): value is Review {
@@ -451,6 +554,9 @@ function isValidRecord(value: unknown, canvasId: string): value is ReviewFileRec
   if (!Number.isInteger(rec.nextAnnotation) || (rec.nextAnnotation as number) < 1) return false
   if (!Array.isArray(rec.reviews) || rec.reviews.length > MAX_REVIEWS_PER_CANVAS) return false
   if (!Array.isArray(rec.annotations)) return false
+  // `sanitizeLoadedRecord` has already dropped a malformed composer, so reaching
+  // here with a bad one means a writer inside this process produced it.
+  if (rec.composer !== undefined && !isValidComposerDraft(rec.composer)) return false
   if (!rec.reviews.every((r) => isValidReview(r, canvasId, rec.sessionId as string))) return false
   if (!rec.annotations.every(isValidAnnotation)) return false
   // At most one draft, and every annotation belongs to a review that exists.
@@ -524,6 +630,7 @@ function reboundRecord(record: ReviewFileRecord, sessionId: string): ReviewFileR
       annotationIds: [...r.annotationIds],
     })),
     annotations: record.annotations.map(cloneAnnotation),
+    ...(record.composer ? { composer: cloneComposerDraft(record.composer) } : {}),
   }
 }
 
@@ -685,6 +792,7 @@ function toState(record: ReviewFileRecord): CanvasReviewState {
     sessionId: record.sessionId,
     reviews: record.reviews.map((r) => ({ ...r, canvas: { ...r.canvas }, annotationIds: [...r.annotationIds] })),
     annotations: record.annotations.map(cloneAnnotation),
+    ...(record.composer ? { composer: cloneComposerDraft(record.composer) } : {}),
   }
 }
 
@@ -695,7 +803,16 @@ function cloneAnnotation(a: Annotation): Annotation {
       ? { focus: { ...a.focus, targets: a.focus.targets.map((t) => ({ ...t })), bboxPage: { ...a.focus.bboxPage } } }
       : {}),
     ...(a.sketch ? { sketch: { ...a.sketch, excalidrawElementIds: [...a.sketch.excalidrawElementIds], bboxPage: { ...a.sketch.bboxPage } } } : {}),
-    ...(a.image ? { image: { ...a.image } } : {}),
+    ...(a.images ? { images: a.images.map((img) => ({ ...img })) } : {}),
+  }
+}
+
+function cloneComposerDraft(d: ComposerDraft): ComposerDraft {
+  return {
+    ...d,
+    ...(d.focus ? { focus: { ...d.focus, targets: d.focus.targets.map((t) => ({ ...t })), bboxPage: { ...d.focus.bboxPage } } } : {}),
+    images: d.images.map((img) => ({ ...img })),
+    ...(d.sketch ? { sketch: { scene: d.sketch.scene, versions: { ...d.sketch.versions } } } : {}),
   }
 }
 
@@ -1286,15 +1403,27 @@ export function settleReviewsForSupersededVersions(canvasId: string, versionIds:
 function validateDraft(draft: CanvasAnnotationDraft, canvas: SessionCanvas): void {
   if (typeof draft !== 'object' || draft === null) throw new Error('invalid draft')
   if (!ANNOTATION_SCOPES.has(draft.scope)) throw new Error('invalid draft scope')
-  // Empty text is allowed only when a pasted image rides the note.
-  if (!(draft.image !== undefined ? isCleanNoteOrEmpty(draft.note) : isCleanNote(draft.note))) throw new Error('invalid draft note')
-  if (draft.image !== undefined) {
-    if (draft.sketch !== undefined) throw new Error('a note carries one attachment: a sketch or an image')
-    if (draft.image !== 'keep') {
-      const img = draft.image as { pngBase64?: unknown } | null
-      if (typeof img !== 'object' || img === null || typeof img.pngBase64 !== 'string' || img.pngBase64.length === 0)
-        throw new Error('invalid draft image')
-      if (img.pngBase64.length > Math.ceil(MAX_ATTACHMENT_PNG_BYTES / 3) * 4 + 8) throw new Error('draft image too large')
+  // Empty text is allowed when the ATTACHMENT is the note — a pasted image or a
+  // drawing. Both, now: the composer saves a note that is only a circle round a
+  // broken button, and demanding words for it would be demanding a caption.
+  const hasAttachment = (draft.images !== undefined && draft.images.length > 0) || draft.sketch !== undefined
+  if (!(hasAttachment ? isCleanNoteOrEmpty(draft.note) : isCleanNote(draft.note))) throw new Error('invalid draft note')
+  if (draft.images !== undefined) {
+    if (!Array.isArray(draft.images)) throw new Error('invalid draft images')
+    if (draft.images.length > MAX_NOTE_IMAGES) throw new Error('too many images on one note')
+    for (const entry of draft.images) {
+      if (typeof entry !== 'object' || entry === null) throw new Error('invalid draft image')
+      if ('fromComposer' in entry || 'fromNote' in entry) {
+        // An index into the PERSISTED composer draft, or into the note's own
+        // existing images — resolved at write time against whatever is actually
+        // there. Bounded here so a hostile index cannot reach the resolver.
+        const k = (entry as { fromComposer?: unknown; fromNote?: unknown }).fromComposer ?? (entry as { fromNote?: unknown }).fromNote
+        if (typeof k !== 'number' || !Number.isInteger(k) || k < 0 || k >= MAX_NOTE_IMAGES) throw new Error('invalid draft image reference')
+        continue
+      }
+      const png = (entry as { pngBase64?: unknown }).pngBase64
+      if (typeof png !== 'string' || png.length === 0) throw new Error('invalid draft image')
+      if (png.length > Math.ceil(MAX_ATTACHMENT_PNG_BYTES / 3) * 4 + 8) throw new Error('draft image too large')
     }
   }
   if (typeof draft.versionId !== 'string' || !canvas.versionIds.has(draft.versionId)) throw new Error('draft names an unknown version')
@@ -1314,29 +1443,142 @@ function validateDraft(draft: CanvasAnnotationDraft, canvas: SessionCanvas): voi
 }
 
 /** Where a pasted image lives, relative to the canvas dir. Keyed by note id —
- *  unique per canvas — because at compose time the review id is still fluid. */
-function pastedImagePath(annotationId: string): string {
-  return `reviews/pasted/${annotationId}.png`
+ *  unique per canvas — plus its POSITION on the note, because a note carries
+ *  several now and the order is what "Image 2" in the text refers to. */
+function pastedImagePath(annotationId: string, index: number): string {
+  return `reviews/pasted/${annotationId}-${index}.png`
 }
 
-/** Decode, cap-check and write a pasted image; returns the record to store.
- *  Same PNG discipline as sketch exports (magic + byte cap), written BEFORE the
- *  record commits so a failed write refuses the whole save. */
-function writePastedImage(canvasId: string, annotationId: string, pngBase64: string): AnnotationImage {
-  const bytes = decodeAttachmentPng(pngBase64)
-  mkdirSecure(path.join(canvasDir(canvasId), 'reviews', 'pasted'))
-  atomicWriteSecure(path.join(canvasDir(canvasId), pastedImagePath(annotationId)), bytes)
-  return { pngPath: pastedImagePath(annotationId) }
+/** Where a persisted COMPOSER image lives. Keyed by position only: at compose
+ *  time there is no note id yet, and there is one composer per canvas. */
+function composerImagePath(index: number): string {
+  return `reviews/composer/img-${index}.png`
+}
+
+/**
+ * Land a planned image list on disk and return the records to store.
+ *
+ * Files FIRST, record after (the store's standing order): a save that throws
+ * here leaves the note exactly as it was, at worst with an orphan PNG no record
+ * references. The reverse — a committed record naming a file that was never
+ * written — is the one failure the panel cannot render its way out of.
+ */
+function writePlannedImages(canvasId: string, plan: readonly PlannedImage[]): AnnotationImage[] {
+  if (plan.some((p) => p.bytes !== null)) mkdirSecure(path.join(canvasDir(canvasId), 'reviews', 'pasted'))
+  for (const item of plan) {
+    if (item.bytes === null) continue
+    atomicWriteSecure(path.join(canvasDir(canvasId), item.targetPath), item.bytes)
+  }
+  return plan.map((p) => ({ pngPath: p.targetPath }))
 }
 
 /** Best-effort removal — a leftover file no record references is harmless; a
  *  throw here must never undo the record mutation it accompanies. */
 function unlinkPastedImage(canvasId: string, image: AnnotationImage | undefined): void {
-  if (!image?.pngPath || !IMAGE_PNG_PATH_RE.test(image.pngPath)) return
+  if (!image?.pngPath) return
+  if (!IMAGE_PNG_PATH_RE.test(image.pngPath) && !COMPOSER_PNG_PATH_RE.test(image.pngPath)) return
   try {
     fs.unlinkSync(path.join(canvasDir(canvasId), image.pngPath))
   } catch {
     /* already gone, or locked — either way the record is the truth */
+  }
+}
+
+/** Every attachment file one note owns. Used by the three paths that DELETE a
+ *  note (draft delete, force close, artefact delete) — each of which used to
+ *  name the single image field and would silently strand the rest. */
+function noteImages(a: Annotation): AnnotationImage[] {
+  return a.images ?? []
+}
+
+/** PNG bytes for one image the save is keeping or moving, or `null` when the
+ *  file is already exactly where the new list wants it. */
+interface PlannedImage {
+  targetPath: string
+  bytes: Buffer | null
+}
+
+/**
+ * Work out where every image on a saved note ends up, WITHOUT touching disk.
+ *
+ * Two-phase on purpose. A note's images are named by POSITION
+ * (`a7-0.png`, `a7-1.png`, …) and the user can reorder or delete them, so a
+ * naive copy-as-you-go would clobber a source it had not read yet — dropping
+ * image 1 to make `[{fromNote:1}]` writes `a7-1` over `a7-0` while `a7-1` is
+ * still the source of a later entry. Reading every moving image into memory
+ * first makes the whole rearrangement atomic against itself. Only images that
+ * actually MOVE are read; one staying at its own index costs nothing.
+ */
+function planNoteImages(
+  canvasId: string,
+  annotationId: string,
+  entries: NonNullable<CanvasAnnotationDraft['images']>,
+  previous: readonly AnnotationImage[],
+  composer: ComposerDraft | undefined,
+): { plan: PlannedImage[]; consumedComposerIndices: number[] } {
+  const plan: PlannedImage[] = []
+  const consumedComposerIndices: number[] = []
+  entries.forEach((entry, k) => {
+    const targetPath = pastedImagePath(annotationId, k)
+    if ('pngBase64' in entry) {
+      plan.push({ targetPath, bytes: decodeAttachmentPng(entry.pngBase64) })
+      return
+    }
+    if ('fromNote' in entry) {
+      const src = previous[entry.fromNote]
+      if (!src) throw new Error('that note image is gone')
+      if (src.pngPath === targetPath) {
+        plan.push({ targetPath, bytes: null })
+        return
+      }
+      plan.push({ targetPath, bytes: readAttachmentFile(canvasId, src.pngPath) })
+      return
+    }
+    const src = composer?.images[entry.fromComposer]
+    if (!src) throw new Error('that composer image is gone')
+    // One composer image cannot become two notes' images: the file is MOVED,
+    // so the second reference would resolve to a path we already deleted.
+    if (consumedComposerIndices.includes(entry.fromComposer)) throw new Error('the same composer image twice')
+    consumedComposerIndices.push(entry.fromComposer)
+    plan.push({ targetPath, bytes: readAttachmentFile(canvasId, src.pngPath) })
+  })
+  return { plan, consumedComposerIndices }
+}
+
+/**
+ * Read one attachment back off disk, held to the same PNG discipline as a fresh
+ * paste — and to atomic-write.ts's discipline about WHAT it is reading.
+ *
+ * The path is store-minted and re-validated, but the FILE at it is not: the
+ * canvas directory lives under a user-selectable resources root, so anything
+ * with write access there can replace an attachment with a reparse point aimed
+ * at a 4 GB file (or at something outside the canvas entirely) between the write
+ * and this read. `readFileSync` would follow it and buffer the lot.
+ *
+ * So, in order and all before a byte is read:
+ *   1. `lstat` — refuse a symlink or junction outright, never chase it;
+ *   2. open a HANDLE, and ask the handle what it is (`fstat`), so the size and
+ *      the kind describe the inode actually opened rather than whatever the path
+ *      resolved to a moment ago;
+ *   3. refuse anything that is not a regular file, or is past the cap, BEFORE
+ *      allocating for it.
+ */
+function readAttachmentFile(canvasId: string, relPath: string): Buffer {
+  const abs = path.join(canvasDir(canvasId), relPath)
+  const link = fs.lstatSync(abs)
+  if (link.isSymbolicLink()) throw new Error('attachment is a reparse point, not a file')
+  const fd = fs.openSync(abs, 'r')
+  try {
+    const stat = fs.fstatSync(fd)
+    if (!stat.isFile()) throw new Error('attachment is not a file')
+    if (stat.size === 0 || stat.size > MAX_SKETCH_PNG_BYTES) throw new Error('attachment png too large')
+    const bytes = Buffer.allocUnsafe(stat.size)
+    const read = fs.readSync(fd, bytes, 0, stat.size, 0)
+    if (read !== stat.size) throw new Error('attachment could not be read whole')
+    if (bytes.length < PNG_MAGIC.length || !bytes.subarray(0, PNG_MAGIC.length).equals(PNG_MAGIC)) throw new Error('attachment is not a png')
+    return bytes
+  } finally {
+    fs.closeSync(fd)
   }
 }
 
@@ -1379,24 +1621,29 @@ export function upsertAnnotation(
     else existing.focus = draft.focus
     if (draft.sketch) existing.sketch = { ...draft.sketch, pngPath: '' }
     else delete existing.sketch
-    // A removal's file is unlinked AFTER the commit, never before — the same
-    // persist-before-memory discipline deleteAnnotation states: if `persist`
-    // throws, the still-committed record must not reference a file we already
-    // deleted. Captured here (from the clone we are about to overwrite) and
-    // unlinked past the commit below.
-    let imageToUnlink: AnnotationImage | undefined
-    if (draft.image === 'keep') {
-      if (!existing.image) throw new Error('no image to keep on this note')
-    } else if (draft.image) {
-      // Write before commit (persist-before-memory); replacing overwrites the
-      // same path atomically.
-      existing.image = writePastedImage(canvas.canvasId, existing.id, draft.image.pngBase64)
-    } else if (existing.image) {
-      imageToUnlink = existing.image
-      delete existing.image
-    }
+    // Files the save no longer references are unlinked AFTER the commit, never
+    // before — the same persist-before-memory discipline deleteAnnotation
+    // states: if `persist` throws, the still-committed record must not point at
+    // a file we already deleted. Captured here (from the clone we are about to
+    // overwrite) and unlinked past the commit below.
+    const previous = noteImages(existing)
+    const { plan, consumedComposerIndices } = planNoteImages(
+      canvas.canvasId,
+      existing.id,
+      draft.images ?? [],
+      previous,
+      next.composer,
+    )
+    const landed = writePlannedImages(canvas.canvasId, plan)
+    if (landed.length > 0) existing.images = landed
+    else delete existing.images
+    const kept = new Set(landed.map((img) => img.pngPath))
+    const toUnlink = [
+      ...previous.filter((img) => !kept.has(img.pngPath)),
+      ...consumeComposerImages(next, consumedComposerIndices),
+    ]
     commit(next)
-    if (imageToUnlink) unlinkPastedImage(canvas.canvasId, imageToUnlink)
+    for (const img of toUnlink) unlinkPastedImage(canvas.canvasId, img)
     return { state: toState(next), annotationId }
   } else {
     if (!review) {
@@ -1414,9 +1661,18 @@ export function upsertAnnotation(
       next.reviews.push(review)
     }
     if (review.annotationIds.length >= MAX_ANNOTATIONS_PER_REVIEW) throw new Error('note cap reached for this review')
-    if (draft.image === 'keep') throw new Error('no image to keep on a new note')
     annotationId = `a${next.nextAnnotation}`
     next.nextAnnotation += 1
+    // A brand-new note has no images of its own to keep, so `fromNote` here
+    // names nothing — planNoteImages refuses it against the empty list.
+    const { plan, consumedComposerIndices } = planNoteImages(
+      canvas.canvasId,
+      annotationId,
+      draft.images ?? [],
+      [],
+      next.composer,
+    )
+    const landed = writePlannedImages(canvas.canvasId, plan)
     const annotation: Annotation = {
       id: annotationId,
       reviewId: review.id,
@@ -1426,14 +1682,198 @@ export function upsertAnnotation(
       state: 'open',
       ...(draft.scope !== 'general' && draft.focus ? { focus: draft.focus } : {}),
       ...(draft.sketch ? { sketch: { ...draft.sketch, pngPath: '' } } : {}),
-      ...(draft.image ? { image: writePastedImage(canvas.canvasId, annotationId, draft.image.pngBase64) } : {}),
+      ...(landed.length > 0 ? { images: landed } : {}),
     }
     next.annotations.push(annotation)
     review.annotationIds.push(annotationId)
+    const consumed = consumeComposerImages(next, consumedComposerIndices)
+    next.nextAnnotation = Math.max(next.nextAnnotation, Number(annotationId.slice(1)) + 1)
+    commit(next)
+    for (const img of consumed) unlinkPastedImage(canvas.canvasId, img)
+    return { state: toState(next), annotationId }
   }
+}
 
+/**
+ * PERSIST THE HALF-WRITTEN NOTE (W14).
+ *
+ * The composer's decision, text, target, images and sketch scene, saved per
+ * canvas so a pane switch — or a crash — does not throw away work the user has
+ * not sent yet. The renderer calls this debounced on typing and immediately on
+ * anything that costs bytes (a paste, an image removed, the panel unmounting).
+ *
+ * OWNER-SESSION SCOPED, like every other renderer write here: the canvas named
+ * has to be the one this session actually holds. A draft is the user's unsent
+ * words, and answering (or accepting) one for a canvas somebody else owns would
+ * be both a leak and a way to plant text in another session's composer.
+ *
+ * Everything is re-validated: main is the last line, and the scene JSON is
+ * OPAQUE here — it is bounded in bytes and never parsed, exactly as the note
+ * text is never interpreted.
+ */
+export function setComposerDraft(sessionId: string, canvasId: string, input: ComposerDraftInput): CanvasReviewState {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  if (canvas.canvasId !== canvasId) throw new Error('that canvas is not this session’s')
+  requireHealthy(canvas.canvasId)
+  requireNotCompleted(canvas.canvasId)
+  validateComposerInput(input, canvas)
+
+  const base = recordFor(sessionId, canvas)
+  const previous = base.composer?.images ?? []
+  const { plan } = planComposerImages(canvas.canvasId, input.images, previous)
+  const landed = writeComposerImages(canvas.canvasId, plan)
+  const kept = new Set(landed.map((img) => img.pngPath))
+
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+    composer: {
+      versionId: input.versionId,
+      ...(input.decision ? { decision: input.decision } : {}),
+      text: input.text,
+      ...(input.focus ? { focus: input.focus } : {}),
+      images: landed,
+      ...(input.sketch ? { sketch: { scene: input.sketch.scene, versions: { ...input.sketch.versions } } } : {}),
+      updatedAt: new Date().toISOString(),
+    },
+  }
   commit(next)
-  return { state: toState(next), annotationId }
+  for (const img of previous) if (!kept.has(img.pngPath)) unlinkPastedImage(canvas.canvasId, img)
+  return toState(next)
+}
+
+/** Drop the persisted composer and its images. Called when the round is
+ *  submitted (the draft went with it) and when the user empties the composer. */
+export function clearComposerDraft(sessionId: string, canvasId: string): CanvasReviewState {
+  const canvas = canvasForSession(sessionId)
+  if (!canvas) throw new Error('no canvas for session')
+  if (canvas.canvasId !== canvasId) throw new Error('that canvas is not this session’s')
+  requireHealthy(canvas.canvasId)
+
+  const base = recordFor(sessionId, canvas)
+  if (!base.composer) return toState(base)
+  const doomed = base.composer.images
+  const next: ReviewFileRecord = {
+    ...base,
+    reviews: base.reviews.map((r) => ({ ...r, annotationIds: [...r.annotationIds] })),
+    annotations: base.annotations.map(cloneAnnotation),
+  }
+  delete next.composer
+  commit(next)
+  for (const img of doomed) unlinkPastedImage(canvas.canvasId, img)
+  return toState(next)
+}
+
+/** The composer draft dropped WITHOUT a session in hand — the submit path, which
+ *  already holds the record it is committing. Mutates in place and returns the
+ *  files to unlink after that commit lands. */
+function dropComposerFrom(record: ReviewFileRecord): AnnotationImage[] {
+  const doomed = record.composer?.images ?? []
+  delete record.composer
+  return doomed
+}
+
+function validateComposerInput(input: ComposerDraftInput, canvas: SessionCanvas): void {
+  if (typeof input !== 'object' || input === null) throw new Error('invalid composer draft')
+  if (typeof input.versionId !== 'string' || !canvas.versionIds.has(input.versionId)) throw new Error('composer draft names an unknown version')
+  // Same rule as a note: the user can only be composing about a version they
+  // were SHOWN. An agent draft (#366) is invisible by contract.
+  if (canvas.draftVersionIds.includes(input.versionId)) throw new Error('composer draft names a version the user has not been shown')
+  if (input.decision !== undefined && input.decision !== 'approve' && input.decision !== 'reject') throw new Error('invalid composer decision')
+  if (!isCleanNoteOrEmpty(input.text)) throw new Error('invalid composer text')
+  if (input.focus !== undefined && !isValidFocus(input.focus)) throw new Error('invalid composer focus')
+  if (!Array.isArray(input.images) || input.images.length > MAX_NOTE_IMAGES) throw new Error('invalid composer images')
+  const kept = new Set<number>()
+  input.images.forEach((entry, k) => {
+    if (entry === 'keep' || (typeof entry === 'object' && entry !== null && 'keepIndex' in entry)) {
+      const from = entry === 'keep' ? k : (entry as { keepIndex: unknown }).keepIndex
+      if (typeof from !== 'number' || !Number.isInteger(from) || from < 0 || from >= MAX_NOTE_IMAGES) throw new Error('invalid composer image reference')
+      // One persisted image cannot become two: the plan MOVES files by
+      // destination index, so two entries claiming one source would leave the
+      // second reading a file the first has already overwritten.
+      if (kept.has(from)) throw new Error('the same composer image twice')
+      kept.add(from)
+      return
+    }
+    if (typeof entry !== 'object' || entry === null || typeof entry.pngBase64 !== 'string' || entry.pngBase64.length === 0)
+      throw new Error('invalid composer image')
+    if (entry.pngBase64.length > Math.ceil(MAX_ATTACHMENT_PNG_BYTES / 3) * 4 + 8) throw new Error('composer image too large')
+  })
+  if (input.sketch !== undefined) {
+    const s = input.sketch as Partial<CanvasSketchScene> & Record<string, unknown>
+    if (typeof s !== 'object' || s === null) throw new Error('invalid composer sketch')
+    if (typeof s.scene !== 'string') throw new Error('invalid composer sketch')
+    if (Buffer.byteLength(s.scene, 'utf8') > MAX_SKETCH_SCENE_BYTES) throw new Error('composer sketch too large')
+    if (typeof s.versions !== 'object' || s.versions === null || Array.isArray(s.versions)) throw new Error('invalid composer sketch')
+    const stamps = Object.entries(s.versions as Record<string, unknown>)
+    if (stamps.length > MAX_SKETCH_SCENE_ELEMENTS) throw new Error('too many drawing elements to keep with the draft')
+    for (const [id, versionId] of stamps) {
+      if (!isCleanString(id, SKETCH_ELEMENT_ID_MAX) || id.length === 0) throw new Error('invalid composer sketch')
+      if (typeof versionId !== 'string' || !CANVAS_VERSION_ID_RE.test(versionId)) throw new Error('invalid composer sketch')
+    }
+  }
+}
+
+/**
+ * Where every composer image ends up. Same two-phase read-then-write as
+ * `planNoteImages`, and for the same reason: an entry names a SOURCE index and
+ * the paths are canonical by DESTINATION (`img-<k>.png`), so a removal or a
+ * reorder makes some image's source the same file as another's destination.
+ * Reading every mover before writing anything makes the rearrangement atomic
+ * against itself; an image that has not moved costs nothing.
+ */
+function planComposerImages(
+  canvasId: string,
+  entries: readonly ('keep' | { keepIndex: number } | { pngBase64: string })[],
+  previous: readonly AnnotationImage[],
+): { plan: PlannedImage[] } {
+  const plan: PlannedImage[] = []
+  entries.forEach((entry, k) => {
+    const targetPath = composerImagePath(k)
+    if (entry === 'keep' || 'keepIndex' in entry) {
+      // Bare 'keep' is the shorthand for "the one at this same index".
+      const from = entry === 'keep' ? k : entry.keepIndex
+      const src = previous[from]
+      if (!src) throw new Error('no composer image to keep at that position')
+      plan.push({ targetPath, bytes: src.pngPath === targetPath ? null : readAttachmentFile(canvasId, src.pngPath) })
+      return
+    }
+    plan.push({ targetPath, bytes: decodeAttachmentPng(entry.pngBase64) })
+  })
+  return { plan }
+}
+
+function writeComposerImages(canvasId: string, plan: readonly PlannedImage[]): AnnotationImage[] {
+  if (plan.some((p) => p.bytes !== null)) mkdirSecure(path.join(canvasDir(canvasId), 'reviews', 'composer'))
+  for (const item of plan) {
+    if (item.bytes === null) continue
+    atomicWriteSecure(path.join(canvasDir(canvasId), item.targetPath), item.bytes)
+  }
+  return plan.map((p) => ({ pngPath: p.targetPath }))
+}
+
+/**
+ * Take the named images off the persisted composer draft and return them, so the
+ * caller can unlink their files once its own record is committed.
+ *
+ * The composer entry has to go in the SAME commit as the note that took it: the
+ * file has already been copied onto the note, so a composer still listing it
+ * would render a thumbnail for a picture that is about to be deleted. Mutates
+ * `record` in place — the caller owns the off-to-the-side copy.
+ */
+function consumeComposerImages(record: ReviewFileRecord, indices: readonly number[]): AnnotationImage[] {
+  if (indices.length === 0 || !record.composer) return []
+  const taken = new Set(indices)
+  const removed = record.composer.images.filter((_, i) => taken.has(i))
+  if (removed.length === 0) return []
+  record.composer = {
+    ...cloneComposerDraft(record.composer),
+    images: record.composer.images.filter((_, i) => !taken.has(i)).map((img) => ({ ...img })),
+    updatedAt: new Date().toISOString(),
+  }
+  return removed
 }
 
 export function deleteAnnotation(sessionId: string, annotationId: string): CanvasReviewState {
@@ -1458,9 +1898,9 @@ export function deleteAnnotation(sessionId: string, annotationId: string): Canva
       .filter((r) => r.status !== 'draft' || r.annotationIds.length > 0),
   }
   commit(next)
-  // After the commit: a pasted image belongs to exactly this note, so the file
-  // goes with it. Best-effort — the record is already the truth.
-  unlinkPastedImage(canvas.canvasId, target.image)
+  // After the commit: a pasted image belongs to exactly this note, so EVERY one
+  // of them goes with it. Best-effort — the record is already the truth.
+  for (const img of noteImages(target)) unlinkPastedImage(canvas.canvasId, img)
   return toState(next)
 }
 
@@ -1594,6 +2034,13 @@ export function submitReview(
   const runIds = artifactVersionIdsFor(canvas.canvasId, frozenVersionId)
   if (runIds) settleEarlierRounds(next, runIds, frozenVersionId, nextReview.id)
 
+  // The half-written note goes with the round (W14). Whatever was in the
+  // composer was either turned into a note and sent, or is about a version the
+  // user has now ruled on — either way restoring it into the next round's
+  // composer would put words back in front of them that they have already dealt
+  // with. Its files are unlinked after the commit, like every other attachment.
+  const doomedComposer = dropComposerFrom(next)
+
   // PNGs first, record second, memory last. A failure anywhere leaves the
   // draft intact in memory and on disk; at worst orphaned PNG files that no
   // record references.
@@ -1602,6 +2049,7 @@ export function submitReview(
     for (const write of pngWrites) atomicWriteSecure(write.absPath, write.bytes)
   }
   commit(next)
+  for (const img of doomedComposer) unlinkPastedImage(canvas.canvasId, img)
   // Submitting IS responding: the ready-marked round leaves the review queue
   // (#366). After the commit, so a failed submit never clears what is owed;
   // and never the other way to fail — a clear that throws must not undo a
@@ -1663,7 +2111,7 @@ export function submitReview(
 function rejectionGist(notes: readonly Annotation[]): string {
   const written = notes.find((a) => a.note.trim().length > 0)?.note
   if (written) return written
-  if (notes.some((a) => a.image)) return 'see the attached image'
+  if (notes.some((a) => noteImages(a).length > 0)) return 'see the attached image'
   if (notes.some((a) => a.sketch)) return 'see the attached drawing'
   return 'see the notes on this round'
 }
@@ -1672,9 +2120,10 @@ function rejectionGist(notes: readonly Annotation[]): string {
 
 export interface ReviewPayloadResult {
   payload: ReviewPayload
-  /** Absolute PNG paths, 1:1 with payload.attachments. Resolved HERE from the
-   *  validated relative paths so the tool never joins paths itself. */
-  attachmentFiles: Array<{ annotationId: string; absPath: string }>
+  /** Absolute PNG paths, 1:1 with payload.attachments (same order, same kinds).
+   *  Resolved HERE from the validated relative paths so the tool never joins
+   *  paths itself. */
+  attachmentFiles: Array<{ annotationId: string; absPath: string; kind: 'sketch' | 'image'; imageIndex?: number }>
   /** Ids of every submitted (fetchable) review, for the tool's own messaging. */
   submittedReviewIds: string[]
 }
@@ -1701,12 +2150,20 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
   const all = record.annotations.filter((a) => members.has(a.id)).map(cloneAnnotation)
   const generalNotes = all.filter((a) => a.scope === 'general')
   const anchored = all.filter((a) => a.scope !== 'general')
-  const attachments = all
-    .filter((a) => (a.sketch && a.sketch.pngPath !== '') || a.image)
-    .map((a) => ({
-      annotationId: a.id,
-      pngPath: a.sketch && a.sketch.pngPath !== '' ? a.sketch.pngPath : a.image!.pngPath,
-    }))
+  // Attachments, in the order the note's own text refers to them: its images
+  // first (1..N — "Image 2" in the prose is the second one here), then its
+  // drawing. A note carries several of each now, so the entry says WHICH it is
+  // and, for an image, its position on the note — the serializer turns that into
+  // "Image 2 = attachment 5" so the words and the image blocks cannot drift.
+  const attachments: ReviewPayload['attachments'] = []
+  for (const a of all) {
+    noteImages(a).forEach((img, i) => {
+      attachments.push({ annotationId: a.id, pngPath: img.pngPath, kind: 'image', imageIndex: i + 1 })
+    })
+    if (a.sketch && a.sketch.pngPath !== '') {
+      attachments.push({ annotationId: a.id, pngPath: a.sketch.pngPath, kind: 'sketch' })
+    }
+  }
 
   // A4: the rounds THIS submission settled, and per round the notes that were
   // still open when it did. Derived from the record rather than remembered from
@@ -1739,6 +2196,8 @@ export function getReviewPayload(sessionId: string, reviewId: string): ReviewPay
     attachmentFiles: attachments.map((att) => ({
       annotationId: att.annotationId,
       absPath: path.join(canvasDir(canvas.canvasId), att.pngPath),
+      kind: att.kind,
+      ...(att.imageIndex !== undefined ? { imageIndex: att.imageIndex } : {}),
     })),
     submittedReviewIds,
   }
@@ -2537,7 +2996,13 @@ export function forceCloseCanvasReviews(canvasId: string): ForceCloseReport | nu
   commit(next)
   // Files last, after the record is the truth — the same order deleteAnnotation
   // uses, so a persist that throws never orphans a record onto a deleted file.
-  for (const a of doomedDrafts) unlinkPastedImage(canvasId, a.image)
+  //
+  // The persisted COMPOSER deliberately survives a force. It is not part of what
+  // a force closes — an unsent composer never made the canvas owed (the counts
+  // read draft NOTES, live rounds and awaited versions) — so deleting it here
+  // would throw away words the user never asked anyone to act on. Reopening the
+  // canvas finds them where they left them.
+  for (const a of doomedDrafts) for (const img of noteImages(a)) unlinkPastedImage(canvasId, img)
   return report
 }
 
@@ -2578,7 +3043,7 @@ export function deleteAnnotationsForVersions(canvasId: string, versionIds: reado
   // references them, so a leftover file is harmless; a throw here must never
   // undo the commit above.
   for (const a of doomed) {
-    if (a.image) unlinkPastedImage(canvasId, a.image)
+    for (const img of noteImages(a)) unlinkPastedImage(canvasId, img)
     // Re-validate the sketch path at unlink time, exactly as unlinkPastedImage
     // re-checks its own — the record is validated on load today, but this guard
     // keeps the unlink from becoming a delete-by-path primitive if any future

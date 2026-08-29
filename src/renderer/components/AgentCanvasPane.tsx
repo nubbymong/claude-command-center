@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Excalidraw } from '@excalidraw/excalidraw'
+import { Excalidraw, restoreElements } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import CanvasEmptyState from './CanvasEmptyState'
@@ -9,7 +9,8 @@ import CanvasNotesPanel from './CanvasNotesPanel'
 import CanvasCompleteButton from './CanvasCompleteButton'
 import CanvasHistoryControl from './CanvasHistoryControl'
 import CanvasXrayReadout from './CanvasXrayReadout'
-import { useCanvasStore } from '../stores/canvasStore'
+import { DismissButton } from './ui/DismissButton'
+import { useCanvasStore, type CanvasSketchScene } from '../stores/canvasStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import {
@@ -37,7 +38,7 @@ import {
   xrayReadsOutInPanel,
   type CanvasXrayMode,
 } from '../canvas/xray-mode'
-import { openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
+import { draftAnnotationsOf, openReviewsOf, openSubmittedNotesOf, useCanvasReviewStore } from '../stores/canvasReviewStore'
 
 /** How long a frame may sit silent before the pane stops claiming it is
  *  loading. A 404, a CSP-blocked bridge script and a crashed page otherwise
@@ -140,8 +141,9 @@ function canvasModeLockup(version: CanvasVersion): { word: string; color: string
 }
 
 /** The tool-chip glyphs (item C): eye = Inspect, pencil = Sketch, dashed
- *  rectangle + arrow = Region. Stroke-only, sized for a 26px chip. */
-function ToolIcon({ kind }: { kind: 'inspect' | 'sketch' | 'region' }) {
+ *  rectangle + arrow = Region, sliders = Tools. Stroke-only, sized for a 26px
+ *  chip, and drawn rather than typed — the repo takes no emoji in JSX. */
+function ToolIcon({ kind }: { kind: 'inspect' | 'sketch' | 'region' | 'tools' }) {
   const common = { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
   if (kind === 'inspect') {
     return (
@@ -155,6 +157,15 @@ function ToolIcon({ kind }: { kind: 'inspect' | 'sketch' | 'region' }) {
     return (
       <svg {...common}>
         <path d="M4 20l3.5-.8L19 7.7a2 2 0 0 0-2.8-2.8L4.8 16.4z" />
+      </svg>
+    )
+  }
+  if (kind === 'tools') {
+    return (
+      <svg {...common}>
+        <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+        <circle cx="16" cy="7" r="2" />
+        <circle cx="10" cy="17" r="2" />
       </svg>
     )
   }
@@ -233,7 +244,9 @@ export default function AgentCanvasPane({ sessionId, isActive = false }: Props) 
   // control that destroys its own host, mid-action.
   if (!canvasState?.canvasId || !activeVersion) {
     return (
-      <div className="flex-1 flex flex-col min-h-0">
+      // `pane-fade-in` (W23): the canvas half of the swap. The class is static
+      // because the element is created BY the swap — mounting is the trigger.
+      <div className="flex-1 flex flex-col min-h-0 pane-fade-in" data-testid="canvas-pane-root">
         <CanvasFiledStrip sessionId={sessionId} />
         {draftPending && (
           <div
@@ -256,7 +269,7 @@ export default function AgentCanvasPane({ sessionId, isActive = false }: Props) 
     )
   }
   return (
-    <div className="flex-1 flex flex-col min-h-0 relative">
+    <div className="flex-1 flex flex-col min-h-0 relative pane-fade-in" data-testid="canvas-pane-root">
       {/* Above the surface, so the one thing that happened without asking is
           the first thing read. */}
       <CanvasFiledStrip sessionId={sessionId} />
@@ -310,6 +323,30 @@ interface MarqueeDrag {
 /** Smallest marquee (stage px) that becomes a region — below this it was a
  *  click, not a drag. */
 const MARQUEE_MIN_PX = 8
+
+/** The glass's default stroke — a red that cannot be mistaken for part of the
+ *  page it is drawn over (Catppuccin Latte red; the glass is always light).
+ *  A literal, not `var(--color-red)`: this goes into Excalidraw's appState,
+ *  which is data rather than CSS, and a token string there would be written
+ *  verbatim into every element's `strokeColor` and painted as an invalid
+ *  colour. */
+const SKETCH_STROKE_COLOR = '#d20f39'
+
+/** Excalidraw's FONT_FAMILY.Helvetica — the plain sans. Its default is the
+ *  hand-drawn face, which is charming on a whiteboard and hard to read as a
+ *  label pinned to someone's mockup. Written as the number the enum resolves
+ *  to because appState is handed over as opaque initial data. */
+const SKETCH_FONT_FAMILY = 2
+
+/** How many elements a restored scene may carry. A stored scene comes back
+ *  through `reviews.json`, which carries no MAC of its own, so the count is
+ *  bounded before anything is normalised: a file naming a million elements
+ *  would otherwise spend the frame budget inside Excalidraw's restore. Well
+ *  above any real annotation pass — a busy review is tens of strokes. */
+const MAX_RESTORED_SKETCH_ELEMENTS = 2000
+
+/** The belt's way of saying "the user cleared the glass" out loud. */
+const EMPTY_SKETCH_SCENE: CanvasSketchScene = { scene: '[]', versions: {} }
 
 function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versions, onOpenLibrary, isActive }: SurfaceProps) {
   const togglePane = useExcalidrawStore((s) => s.togglePane)
@@ -366,6 +403,27 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
    */
   const sketchVersionRef = useRef(new Map<string, string>())
   const foreignSketchStashRef = useRef(new Map<string, ReturnType<ExcalidrawImperativeAPI['getSceneElements']>[number]>())
+  /** The last scene the glass REPORTED, kept so a read after the glass has been
+   *  torn down still has an answer (W20 — see allSketchElements). */
+  const lastSceneRef = useRef<ReturnType<ExcalidrawImperativeAPI['getSceneElements']>[number][]>([])
+  /** Has this canvas ever held a mark in this mount? Only then is an empty
+   *  glass a DELETION worth parking, rather than a canvas nobody drew on. */
+  const hadSketchElementsRef = useRef(false)
+  /**
+   * A fingerprint of the live element set, so the revision below counts CHANGES
+   * rather than callbacks. Excalidraw fires `onChange` for camera moves and
+   * selection as well as edits, and the pane repins the camera constantly — a
+   * counter driven by the callback alone would re-render the panel on every
+   * scroll of the page underneath.
+   *
+   * Ids plus each element's own version counters: that is what Excalidraw
+   * itself uses to decide an element changed, so a drag's intermediate states
+   * register (the stroke is growing) while a pure camera move does not.
+   */
+  const sketchFingerprintRef = useRef('')
+  /** The rAF holding one pending bump, so a drag is one re-render per frame
+   *  rather than one per mouse move. */
+  const sketchBumpFrameRef = useRef<number | null>(null)
   const repinPendingRef = useRef(false)
   const viewportRef = useRef<CanvasViewportInfo | null>(null)
   const modeRef = useRef(mode)
@@ -475,6 +533,22 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   // a thin rail keeps the outstanding count and the way back. Pane-local, like
   // the zoom — it resets when the pane closes.
   const [panelHidden, setPanelHidden] = useState(false)
+  // Are Excalidraw's islands on screen (W17)? Draw mode only — outside it there
+  // are none to hide. Shown by default: hiding the tools by default would make
+  // draw mode look broken. Pane-local, like the zoom.
+  const [toolsVisible, setToolsVisible] = useState(true)
+  /**
+   * How many times the glass's element set has changed in this mount (W20).
+   *
+   * The panel reads the unattached strokes through a plain function call, which
+   * is not reactive — so without a value it can depend on, drawing changed
+   * nothing it could see: "Add note" stayed disabled after a drawing until the
+   * user toggled Sketch off and back on, and a drawing-only draft never reached
+   * disk. A COUNTER, not the scene: the panel needs to know that it changed,
+   * never what changed, and handing it elements would re-render it on identity
+   * alone.
+   */
+  const [sketchRevision, setSketchRevision] = useState(0)
 
   const contentUrl = useMemo(
     () => canvasContentUrl(canvasId, version.id, version.source.entry),
@@ -516,6 +590,244 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
     }
     if (changed) api.updateScene({ elements: keep })
   }, [version.id])
+
+  // ── The glass, as something that survives the pane (W20) ──────────────────
+  // Sketches used to live for exactly as long as the mounted Excalidraw did:
+  // glance at the terminal mid-review and every mark was gone, with no warning
+  // and nothing to undo. Two mechanisms bring them back. The panel PERSISTS the
+  // scene (it owns the composer-draft IPC, so the strokes ride the draft note
+  // they were drawn for); the pane keeps an in-memory stash per canvas as a
+  // belt, so the common case — pane closed and reopened in the same breath —
+  // restores in the same frame instead of waiting on a disk read.
+
+  /** Every mark this canvas holds: the live scene PLUS the other versions'
+   *  marks lifted out by the swap above. Both paths that leave the pane —
+   *  persist and submit — need the union, or a version switch made after
+   *  drawing silently drops half of it. */
+  const allSketchElements = useCallback((): ReturnType<ExcalidrawImperativeAPI['getSceneElements']>[number][] => {
+    let live: ReturnType<ExcalidrawImperativeAPI['getSceneElements']>[number][] = []
+    try {
+      live = [...(glassApiRef.current?.getSceneElements() ?? [])]
+    } catch {
+      /* see the fallback below — a torn-down glass, asked one last question */
+    }
+    // The api outlives the component that handed it over, and the LAST read of
+    // it is the one that matters: the panel persists on its own unmount, and it
+    // is a later sibling than the glass, so by then Excalidraw's fiber is gone
+    // and its answer may be nothing at all. Falling back to the last scene it
+    // reported means the save that closes the pane still carries the marks.
+    // Safe against resurrection: `onChange` fires for a deletion too, so an
+    // emptied glass empties this as well and the fallback has nothing to give.
+    if (live.length === 0 && lastSceneRef.current.length > 0) live = [...lastSceneRef.current]
+    return [...live, ...foreignSketchStashRef.current.values()]
+  }, [])
+
+  /** A restore asked for before the glass existed. The panel reads its draft
+   *  over IPC and can answer either side of Excalidraw's api callback, so the
+   *  scene waits here rather than being dropped. */
+  const pendingRestoreRef = useRef<CanvasSketchScene | null>(null)
+  /** The belt has already been unrolled for this mount — so a re-render, or a
+   *  second api callback, cannot re-apply a scene the user has since edited. */
+  const beltAppliedRef = useRef(false)
+
+  /** Serialise the glass for whoever is persisting it. Null when there is
+   *  nothing to save, so an empty glass never overwrites a stored scene. */
+  const getSketchSceneForPersist = useCallback((): CanvasSketchScene | null => {
+    const all = allSketchElements()
+    if (all.length === 0) return null
+    const versions: Record<string, string> = {}
+    for (const el of all) {
+      // The stamp, not the version on screen: an element restored into a
+      // different version's view must keep the version it was drawn on, which
+      // is the whole point of the stash.
+      const stamp = sketchVersionRef.current.get(el.id)
+      if (stamp) versions[el.id] = stamp
+    }
+    return { scene: JSON.stringify(all), versions }
+  }, [allSketchElements])
+
+  /**
+   * Put a serialised scene back on the glass.
+   *
+   * A MERGE by element id, not a replacement: what is already on the glass
+   * wins. On a fresh mount there is nothing live and this is exactly a restore;
+   * later — a slow IPC answer landing after the user has started drawing — it
+   * cannot undo a stroke they just made.
+   *
+   * Everything here is UNTRUSTED SHAPE. The scene comes back from
+   * `reviews.json`, which carries no MAC of its own, and an element that is
+   * merely the wrong shape does not fail politely: Excalidraw reads it during
+   * render, throws, and takes the App-wide error boundary with it — on every
+   * mount of that canvas, which is a canvas the user can no longer open. So the
+   * list is capped, run through Excalidraw's OWN `restoreElements` normaliser
+   * (the same one its file import uses, which fills defaults and discards what
+   * it cannot repair), and the whole thing is wrapped: malformed is DROPPED,
+   * never fatal.
+   *
+   * Returns whether the glass ACTUALLY moved — true only when at least one
+   * element was added and Excalidraw took it. The panel arms an
+   * ignore-the-next-revision flag before calling this, because a restore it
+   * asked for is not the user drawing; a restore that changes nothing produces
+   * no `onChange`, so a flag armed on faith stays armed and eats the dirty-mark
+   * of the user's first REAL stroke. Every no-op path below says so: nothing
+   * parsed, no glass yet, everything already known, all of it another version's,
+   * or dropped by the normaliser.
+   */
+  const restoreSketchScene = useCallback(
+    (saved: CanvasSketchScene): boolean => {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(saved.scene)
+      } catch {
+        return false
+      }
+      if (!Array.isArray(parsed)) return false
+      const api = glassApiRef.current
+      if (!api) {
+        pendingRestoreRef.current = saved
+        return false
+      }
+      // Sift BEFORE the normaliser, not after. `restoreElements` reads
+      // `element.type` on every entry with no null guard, so one `null` or bare
+      // number in the list throws — and the catch below would then discard the
+      // whole scene, losing every good stroke to one bad neighbour. Dropping an
+      // entry has to cost that entry only. The cap comes after the sift so a
+      // file padded with junk cannot spend the budget keeping real marks out.
+      const candidates = parsed.filter(
+        (el): el is Record<string, unknown> =>
+          !!el && typeof el === 'object' && !Array.isArray(el) && typeof (el as { id?: unknown }).id === 'string',
+      )
+      let normalised: ReturnType<typeof restoreElements> = []
+      try {
+        // `null` local elements: this is a restore of a stored scene, not a
+        // reconciliation against a live one — the merge below is ours, by id.
+        normalised = restoreElements(candidates.slice(0, MAX_RESTORED_SKETCH_ELEMENTS) as never, null)
+      } catch {
+        // A scene that cannot even be normalised is not worth a broken canvas.
+        return false
+      }
+      for (const [id, stamp] of Object.entries(saved.versions ?? {})) {
+        if (typeof id === 'string' && typeof stamp === 'string' && !sketchVersionRef.current.has(id)) {
+          sketchVersionRef.current.set(id, stamp)
+        }
+      }
+      const live = api.getSceneElements()
+      const known = new Set<string>([...live.map((el) => el.id), ...foreignSketchStashRef.current.keys()])
+      const keep = [...live]
+      for (const el of normalised) {
+        if (!el || typeof el.id !== 'string' || known.has(el.id)) continue
+        known.add(el.id)
+        const stamp = sketchVersionRef.current.get(el.id) ?? versionIdRef.current
+        sketchVersionRef.current.set(el.id, stamp)
+        // Marks made on another version go straight to the stash, exactly as
+        // the version swap would have put them there.
+        if (stamp === versionIdRef.current) keep.push(el)
+        else foreignSketchStashRef.current.set(el.id, el)
+      }
+      if (keep.length === live.length) return false
+      try {
+        api.updateScene({ elements: keep })
+      } catch {
+        // The glass refused the scene — the pane still opens, empty-handed, and
+        // nothing changed, so the caller must not believe it did.
+        return false
+      }
+      return true
+    },
+    [],
+  )
+
+  /**
+   * Which marks on the DISPLAYED version are not yet spoken for by a note.
+   *
+   * The panel used to make the user press "attach selected sketch" — an extra
+   * deliberate step for something they had just drawn on purpose. Now the
+   * strokes ride the note automatically, which only works if the pane can say
+   * which ones are still free: the attached set is what stops the next note
+   * taking the previous note's drawing a second time.
+   */
+  const getUnattachedSketchElementIds = useCallback((): string[] => {
+    const api = glassApiRef.current
+    if (!api) return []
+    // Two sources, because the in-memory set is only half the truth. It is
+    // renderer memory, so a restart empties it — and the draft notes it was
+    // tracking come BACK from disk with their strokes still named in
+    // `sketch.excalidrawElementIds`. Without the second source the marks a
+    // draft note already carries read as free again after a restart, and the
+    // next note takes them a second time. The notes are the durable record;
+    // the set is the fast path for this session.
+    const session = useCanvasReviewStore.getState().bySessionId[sessionId]
+    const attached = new Set(useCanvasStore.getState().sketchByCanvasId[canvasId]?.attached ?? [])
+    if (session) {
+      for (const note of draftAnnotationsOf(session)) {
+        for (const id of note.sketch?.excalidrawElementIds ?? []) attached.add(id)
+      }
+    }
+    return api
+      .getSceneElements()
+      .filter((el) => {
+        if (el.isDeleted || attached.has(el.id)) return false
+        // The live scene already holds only the displayed version's marks, but
+        // say it anyway: an element drawn before stamping existed defaults to
+        // the version on screen, and a note must never claim another's.
+        return (sketchVersionRef.current.get(el.id) ?? versionIdRef.current) === versionIdRef.current
+      })
+      .map((el) => el.id)
+  }, [canvasId, sessionId])
+
+  const markSketchElementsAttached = useCallback(
+    (ids: string[]) => {
+      useCanvasStore.getState().markSketchAttached(canvasId, ids)
+    },
+    [canvasId],
+  )
+
+  /**
+   * The glass reported a scene: bump the revision if the ELEMENTS moved, at
+   * most once per frame. Both halves matter — the fingerprint keeps a camera
+   * repin from re-rendering the panel at all, and the frame throttle keeps a
+   * freehand drag from doing it per mouse move.
+   */
+  const noteGlassChanged = useCallback(
+    (living: readonly { id: string; version?: number; versionNonce?: number }[]) => {
+      const fingerprint = living.map((el) => `${el.id}:${el.version ?? 0}:${el.versionNonce ?? 0}`).join(',')
+      if (fingerprint === sketchFingerprintRef.current) return
+      sketchFingerprintRef.current = fingerprint
+      if (sketchBumpFrameRef.current !== null) return
+      sketchBumpFrameRef.current = requestAnimationFrame(() => {
+        sketchBumpFrameRef.current = null
+        setSketchRevision((n) => n + 1)
+      })
+    },
+    [],
+  )
+
+  // A pending bump must not outlive the pane — it would set state on a pane the
+  // user has closed.
+  useEffect(() => {
+    return () => {
+      if (sketchBumpFrameRef.current !== null) {
+        cancelAnimationFrame(sketchBumpFrameRef.current)
+        sketchBumpFrameRef.current = null
+      }
+    }
+  }, [])
+
+  // The belt, tied off. Unmount parks the union in the store; nothing is written
+  // to disk here — that is the panel's job, and doing it twice would race it.
+  //
+  // An emptied glass parks an EMPTY scene, never `null`. Null means "no belt,
+  // fall through to disk", and for a canvas the user had just cleared that is
+  // the one answer that resurrects the strokes they deleted. The belt is the
+  // authority for the rest of the session, so it has to be able to say "none".
+  useEffect(() => {
+    return () => {
+      const scene = getSketchSceneForPersist()
+      useCanvasStore
+        .getState()
+        .stashSketchScene(canvasId, scene ?? (hadSketchElementsRef.current ? EMPTY_SKETCH_SCENE : null))
+    }
+  }, [canvasId, getSketchSceneForPersist])
 
   // Keep the glass pinned to the content: scene scroll ≡ −content scroll, scene
   // zoom ≡ the content zoom (canvas-coords.glassScrollForContent). Applied on
@@ -1123,6 +1435,11 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   marqueeDragRef.current = marqueeDrag
 
   const marqueeMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    // Primary button only (W19). `onMouseDown` fires for every button, so a
+    // right-click over the stage started a region drag that then swallowed the
+    // context-menu gesture and left a rectangle armed behind the menu that
+    // never came. A secondary click is not a drag, here or anywhere.
+    if (e.button !== 0) return
     const bounds = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - bounds.left
     const y = e.clientY - bounds.top
@@ -1213,8 +1530,21 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
 
   // The glass always renders LIGHT: its strokes sit over real page content
   // (usually light), and Excalidraw's dark theme would colour-invert them.
+  //
+  // The two item defaults are what a REVIEW mark should look like before the
+  // user touches anything (W18). Excalidraw's own defaults are a dark grey
+  // stroke and its hand-drawn font, both of which read as part of the page when
+  // they are drawn over one: a red mark is unmistakably an annotation, and a
+  // plain sans is legible at the size a label on a mockup ends up.
   const glassInitialData = useMemo(
-    () => ({ appState: { viewBackgroundColor: 'transparent' } }) as never,
+    () =>
+      ({
+        appState: {
+          viewBackgroundColor: 'transparent',
+          currentItemStrokeColor: SKETCH_STROKE_COLOR,
+          currentItemFontFamily: SKETCH_FONT_FAMILY,
+        },
+      }) as never,
     [],
   )
 
@@ -1238,7 +1568,14 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
   const modeStrip = marqueeArmed
     ? { color: 'text-peach', label: 'Region', hint: 'drag a rectangle over the area — Esc cancels' }
     : mode === 'draw'
-      ? { color: 'text-mauve', label: 'Sketch', hint: 'the glass takes the pointer; draw over the content, then attach the strokes to a note' }
+      ? {
+          color: 'text-mauve',
+          label: 'Sketch',
+          // W16: the strokes ride the next note by themselves, so the hint no
+          // longer sends the user to a button that is gone. It says instead how
+          // to get the page back, which is the thing draw mode takes away.
+          hint: 'drawing over the page — what you draw rides your next note · press Sketch again to use the page',
+        }
       : {
           color: 'text-blue',
           label: xrayMode === 'on' ? 'Inspect' : `Inspect · ${xrayMode === 'off' ? 'Off' : 'Stealth'}`,
@@ -1359,17 +1696,17 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             gone — the count lives in exactly one place (the toolbar Canvas
             button), and History carries the pending pill. */}
         <div className="flex-1" />
-        <button
+        {/* The ONE dismiss control (M2). Still disabled while the submit
+            hand-back is in flight (#478): that transition owns the pane. */}
+        <DismissButton
           onClick={() => togglePane(sessionId)}
           disabled={returning}
-          aria-label="Close Agent Canvas"
+          size={11}
+          label="Close Agent Canvas"
           title={returning ? 'Returning to the terminal…' : 'Close Agent Canvas'}
-          className="shrink-0 p-[5px] rounded leading-none text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-panel)] transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
-            <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" />
-          </svg>
-        </button>
+          data-testid="canvas-pane-close"
+          className="hover:bg-[var(--surface-panel)]"
+        />
       </div>
 
       {/* C3 row 2 — the TOOLS row, on its own line (canvas-approved header):
@@ -1444,21 +1781,61 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
           <span className="text-[9px] font-bold tracking-[0.08em] shrink-0" style={{ color: 'var(--text-secondary)' }} aria-hidden>
             ANNOTATE
           </span>
+          {/* W17: a TOGGLE, not a setter — and the fix for BOTH W24 and W19.
+              Sketch used to be one-way: nothing in this row said "stop
+              sketching", so the only way back to the content was a click on an
+              X-Ray segment, which does not look like one. The glass then owned
+              the pointer for the rest of the session (the mode is per-session
+              state that outlives the pane), with two symptoms that were
+              reported as separate bugs.
+
+              W24 — a tall page would not scroll. In draw mode the interactive
+              canvas covers the whole stage, the scrollbar included, so neither
+              the wheel nor a drag on it ever reached the page; and the wheel
+              did not even move the glass instead, because the repin snaps the
+              scene back to the content's (unchanged) scroll.
+
+              W19 — right-click did nothing. Excalidraw's context menu is fine;
+              in BROWSE mode the glass is inert, so the gesture never reaches
+              it, and there was no legible way to get into the mode where it
+              would. Pressing Sketch again gives the pointer back. */}
           <button
             onClick={() => {
               setMarqueeArmed(sessionId, false)
-              setInteractionMode(sessionId, 'draw')
+              setInteractionMode(sessionId, sketchActive ? 'browse' : 'draw')
             }}
             aria-pressed={sketchActive}
             disabled={viewingCompleted}
             className={chipClass(sketchActive, false)}
             style={chipStyle(sketchActive)}
-            title={viewingCompleted ? 'This canvas is signed off — Reopen it to annotate again' : 'Sketch — the glass takes the pointer; draw over the content, then attach the strokes to a note'}
+            title={
+              viewingCompleted
+                ? 'This canvas is signed off — Reopen it to annotate again'
+                : sketchActive
+                  ? 'Stop sketching — give the pointer back to the page (scrolling and clicking work again)'
+                  : 'Sketch — the glass takes the pointer; draw over the content and the strokes ride your next note'
+            }
             data-testid="canvas-tool-sketch"
           >
             <ToolIcon kind="sketch" />
             Sketch
           </button>
+          {/* Only while drawing: outside draw mode Excalidraw renders no
+              islands, so a control for hiding them would be a control for
+              nothing. */}
+          {sketchActive && (
+            <button
+              onClick={() => setToolsVisible((v) => !v)}
+              aria-pressed={toolsVisible}
+              className={chipClass(false, false)}
+              style={chipStyle(false)}
+              title={toolsVisible ? 'Hide the drawing tools — the page underneath, without leaving Sketch' : 'Show the drawing tools'}
+              data-testid="canvas-tool-tools"
+            >
+              <ToolIcon kind="tools" />
+              Tools
+            </button>
+          )}
           <button
             onClick={() => setMarqueeArmed(sessionId, !marqueeArmed)}
             aria-pressed={regionActive}
@@ -1545,13 +1922,37 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
               only in draw mode. A sibling overlay, never injected (D7). */}
           <div
             className="absolute inset-0"
-            style={{ pointerEvents: mode === 'draw' && !marqueeArmed ? 'auto' : 'none' }}
+            style={{ pointerEvents: pointerOwner === 'glass' ? 'auto' : 'none' }}
             data-canvas-layer="glass"
+            // W24: `pointer-events: none` above is INHERITED, and Excalidraw's
+            // own stylesheet re-declares the property on its islands — so the
+            // host's word is not final until a rule says so. See the
+            // `[data-glass-inert]` block in styles.css. The testid rides the
+            // same condition so a VM pass can point at the one attribute that
+            // decides whether the page under review can be scrolled at all.
+            data-glass-inert={pointerOwner === 'glass' ? undefined : 'true'}
+            data-testid={pointerOwner === 'glass' ? 'canvas-glass-live' : 'canvas-glass-inert'}
+            // W17: the islands, out of the way, without leaving draw mode.
+            data-glass-tools={toolsVisible ? 'shown' : 'hidden'}
           >
             <Excalidraw
               excalidrawAPI={(api) => {
                 glassApiRef.current = api
                 repinGlass()
+                // The glass exists now, so anything that was waiting for it
+                // goes on: first whatever the panel asked to restore, then —
+                // only if nobody asked — the pane's own in-memory belt.
+                const pending = pendingRestoreRef.current
+                if (pending) {
+                  pendingRestoreRef.current = null
+                  beltAppliedRef.current = true
+                  restoreSketchScene(pending)
+                  return
+                }
+                if (beltAppliedRef.current) return
+                beltAppliedRef.current = true
+                const stashed = useCanvasStore.getState().sketchByCanvasId[canvasId]?.scene
+                if (stashed) restoreSketchScene(stashed)
               }}
               theme="light"
               initialData={glassInitialData}
@@ -1563,13 +1964,23 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
                     sketchVersionRef.current.set(el.id, versionIdRef.current)
                   }
                 }
+                const livingNow = els.filter((el) => !el.isDeleted)
+                lastSceneRef.current = livingNow
+                if (livingNow.length > 0) hadSketchElementsRef.current = true
+                noteGlassChanged(livingNow)
               }}
               onScrollChange={handleGlassScrolled}
-              // Outside draw mode the glass is inert: view mode drops the tool
-              // island so nothing floats over the page being reviewed. Zen
-              // mode + the glass-scoped CSS keep draw mode down to the tools.
-              viewModeEnabled={mode !== 'draw' || marqueeArmed}
-              zenModeEnabled
+              // Outside draw mode the glass is inert: view mode drops every
+              // island so nothing floats over the page being reviewed.
+              viewModeEnabled={pointerOwner !== 'glass'}
+              // Zen mode OFF (W18). It was on to keep draw mode down to the
+              // tools, and what it actually dropped was the PROPERTIES island —
+              // stroke colour, font family, font size, opacity — so a text mark
+              // could be typed and then never coloured or resized, which read
+              // as Excalidraw being broken inside the pane. The unwanted chrome
+              // (main menu, sidebar triggers, help, footer) is hidden by the
+              // glass-scoped CSS instead, which takes only what it names.
+              zenModeEnabled={false}
               UIOptions={glassUIOptions}
             />
           </div>
@@ -1687,6 +2098,7 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             >
               {marqueeDrag && (
                 <div
+                  data-testid="canvas-marquee-rect"
                   className="absolute border-2 border-peach"
                   style={{
                     left: Math.min(marqueeDrag.x0, marqueeDrag.x1),
@@ -1786,12 +2198,26 @@ function CanvasSurface({ sessionId, canvasId, title: canvasTitle, version, versi
             <div className="flex-1 min-h-0 flex">
               <CanvasNotesPanel
                 sessionId={sessionId}
+                // The canvas the SURFACE is keyed by, not the one the review
+                // mirror happens to hold: during a switch the two disagree for
+                // a beat, and a composer draft written in that beat belongs to
+                // the canvas the user just left.
+                canvasId={canvasId}
                 version={version}
+                // W20/BLOCKER: the panel cannot watch the glass, so the pane
+                // tells it THAT something changed. Without this nothing
+                // re-rendered after a stroke and "Add note" stayed dead until
+                // the user toggled Sketch off and on again.
+                sketchRevision={sketchRevision}
                 getGlassApi={() => glassApiRef.current}
-                getAllSketchElements={() => [
-                  ...(glassApiRef.current?.getSceneElements() ?? []),
-                  ...foreignSketchStashRef.current.values(),
-                ]}
+                getAllSketchElements={allSketchElements}
+                // W20: the glass belongs to the pane, the persistence belongs
+                // to the panel (it owns the composer-draft IPC). These four are
+                // the whole seam between them.
+                getUnattachedSketchElementIds={getUnattachedSketchElementIds}
+                markSketchElementsAttached={markSketchElementsAttached}
+                getSketchSceneForPersist={getSketchSceneForPersist}
+                restoreSketchScene={restoreSketchScene}
                 onReturnToTerminal={() => togglePane(sessionId)}
                 isActive={isActive}
                 onHide={() => setPanelHidden(true)}

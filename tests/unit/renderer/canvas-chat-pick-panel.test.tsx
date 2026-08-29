@@ -17,10 +17,12 @@ import type { Annotation, CanvasReviewState, CanvasVersion, Review } from '../..
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 vi.mock('@excalidraw/excalidraw', () => ({ exportToBlob: vi.fn() }))
 
+import { paneSketchProps } from './canvas-panel-harness'
 const CanvasNotesPanel = CanvasNotesPanelDefault
 const { useCanvasReviewStore } = await import('../../../src/renderer/stores/canvasReviewStore')
 
 const SID = 'session-1'
+const CID = 'canvas-1'
 const V2 = { id: 'v2', mode: 'design', createdAt: '2026-08-23T10:00:00Z', source: { mode: 'design', entry: 'index.html' } } as CanvasVersion
 
 const REVIEW: Review = {
@@ -90,6 +92,8 @@ async function render(props: { isActive?: boolean } = {}): Promise<void> {
   await act(async () => {
     root.render(
       <CanvasNotesPanel
+        {...paneSketchProps()}
+        canvasId={CID}
         sessionId={SID}
         version={V2}
         getGlassApi={() => null}
@@ -100,15 +104,25 @@ async function render(props: { isActive?: boolean } = {}): Promise<void> {
   })
 }
 
-/** A fully-closed round starts collapsed, so first expand the group header,
- *  then (optionally) the Closed sub-list inside it. */
+/** A settled round lives inside the folded History and starts collapsed in
+ *  there, so both layers have to be opened before its notes are on screen. */
+async function openHistory(): Promise<void> {
+  const folded = container.querySelector('[data-testid="canvas-history-folded"]') as HTMLButtonElement | null
+  if (folded && folded.getAttribute('aria-expanded') !== 'true') {
+    await act(async () => folded.click())
+  }
+}
+
 async function expandGroup(): Promise<void> {
+  await openHistory()
   const header = container.querySelector('[data-testid="review-group"] button') as HTMLButtonElement | null
   if (header && header.getAttribute('aria-expanded') !== 'true') {
     await act(async () => header.click())
   }
 }
 
+/** The Closed sub-list is open by default on a settled round — it is all such a
+ *  round has — so unfolding the round itself is enough. */
 async function openClosed(): Promise<void> {
   await expandGroup()
   const toggle = container.querySelector('[data-testid="review-closed-toggle"]') as HTMLButtonElement | null

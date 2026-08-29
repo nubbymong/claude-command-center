@@ -6,6 +6,7 @@ import { relativeTime } from '../utils/relativeTime'
 import type { ReclaimableCanvas } from '../../shared/canvas'
 import { CanvasLibrary } from './CanvasLibrary'
 import { useArmedConfirm } from '../hooks/useArmedConfirm'
+import { DismissButton } from './ui/DismissButton'
 
 interface Props {
   sessionId: string
@@ -282,16 +283,11 @@ export default function CanvasEmptyState({ sessionId, onClose }: Props) {
               Reopen
             </button>
             <div className="flex-1" />
-            <button
+            <DismissButton
               onClick={() => dismissCompleted(sessionId)}
-              className="text-[11px] focus-ring rounded"
-              style={{ color: 'var(--text-muted)' }}
-              aria-label="Dismiss"
-              title="Dismiss"
+              label="Dismiss this notice"
               data-testid="canvas-completed-notice-dismiss"
-            >
-              ✕
-            </button>
+            />
           </div>
         )}
         <div className="canvas-sheet relative w-full max-w-[840px] mx-auto flex flex-col rounded border border-[var(--border-subtle)] bg-[var(--surface-raised)]">

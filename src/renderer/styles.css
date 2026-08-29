@@ -657,15 +657,46 @@ input[type="range"] {
    the content (zoom is re-pinned to 1, scenes are per-session), and every
    floating island it draws sits ON TOP of the page under review. Hide the
    app chrome — main menu (open/save/reset), library sidebar, help, and the
-   whole footer (zoom + undo buttons; Ctrl+Z still works) — leaving only the
-   top tool island, which draw mode needs. The classic sketchpad pane keeps
-   full chrome; this is scoped to the canvas glass layer only. */
+   whole footer (zoom + undo buttons; Ctrl+Z still works) — leaving the top
+   tool island AND the properties island (stroke colour, font, size, opacity),
+   which draw mode needs. The classic sketchpad pane keeps full chrome; this is
+   scoped to the canvas glass layer only.
+
+   Nothing here may name `.App-menu_top`, `.App-toolbar` or `.App-menu__left`:
+   those ARE the two islands, and hiding the second is exactly the bug W18
+   fixes — zen mode used to drop the properties island, so a text mark could be
+   written but never coloured or resized. */
 [data-canvas-layer='glass'] .main-menu-trigger,
 [data-canvas-layer='glass'] .default-sidebar-trigger,
 [data-canvas-layer='glass'] .sidebar-trigger,
 [data-canvas-layer='glass'] .help-icon,
 [data-canvas-layer='glass'] .layer-ui__wrapper__footer {
   display: none !important;
+}
+
+/* The Tools chip (W17): the islands out of the way for a look at the page,
+   without leaving draw mode and losing the marks in progress. One selector —
+   `.App-menu_top` is the row that holds both islands and the top-right slot,
+   so the page is uncovered in one move and the canvas itself stays live. */
+[data-canvas-layer='glass'][data-glass-tools='hidden'] .App-menu_top {
+  display: none !important;
+}
+
+/* INERT MEANS INERT (W24).
+   The pane declares who owns the pointer by setting `pointer-events` on the
+   glass wrapper — but that property is INHERITED, not absolute, and
+   Excalidraw's own stylesheet re-declares it on its UI descendants
+   (`.FixedSideContainer > *`, `.App-menu_top > *`, `.layer-ui__wrapper__top-right > *`,
+   `.sidebar`, `.scroll-back-to-content` all resolve `--ui-pointerEvents`,
+   which is `all` except during a laser drag). A descendant that sets its own
+   value does not inherit the host's `none`, so an island that happens to sit
+   over the reviewed page takes the wheel and the mouse-down while the host
+   believes the glass is transparent — and a page that will not scroll is
+   indistinguishable from a broken render. Browse mode is safe today only
+   because Excalidraw's view mode renders no islands at all; that is its
+   choice, not our guarantee. This makes it ours. */
+[data-canvas-layer='glass'][data-glass-inert='true'] * {
+  pointer-events: none !important;
 }
 
 /* ── Agent Canvas landing: the empty state IS the canvas, unfilled ─────────
@@ -711,4 +742,26 @@ input[type="range"] {
     transition: none !important;
     animation: none !important;
   }
+}
+
+/* ── Canvas ⇄ terminal swap (W23) ─────────────────────────────────────────
+   The two panes replace each other by conditional render, so the swap was a
+   hard cut: a wall of terminal text became a page under review between one
+   frame and the next, with nothing to say which way you had just gone. A
+   short opacity fade in BOTH directions carries the eye across. Opacity only
+   — never transform or width — because the terminal container holds a live
+   xterm whose layout must not move, and 150ms sits at the fast end of the
+   project's 150-300ms window since this is a navigation, not an entrance.
+
+   Reduced motion nulls it. That also means no `animationend` ever fires, so
+   whoever adds this class must clear it on a timer as well — see PaneFade. */
+.pane-fade-in {
+  animation: pane-fade-in 150ms ease-out;
+}
+@keyframes pane-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-fade-in { animation: none; }
 }

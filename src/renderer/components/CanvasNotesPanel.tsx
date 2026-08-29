@@ -1,7 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { exportToBlob } from '@excalidraw/excalidraw'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
-import type { Annotation, CanvasSketchExport, CanvasVersion, FocusObject, Rect } from '../../shared/canvas'
+import type { Annotation, CanvasSketchExport, CanvasSketchScene, CanvasVersion, FocusObject, Rect } from '../../shared/canvas'
+import {
+  MAX_NOTE_IMAGES,
+  MAX_SKETCH_SCENE_BYTES,
+  MAX_SKETCH_SCENE_ELEMENTS,
+  artifactPhaseOf,
+  artifactRunContaining,
+  artifactRuns,
+} from '../../shared/canvas'
 import {
   draftAnnotationsOf,
   draftReviewOf,
@@ -14,16 +22,29 @@ import { PAGE_REPORTED_MARK, PAGE_REPORTED_TITLE } from '../canvas/page-reported
 import { useCanvasStore } from '../stores/canvasStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { imageFileFromClipboard, pastedImageToPng } from '../utils/canvasPasteImage'
+import { DismissButton } from './ui/DismissButton'
 
 interface Props {
   sessionId: string
+  /**
+   * The canvas the PANE is showing — the id its surface is keyed by, so it is
+   * fixed for the life of this mount.
+   *
+   * The review mirror carries a canvas id too, and during a switch the two
+   * disagree for a beat. Every composer read, write and restore is gated on them
+   * AGREEING: a draft written against the canvas the user just left, or restored
+   * from the one they are arriving at before its notes have loaded, is a draft
+   * on the wrong canvas.
+   */
+  canvasId: string
   version: CanvasVersion
   /** Read at call time — the glass remounts with the pane. */
   getGlassApi: () => ExcalidrawImperativeAPI | null
   /** C1: the live scene PLUS the pane's foreign-version sketch stash, so a
-   *  note's sketch exports whichever version is on screen at submit. Optional
-   *  — absent falls back to the live scene alone (pre-C1 behaviour). */
-  getAllSketchElements?: () => ReturnType<ExcalidrawImperativeAPI['getSceneElements']>
+   *  note's sketch exports whichever version is on screen at submit. Required:
+   *  the pane always passes it, and the pre-C1 fallback it used to have was a
+   *  quieter way of exporting the wrong version's strokes. */
+  getAllSketchElements: () => ReturnType<ExcalidrawImperativeAPI['getSceneElements']>
   /** One-click return to the terminal after submit (spec D3). */
   onReturnToTerminal: () => void
   /**
@@ -33,15 +54,49 @@ interface Props {
    * CSS, so being MOUNTED proves nothing about being seen. This is the session
    * being the active one on the sessions view — and it is load-bearing, not
    * cosmetic: it gates the "the user has seen this round addressed" report that
-   * releases the agent's close-out barrier. Defaults to false at every call
-   * site that does not know, which fails closed (the barrier stays shut and the
-   * user closes the round themselves).
+   * releases the agent's close-out barrier, and the window paste listener.
+   * Defaults to false at every call site that does not know, which fails closed.
    */
   isActive: boolean
   /** Hide the panel (item C): the page takes the full width and a thin rail
-   *  keeps the count and the way back. Owned by the pane, since the panel does
-   *  not control its own column; optional so other mounts need not wire it. */
+   *  keeps the way back. Owned by the pane, since the panel does not control
+   *  its own column; optional so other mounts need not wire it. */
   onHide?: () => void
+
+  // ── The glass, as the pane exposes it (M2 shared contract) ────────────────
+  // Drawings RIDE THE NOTE now (W16): there is no "attach selected sketch"
+  // button, so the panel has to be able to ask which strokes on the displayed
+  // version are not yet spoken for, and to tell the pane it has taken them.
+  /** Glass elements on the DISPLAYED version not yet attached to any note. */
+  getUnattachedSketchElementIds: () => string[]
+  /** Claim those ids, so the next note does not take them a second time. */
+  markSketchElementsAttached: (ids: string[]) => void
+  /** The glass, serialised for the persisted composer draft (W14/W20). */
+  getSketchSceneForPersist: () => CanvasSketchScene | null
+  /**
+   * Put a persisted scene back on the glass. Returns whether it actually CHANGED
+   * the glass.
+   *
+   * The answer is load-bearing, not a courtesy: the panel has to ignore exactly
+   * one `sketchRevision` bump after a restore (its own echo through the glass's
+   * onChange), and a restore that changed nothing produces no bump — so arming
+   * that suppression unconditionally leaves it waiting, and the next bump it
+   * eats is the user's FIRST REAL STROKE. That stroke then never marks the draft
+   * dirty and never reaches disk.
+   */
+  restoreSketchScene: (scene: CanvasSketchScene) => boolean
+  /**
+   * Bumped by the pane whenever the glass changes (throttled from Excalidraw's
+   * `onChange`).
+   *
+   * The panel cannot observe the glass — it is the pane's, and `getUnattached…`
+   * is a plain function call, not reactive state. Without this the stroke count
+   * was read once per render and nothing re-rendered when the user drew, so Add
+   * note stayed dead after a drawing and a drawing-only draft never reached
+   * disk. A counter rather than the scene itself: the panel needs to know THAT
+   * it changed, never what changed.
+   */
+  sketchRevision: number
 }
 
 /**
@@ -52,12 +107,35 @@ interface Props {
  * re-render, or while the pane was mounted behind another view, has not been
  * read by anybody. A second and a half of continuous visibility in the active,
  * visible window is a modest claim that is actually true.
- *
- * Note where this dwell lives — on the USER's side, measuring the user's
- * exposure. The dwell it replaces sat on the agent's side and measured the
- * agent's patience, which an unattended agent simply spends.
  */
 const SEEN_DWELL_MS = 1500
+
+/**
+ * How long typing settles before the composer is written to disk.
+ *
+ * Long enough that a sentence is one write rather than forty; short enough that
+ * a user who types a line and immediately switches panes keeps it. The saves
+ * that cost REAL bytes — a paste, an image removed — do not wait for this at
+ * all: they go immediately, because those are the ones whose loss is expensive.
+ */
+export const COMPOSER_SAVE_DEBOUNCE_MS = 400
+
+/** A stable empty list, so a component reading `versions ?? NO_VERSIONS` does
+ *  not hand its effects a fresh array identity on every commit. */
+const NO_VERSIONS: readonly CanvasVersion[] = []
+
+/**
+ * Will this drawing fit in the persisted draft?
+ *
+ * Checked in the RENDERER, before the IPC, because main refuses an oversized
+ * scene for the whole call — and a refusal at the seam takes the note's text
+ * down with the drawing. Both bounds are the shared ones main enforces, so the
+ * two can never disagree about what fits.
+ */
+export function sketchFitsDraft(sketch: CanvasSketchScene): boolean {
+  if (new Blob([sketch.scene]).size > MAX_SKETCH_SCENE_BYTES) return false
+  return Object.keys(sketch.versions).length <= MAX_SKETCH_SCENE_ELEMENTS
+}
 
 /** Scene-coord bbox of a set of glass elements. The glass is pinned 1:1 over
  *  the content (scene ≡ page coords), so this IS the sketch's page bbox. */
@@ -85,16 +163,167 @@ async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(binary)
 }
 
-/** "sent 14:20 · on v3" — when the round went out, and against what. The
- *  version matters: a note was written against the render that was on screen
- *  then, which is not necessarily the one you are looking at now. */
-function reviewSentLabel(review: { submittedAt?: string; createdAt: string; versionId: string }): string {
-  const raw = review.submittedAt ?? review.createdAt
-  const ms = Date.parse(raw)
-  const when = Number.isFinite(ms)
-    ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : null
-  return when ? `sent ${when} · on ${review.versionId}` : `on ${review.versionId}`
+/** "02:53" — when the round went out. */
+function reviewTime(review: { submittedAt?: string; createdAt: string }): string {
+  const ms = Date.parse(review.submittedAt ?? review.createdAt)
+  return Number.isFinite(ms) ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+}
+
+// ── The words (W13/W46) ─────────────────────────────────────────────────────
+//
+// One place, because the same decision is called three things depending on what
+// the user is looking at, and a button that says Approve above a Submit that
+// says Pass is two different events to the person clicking them.
+
+/** What the user is deciding ON: a build in Testing mode, a plan, or a version. */
+export function decisionSubject(version: CanvasVersion): string {
+  if (version.mode === 'uat') {
+    const label = version.source.mode === 'uat' ? version.source.buildLabel : undefined
+    return label ?? version.id
+  }
+  if (version.mode === 'plan') return 'plan'
+  return version.id
+}
+
+/** The two decision buttons' words. */
+export function decisionLabels(version: CanvasVersion): { approve: string; reject: string } {
+  const subject = decisionSubject(version)
+  if (version.mode === 'uat') return { approve: `Pass build ${subject}`, reject: `Fail build ${subject}` }
+  return { approve: `Approve ${subject}`, reject: `Reject ${subject}` }
+}
+
+/**
+ * What Submit says it will FILE — never just "Submit".
+ *
+ * The button is the last thing between the user and a decision that settles
+ * every earlier round of the subject, so it states the decision, what it is
+ * about, and how many notes ride with it. Testing mode names its own nouns:
+ * notes on a failure are defects, notes on a pass are observations.
+ */
+export function submitLabel(version: CanvasVersion, decision: 'approve' | 'reject' | null, noteCount: number): string {
+  if (decision === null) return 'Submit'
+  const subject = decisionSubject(version)
+  if (version.mode === 'uat') {
+    if (decision === 'reject') return `Submit test — Fail, ${noteCount} ${noteCount === 1 ? 'defect' : 'defects'}`
+    return noteCount > 0
+      ? `Submit test — Pass, ${noteCount} ${noteCount === 1 ? 'observation' : 'observations'}`
+      : 'Submit test — Pass'
+  }
+  const word = decision === 'approve' ? 'Approve' : 'Reject'
+  if (noteCount === 0) return `Submit — ${word} ${subject}`
+  return `Submit — ${word} ${subject}, ${noteCount} ${noteCount === 1 ? 'note' : 'notes'}`
+}
+
+/**
+ * The outcome a SETTLED round wears in History.
+ *
+ * The user's own word first — they Approved or Rejected (Passed or Failed in
+ * Testing mode) and that is what the row should say back. Two exceptions, both
+ * about not overstating:
+ *
+ *  - a round carrying OBSERVATIONS says so, because "APPROVED" alone hides that
+ *    the user wrote something the agent was meant to read;
+ *  - a round with no decision stamped — settled by a later decision, by a force,
+ *    or healed from a pre-rework record — has no word of the user's to quote, so
+ *    it says HOW it settled instead of inventing one.
+ */
+export function roundOutcomeLabel(group: ReviewGroup, versions: readonly CanvasVersion[]): string {
+  const uat = versions.find((v) => v.id === group.review.versionId)?.mode === 'uat'
+  const hasObservations = group.closedNotes.some((n) => n.state === 'observation')
+  const decision = group.review.decision
+  if (hasObservations || decision === undefined) return settledLabel(group, versions) ?? 'settled'
+  if (decision === 'approve') return uat ? 'PASSED' : 'APPROVED'
+  return uat ? 'FAILED' : 'REJECTED'
+}
+
+/**
+ * The version the agent will render next, named rather than guessed at.
+ *
+ * Ids are minted monotonically per canvas (`v<n>`, the store's own high-water
+ * mark is `max(id) + 1`), so the successor of the whole canvas IS what the next
+ * render gets. Falls back to the vaguer phrasing when nothing parses, which is
+ * better than naming a version that will not exist.
+ */
+export function nextVersionLabel(versions: readonly CanvasVersion[]): string | null {
+  let max = 0
+  for (const v of versions) {
+    const n = Number(v.id.slice(1))
+    if (Number.isFinite(n)) max = Math.max(max, n)
+  }
+  return max > 0 ? `v${max + 1}` : null
+}
+
+/**
+ * The version that ANSWERED a rejected one — the next ready render in the same
+ * artefact run, or null when the agent has not made it yet.
+ *
+ * Not `max(id) + 1`. That is the id the NEXT render will get, which is the right
+ * prediction while the user is waiting and the wrong answer once the answer
+ * exists: with v8 already on the canvas, "v7 was rejected — the agent is working
+ * on v9" names a version nobody has heard of and hides the one the user could go
+ * and look at. It also has to stay inside the RUN, because a plan rendered
+ * between two mockups takes the next id without answering anything.
+ */
+export function answeringVersion(
+  versions: readonly CanvasVersion[],
+  rejectedId: string,
+): CanvasVersion | null {
+  const run = artifactRunContaining(versions, rejectedId)
+  if (!run) return null
+  const at = run.findIndex((v) => v.id === rejectedId)
+  if (at < 0) return null
+  return run.slice(at + 1).find((v) => !v.draft && !v.show) ?? null
+}
+
+// ── Inline image markers ────────────────────────────────────────────────────
+//
+// The note text may say "Image 2", and that is not decoration: the serializer
+// tells the agent which image block "Image 2" is, so the words in the note point
+// at a picture. Which means the panel owns the numbering, and has to keep it
+// true when the user deletes one from the middle.
+
+export function imageMarker(n: number): string {
+  return `Image ${n}`
+}
+
+/** Insert "Image N" at the caret, with a space either side when the text there
+ *  does not already have one. Returns the new text and where the caret lands. */
+export function insertImageMarker(
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+  n: number,
+): { text: string; caret: number } {
+  const start = Math.max(0, Math.min(selectionStart, text.length))
+  const end = Math.max(start, Math.min(selectionEnd, text.length))
+  const before = text.slice(0, start)
+  const after = text.slice(end)
+  const lead = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
+  const trail = after.length > 0 && !/^\s/.test(after) ? ' ' : ''
+  const marker = `${lead}${imageMarker(n)}${trail}`
+  return { text: `${before}${marker}${after}`, caret: before.length + marker.length }
+}
+
+/**
+ * Renumber the note's markers after image `removed` (1-based) is deleted.
+ *
+ * The marker for the removed image goes with it — leaving "Image 2" behind
+ * would point the agent at a picture that is no longer attached, which is worse
+ * than saying nothing. Everything after it shifts down by one, so "Image 3"
+ * becomes "Image 2" and the words keep meaning what they meant.
+ */
+export function renumberImageMarkers(text: string, removed: number): string {
+  // Eat the whitespace on BOTH sides and put one back only when the marker sat
+  // between two things — otherwise deleting the first word of a note leaves it
+  // starting with a space.
+  const withoutRemoved = text.replace(
+    new RegExp(`(\\s*)\\b${imageMarker(removed)}\\b(\\s*)`, 'g'),
+    (_whole, lead: string, trail: string) => (lead && trail ? lead : ''),
+  )
+  return withoutRemoved.replace(/\bImage (\d+)\b/g, (whole, digits: string) => {
+    const n = Number(digits)
+    return Number.isFinite(n) && n > removed ? imageMarker(n - 1) : whole
+  })
 }
 
 /**
@@ -118,12 +347,6 @@ export function closedLabel(note: Annotation): string {
   // it. Nobody clicked this note, and "closed — work shipped" would be a claim
   // about the work that nobody made — so the row says what actually happened to
   // THIS note, which is a different sentence depending on where it was.
-  //
-  //  - from 'open': nobody ever answered it. Saying so is the whole point of
-  //    keeping `closedFrom` — the user should be able to see, in the list, that
-  //    a note of theirs timed out rather than being handled.
-  //  - from 'addressed': the agent claimed it, and (when it said so) named the
-  //    version the fix landed in.
   if (note.closedBy === 'decision') {
     const by = note.settledBy?.reviewId
       ? `superseded by your ${note.settledBy.reviewId.replace('R', 'Review #')}`
@@ -157,16 +380,28 @@ export function pickedVariantLabel(note: Annotation): string | null {
   return chosen ? `picked ${chosen.key} — ${chosen.label}` : `picked ${note.chosenVariantKey}`
 }
 
-const SCOPE_BADGE: Record<Annotation['scope'], string> = {
-  element: 'text-blue',
-  region: 'text-peach',
-  general: 'text-overlay1',
+/** The pencil mark. Drawn, not typed: the repo's rule is that a glyph in JSX is
+ *  a font dependency the user may not have. */
+function PencilMark({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" aria-hidden className={className}>
+      <path d="M6.8 1.2l2 2-5 5-2.4.4.4-2.4z" />
+    </svg>
+  )
 }
 
-/** Reading order of the panel's sections: what is with the agent, then what is
- *  settled. There is no "waiting on you" section any more — what waits on the
- *  user is the VERSION, and the decision bar below is where that lives. */
-const SECTION_ORDER: Record<ReviewGroup['waitingOn'], number> = { agent: 0, closed: 1 }
+/** The disclosure triangle every collapsible row here uses. */
+function Caret({ open }: { open: boolean }): React.JSX.Element {
+  return (
+    <svg
+      width="9" height="9" viewBox="0 0 10 10" fill="currentColor" aria-hidden
+      className="shrink-0 transition-transform"
+      style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', color: 'var(--text-muted)' }}
+    >
+      <polygon points="2,2 8,5 2,8" />
+    </svg>
+  )
+}
 
 /**
  * The label of a locked target, attributed.
@@ -181,18 +416,107 @@ function FocusLabel({ focus, className }: { focus: FocusObject; className?: stri
   const pageReported = focus.targets.length > 0
   return (
     <span className={className} title={pageReported ? PAGE_REPORTED_TITLE : focus.label}>
-      {pageReported && <span className="text-overlay1">{PAGE_REPORTED_MARK} </span>}
+      {pageReported && <span style={{ color: 'var(--text-muted)' }}>{PAGE_REPORTED_MARK} </span>}
       {focus.label}
     </span>
   )
 }
 
 /**
- * The docked notes panel (spec D3/§6): resolution checklist for open notes
- * from earlier reviews, the composer for the note being written, the draft
- * list, and Submit. GitHub-review vocabulary throughout.
+ * One image on a note or in the composer.
+ *
+ * A freshly pasted one has its bytes in hand and shows the picture; a persisted
+ * one is a numbered tile, because the renderer never reads files and "Image 2"
+ * is the honest thing to draw for a picture it cannot see.
+ *
+ * M3 adds an owner-scoped `canvas:evidenceRead` channel and these tiles become
+ * real thumbnails then; the numbering and the ordering are already the contract,
+ * so only the picture changes.
+ *
+ * `prefix` keeps the composer's tiles and a note row's tiles apart in the DOM:
+ * they are the same component in two places, and one testid for both makes a
+ * test that means "the composer's second image" quietly match a note's.
  */
-export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getAllSketchElements, onReturnToTerminal, isActive, onHide }: Props) {
+function ImageTile({
+  index,
+  pngBase64,
+  onRemove,
+  prefix = 'composer-image',
+}: {
+  index: number
+  pngBase64?: string
+  onRemove?: () => void
+  prefix?: 'composer-image' | 'note-image'
+}): React.JSX.Element {
+  return (
+    <span
+      className="inline-flex items-center gap-1 pl-1 pr-0.5 py-0.5 rounded border text-[10px]"
+      style={{ borderColor: 'color-mix(in srgb, var(--color-mauve) 45%, transparent)', color: 'var(--color-mauve)' }}
+      data-testid={`${prefix}-${index}`}
+    >
+      {pngBase64 ? (
+        <img src={`data:image/png;base64,${pngBase64}`} alt="" className="h-[16px] w-auto max-w-[32px] rounded-[2px] object-cover" />
+      ) : (
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.1" aria-hidden>
+          <rect x="1" y="1.8" width="8" height="6.4" rx="1" />
+          <path d="M1 6.4l2.2-2 2 1.8 1.6-1.4L9 6.6" />
+        </svg>
+      )}
+      {imageMarker(index)}
+      {onRemove && <DismissButton onClick={onRemove} label={`Remove ${imageMarker(index)}`} size={8} data-testid={`${prefix}-remove-${index}`} />}
+    </span>
+  )
+}
+
+/**
+ * The composer's own idea of one image.
+ *
+ * `key` is a LOCAL, monotonic identity and it is the whole point. Neither
+ * position nor path survives a save: main renames the files by destination on
+ * every write, so an image that was `img-2.png` becomes `img-1.png` the moment
+ * something before it is removed — and a `keepIndex` resolved against a path
+ * would silently miss and drop the picture. The key never moves, so the send
+ * path can say exactly which of main's images it means by looking the key up in
+ * the list it last confirmed.
+ *
+ * `pngBase64` is present only while this session still holds the bytes (a paste
+ * made here), and only for the thumbnail. `noteIndex` is set for an image that
+ * came off a note being EDITED — its position on that note, which is what
+ * `fromNote` names and which the current position stops matching as soon as one
+ * is removed.
+ */
+interface ComposerImage {
+  key: number
+  pngBase64?: string
+  noteIndex?: number
+}
+
+/** Local image ids, unique within the process. Only their inequality matters. */
+let nextComposerImageKey = 1
+function mintImageKey(): number {
+  nextComposerImageKey += 1
+  return nextComposerImageKey
+}
+
+/**
+ * The docked review panel (M2): the folded history, the one live round, the
+ * notes not yet sent, the composer, and the decision.
+ */
+export default function CanvasNotesPanel({
+  sessionId,
+  canvasId,
+  version,
+  getGlassApi,
+  getAllSketchElements,
+  onReturnToTerminal,
+  isActive,
+  onHide,
+  getUnattachedSketchElementIds,
+  markSketchElementsAttached,
+  getSketchSceneForPersist,
+  restoreSketchScene,
+  sketchRevision,
+}: Props) {
   const state = useCanvasReviewStore((s) => s.bySessionId[sessionId])
   const refresh = useCanvasReviewStore((s) => s.refresh)
   const markAddressedSeen = useCanvasReviewStore((s) => s.markAddressedSeen)
@@ -203,38 +527,38 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
   const reopenRound = useCanvasReviewStore((s) => s.reopenRound)
   const clearFocus = useCanvasReviewStore((s) => s.clearFocus)
   const expandFocus = useCanvasReviewStore((s) => s.expandFocus)
+  const restoreFocus = useCanvasReviewStore((s) => s.restoreFocus)
   const setEditing = useCanvasReviewStore((s) => s.setEditingAnnotation)
   const setPanelHighlight = useCanvasReviewStore((s) => s.setPanelHighlight)
-  const dismissHelp = useCanvasReviewStore((s) => s.dismissHelp)
-  const helpDismissed = useCanvasReviewStore((s) => s.bySessionId[sessionId]?.helpDismissed ?? false)
+  const saveComposerDraft = useCanvasReviewStore((s) => s.saveComposerDraft)
+  const clearComposerDraft = useCanvasReviewStore((s) => s.clearComposerDraft)
   /** The canvas's versions, so a settled round can name the DECISION that ended
-   *  it — "settled by your v8 approval", not the shrug of "your v8 decision".
-   *  The verdict word lives on the version record; without this the label has
-   *  no way to look it up. */
-  const canvasVersions = useCanvasStore((s) => s.bySessionId[sessionId]?.versions) ?? []
+   *  it. A stable EMPTY constant rather than `?? []`, so the restore effect
+   *  below does not see a fresh array identity on every commit. */
+  const canvasVersions = useCanvasStore((s) => s.bySessionId[sessionId]?.versions) ?? NO_VERSIONS
 
   const [noteText, setNoteText] = useState('')
-  const [attachedSketch, setAttachedSketch] = useState<{ excalidrawElementIds: string[]; bboxPage: Rect } | null>(null)
-  /** A pasted screenshot on the composer (item B). Fresh paste holds the bytes;
-   *  'keep' stands for an existing image on the note being edited (the
-   *  renderer never re-reads those bytes). One attachment slot: attaching a
-   *  sketch drops the image and vice versa. */
-  const [attachedImage, setAttachedImage] = useState<'keep' | { pngBase64: string } | null>(null)
+  const [images, setImages] = useState<ComposerImage[]>([])
   const [pasteError, setPasteError] = useState<string | null>(null)
+  /** The drawing is too big to ride the draft. Said once, in plain words,
+   *  rather than failing the whole save in silence. */
+  const [sketchTooLarge, setSketchTooLarge] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  /** C1 (owner state machine, 2026-08-26): the decision this review will
-   *  carry. Submit stays dead until one is made; reject mandates a note. */
+  /** The decision this review will carry. Submit stays dead until one is made;
+   *  reject mandates a note. */
   const [decision, setDecision] = useState<'approve' | 'reject' | null>(null)
-  // The displayed version's openness: only an OPEN version (ready, no verdict)
-  // takes a review. Reset the decision whenever the version changes.
-  const versionOpen = !version.draft && !version.verdict
-  useEffect(() => { setDecision(null) }, [version.id])
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [justSubmitted, setJustSubmitted] = useState<{ kind?: 'verdict' | 'review'; id: string; count: number } | null>(null)
-  // The auto-return timer moved into excalidrawStore with #478
-  // (beginSubmitReturn) — the landing must outlive this panel, since the
-  // landing itself is what unmounts it, and it CLOSES rather than toggles so
-  // it can never reopen a pane something else already closed.
+  /** What was just filed, so the compose area can say what is now happening
+   *  instead of offering a second submit (W12). */
+  const [filed, setFiled] = useState<{ decision: 'approve' | 'reject'; reviewId?: string } | null>(null)
+  /** History is folded by default — it is the settled past, not the work. */
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+
+  // The displayed version's openness: only an OPEN version (ready, no verdict)
+  // takes a review.
+  const versionOpen = !version.draft && !version.verdict
 
   useEffect(() => {
     void refresh(sessionId)
@@ -246,37 +570,42 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
   const editingId = state?.editingAnnotationId ?? null
   const resolution = state?.resolution ?? null
 
-  const draftReview = state ? draftReviewOf(state) : null
-  const draftNotes = state ? draftAnnotationsOf(state) : []
-  // Every submitted round, newest first, with who it is waiting on.
-  const groups = useMemo(() => (state ? reviewGroupsOf(state) : []), [state])
-  /** Explicit user toggles only. The DEFAULT is derived per group (a closed
-   *  round starts collapsed, an outstanding one starts open) so a round that
-   *  becomes closed folds itself away without the user having to tidy up.
+  /**
+   * Is the review mirror actually describing the canvas the PANE is showing?
    *
-   *  Keyed by CANVAS as well as review, because a review id is ordinal within
-   *  its own canvas — every canvas has an R1. The panel does not remount when
-   *  the session switches canvases, so keying on the review id alone carried
-   *  "R2 is collapsed" from the canvas you left onto the one you arrived at.
-   *  Switching back still finds your toggles where you left them. */
+   * The mirror refreshes asynchronously and a canvas switch moves it a beat
+   * after the pane, so for that beat `state.canvasId` names the canvas the user
+   * has left. Every composer read, write and restore hangs off this: a draft
+   * saved during that beat lands on the wrong canvas, and one restored during it
+   * puts another canvas's half-written note in front of the user.
+   */
+  const mirrorMatches = !!state?.loaded && state.canvasId === canvasId
+
+  const draftReview = state ? draftReviewOf(state) : null
+  const draftNotes = useMemo(() => (state ? draftAnnotationsOf(state) : []), [state])
+  const groups = useMemo(() => (state ? reviewGroupsOf(state) : []), [state])
+  // "ONE active round" is the invariant; a user Reopen can legitimately make a
+  // second, and both are drawn, newest first.
+  const liveGroups = useMemo(() => groups.filter((g) => g.waitingOn === 'agent'), [groups])
+  const settledGroups = useMemo(() => groups.filter((g) => g.waitingOn === 'closed'), [groups])
+
+  /** Explicit user toggles only; a round's default fold state is derived (a
+   *  settled round starts collapsed, the live one starts open). Keyed by CANVAS
+   *  as well as review, because a review id is an ordinal within its own canvas. */
   const [groupOverride, setGroupOverride] = useState<Record<string, boolean>>({})
-  const overrideKey = useCallback(
-    (reviewId: string) => `${state?.canvasId ?? ''}:${reviewId}`,
-    [state?.canvasId],
-  )
-  /** The default fold state. A SETTLED round folds — it is history the user can
-   *  reopen, not something to read past. The one LIVE round stays open. */
-  const defaultCollapsedFor = useCallback((g: ReviewGroup): boolean => g.waitingOn === 'closed', [])
+  const overrideKey = useCallback((reviewId: string) => canvasId + ':' + reviewId, [canvasId])
   const isGroupCollapsed = useCallback(
-    (g: ReviewGroup) => groupOverride[overrideKey(g.review.id)] ?? defaultCollapsedFor(g),
-    [groupOverride, overrideKey, defaultCollapsedFor],
+    (g: ReviewGroup) => groupOverride[overrideKey(g.review.id)] ?? g.waitingOn === 'closed',
+    [groupOverride, overrideKey],
   )
-  const toggleGroup = useCallback((reviewId: string, defaultCollapsed: boolean) => {
-    const key = overrideKey(reviewId)
-    setGroupOverride((prev) => ({ ...prev, [key]: !(prev[key] ?? defaultCollapsed) }))
-  }, [overrideKey])
-  /** Which rounds have their Closed list expanded. Settled work is kept, not
-   *  hidden — but it folds away by default so it does not bury what is live. */
+  const toggleGroup = useCallback(
+    (g: ReviewGroup) => {
+      const key = overrideKey(g.review.id)
+      setGroupOverride((prev) => ({ ...prev, [key]: !(prev[key] ?? g.waitingOn === 'closed') }))
+    },
+    [overrideKey],
+  )
+  /** Which settled rounds have their note list expanded. */
   const [closedOpen, setClosedOpen] = useState<Record<string, boolean>>({})
 
   const editingNote = useMemo(
@@ -284,29 +613,377 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
     [editingId, draftNotes],
   )
 
-  // Opening a note for editing loads its text + attachments into the composer.
-  useEffect(() => {
-    if (editingNote) {
-      setNoteText(editingNote.note)
-      setAttachedSketch(editingNote.sketch ? { excalidrawElementIds: editingNote.sketch.excalidrawElementIds, bboxPage: editingNote.sketch.bboxPage } : null)
-      setAttachedImage(editingNote.image ? 'keep' : null)
-      setPasteError(null)
+  // ── The EDIT BUFFER, kept apart from the composer ──────────────────────────
+  //
+  // Editing a filed draft note used to load it into the composer's own state, so
+  // the note's text became the composer's text — and every save path wrote it to
+  // disk as the half-written note. Cancel then left a phantom: a composer holding
+  // words the user had never composed, which came back on the next mount.
+  //
+  // An edit is a different operation with a different destination (the note, via
+  // `annotationUpsert`), so it gets its own buffer and touches nothing the
+  // composer owns.
+  const [editText, setEditText] = useState('')
+  const [editImages, setEditImages] = useState<ComposerImage[]>([])
+  const editTextRef = useRef('')
+  editTextRef.current = editText
+  const editImagesRef = useRef<ComposerImage[]>([])
+  editImagesRef.current = editImages
+
+  // ── The persisted composer (W14) ──────────────────────────────────────────
+  //
+  // Every field the composer owns round-trips through main. Nothing that a
+  // pane switch could throw away may live only in React state after this — the
+  // "draft in renderer memory" root cause is the reason the rework exists.
+
+  /**
+   * The live composer values, updated SYNCHRONOUSLY at every mutation.
+   *
+   * Not an effect, deliberately. A save fired from an event handler has to see
+   * what the user just did, and two mutations in one tick (two removes, a paste
+   * then a remove) each have to build on the last — an effect-updated ref lags
+   * by a commit, so both would build on the same stale base.
+   */
+  const composerRef = useRef({
+    noteText: '',
+    decision: null as 'approve' | 'reject' | null,
+    images: [] as ComposerImage[],
+    focus: null as FocusObject | null,
+  })
+  composerRef.current.focus = focus
+  /** The KEYS of the images main is currently holding, in its own order — the
+   *  list this panel last successfully sent. `keepIndex` is resolved against
+   *  THIS at send time; see ComposerImage for why not a path. */
+  const confirmedImageKeysRef = useRef<number[]>([])
+  /** Set by anything the user does; the saver refuses to write until then, so
+   *  restoring a draft cannot immediately re-save the thing it just read. */
+  const dirtyRef = useRef(false)
+  /** The canvas this mount belongs to. The pane keys its surface by canvas id so
+   *  this never changes for a mount — captured all the same, because the unmount
+   *  save runs after the props are gone. */
+  const mountedCanvasIdRef = useRef(canvasId)
+  const versionOpenRef = useRef(versionOpen)
+  versionOpenRef.current = versionOpen
+  const versionIdRef = useRef(version.id)
+  versionIdRef.current = version.id
+  const mirrorMatchesRef = useRef(mirrorMatches)
+  mirrorMatchesRef.current = mirrorMatches
+  const editingRef = useRef(false)
+  editingRef.current = editingNote !== null
+  /**
+   * The submit gate.
+   *
+   * A debounced save armed a moment before Submit used to land AFTER it, writing
+   * the composer main had just cleared with the round — so the note the user had
+   * sent came back as an unsent draft on the next mount. The submit paths close
+   * this before their first await; the next user edit opens it again.
+   */
+  const submittingRef = useRef(false)
+
+  /** Serialise the saves: one in flight, and the LATEST queued behind it. Two
+   *  saves racing is how the renderer and main came to disagree about which
+   *  images exist. */
+  const saveQueuedRef = useRef(false)
+  const saveRunningRef = useRef(false)
+
+  const sendComposerDraft = useCallback(async (): Promise<void> => {
+    const cid = mountedCanvasIdRef.current
+    const cur = composerRef.current
+    // The glass rides the draft, so a pane switch does not lose the drawing the
+    // note was going to carry.
+    //
+    // CHECKED HERE, before the IPC: main refuses an oversized scene, and a
+    // refusal at the seam would take the note's TEXT down with it. A drawing too
+    // big to persist is a drawing that stays on the canvas while the pane is
+    // open — worth saying, not worth losing a paragraph over.
+    const rawSketch = getSketchSceneForPersist()
+    const oversized = rawSketch !== null && !sketchFitsDraft(rawSketch)
+    const sketch = oversized ? null : rawSketch
+    setSketchTooLarge(oversized)
+    // Resolve every already-persisted image to its position in MAIN's list by
+    // its stable KEY. The keys of the last confirmed send describe main's
+    // current list exactly — saves are serialised, so it cannot be a send behind
+    // — while a path or a position would have moved under the rename.
+    const confirmed = confirmedImageKeysRef.current
+    const sending = cur.images
+    const sentKeys: number[] = []
+    const entries: Array<{ pngBase64: string } | { keepIndex: number }> = []
+    for (const img of sending) {
+      const at = confirmed.indexOf(img.key)
+      if (at >= 0) {
+        entries.push({ keepIndex: at })
+        sentKeys.push(img.key)
+      } else if (img.pngBase64 !== undefined) {
+        entries.push({ pngBase64: img.pngBase64 })
+        sentKeys.push(img.key)
+      }
+      // Neither: main has forgotten it and this session has no bytes for it, so
+      // there is nothing honest to send. Dropped rather than guessed at.
     }
+    const saved = await saveComposerDraft(sessionId, cid, {
+      versionId: versionIdRef.current,
+      ...(cur.decision ? { decision: cur.decision } : {}),
+      text: cur.noteText,
+      ...(cur.focus ? { focus: cur.focus } : {}),
+      images: entries,
+      ...(sketch ? { sketch } : {}),
+    })
+    if (!saved) return
+    // Main now holds exactly the images we sent, in that order. Recording their
+    // KEYS is what lets the next save name them without re-sending bytes — and
+    // it is correct even if the list has moved under us in the meantime, because
+    // the survivors keep their keys and the queued save resolves against this.
+    confirmedImageKeysRef.current = sentKeys.slice(0, saved.images.length)
+  }, [sessionId, saveComposerDraft, getSketchSceneForPersist])
+
+  /**
+   * Write the composer to disk — at most one write in flight, latest wins.
+   *
+   * Every early return here is a case where writing would be WRONG rather than
+   * merely unnecessary: no user edit yet (a restore would re-save itself), an
+   * edit in progress (that belongs to the note, not the composer), a submit in
+   * flight (the round has taken the draft with it), or a mirror describing
+   * another canvas.
+   */
+  const persistComposer = useCallback((): void => {
+    if (!dirtyRef.current || !versionOpenRef.current) return
+    if (editingRef.current || submittingRef.current || !mirrorMatchesRef.current) return
+    saveQueuedRef.current = true
+    if (saveRunningRef.current) return
+    saveRunningRef.current = true
+    void (async () => {
+      try {
+        while (saveQueuedRef.current) {
+          saveQueuedRef.current = false
+          await sendComposerDraft()
+        }
+      } finally {
+        saveRunningRef.current = false
+      }
+    })()
+  }, [sendComposerDraft])
+
+  const persistRef = useRef(persistComposer)
+  persistRef.current = persistComposer
+
+  /**
+   * The debounce timer, in a ref.
+   *
+   * Held rather than left to an effect's own cleanup because Submit has to
+   * CANCEL it — a save armed a keystroke before Submit lands after it, and
+   * resurrects the draft main has just cleared.
+   */
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cancelPendingSave = useCallback(() => {
+    if (debounceRef.current !== null) clearTimeout(debounceRef.current)
+    debounceRef.current = null
+  }, [])
+  const armSave = useCallback(() => {
+    if (debounceRef.current !== null) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null
+      persistRef.current()
+    }, COMPOSER_SAVE_DEBOUNCE_MS)
+  }, [])
+
+  /** Debounced: typing, deciding, re-targeting. */
+  useEffect(() => {
+    if (!dirtyRef.current) return
+    armSave()
+  }, [noteText, decision, focus, armSave])
+
+  /**
+   * A stroke on the glass is a user edit.
+   *
+   * The pane bumps sketchRevision from the glass's own onChange, which is the
+   * only way this panel learns that a drawing happened: without it a
+   * drawing-only draft was never dirty and never reached disk, and the stroke
+   * count that arms Add note was read once per render and never recomputed.
+   */
+  const lastSketchRevisionRef = useRef(sketchRevision)
+  const ignoreNextSketchRevisionRef = useRef(false)
+  useEffect(() => {
+    if (sketchRevision === lastSketchRevisionRef.current) return
+    lastSketchRevisionRef.current = sketchRevision
+    // A restore puts the scene back and the glass reports it as a change. That
+    // is the panel's own doing, not the user's, so it must not mark the draft
+    // dirty — the very next save would re-write what was just read.
+    if (ignoreNextSketchRevisionRef.current) {
+      ignoreNextSketchRevisionRef.current = false
+      return
+    }
+    if (editingRef.current || submittingRef.current) return
+    dirtyRef.current = true
+    armSave()
+  }, [sketchRevision, armSave])
+
+  /** The panel going away is the moment the old model lost everything. */
+  useEffect(() => {
+    return () => {
+      cancelPendingSave()
+      persistRef.current()
+    }
+  }, [cancelPendingSave])
+
+  /**
+   * Restore the half-written note (W14) — and drop one that belongs elsewhere.
+   *
+   * A draft belongs to the version it was written on, but not only to that
+   * version: the agent renders v9 in answer to the notes, and the half-written
+   * one the user was still working on is about the same SUBJECT, so it comes
+   * back. A draft from a different ARTEFACT does not — those notes were about
+   * another page — and it is dropped rather than carried across.
+   *
+   * The artefact check runs on every version change, not once per mount: the
+   * pane can move from a mockup to a plan while this panel stays mounted, and a
+   * check that only ever ran at mount left the mockup's draft under the plan.
+   */
+  const restoredForRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!mirrorMatches) return
+    const composer = state?.composer
+    if (!composer) {
+      restoredForRef.current = canvasId
+      return
+    }
+    const run = artifactRunContaining(canvasVersions, version.id)
+    const sameArtefact = run ? run.some((v) => v.id === composer.versionId) : composer.versionId === version.id
+    if (!sameArtefact) {
+      // Nothing is persisted first: the draft being dropped is the one that does
+      // not belong here, and writing the composer on screen over it would file
+      // this artefact's empty composer against the other one's words.
+      cancelPendingSave()
+      dirtyRef.current = false
+      composerRef.current = { noteText: '', decision: null, images: [], focus: null }
+      confirmedImageKeysRef.current = []
+      setNoteText('')
+      setImages([])
+      setDecision(null)
+      restoredForRef.current = canvasId
+      void clearComposerDraft(sessionId, canvasId)
+      return
+    }
+    if (restoredForRef.current === canvasId) return
+    restoredForRef.current = canvasId
+    const restoredImages: ComposerImage[] = composer.images.map(() => ({ key: mintImageKey() }))
+    confirmedImageKeysRef.current = restoredImages.map((img) => img.key)
+    composerRef.current = {
+      noteText: composer.text,
+      decision: composer.decision ?? null,
+      images: restoredImages,
+      focus: composer.focus ?? null,
+    }
+    setNoteText(composer.text)
+    setDecision(composer.decision ?? null)
+    setImages(restoredImages)
+    // A target belongs to the version it was locked on: a box measured against
+    // v8 points somewhere else on v9, and the composer has no re-anchor pass of
+    // its own. Restored only onto its own version; otherwise the note simply
+    // starts untargeted, which is honest.
+    if (composer.focus && composer.versionId === version.id) restoreFocus(sessionId, composer.focus)
+    if (composer.sketch) {
+      // Armed ONLY when the glass actually moved. A no-op restore (the scene was
+      // already there — a quick pane toggle restoring from the in-memory stash)
+      // sends no bump, so a suppression armed anyway would sit waiting and
+      // swallow the user's first real stroke instead.
+      ignoreNextSketchRevisionRef.current = restoreSketchScene(composer.sketch)
+    }
+  }, [
+    mirrorMatches,
+    canvasId,
+    state?.composer,
+    canvasVersions,
+    version.id,
+    sessionId,
+    clearComposerDraft,
+    restoreFocus,
+    restoreSketchScene,
+    cancelPendingSave,
+  ])
+
+  /** A version change within the same artefact keeps the draft but resets what
+   *  is version-specific: the decision is about the render in front of you. */
+  useEffect(() => {
+    setDecision(null)
+    composerRef.current.decision = null
+    setFiled(null)
+  }, [version.id])
+
+  /**
+   * Empty the composer's TEXT, IMAGES and TARGET, keeping the decision and the
+   * drawing.
+   *
+   * Called after Add note. The images have moved onto the note and the words are
+   * now its words, but the decision the user made about the version has not
+   * changed and the glass still holds whatever they drew after it — clearing the
+   * record outright threw both away.
+   */
+  const clearComposerAfterNote = useCallback(() => {
+    composerRef.current = { noteText: '', decision: composerRef.current.decision, images: [], focus: null }
+    confirmedImageKeysRef.current = []
+    setNoteText('')
+    setImages([])
+    setPasteError(null)
+    dirtyRef.current = true
+    cancelPendingSave()
+    persistRef.current()
+  }, [cancelPendingSave])
+
+  // Opening a draft note for editing loads it into the EDIT BUFFER — never into
+  // the composer. Its images come back as positions on the NOTE; the renderer
+  // never held their bytes.
+  useEffect(() => {
+    if (!editingNote) return
+    setEditText(editingNote.note)
+    setEditImages((editingNote.images ?? []).map((_, k) => ({ key: mintImageKey(), noteIndex: k })))
+    setPasteError(null)
   }, [editingNote?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Ctrl+V anywhere on this pane attaches an image to the note being written
-  // (owner: "auto attach"). A paste aimed at someone else's editable — another
-  // tile's terminal, a rename field — is left alone; a text paste is left to
-  // the textarea. The image is re-encoded to a capped PNG before it goes
-  // anywhere near IPC.
-  const panelRef = useRef<HTMLDivElement | null>(null)
+  // ── Multi-image paste (W15) ───────────────────────────────────────────────
+  //
+  // Ctrl+V anywhere on this pane APPENDS an image to the note being written and
+  // drops "Image N" at the caret. The single slot it replaces silently
+  // overwrote the previous paste: the user attached three screenshots and the
+  // agent was handed one.
+  const appendPastedImage = useCallback((pngBase64: string) => {
+    const editing = editingRef.current
+    const prevImages = editing ? editImagesRef.current : composerRef.current.images
+    if (prevImages.length >= MAX_NOTE_IMAGES) {
+      setPasteError('A note carries at most ' + MAX_NOTE_IMAGES + ' images — remove one to add another.')
+      return
+    }
+    const nextImages: ComposerImage[] = [...prevImages, { key: mintImageKey(), pngBase64 }]
+    const el = textareaRef.current
+    const prevText = editing ? editTextRef.current : composerRef.current.noteText
+    const start = el && document.activeElement === el ? el.selectionStart : prevText.length
+    const end = el && document.activeElement === el ? el.selectionEnd : prevText.length
+    const out = insertImageMarker(prevText, start, end, nextImages.length)
+    setPasteError(null)
+    if (editing) {
+      editImagesRef.current = nextImages
+      editTextRef.current = out.text
+      setEditImages(nextImages)
+      setEditText(out.text)
+    } else {
+      composerRef.current.images = nextImages
+      composerRef.current.noteText = out.text
+      setImages(nextImages)
+      setNoteText(out.text)
+      dirtyRef.current = true
+      // Immediately, not on the debounce: this one cost the user a screenshot.
+      cancelPendingSave()
+      persistRef.current()
+    }
+    // Put the caret after the marker, so the user keeps typing where they were
+    // rather than at the top of the box.
+    if (el) requestAnimationFrame(() => el.setSelectionRange(out.caret, out.caret))
+  }, [cancelPendingSave])
+
   useEffect(() => {
     // Only the ACTIVE session's pane handles a paste. Every session mounts its
     // own CanvasNotesPanel, kept off-screen with CSS rather than unmounted, so
     // each registers this window listener; without the guard a single Ctrl+V on
-    // a non-editable target would attach the image to EVERY session's composer
-    // at once (spec review, 2026-08-24). The mark-seen effect below gates on the
-    // same signal for the same reason.
+    // a non-editable target would attach the image to EVERY session's composer.
     if (!isActive) return
     const onPaste = (e: ClipboardEvent) => {
       const target = e.target as HTMLElement | null
@@ -327,85 +1004,187 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
           )
           return
         }
-        setPasteError(null)
-        setAttachedSketch(null)
-        setAttachedImage({ pngBase64: out.pngBase64 })
+        appendPastedImage(out.pngBase64)
       })()
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  }, [isActive])
+  }, [isActive, appendPastedImage])
+
+  /** Remove image k (0-based) and renumber the markers the text carries. */
+  const removeImage = useCallback(
+    (index: number) => {
+      const editing = editingRef.current
+      const prevImages = editing ? editImagesRef.current : composerRef.current.images
+      const prevText = editing ? editTextRef.current : composerRef.current.noteText
+      const nextImages = prevImages.filter((_, i) => i !== index)
+      const nextText = renumberImageMarkers(prevText, index + 1)
+      setPasteError(null)
+      if (editing) {
+        editImagesRef.current = nextImages
+        editTextRef.current = nextText
+        setEditImages(nextImages)
+        setEditText(nextText)
+        return
+      }
+      composerRef.current.images = nextImages
+      composerRef.current.noteText = nextText
+      setImages(nextImages)
+      setNoteText(nextText)
+      dirtyRef.current = true
+      cancelPendingSave()
+      persistRef.current()
+    },
+    [cancelPendingSave],
+  )
 
   const composerScope: Annotation['scope'] = focus ? (focus.targets.length > 0 ? 'element' : 'region') : 'general'
   const canExpand = focus != null && focusChain.length > 0 && focusChainIndex < focusChain.length - 1
 
-  const attachSelection = useCallback(() => {
-    const api = getGlassApi()
-    if (!api) return
-    const selected = api.getAppState().selectedElementIds
-    const ids = Object.keys(selected).filter((id) => selected[id])
-    if (ids.length === 0) return
-    const chosen = api.getSceneElements().filter((el) => ids.includes(el.id))
-    if (chosen.length === 0) return
-    setAttachedImage(null)
-    setAttachedSketch({ excalidrawElementIds: chosen.map((el) => el.id), bboxPage: sceneBBox(chosen) })
-  }, [getGlassApi])
+  /**
+   * Strokes on the displayed version nobody has claimed — they ride the next
+   * note automatically (W16).
+   *
+   * Two inputs, and BOTH are load-bearing:
+   *
+   *  - `sketchRevision`, because that is the only signal the panel gets that the
+   *    glass moved: `getUnattachedSketchElementIds` is a plain call into the
+   *    pane, so reading it during render without a reason to re-render meant the
+   *    count was whatever it had been when something ELSE happened to re-render
+   *    the panel — which is why Add note stayed dead after a drawing.
+   *  - `draftNotes`, because taking strokes onto a note changes NOTHING about
+   *    the glass: no bump, no re-render of this memo, so "1 stroke will ride
+   *    this note" stayed armed after the note was filed and a second click filed
+   *    a DUPLICATE carrying the same drawing.
+   *
+   * The pane subtracts its own attached set; the draft notes' own sketch ids are
+   * subtracted here as well rather than trusted to it. Two sources agreeing is
+   * cheap; a note that already carries a stroke being offered it again is the
+   * duplicate this exists to stop, and the record is the one that cannot lag.
+   */
+  const draftSketchIds = useMemo(() => {
+    const taken = new Set<string>()
+    for (const note of draftNotes) for (const id of note.sketch?.excalidrawElementIds ?? []) taken.add(id)
+    return taken
+  }, [draftNotes])
+  const unattachedStrokeIds = useMemo(
+    () => (versionOpen ? getUnattachedSketchElementIds().filter((id) => !draftSketchIds.has(id)) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [versionOpen, sketchRevision, version.id, getUnattachedSketchElementIds, draftSketchIds],
+  )
+  const unattachedStrokeCount = unattachedStrokeIds.length
+
+  // An EDIT never takes strokes: they belong to whatever note is written next,
+  // and letting a re-worded note swallow them would move a drawing the user made
+  // after it. So unattached strokes only arm Add note, never Save.
+  const activeText = editingNote ? editText : noteText
+  const activeImages = editingNote ? editImages : images
+  const canAddNote =
+    activeText.trim().length > 0 ||
+    activeImages.length > 0 ||
+    (!editingNote && unattachedStrokeCount > 0) ||
+    !!editingNote?.sketch
 
   const saveNote = useCallback(async () => {
-    const text = noteText.trim()
-    // Text may be empty only when a pasted image IS the note.
-    if (!text && !attachedImage) return
-    const scope = editingNote ? editingNote.scope : composerScope
-    const noteFocus = editingNote ? editingNote.focus : (focus ?? undefined)
+    const editing = editingNote
+    const text = (editing ? editTextRef.current : composerRef.current.noteText).trim()
+    const noteImages = editing ? editImagesRef.current : composerRef.current.images
+    const strokeIds = editing ? [] : unattachedStrokeIds
+    const scope = editing ? editing.scope : composerScope
+    const noteFocus = editing ? editing.focus : (focus ?? undefined)
+    // The drawing rides the note: the strokes on the glass that nobody has
+    // claimed become this note's sketch, with no button to press. The bbox is
+    // measured from the live scene, so an element erased between the draw and
+    // the save simply is not in it.
+    //
+    // On an EDIT the note KEEPS the drawing it already has — re-sending its
+    // metadata unchanged. Sending nothing would delete it, which is how
+    // re-wording a note would silently throw away the circle drawn round the
+    // thing it was about.
+    const liveElements = strokeIds.length > 0 ? getAllSketchElements() : []
+    const chosen = liveElements.filter((el) => strokeIds.includes(el.id))
+    const sketch = editing?.sketch
+      ? { excalidrawElementIds: [...editing.sketch.excalidrawElementIds], bboxPage: editing.sketch.bboxPage }
+      : chosen.length > 0
+        ? { excalidrawElementIds: chosen.map((el) => el.id), bboxPage: sceneBBox(chosen) }
+        : null
+    if (!text && noteImages.length === 0 && !sketch) return
+    const confirmed = confirmedImageKeysRef.current
     const saved = await upsertNote(sessionId, {
-      ...(editingNote ? { annotationId: editingNote.id } : {}),
+      ...(editing ? { annotationId: editing.id } : {}),
       scope,
       note: text,
       ...(scope !== 'general' && noteFocus ? { focus: noteFocus } : {}),
-      ...(attachedSketch ? { sketch: attachedSketch } : {}),
-      ...(attachedImage ? { image: attachedImage === 'keep' ? ('keep' as const) : { pngBase64: attachedImage.pngBase64 } } : {}),
+      ...(sketch ? { sketch } : {}),
+      ...(noteImages.length > 0
+        ? {
+            images: noteImages.map((img) =>
+              editing
+                ? // An edit keeps what the NOTE already had, BY ITS POSITION ON
+                  // THE NOTE — not by where it sits in the buffer now, which
+                  // shifts the moment one is removed. A paste made during the
+                  // edit rides its own bytes.
+                  img.noteIndex !== undefined
+                  ? { fromNote: img.noteIndex }
+                  : { pngBase64: img.pngBase64 as string }
+                : confirmed.indexOf(img.key) >= 0
+                  ? { fromComposer: confirmed.indexOf(img.key) }
+                  : { pngBase64: img.pngBase64 as string },
+            ),
+          }
+        : {}),
       versionId: version.id,
     })
-    if (saved !== null) {
-      setNoteText('')
-      setAttachedSketch(null)
-      setAttachedImage(null)
-      setPasteError(null)
+    if (saved === null) return
+    // Only a FRESH take is reported: on an edit the ids were already claimed
+    // when the note first took them, and claiming them twice would say nothing.
+    if (!editing && sketch) markSketchElementsAttached(sketch.excalidrawElementIds)
+    setFiled(null)
+    if (editing) {
       setEditing(sessionId, null)
-      if (!editingNote) clearFocus(sessionId)
-      setJustSubmitted(null)
+      editTextRef.current = ''
+      editImagesRef.current = []
+      setEditText('')
+      setEditImages([])
+      return
     }
-  }, [noteText, editingNote, composerScope, focus, attachedSketch, attachedImage, sessionId, version.id, upsertNote, setEditing, clearFocus])
+    clearFocus(sessionId)
+    // The composer keeps the decision and the drawing; its words and its images
+    // have become the note's.
+    clearComposerAfterNote()
+  }, [
+    editingNote,
+    unattachedStrokeIds,
+    composerScope,
+    focus,
+    sessionId,
+    version.id,
+    upsertNote,
+    setEditing,
+    clearFocus,
+    clearComposerAfterNote,
+    getAllSketchElements,
+    markSketchElementsAttached,
+  ])
 
-  // The per-note verdict machinery (resolveEach / resolveOne / resolveGroup /
-  // "close all waiting on me") is GONE with the settled machine (W6).
-  //
-  // Notes have no controls of their own any more. The user's word is a
-  // VERSION-level decision — Approve or Reject on the render in front of them —
-  // and that one gesture settles this round and every earlier one on the same
-  // subject. Per-note approvals were the mechanism that made "addressed" read as
-  // work owed by the user, which is what left six rounds of "1 for you" behind a
-  // single approval; there is nothing here for them to do note by note.
+  /** Cancel an edit: the note is untouched, and the composer never saw it. */
+  const cancelEdit = useCallback(() => {
+    setEditing(sessionId, null)
+    editTextRef.current = ''
+    editImagesRef.current = []
+    setEditText('')
+    setEditImages([])
+    setPasteError(null)
+  }, [sessionId, setEditing])
 
   /**
    * Report to main that the user has these addressed notes ON SCREEN.
    *
-   * This is the release side of the agent's close-out barrier: until the user
-   * has seen a note in its addressed state, `canvas_verdict` refuses to close
-   * it and the agent is told to hand back. The report is therefore a claim
-   * about the user's eyes, and every condition here exists to keep that claim
-   * honest:
-   *
-   *   - `isActive`: every session mounts its own pane, hidden with CSS. Mounted
-   *     is not seen.
-   *   - the document being VISIBLE: a minimised or background window shows
-   *     nobody anything.
-   *   - `SEEN_DWELL_MS` of both, uninterrupted: a row that flashed past during
-   *     a re-render was not read.
-   *
-   * Only notes not already marked are sent, so the steady state is an empty
-   * list and no IPC — the effect cannot feed itself through the refresh its own
-   * write triggers.
+   * The release side of the agent's close-out barrier: until the user has seen
+   * a note in its addressed state, `canvas_verdict` refuses to close it. The
+   * report is a claim about the user's eyes, and every condition here exists to
+   * keep it honest — `isActive` (mounted is not seen), the document being
+   * VISIBLE, and SEEN_DWELL_MS of both uninterrupted.
    */
   const unseenAddressedIds = useMemo(
     () =>
@@ -414,10 +1193,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
         .map((a) => a.id),
     [state?.annotations],
   )
-  /** Identity that changes only when the SET does, so the dwell is not restarted
-   *  by every unrelated store commit. */
   const unseenKey = unseenAddressedIds.join(',')
-  const canvasId = state?.canvasId ?? null
 
   /** Window visibility as state, so a window hidden mid-dwell RESTARTS the dwell
    *  when it comes back rather than leaving a cancelled timer nobody re-arms. */
@@ -433,46 +1209,120 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
   }, [])
 
   useEffect(() => {
-    if (!isActive || !windowVisible || !canvasId || unseenKey === '') return
+    // `mirrorMatches`, not just `canvasId`: the ids come from the review mirror,
+    // so reporting them while it still describes the canvas the user has left
+    // would name another canvas's notes as seen on this one.
+    if (!isActive || !windowVisible || !mirrorMatches || unseenKey === '') return
     const ids = unseenKey.split(',')
     const timer = setTimeout(() => {
       void markAddressedSeen(sessionId, canvasId, ids)
     }, SEEN_DWELL_MS)
     return () => clearTimeout(timer)
-  }, [isActive, windowVisible, canvasId, unseenKey, sessionId, markAddressedSeen])
-
-  const cancelEdit = useCallback(() => {
-    setEditing(sessionId, null)
-    setNoteText('')
-    setAttachedSketch(null)
-    setAttachedImage(null)
-    setPasteError(null)
-  }, [sessionId, setEditing])
+  }, [isActive, windowVisible, mirrorMatches, canvasId, unseenKey, sessionId, markAddressedSeen])
 
   /**
-   * Submit (spec §6 step 4): every sketch-carrying draft note gets its glass
-   * elements exported to PNG here — elements that have since been erased drop
-   * the sketch from the note first, so main (which refuses a sketch without
-   * its export) never sees a half-attached note.
+   * Submit: every sketch-carrying draft note gets its glass elements exported to
+   * PNG here — elements that have since been erased drop the sketch from the
+   * note first, so main (which refuses a sketch without its export) never sees a
+   * half-attached note.
+   *
+   * BOTH paths close the composer down BEFORE their first await: the debounce is
+   * cancelled, the draft stops being dirty, and `submittingRef` bars any save
+   * until the user edits again. A save armed one keystroke before Submit
+   * otherwise lands after it and writes back the draft main has just cleared
+   * with the round — so the note the user had SENT reappears as an unsent one.
    */
+  /**
+   * Take the composer off screen and off the save path for the duration of a
+   * submit, keeping a snapshot so a REFUSAL can put it back.
+   *
+   * The wipe has to happen before the first await: a save armed one keystroke
+   * before Submit otherwise lands after it and writes back the draft main has
+   * just cleared with the round, so the note the user had SENT reappears as an
+   * unsent one. But a refused submit files nothing, and the user's unsent words
+   * are still the only copy — clearing the screen and leaving it clear would
+   * lose them to an error they did not cause.
+   */
+  const restoreComposerAfterRefusal = useRef<(() => void) | null>(null)
+  const closeComposerForSubmit = useCallback(() => {
+    const snapshot = {
+      composer: { ...composerRef.current, images: [...composerRef.current.images] },
+      confirmedKeys: [...confirmedImageKeysRef.current],
+      text: composerRef.current.noteText,
+      decision: composerRef.current.decision,
+      images: [...composerRef.current.images],
+    }
+    restoreComposerAfterRefusal.current = () => {
+      submittingRef.current = false
+      composerRef.current = snapshot.composer
+      confirmedImageKeysRef.current = snapshot.confirmedKeys
+      setNoteText(snapshot.text)
+      setDecision(snapshot.decision)
+      setImages(snapshot.images)
+      // Still unsaved as far as this panel knows — the pre-submit save was
+      // cancelled — so the next edit (or the unmount) writes it out again.
+      dirtyRef.current = true
+      restoreComposerAfterRefusal.current = null
+    }
+    submittingRef.current = true
+    dirtyRef.current = false
+    cancelPendingSave()
+    saveQueuedRef.current = false
+    composerRef.current = { noteText: '', decision: null, images: [], focus: null }
+    confirmedImageKeysRef.current = []
+    setNoteText('')
+    setImages([])
+    setPasteError(null)
+    setSketchTooLarge(false)
+  }, [cancelPendingSave])
+
+  /**
+   * The submit landed: the composer's words are the round's now.
+   *
+   * Anything that accumulated WHILE the gate was shut is discarded with it. The
+   * paste listener sits on the window, so a screenshot can arrive mid-submit and
+   * land in a composer the user is about to stop seeing — `persistComposer`
+   * refuses to write it, but the flag it set would otherwise survive the gate
+   * and the next debounce would file a round already sent back as an unsent
+   * draft, carrying an image nobody chose to attach to it.
+   */
+  const finishComposerSubmit = useCallback(() => {
+    restoreComposerAfterRefusal.current = null
+    dirtyRef.current = false
+    cancelPendingSave()
+    saveQueuedRef.current = false
+    composerRef.current = { noteText: '', decision: null, images: [], focus: null }
+    confirmedImageKeysRef.current = []
+    setNoteText('')
+    setImages([])
+    submittingRef.current = false
+  }, [cancelPendingSave])
+
   const doSubmit = useCallback(async () => {
     if (submitting || !versionOpen || decision === null) return
     if (decision === 'reject' && draftNotes.length === 0) return // note mandated
     // The plain Approve with nothing written: no review record — just the
-    // version's verdict (C1). The store refresh brings the new state in.
+    // version's verdict. The store refresh brings the new state in.
     if (decision === 'approve' && (!draftReview || draftNotes.length === 0)) {
       setSubmitting(true)
       setSubmitError(null)
+      closeComposerForSubmit()
       try {
         const r = await window.electronAPI.canvas.versionVerdict({ sessionId, versionId: version.id, state: 'approved' })
         if (r && 'error' in r) {
+          // The verdict was refused, so nothing was filed — and the words on
+          // screen were the only copy. Put them back rather than leaving the
+          // user with an error and an empty box.
+          restoreComposerAfterRefusal.current?.()
           setSubmitError(r.error)
           return
         }
-        window.electronAPI.pty.write(sessionId, `Approved ${version.id} on the canvas · canvas_version_verdict recorded\r`)
-        setJustSubmitted({ kind: 'verdict', id: version.id, count: 0 })
+        window.electronAPI.pty.write(sessionId, 'Approved ' + version.id + ' on the canvas · canvas_version_verdict recorded\r')
+        setFiled({ decision: 'approve' })
         setDecision(null)
+        void clearComposerDraft(sessionId, mountedCanvasIdRef.current)
         useExcalidrawStore.getState().beginSubmitReturn(sessionId)
+        finishComposerSubmit()
       } finally {
         setSubmitting(false)
       }
@@ -481,11 +1331,12 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
     if (!draftReview || draftNotes.length === 0) return
     setSubmitting(true)
     setSubmitError(null)
+    closeComposerForSubmit()
     try {
       const api = getGlassApi()
       // C1: include the pane's foreign-version stash, so a sketch drawn on an
       // earlier version still exports when submitting from a later one.
-      const scene = getAllSketchElements?.() ?? api?.getSceneElements() ?? []
+      const scene = getAllSketchElements()
       const files = api?.getFiles() ?? {}
       const sketches: CanvasSketchExport[] = []
       for (const note of draftNotes) {
@@ -498,6 +1349,7 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
             scope: note.scope,
             note: note.note,
             ...(note.scope !== 'general' && note.focus ? { focus: note.focus } : {}),
+            ...((note.images?.length ?? 0) > 0 ? { images: (note.images ?? []).map((_, k) => ({ fromNote: k })) } : {}),
             versionId: note.versionId,
           })
           continue
@@ -513,65 +1365,68 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
       }
       const review = await submitReview(sessionId, draftReview.id, sketches, decision)
       if (!review) {
+        restoreComposerAfterRefusal.current?.()
         setSubmitError('The review could not be submitted. Check the note list and try again.')
         return
       }
       const count = review.annotationIds.length
       // The pull side of D10: one line in chat carries the id; the agent
       // fetches the payload itself via canvas_review.
-      window.electronAPI.pty.write(sessionId, `Review #${review.id.slice(1)} — ${count} notes · canvas_review ${review.id}\r`)
-      setJustSubmitted({ kind: 'review', id: review.id, count })
+      window.electronAPI.pty.write(sessionId, 'Review #' + review.id.slice(1) + ' — ' + count + ' notes · canvas_review ' + review.id + '\r')
+      setFiled({ decision, reviewId: review.id })
       setDecision(null)
-      // Hand back to the session automatically. Submitting is the moment the
-      // work moves from the user to the agent, and the agent has ALREADY been
-      // handed the review by the line written just above -- so leaving the user
-      // on a frozen canvas, with a button they have to find, strands them on the
-      // one surface where nothing is now happening. The confirmation stays up
-      // for a beat first so the hand-off reads as deliberate rather than abrupt,
-      // and the Canvas button pulses again the moment the agent re-renders,
-      // which is what brings them back. The manual control stays for anyone who
-      // wants to leave sooner.
-      // #478: the hand-off lives in the store, which lands it by CLOSING the
-      // pane (never toggling) and flags the session so the pane toggles
-      // disable meanwhile — a user click racing this window cannot double-flip
-      // the pane. The store timer also survives this panel unmounting.
+      // Hand back to the session automatically (#478): submitting is the moment
+      // the work moves from the user to the agent, and the agent has ALREADY
+      // been handed the review by the line written just above. The store owns
+      // the landing so it outlives this panel, and it CLOSES rather than
+      // toggles, so a click racing it cannot double-flip the pane.
       useExcalidrawStore.getState().beginSubmitReturn(sessionId)
+      finishComposerSubmit()
     } finally {
       setSubmitting(false)
     }
-  }, [draftReview, draftNotes, submitting, decision, versionOpen, version.id, getGlassApi, getAllSketchElements, sessionId, submitReview, upsertNote])
+  }, [
+    draftReview,
+    draftNotes,
+    submitting,
+    decision,
+    versionOpen,
+    version.id,
+    getGlassApi,
+    getAllSketchElements,
+    sessionId,
+    submitReview,
+    upsertNote,
+    closeComposerForSubmit,
+    finishComposerSubmit,
+    clearComposerDraft,
+  ])
 
   /**
-   * What the checklist may say about one open note — and, as load-bearing as
-   * the words, WHO is saying it.
+   * What the panel may say about ONE live note's anchor — and, as load-bearing
+   * as the words, WHO is saying it.
    *
-   * `current` and `ghost` are the app's own knowledge: which version a note was
-   * written against, and where its box was when the user drew it. `reported` is
-   * not. A re-anchor result is assembled by the page under review, in answer to
-   * a question about that page, with no way for the host to check the answer —
-   * so it is rendered in the page's voice ("page says …") and never in the
-   * app's. It used to read "re-anchored" in resolved green, which let an
-   * artifact mark every open issue against it as tracked and point the
-   * highlight anywhere it liked (adversarial review, 2026-08-14): the reviewer
-   * saw their issues as followed up when nothing had been.
+   * `current` and `ghost` are the app's own knowledge. `reported` is not: a
+   * re-anchor result is assembled by the page under review, with no way for the
+   * host to check it, so it is rendered in the page's voice ("page says …") and
+   * never in the app's. It used to read "re-anchored" in resolved green, which
+   * let an artifact mark every open issue against it as tracked and point the
+   * highlight anywhere it liked (adversarial review, 2026-08-14).
    */
-  const checklistStatus = useCallback(
-    (note: Annotation): { text: string; kind: 'reported' | 'ghost' | 'current'; rect: Rect | null } => {
-      // A note written against the version on screen needs no re-anchoring —
-      // unless the pane's zoom moved since (#368): a zoom step reflows the
-      // page, so the box recorded at note time belongs to another layout. The
-      // resolution pass re-measures same-version notes on a zoom change, and
-      // when it has, its box wins; like every re-anchor result it is the
-      // page's own answer, so it wears the page-reported kind, never the
-      // solid green that means the app measured it.
+  const anchorStatus = useCallback(
+    (note: Annotation): { text: string | null; kind: 'reported' | 'ghost' | 'current'; rect: Rect | null } => {
       if (note.versionId === version.id) {
         const zoomEntry = resolution?.versionId === version.id ? resolution.byAnnotation[note.id] : undefined
         if (zoomEntry && zoomEntry.found) {
           return { text: 'on this version — page-located', kind: 'reported', rect: zoomEntry.box }
         }
-        return { text: 'on this version', kind: 'current', rect: note.focus?.bboxPage ?? null }
+        // No chip. "on this version" is the ordinary case — every note in the
+        // live round is normally on it — so a badge saying so on every row is
+        // noise that teaches the eye to skip the chip column, which is exactly
+        // where the page-reported warning lives.
+        return { text: null, kind: 'current', rect: note.focus?.bboxPage ?? null }
       }
-      if (!note.focus) return { text: 'general', kind: 'current', rect: null }
+      if (!note.focus) return { text: null, kind: 'current', rect: null }
       if (note.focus.targets.length === 0) {
         return { text: 'region — verify placement', kind: 'ghost', rect: note.focus.bboxPage }
       }
@@ -589,13 +1444,13 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
     [resolution, version.id],
   )
 
-  const hoverChecklistNote = useCallback(
+  const hoverNote = useCallback(
     (note: Annotation | null) => {
       if (!note) {
         setPanelHighlight(sessionId, null)
         return
       }
-      const status = checklistStatus(note)
+      const status = anchorStatus(note)
       // The stage highlight carries the same distinction: a box the page
       // asserts is drawn dashed and in the page-reported colour, never in the
       // solid green that means "the app knows where this is".
@@ -606,540 +1461,707 @@ export default function CanvasNotesPanel({ sessionId, version, getGlassApi, getA
           : null,
       )
     },
-    [sessionId, checklistStatus, setPanelHighlight],
+    [sessionId, anchorStatus, setPanelHighlight],
   )
 
-  // Sections: rounds grouped by who they wait on, in reading order — WITH THE
-  // AGENT first, then SETTLED. The old NEEDS-YOU section is gone with the
-  // per-note verdicts: a round never waits on the user, and grouping rounds
-  // under a heading that said it did is what taught the pile to accumulate.
-  const sortedGroups = [...groups].sort((a, b) => SECTION_ORDER[a.waitingOn] - SECTION_ORDER[b.waitingOn])
-  const sectionCounts = {
-    agent: groups.filter((g) => g.waitingOn === 'agent').length,
-    closed: groups.filter((g) => g.waitingOn === 'closed').length,
-  }
-  const sectionHeader = (kind: ReviewGroup['waitingOn']) => {
-    const meta =
-      kind === 'agent'
-        ? { label: 'WITH THE AGENT', color: 'var(--color-blue)', count: sectionCounts.agent }
-        : { label: 'SETTLED', color: 'var(--text-muted)', count: sectionCounts.closed }
+  /**
+   * What is still owed ELSEWHERE on this canvas, in plain words.
+   *
+   * Read after an approval that did NOT sign the subject off, which is the one
+   * moment the user is owed an explanation: they approved, the pane did not go
+   * to the front page, and without this the only signal is the absence of one.
+   * Derived through the shared `artifactPhaseOf` — the same helper the Library
+   * row and main use — so this line cannot disagree with them.
+   */
+  const owedElsewhere = useCallback((): string | null => {
+    if (!state) return null
+    if (draftNotes.length > 0) return 'a note you have not sent yet'
+    const runs = artifactRuns(canvasVersions).filter((r) => !r[0]?.archived)
+    for (const run of runs) {
+      if (run.some((v) => v.id === version.id)) continue
+      const phase = artifactPhaseOf(run, state.reviews, state.annotations)
+      if (phase.kind === 'needs-you') return 'another version is waiting on you'
+      if (phase.kind === 'with-agent') return 'another round is still with the agent'
+    }
+    return null
+  }, [state, draftNotes.length, canvasVersions, version.id])
+
+  const nextVersion = nextVersionLabel(canvasVersions)
+  const labels = decisionLabels(version)
+
+  /**
+   * What an APPROVE that did not sign the subject off leaves on screen.
+   *
+   * When it DOES complete, the canvas's own `completed` push takes the pane back
+   * to its front page and this line is never read — so its only job is the other
+   * case: the user approved, nothing moved, and without a sentence naming what is
+   * still owed the only signal would be the absence of one.
+   */
+  const approvedLine =
+    `${version.mode === 'uat' ? 'Passed' : 'Approved'} ${decisionSubject(version)}` +
+    (filed?.decision === 'approve' ? ((owed) => (owed ? ` · ${owed}` : ''))(owedElsewhere()) : '')
+
+  // ── Rows ──────────────────────────────────────────────────────────────────
+
+  const noteRow = (note: Annotation, live: boolean): React.JSX.Element => {
+    const status = live ? anchorStatus(note) : null
     return (
       <div
-        className="flex items-center gap-2 px-3 pt-2.5 pb-1 text-[10.5px] font-bold tracking-[0.09em]"
-        style={{ color: meta.color }}
-        data-testid={`review-section-${kind}`}
+        key={note.id}
+        className="px-3 py-2.5"
+        style={{ borderTop: '1px solid var(--border-subtle)' }}
+        data-testid={live ? 'round-note' : 'review-closed-note'}
+        onMouseEnter={() => live && hoverNote(note)}
+        onMouseLeave={() => live && hoverNote(null)}
       >
-        {meta.label}
-        <span
-          className="text-[10px] font-semibold rounded-full px-1.5 leading-[1.4]"
-          style={{ background: meta.color, color: 'var(--surface-chrome)' }}
-        >
-          {meta.count}
-        </span>
+        {note.note.trim().length > 0 && (
+          <div className="whitespace-pre-wrap leading-[1.5]" style={{ color: live ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+            {note.note}
+          </div>
+        )}
+        {note.focus && <FocusLabel focus={note.focus} className="block truncate mt-1" />}
+        <div className="flex items-center gap-2 flex-wrap mt-1.5">
+          <span className="text-[9.5px] tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
+            {note.scope.toUpperCase()}
+          </span>
+          {live ? (
+            <span
+              className="text-[10px] rounded-full px-2 py-px border"
+              data-testid="note-state-chip"
+              style={
+                note.state === 'open'
+                  ? {
+                      color: 'var(--color-peach)',
+                      borderColor: 'color-mix(in srgb, var(--color-peach) 40%, transparent)',
+                      background: 'color-mix(in srgb, var(--color-peach) 10%, transparent)',
+                    }
+                  : {
+                      color: 'var(--color-mauve)',
+                      borderColor: 'color-mix(in srgb, var(--color-mauve) 40%, transparent)',
+                      background: 'color-mix(in srgb, var(--color-mauve) 10%, transparent)',
+                    }
+              }
+            >
+              {note.state === 'open' ? 'open' : note.addressedIn ? `updated in ${note.addressedIn}` : 'updated'}
+            </span>
+          ) : (
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {closedLabel(note)}
+            </span>
+          )}
+          {/* Only the two cases the user has to be WARNED about are drawn: a box
+              the PAGE claims (its own voice, never the app's — the 2026-08-14
+              adversarial review) and one that needs re-pointing. A note sitting
+              where the app itself measured it says nothing. */}
+          {status?.text && (
+            <span
+              className={`text-[10px] px-1 py-0.5 rounded border ${
+                status.kind === 'ghost' ? 'text-yellow border-yellow/40 bg-yellow/10' : 'text-blue border-blue/40 bg-blue/10'
+              }`}
+              title={status.kind === 'reported' ? PAGE_REPORTED_TITLE : undefined}
+            >
+              {status.text}
+            </span>
+          )}
+          {(note.images ?? []).map((_, i) => (
+            <ImageTile key={i} index={i + 1} prefix="note-image" />
+          ))}
+          {note.sketch && (
+            <span className="inline-flex items-center gap-1 text-[10px]" style={{ color: 'var(--color-mauve)' }} data-testid="note-drawing-chip">
+              <PencilMark /> drawing
+            </span>
+          )}
+        </div>
+        {/* Alternatives the agent attached, as READ-ONLY labels. They used to be
+            buttons: clicking one approved the note and named the winner. That
+            click is gone with every other per-note verdict (W6) — the user picks
+            in chat, which the agent records with canvas_pick. */}
+        {note.state === 'addressed' && note.variants && note.variants.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-1.5" data-testid="note-variant-chips">
+            {note.variants.map((variant) => (
+              <span
+                key={variant.key}
+                className="px-1.5 py-0.5 text-[10px] rounded border border-green/40 text-green max-w-full truncate"
+                title={`The agent built alternative ${variant.key}. Tell it which one you want.`}
+                data-testid={`note-variant-${variant.key}`}
+              >
+                {variant.key} · {variant.label}
+              </span>
+            ))}
+          </div>
+        )}
+        {!live && pickedVariantLabel(note) && (
+          <div className="text-[9.5px] mt-1 truncate" style={{ color: 'var(--color-green)' }} data-testid="review-closed-picked-variant">
+            {pickedVariantLabel(note)}
+          </div>
+        )}
+        {/* The residual risk, said out loud on the row it applies to: on an
+            agent-closed note the same party did the work AND ended the
+            conversation about it. A chat PICK is excluded — there the user
+            themselves named the winner. */}
+        {!live && note.closedBy === 'agent' && note.closedFrom === 'addressed' && note.pickSource !== 'chat' && (
+          <div className="text-[9.5px] mt-1" style={{ color: 'var(--text-muted)' }} data-testid="review-closed-agent-both">
+            the agent marked this addressed and closed it — nobody else checked it
+          </div>
+        )}
+        {!live && (
+          <div className="mt-1.5">
+            <button
+              onClick={() => void reopenNote(sessionId, note.id)}
+              className="px-1.5 py-0.5 text-[10px] rounded border focus-ring"
+              style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+              title="Put this note back in play, exactly where it was before it was closed"
+              data-testid="review-reopen-note"
+            >
+              Reopen
+            </button>
+          </div>
+        )}
       </div>
     )
   }
 
-  return (
-    <div ref={panelRef} className="w-80 shrink-0 border-l border-[var(--border-subtle)] bg-[var(--surface-panel)] flex flex-col min-h-0 text-[12px]">
-      <div className="px-3 py-2 border-b border-[var(--border-subtle)] flex items-center gap-2 shrink-0 bg-[var(--surface-chrome)]">
-        <span className="font-medium text-subtext1">Review</span>
-        {draftReview && <span className="text-overlay1">draft · {draftNotes.length} note{draftNotes.length === 1 ? '' : 's'}</span>}
-        <div className="flex-1" />
-        {onHide && (
-          <button
-            onClick={onHide}
-            data-testid="canvas-panel-hide"
-            className="shrink-0 text-[11px] rounded px-1.5 py-0.5 border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-ring"
-            title="Hide the review panel — the page widens; a thin rail keeps the count and brings it back"
+  /**
+   * One ROUND, live or settled.
+   *
+   * Live is the peach-edged card with the OPEN pill — there is meant to be one,
+   * and a user Reopen can legitimately make a second. Settled is the same card
+   * without the peach, drawn inside the folded History and wearing the outcome
+   * instead of the pill.
+   *
+   * Both carry a "Closed · N" sub-list, because BOTH can hold settled notes: a
+   * live round accumulates them when the agent closes one on the user's word
+   * (`canvas_verdict`), and dropping those rows would take the note's text and
+   * its Reopen with them. It folds by default on a live round (the live notes
+   * are the point there) and is open on a settled one (they are all it has).
+   */
+  const roundCard = (group: ReviewGroup): React.JSX.Element => {
+    const live = group.waitingOn === 'agent'
+    const collapsed = isGroupCollapsed(group)
+    const key = overrideKey(group.review.id)
+    const closedShown = closedOpen[key] ?? !live
+    return (
+      <div
+        key={group.review.id}
+        className="rounded-[11px] overflow-hidden"
+        style={{
+          border: live
+            ? '1px solid color-mix(in srgb, var(--color-peach) 35%, var(--border-subtle))'
+            : '1px solid var(--border-subtle)',
+          background: live ? 'var(--surface-chrome)' : undefined,
+        }}
+        data-testid="review-group"
+        data-review={group.review.id}
+      >
+        <button
+          type="button"
+          onClick={() => toggleGroup(group)}
+          aria-expanded={!collapsed}
+          className="w-full flex items-center gap-2 px-3 py-2 text-left focus-ring"
+          style={live ? { background: 'color-mix(in srgb, var(--color-peach) 6%, transparent)' } : undefined}
+          data-testid="review-group-toggle"
+        >
+          <Caret open={!collapsed} />
+          <span
+            className={live ? 'text-[12px] font-bold' : 'text-[11.5px] font-semibold shrink-0'}
+            style={{ color: live ? 'var(--text-primary)' : 'var(--text-secondary)' }}
           >
-            hide ⟩
-          </button>
-        )}
-      </div>
-
-      {/* The "Close all waiting on me" strip that used to sit here is gone (W6).
-          Nothing waits on the user note by note any more, so there is nothing
-          for it to clear; the one bulk exit is Mark complete in the pane header,
-          which names each closure before the user commits. */}
-
-      <div className="flex-1 overflow-y-auto min-h-0 canvas-review-scroll">
-        {/* ── First-use primer — until the first note exists or it's dismissed ── */}
-        {!helpDismissed && draftNotes.length === 0 && (state?.reviews.length ?? 0) === 0 && (
-          <div className="mx-3 mt-2 mb-1 rounded border border-mauve/40 bg-mauve/5 px-3 py-2.5">
-            <div className="flex items-center">
-              <span className="text-[11px] font-medium text-mauve uppercase tracking-wide">How to review</span>
-              <button
-                onClick={() => dismissHelp(sessionId)}
-                className="ml-auto text-[11px] text-overlay1 hover:text-text"
-                title="Hide this"
-              >
-                ✕
-              </button>
-            </div>
-            <ul className="mt-1.5 flex flex-col gap-1 text-[11px] text-subtext0 leading-relaxed">
-              <li>In <span className="text-text">Browse</span>, click anything on the page to select it — <span className="text-text">↑</span> selects its parent, <span className="text-text">Esc</span> clears.</li>
-              <li><span className="text-text">Region</span> lets you drag a box over an area instead.</li>
-              <li>Sketch in <span className="text-text">Draw</span>, select the strokes, then attach them to a note here.</li>
-              <li>Write notes below, then <span className="text-text">Submit review</span> — your agent picks them up and revises.</li>
-            </ul>
-          </div>
-        )}
-
-        {/* ── Resolution checklist (spec §6 step 2), by ROUND ──
-            A review is sent as a unit, so it comes back as one. Flattening every
-            open note under a single heading lost the round: nothing said a whole
-            review was finished, there was no way to close one, and a note from
-            this morning sat between two from ten minutes ago. */}
-        {sortedGroups.map((group, i) => {
-          const collapsed = isGroupCollapsed(group)
-          const showHeader = i === 0 || sortedGroups[i - 1].waitingOn !== group.waitingOn
-          return (
-          <React.Fragment key={group.review.id}>
-          {showHeader && sectionHeader(group.waitingOn)}
-          <div className="border-b border-[var(--border-subtle)]" data-testid="review-group" data-review={group.review.id}>
-            <button
-              type="button"
-              onClick={() => toggleGroup(group.review.id, defaultCollapsedFor(group))}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface0/40 focus-ring"
-              aria-expanded={!collapsed}
+            {group.review.id.replace('R', 'Review #')}
+          </span>
+          <span className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+            on {group.review.versionId}
+            {reviewTime(group.review) ? ` · ${reviewTime(group.review)}` : ''}
+          </span>
+          {live ? (
+            <span
+              className="ml-auto shrink-0 text-[9.5px] font-extrabold rounded-full px-2 py-px"
+              style={{ background: 'var(--color-peach)', color: 'var(--surface-chrome)' }}
+              data-testid="round-open-pill"
             >
-              <svg
-                width="9" height="9" viewBox="0 0 10 10" fill="currentColor" aria-hidden
-                className="shrink-0 text-overlay0 transition-transform"
-                style={{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
-              >
-                <polygon points="2,2 8,5 2,8" />
-              </svg>
-              <span className="text-[11px] font-semibold text-text shrink-0">
-                {group.review.id.replace('R', 'Review #')}
-              </span>
-              <span className="text-[10px] text-overlay1 truncate">{reviewSentLabel(group.review)}</span>
-              <span className={`ml-auto shrink-0 text-[9.5px] font-semibold px-1.5 py-px rounded-full border ${
-                group.waitingOn === 'agent'
-                  ? 'text-blue border-blue/40 bg-blue/10'
-                  : 'text-green border-green/40 bg-green/10'
-              }`}>
-                {group.waitingOn === 'agent'
-                  ? `${group.openCount} with the agent`
-                  : (settledLabel(group, canvasVersions) ?? 'settled')}
-              </span>
-            </button>
-            {!collapsed && group.notes.map((note) => {
-              const status = checklistStatus(note)
-              return (
-                <div
-                  key={note.id}
-                  className="px-3 py-2 border-t border-surface0/60 hover:bg-surface0/40"
-                  onMouseEnter={() => hoverChecklistNote(note)}
-                  onMouseLeave={() => hoverChecklistNote(null)}
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-[10px] uppercase tracking-wide ${SCOPE_BADGE[note.scope]}`}>{note.scope}</span>
-                    {/* The "Review #N" tag that used to live here is gone: the
-                        row now sits UNDER its review's header, so repeating it
-                        on every note was the flat list showing through. */}
-                    {/* The agent said it acted on this one (canvas_resolve). The
-                        verdict is still the user's — the buttons below stay —
-                        but the row says which notes are waiting on THEM rather
-                        than on the agent, so a review finished in chat does not
-                        look like five things nobody did. */}
-                    {note.state === 'addressed' && (
-                      <span
-                        className="text-[10px] px-1 py-0.5 rounded border text-mauve border-mauve/40 bg-mauve/10"
-                        title="The agent marked this note as addressed. Approve if the change is right, re-annotate if it is not."
-                        data-testid="note-addressed-chip"
-                      >
-                        addressed
-                      </span>
-                    )}
-                    <span
-                      className={`ml-auto text-[10px] px-1 py-0.5 rounded border ${
-                        status.kind === 'ghost'
-                          ? 'text-yellow border-yellow/40 bg-yellow/10'
-                          : status.kind === 'reported'
-                            ? 'text-blue border-blue/40 bg-blue/10'
-                            : 'text-green border-green/40 bg-green/10'
-                      }`}
-                      title={status.kind === 'reported' ? PAGE_REPORTED_TITLE : undefined}
-                    >
-                      {status.text}
-                    </span>
-                  </div>
-                  {note.focus && <FocusLabel focus={note.focus} className="text-subtext1 truncate mt-0.5 block" />}
-                  <div className="text-text/90 mt-0.5 line-clamp-3 whitespace-pre-wrap">{note.note}</div>
-                  {/* Alternatives the agent attached, as READ-ONLY labels. They
-                      used to be buttons: clicking one approved the note and
-                      named the winner. The click is gone with every other
-                      per-note verdict (W6) — the user picks in chat, which the
-                      agent records with canvas_pick, or simply says so in the
-                      next round's notes. Kept visible because the version on
-                      screen renders all of them, and a chip is how the user
-                      knows which is which. */}
-                  {note.state === 'addressed' && note.variants && note.variants.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-1.5" data-testid="note-variant-chips">
-                      {note.variants.map((variant) => (
-                        <span
-                          key={variant.key}
-                          className="px-1.5 py-0.5 text-[10px] rounded border border-green/40 text-green max-w-full truncate"
-                          title={`The agent built alternative ${variant.key}. Tell it which one you want.`}
-                          data-testid={`note-variant-${variant.key}`}
-                        >
-                          {variant.key} · {variant.label}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {/* The per-note Approve / Re-annotate / Close / Dismiss row and
-                      the round-level "Approve all / Accept as built / Dismiss the
-                      rest" bar are both gone (W6). The user's word is the DECISION
-                      on the version, in the bar below — one gesture that settles
-                      this round and every earlier one on the subject. */}
-                  {note.addressedIn && (
-                    <div className="text-[10px] text-overlay1 mt-1" data-testid="note-updated-in">
-                      updated in {note.addressedIn}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-
-            {/* ── Closed ──
-                Cleared, not deleted. Everything ruled on in this round is still
-                here with its text, and every row says WHO closed it — because
-                "the agent closed this because you told it to" and "you approved
-                this" are different facts, and the second is the only one that
-                is an approval. Reopen is one click, which is what makes a bulk
-                close something a person can risk. */}
-            {!collapsed && group.closedNotes.length > 0 && (
-              <div className="border-t border-surface0/60" data-testid="review-closed-section">
+              OPEN
+            </span>
+          ) : (
+            <span className="ml-auto shrink-0 text-[9.5px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+              {roundOutcomeLabel(group, canvasVersions)}
+            </span>
+          )}
+        </button>
+        {!collapsed && (
+          <>
+            {group.notes.map((note) => noteRow(note, live))}
+            {group.closedNotes.length > 0 && (
+              <div style={{ borderTop: '1px solid var(--border-subtle)' }}>
                 <button
                   type="button"
-                  onClick={() => setClosedOpen((p) => ({ ...p, [overrideKey(group.review.id)]: !p[overrideKey(group.review.id)] }))}
-                  className="w-full flex items-center gap-1.5 px-3 py-1 text-left hover:bg-surface0/40 focus-ring"
-                  aria-expanded={!!closedOpen[overrideKey(group.review.id)]}
+                  onClick={() => setClosedOpen((p) => ({ ...p, [key]: !(p[key] ?? !live) }))}
+                  aria-expanded={closedShown}
+                  className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left focus-ring"
                   data-testid="review-closed-toggle"
                 >
-                  <span className="text-[10px] text-overlay1">
-                    Closed · {group.closedNotes.length}
-                  </span>
-                  {group.agentClosedCount > 0 && (
+                  {/* NEVER THE SAME NUMBER TWICE. When the agent closed every
+                      one of them, "Closed · 3" and "3 on your instruction" are
+                      two labels for one fact — so they become one line. The chip
+                      stays a separate element only when the counts genuinely
+                      differ, which is the only case where reading both tells you
+                      something. */}
+                  {group.agentClosedCount === group.closedNotes.length ? (
                     <span
-                      className="text-[9.5px] px-1 py-px rounded border text-mauve border-mauve/40 bg-mauve/10"
+                      className="text-[10px]"
+                      style={{ color: 'var(--color-mauve)' }}
                       title="Closed by the agent on your instruction — not approved. Reopen any of them below."
                       data-testid="review-agent-closed-chip"
                     >
-                      {group.agentClosedCount} on your instruction
+                      Closed · {group.closedNotes.length} — on your instruction
                     </span>
+                  ) : (
+                    <>
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        Closed · {group.closedNotes.length}
+                      </span>
+                      {group.agentClosedCount > 0 && (
+                        <span
+                          className="text-[9.5px] px-1 py-px rounded border"
+                          style={{
+                            color: 'var(--color-mauve)',
+                            borderColor: 'color-mix(in srgb, var(--color-mauve) 40%, transparent)',
+                          }}
+                          title="Closed by the agent on your instruction — not approved. Reopen any of them below."
+                          data-testid="review-agent-closed-chip"
+                        >
+                          {group.agentClosedCount} on your instruction
+                        </span>
+                      )}
+                    </>
                   )}
                   <div className="flex-1" />
-                  <span className="text-[10px] text-overlay0">{closedOpen[overrideKey(group.review.id)] ? 'hide' : 'show'}</span>
+                  <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    {closedShown ? 'hide' : 'show'}
+                  </span>
                 </button>
-                {/* THE ONLY REVIVAL there is, at the round level. Nothing
-                    automatic may wake a settled round — not a render, not a
-                    resolve, not a reload — so the user needs one gesture that
-                    does, and it has to sit where they can see what they are
-                    bringing back. Every note the round settled comes live again,
-                    whoever closed it: reopening only ever restores obligations. */}
-                {group.waitingOn === 'closed' && state?.canvasId && (
-                  <div className="px-3 pb-1.5 flex items-center gap-1.5">
-                    <button
-                      onClick={() => void reopenRound(sessionId, state.canvasId!, group.review.id)}
-                      className="px-1.5 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:text-text focus-ring"
-                      title="Put this whole round back in play — every note on it goes live again, exactly where it was"
-                      data-testid="review-reopen-round"
-                    >
-                      Reopen round
-                    </button>
-                  </div>
-                )}
-                {closedOpen[overrideKey(group.review.id)] && group.closedNotes.map((note) => (
-                  <div key={note.id} className="px-3 py-1.5 border-t border-surface0/40" data-testid="review-closed-note">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`text-[10px] uppercase tracking-wide ${SCOPE_BADGE[note.scope]}`}>{note.scope}</span>
-                      <span className="text-[10px] text-overlay1">{closedLabel(note)}</span>
-                      <div className="flex-1" />
-                      <button
-                        onClick={() => void reopenNote(sessionId, note.id)}
-                        className="px-1.5 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:text-text focus-ring"
-                        title="Put this note back in play, exactly where it was before it was closed"
-                        data-testid="review-reopen-note"
-                      >
-                        Reopen
-                      </button>
-                    </div>
-                    <div className="text-text/60 mt-0.5 line-clamp-2 whitespace-pre-wrap">{note.note}</div>
-                    {pickedVariantLabel(note) && (
-                      <div className="text-[9.5px] text-green/80 mt-0.5 truncate" data-testid="review-closed-picked-variant">
-                        {pickedVariantLabel(note)}
-                      </div>
-                    )}
-                    {/* The residual risk, said out loud on the row it applies to.
-                        The agent's close-out precondition is a state the agent
-                        itself writes (canvas_resolve), so on an agent-closed
-                        note the same party did the work AND ended the
-                        conversation about it. The store refuses the two in one
-                        pass, but it cannot see whether the user actually asked —
-                        that instruction lives in chat. So the row says who did
-                        what, and Reopen sits next to it. A chat PICK is
-                        excluded: there the user themselves named the winner, so
-                        "nobody else checked it" would be a lie — its own
-                        "picked in chat" label already says who decided. */}
-                    {note.closedBy === 'agent' && note.closedFrom === 'addressed' && note.pickSource !== 'chat' && (
-                      <div className="text-[9.5px] text-overlay0 mt-0.5" data-testid="review-closed-agent-both">
-                        the agent marked this addressed and closed it — nobody else checked it
-                      </div>
-                    )}
-                  </div>
-                ))}
+                {closedShown && group.closedNotes.map((note) => noteRow(note, false))}
               </div>
             )}
-          </div>
-          </React.Fragment>
-          )
-        })}
-
-        {/* ── Composer ── */}
-        <div className="px-3 py-2 border-b border-surface0">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <span className={`text-[10px] uppercase tracking-wide ${SCOPE_BADGE[editingNote ? editingNote.scope : composerScope]}`}>
-              {editingNote ? editingNote.scope : composerScope}
-            </span>
-            {(editingNote ? editingNote.focus : focus) ? (
-              <FocusLabel focus={(editingNote ? editingNote.focus : focus)!} className="text-subtext1 truncate flex-1" />
-            ) : (
-              <span className="text-overlay1 flex-1">whole page{editingNote ? '' : ' — click an element or drag a region to target'}</span>
-            )}
-            {!editingNote && focus && (
-              <>
-                {canExpand && (
-                  <button
-                    onClick={() => expandFocus(sessionId)}
-                    className="px-1 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:text-text"
-                    title="Expand selection to the parent element (ArrowUp)"
-                  >
-                    ↑ parent
-                  </button>
-                )}
+            {/* THE ONLY REVIVAL there is, at the round level. Nothing automatic
+                may wake a settled round — not a render, not a resolve, not a
+                reload — so the user needs one gesture that does, where they can
+                see what they are bringing back. */}
+            {!live && (
+              <div className="px-3 py-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                 <button
-                  onClick={() => clearFocus(sessionId)}
-                  className="px-1 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:text-text"
-                  title="Clear the selection (Esc)"
+                  onClick={() => void reopenRound(sessionId, canvasId, group.review.id)}
+                  className="px-1.5 py-0.5 text-[10px] rounded border focus-ring"
+                  style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+                  title="Put this whole round back in play — every note on it goes live again, exactly where it was"
+                  data-testid="review-reopen-round"
                 >
-                  ✕
+                  Reopen round
                 </button>
-              </>
+              </div>
             )}
-          </div>
-          <textarea
-            value={noteText}
-            onChange={(e) => setNoteText(e.target.value)}
-            placeholder={editingNote ? 'Edit this note…' : 'Write a note for the agent…'}
-            rows={3}
-            className="w-full resize-y rounded bg-surface0/60 border border-surface1/60 px-2 py-1.5 text-text placeholder:text-overlay0 focus:outline-none focus:border-overlay1"
-          />
-          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-            <button
-              onClick={attachSelection}
-              className={`px-1.5 py-0.5 text-[10px] rounded border ${
-                attachedSketch ? 'border-mauve/50 text-mauve bg-mauve/10' : 'border-surface1 text-overlay1 hover:text-text'
-              }`}
-              title="Attach the glass elements currently selected in Draw mode to this note"
-            >
-              {attachedSketch ? `sketch: ${attachedSketch.excalidrawElementIds.length} element(s)` : 'Attach selected sketch'}
-            </button>
-            {attachedSketch && (
-              <button
-                onClick={() => setAttachedSketch(null)}
-                className="px-1 py-0.5 text-[10px] rounded border border-surface1 text-overlay1 hover:text-text"
-                title="Detach the sketch"
-              >
-                ✕
-              </button>
-            )}
-            {attachedImage && (
-              <span
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded border border-mauve/50 text-mauve bg-mauve/10"
-                data-testid="composer-image-chip"
-              >
-                {attachedImage !== 'keep' && (
-                  <img
-                    src={`data:image/png;base64,${attachedImage.pngBase64}`}
-                    alt=""
-                    className="h-[14px] w-auto max-w-[28px] rounded-[2px] object-cover"
-                  />
-                )}
-                pasted image
-                <button onClick={() => setAttachedImage(null)} className="text-overlay1 hover:text-text" title="Remove the image" data-testid="composer-image-remove">
-                  ✕
-                </button>
-              </span>
-            )}
-            {!attachedImage && !attachedSketch && (
-              <span className="text-[10px] text-overlay0" data-testid="composer-paste-hint">
-                Ctrl+V pastes an image
-              </span>
-            )}
-            <div className="flex-1" />
-            {editingNote && (
-              <button onClick={cancelEdit} className="px-2 py-0.5 text-[11px] rounded border border-surface1 text-overlay1 hover:text-text">
-                Cancel
-              </button>
-            )}
-            <button
-              onClick={() => void saveNote()}
-              disabled={noteText.trim().length === 0 && !attachedImage}
-              className="px-2 py-0.5 text-[11px] rounded border border-blue/50 text-blue hover:bg-blue/10 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {editingNote ? 'Save' : 'Add note'}
-            </button>
-          </div>
-          {pasteError && (
-            <div className="mt-1 text-[10.5px] text-red" data-testid="composer-paste-error">
-              {pasteError}
-            </div>
-          )}
-        </div>
+          </>
+        )}
+      </div>
+    )
+  }
 
-        {/* ── Draft notes ── */}
+  /** Why there is no composer, in plain words — never "already decided
+   *  (rejected)", which reads like an error code for a thing the user did. */
+  const closedVersionLine = (): string => {
+    if (version.draft) return 'This version is still being drafted.'
+    const verdict = version.verdict
+    if (!verdict) return 'This version is not open for review.'
+    switch (verdict.state) {
+      case 'approved':
+        return `${version.id} is approved.`
+      case 'rejected': {
+        // Name the render that ANSWERED it when there is one — that is the thing
+        // the user can go and look at — and only fall back to the wait when the
+        // agent has not made it yet.
+        const answered = answeringVersion(canvasVersions, version.id)
+        return answered
+          ? `${version.id} was rejected — ${answered.id} answers it.`
+          : `${version.id} was rejected — the agent is working on the next version.`
+      }
+      case 'dismissed':
+        return `${version.id} was closed without a review.`
+      case 'withdrawn':
+        return `${version.id} was withdrawn.`
+      case 'superseded':
+        return `${version.id} was replaced by a newer version.`
+    }
+  }
+
+  const rejectNeedsNote = decision === 'reject' && draftNotes.length === 0
+  const submitDisabled = !versionOpen || decision === null || rejectNeedsNote || submitting
+
+  return (
+    <div
+      ref={panelRef}
+      className="w-[352px] shrink-0 flex flex-col min-h-0 text-[12px]"
+      style={{ borderLeft: '1px solid var(--border-subtle)', background: 'var(--surface-panel)' }}
+    >
+      <div
+        className="flex items-center gap-2 px-3.5 py-2.5 shrink-0"
+        style={{ borderBottom: '1px solid var(--border-subtle)' }}
+      >
+        <span className="text-[12.5px] font-bold" style={{ color: 'var(--text-primary)' }}>
+          Review
+        </span>
+        <div className="flex-1" />
+        {onHide && (
+          <DismissButton
+            onClick={onHide}
+            label="Hide the review panel"
+            title="Hide the review panel — the page widens; a thin rail brings it back"
+            text="hide"
+            data-testid="canvas-panel-hide"
+          />
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto min-h-0 canvas-review-scroll px-3 pt-3 pb-1 flex flex-col gap-2.5">
+        {/* ── History, folded, at the TOP ──
+            Settled rounds are the past. They stay — every note readable, every
+            round reopenable — but they fold away, because a pile of settled
+            rounds above the live one is exactly what buried the work. */}
+        {settledGroups.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((v) => !v)}
+              aria-expanded={historyOpen}
+              className="flex items-center gap-2 px-3 py-2.5 rounded-[11px] text-left focus-ring"
+              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+              data-testid="canvas-history-folded"
+            >
+              <span>History</span>
+              <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
+                {settledGroups.length} earlier {settledGroups.length === 1 ? 'round' : 'rounds'} · settled
+              </span>
+              <div className="flex-1" />
+              <Caret open={historyOpen} />
+            </button>
+            {historyOpen && settledGroups.map(roundCard)}
+          </>
+        )}
+
+        {liveGroups.map(roundCard)}
+
+        {/* ── Your notes ──
+            Written, not sent. They are the user's own and stay editable until
+            the round goes out, which is why they sit apart from the round above
+            rather than inside it. */}
         {draftNotes.length > 0 && (
-          <div>
-            <div className="px-3 pt-2 pb-1 text-[11px] font-medium text-subtext0">Pending notes</div>
+          <div className="rounded-[10px] overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }} data-testid="your-notes">
+            <div className="px-3 py-2 text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+              Your notes
+            </div>
             {draftNotes.map((note) => (
               <div
                 key={note.id}
-                className={`px-3 py-2 border-t border-surface0/60 hover:bg-surface0/40 ${editingId === note.id ? 'bg-surface0/60' : ''}`}
+                className="px-3 py-2"
+                style={{
+                  borderTop: '1px solid var(--border-subtle)',
+                  background: editingId === note.id ? 'var(--surface-raised)' : undefined,
+                }}
+                data-testid="draft-note"
                 onMouseEnter={() => note.focus && setPanelHighlight(sessionId, { rect: note.focus.bboxPage, kind: 'anchored' })}
                 onMouseLeave={() => setPanelHighlight(sessionId, null)}
               >
-                <div className="flex items-center gap-1.5">
-                  <span className={`text-[10px] uppercase tracking-wide ${SCOPE_BADGE[note.scope]}`}>{note.scope}</span>
-                  {note.sketch && <span className="text-[10px] text-mauve">✎ sketch</span>}
-                  {note.image && <span className="text-[10px] text-mauve" data-testid="draft-image-chip">image</span>}
+                {note.note.trim().length > 0 && (
+                  <div className="whitespace-pre-wrap leading-[1.5]" style={{ color: 'var(--text-primary)' }}>
+                    {note.note}
+                  </div>
+                )}
+                {note.focus && <FocusLabel focus={note.focus} className="block truncate mt-1" />}
+                <div className="flex items-center gap-2 flex-wrap mt-1.5">
+                  <span className="text-[9.5px] tracking-[0.08em]" style={{ color: 'var(--text-muted)' }}>
+                    {note.scope.toUpperCase()}
+                  </span>
+                  {(note.images ?? []).map((_, i) => (
+                    <ImageTile key={i} index={i + 1} prefix="note-image" />
+                  ))}
+                  {note.sketch && (
+                    <span className="inline-flex items-center gap-1 text-[10px]" style={{ color: 'var(--color-mauve)' }}>
+                      <PencilMark /> drawing
+                    </span>
+                  )}
                   <div className="flex-1" />
                   <button
                     onClick={() => setEditing(sessionId, note.id)}
-                    className="text-[10px] text-overlay1 hover:text-text"
+                    className="text-[10px] focus-ring rounded px-1"
+                    style={{ color: 'var(--text-secondary)' }}
                     title="Edit this note"
+                    data-testid="draft-note-edit"
                   >
                     edit
                   </button>
                   <button
                     onClick={() => void deleteNote(sessionId, note.id)}
-                    className="text-[10px] text-overlay1 hover:text-red"
+                    className="text-[10px] focus-ring rounded px-1"
+                    style={{ color: 'var(--text-secondary)' }}
                     title="Delete this note"
+                    data-testid="draft-note-delete"
                   >
                     delete
                   </button>
                 </div>
-                {note.focus && <FocusLabel focus={note.focus} className="text-subtext1 truncate mt-0.5 block" />}
-                <div className="text-text/90 mt-0.5 line-clamp-3 whitespace-pre-wrap">{note.note}</div>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      {/* ── Submit ── */}
-      <div className="px-3 py-2 border-t border-surface0 shrink-0">
-        {justSubmitted ? (
-          <div className="flex items-center gap-2">
-            <span className="text-green text-[11px]">
-              {justSubmitted.kind === 'verdict'
-                ? `${justSubmitted.id} approved — handed to the agent`
-                : `Review #${justSubmitted.id.slice(1)} submitted — ${justSubmitted.count} note${justSubmitted.count === 1 ? '' : 's'}`}
-            </span>
-            <div className="flex-1" />
-            <button
-              onClick={() => {
-                // Leaving EARLY is race-safe by construction: cancel the
-                // store's pending landing first, then do the one navigation.
-                useExcalidrawStore.getState().cancelSubmitReturn(sessionId)
-                onReturnToTerminal()
-              }}
-              className="px-2 py-1 text-[11px] rounded border border-blue/50 text-blue hover:bg-blue/10"
-              title="Returning automatically — click to go now"
-            >
-              Return to terminal
-            </button>
+      {/* ── The compose area ──
+          Never dead. Either the composer and the decision, or one line saying
+          what is happening instead. */}
+      {filed ? (
+        <div className="px-3 py-3 shrink-0" style={{ borderTop: '1px solid var(--border-subtle)', background: 'var(--surface-chrome)' }}>
+          <div className="text-[11.5px]" style={{ color: 'var(--text-secondary)' }} data-testid="canvas-filed-waiting">
+            {filed.decision === 'reject'
+              ? `${filed.reviewId ? filed.reviewId.replace('R', 'Review #') : 'Your review'} filed · waiting on the agent to render ${nextVersion ?? 'the next version'}`
+              : approvedLine}
           </div>
-        ) : (
-          <>
-            {submitError && <div className="text-red text-[10px] mb-1">{submitError}</div>}
-            {/* C1: the decision row. The review IS a verdict on the version —
-                Approve or Reject first; a reject demands a note (one already
-                written counts); Submit arms only once decided. */}
-            {versionOpen ? (
-              <div className="flex gap-1.5 mb-1.5" data-testid="decision-row">
-                <button
-                  onClick={() => setDecision(decision === 'approve' ? null : 'approve')}
-                  className={`flex-1 px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
-                    decision === 'approve'
-                      ? 'bg-green text-crust border-green'
-                      : 'border-surface1/80 text-subtext0 hover:border-green/60 hover:text-green'
-                  }`}
-                  data-testid="decision-approve"
-                >
-                  Approve {version.id}
-                </button>
-                <button
-                  onClick={() => setDecision(decision === 'reject' ? null : 'reject')}
-                  className={`flex-1 px-2 py-1 text-[11px] font-semibold rounded border transition-colors ${
-                    decision === 'reject'
-                      ? 'bg-red text-crust border-red'
-                      : 'border-surface1/80 text-subtext0 hover:border-red/60 hover:text-red'
-                  }`}
-                  data-testid="decision-reject"
-                >
-                  Reject {version.id}
-                </button>
-              </div>
-            ) : (
-              <div className="text-[10px] text-overlay0 mb-1" data-testid="version-decided-hint">
-                {version.draft
-                  ? 'This version is still a draft.'
-                  : `${version.id} is already decided${version.verdict ? ` (${version.verdict.state}${version.verdict.by === 'agent-chat' ? ' · recorded from chat' : ''})` : ''}.`}
+          <button
+            onClick={() => {
+              // Leaving EARLY is race-safe by construction: cancel the store's
+              // pending landing first, then do the one navigation.
+              useExcalidrawStore.getState().cancelSubmitReturn(sessionId)
+              onReturnToTerminal()
+            }}
+            className="mt-1.5 text-[11px] underline underline-offset-2 focus-ring rounded"
+            style={{ color: 'var(--brand)' }}
+            title="Returning automatically — click to go now"
+            data-testid="canvas-return-to-terminal"
+          >
+            Return to terminal
+          </button>
+        </div>
+      ) : !versionOpen ? (
+        <div
+          className="px-3 py-3 shrink-0 text-[11.5px]"
+          style={{ borderTop: '1px solid var(--border-subtle)', background: 'var(--surface-chrome)', color: 'var(--text-muted)' }}
+          data-testid="canvas-version-closed-line"
+        >
+          {closedVersionLine()}
+        </div>
+      ) : (
+        <>
+          {/* ── Composer ── */}
+          <div
+            className="px-3 py-3 shrink-0 flex flex-col gap-2"
+            style={{ borderTop: '1px solid var(--border-subtle)' }}
+          >
+            <div className="flex items-center gap-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              {(editingNote ? editingNote.focus : focus) ? (
+                <FocusLabel
+                  focus={(editingNote ? editingNote.focus : focus)!}
+                  className="truncate flex-1"
+                />
+              ) : (
+                <>
+                  <span
+                    className="text-[9.5px] rounded px-2 py-0.5 shrink-0"
+                    style={{ border: '1px dashed var(--border-subtle)', color: 'var(--text-secondary)' }}
+                  >
+                    whole page
+                  </span>
+                  <span className="truncate flex-1">click an element or drag a region to target</span>
+                </>
+              )}
+              {!editingNote && focus && (
+                <>
+                  {canExpand && (
+                    <button
+                      onClick={() => expandFocus(sessionId)}
+                      className="px-1 py-0.5 text-[10px] rounded border focus-ring shrink-0"
+                      style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+                      title="Expand the selection to the parent element (ArrowUp)"
+                      data-testid="composer-expand-focus"
+                    >
+                      parent
+                    </button>
+                  )}
+                  <DismissButton
+                    onClick={() => clearFocus(sessionId)}
+                    label="Clear the target"
+                    title="Clear the selection (Esc)"
+                    size={8}
+                    data-testid="composer-clear-focus"
+                  />
+                </>
+              )}
+            </div>
+            <textarea
+              ref={textareaRef}
+              value={activeText}
+              onChange={(e) => {
+                // An EDIT writes to its own buffer and never to the composer:
+                // the note's words are not the half-written note, and letting
+                // them become it is how Cancel used to leave a phantom draft.
+                if (editingNote) {
+                  editTextRef.current = e.target.value
+                  setEditText(e.target.value)
+                  return
+                }
+                composerRef.current.noteText = e.target.value
+                dirtyRef.current = true
+                setNoteText(e.target.value)
+              }}
+              placeholder={editingNote ? 'Edit this note…' : 'Write a note for the agent…'}
+              rows={3}
+              className="w-full resize-y rounded-[9px] px-2.5 py-2 text-[12px] focus:outline-none"
+              style={{
+                background: 'var(--surface-chrome)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
+              }}
+              data-testid="composer-textarea"
+            />
+            {activeImages.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap" data-testid="composer-images">
+                {activeImages.map((img, i) => (
+                  <ImageTile key={i} index={i + 1} pngBase64={img.pngBase64} onRemove={() => removeImage(i)} />
+                ))}
               </div>
             )}
-            {decision === 'reject' && draftNotes.length === 0 && (
-              <div className="text-[10px] text-red font-semibold mb-1" data-testid="reject-needs-note">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }} data-testid="composer-paste-hint">
+                {activeImages.length === 0
+                  ? 'Ctrl+V adds images — Image 1, Image 2…'
+                  : 'Ctrl+V pastes another image — inserts ' + imageMarker(activeImages.length + 1) + ' here'}
+              </span>
+              {unattachedStrokeCount > 0 && !editingNote && (
+                <span className="inline-flex items-center gap-1 text-[10px]" style={{ color: 'var(--color-mauve)' }} data-testid="composer-strokes-ride">
+                  <PencilMark /> {unattachedStrokeCount} {unattachedStrokeCount === 1 ? 'stroke' : 'strokes'} will ride this note
+                </span>
+              )}
+              <div className="flex-1" />
+              {editingNote && (
+                <button
+                  onClick={cancelEdit}
+                  className="px-2 py-1 text-[11px] rounded-[8px] border focus-ring"
+                  style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+                  data-testid="composer-cancel-edit"
+                >
+                  Cancel
+                </button>
+              )}
+              <button
+                onClick={() => void saveNote()}
+                disabled={!canAddNote}
+                className="px-3.5 py-1.5 text-[12px] font-semibold rounded-[8px] border focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+                data-testid="composer-add-note"
+              >
+                {editingNote ? 'Save' : 'Add note'}
+              </button>
+            </div>
+            {pasteError && (
+              <div className="text-[10.5px]" style={{ color: 'var(--color-red)' }} data-testid="composer-paste-error">
+                {pasteError}
+              </div>
+            )}
+            {/* A ceiling the user can HIT should be a sentence, not silence. The
+                draft still saves — its words, its target and its images — and the
+                drawing stays where they made it for as long as the pane is open. */}
+            {sketchTooLarge && (
+              <div className="text-[10.5px]" style={{ color: 'var(--text-secondary)' }} data-testid="composer-sketch-too-large">
+                drawing too large to keep with the draft — it stays on the canvas while the pane is open
+              </div>
+            )}
+          </div>
+
+          {/* ── Decision ── */}
+          <div
+            className="px-3 py-3 shrink-0 flex flex-col gap-2"
+            style={{ borderTop: '1px solid var(--border-subtle)', background: 'var(--surface-chrome)' }}
+          >
+            {submitError && (
+              <div className="text-[10px]" style={{ color: 'var(--color-red)' }} data-testid="canvas-submit-error">
+                {submitError}
+              </div>
+            )}
+            <div className="flex gap-2" data-testid="decision-row">
+              <button
+                onClick={() => {
+                  const next = decision === 'approve' ? null : ('approve' as const)
+                  // The ref is the composer's truth for every save that fires
+                  // outside render, so it moves with the state, not after it.
+                  composerRef.current.decision = next
+                  dirtyRef.current = true
+                  setDecision(next)
+                }}
+                className="flex-1 text-center text-[12.5px] font-semibold rounded-[9px] py-2 border transition-colors focus-ring"
+                style={
+                  decision === 'approve'
+                    ? { background: 'var(--color-green)', borderColor: 'var(--color-green)', color: 'var(--surface-chrome)' }
+                    : { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }
+                }
+                data-testid="decision-approve"
+              >
+                {labels.approve}
+              </button>
+              <button
+                onClick={() => {
+                  const next = decision === 'reject' ? null : ('reject' as const)
+                  composerRef.current.decision = next
+                  dirtyRef.current = true
+                  setDecision(next)
+                }}
+                className="flex-1 text-center text-[12.5px] font-semibold rounded-[9px] py-2 border transition-colors focus-ring"
+                style={
+                  decision === 'reject'
+                    ? { background: 'var(--color-red)', borderColor: 'var(--color-red)', color: 'var(--surface-chrome)' }
+                    : { borderColor: 'color-mix(in srgb, var(--color-red) 40%, transparent)', color: 'var(--color-red)' }
+                }
+                data-testid="decision-reject"
+              >
+                {labels.reject}
+              </button>
+            </div>
+            {rejectNeedsNote && (
+              <div className="text-[10.5px] font-semibold" style={{ color: 'var(--color-red)' }} data-testid="reject-needs-note">
                 A reject needs a note — tell the agent what&apos;s wrong.
               </div>
             )}
             {/* APPROVE MEANS NOTHING OWED, said before the click rather than
                 discovered after it. Notes filed with an approval become
-                observations: the agent reads them, nothing comes back. Anything
-                that needs work has to ride a reject — and a user who did not
-                know that is exactly how a note ended up shipped in code and
-                owed forever. */}
+                observations: the agent reads them, nothing comes back. */}
             {decision === 'approve' && draftNotes.length > 0 && (
-              <div className="text-[10px] text-subtext0 mb-1" data-testid="canvas-approve-observations-warning">
+              <div className="text-[10.5px]" style={{ color: 'var(--text-secondary)' }} data-testid="canvas-approve-observations-warning">
                 approve only if none needs work — they&apos;ll be recorded as observations
               </div>
             )}
             <button
               onClick={() => void doSubmit()}
-              disabled={!versionOpen || decision === null || (decision === 'reject' && draftNotes.length === 0) || submitting}
-              className={`w-full px-2 py-1.5 text-[12px] rounded border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
-                versionOpen && decision !== null && !(decision === 'reject' && draftNotes.length === 0) && !submitting
-                  ? 'border-green bg-green/20 text-green font-semibold shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-green)_25%,transparent)]'
-                  : 'border-green/50 text-green'
-              }`}
-              title={decision === null && versionOpen ? 'Decide first — approve or reject' : 'Freeze this review and hand it to the agent'}
-            >
-              {submitting
-                ? 'Submitting…'
-                : decision === 'approve'
-                  ? draftNotes.length > 0
-                    ? `Submit review — Approved, ${draftNotes.length} note${draftNotes.length === 1 ? '' : 's'}`
-                    : `Submit review — Approve ${version.id}`
+              disabled={submitDisabled}
+              className="w-full text-center text-[12.5px] font-bold rounded-[9px] py-2.5 border transition-all focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+              style={
+                submitDisabled
+                  ? { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }
                   : decision === 'reject'
-                    ? `Submit review — Rejected, ${draftNotes.length} note${draftNotes.length === 1 ? '' : 's'}`
-                    : 'Submit review'}
+                    ? {
+                        background: 'var(--color-red)',
+                        borderColor: 'var(--color-red)',
+                        color: 'var(--surface-chrome)',
+                        boxShadow: '0 0 0 3px color-mix(in srgb, var(--color-red) 22%, transparent)',
+                      }
+                    : {
+                        background: 'var(--color-green)',
+                        borderColor: 'var(--color-green)',
+                        color: 'var(--surface-chrome)',
+                        boxShadow: '0 0 0 3px color-mix(in srgb, var(--color-green) 22%, transparent)',
+                      }
+              }
+              title={decision === null ? 'Decide first — approve or reject' : 'Send this review to the agent'}
+              data-testid="canvas-submit"
+            >
+              {submitting ? 'Submitting…' : submitLabel(version, decision, draftNotes.length)}
             </button>
-          </>
-        )}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

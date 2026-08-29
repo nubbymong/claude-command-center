@@ -421,7 +421,7 @@ describe('reject hands the round to the agent', () => {
       scope: 'general',
       note: '',
       versionId: 'v1',
-      image: { pngBase64: png },
+      images: [{ pngBase64: png }],
     })
     const reviewId = state.reviews.find((r) => r.status === 'draft')!.id
     reviews.submitReview(SID, reviewId, [], 'reject')

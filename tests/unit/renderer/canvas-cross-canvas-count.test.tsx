@@ -43,7 +43,7 @@ function seedMirror(rounds: Array<ReturnType<typeof owedRound>>, extraReviews: R
       s1: {
         loaded: true, canvasId: 'c1', reviews: [...rounds.map((r) => r.review), ...extraReviews], annotations: rounds.map((r) => r.note),
         focus: null, focusChain: [], focusChainIndex: 0, marqueeArmed: false,
-        editingAnnotationId: null, resolution: null, panelHighlight: null, helpDismissed: false,
+        editingAnnotationId: null, resolution: null, panelHighlight: null,
       },
     },
   })

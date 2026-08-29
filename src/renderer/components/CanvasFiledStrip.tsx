@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react'
 import { useCanvasStore } from '../stores/canvasStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { DismissButton } from './ui/DismissButton'
 
 /**
  * "That canvas was filed."
@@ -78,15 +79,11 @@ export default function CanvasFiledStrip({ sessionId }: { sessionId: string }) {
       >
         Reopen it
       </button>
-      <button
+      <DismissButton
         onClick={() => dismissFiled(sessionId)}
-        aria-label="Dismiss"
-        title="Dismiss"
-        className="shrink-0 px-1 focus-ring rounded"
-        style={{ color: 'var(--text-muted)' }}
-      >
-        &times;
-      </button>
+        label="Dismiss this notice"
+        data-testid="canvas-filed-dismiss"
+      />
     </div>
   )
 }

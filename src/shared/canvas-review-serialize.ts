@@ -27,7 +27,22 @@ function fmtNote(note: string, indent: string): string {
   return note.split('\n').join(`\n${indent}    `)
 }
 
-function fmtAnnotation(a: Annotation, imageIndexByAnnotation: Map<string, number>): string {
+/**
+ * Which image BLOCKS one note's attachments became.
+ *
+ * `sketch` is the block the drawing landed in; `images` maps the note's own
+ * 1-based image position — the "Image 2" the user typed into the note text — to
+ * the block that carries it. The two numbers are different on purpose and both
+ * have to be said: the note's prose counts per note, the image blocks count
+ * across the whole payload, and an agent handed only one of them cannot tell
+ * which picture "Image 2" is.
+ */
+export interface NoteAttachmentBlocks {
+  sketch?: number
+  images: Array<{ imageIndex: number; block: number }>
+}
+
+function fmtAnnotation(a: Annotation, blocksByAnnotation: Map<string, NoteAttachmentBlocks>): string {
   const lines: string[] = []
   const head = `- ${a.id} [${a.scope}] [${a.state}] on ${a.versionId}`
   lines.push(head)
@@ -65,11 +80,21 @@ function fmtAnnotation(a: Annotation, imageIndexByAnnotation: Map<string, number
     lines.push(`  chosen-variant: ${a.chosenVariantKey}${a.pickSource === 'chat' ? ' (picked in chat)' : ''}`)
   }
   lines.push(`  note: ${fmtNote(a.note, '  ')}`)
-  const imageIndex = imageIndexByAnnotation.get(a.id)
-  if (imageIndex !== undefined && a.sketch) {
-    lines.push(`  sketch: attached as image ${imageIndex} ${fmtBox(a.sketch.bboxPage)}`)
-  } else if (imageIndex !== undefined && a.image) {
-    lines.push(`  image: pasted screenshot, attached as image ${imageIndex}`)
+  const blocks = blocksByAnnotation.get(a.id)
+  // The note's own numbering, spelled out. The user types "Image 2" into the
+  // text and means the second screenshot they pasted onto THIS note; the image
+  // blocks are numbered across the whole payload. Saying which is which is the
+  // difference between an agent looking at the right picture and it guessing.
+  if (blocks && blocks.images.length > 0) {
+    const map = blocks.images.map((b) => `Image ${b.imageIndex} = attachment ${b.block}`).join('; ')
+    lines.push(`  images (${blocks.images.length}): ${map}`)
+  }
+  // A DRAWING rides its note automatically now — the user does not attach it,
+  // they draw on the page and it goes with whatever note they write next. Said
+  // in those words so the agent reads the strokes as part of the note rather
+  // than as a separate artefact somebody chose to include.
+  if (blocks?.sketch !== undefined && a.sketch) {
+    lines.push(`  drawing: rides this note, attached as attachment ${blocks.sketch} ${fmtBox(a.sketch.bboxPage)}`)
   }
   return lines.join('\n')
 }
@@ -78,21 +103,37 @@ export interface SerializedReview {
   text: string
 }
 
+/** One image block the tool actually loaded, in block order. */
+export interface SerializedAttachment {
+  annotationId: string
+  kind: 'sketch' | 'image'
+  /** 1-based position of this image on its own note. Absent for a sketch. */
+  imageIndex?: number
+}
+
 /**
- * The body text for one review payload. `attachmentOrder` is the annotation-id
- * order the tool will append images in — the serializer numbers sketches from
- * it (1-based) so the text and the image blocks can never drift apart.
+ * The body text for one review payload. `attachmentOrder` is the list of image
+ * blocks the tool will append, in order — the serializer numbers from it
+ * (1-based) so the text and the image blocks can never drift apart. A note may
+ * contribute several blocks now (its pasted images, then its drawing), which is
+ * why the entries are typed rather than bare annotation ids.
  */
 export function serializeReviewPayload(
   payload: ReviewPayload,
-  attachmentOrder: string[],
+  attachmentOrder: readonly SerializedAttachment[],
   /** The mode of the version this round froze against. Testing mode calls the
    *  same two decisions Pass and Fail; the machine is one, only the words
    *  change, and the agent should read back the word the user saw. */
   opts?: { uat?: boolean },
 ): SerializedReview {
-  const imageIndexByAnnotation = new Map<string, number>()
-  attachmentOrder.forEach((annotationId, i) => imageIndexByAnnotation.set(annotationId, i + 1))
+  const blocksByAnnotation = new Map<string, NoteAttachmentBlocks>()
+  attachmentOrder.forEach((att, i) => {
+    const block = i + 1
+    const entry = blocksByAnnotation.get(att.annotationId) ?? { images: [] }
+    if (att.kind === 'sketch') entry.sketch = block
+    else entry.images.push({ imageIndex: att.imageIndex ?? entry.images.length + 1, block })
+    blocksByAnnotation.set(att.annotationId, entry)
+  })
 
   const parts: string[] = []
   // THE DECISION FIRST. It is the single most load-bearing fact about a round —
@@ -112,11 +153,11 @@ export function serializeReviewPayload(
   }
   const anchored = payload.annotations
   if (anchored.length > 0) {
-    parts.push(anchored.map((a) => fmtAnnotation(a, imageIndexByAnnotation)).join('\n'))
+    parts.push(anchored.map((a) => fmtAnnotation(a, blocksByAnnotation)).join('\n'))
   }
   if (payload.generalNotes.length > 0) {
     parts.push('general notes:')
-    parts.push(payload.generalNotes.map((a) => fmtAnnotation(a, imageIndexByAnnotation)).join('\n'))
+    parts.push(payload.generalNotes.map((a) => fmtAnnotation(a, blocksByAnnotation)).join('\n'))
   }
   if (anchored.length === 0 && payload.generalNotes.length === 0) parts.push('(this review has no notes)')
   // A4: the earlier rounds this submission settled, and the notes on them that
@@ -136,7 +177,7 @@ export function serializeReviewPayload(
     for (const round of settled) {
       if (round.neverResolved.length === 0) continue
       parts.push(`- ${round.reviewId}`)
-      parts.push(round.neverResolved.map((a) => fmtAnnotation(a, imageIndexByAnnotation)).join('\n'))
+      parts.push(round.neverResolved.map((a) => fmtAnnotation(a, blocksByAnnotation)).join('\n'))
     }
   }
   return { text: parts.join('\n') }

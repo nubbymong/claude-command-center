@@ -44,12 +44,12 @@ export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeveri
 import type {
   CanvasAnnotationDraft, CanvasChangedEvent, CanvasRenderSource, CanvasReviewChangedEvent,
   CanvasReviewState, CanvasSketchExport, CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasState,
-  ForceClosures, ReclaimableCanvas,
+  ComposerDraftInput, ForceClosures, ReclaimableCanvas,
 } from '../../shared/canvas'
 export type {
   AnchorRef, Annotation, AnnotationScope, AnnotationState, ForceClosures,
   CanvasAnnotationDraft, CanvasChangedEvent, CanvasHandle, CanvasHitInfo, CanvasMode, CanvasRenderSource,
-  CanvasReviewChangedEvent, CanvasReviewState, CanvasSketchExport,
+  CanvasReviewChangedEvent, CanvasReviewState, CanvasSketchExport, ComposerDraft, ComposerDraftInput,
   CanvasSnapshotReply, CanvasSnapshotRequestEvent, CanvasSnapshotResult,
   CanvasState, CanvasVersion, CanvasVersionSource, CanvasViewportInfo,
   FocusObject, ReclaimableCanvas, Review, CanvasLibraryEntry,
@@ -419,6 +419,11 @@ export interface ElectronAPI {
     /** The user has these addressed notes on screen — the release side of the
      *  agent close-out barrier. Renderer-only; no MCP tool reaches it. */
     reviewMarkSeen: (args: { sessionId: string; canvasId: string; annotationIds: string[] }) => Promise<{ state: CanvasReviewState; seen: string[] }>
+    /** Persist the half-written note (W14): text, decision, target, pasted
+     *  images, sketch scene. Owner-scoped; no MCP tool reaches it. */
+    composerDraftSet: (args: { sessionId: string; canvasId: string; draft: ComposerDraftInput }) => Promise<CanvasReviewState>
+    /** Drop it — the round was submitted, or the composer was emptied. */
+    composerDraftClear: (args: { sessionId: string; canvasId: string }) => Promise<CanvasReviewState>
     /** Sign the subject off (#476). Refused (`ok:false` + reason) while
      *  anything is owed either way; the pane then shows its front page. */
     complete: (args: { sessionId: string; canvasId: string }) => Promise<{ ok: boolean; reason?: string; state?: CanvasState }>

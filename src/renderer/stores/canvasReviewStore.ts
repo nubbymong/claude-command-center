@@ -24,6 +24,8 @@ import type {
   CanvasReviewState,
   CanvasSketchExport,
   CanvasVersion,
+  ComposerDraft,
+  ComposerDraftInput,
   FocusObject,
   Rect,
   Review,
@@ -41,6 +43,16 @@ export interface CanvasReviewSessionState {
   canvasId: string | null
   reviews: Review[]
   annotations: Annotation[]
+  /**
+   * The half-written note as MAIN holds it (W14).
+   *
+   * Mirrored rather than kept in React state, which is the whole point: the
+   * composer's text, decision, target, pasted images and drawing used to live
+   * only in the panel, so a pane switch threw them away. Every field the
+   * composer owns now round-trips through main, and this is the copy the panel
+   * restores from on mount.
+   */
+  composer: ComposerDraft | null
   /** Locked focus, ready to become a note (element via click, region via
    *  marquee). Hover alone never locks. */
   focus: FocusObject | null
@@ -58,9 +70,6 @@ export interface CanvasReviewSessionState {
    *  measure is how a page marked its reviewer's open issues as tracked
    *  (adversarial review, 2026-08-14). */
   panelHighlight: { rect: Rect; kind: 'anchored' | 'ghost' | 'reported' } | null
-  /** The "how to review" primer in the notes panel — shown until the user
-   *  dismisses it or has written a first note. Renderer-session state only. */
-  helpDismissed: boolean
 }
 
 const EMPTY: CanvasReviewSessionState = {
@@ -68,6 +77,7 @@ const EMPTY: CanvasReviewSessionState = {
   canvasId: null,
   reviews: [],
   annotations: [],
+  composer: null,
   focus: null,
   focusChain: [],
   focusChainIndex: 0,
@@ -75,7 +85,6 @@ const EMPTY: CanvasReviewSessionState = {
   editingAnnotationId: null,
   resolution: null,
   panelHighlight: null,
-  helpDismissed: false,
 }
 
 /** The label the focus chip and the notes panel show for one chain entry —
@@ -106,6 +115,17 @@ interface CanvasReviewStoreState {
   lockFocus: (sessionId: string, chain: CanvasInspectEntry[], versionId: string) => void
   expandFocus: (sessionId: string) => void
   clearFocus: (sessionId: string) => void
+  /**
+   * Put back a focus that was PERSISTED with a composer draft (W14).
+   *
+   * Distinct from `lockFocus` and `setRegionFocus`, which mint a focus from a
+   * fresh page interaction — this one restores an object main already holds, so
+   * a half-written note that was aimed at a button is still aimed at it after a
+   * pane switch. There is no expand ladder to restore: the chain is a live
+   * artefact of the click, and the parent button simply stays hidden until the
+   * user targets something again.
+   */
+  restoreFocus: (sessionId: string, focus: FocusObject) => void
   setRegionFocus: (sessionId: string, bboxPage: Rect, versionId: string) => void
   /** Re-point the LIVE locked focus after a layout change (#368): applied only
    *  while `forFocus` is still the focus, by reference — see the action. */
@@ -114,7 +134,6 @@ interface CanvasReviewStoreState {
   setEditingAnnotation: (sessionId: string, annotationId: string | null) => void
   setResolution: (sessionId: string, pass: ResolutionPass | null) => void
   setPanelHighlight: (sessionId: string, highlight: CanvasReviewSessionState['panelHighlight']) => void
-  dismissHelp: (sessionId: string) => void
   upsertNote: (sessionId: string, draft: CanvasAnnotationDraft) => Promise<string | null>
   deleteNote: (sessionId: string, annotationId: string) => Promise<void>
   /** The decision is REQUIRED: notes have no verdicts of their own any more, so
@@ -137,13 +156,29 @@ interface CanvasReviewStoreState {
    * fire without them looking makes it a lie.
    */
   markAddressedSeen: (sessionId: string, canvasId: string, annotationIds: string[]) => Promise<void>
+  /**
+   * Persist the half-written note (W14). Returns the composer main committed, so
+   * the caller can flip its freshly-pasted images to "persisted" and stop
+   * re-sending their bytes on the next keystroke.
+   */
+  saveComposerDraft: (sessionId: string, canvasId: string, draft: ComposerDraftInput) => Promise<ComposerDraft | null>
+  /** Drop it — the round was submitted, or the draft belongs to an artefact the
+   *  pane has left. */
+  clearComposerDraft: (sessionId: string, canvasId: string) => Promise<void>
   reset: () => void
 }
 
 function fromMain(prev: CanvasReviewSessionState | undefined, state: CanvasReviewState | null): CanvasReviewSessionState {
   const base = prev ?? EMPTY
-  if (!state) return { ...base, canvasId: null, reviews: [], annotations: [], loaded: true }
-  return { ...base, canvasId: state.canvasId, reviews: state.reviews, annotations: state.annotations, loaded: true }
+  if (!state) return { ...base, canvasId: null, reviews: [], annotations: [], composer: null, loaded: true }
+  return {
+    ...base,
+    canvasId: state.canvasId,
+    reviews: state.reviews,
+    annotations: state.annotations,
+    composer: state.composer ?? null,
+    loaded: true,
+  }
 }
 
 function patch(
@@ -202,6 +237,10 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
     set((s) => patch(s, sessionId, { focus: null, focusChain: [], focusChainIndex: 0 }))
   },
 
+  restoreFocus: (sessionId, focus) => {
+    set((s) => patch(s, sessionId, { focus, focusChain: [], focusChainIndex: 0, marqueeArmed: false }))
+  },
+
   setRegionFocus: (sessionId, bboxPage, versionId) => {
     const label = `region ${Math.round(bboxPage.width)}×${Math.round(bboxPage.height)}`
     set((s) =>
@@ -241,10 +280,6 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
 
   setPanelHighlight: (sessionId, highlight) => {
     set((s) => patch(s, sessionId, { panelHighlight: highlight }))
-  },
-
-  dismissHelp: (sessionId) => {
-    set((s) => patch(s, sessionId, { helpDismissed: true }))
   },
 
   upsertNote: async (sessionId, draft) => {
@@ -332,6 +367,33 @@ export const useCanvasReviewStore = create<CanvasReviewStoreState>((set, get) =>
       // A refused report is not a user-visible failure: the barrier simply
       // stays closed, and the user closes the round from the panel instead.
       console.error('[canvasReviewStore] markAddressedSeen failed:', err)
+    }
+  },
+
+  saveComposerDraft: async (sessionId, canvasId, draft) => {
+    try {
+      const state = await window.electronAPI.canvas.composerDraftSet({ sessionId, canvasId, draft })
+      set((s) => ({
+        bySessionId: { ...s.bySessionId, [sessionId]: fromMain(s.bySessionId[sessionId], state) },
+      }))
+      return state.composer ?? null
+    } catch (err) {
+      // A refused save is not a user-visible failure — the words are still on
+      // screen, and the next keystroke tries again. Losing them silently is what
+      // this whole path exists to stop; losing the SAVE is survivable.
+      console.error('[canvasReviewStore] saveComposerDraft failed:', err)
+      return null
+    }
+  },
+
+  clearComposerDraft: async (sessionId, canvasId) => {
+    try {
+      const state = await window.electronAPI.canvas.composerDraftClear({ sessionId, canvasId })
+      set((s) => ({
+        bySessionId: { ...s.bySessionId, [sessionId]: fromMain(s.bySessionId[sessionId], state) },
+      }))
+    } catch (err) {
+      console.error('[canvasReviewStore] clearComposerDraft failed:', err)
     }
   },
 
@@ -523,7 +585,13 @@ export function settledLabel(group: ReviewGroup, versions: readonly CanvasVersio
   if (!settled) return null
   switch (settled.by) {
     case 'observation':
-      return 'passed with observations'
+      // The user's own two words for the same gesture. Testing mode calls the
+      // decision Pass, everything else calls it Approve, and a History row that
+      // said "passed" about a mockup the user APPROVED reads as a different
+      // event. The word comes from the version the round froze against.
+      return versions.find((v) => v.id === group.review.versionId)?.mode === 'uat'
+        ? 'passed with observations'
+        : 'approved with observations'
     case 'decision': {
       // A decision that carried a ROUND of its own is named by that round —
       // "superseded by your Review #8" is what the user can go and re-read.
