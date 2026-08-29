@@ -232,8 +232,13 @@ jobs:
           AllowTcpForwarding yes
           UsePAM no
           EOF
-          sudo "$(command -v sshd)" -f "$D/sshd_config"
+          sudo mkdir -p /run/sshd
+          sudo "$(command -v sshd)" -t -f "$D/sshd_config"
+          sudo "$(command -v sshd)" -f "$D/sshd_config" -E "$D/sshd.log"
           for i in $(seq 1 20); do nc -z 127.0.0.1 2222 && break; sleep 0.5; done
+          nc -z 127.0.0.1 2222 || { echo "sshd failed to start"; sudo cat "$D/sshd.log" 2>/dev/null || true; exit 1; }
+          # prove key auth + forwarding before the test, surfacing sshd errors early
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 2222 "$(whoami)@127.0.0.1" 'echo SSHD_UP' || { sudo cat "$D/sshd.log" 2>/dev/null || true; exit 1; }
       - name: Write live host entry (localhost)
         run: |
           mkdir -p tests/live
