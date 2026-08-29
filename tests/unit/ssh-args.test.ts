@@ -62,6 +62,25 @@ describe('buildSshArgs', () => {
     expect(args.some((a) => a.includes(' '))).toBe(false)
   })
 
+  // #24: a distinct per-session REMOTE listen port forwarded to the ONE shared
+  // LOCAL server port, so two sessions to the same host don't collide on a
+  // single fixed port. Mutation to prove this: revert the `-R` to
+  // `${mcpPort}:127.0.0.1:${mcpPort}` — both assertions below fail.
+  it('#24: forwards the per-session remote listen port to the shared local port', () => {
+    expect(buildSshArgs(target, 5111, 'linux', 40001)).toEqual([...BASE, '-R', '40001:127.0.0.1:5111'])
+    // Two concurrent sessions → two distinct remote binds, same local target.
+    expect(buildSshArgs(target, 5111, 'linux', 40002)).toEqual([...BASE, '-R', '40002:127.0.0.1:5111'])
+  })
+
+  it('#24: defaults the remote port to mcpPort (pre-#24 shape) when omitted or 0', () => {
+    expect(buildSshArgs(target, 5111, 'linux')).toEqual([...BASE, '-R', '5111:127.0.0.1:5111'])
+    expect(buildSshArgs(target, 5111, 'linux', 0)).toEqual([...BASE, '-R', '5111:127.0.0.1:5111'])
+  })
+
+  it('#24: no tunnel when the local server is down (mcpPort 0), regardless of remote port', () => {
+    expect(buildSshArgs(target, 0, 'linux', 40001).some((a) => a === '-R')).toBe(false)
+  })
+
   // #242: tmux persistence depends on the connection eventually noticing
   // it's dead (see the doc comment on buildSshArgs). Unlike ControlMaster,
   // this is NOT platform-conditional.

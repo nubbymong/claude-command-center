@@ -25,8 +25,9 @@ import { buildRemoteSessionCleanupCommand, buildTmuxBinPatchCommand, buildRemote
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { buildSshArgs, buildSshExecArgs } from './ssh-args'
+import { getRemoteMcpPort } from './ssh-remote-port'
 import { resolveClaudeBinary, resolveHostColorScheme, colorFgBgEnvToken } from './providers/claude/spawn'
-import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
+import { detectClaudeUi, lastPromptLineForClaude, looksLikeShellPromptTail } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
@@ -1153,7 +1154,13 @@ export function spawnPty(
     // resolves `localhost` IPv6-first (::1) -- a dead address that would
     // ECONNREFUSED and kill the channel ("socket connection closed unexpectedly"
     // on the remote MCP client).
-    const sshArgs = buildSshArgs(ssh, getConductorMcpPort(), os.platform())
+    // #24: a STABLE per-session remote listen port for the MCP reverse tunnel,
+    // so multiple sessions to the SAME host don't collide on one fixed port.
+    // Forward `-R <remoteMcpPort>:127.0.0.1:<localMcpPort>` and bake the remote
+    // Claude's MCP URL with the same per-session port (setupOpts below).
+    const localMcpPort = getConductorMcpPort()
+    const remoteMcpPort = getRemoteMcpPort(sessionId, localMcpPort)
+    const sshArgs = buildSshArgs(ssh, localMcpPort, os.platform(), remoteMcpPort)
 
     // HTTP Hooks Gateway: when enabled, tunnel the gateway's loopback port so
     // Claude Code inside the SSH session can reach it via http://localhost:<port>.
@@ -1216,6 +1223,9 @@ export function spawnPty(
     let containerSetupShellReady = false
     let claudeSent = false
     let claudeRunning = false
+    // #25: rolling tail of recent PTY output, so the idle-fallback can tell a
+    // running-but-marker-less claude from one that exited to a bare shell.
+    let recentSshTail = ''
     // #242 finding F1 (b), BLOCKER (adversarial review round 5): per-session
     // nonce, generated ONCE here via randomId() (src/shared/id.ts -- the
     // repo's CSPRNG helper, NOT Math.random) and baked into every setup/
@@ -1464,6 +1474,16 @@ export function spawnPty(
         // almost certainly running — flip the latch so the overlay
         // can disappear and no more auto-writes ever fire.
         if (currentFlowState === 'running-claude' && claudeSent) {
+          // #25: don't FALSE-GREEN. If the pane has dropped back to a bare shell
+          // prompt, claude exited (e.g. the first-run trust prompt was declined,
+          // or claude crashed) — surface it as failed instead of latching
+          // claude-running. Conservative detector: never mis-flags a running
+          // claude (whose UI uses ❯/box drawing, not a bare $/#).
+          if (looksLikeShellPromptTail(recentSshTail)) {
+            logError(`[ssh] ${sessionId}: idle after claudeCmd but pane is a bare shell → claude exited (not latching claude-running)`)
+            setFlowState('failed', 'claude exited to shell')
+            return
+          }
           logInfo(`[ssh] ${sessionId}: idle after claudeCmd → assuming claude-running (fallback)`)
           claudeRunning = true
           setFlowState('claude-running', 'idle-fallback')
@@ -1625,6 +1645,7 @@ export function spawnPty(
           const setupOpts = {
             includeStatusLine: s?.statusLineEnabled !== false,
             includeConductorMcp: s?.conductorToolsEnabled !== false,
+            remoteMcpPort, // #24: bake the remote MCP URL with the per-session port
           }
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
           // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
@@ -1667,6 +1688,7 @@ export function spawnPty(
           const setupOpts = {
             includeStatusLine: s?.statusLineEnabled !== false,
             includeConductorMcp: s?.conductorToolsEnabled !== false,
+            remoteMcpPort, // #24: bake the remote MCP URL with the per-session port
           }
           // item 3: Windows uses the PowerShell-delivered setup (no POSIX
           // base64/stty, no tmux); auto/unix keep the POSIX path unchanged.
@@ -2397,6 +2419,7 @@ export function spawnPty(
       // since once Claude is running we never want auto-writes again.
       if (data.length > 0 && !claudeRunning) {
         receivedAnyData = true
+        recentSshTail = (recentSshTail + data).slice(-800) // #25: for claude-exit detection in the fallback
         // Fresh output resets the auth-hold budget: the hold cap only counts
         // CONSECUTIVE quiet fallback fires, so a genuinely waiting prompt that
         // repaints keeps its full hold window.

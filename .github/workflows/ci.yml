@@ -188,3 +188,67 @@ jobs:
           path: dist/*.dmg
           if-no-files-found: error
           retention-days: 14
+
+  # SSH multi-session smoke (#24 regression gate; aicc_planning#28). Real `ssh`
+  # against an EPHEMERAL localhost sshd — no external hosts or credentials, so
+  # unlike the manual live matrix (AGENTS.md) this CAN run in CI. It proves the
+  # per-session MCP reverse-tunnel ports coexist (two sessions to one host) and
+  # that the old single-fixed-port shape collides. It exercises only the SSH
+  # connection / `-R` / argv layer (child_process ssh + the pure argv builder) —
+  # NOT claude/tmux/statusline, which still need the manual matrix.
+  #
+  # ALWAYS runs on PRs (not `ci-run`-gated) so it can be a REQUIRED status check
+  # without the skipped-required deadlock the desktop-gate comment describes.
+  ssh-smoke:
+    name: SSH multi-session smoke (#24)
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Provision an ephemeral key-auth sshd (TCP forwarding on)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server netcat-openbsd
+          # The runner account is password-locked in /etc/shadow; sshd (UsePAM no)
+          # refuses locked accounts even for pubkey auth. Set a throwaway password
+          # to UNLOCK it — PasswordAuthentication stays off, so it's never usable
+          # for login; the ephemeral runner is discarded after the job.
+          echo "$(whoami):ci-ssh-smoke-$(date +%s)" | sudo chpasswd
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 -q
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          D="$RUNNER_TEMP/sshd"; mkdir -p "$D"
+          ssh-keygen -t ed25519 -N '' -f "$D/hostkey" -q
+          cat > "$D/sshd_config" <<EOF
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey $D/hostkey
+          PidFile $D/sshd.pid
+          AuthorizedKeysFile $HOME/.ssh/authorized_keys
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          AllowTcpForwarding yes
+          UsePAM no
+          StrictModes no
+          LogLevel VERBOSE
+          EOF
+          sudo mkdir -p /run/sshd
+          sudo "$(command -v sshd)" -t -f "$D/sshd_config"
+          sudo "$(command -v sshd)" -f "$D/sshd_config" -E "$D/sshd.log"
+          for i in $(seq 1 20); do nc -z 127.0.0.1 2222 && break; sleep 0.5; done
+          nc -z 127.0.0.1 2222 || { echo "sshd failed to start"; sudo cat "$D/sshd.log" 2>/dev/null || true; exit 1; }
+          # prove key auth + forwarding before the test, surfacing sshd errors early
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p 2222 "$(whoami)@127.0.0.1" 'echo SSHD_UP' || { sudo cat "$D/sshd.log" 2>/dev/null || true; exit 1; }
+      - name: Write live host entry (localhost)
+        run: |
+          mkdir -p tests/live
+          printf '{ "linuxKey": { "host": "127.0.0.1", "username": "%s", "port": 2222 } }\n' "$(whoami)" > tests/live/hosts.local.json
+      - name: SSH multi-session -R test (#24)
+        run: npx vitest run --config vitest.live.config.ts tests/live/ssh-multisession.live.ts

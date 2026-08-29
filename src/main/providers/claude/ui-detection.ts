@@ -8,6 +8,28 @@ export function detectClaudeUi(data: string, claudeSent: boolean): boolean {
   return false
 }
 
+/**
+ * #25: after the claude command has been written, does the pane's last line look
+ * like a bare SHELL prompt returning — i.e. claude exited (or never started) and
+ * dropped to the shell? Used by the SSH idle-fallback to avoid the "false green":
+ * latching `claude-running` on a session that actually exited to a bare shell
+ * (e.g. the first-run trust prompt was declined, or claude crashed).
+ *
+ * Deliberately CONSERVATIVE to never mis-flag a RUNNING claude as exited: it
+ * requires the last non-empty (ANSI-stripped) line to end in `$`/`#` AND to carry
+ * NO claude-UI glyph (`❯`, box drawing, vertical bars). Claude's input line uses
+ * `❯` and box drawing, never a bare `$`/`#`, so a running claude cannot match;
+ * `>`/`~` are excluded (a claude screen can legitimately end in either).
+ */
+export function looksLikeShellPromptTail(data: string): boolean {
+  const clean = data
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC
+    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '') // CSI
+  const last = clean.split(/\r?\n/).map((l) => l.replace(/\s+$/, '')).filter((l) => l.length > 0).pop() ?? ''
+  if (/[❯╭╰╮╯┃│]/.test(last)) return false
+  return /[$#]\s*$/.test(last)
+}
+
 // Escape stripping for the prompt-shape tests. Two gaps in the old
 // CSI-only `\x1b\[[0-9;]*[a-zA-Z]` strip broke every END-ANCHORED detector
 // on Windows OpenSSH under ConPTY (probed against a real host, 2026-08-27):
